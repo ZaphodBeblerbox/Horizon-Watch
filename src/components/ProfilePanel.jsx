@@ -120,8 +120,8 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                     {/* Save button */}
                     <button onClick={handleSave} style={{
                         padding:      "5px 14px",
-                        background:   saved ? "rgba(16,185,129,0.15)" : "rgba(13,148,136,0.15)",
-                        border:       `1px solid ${saved ? "rgba(16,185,129,0.4)" : "rgba(13,148,136,0.4)"}`,
+                        background:   saved ? "rgba(16,185,129,0.15)" : "rgba(26,110,181,0.15)",
+                        border:       `1px solid ${saved ? "rgba(16,185,129,0.4)" : "rgba(26,110,181,0.4)"}`,
                         borderRadius: 4,
                         color:        saved ? "#34d399" : "var(--akili-accent)",
                         fontSize:     11,
@@ -173,7 +173,7 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                             color:          "rgba(255,255,255,0.2)",
                             transition:     "border-color 0.15s, color 0.15s",
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(13,148,136,0.5)"; e.currentTarget.style.color = "rgba(13,148,136,0.6)" }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(26,110,181,0.5)"; e.currentTarget.style.color = "rgba(26,110,181,0.6)" }}
                         onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; e.currentTarget.style.color = "rgba(255,255,255,0.2)" }}
                     >
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -267,8 +267,8 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                                         fontSize: 11, color: "var(--akili-text-muted)", cursor: "pointer",
                                     }}>Cancel</button>
                                     <button style={{
-                                        flex: 2, padding: "6px", background: "rgba(13,148,136,0.12)",
-                                        border: "1px solid rgba(13,148,136,0.35)", borderRadius: 4,
+                                        flex: 2, padding: "6px", background: "rgba(26,110,181,0.12)",
+                                        border: "1px solid rgba(26,110,181,0.35)", borderRadius: 4,
                                         fontSize: 11, color: "var(--akili-accent)", cursor: "pointer",
                                     }}>Update Password</button>
                                 </div>
@@ -303,11 +303,11 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                         marginTop:    14,
                         width:        "100%",
                         padding:      "8px",
-                        background:   "rgba(13,148,136,0.06)",
-                        border:       "1px dashed rgba(13,148,136,0.3)",
+                        background:   "rgba(26,110,181,0.06)",
+                        border:       "1px dashed rgba(26,110,181,0.3)",
                         borderRadius: 4,
                         fontSize:     11,
-                        color:        "rgba(13,148,136,0.7)",
+                        color:        "rgba(26,110,181,0.7)",
                         cursor:       "pointer",
                         letterSpacing:"0.04em",
                     }}>
@@ -335,8 +335,8 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                                         fontSize: 11, color: "var(--akili-text-muted)", cursor: "pointer",
                                     }}>Cancel</button>
                                     <button onClick={handleRequest} style={{
-                                        flex: 2, padding: "6px", background: "rgba(13,148,136,0.12)",
-                                        border: "1px solid rgba(13,148,136,0.35)", borderRadius: 4,
+                                        flex: 2, padding: "6px", background: "rgba(26,110,181,0.12)",
+                                        border: "1px solid rgba(26,110,181,0.35)", borderRadius: 4,
                                         fontSize: 11, color: "var(--akili-accent)", cursor: "pointer",
                                     }}>Submit</button>
                                 </div>

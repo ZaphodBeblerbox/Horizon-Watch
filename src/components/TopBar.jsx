@@ -113,7 +113,7 @@ export default function TopBar({
                         fontFamily:    "monospace",
                         fontSize:      8,
                         letterSpacing: "0.12em",
-                        color:         "rgba(13,148,136,0.65)",
+                        color:         "rgba(26,110,181,0.65)",
                         marginTop:     2,
                     }}>
                         by Trifecta Technologies

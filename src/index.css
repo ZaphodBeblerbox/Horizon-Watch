@@ -87,7 +87,7 @@ input:focus,
 select:focus,
 textarea:focus {
     outline: none;
-    border-color: rgba(13, 148, 136, 0.6) !important;
+    border-color: rgba(26, 110, 181, 0.6) !important;
 }
 
 /* ── Select elements global dark ────────────────────────────────────────── */
@@ -142,7 +142,7 @@ textarea::placeholder {
 .akili-section-header {
     font-size: 11px;
     font-weight: 700;
-    color: #0d9488;
+    color: var(--accent);
     letter-spacing: 0.1em;
     text-transform: uppercase;
 }

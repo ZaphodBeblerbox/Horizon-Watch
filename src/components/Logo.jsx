@@ -1,47 +1,31 @@
-const Logo = ({ size = 120 }) => (
-    <svg width={size} height={size * 0.6} viewBox="0 0 120 72" xmlns="http://www.w3.org/2000/svg">
-        {/* Horizon line */}
-        <line x1="0" y1="52" x2="120" y2="52" stroke="#0d9488" strokeWidth="1.5" opacity="0.8"/>
+const Logo = ({ size = 48 }) => {
+    const w = size * 1.6
+    const h = size
+    return (
+        <svg width={w} height={h} viewBox="0 0 80 50" xmlns="http://www.w3.org/2000/svg">
+            {/* Horizon line */}
+            <line x1="0" y1="35" x2="80" y2="35" stroke="white" strokeWidth="1.2" opacity="0.9"/>
 
-        {/* Sun arc — semicircle rising above horizon */}
-        <path d="M 30 52 A 30 30 0 0 1 90 52"
-              stroke="#0d9488" strokeWidth="1.8" fill="none" opacity="0.9"/>
+            {/* Sun rays — clean straight lines radiating upward */}
+            <line x1="40" y1="6"  x2="40" y2="14" stroke="white" strokeWidth="1.4" strokeLinecap="round"/>
+            <line x1="22" y1="11" x2="26" y2="18" stroke="white" strokeWidth="1.2" strokeLinecap="round"/>
+            <line x1="58" y1="11" x2="54" y2="18" stroke="white" strokeWidth="1.2" strokeLinecap="round"/>
+            <line x1="10" y1="24" x2="16" y2="27" stroke="white" strokeWidth="1"   strokeLinecap="round" opacity="0.8"/>
+            <line x1="70" y1="24" x2="64" y2="27" stroke="white" strokeWidth="1"   strokeLinecap="round" opacity="0.8"/>
+            <line x1="4"  y1="35" x2="11" y2="35" stroke="white" strokeWidth="1"   opacity="0.5"/>
+            <line x1="76" y1="35" x2="69" y2="35" stroke="white" strokeWidth="1"   opacity="0.5"/>
 
-        {/* Sun centre glow */}
-        <circle cx="60" cy="52" r="8" fill="#0d9488" opacity="0.9"/>
-        <circle cx="60" cy="52" r="5" fill="#14b8a6" opacity="1"/>
-        <circle cx="60" cy="52" r="2.5" fill="#e8edf2"/>
+            {/* Sun semicircle — clean arc sitting on the horizon */}
+            <path d="M 22 35 A 18 18 0 0 1 58 35" stroke="white" strokeWidth="1.6" fill="none"/>
 
-        {/* Sun rays — radiating outward above horizon */}
-        <line x1="60" y1="18" x2="60" y2="26" stroke="#0d9488" strokeWidth="1.5" opacity="0.7"/>
-        <line x1="35" y1="27" x2="40" y2="33" stroke="#0d9488" strokeWidth="1.5" opacity="0.6"/>
-        <line x1="85" y1="27" x2="80" y2="33" stroke="#0d9488" strokeWidth="1.5" opacity="0.6"/>
-        <line x1="22" y1="44" x2="30" y2="46" stroke="#0d9488" strokeWidth="1.5" opacity="0.5"/>
-        <line x1="98" y1="44" x2="90" y2="46" stroke="#0d9488" strokeWidth="1.5" opacity="0.5"/>
-        <line x1="28" y1="34" x2="34" y2="39" stroke="#0d9488" strokeWidth="1" opacity="0.4"/>
-        <line x1="92" y1="34" x2="86" y2="39" stroke="#0d9488" strokeWidth="1" opacity="0.4"/>
+            {/* Sun centre — filled circle on the horizon */}
+            <circle cx="40" cy="35" r="5"   fill="white"/>
+            <circle cx="40" cy="35" r="2.5" fill="#0a1628"/>
 
-        {/* Horizon glow */}
-        <ellipse cx="60" cy="52" rx="35" ry="6"
-                 fill="url(#horizonGlow)" opacity="0.4"/>
-
-        {/* Earth curve below horizon */}
-        <path d="M 0 52 Q 60 62 120 52"
-              stroke="#0d9488" strokeWidth="0.8" fill="none" opacity="0.25"/>
-
-        {/* Latitude lines on arc suggesting globe */}
-        <path d="M 36 52 A 24 24 0 0 1 84 52"
-              stroke="#0d9488" strokeWidth="0.7" fill="none" opacity="0.2"/>
-        <path d="M 44 52 A 16 16 0 0 1 76 52"
-              stroke="#0d9488" strokeWidth="0.7" fill="none" opacity="0.15"/>
-
-        <defs>
-            <radialGradient id="horizonGlow" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#0d9488" stopOpacity="1"/>
-                <stop offset="100%" stopColor="#0d9488" stopOpacity="0"/>
-            </radialGradient>
-        </defs>
-    </svg>
-)
+            {/* Subtle reflection below horizon */}
+            <line x1="0" y1="35" x2="80" y2="35" stroke="white" strokeWidth="0.4" opacity="0.2" transform="translate(0,4)"/>
+        </svg>
+    )
+}
 
 export default Logo

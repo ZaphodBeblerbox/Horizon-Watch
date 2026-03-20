@@ -13,7 +13,7 @@ function Toggle({ value, onChange }) {
                 height:       18,
                 borderRadius: 9,
                 border:       "none",
-                background:   value ? "#0d9488" : "#2d3748",
+                background:   value ? "var(--akili-accent)" : "#2d3748",
                 cursor:       "pointer",
                 position:     "relative",
                 transition:   "background 0.2s",
@@ -116,11 +116,11 @@ function SectionHeader({ label }) {
         <div style={{
             fontSize:      11,
             fontWeight:    700,
-            color:         "#0d9488",
+            color:         "var(--akili-accent)",
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             padding:       "12px 0 4px",
-            borderBottom:  "1px solid rgba(13,148,136,0.3)",
+            borderBottom:  "1px solid rgba(26,110,181,0.3)",
             marginBottom:  2,
         }}>
             {label}

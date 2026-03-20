@@ -150,7 +150,7 @@ export default function TabBar({
                             cursor:       "pointer",
                             userSelect:   "none",
                             background:   isActive ? "rgba(255,255,255,0.08)" : "transparent",
-                            borderBottom: isActive ? "2px solid #0d9488" : "2px solid transparent",
+                            borderBottom: isActive ? "2px solid var(--akili-accent)" : "2px solid transparent",
                             borderRight:  !isActive ? "1px solid rgba(255,255,255,0.04)" : "none",
                             color:        isActive ? "#e8edf2" : isHovered ? "#8899aa" : "#4a5568",
                             transition:   "color 0.1s, background 0.1s",

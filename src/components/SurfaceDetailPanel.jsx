@@ -6,7 +6,7 @@ const API = API_BASE
 const COLOR_MAP = {
     red:    "#ef4444",
     amber:  "#f59e0b",
-    teal:   "#0d9488",
+    teal:   "var(--akili-accent)",
     orange: "#f97316",
     yellow: "#eab308",
     white:  "#ffffff",
@@ -193,7 +193,7 @@ export default function SurfaceDetailPanel({
             <InfoRow label="Coordinates" value={item?.lat != null && item?.lon != null ? `${Number(item.lat).toFixed(3)}, ${Number(item.lon).toFixed(3)}` : ""} />
 
             {/* Context infrastructure */}
-            <div style={{ marginTop: 14, marginBottom: 8, fontSize: 10, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "#0d9488" }}>
+            <div style={{ marginTop: 14, marginBottom: 8, fontSize: 10, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--akili-accent)" }}>
                 Infrastructure Context
             </div>
             {contextLoading && (
@@ -207,13 +207,13 @@ export default function SurfaceDetailPanel({
                                 width: 18,
                                 height: 18,
                                 borderRadius: 9,
-                                background: "rgba(13,148,136,0.15)",
-                                border: "1px solid rgba(13,148,136,0.6)",
+                                background: "rgba(26,110,181,0.15)",
+                                border: "1px solid rgba(26,110,181,0.6)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
                                 fontSize: 9,
-                                color: "#0d9488",
+                                color: "var(--akili-accent)",
                             }}>
                                 {INFRA_ICON[n.type] || "◆"}
                             </div>
@@ -229,7 +229,7 @@ export default function SurfaceDetailPanel({
             ))}
 
             {/* Enrichment */}
-            <div style={{ marginTop: 16, marginBottom: 8, fontSize: 10, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "#0d9488" }}>
+            <div style={{ marginTop: 16, marginBottom: 8, fontSize: 10, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--akili-accent)" }}>
                 Analysis
             </div>
             {enrichmentLoading && (
@@ -237,7 +237,7 @@ export default function SurfaceDetailPanel({
             )}
             {!enrichmentLoading && enrichment?.prose && (
                 <div style={{
-                    borderLeft: "3px solid #0d9488",
+                    borderLeft: "3px solid var(--akili-accent)",
                     paddingLeft: 10,
                     color: "var(--akili-text-primary)",
                     fontSize: 12,
@@ -253,8 +253,8 @@ export default function SurfaceDetailPanel({
                         onClick={handleAnalyse}
                         disabled={analysing}
                         style={{
-                            background: "rgba(13,148,136,0.2)",
-                            border: "1px solid rgba(13,148,136,0.5)",
+                            background: "rgba(26,110,181,0.2)",
+                            border: "1px solid rgba(26,110,181,0.5)",
                             color: "#e8edf2",
                             padding: "6px 12px",
                             borderRadius: 6,

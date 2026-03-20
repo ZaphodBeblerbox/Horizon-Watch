@@ -3,7 +3,7 @@ import { useMemo } from "react"
 const TIER_COLOR = {
     critical:    "#dc2626",
     significant: "#d97706",
-    elevated:    "#0d9488",
+    elevated:    "var(--akili-accent)",
     low:         "#4a5568",
 }
 
@@ -101,7 +101,7 @@ export default function NotificationsDrawer({
                                     fontSize:      10,
                                     fontWeight:    600,
                                     letterSpacing: "0.04em",
-                                    color:         sortMode === mode ? "#0d9488" : "var(--akili-text-muted)",
+                                    color:         sortMode === mode ? "var(--akili-accent)" : "var(--akili-text-muted)",
                                     padding:       "0 4px",
                                     transition:    "color 0.1s",
                                 }}
@@ -231,11 +231,11 @@ export default function NotificationsDrawer({
                                                 fontSize:     9,
                                                 fontWeight:   700,
                                                 letterSpacing:"0.06em",
-                                                color:        "#0d9488",
+                                                color:        "var(--akili-accent)",
                                                 opacity:      isRead ? 0.5 : 0.9,
                                             }}
                                         >
-                                            <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#0d9488", display: "inline-block", flexShrink: 0 }} />
+                                            <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--akili-accent)", display: "inline-block", flexShrink: 0 }} />
                                             AI
                                         </span>
                                     )}

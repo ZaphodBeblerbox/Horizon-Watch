@@ -85,6 +85,16 @@ function IconHealth() {
     )
 }
 
+function IconTV() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="1" y="2.5" width="16" height="11" rx="1.5"/>
+            <line x1="6"  y1="15.5" x2="12" y2="15.5"/>
+            <line x1="9"  y1="13.5" x2="9"  y2="15.5"/>
+        </svg>
+    )
+}
+
 function IconProfile() {
     return (
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -177,12 +187,15 @@ export default function Sidebar({
     onThemeCycle,
     soundMuted    = false,
     onToggleSound,
+    tvOpen        = false,
+    onToggleTV,
 }) {
     const [hovered, setHovered] = useState(null)
 
     const iconColor = (id) => {
         const active = (id === "layers"     && rightPanel === "layers")        ||
                        (id === "alerts"     && rightPanel === "alerts")        ||
+                       (id === "tv"         && tvOpen)                         ||
                        (id === "situations" && rightPanel === "situations")    ||
                        (id === "settings"   && rightPanel === "settings")      ||
                        (id === "profile"    && rightPanel === "profile")       ||
@@ -294,7 +307,7 @@ export default function Sidebar({
                                 minWidth:       14,
                                 height:         14,
                                 borderRadius:   7,
-                                background:     "#0d9488",
+                                background:     "var(--akili-accent)",
                                 color:          "#fff",
                                 fontSize:       8,
                                 fontWeight:     700,
@@ -341,7 +354,7 @@ export default function Sidebar({
                                 width:        6,
                                 height:       6,
                                 borderRadius: "50%",
-                                background:   "#0d9488",
+                                background:   "var(--akili-accent)",
                             }} />
                         )}
                     </button>
@@ -352,6 +365,31 @@ export default function Sidebar({
                 {btn("situations", <IconSituations />)}
                 {btn("poi",        <IconPOI />, null, null)}
                 {profile && btn("health", <IconHealth />, null, null)}
+
+                {/* TV button */}
+                {onToggleTV && (
+                    <button
+                        onMouseEnter={() => setHovered("tv")}
+                        onMouseLeave={() => setHovered(null)}
+                        onClick={onToggleTV}
+                        title="Live TV"
+                        style={{
+                            width:          48,
+                            height:         40,
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            background:     "none",
+                            border:         "none",
+                            cursor:         "pointer",
+                            color:          tvOpen ? "var(--accent-bright, var(--akili-accent))" : iconColor("tv"),
+                            transition:     "color 0.12s",
+                            flexShrink:     0,
+                        }}
+                    >
+                        <IconTV />
+                    </button>
+                )}
             </div>
 
             {/* Bottom icons */}
@@ -366,7 +404,7 @@ export default function Sidebar({
                         fontSize:           10,
                         fontWeight:         600,
                         fontVariantNumeric: "tabular-nums",
-                        color:              budgetPct > 50 ? "#0d9488" : budgetPct > 20 ? "#d97706" : "#dc2626",
+                        color:              budgetPct > 50 ? "var(--akili-accent)" : budgetPct > 20 ? "#d97706" : "#dc2626",
                         letterSpacing:      "0.02em",
                     }}>
                         {Math.round(budgetPct)}%

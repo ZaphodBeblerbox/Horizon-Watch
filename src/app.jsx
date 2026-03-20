@@ -6,7 +6,7 @@ import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
 import SituationsPanel from "./components/SituationsPanel.jsx"
 import ChatPanel from "./components/ChatPanel.jsx"
-import NewsPage from "./components/newspage.jsx"
+import TVWidget from "./components/tvwidget.jsx"
 import MissionProfilePanel, { loadProfile, saveProfileToStorage } from "./components/MissionProfilePanel.jsx"
 import NotificationsDrawer from "./components/NotificationsDrawer.jsx"
 import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
@@ -190,6 +190,7 @@ const PANEL_STYLE = {
 
 export default function App() {
     const [loading, setLoading] = useState(true)
+    const [showTV,  setShowTV]  = useState(false)
 
     // ── Mission profile ───────────────────────────────────────────────────────
     const [profile, setProfile] = useState(() => loadProfile())
@@ -738,7 +739,6 @@ export default function App() {
         const order = [
             { type: "poi",      label: "POI" },
             { type: "briefing", label: "Briefings" },
-            { type: "news",     label: "News" },
         ]
         for (const { type } of order) {
             if (!tabs.find(t => t.type === type)) { openTab(type); return }
@@ -824,7 +824,7 @@ export default function App() {
             overflow:      "hidden",
             fontFamily:    "system-ui, -apple-system, sans-serif",
         }}>
-            {loading && <LoadingScreen onDone={() => setLoading(false)} />}
+            {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
             {/* Minimum width guard */}
             {tooNarrow && (
                 <div style={{
@@ -882,6 +882,8 @@ export default function App() {
                     onThemeCycle={onThemeCycle}
                     soundMuted={soundMuted}
                     onToggleSound={onToggleSound}
+                    tvOpen={showTV}
+                    onToggleTV={() => setShowTV(v => !v)}
                 />
 
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
@@ -938,11 +940,9 @@ export default function App() {
                     />
                 </div>
 
-                {/* News — mounted only while a news tab exists */}
-                {tabs.some(t => t.type === "news") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "news" ? "flex" : "none", flexDirection: "column" }}>
-                        <NewsPage />
-                    </div>
+                {/* TV overlay */}
+                {showTV && (
+                    <TVWidget onClose={() => setShowTV(false)} />
                 )}
 
                 {/* Briefings — mounted only while a briefing tab exists */}

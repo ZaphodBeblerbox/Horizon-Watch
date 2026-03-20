@@ -1,113 +1,174 @@
-import { useEffect, useRef } from "react"
-import Logo from "./Logo.jsx"
+import { useEffect, useState } from "react"
+import Logo from "./Logo"
 
-// Pre-computed star positions (deterministic, looks random)
-const STARS = Array.from({ length: 40 }, (_, i) => ({
-    x:       ((i * 37 + 13) % 97) / 97 * 100,
-    y:       ((i * 53 +  7) % 89) / 89 * 100,
-    size:    1 + ((i * 11) % 12) / 12,
-    opacity: 0.1 + ((i * 17) % 31) / 100,
-    drift:   (i % 6) + 1,
-    dur:     15 + (i *  7) % 20,
-    delay:   -((i * 11) % 30),
-}))
+const steps = [
+    "Initialising intelligence feeds",
+    "Connecting data sources",
+    "Loading infrastructure database",
+    "Calibrating geospatial engine",
+    "Establishing secure connection",
+    "Ready"
+]
 
-const CSS = `
-@keyframes hwDrift1 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(8px,-6px)} }
-@keyframes hwDrift2 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-5px,9px)} }
-@keyframes hwDrift3 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(10px,4px)} }
-@keyframes hwDrift4 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-8px,-7px)} }
-@keyframes hwDrift5 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(6px,10px)} }
-@keyframes hwDrift6 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-3px,-10px)} }
-@keyframes hwFadeIn  { from{opacity:0} to{opacity:1} }
-@keyframes hwRiseUp  { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
-@keyframes hwGlow    { 0%,100%{filter:drop-shadow(0 0 8px rgba(13,148,136,0.35))} 50%{filter:drop-shadow(0 0 22px rgba(13,148,136,0.7))} }
-@keyframes hwFadeOut { from{opacity:1} to{opacity:0} }
-`
-
-export default function LoadingScreen({ onDone }) {
-    const doneRef = useRef(onDone)
-    doneRef.current = onDone
+export default function LoadingScreen({ onComplete }) {
+    const [phase,   setPhase]   = useState(0)
+    const [stepIdx, setStepIdx] = useState(0)
+    const [progress,setProgress]= useState(0)
+    const [visible, setVisible] = useState(true)
 
     useEffect(() => {
-        const t = setTimeout(() => doneRef.current?.(), 5100)
-        return () => clearTimeout(t)
-    }, [])
+        const t1 = setTimeout(() => setPhase(1), 600)
+        const t2 = setTimeout(() => setPhase(2), 1800)
+        const t3 = setTimeout(() => setPhase(3), 3000)
+        const t4 = setTimeout(() => {
+            setVisible(false)
+            setTimeout(onComplete, 600)
+        }, 4200)
+
+        // Progress bar over 2.4s starting at phase 1
+        const t5 = setTimeout(() => {
+            let p = 0
+            const iv = setInterval(() => {
+                p += 2
+                setProgress(p)
+                if (p >= 100) clearInterval(iv)
+            }, 48)
+        }, 600)
+
+        // Step text cycling
+        const t6 = setTimeout(() => {
+            let i = 0
+            const iv = setInterval(() => {
+                i++
+                setStepIdx(i)
+                if (i >= steps.length - 1) clearInterval(iv)
+            }, 400)
+        }, 600)
+
+        return () => [t1, t2, t3, t4, t5, t6].forEach(clearTimeout)
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
         <div style={{
-            position:   "fixed",
-            inset:      0,
-            zIndex:     9999,
-            background: "#060a10",
-            overflow:   "hidden",
-            animation:  "hwFadeOut 1s ease-in 4s forwards",
+            position:       "fixed",
+            inset:          0,
+            zIndex:         9999,
+            background:     "#060d1a",
+            display:        "flex",
+            alignItems:     "center",
+            justifyContent: "center",
+            flexDirection:  "column",
+            opacity:        visible ? 1 : 0,
+            transition:     "opacity 0.6s ease-in",
+            overflow:       "hidden",
         }}>
-            <style>{CSS}</style>
-
             {/* Starfield */}
-            <div style={{ position: "absolute", inset: 0 }}>
-                {STARS.map((s, i) => (
-                    <div key={i} style={{
-                        position:     "absolute",
-                        left:         `${s.x}%`,
-                        top:          `${s.y}%`,
-                        width:        s.size,
-                        height:       s.size,
-                        borderRadius: "50%",
-                        background:   "#ffffff",
-                        opacity:      s.opacity,
-                        animation:    `hwDrift${s.drift} ${s.dur}s ease-in-out ${s.delay}s infinite`,
-                    }} />
-                ))}
-            </div>
+            {Array.from({ length: 40 }).map((_, i) => (
+                <div key={i} style={{
+                    position:        "absolute",
+                    width:           i % 3 === 0 ? 2 : 1,
+                    height:          i % 3 === 0 ? 2 : 1,
+                    background:      "white",
+                    borderRadius:    "50%",
+                    left:            `${(i * 37 + 11) % 100}%`,
+                    top:             `${(i * 23 + 7) % 100}%`,
+                    opacity:         0.1 + (i % 4) * 0.08,
+                    animation:       `drift${i % 5} ${8 + (i % 7)}s ease-in-out infinite`,
+                    animationDelay:  `${(i % 6) * -1.3}s`,
+                }} />
+            ))}
 
-            {/* Centre content */}
+            {/* Main content */}
             <div style={{
-                position:        "absolute",
-                inset:           0,
-                display:         "flex",
-                flexDirection:   "column",
-                alignItems:      "center",
-                justifyContent:  "center",
-                gap:             36,
+                display:        "flex",
+                flexDirection:  "column",
+                alignItems:     "center",
+                gap:            0,
+                position:       "relative",
+                zIndex:         2,
             }}>
-                {/* Phase 2: text fades in at 0.8s */}
+
+                {/* Title — fades in phase 1 */}
                 <div style={{
-                    textAlign: "center",
-                    animation: "hwFadeIn 1.4s ease-in 0.8s forwards",
-                    opacity:   0,
+                    opacity:    phase >= 1 ? 1 : 0,
+                    transition: "opacity 1.4s ease-in",
+                    textAlign:  "center",
+                    marginBottom: 32,
                 }}>
                     <div style={{
-                        fontSize:      36,
+                        fontSize:      32,
                         fontWeight:    700,
-                        letterSpacing: "0.3em",
-                        color:         "#e8edf2",
-                        fontFamily:    "system-ui, -apple-system, sans-serif",
-                        marginBottom:  12,
+                        letterSpacing: "0.28em",
+                        color:         "white",
+                        textTransform: "uppercase",
+                        fontFamily:    "Inter, -apple-system, sans-serif",
                     }}>
                         HORIZON WATCH
                     </div>
                     <div style={{
-                        fontSize:      11,
+                        fontSize:      10,
                         letterSpacing: "0.2em",
-                        color:         "#4a5568",
-                        fontFamily:    "monospace",
-                        animation:     "hwFadeIn 0.4s ease-in 1.2s forwards",
-                        opacity:       0,
+                        color:         "rgba(255,255,255,0.35)",
+                        textTransform: "uppercase",
+                        marginTop:     8,
                     }}>
                         by Trifecta Technologies
                     </div>
                 </div>
 
-                {/* Phase 3: logo rises at 2.2s, glow pulses from 3s */}
+                {/* Logo — rises in phase 2 */}
                 <div style={{
-                    animation: "hwRiseUp 0.8s ease-out 2.2s forwards, hwGlow 2s ease-in-out 3s infinite",
-                    opacity:   0,
+                    opacity:    phase >= 2 ? 1 : 0,
+                    transform:  phase >= 2 ? "translateY(0)" : "translateY(24px)",
+                    transition: "opacity 0.8s ease-out, transform 0.8s ease-out",
+                    filter:     phase >= 2 ? "drop-shadow(0 0 24px rgba(29,110,181,0.5))" : "none",
+                    marginBottom: 40,
                 }}>
-                    <Logo size={120} />
+                    <Logo size={56} />
+                </div>
+
+                {/* Progress bar */}
+                <div style={{
+                    opacity:    phase >= 1 ? 1 : 0,
+                    transition: "opacity 0.8s",
+                    width:      200,
+                    display:    "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap:        10,
+                }}>
+                    <div style={{
+                        width:        "100%",
+                        height:       1.5,
+                        background:   "rgba(255,255,255,0.08)",
+                        borderRadius: 2,
+                    }}>
+                        <div style={{
+                            height:     "100%",
+                            width:      `${progress}%`,
+                            background: "linear-gradient(90deg, #1a6eb5, #2d8fe8)",
+                            borderRadius: 2,
+                            transition: "width 0.05s linear",
+                        }} />
+                    </div>
+                    <div style={{
+                        fontSize:      11,
+                        color:         "rgba(255,255,255,0.3)",
+                        letterSpacing: "0.08em",
+                        height:        16,
+                    }}>
+                        {steps[stepIdx]}
+                    </div>
                 </div>
             </div>
+
+            <style>{`
+                @keyframes drift0 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(12px,-8px)} }
+                @keyframes drift1 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-10px,14px)} }
+                @keyframes drift2 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(8px,10px)} }
+                @keyframes drift3 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-14px,-6px)} }
+                @keyframes drift4 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(6px,-12px)} }
+            `}</style>
         </div>
     )
 }

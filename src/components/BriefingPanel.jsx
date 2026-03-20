@@ -73,10 +73,10 @@ function BriefingSections({ content }) {
         return (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {items.map((it, i) => (
-                    <div key={i} style={{ padding: "8px 11px", background: "rgba(255,255,255,0.03)", borderRadius: 5, borderLeft: "2px solid rgba(13,148,136,0.5)" }}>
-                        {it.tag && <span style={{ display: "inline-block", fontSize: 9, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "#0d9488", background: "rgba(13,148,136,0.12)", borderRadius: 3, padding: "1px 6px", marginBottom: 4 }}>{it.tag}</span>}
+                    <div key={i} style={{ padding: "8px 11px", background: "rgba(255,255,255,0.03)", borderRadius: 5, borderLeft: "2px solid rgba(26,110,181,0.5)" }}>
+                        {it.tag && <span style={{ display: "inline-block", fontSize: 9, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--akili-accent)", background: "rgba(26,110,181,0.12)", borderRadius: 3, padding: "1px 6px", marginBottom: 4 }}>{it.tag}</span>}
                         <div style={{ fontSize: 13, color: "var(--akili-text-primary)", lineHeight: 1.45 }}>{it.body}</div>
-                        {it.soWhat && <div style={{ fontSize: 11, color: "var(--akili-text-secondary)", marginTop: 3 }}><span style={{ color: "#0d9488", fontWeight: 600 }}>So what: </span>{it.soWhat}</div>}
+                        {it.soWhat && <div style={{ fontSize: 11, color: "var(--akili-text-secondary)", marginTop: 3 }}><span style={{ color: "var(--akili-accent)", fontWeight: 600 }}>So what: </span>{it.soWhat}</div>}
                     </div>
                 ))}
             </div>
@@ -84,7 +84,7 @@ function BriefingSections({ content }) {
     }
 
     const SH = ({ label }) => (
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#0d9488", marginBottom: 8, paddingBottom: 4, borderBottom: "1px solid rgba(13,148,136,0.25)" }}>
+        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--akili-accent)", marginBottom: 8, paddingBottom: 4, borderBottom: "1px solid rgba(26,110,181,0.25)" }}>
             {label}
         </div>
     )
@@ -354,15 +354,15 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
         folderRow: (active) => ({
             display: "flex", alignItems: "center", gap: 6,
             padding: "5px 10px 5px 10px", cursor: "pointer",
-            background: active ? "rgba(13,148,136,0.1)" : "transparent",
+            background: active ? "rgba(26,110,181,0.1)" : "transparent",
             fontSize: 11, fontWeight: 600, letterSpacing: "0.04em",
-            color: active ? "#0d9488" : "var(--akili-text-secondary)",
+            color: active ? "var(--akili-accent)" : "var(--akili-text-secondary)",
             userSelect: "none",
         }),
         docRow: (active) => ({
             padding: "6px 10px 6px 26px", cursor: "pointer",
-            background: active ? "rgba(13,148,136,0.08)" : "transparent",
-            borderLeft: active ? "2px solid #0d9488" : "2px solid transparent",
+            background: active ? "rgba(26,110,181,0.08)" : "transparent",
+            borderLeft: active ? "2px solid var(--akili-accent)" : "2px solid transparent",
             fontSize: 11, color: active ? "var(--akili-text-primary)" : "var(--akili-text-secondary)",
             lineHeight: 1.4, transition: "background 0.08s",
         }),
@@ -378,7 +378,7 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
             flex: 1, padding: "20px 22px", overflowY: "auto",
             outline: "none", fontSize: 13, lineHeight: 1.7,
             color: "var(--akili-text-primary)",
-            caretColor: "#0d9488",
+            caretColor: "var(--akili-accent)",
         },
     }
 
@@ -387,7 +387,7 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
 
             {/* ── Header ──────────────────────────────────────────────────── */}
             <div style={S.header}>
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#0d9488" strokeWidth="1.4" strokeLinecap="round">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--akili-accent)" strokeWidth="1.4" strokeLinecap="round">
                     <rect x="2" y="1" width="12" height="14" rx="1.5"/>
                     <line x1="5" y1="5" x2="11" y2="5"/>
                     <line x1="5" y1="8" x2="11" y2="8"/>
@@ -415,8 +415,8 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                     onClick={handleNewDoc}
                     style={{
                         height: 26, padding: "0 10px", fontSize: 10, fontWeight: 700,
-                        letterSpacing: "0.05em", background: "rgba(13,148,136,0.15)",
-                        color: "#0d9488", border: "1px solid rgba(13,148,136,0.35)",
+                        letterSpacing: "0.05em", background: "rgba(26,110,181,0.15)",
+                        color: "var(--akili-accent)", border: "1px solid rgba(26,110,181,0.35)",
                         borderRadius: 4, cursor: "pointer", flexShrink: 0,
                     }}
                 >
@@ -506,7 +506,7 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                                         })
                                     }}
                                 >
-                                    <span style={{ color: "#0d9488", opacity: 0.7 }}>
+                                    <span style={{ color: "var(--akili-accent)", opacity: 0.7 }}>
                                         <ChevronIcon open={isExp} />
                                     </span>
                                     <span style={{ flex: 1 }}>{folder.label}</span>
@@ -570,7 +570,7 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                                     disabled={generating}
                                     style={{
                                         padding: "7px 16px", fontSize: 11, fontWeight: 700,
-                                        background: "#0d9488", color: "#fff", border: "none",
+                                        background: "var(--akili-accent)", color: "#fff", border: "none",
                                         borderRadius: 5, cursor: generating ? "default" : "pointer",
                                         opacity: generating ? 0.6 : 1,
                                     }}
@@ -585,8 +585,8 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                     {docLoading && (
                         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
                             <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                                <circle cx="14" cy="14" r="11" stroke="rgba(13,148,136,0.2)" strokeWidth="2"/>
-                                <path d="M14 3 A11 11 0 0 1 25 14" stroke="#0d9488" strokeWidth="2" strokeLinecap="round">
+                                <circle cx="14" cy="14" r="11" stroke="rgba(26,110,181,0.2)" strokeWidth="2"/>
+                                <path d="M14 3 A11 11 0 0 1 25 14" stroke="var(--akili-accent)" strokeWidth="2" strokeLinecap="round">
                                     <animateTransform attributeName="transform" type="rotate" from="0 14 14" to="360 14 14" dur="0.8s" repeatCount="indefinite"/>
                                 </path>
                             </svg>
@@ -627,9 +627,9 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                                             disabled={!isDirty || saving}
                                             style={{
                                                 height: 24, padding: "0 10px", fontSize: 10, fontWeight: 700,
-                                                background: isDirty ? "rgba(13,148,136,0.15)" : "transparent",
-                                                color: isDirty ? "#0d9488" : "var(--akili-text-muted)",
-                                                border: `1px solid ${isDirty ? "rgba(13,148,136,0.4)" : "transparent"}`,
+                                                background: isDirty ? "rgba(26,110,181,0.15)" : "transparent",
+                                                color: isDirty ? "var(--akili-accent)" : "var(--akili-text-muted)",
+                                                border: `1px solid ${isDirty ? "rgba(26,110,181,0.4)" : "transparent"}`,
                                                 borderRadius: 4, cursor: isDirty ? "pointer" : "default",
                                             }}
                                         >
@@ -661,9 +661,9 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                                             disabled={!canRegen || generating}
                                             style={{
                                                 height: 24, padding: "0 10px", fontSize: 10, fontWeight: 700,
-                                                background: canRegen && !generating ? "rgba(13,148,136,0.15)" : "transparent",
-                                                color: canRegen && !generating ? "#0d9488" : "var(--akili-text-muted)",
-                                                border: `1px solid ${canRegen && !generating ? "rgba(13,148,136,0.4)" : "rgba(255,255,255,0.06)"}`,
+                                                background: canRegen && !generating ? "rgba(26,110,181,0.15)" : "transparent",
+                                                color: canRegen && !generating ? "var(--akili-accent)" : "var(--akili-text-muted)",
+                                                border: `1px solid ${canRegen && !generating ? "rgba(26,110,181,0.4)" : "rgba(255,255,255,0.06)"}`,
                                                 borderRadius: 4, cursor: canRegen && !generating ? "pointer" : "default",
                                             }}
                                         >

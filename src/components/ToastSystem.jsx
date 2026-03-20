@@ -5,7 +5,7 @@ const SEVERITY_COLOR = {
     critical:    "#ef4444",
     significant: "#f97316",
     elevated:    "#eab308",
-    low:         "#0d9488",
+    low:         "var(--akili-accent)",
 }
 
 function severityColor(item) {

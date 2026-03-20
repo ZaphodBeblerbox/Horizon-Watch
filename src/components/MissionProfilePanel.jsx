@@ -418,7 +418,7 @@ function StepCalibration({ draft, upd }) {
                 >
                     <div style={{
                         width: 32, height: 18, borderRadius: 9, flexShrink: 0,
-                        background: draft.poiProximityAlerts !== false ? "#0d9488" : "#2d3748",
+                        background: draft.poiProximityAlerts !== false ? "var(--akili-accent)" : "#2d3748",
                         position: "relative", transition: "background 0.2s",
                     }}>
                         <span style={{
@@ -427,7 +427,7 @@ function StepCalibration({ draft, upd }) {
                             left: draft.poiProximityAlerts !== false ? 16 : 2,
                         }} />
                     </div>
-                    <span style={{ fontSize: 11, color: draft.poiProximityAlerts !== false ? "#0d9488" : "rgba(255,255,255,0.3)" }}>
+                    <span style={{ fontSize: 11, color: draft.poiProximityAlerts !== false ? "var(--akili-accent)" : "rgba(255,255,255,0.3)" }}>
                         {draft.poiProximityAlerts !== false ? "On" : "Off"}
                     </span>
                 </button>
@@ -614,7 +614,7 @@ function SettingsPanel({ profile, onSave, onClose }) {
                         >
                             <div style={{
                                 width: 32, height: 18, borderRadius: 9, flexShrink: 0,
-                                background: draft.poiProximityAlerts !== false ? "#0d9488" : "#2d3748",
+                                background: draft.poiProximityAlerts !== false ? "var(--akili-accent)" : "#2d3748",
                                 position: "relative", transition: "background 0.2s",
                             }}>
                                 <span style={{
@@ -623,7 +623,7 @@ function SettingsPanel({ profile, onSave, onClose }) {
                                     left: draft.poiProximityAlerts !== false ? 16 : 2,
                                 }} />
                             </div>
-                            <span style={{ fontSize: 11, color: draft.poiProximityAlerts !== false ? "#0d9488" : "rgba(255,255,255,0.3)" }}>
+                            <span style={{ fontSize: 11, color: draft.poiProximityAlerts !== false ? "var(--akili-accent)" : "rgba(255,255,255,0.3)" }}>
                                 {draft.poiProximityAlerts !== false ? "On" : "Off"}
                             </span>
                         </button>
@@ -661,10 +661,10 @@ function SettingsPanel({ profile, onSave, onClose }) {
                     style={{
                         width: "100%", padding: "9px", fontSize: 10,
                         fontWeight: 700, letterSpacing: "0.08em",
-                        background: savedMsg ? "rgba(13,148,136,0.25)" : "#0d9488",
-                        border: savedMsg ? "1px solid rgba(13,148,136,0.4)" : "none",
+                        background: savedMsg ? "rgba(26,110,181,0.25)" : "var(--akili-accent)",
+                        border: savedMsg ? "1px solid rgba(26,110,181,0.4)" : "none",
                         borderRadius: 5,
-                        color: savedMsg ? "#0d9488" : "#e8edf2",
+                        color: savedMsg ? "var(--akili-accent)" : "#e8edf2",
                         cursor: savedMsg ? "default" : "pointer",
                         transition: "all 0.15s",
                     }}
