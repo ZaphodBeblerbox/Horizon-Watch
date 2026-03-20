@@ -2,14 +2,18 @@ import { useState, useRef } from "react"
 import { saveProfileToStorage } from "./MissionProfilePanel.jsx"
 import { apiFetch } from "../auth.js"
 
-const CLEARANCES = [
-    { label: "Map Intelligence",   status: "GRANTED" },
-    { label: "Briefings Access",   status: "GRANTED" },
-    { label: "POI Profiles",       status: "GRANTED" },
-    { label: "Claude Analysis",    status: "PENDING" },
-    { label: "Admin Panel",        status: "DENIED"  },
-    { label: "Export Reports",     status: "PENDING" },
-]
+const getClearances = (user) => {
+    if (!user) return []
+    const role = user.role
+    return [
+        { name: "Map Intelligence",  status: "GRANTED" },
+        { name: "Briefings Access",  status: "GRANTED" },
+        { name: "POI Profiles",      status: (role === "analyst" || role === "admin") ? "GRANTED" : "OBSERVER" },
+        { name: "Claude Analysis",   status: (role === "analyst" || role === "admin") ? "GRANTED" : "DENIED" },
+        { name: "Admin Panel",       status: role === "admin" ? "GRANTED" : "DENIED" },
+        { name: "Export Reports",    status: role === "admin" ? "GRANTED" : "PENDING" },
+    ]
+}
 
 const BADGE_COLOR = {
     ADMIN:        { bg: "rgba(220,38,38,0.15)",   border: "rgba(220,38,38,0.4)",   text: "#ef4444" },
@@ -20,9 +24,10 @@ const BADGE_COLOR = {
 }
 
 const STATUS_COLOR = {
-    GRANTED: { bg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.35)", text: "#34d399" },
-    PENDING: { bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.35)", text: "#fbbf24" },
-    DENIED:  { bg: "rgba(239,68,68,0.12)",  border: "rgba(239,68,68,0.35)",  text: "#f87171" },
+    GRANTED:  { bg: "rgba(22,163,74,0.12)",  border: "rgba(22,163,74,0.35)",  text: "#16a34a" },
+    PENDING:  { bg: "rgba(217,119,6,0.12)",  border: "rgba(217,119,6,0.35)",  text: "#d97706" },
+    DENIED:   { bg: "rgba(220,38,38,0.12)",  border: "rgba(220,38,38,0.35)",  text: "#dc2626" },
+    OBSERVER: { bg: "rgba(74,85,104,0.12)",  border: "rgba(74,85,104,0.35)",  text: "#4a5568" },
 }
 
 function StatusBadge({ status }) {
@@ -84,7 +89,8 @@ function relTimeAgo(iso) {
     return new Date(iso).toLocaleDateString()
 }
 
-export default function ProfilePanel({ profile, onSave, onClose, currentUser }) {
+export default function ProfilePanel({ profile, onSave, onClose, user: userProp, currentUser: currentUserProp }) {
+    const currentUser = userProp ?? currentUserProp
     const [displayName, setDisplayName] = useState(currentUser?.name || profile?.displayName || "")
     const [email,       setEmail]       = useState(currentUser?.email || profile?._email || "")
     const [pwExpanded,  setPwExpanded]  = useState(false)
@@ -335,8 +341,8 @@ export default function ProfilePanel({ profile, onSave, onClose, currentUser }) 
                 <SectionHeader>Access Clearances</SectionHeader>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                    {CLEARANCES.map(c => (
-                        <div key={c.label} style={{
+                    {getClearances(currentUser || profile).map(c => (
+                        <div key={c.name} style={{
                             display:        "flex",
                             alignItems:     "center",
                             justifyContent: "space-between",
@@ -344,7 +350,7 @@ export default function ProfilePanel({ profile, onSave, onClose, currentUser }) 
                             borderBottom:   "1px solid var(--akili-border-subtle)",
                         }}>
                             <span style={{ fontSize: 12, color: "var(--akili-text-primary)" }}>
-                                {c.label}
+                                {c.name}
                             </span>
                             <StatusBadge status={c.status} />
                         </div>

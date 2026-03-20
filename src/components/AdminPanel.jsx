@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import { apiFetch } from "../auth.js"
+import API_BASE from "../apiBase.js"
 
 const ROLE_COLORS = {
     observer: "rgba(255,255,255,0.3)",
@@ -41,35 +42,32 @@ class AdminErrorBoundary extends React.Component {
     }
 }
 
-// Import React for the error boundary class
-import React from "react"
-
-function AdminPanelInner({ currentUser, onClose }) {
-    const [tab,     setTab]     = useState("users")
-    const [users,   setUsers]   = useState([])
-    const [loading, setLoading] = useState(false)
-    const [error,   setError]   = useState("")
-    const [notes,   setNotes]   = useState({})
-    const [saving,  setSaving]  = useState({})
+function AdminPanelInner({ user, onClose }) {
+    const [tab,        setTab]        = useState("users")
+    const [users,      setUsers]      = useState([])
+    const [loading,    setLoading]    = useState(false)
+    const [error,      setError]      = useState("")
+    const [notes,      setNotes]      = useState({})
+    const [saving,     setSaving]     = useState({})
+    const [panelError, setPanelError] = useState(null)
+    const [loadError,  setLoadError]  = useState(null)
 
     const fetchUsers = useCallback(async () => {
         setLoading(true)
         setError("")
         try {
-            const res = await apiFetch("/api/admin/users")
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}))
-                setError(err.detail || `Error ${res.status}`)
-                return
-            }
+            const res = await fetch(`${API_BASE}/api/admin/users`, {
+                headers: { Authorization: "Bearer " + localStorage.getItem("hw-auth-token") }
+            })
+            if (!res.ok) throw new Error(`Server returned ${res.status}`)
             const data = await res.json()
             const list = Array.isArray(data) ? data : []
             setUsers(list)
             const n = {}
             list.forEach(u => { n[u.id] = u.notes || "" })
             setNotes(n)
-        } catch (e) {
-            setError("Connection error — check backend.")
+        } catch (err) {
+            setLoadError(err.message)
         } finally {
             setLoading(false)
         }
@@ -115,6 +113,29 @@ function AdminPanelInner({ currentUser, onClose }) {
 
     const pending  = users.filter(u => !u.approved)
     const approved = users.filter(u => u.approved)
+
+    const isAdmin = user?.role === "admin" || user?.is_super_admin === true
+    if (!isAdmin) return (
+        <div style={{ padding: 32, color: "#8899aa", fontFamily: "Inter, sans-serif", textAlign: "center" }}>
+            <div style={{ fontSize: 14 }}>Admin access required</div>
+            <div style={{ fontSize: 12, marginTop: 8, color: "#4a5568" }}>Current role: {user?.role || "unknown"}</div>
+        </div>
+    )
+
+    if (loadError) return (
+        <div style={{ padding: 24, color: "#dc2626", fontFamily: "Inter, sans-serif" }}>
+            Error: {loadError}
+            <button onClick={() => { setLoadError(null); fetchUsers() }} style={{ marginLeft: 12, padding: "4px 12px", background: "#1a3a6b", color: "white", border: "none", cursor: "pointer" }}>Retry</button>
+        </div>
+    )
+
+    if (panelError) return (
+        <div style={{ padding: 24, color: "#dc2626", fontFamily: "Inter, sans-serif" }}>
+            <div style={{ marginBottom: 8, fontWeight: 600 }}>Admin Panel Error</div>
+            <div style={{ fontSize: 13, color: "#8899aa" }}>{panelError}</div>
+            <button onClick={() => setPanelError(null)} style={{ marginTop: 12, padding: "6px 16px", background: "#1a6eb5", color: "white", border: "none", cursor: "pointer", borderRadius: 3 }}>Retry</button>
+        </div>
+    )
 
     return (
         <div style={{
@@ -185,7 +206,7 @@ function AdminPanelInner({ currentUser, onClose }) {
                                     Pending Approval ({pending.length})
                                 </div>
                                 {pending.map(u => (
-                                    <UserRow key={u.id} user={u} currentUser={currentUser}
+                                    <UserRow key={u.id} user={u} currentUser={user}
                                         notes={notes[u.id] || ""} onNotesChange={v => setNotes(n => ({ ...n, [u.id]: v }))}
                                         onSaveNotes={() => saveNotes(u.id)} savingNotes={!!saving[u.id]}
                                         onApprove={() => approve(u.id)} onSetRole={r => setRole(u.id, r)}
@@ -199,7 +220,7 @@ function AdminPanelInner({ currentUser, onClose }) {
                             Active Users ({approved.length})
                         </div>
                         {approved.map(u => (
-                            <UserRow key={u.id} user={u} currentUser={currentUser}
+                            <UserRow key={u.id} user={u} currentUser={user}
                                 notes={notes[u.id] || ""} onNotesChange={v => setNotes(n => ({ ...n, [u.id]: v }))}
                                 onSaveNotes={() => saveNotes(u.id)} savingNotes={!!saving[u.id]}
                                 onApprove={null} onSetRole={r => setRole(u.id, r)}

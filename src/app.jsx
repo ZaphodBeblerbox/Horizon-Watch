@@ -1029,7 +1029,7 @@ export default function App() {
                             profile={profile}
                             onSave={handleProfileSave}
                             onClose={() => setRightPanel(null)}
-                            currentUser={currentUser}
+                            user={currentUser}
                         />
                     </div>
                 )}
@@ -1138,7 +1138,7 @@ export default function App() {
 
             {/* Admin panel */}
             {showAdmin && (currentUser?.role === "admin" || currentUser?.role === "super_admin") && (
-                <AdminPanel currentUser={currentUser} onClose={() => setShowAdmin(false)} />
+                <AdminPanel user={currentUser} onClose={() => setShowAdmin(false)} />
             )}
 
             {/* Real-time toast notifications */}

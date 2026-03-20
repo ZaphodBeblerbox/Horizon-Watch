@@ -476,11 +476,14 @@ function BoundsTracker({ onUpdate, onViewportChange }) {
 }
 
 
-function MapInstanceTracker({ mapRef }) {
+function MapInstanceTracker({ mapRef, depLayerRef }) {
     const map = useMap()
     useEffect(() => {
         mapRef.current = map
-    }, [map, mapRef])
+        if (depLayerRef && !depLayerRef.current) {
+            depLayerRef.current = L.layerGroup()
+        }
+    }, [map, mapRef])  // eslint-disable-line react-hooks/exhaustive-deps
     return null
 }
 
@@ -1507,9 +1510,6 @@ const CARRIER_ZONES = {
     "Charles de Gaulle-class (nuclear)":{ nfz_km: 92.6,  strike_km: 648,  extended_km: 1019, aircraft: "Rafale Marine",           nfz_nm: 50,  strike_nm: 350, extended_nm: 550 },
     "default":                          { nfz_km: 92.6,  strike_km: 740,  extended_km: 1100, aircraft: "Embarked aircraft",        nfz_nm: 50,  strike_nm: 400, extended_nm: 600 },
 }
-
-// Canvas renderer for deployment zone circles — created once at module level
-const _depCanvasRenderer = L.canvas()
 
 // Hardcoded major global pipelines — GeoJSON-style features, [lon,lat] coords.
 // Remote sources (GOPIT) are dead (404). This gives reliable rendering.
@@ -3718,6 +3718,7 @@ export default function MapPage({
     const cityLabelsLayerRef     = useRef(null)
     const newsConflictsLayerRef  = useRef(null)
     const enrichmentLayerRef     = useRef(null)
+    const depLayerRef            = useRef(null)
     const contextBordersLayerRef = useRef(null)
     const contextEezLayerRef     = useRef(null)
     const viewportBoundsRef      = useRef(null)
@@ -4266,12 +4267,59 @@ export default function MapPage({
 
     // ── Deployments layer fetch ───────────────────────────────────────────────
     useEffect(() => {
-        if (!active.deployments) { setDeploymentsData(null); return }
+        const depLayer = depLayerRef.current
+        if (!active.deployments) {
+            if (depLayer) { depLayer.remove(); depLayer.clearLayers() }
+            setDeploymentsData(null)
+            return
+        }
         fetch(`${API}/api/deployments`)
             .then(r => r.json())
-            .then(d => setDeploymentsData(d))
+            .then(data => {
+                setDeploymentsData(data)
+                if (!depLayerRef.current || !mapRef.current) return
+                const layer = depLayerRef.current
+                layer.clearLayers()
+
+                ;(data.carrier_strike_groups || []).forEach(csg => {
+                    if (!csg.lat || !csg.lon) return
+                    const isUSN = !csg.flagship?.includes("FS ")
+                    const nationColor = isUSN ? "#1a3a6b" : "#002395"
+                    const carrierIcon = L.divIcon({
+                        className: "",
+                        html: `<div style="width:52px;height:22px;background:rgba(255,255,255,0.9);border:2px solid ${nationColor};border-radius:2px;display:flex;align-items:center;justify-content:center;"><div style="width:8px;height:8px;background:${nationColor};border-radius:50%;"></div></div>`,
+                        iconSize: [52, 22],
+                        iconAnchor: [26, 11],
+                    })
+                    const marker = L.marker([csg.lat, csg.lon], { icon: carrierIcon })
+                    marker.bindPopup(`<div style="background:rgba(6,13,26,0.95);padding:12px;color:#e8edf2;min-width:220px;border:1px solid rgba(255,255,255,0.1);">
+                        <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${csg.name}</div>
+                        <div style="font-size:12px;color:#8899aa;">${csg.flagship}</div>
+                        <div style="font-size:12px;color:#1a6eb5;margin-top:4px;">${csg.theater}</div>
+                        ${csg.operation ? `<div style="font-size:11px;color:#d97706;margin-top:2px;">${csg.operation}</div>` : ""}
+                        <div style="font-size:11px;color:#4a5568;margin-top:8px;">Escorts: ${(csg.escorts || []).join(", ")}</div>
+                        <div style="font-size:10px;color:#3d5068;margin-top:8px;font-style:italic;">⚠ Position approximate — public OSINT</div>
+                    </div>`, { className: "" })
+                    layer.addLayer(marker)
+                    const nfz = L.circle([csg.lat, csg.lon], { radius: 92600, color: "#dc2626", weight: 2, fill: false, dashArray: "6 4", opacity: 0.7 })
+                    layer.addLayer(nfz)
+                    const strikeKm = isUSN ? 833000 : 648000
+                    const strike = L.circle([csg.lat, csg.lon], { radius: strikeKm, color: "#d97706", weight: 1.5, fill: false, dashArray: "10 6", opacity: 0.5 })
+                    layer.addLayer(strike)
+                })
+
+                ;(data.notable_surface_units || []).forEach(unit => {
+                    if (!unit.lat || !unit.lon) return
+                    const icon = L.divIcon({ className: "", html: `<div style="width:10px;height:10px;background:#1a3a6b;border:1px solid white;border-radius:2px;"></div>`, iconSize: [10, 10], iconAnchor: [5, 5] })
+                    const m = L.marker([unit.lat, unit.lon], { icon })
+                    m.bindTooltip(unit.name || "Naval unit")
+                    layer.addLayer(m)
+                })
+
+                layer.addTo(mapRef.current)
+            })
             .catch(() => {})
-    }, [active.deployments])
+    }, [active.deployments])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // Shipping lanes use hardcoded _SHIPPING_ROUTES_HARDCODED constant — no fetch needed
 
@@ -5497,7 +5545,7 @@ export default function MapPage({
                 preferCanvas={true}
             >
                 <MapPaneSetup />
-                <MapInstanceTracker mapRef={mapRef} />
+                <MapInstanceTracker mapRef={mapRef} depLayerRef={depLayerRef} />
                 {mapType === "standard" && (
                     <TileLayer key="standard" url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
                 )}
@@ -5812,112 +5860,7 @@ export default function MapPage({
                     )
                 })}
 
-                {/* ── Deployments layer ─────────────────────────────────────── */}
-                {active.deployments && deploymentsData && (() => {
-                    const allCsgs    = deploymentsData.carrier_strike_groups || []
-                    const allArgs    = deploymentsData.amphibious_ready_groups || []
-                    const allSurface = deploymentsData.notable_surface_units || []
-                    return (
-                        <>
-                            {allCsgs.map(csg => {
-                                const zones      = CARRIER_ZONES[csg.class] || CARRIER_ZONES["Nimitz-class"]
-                                const isSelected = selectedDeployment?.name === csg.name
-                                const isHovered  = hoveredDeploymentName === csg.name
-                                const isActive   = (isSelected || isHovered) && deploymentZonesVisible
-                                // zoom < 5: no circles; zoom 5+: show all 3 zones for active
-                                const showStrike = isActive && zoom >= 5
-                                const showAll3   = isActive && zoom >= 5
-                                const showLabels = isActive && zoom >= 6
-                                return (
-                                    <Fragment key={csg.name}>
-                                        {/* Strike radius — visible at zoom 7+ for hovered/selected */}
-                                        {/* Strike radius — amber dashed, 2px */}
-                                        {showStrike && (
-                                            <Circle
-                                                center={[csg.lat, csg.lon]}
-                                                radius={zones.strike_km * 1000}
-                                                renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#f97316", weight: 2, opacity: 0.6, fillOpacity: 0, dashArray: "8 5" }}
-                                                interactive={false}
-                                            />
-                                        )}
-                                        {/* NFZ — solid red, 2px */}
-                                        {showAll3 && (
-                                            <Circle
-                                                center={[csg.lat, csg.lon]}
-                                                radius={zones.nfz_km * 1000}
-                                                renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#ef4444", weight: 2, opacity: 0.7, fillColor: "#ef4444", fillOpacity: 0.06 }}
-                                                interactive={false}
-                                            />
-                                        )}
-                                        {/* Extended — dashed white, 1px */}
-                                        {showAll3 && (
-                                            <Circle
-                                                center={[csg.lat, csg.lon]}
-                                                radius={zones.extended_km * 1000}
-                                                renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#ffffff", weight: 1, opacity: 0.3, fillOpacity: 0, dashArray: "4 8" }}
-                                                interactive={false}
-                                            />
-                                        )}
-                                        {/* Zone label at bearing 0 — zoom >= 7 for active CSG */}
-                                        {showLabels && (() => {
-                                            const strikeLat = csg.lat + (zones.strike_km / 6371) * (180 / Math.PI)
-                                            return (
-                                                <Marker
-                                                    position={[strikeLat, csg.lon]}
-                                                    icon={L.divIcon({ className: "", html: `<div style="font-size:9px;color:#f97316;white-space:nowrap;text-shadow:0 1px 3px #000">Strike ${Math.round(zones.strike_km)}km</div>`, iconAnchor: [24, 0] })}
-                                                    interactive={false}
-                                                />
-                                            )
-                                        })()}
-                                        {/* Carrier marker */}
-                                        <Marker
-                                            position={[csg.lat, csg.lon]}
-                                            icon={makeCarrierDivIcon(csg, zoom)}
-                                            eventHandlers={{
-                                                click:     () => setSelectedDeployment({ ...csg, _type: "csg" }),
-                                                mouseover: () => setHoveredDeploymentName(csg.name),
-                                                mouseout:  () => setHoveredDeploymentName(null),
-                                            }}
-                                        >
-                                            {zoom < 8 && (
-                                                <Tooltip direction="top" offset={[0, -22]} opacity={0.9}>
-                                                    <div style={{ fontSize: 11 }}><strong>{csg.flagship}</strong><br />{csg.theater}</div>
-                                                </Tooltip>
-                                            )}
-                                        </Marker>
-                                    </Fragment>
-                                )
-                            })}
-                            {allArgs.map(arg => (
-                                <Marker
-                                    key={arg.name}
-                                    position={[arg.lat, arg.lon]}
-                                    icon={makeArgDivIcon(arg)}
-                                    eventHandlers={{ click: () => setSelectedDeployment({ ...arg, _type: "arg" }) }}
-                                >
-                                    <Tooltip direction="top" offset={[0, -18]} opacity={0.9}>
-                                        <div style={{ fontSize: 11 }}><strong>{arg.flagship}</strong><br />{arg.theater}</div>
-                                    </Tooltip>
-                                </Marker>
-                            ))}
-                            {allSurface.map(su => (
-                                <Marker
-                                    key={su.name}
-                                    position={[su.lat, su.lon]}
-                                    icon={makeDestroyerDivIcon()}
-                                    eventHandlers={{ click: () => setSelectedDeployment({ ...su, _type: "surface" }) }}
-                                >
-                                    <Tooltip direction="top" offset={[0, -14]} opacity={0.9}>
-                                        <div style={{ fontSize: 11 }}><strong>{su.name}</strong><br />{su.theater}</div>
-                                    </Tooltip>
-                                </Marker>
-                            ))}
-                        </>
-                    )
-                })()}
+                {/* ── Deployments layer — managed via vanilla Leaflet in useEffect above ── */}
 
                 {/* ── ADS-B Aircraft ────────────────────────────────────────── */}
                 {/* Isolated child: aircraft state + polling live in AircraftLayer
