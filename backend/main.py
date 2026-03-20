@@ -91,6 +91,8 @@ try:
 except ImportError:
     _HAS_AUTH = False
     print("[startup] WARNING: Auth deps missing. Run: pip install python-jose[cryptography] passlib[bcrypt]")
+    class _HTTPCreds:
+        pass
 
 app = FastAPI()
 
