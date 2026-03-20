@@ -41,6 +41,33 @@ class DirectMessage(Base):
     read_at         = Column(DateTime, nullable=True)
 
 
+
+def migrate_db():
+    """Add missing columns to existing database."""
+    import sqlite3, os
+    db_path = os.getenv('DATA_DIR', './data') + '/akili.db'
+    if not os.path.exists(db_path):
+        return
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cols = [
+        ('last_ip', 'TEXT'),
+        ('last_seen', 'DATETIME'),
+        ('current_view', 'TEXT'),
+        ('location_lat', 'REAL'),
+        ('location_lon', 'REAL'),
+        ('location_city', 'TEXT'),
+        ('location_updated', 'DATETIME'),
+        ('location_consent', 'BOOLEAN DEFAULT 0'),
+    ]
+    existing = [row[1] for row in cur.execute('PRAGMA table_info(users)').fetchall()]
+    for col, typ in cols:
+        if col not in existing:
+            cur.execute(f'ALTER TABLE users ADD COLUMN {col} {typ}')
+            print(f'[db-migrate] added column: {col}')
+    conn.commit()
+    conn.close()
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()

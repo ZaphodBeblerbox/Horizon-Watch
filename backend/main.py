@@ -6430,7 +6430,8 @@ async def _daily_briefing_loop():
 
 async def _startup_warmup_tasks():
     try:
-        from database import init_db
+        from database import migrate_db, init_db
+        migrate_db()
         init_db()
         print("[startup] database initialised and admins seeded")
     except Exception as e:
