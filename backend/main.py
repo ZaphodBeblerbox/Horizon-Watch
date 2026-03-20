@@ -427,16 +427,20 @@ _ALERTS_QUEUE: list      = []          # all real-time alerts, newest last
 _ALERTS_QUEUE_LOCK       = threading.Lock()
 _ALERTS_QUEUE_MAX        = 500
 _OREF_SEEN_IDS: set      = set()      # dedup: alertDate + first_area
+_OREF_FAILURES           = 0
+_OREF_MAX_FAILURES       = 10
+_OREF_SUSPENDED          = False
 _USGS_SEEN_IDS: set      = set()      # dedup: USGS feature id
 _GDACS_SEEN_GUIDS: set   = set()      # dedup: GDACS entry guid
 
 # ── Data source health tracking ───────────────────────────────────────────────
 _DS_STATUS: dict = {
-    "oref":     {"last_poll": None, "last_alert": None, "failures": 0},
+    "oref":     {"last_poll": None, "last_alert": None, "failures": 0, "suspended": False},
     "usgs":     {"last_poll": None, "last_event": None, "failures": 0},
     "gdacs":    {"last_poll": None, "failures": 0},
     "rss":      {"last_run": None,  "feeds_ok": 0, "feeds_total": 0, "failures": 0},
     "gdelt":    {"last_fetch": None, "event_count": 0, "failures": 0},
+    "ais":      {"connected": False, "failures": 0, "message": None},
     "airports": {"last_download": None, "count": 0},
     "ports":    {"last_download": None, "count": 0},
     "power":    {"last_download": None, "count": 0},
@@ -444,6 +448,7 @@ _DS_STATUS: dict = {
     "imb":      {"last_poll": None, "failures": 0},
 }
 _DS_STATUS_LOCK = threading.Lock()
+_IMB_INCIDENTS: list = []
 
 # ── Daily intelligence briefing ───────────────────────────────────────────────
 _BRIEFING_FILE          = BASE_DIR / "briefings.json"
@@ -1075,9 +1080,11 @@ def get_health_detailed():
             "name":      "IDF Home Front Command (OREF)",
             "type":      "real-time alerts",
             "last_fetch": ds["oref"].get("last_poll"),
-            "status":    _status(ds["oref"].get("failures", 0), ds["oref"].get("last_poll")),
+            "status":    "degraded" if ds["oref"].get("suspended") else _status(ds["oref"].get("failures", 0), ds["oref"].get("last_poll")),
+            "status_label": "Geo-blocked" if ds["oref"].get("suspended") else None,
             "failures":  ds["oref"].get("failures", 0),
             "last_alert": ds["oref"].get("last_alert"),
+            "message":   "Polling suspended after repeated geo-blocked failures" if ds["oref"].get("suspended") else None,
         },
         {
             "id":        "usgs",
@@ -1118,6 +1125,17 @@ def get_health_detailed():
             "status":    _status(ds["gdelt"].get("failures", 0), ds["gdelt"].get("last_fetch")),
             "failures":  ds["gdelt"].get("failures", 0),
             "event_count": ds["gdelt"].get("event_count", 0),
+        },
+        {
+            "id":        "ais",
+            "name":      "AISStream Live Vessels",
+            "type":      "maritime",
+            "last_fetch": _AIS_STATUS.get("last_poll"),
+            "status":    "ok" if _AIS_STATUS.get("connected") else ("degraded" if not _AISSTREAM_KEY or _AIS_STATUS.get("error") else "pending"),
+            "failures":  0,
+            "message":   _AIS_STATUS.get("error") or ("AISSTREAM_API_KEY missing — Railway WebSocket ingest is disabled" if not _AISSTREAM_KEY else None),
+            "key_configured": bool(_AISSTREAM_KEY),
+            "vessel_count": _AIS_STATUS.get("vessel_count", 0),
         },
         {
             "id":        "airports",
@@ -1173,6 +1191,32 @@ def get_health_detailed():
         "data_sources": sources,
         "claude_usage": usage,
     }
+
+
+def _load_imb_incidents() -> list:
+    global _IMB_INCIDENTS
+    path = BASE_DIR / "data" / "imb_piracy.json"
+    try:
+        if path.exists():
+            payload = _json.loads(path.read_text())
+            _IMB_INCIDENTS = payload if isinstance(payload, list) else payload.get("incidents", [])
+        else:
+            _IMB_INCIDENTS = []
+        with _DS_STATUS_LOCK:
+            _DS_STATUS["imb"]["last_poll"] = datetime.now(timezone.utc).isoformat()
+            _DS_STATUS["imb"]["failures"] = 0
+        print(f"[imb] fetched {len(_IMB_INCIDENTS)} incidents")
+    except Exception as ex:
+        with _DS_STATUS_LOCK:
+            _DS_STATUS["imb"]["failures"] = _DS_STATUS["imb"].get("failures", 0) + 1
+        print(f"[imb] fetch error: {ex}")
+        _IMB_INCIDENTS = []
+    return _IMB_INCIDENTS
+
+
+@app.get("/api/infrastructure/imb-piracy")
+def api_imb_piracy():
+    return _load_imb_incidents()
 
 
 @app.post("/api/sources/init")
@@ -5694,7 +5738,7 @@ def _build_surface_pool() -> list:
         item["significance_score"] = significance
         if significance >= 80:
             item["auto_enrichment_gate"] = "AUTO_ENRICH"
-        elif significance >= 55:
+        elif significance >= 40:
             item["auto_enrichment_gate"] = "SURFACE"
         else:
             item["auto_enrichment_gate"] = "DISCARD"
@@ -6479,7 +6523,7 @@ async def _startup_warmup_tasks():
 _AISSTREAM_KEY   = os.getenv("AISSTREAM_API_KEY", "")
 _AIS_VESSELS:    dict = {}   # keyed by MMSI string
 _AIS_LOCK        = threading.Lock()
-_AIS_STATUS      = {"connected": False, "error": None, "vessel_count": 0, "last_msg": None}
+_AIS_STATUS      = {"connected": False, "error": None, "vessel_count": 0, "last_msg": None, "last_poll": None}
 
 _AIS_BBOXES = [
     [[15, 45], [32, 65]],    # Persian Gulf / Arabian Sea
@@ -6576,6 +6620,7 @@ async def _ais_websocket_loop():
                                 del _AIS_VESSELS[oldest]
                         _AIS_STATUS["vessel_count"] = len(_AIS_VESSELS)
                         _AIS_STATUS["last_msg"]     = time.strftime("%H:%M:%S", time.gmtime())
+                        _AIS_STATUS["last_poll"]    = datetime.now(timezone.utc).isoformat()
                     except Exception:
                         continue
         except Exception as ex:
@@ -6674,12 +6719,14 @@ async def startup_event():
 # ── Pikud HaOref (Israel missile alerts) ─────────────────────────────────────
 
 async def _oref_loop():
-    global _OREF_SEEN_IDS
+    global _OREF_SEEN_IDS, _OREF_FAILURES, _OREF_SUSPENDED
     url  = "https://www.oref.org.il/WarningMessages/History/AlertsHistory.json"
     loop = asyncio.get_event_loop()
     # Seed seen IDs from first fetch — don't treat existing history as new
     seeded = False
     while True:
+        if _OREF_SUSPENDED:
+            return
         try:
             def _fetch_oref():
                 req = urllib.request.Request(url, headers={
@@ -6733,14 +6780,18 @@ async def _oref_loop():
             with _DS_STATUS_LOCK:
                 _DS_STATUS["oref"]["last_poll"] = datetime.now(timezone.utc).isoformat()
                 _DS_STATUS["oref"]["failures"]  = 0
+                _DS_STATUS["oref"]["suspended"] = False
+            _OREF_FAILURES = 0
         except Exception as ex:
             print(f"[oref] fetch error: {ex}")
             seeded = True   # don't block seeding on error
+            _OREF_FAILURES += 1
             with _DS_STATUS_LOCK:
-                _DS_STATUS["oref"]["failures"] = _DS_STATUS["oref"].get("failures", 0) + 1
-                consecutive = _DS_STATUS["oref"]["failures"]
-            if consecutive >= 10:
-                print("[oref] geo-blocked — polling suspended")
+                _DS_STATUS["oref"]["failures"] = _OREF_FAILURES
+                _DS_STATUS["oref"]["suspended"] = _OREF_FAILURES >= _OREF_MAX_FAILURES
+            if _OREF_FAILURES >= _OREF_MAX_FAILURES:
+                _OREF_SUSPENDED = True
+                print("[oref] geo-blocked — polling suspended permanently after 10 failures")
                 return
         await asyncio.sleep(20)
 
@@ -7500,13 +7551,7 @@ async def satellite_auth_status():
     }
 
 
-@app.post("/satellite/search")
-async def satellite_search(request: Request):
-    body = await request.json()
-    bbox = body.get("bbox")
-    max_cloud = body.get("max_cloud", 20)
-    days_back = body.get("days_back", 60)
-
+async def _satellite_search_impl(bbox, max_cloud=20, days_back=60, date_range: str | None = None):
     try:
         bbox = [float(v) for v in bbox]
         if len(bbox) != 4:
@@ -7523,9 +7568,12 @@ async def satellite_search(request: Request):
     except Exception:
         days_back = 60
 
-    end_dt = datetime.now(timezone.utc)
-    start_dt = end_dt - timedelta(days=days_back)
-    dt_range = f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+    if date_range:
+        dt_range = str(date_range)
+    else:
+        end_dt = datetime.now(timezone.utc)
+        start_dt = end_dt - timedelta(days=days_back)
+        dt_range = f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
 
     payload = {
         "collections": ["sentinel-2-l2a"],
@@ -7582,7 +7630,35 @@ async def satellite_search(request: Request):
         "error": None,
         "auth_mode": auth_mode,
         "auth_error": None,
+        "credentials_configured": bool(_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET),
     }
+
+
+@app.post("/satellite/search")
+async def satellite_search(request: Request):
+    body = await request.json()
+    return await _satellite_search_impl(
+        body.get("bbox"),
+        body.get("max_cloud", 20),
+        body.get("days_back", 60),
+    )
+
+
+@app.get("/api/satellite/search")
+async def api_satellite_search(
+    bbox: str = Query(..., description="west,south,east,north"),
+    date: str = Query(None, description="YYYY-MM-DD/YYYY-MM-DD"),
+):
+    try:
+        bbox_values = [float(v) for v in bbox.split(",")]
+    except Exception:
+        bbox_values = bbox
+    return await _satellite_search_impl(
+        bbox_values,
+        20,
+        60,
+        date_range=date,
+    )
 
 
 # ── /satellite/tile — Sentinel Hub Process API tile proxy ────────────────────
@@ -9947,9 +10023,15 @@ def update_session(body: _SessionBody, request: Request, current_user=Depends(re
     try:
         u = db.query(DbUser).filter(DbUser.id == current_user.id).first()
         if u:
+            lat = float(body.lat) if body.lat is not None else None
+            lon = float(body.lon) if body.lon is not None else None
             u.last_seen    = datetime.utcnow()
             u.last_ip      = (request.headers.get("X-Forwarded-For") or request.client.host or "").split(",")[0].strip()
-            u.current_view = _j.dumps({"lat": body.lat, "lon": body.lon, "zoom": body.zoom, "event": body.event})
+            u.current_view = _j.dumps({"lat": lat, "lon": lon, "zoom": body.zoom, "event": body.event})
+            if lat is not None and lon is not None:
+                u.location_lat = lat
+                u.location_lon = lon
+                u.location_updated = datetime.utcnow()
             db.commit()
         return {"ok": True}
     finally:
@@ -9982,6 +10064,9 @@ def admin_active_users(current_user=Depends(require_admin_user)):
                 "last_ip":      u.last_ip or "",
                 "created_at":   u.created_at.isoformat() if u.created_at else None,
                 "last_login":   u.last_login.isoformat() if u.last_login else None,
+                "location_lat": u.location_lat if getattr(u, "location_lat", None) is not None else cv.get("lat"),
+                "location_lon": u.location_lon if getattr(u, "location_lon", None) is not None else cv.get("lon"),
+                "location_city": getattr(u, "location_city", None),
                 "current_view": cv,
             })
         return result

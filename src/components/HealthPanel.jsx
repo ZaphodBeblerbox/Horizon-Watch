@@ -230,6 +230,7 @@ export default function HealthPanel({ onClose }) {
                                                 {src.record_count != null && src.record_count > 0 && ` · ${src.record_count.toLocaleString()} records`}
                                                 {src.event_count  != null && src.event_count  > 0 && ` · ${src.event_count.toLocaleString()} events`}
                                                 {src.feeds_ok     != null && ` · ${src.feeds_ok}/${src.feeds_total} feeds`}
+                                                {src.status_label ? ` · ${src.status_label}` : ""}
                                             </div>
                                         </div>
                                         <div style={{ fontSize: 10, color: "var(--akili-text-muted)", textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
@@ -264,6 +265,11 @@ export default function HealthPanel({ onClose }) {
                                                     {src.last_error_message}
                                                 </div>
                                             )}
+                                        </div>
+                                    )}
+                                    {src.message && (
+                                        <div style={{ marginTop: 6, paddingLeft: 16, fontSize: 10, color: src.id === "ais" ? "#fbbf24" : "#f97316" }}>
+                                            {src.message}
                                         </div>
                                     )}
                                 </div>

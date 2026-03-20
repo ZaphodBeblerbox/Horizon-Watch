@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy import create_engine, Column, String, Boolean, DateTime, Text, ForeignKey, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import uuid, datetime, os
@@ -27,6 +27,11 @@ class User(Base):
     last_ip             = Column(String, nullable=True)
     last_seen           = Column(DateTime, nullable=True)
     current_view        = Column(Text, nullable=True)   # JSON: {lat, lon, zoom, event}
+    location_lat        = Column(Float, nullable=True)
+    location_lon        = Column(Float, nullable=True)
+    location_city       = Column(String, nullable=True)
+    location_updated    = Column(DateTime, nullable=True)
+    location_consent    = Column(Boolean, default=False)
 
 
 class DirectMessage(Base):

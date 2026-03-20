@@ -14,6 +14,7 @@ import CountryPanel from "./CountryPanel.jsx"
 import TVWidget from "./tvwidget.jsx"
 import DraggablePanel from "./DraggablePanel.jsx"
 import LayersPanel from "./LayersPanel.jsx"
+import SatellitePanel from "./SatellitePanel.jsx"
 import API_BASE from "../apiBase.js"
 
 const API = API_BASE
@@ -1220,12 +1221,25 @@ function makePortIcon(name) {
     return L.divIcon({ html, className: "", iconSize: [36, 36], iconAnchor: [18, 18], popupAnchor: [0, -20] })
 }
 
-const _AIS_TYPE_COLOR = { tanker: "#f59e0b", cargo: "#0d9488", military: "#ef4444", passenger: "#3b82f6", other: "#6b7280" }
+function vesselColor(type) {
+    if (!type) return "#8899aa"
+    const t = String(type).toLowerCase()
+    if (t.includes("tanker")) return "#d97706"
+    if (t.includes("cargo")) return "#0d9488"
+    if (t.includes("military") || t.includes("naval")) return "#dc2626"
+    if (t.includes("passenger")) return "#3b82f6"
+    return "#8899aa"
+}
+
 function makeAisVesselIcon(shipType, heading) {
-    const color = _AIS_TYPE_COLOR[shipType] || _AIS_TYPE_COLOR.other
-    const hdg   = isFinite(Number(heading)) ? Number(heading) : 0
-    const svg   = `<svg width="16" height="24" viewBox="0 0 16 24" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${hdg}deg);transform-origin:50% 50%;display:block;overflow:visible"><polygon points="8,0 14,8 14,22 2,22 2,8" fill="${color}" opacity="0.85" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/><polygon points="8,0 13,7 3,7" fill="rgba(255,255,255,0.4)"/></svg>`
-    return L.divIcon({ html: svg, className: "", iconSize: [16, 24], iconAnchor: [8, 12] })
+    const color = vesselColor(shipType)
+    const hdg = isFinite(Number(heading)) ? Number(heading) : 0
+    const html = `<div style="transform:rotate(${hdg}deg);width:16px;height:24px;">
+        <svg viewBox="0 0 16 24" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="8,0 14,8 14,22 2,22 2,8" fill="${color}" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/>
+        </svg>
+      </div>`
+    return L.divIcon({ html, className: "", iconSize: [16, 24], iconAnchor: [8, 12] })
 }
 
 function makePowerIcon(name, fuelType) {
@@ -1700,6 +1714,23 @@ function makeDestroyerDivIcon() {
       ${_destroyerSvg(color)}
     </div>`
     return L.divIcon({ html, className: "", iconSize: [24, 24], iconAnchor: [12, 12] })
+}
+
+function carrierHTML(nation) {
+    const color = nation === "France" ? "#002395" : "#1a3a6b"
+    return `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+      <div style="width:52px;height:22px;background:rgba(255,255,255,0.9);border:2px solid ${color};border-radius:2px;position:relative;">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:8px;height:8px;background:${color};border-radius:50%;"></div>
+      </div>
+    </div>`
+}
+
+function escortTriangleHTML(color) {
+    return `<div style="width:14px;height:14px;transform:rotate(180deg);">
+      <svg viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="7,1 13,13 1,13" fill="${color}" stroke="rgba(255,255,255,0.55)" stroke-width="0.8"/>
+      </svg>
+    </div>`
 }
 
 // ── DeploymentCard panel ──────────────────────────────────────────────────────
@@ -3327,6 +3358,7 @@ export default function MapPage({
     onSelect,
     activeSituation,
     searchTarget,
+    currentUser,
     profile,            // Mission Profile object — passed to all Claude calls
     onSituationAnnotationsChange,
     onConflictEventsToggle,
@@ -3385,6 +3417,7 @@ export default function MapPage({
             poi: false,
             deployments: false,
             aisVessels: false,
+            userLocations: false,
         }
         let stored = {}
         try { stored = JSON.parse(localStorage.getItem(LAYER_STORAGE_KEY) || "{}") } catch {}
@@ -3409,6 +3442,8 @@ export default function MapPage({
     const [satelliteResults, setSatelliteResults]     = useState([])    // raw items from backend
     const [satelliteSelected, setSatelliteSelected]   = useState({})    // { itemId: true } shown on map
     const [satelliteInfoItem, setSatelliteInfoItem]   = useState(null)  // item in info panel
+    const [satelliteOpacity, setSatelliteOpacity]     = useState(85)
+    const [satelliteCredentialsConfigured, setSatelliteCredentialsConfigured] = useState(true)
     const [maxCloud, setMaxCloud]                     = useState(20)
     const [daysBack, setDaysBack]                     = useState(60)
     const [satelliteError, setSatelliteError]         = useState(null)
@@ -3467,12 +3502,16 @@ export default function MapPage({
     const [selectedDeployment, setSelectedDeployment]         = useState(null)
     const [deploymentZonesVisible, setDeploymentZonesVisible] = useState(true)
     const [hoveredDeploymentName, setHoveredDeploymentName]   = useState(null)
+    const csgLayerGroupRef                                    = useRef(L.layerGroup())
 
     // ── AIS live vessel tracking ───────────────────────────────────────────────
     const [aisVessels, setAisVessels]         = useState([])
     const [aisStatus, setAisStatus]           = useState(null)  // {connected, error, vessel_count}
     const [selectedAisVessel, setSelectedAisVessel] = useState(null)
     const aisIntervalRef                      = useRef(null)
+    const [imbIncidents, setImbIncidents]    = useState([])
+    const adsbLayerRef                        = useRef(L.layerGroup())
+    const userLocationsLayerRef               = useRef(L.layerGroup())
 
     // ── Shipping lanes ─────────────────────────────────────────────────────────
     const [shippingLaneData, setShippingLaneData] = useState({ neFeatures: [], namedRoutes: [] })
@@ -4163,16 +4202,19 @@ export default function MapPage({
             if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null }
             return
         }
-        const fetchVessels = () => {
-            const b = viewportBoundsRef.current
-            const q = b ? `?bbox=${b.south.toFixed(4)},${b.west.toFixed(4)},${b.north.toFixed(4)},${b.east.toFixed(4)}` : ""
-            fetch(`${API}/api/ais/vessels${q}`)
-                .then(r => r.json())
-                .then(d => {
-                    setAisVessels(d.vessels || [])
-                    if (d.status) setAisStatus(d.status)
-                })
-                .catch(() => {})
+        const fetchVessels = async () => {
+            const bounds = mapRef.current?.getBounds()
+            if (!bounds) return
+            const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`
+            try {
+                const res = await fetch(`${API}/api/ais/vessels?bbox=${bbox}`)
+                const data = await res.json()
+                console.log("[ais] vessels fetched:", data?.vessels?.length || 0)
+                setAisVessels(data?.vessels || [])
+                if (data?.status) setAisStatus(data.status)
+            } catch (e) {
+                console.error("[ais] fetch error:", e)
+            }
         }
         fetchVessels()  // immediate fetch on toggle-on
         if (aisIntervalRef.current) clearInterval(aisIntervalRef.current)
@@ -4269,9 +4311,165 @@ export default function MapPage({
         if (!active.deployments) { setDeploymentsData(null); return }
         fetch(`${API}/api/deployments`)
             .then(r => r.json())
-            .then(d => setDeploymentsData(d))
+            .then(d => {
+                console.log("[deployments] fetched:", d)
+                setDeploymentsData(d)
+            })
             .catch(() => {})
     }, [active.deployments])
+
+    useEffect(() => {
+        const map = mapRef.current
+        const layer = csgLayerGroupRef.current
+        if (!map || !layer) return
+
+        layer.clearLayers()
+        if (!active.deployments || !deploymentsData) {
+            if (map.hasLayer(layer)) map.removeLayer(layer)
+            return
+        }
+
+        if (!map.hasLayer(layer)) layer.addTo(map)
+
+        const allCsgs = deploymentsData.carrier_strike_groups || []
+        allCsgs.forEach((csg) => {
+            if (!Number.isFinite(Number(csg.lat)) || !Number.isFinite(Number(csg.lon))) return
+            const nation = (csg.flagship || "").includes("FS ") ? "France" : "US"
+            const nationColor = nation === "France" ? "#002395" : "#1a3a6b"
+            const strikeRadius = nation === "France" ? 648000 : 833000
+            const extendedRadius = nation === "France" ? 1019000 : 1296000
+
+            const carrierIcon = L.divIcon({
+                html: `${carrierHTML(nation === "France" ? "France" : "US")}<div style="margin-top:6px;font-size:11px;font-weight:700;color:#e8edf2;text-shadow:0 1px 4px rgba(0,0,0,0.9);white-space:nowrap;">${csg.flagship || csg.name}</div>`,
+                className: "",
+                iconSize: [160, 52],
+                iconAnchor: [80, 20],
+            })
+            const carrierMarker = L.marker([csg.lat, csg.lon], { icon: carrierIcon })
+            carrierMarker.on("click", () => setSelectedDeployment({ ...csg, _type: "csg" }))
+            carrierMarker.addTo(layer)
+
+            L.circle([csg.lat, csg.lon], {
+                radius: 92600,
+                color: "#dc2626",
+                weight: 2,
+                fill: false,
+                dashArray: "none",
+                opacity: 0.7,
+            }).addTo(layer)
+            L.circle([csg.lat, csg.lon], {
+                radius: strikeRadius,
+                color: "#d97706",
+                weight: 2,
+                fill: false,
+                dashArray: "8 4",
+                opacity: 0.6,
+            }).addTo(layer)
+            L.circle([csg.lat, csg.lon], {
+                radius: extendedRadius,
+                color: "rgba(255,255,255,0.4)",
+                weight: 1,
+                fill: false,
+                dashArray: "4 8",
+                opacity: 0.4,
+            }).addTo(layer)
+
+            const centerPoint = map.latLngToLayerPoint([csg.lat, csg.lon])
+            ;(csg.escorts || []).forEach((escort, index, arr) => {
+                const angle = (index / Math.max(arr.length, 1)) * Math.PI * 2
+                const escortPoint = L.point(
+                    centerPoint.x + Math.cos(angle) * 70,
+                    centerPoint.y + Math.sin(angle) * 70,
+                )
+                const escortLatLng = map.layerPointToLatLng(escortPoint)
+                const escortMarker = L.marker(escortLatLng, {
+                    icon: L.divIcon({
+                        html: escortTriangleHTML(nationColor),
+                        className: "",
+                        iconSize: [14, 14],
+                        iconAnchor: [7, 7],
+                    }),
+                })
+                escortMarker.bindTooltip(escort)
+                escortMarker.addTo(layer)
+            })
+        })
+
+        return () => {
+            layer.clearLayers()
+            if (map.hasLayer(layer) && !active.deployments) {
+                map.removeLayer(layer)
+            }
+        }
+    }, [active.deployments, deploymentsData, zoom])
+
+    const renderUserLocationsOnMap = useCallback((users = []) => {
+        const map = mapRef.current
+        const layer = userLocationsLayerRef.current
+        if (!map || !layer) return
+        layer.clearLayers()
+        if (!users.length) {
+            if (map.hasLayer(layer)) map.removeLayer(layer)
+            return
+        }
+        if (!map.hasLayer(layer)) layer.addTo(map)
+        users.forEach((u) => {
+            const lat = Number(u.location_lat)
+            const lon = Number(u.location_lon)
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+            const icon = L.divIcon({
+                html: `<div style="background:#1a6eb5;border:2px solid white;border-radius:50%;width:12px;height:12px;"></div>`,
+                iconSize: [12, 12],
+                iconAnchor: [6, 6],
+                className: "",
+            })
+            const marker = L.marker([lat, lon], { icon })
+            marker.bindPopup(`
+              <div style="background:rgba(6,13,26,0.95);padding:12px;border:1px solid rgba(255,255,255,0.1);color:#e8edf2;font-size:12px;min-width:200px;">
+                <div style="font-weight:700;font-size:14px;margin-bottom:8px;">${u.name}</div>
+                <div>${u.email}</div>
+                <div style="color:#8899aa">${u.role} · ${u.location_city || "Location unknown"}</div>
+                <div style="color:#8899aa;font-size:11px;margin-top:4px;">Last seen: ${u.last_seen ? new Date(u.last_seen).toLocaleTimeString() : "unknown"}</div>
+                <div style="color:#3d5068;font-size:10px;margin-top:8px;font-style:italic;">Not visible to this user</div>
+              </div>
+            `, { className: "" })
+            layer.addLayer(marker)
+        })
+    }, [])
+
+    useEffect(() => {
+        if (!active.userLocations) {
+            renderUserLocationsOnMap([])
+            return
+        }
+        const fetchUserLocations = async () => {
+            const res = await fetch(`${API}/api/admin/active-users`, {
+                headers: { Authorization: `Bearer ${localStorage.getItem("hw_token")}` },
+            })
+            const users = await res.json()
+            renderUserLocationsOnMap(users)
+        }
+        fetchUserLocations().catch(() => {})
+    }, [active.userLocations, renderUserLocationsOnMap])
+
+    useEffect(() => {
+        const handler = (event) => {
+            renderUserLocationsOnMap(event.detail || [])
+        }
+        window.addEventListener("akili:show-user-locations", handler)
+        return () => window.removeEventListener("akili:show-user-locations", handler)
+    }, [renderUserLocationsOnMap])
+
+    useEffect(() => {
+        if (!active.imbPiracy) {
+            setImbIncidents([])
+            return
+        }
+        fetch(`${API}/api/infrastructure/imb-piracy`)
+            .then((r) => r.json())
+            .then((data) => setImbIncidents(Array.isArray(data) ? data : []))
+            .catch(() => setImbIncidents([]))
+    }, [active.imbPiracy])
 
     // Shipping lanes use hardcoded _SHIPPING_ROUTES_HARDCODED constant — no fetch needed
 
@@ -4532,16 +4730,19 @@ export default function MapPage({
         setSatelliteInfoItem(null)
         const { west, south, east, north } = viewportBounds
         try {
-            const res = await fetch(`${API}/satellite/search`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ bbox: [west, south, east, north], max_cloud: maxCloud, days_back: daysBack }),
-            })
+            const bbox = `${west},${south},${east},${north}`
+            const res = await fetch(`${API}/api/satellite/search?bbox=${bbox}&date=2026-03-01/2026-03-20`)
             const data = await res.json()
             if (data.error) setSatelliteError(data.error)
             setSatelliteAuthMode(data.auth_mode || "public")
             setSatelliteAuthError(data.auth_error || null)
-            setSatelliteResults(data.items || [])
+            setSatelliteCredentialsConfigured(data.credentials_configured !== false)
+            const items = data.items || []
+            setSatelliteResults(items)
+            if (items[0]?.id) {
+                setSatelliteSelected({ [items[0].id]: true })
+                setSatelliteInfoItem(items[0])
+            }
         } catch (e) {
             setSatelliteError("Search failed — check backend connection")
         } finally {
@@ -4549,10 +4750,64 @@ export default function MapPage({
         }
     }
 
-    // ── Stop ADS-B polling when the layer is toggled off ─────────────────────
     useEffect(() => {
-        if (!active.adsb) setAdsbLive(false)
+        if (!active.satellite) return
+        const timer = setTimeout(() => { searchSatellite() }, 250)
+        return () => clearTimeout(timer)
+    }, [active.satellite, viewportBounds])  // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Start/stop ADS-B polling with the layer toggle ───────────────────────
+    useEffect(() => {
+        if (active.adsb) setAdsbLive(true)
+        else setAdsbLive(false)
     }, [active.adsb])
+
+    useEffect(() => {
+        if (!mapRef.current || !active.adsb || !adsbLive) {
+            adsbLayerRef.current.clearLayers()
+            if (mapRef.current?.hasLayer(adsbLayerRef.current)) {
+                mapRef.current.removeLayer(adsbLayerRef.current)
+            }
+            setAdsbCount(0)
+            return
+        }
+
+        if (!mapRef.current.hasLayer(adsbLayerRef.current)) {
+            adsbLayerRef.current.addTo(mapRef.current)
+        }
+
+        const fetchADSB = async () => {
+            const bounds = mapRef.current?.getBounds()
+            if (!bounds) return
+            const url = `https://api.adsb.fi/v1/aircraft?lat=${bounds.getCenter().lat}&lon=${bounds.getCenter().lng}&radius=300`
+            try {
+                const res = await fetch(url)
+                const data = await res.json()
+                const aircraft = data.aircraft || data.ac || []
+                console.log("[adsb] aircraft in range:", aircraft.length)
+                adsbLayerRef.current.clearLayers()
+                aircraft.forEach((ac) => {
+                    if (!ac.lat || !ac.lon) return
+                    const icon = L.divIcon({
+                        html: `<div style="transform:rotate(${ac.track || 0}deg);font-size:14px;filter:drop-shadow(0 0 3px rgba(13,148,136,0.8));">✈️</div>`,
+                        iconSize: [20, 20],
+                        iconAnchor: [10, 10],
+                        className: "",
+                    })
+                    const marker = L.marker([ac.lat, ac.lon], { icon })
+                    marker.bindTooltip(`${ac.flight || ac.hex || "Unknown"} | Alt: ${ac.alt_baro || "?"}ft | Spd: ${ac.gs || "?"}kts`)
+                    adsbLayerRef.current.addLayer(marker)
+                })
+                setAdsbCount(aircraft.length)
+            } catch (e) {
+                console.error("[adsb] error:", e)
+            }
+        }
+
+        fetchADSB()
+        const intervalId = setInterval(fetchADSB, Math.max(5, adsbRefreshRate || 15) * 1000)
+        return () => clearInterval(intervalId)
+    }, [active.adsb, adsbLive, adsbRefreshRate])
 
     // ── Alternative routes: fetch when requested ──────────────────────────────
     const requestAlternatives = () => {
@@ -5074,7 +5329,7 @@ export default function MapPage({
     }, [visibleSurfaceItems, zoom, onSurfaceItemClick])
 
     const individualMarkers = useMemo(() => {
-        if (zoom < 9 || !visibleSurfaceItems.length) return null
+        if (zoom < 5 || !visibleSurfaceItems.length) return null
         return visibleSurfaceItems.map(item => (
             <Marker
                 key={`surface-${item.id}`}
@@ -5814,83 +6069,10 @@ export default function MapPage({
 
                 {/* ── Deployments layer ─────────────────────────────────────── */}
                 {active.deployments && deploymentsData && (() => {
-                    const allCsgs    = deploymentsData.carrier_strike_groups || []
                     const allArgs    = deploymentsData.amphibious_ready_groups || []
                     const allSurface = deploymentsData.notable_surface_units || []
                     return (
                         <>
-                            {allCsgs.map(csg => {
-                                const zones      = CARRIER_ZONES[csg.class] || CARRIER_ZONES["Nimitz-class"]
-                                const isSelected = selectedDeployment?.name === csg.name
-                                const isHovered  = hoveredDeploymentName === csg.name
-                                const isActive   = (isSelected || isHovered) && deploymentZonesVisible
-                                // zoom < 5: no circles; zoom 5+: show all 3 zones for active
-                                const showStrike = isActive && zoom >= 5
-                                const showAll3   = isActive && zoom >= 5
-                                const showLabels = isActive && zoom >= 6
-                                return (
-                                    <Fragment key={csg.name}>
-                                        {/* Strike radius — visible at zoom 7+ for hovered/selected */}
-                                        {/* Strike radius — amber dashed, 2px */}
-                                        {showStrike && (
-                                            <Circle
-                                                center={[csg.lat, csg.lon]}
-                                                radius={zones.strike_km * 1000}
-                                                renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#f97316", weight: 2, opacity: 0.6, fillOpacity: 0, dashArray: "8 5" }}
-                                                interactive={false}
-                                            />
-                                        )}
-                                        {/* NFZ — solid red, 2px */}
-                                        {showAll3 && (
-                                            <Circle
-                                                center={[csg.lat, csg.lon]}
-                                                radius={zones.nfz_km * 1000}
-                                                renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#ef4444", weight: 2, opacity: 0.7, fillColor: "#ef4444", fillOpacity: 0.06 }}
-                                                interactive={false}
-                                            />
-                                        )}
-                                        {/* Extended — dashed white, 1px */}
-                                        {showAll3 && (
-                                            <Circle
-                                                center={[csg.lat, csg.lon]}
-                                                radius={zones.extended_km * 1000}
-                                                renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#ffffff", weight: 1, opacity: 0.3, fillOpacity: 0, dashArray: "4 8" }}
-                                                interactive={false}
-                                            />
-                                        )}
-                                        {/* Zone label at bearing 0 — zoom >= 7 for active CSG */}
-                                        {showLabels && (() => {
-                                            const strikeLat = csg.lat + (zones.strike_km / 6371) * (180 / Math.PI)
-                                            return (
-                                                <Marker
-                                                    position={[strikeLat, csg.lon]}
-                                                    icon={L.divIcon({ className: "", html: `<div style="font-size:9px;color:#f97316;white-space:nowrap;text-shadow:0 1px 3px #000">Strike ${Math.round(zones.strike_km)}km</div>`, iconAnchor: [24, 0] })}
-                                                    interactive={false}
-                                                />
-                                            )
-                                        })()}
-                                        {/* Carrier marker */}
-                                        <Marker
-                                            position={[csg.lat, csg.lon]}
-                                            icon={makeCarrierDivIcon(csg, zoom)}
-                                            eventHandlers={{
-                                                click:     () => setSelectedDeployment({ ...csg, _type: "csg" }),
-                                                mouseover: () => setHoveredDeploymentName(csg.name),
-                                                mouseout:  () => setHoveredDeploymentName(null),
-                                            }}
-                                        >
-                                            {zoom < 8 && (
-                                                <Tooltip direction="top" offset={[0, -22]} opacity={0.9}>
-                                                    <div style={{ fontSize: 11 }}><strong>{csg.flagship}</strong><br />{csg.theater}</div>
-                                                </Tooltip>
-                                            )}
-                                        </Marker>
-                                    </Fragment>
-                                )
-                            })}
                             {allArgs.map(arg => (
                                 <Marker
                                     key={arg.name}
@@ -5919,18 +6101,30 @@ export default function MapPage({
                     )
                 })()}
 
-                {/* ── ADS-B Aircraft ────────────────────────────────────────── */}
-                {/* Isolated child: aircraft state + polling live in AircraftLayer
-                    so setAircraft() ticks don't re-render MapPage or conflict markers. */}
-                <AircraftLayer
-                    visible={active.adsb}
-                    showLabels={active.adsbLabels}
-                    refreshRate={adsbRefreshRate}
-                    boundsRef={viewportBoundsRef}
-                    onCount={setAdsbCount}
-                    polling={adsbLive}
-                    activateKey={adsbActivateKey}
-                />
+                {/* ── IMB Piracy ───────────────────────────────────────────── */}
+                {active.imbPiracy && imbIncidents.map((incident, index) => {
+                    const lat = Number(incident?.lat)
+                    const lon = Number(incident?.lon)
+                    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+                    const imbIcon = L.divIcon({
+                        html: `<div style="font-size:18px;filter:drop-shadow(0 0 4px rgba(220,38,38,0.8));">⚠️</div>`,
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12],
+                        className: "",
+                    })
+                    return (
+                        <Marker key={`imb-${incident.id || index}`} position={[lat, lon]} icon={imbIcon}>
+                            <Popup>
+                                <div style={{ fontSize: 12, minWidth: 220 }}>
+                                    <div style={{ fontWeight: 700, marginBottom: 6 }}>{incident.type || incident.incident_type || "Piracy incident"}</div>
+                                    <div>{incident.date || "Unknown date"}</div>
+                                    <div>{incident.vessel_name || incident.vessel || "Unknown vessel"}</div>
+                                    <div style={{ marginTop: 8, color: "#94a3b8" }}>{incident.description || incident.summary || "No description available"}</div>
+                                </div>
+                            </Popup>
+                        </Marker>
+                    )
+                })}
 
                 {/* ── Route planner — origin, dest pins + polyline ──────────── */}
                 {active.route && routeOrigin && (
@@ -6274,8 +6468,8 @@ export default function MapPage({
                     return (
                         <Fragment key={tile.id}>
                             {cogTileUrl
-                                ? <TileLayer url={cogTileUrl} opacity={0.9} zIndex={300} />
-                                : <ImageOverlay url={tile.thumbnail} bounds={bounds} opacity={0.85} zIndex={300} />
+                                ? <TileLayer url={cogTileUrl} opacity={satelliteOpacity / 100} zIndex={300} />
+                                : <ImageOverlay url={tile.thumbnail} bounds={bounds} opacity={satelliteOpacity / 100} zIndex={300} />
                             }
                             <Rectangle
                                 bounds={bounds}
@@ -6611,6 +6805,22 @@ export default function MapPage({
                 />
             )}
 
+            <SatellitePanel
+                open={active.satellite}
+                loading={satelliteSearching}
+                error={satelliteError || satelliteAuthError}
+                credentialsConfigured={satelliteCredentialsConfigured}
+                scenes={satelliteResults}
+                selectedId={Object.keys(satelliteSelected).find((id) => satelliteSelected[id]) || null}
+                opacity={satelliteOpacity}
+                onSelect={(scene) => {
+                    setSatelliteSelected({ [scene.id]: true })
+                    setSatelliteInfoItem(scene)
+                }}
+                onOpacityChange={setSatelliteOpacity}
+                onClose={() => toggle("satellite")}
+            />
+
             {/* ── Satellite tile info panel ───────────────────────────────────── */}
             {active.satellite && satelliteInfoItem && (
                 <div style={{
@@ -6866,6 +7076,7 @@ export default function MapPage({
                     manualOverrides={manualOverrides}
                     aisStatus={aisStatus}
                     aisVesselCount={aisVessels.length}
+                    user={currentUser}
                 />
             )}
 

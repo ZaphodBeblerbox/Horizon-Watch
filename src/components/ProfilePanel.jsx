@@ -2,14 +2,27 @@ import { useState, useRef } from "react"
 import { saveProfileToStorage } from "./MissionProfilePanel.jsx"
 import { apiFetch } from "../auth.js"
 
-const CLEARANCES = [
-    { label: "Map Intelligence",   status: "GRANTED" },
-    { label: "Briefings Access",   status: "GRANTED" },
-    { label: "POI Profiles",       status: "GRANTED" },
-    { label: "Claude Analysis",    status: "PENDING" },
-    { label: "Admin Panel",        status: "DENIED"  },
-    { label: "Export Reports",     status: "PENDING" },
-]
+const getClearances = (user) => {
+    const base = [
+        { label: "Map Intelligence", status: "GRANTED" },
+        { label: "Briefings Access", status: "GRANTED" },
+    ]
+    if (user?.role === "analyst" || user?.role === "admin") {
+        base.push({ label: "POI Profiles", status: "GRANTED" })
+        base.push({ label: "Claude Analysis", status: "GRANTED" })
+    } else {
+        base.push({ label: "POI Profiles", status: "PENDING" })
+        base.push({ label: "Claude Analysis", status: "PENDING" })
+    }
+    if (user?.role === "admin") {
+        base.push({ label: "Admin Panel", status: "GRANTED" })
+        base.push({ label: "Export Reports", status: "GRANTED" })
+    } else {
+        base.push({ label: "Admin Panel", status: "DENIED" })
+        base.push({ label: "Export Reports", status: "PENDING" })
+    }
+    return base
+}
 
 const BADGE_COLOR = {
     ADMIN:        { bg: "rgba(220,38,38,0.15)",   border: "rgba(220,38,38,0.4)",   text: "#ef4444" },
@@ -102,6 +115,7 @@ export default function ProfilePanel({ profile, onSave, onClose, currentUser }) 
 
     const roleKey = (currentUser?.role || profile?.role || "").toUpperCase().replace(/\s/g, "")
     const badgeColors = BADGE_COLOR[roleKey] || BADGE_COLOR.OBSERVER
+    const clearances = getClearances(currentUser || profile)
 
     function memberSince(iso) {
         if (!iso) return null
@@ -335,7 +349,7 @@ export default function ProfilePanel({ profile, onSave, onClose, currentUser }) 
                 <SectionHeader>Access Clearances</SectionHeader>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                    {CLEARANCES.map(c => (
+                    {clearances.map(c => (
                         <div key={c.label} style={{
                             display:        "flex",
                             alignItems:     "center",
