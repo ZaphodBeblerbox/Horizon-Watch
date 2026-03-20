@@ -1,4 +1,4 @@
-import { API_BASE } from "../apiBase.js"
+import API_BASE from "../apiBase.js"
 
 const API = API_BASE
 
