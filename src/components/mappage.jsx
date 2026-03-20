@@ -3502,7 +3502,7 @@ export default function MapPage({
     const [selectedDeployment, setSelectedDeployment]         = useState(null)
     const [deploymentZonesVisible, setDeploymentZonesVisible] = useState(true)
     const [hoveredDeploymentName, setHoveredDeploymentName]   = useState(null)
-    const csgLayerGroupRef                                    = useRef(L.layerGroup())
+    const csgLayerGroupRef                                    = useRef(null)
 
     // ── AIS live vessel tracking ───────────────────────────────────────────────
     const [aisVessels, setAisVessels]         = useState([])
@@ -3510,8 +3510,8 @@ export default function MapPage({
     const [selectedAisVessel, setSelectedAisVessel] = useState(null)
     const aisIntervalRef                      = useRef(null)
     const [imbIncidents, setImbIncidents]    = useState([])
-    const adsbLayerRef                        = useRef(L.layerGroup())
-    const userLocationsLayerRef               = useRef(L.layerGroup())
+    const adsbLayerRef                        = useRef(null)
+    const userLocationsLayerRef               = useRef(null)
 
     // ── Shipping lanes ─────────────────────────────────────────────────────────
     const [shippingLaneData, setShippingLaneData] = useState({ neFeatures: [], namedRoutes: [] })
