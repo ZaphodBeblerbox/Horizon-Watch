@@ -20,3 +20,4 @@ backend/situations.json
 backend/article_preview_cache.json
 .vite/
 backend/documents/
+backend/data/akili.db
