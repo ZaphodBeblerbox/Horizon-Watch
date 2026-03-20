@@ -1,0 +1,13 @@
+{
+  "displayName": "Marc",
+  "role": "Analyst",
+  "focusRegions": [
+    "Red Sea / Arabian Peninsula",
+    "Gulf States",
+    "Middle East"
+  ],
+  "infraDomains": [],
+  "chokepoints": [],
+  "threshold": 1,
+  "activeSituations": "Monitoring paris "
+}

@@ -1,0 +1,19 @@
+{
+  "situations": [
+    {
+      "id": "24ef7632-08c1-4207-a8ac-9629d988f9d4",
+      "name": "Iran-US-Israel war",
+      "mission": "",
+      "created": "2026-03-05T15:26:08.056Z",
+      "lastModified": "2026-03-20T14:56:36.080Z",
+      "annotations": {
+        "points": [],
+        "zones": [],
+        "links": []
+      },
+      "notes": "",
+      "color": "#FF8C00"
+    }
+  ],
+  "active_id": "24ef7632-08c1-4207-a8ac-9629d988f9d4"
+}

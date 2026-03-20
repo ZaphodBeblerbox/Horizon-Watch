@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Horizon Watch — Trifecta Technologies</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* ── Akili theme CSS variables ──────────────────────────────────── */
+        :root {
+            --akili-surface:        #0a0e14;
+            --akili-panel:          rgba(14,20,32,0.92);
+            --akili-panel-blur:     rgba(14,20,32,0.82);
+            --akili-panel-solid:    #0e1420;
+            --akili-surface-raised: #0f1520;
+            --akili-hover:          rgba(255,255,255,0.05);
+            --akili-hover-strong:   rgba(255,255,255,0.08);
+            --akili-border:         rgba(255,255,255,0.07);
+            --akili-border-subtle:  rgba(255,255,255,0.04);
+            --akili-text-primary:   #e8edf2;
+            --akili-text-secondary: #8899aa;
+            --akili-text-muted:     #4a5568;
+            --akili-input-bg:       #0f1520;
+            --akili-input-border:   rgba(255,255,255,0.1);
+            --akili-accent:         #0d9488;
+            --akili-accent-bg:      rgba(13,148,136,0.12);
+            --akili-accent-border:  rgba(13,148,136,0.35);
+            --akili-overlay:        rgba(10,14,20,0.95);
+        }
+        [data-theme="day"] {
+            --akili-surface:        #f0f4f8;
+            --akili-panel:          rgba(240,244,248,0.97);
+            --akili-panel-blur:     rgba(235,240,246,0.93);
+            --akili-panel-solid:    #e8edf5;
+            --akili-surface-raised: rgba(0,0,0,0.05);
+            --akili-hover:          rgba(0,0,0,0.04);
+            --akili-hover-strong:   rgba(0,0,0,0.07);
+            --akili-border:         rgba(0,0,0,0.08);
+            --akili-border-subtle:  rgba(0,0,0,0.04);
+            --akili-text-primary:   #1a202c;
+            --akili-text-secondary: #4a5568;
+            --akili-text-muted:     #a0aec0;
+            --akili-input-bg:       rgba(0,0,0,0.05);
+            --akili-input-border:   rgba(0,0,0,0.12);
+            --akili-accent:         #0d9488;
+            --akili-accent-bg:      rgba(13,148,136,0.10);
+            --akili-accent-border:  rgba(13,148,136,0.30);
+            --akili-overlay:        rgba(240,244,248,0.97);
+        }
+        /* ── User location pulse animation ──────────────────────────────── */
+        @keyframes akiliUserLocPulse {
+            0%, 100% { transform: scale(1);   opacity: 0.25; }
+            50%       { transform: scale(1.45); opacity: 0.08; }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+    <script type="module" src="/src/main.jsx"></script>
+</body>
+
+</html>

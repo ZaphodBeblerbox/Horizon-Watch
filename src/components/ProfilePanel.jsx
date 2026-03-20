@@ -1,0 +1,350 @@
+import { useState, useRef } from "react"
+import { saveProfileToStorage } from "./MissionProfilePanel.jsx"
+
+const CLEARANCES = [
+    { label: "Map Intelligence",   status: "GRANTED" },
+    { label: "Briefings Access",   status: "GRANTED" },
+    { label: "POI Profiles",       status: "GRANTED" },
+    { label: "Claude Analysis",    status: "PENDING" },
+    { label: "Admin Panel",        status: "DENIED"  },
+    { label: "Export Reports",     status: "PENDING" },
+]
+
+const BADGE_COLOR = {
+    ADMIN:        { bg: "rgba(220,38,38,0.15)",   border: "rgba(220,38,38,0.4)",   text: "#ef4444" },
+    ANALYST:      { bg: "rgba(59,130,246,0.15)",  border: "rgba(59,130,246,0.4)",  text: "#60a5fa" },
+    ADMINISTRATOR:{ bg: "rgba(220,38,38,0.15)",   border: "rgba(220,38,38,0.4)",   text: "#ef4444" },
+    OPERATOR:     { bg: "rgba(139,92,246,0.15)",  border: "rgba(139,92,246,0.4)",  text: "#a78bfa" },
+    OBSERVER:     { bg: "rgba(107,114,128,0.15)", border: "rgba(107,114,128,0.4)", text: "#9ca3af" },
+}
+
+const STATUS_COLOR = {
+    GRANTED: { bg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.35)", text: "#34d399" },
+    PENDING: { bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.35)", text: "#fbbf24" },
+    DENIED:  { bg: "rgba(239,68,68,0.12)",  border: "rgba(239,68,68,0.35)",  text: "#f87171" },
+}
+
+function StatusBadge({ status }) {
+    const c = STATUS_COLOR[status] || STATUS_COLOR.DENIED
+    return (
+        <span style={{
+            fontSize:     9,
+            fontWeight:   700,
+            letterSpacing:"0.1em",
+            padding:      "2px 7px",
+            borderRadius: 3,
+            background:   c.bg,
+            border:       `1px solid ${c.border}`,
+            color:        c.text,
+        }}>
+            {status}
+        </span>
+    )
+}
+
+function SectionHeader({ children }) {
+    return (
+        <div style={{
+            fontSize:      10,
+            fontWeight:    700,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            color:         "var(--akili-accent)",
+            borderLeft:    "2px solid var(--akili-accent)",
+            paddingLeft:   8,
+            marginTop:     20,
+            marginBottom:  10,
+        }}>
+            {children}
+        </div>
+    )
+}
+
+const INPUT_STYLE = {
+    width:        "100%",
+    background:   "var(--akili-input-bg)",
+    border:       "1px solid var(--akili-input-border)",
+    borderRadius: 4,
+    padding:      "7px 10px",
+    fontSize:     12,
+    color:        "var(--akili-text-primary)",
+    outline:      "none",
+    boxSizing:    "border-box",
+}
+
+export default function ProfilePanel({ profile, onSave, onClose }) {
+    const [displayName, setDisplayName] = useState(profile?.displayName || "")
+    const [email,       setEmail]       = useState(profile?._email || "")
+    const [pwExpanded,  setPwExpanded]  = useState(false)
+    const [curPw,       setCurPw]       = useState("")
+    const [newPw,       setNewPw]       = useState("")
+    const [confirmPw,   setConfirmPw]   = useState("")
+    const [saved,       setSaved]       = useState(false)
+    const [requestOpen, setRequestOpen] = useState(false)
+    const [requestText, setRequestText] = useState("")
+    const [requestDone, setRequestDone] = useState(false)
+    const avatarRef = useRef()
+
+    const roleKey = (profile?.role || "").toUpperCase().replace(/\s/g, "")
+    const badgeColors = BADGE_COLOR[roleKey] || BADGE_COLOR.OBSERVER
+
+    function handleSave() {
+        if (!profile) return
+        const updated = { ...profile, displayName, _email: email }
+        saveProfileToStorage(updated)
+        onSave?.(updated)
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2000)
+    }
+
+    function handleRequest() {
+        setRequestDone(true)
+        setTimeout(() => { setRequestOpen(false); setRequestDone(false); setRequestText("") }, 2000)
+    }
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            {/* Header */}
+            <div style={{
+                display:        "flex",
+                alignItems:     "center",
+                justifyContent: "space-between",
+                padding:        "14px 16px 12px",
+                borderBottom:   "1px solid var(--akili-border)",
+                flexShrink:     0,
+            }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--akili-text-primary)", letterSpacing: "0.04em" }}>
+                    PROFILE
+                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {/* Save button */}
+                    <button onClick={handleSave} style={{
+                        padding:      "5px 14px",
+                        background:   saved ? "rgba(16,185,129,0.15)" : "rgba(13,148,136,0.15)",
+                        border:       `1px solid ${saved ? "rgba(16,185,129,0.4)" : "rgba(13,148,136,0.4)"}`,
+                        borderRadius: 4,
+                        color:        saved ? "#34d399" : "var(--akili-accent)",
+                        fontSize:     11,
+                        fontWeight:   600,
+                        cursor:       "pointer",
+                        transition:   "all 0.2s",
+                        letterSpacing:"0.05em",
+                        display:      "flex",
+                        alignItems:   "center",
+                        gap:          5,
+                    }}>
+                        {saved ? (
+                            <>
+                                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="1,6 4,10 11,2"/>
+                                </svg>
+                                Saved
+                            </>
+                        ) : "Save"}
+                    </button>
+                    <button onClick={onClose} style={{
+                        background: "none", border: "none", cursor: "pointer",
+                        color: "var(--akili-text-secondary)", fontSize: 16, lineHeight: 1, padding: 4,
+                    }}>×</button>
+                </div>
+            </div>
+
+            {/* Body */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 20px" }}>
+
+                {/* Avatar + identity */}
+                <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "20px 0 16px", borderBottom: "1px solid var(--akili-border)" }}>
+                    {/* Avatar */}
+                    <input ref={avatarRef} type="file" accept="image/*" style={{ display: "none" }} />
+                    <button
+                        onClick={() => avatarRef.current?.click()}
+                        title="Upload profile picture"
+                        style={{
+                            width:          80,
+                            height:         80,
+                            borderRadius:   "50%",
+                            border:         "1.5px dashed rgba(255,255,255,0.15)",
+                            background:     "rgba(255,255,255,0.03)",
+                            cursor:         "pointer",
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            flexShrink:     0,
+                            color:          "rgba(255,255,255,0.2)",
+                            transition:     "border-color 0.15s, color 0.15s",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(13,148,136,0.5)"; e.currentTarget.style.color = "rgba(13,148,136,0.6)" }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; e.currentTarget.style.color = "rgba(255,255,255,0.2)" }}
+                    >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                            <circle cx="12" cy="13" r="4"/>
+                        </svg>
+                    </button>
+                    {/* Name + role */}
+                    <div>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--akili-text-primary)", marginBottom: 4 }}>
+                            {profile?.displayName || "No name set"}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--akili-text-muted)", marginBottom: 8 }}>
+                            {profile?._email || "No email set"}
+                        </div>
+                        {profile?.role && (
+                            <span style={{
+                                fontSize:      9,
+                                fontWeight:    700,
+                                letterSpacing: "0.12em",
+                                padding:       "3px 8px",
+                                borderRadius:  3,
+                                background:    badgeColors.bg,
+                                border:        `1px solid ${badgeColors.border}`,
+                                color:         badgeColors.text,
+                            }}>
+                                {profile.role.toUpperCase()}
+                            </span>
+                        )}
+                    </div>
+                </div>
+
+                {/* Edit fields */}
+                <SectionHeader>Account Details</SectionHeader>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div>
+                        <label style={{ fontSize: 10, color: "var(--akili-text-muted)", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>
+                            DISPLAY NAME
+                        </label>
+                        <input
+                            value={displayName}
+                            onChange={e => setDisplayName(e.target.value)}
+                            placeholder="Your display name"
+                            style={INPUT_STYLE}
+                        />
+                    </div>
+
+                    <div>
+                        <label style={{ fontSize: 10, color: "var(--akili-text-muted)", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>
+                            EMAIL
+                        </label>
+                        <input
+                            type="email"
+                            value={email}
+                            onChange={e => setEmail(e.target.value)}
+                            placeholder="your@email.com"
+                            style={INPUT_STYLE}
+                        />
+                    </div>
+
+                    {/* Password section */}
+                    <div>
+                        <label style={{ fontSize: 10, color: "var(--akili-text-muted)", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>
+                            PASSWORD
+                        </label>
+                        {!pwExpanded ? (
+                            <button onClick={() => setPwExpanded(true)} style={{
+                                background:   "var(--akili-hover)",
+                                border:       "1px solid var(--akili-border)",
+                                borderRadius: 4,
+                                padding:      "7px 12px",
+                                fontSize:     11,
+                                color:        "var(--akili-text-secondary)",
+                                cursor:       "pointer",
+                            }}>
+                                Change Password
+                            </button>
+                        ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                <input type="password" value={curPw} onChange={e => setCurPw(e.target.value)}
+                                    placeholder="Current password" style={INPUT_STYLE} />
+                                <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
+                                    placeholder="New password" style={INPUT_STYLE} />
+                                <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+                                    placeholder="Confirm new password" style={INPUT_STYLE} />
+                                <div style={{ display: "flex", gap: 6 }}>
+                                    <button onClick={() => setPwExpanded(false)} style={{
+                                        flex: 1, padding: "6px", background: "none",
+                                        border: "1px solid var(--akili-border)", borderRadius: 4,
+                                        fontSize: 11, color: "var(--akili-text-muted)", cursor: "pointer",
+                                    }}>Cancel</button>
+                                    <button style={{
+                                        flex: 2, padding: "6px", background: "rgba(13,148,136,0.12)",
+                                        border: "1px solid rgba(13,148,136,0.35)", borderRadius: 4,
+                                        fontSize: 11, color: "var(--akili-accent)", cursor: "pointer",
+                                    }}>Update Password</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Clearances */}
+                <SectionHeader>Access Clearances</SectionHeader>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                    {CLEARANCES.map(c => (
+                        <div key={c.label} style={{
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "space-between",
+                            padding:        "9px 0",
+                            borderBottom:   "1px solid var(--akili-border-subtle)",
+                        }}>
+                            <span style={{ fontSize: 12, color: "var(--akili-text-primary)" }}>
+                                {c.label}
+                            </span>
+                            <StatusBadge status={c.status} />
+                        </div>
+                    ))}
+                </div>
+
+                {/* Request access */}
+                {!requestOpen ? (
+                    <button onClick={() => setRequestOpen(true)} style={{
+                        marginTop:    14,
+                        width:        "100%",
+                        padding:      "8px",
+                        background:   "rgba(13,148,136,0.06)",
+                        border:       "1px dashed rgba(13,148,136,0.3)",
+                        borderRadius: 4,
+                        fontSize:     11,
+                        color:        "rgba(13,148,136,0.7)",
+                        cursor:       "pointer",
+                        letterSpacing:"0.04em",
+                    }}>
+                        Request Additional Access
+                    </button>
+                ) : (
+                    <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+                        {requestDone ? (
+                            <div style={{ fontSize: 11, color: "#34d399", textAlign: "center", padding: "10px 0" }}>
+                                Request submitted
+                            </div>
+                        ) : (
+                            <>
+                                <textarea
+                                    value={requestText}
+                                    onChange={e => setRequestText(e.target.value)}
+                                    placeholder="Describe the access you need..."
+                                    rows={3}
+                                    style={{ ...INPUT_STYLE, resize: "vertical", fontFamily: "inherit" }}
+                                />
+                                <div style={{ display: "flex", gap: 6 }}>
+                                    <button onClick={() => setRequestOpen(false)} style={{
+                                        flex: 1, padding: "6px", background: "none",
+                                        border: "1px solid var(--akili-border)", borderRadius: 4,
+                                        fontSize: 11, color: "var(--akili-text-muted)", cursor: "pointer",
+                                    }}>Cancel</button>
+                                    <button onClick={handleRequest} style={{
+                                        flex: 2, padding: "6px", background: "rgba(13,148,136,0.12)",
+                                        border: "1px solid rgba(13,148,136,0.35)", borderRadius: 4,
+                                        fontSize: 11, color: "var(--akili-accent)", cursor: "pointer",
+                                    }}>Submit</button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}

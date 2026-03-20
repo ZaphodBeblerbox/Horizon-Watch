@@ -1,0 +1,79 @@
+[
+  {
+    "id": "hormuz_indian_ocean",
+    "name": "Hormuz to Indian Ocean",
+    "description": "Primary export route for Persian Gulf petroleum through Strait of Hormuz into the Arabian Sea and Indian Ocean",
+    "chokepoints": ["hormuz"],
+    "coordinates": [[56.5,26.5],[58,24],[60,22],[65,18],[68,15]]
+  },
+  {
+    "id": "suez_med",
+    "name": "Suez to Mediterranean",
+    "description": "Northbound Suez Canal transit connecting Red Sea traffic to the Mediterranean Sea",
+    "chokepoints": ["suez"],
+    "coordinates": [[32.3,30],[32,31],[31,32],[29,33],[26,34]]
+  },
+  {
+    "id": "bab_red_sea",
+    "name": "Bab el-Mandeb to Red Sea",
+    "description": "Northbound route through Bab el-Mandeb strait into the Red Sea, connecting Indian Ocean to Suez",
+    "chokepoints": ["bab_el_mandeb"],
+    "coordinates": [[43.3,12.6],[42,14],[41,16],[40,18],[38,20]]
+  },
+  {
+    "id": "malacca_south_china",
+    "name": "Malacca to South China Sea",
+    "description": "Major route connecting Strait of Malacca to South China Sea for East Asian trade",
+    "chokepoints": ["malacca"],
+    "coordinates": [[103,1.5],[105,3],[107,5],[109,8],[111,12]]
+  },
+  {
+    "id": "persian_gulf_loop",
+    "name": "Persian Gulf Circuit",
+    "description": "Circular tanker route through Persian Gulf picking up crude from multiple export terminals",
+    "chokepoints": ["hormuz"],
+    "coordinates": [[56.5,26.5],[55,25],[53,24],[51,24],[49,26],[48,28],[48,29],[50,29],[52,27],[54,26],[56.5,26.5]]
+  },
+  {
+    "id": "east_africa_coast",
+    "name": "East Africa Coastal Route",
+    "description": "Southbound coastal route along East Africa, connecting Horn of Africa to Mozambique Channel",
+    "chokepoints": ["mozambique_channel"],
+    "coordinates": [[40,-10],[41,-15],[40,-20],[37,-25],[35,-30]]
+  },
+  {
+    "id": "cape_route",
+    "name": "Cape of Good Hope Route",
+    "description": "Alternative route around Cape of Good Hope bypassing Suez Canal and Red Sea chokepoints",
+    "chokepoints": ["cape_of_good_hope"],
+    "coordinates": [[35,-30],[25,-34],[18,-34],[15,-32],[10,-28]]
+  },
+  {
+    "id": "red_sea_southbound",
+    "name": "Red Sea Southbound",
+    "description": "Southbound container and tanker traffic from Mediterranean through Suez Canal toward Bab el-Mandeb",
+    "chokepoints": ["suez", "bab_el_mandeb"],
+    "coordinates": [[32.3,30],[33,27],[38,22],[40,18],[42,14],[43.3,12.6]]
+  },
+  {
+    "id": "hormuz_gulf_aden",
+    "name": "Hormuz to Gulf of Aden",
+    "description": "Route connecting Strait of Hormuz through Arabian Sea to Gulf of Aden and Bab el-Mandeb",
+    "chokepoints": ["hormuz", "bab_el_mandeb"],
+    "coordinates": [[56.5,26.5],[58,23],[55,18],[52,14],[48,12],[45,12],[43.3,12.6]]
+  },
+  {
+    "id": "gibraltar_med_east",
+    "name": "Gibraltar to Eastern Mediterranean",
+    "description": "Eastbound transit through Strait of Gibraltar into Mediterranean Sea",
+    "chokepoints": ["gibraltar"],
+    "coordinates": [[-5.6,35.9],[-2,36],[5,37],[15,37],[25,34],[32,31],[35,30]]
+  },
+  {
+    "id": "bosphorus_black_sea",
+    "name": "Bosphorus to Black Sea",
+    "description": "Route through Turkish Straits connecting Mediterranean to Black Sea petroleum exports",
+    "chokepoints": ["bosphorus"],
+    "coordinates": [[29,41.1],[28.5,42],[29,43],[31,44],[32,45],[34,46]]
+  }
+]

@@ -1,0 +1,106 @@
+{
+  "last_updated": "2026-03-20",
+  "source": "USNI News Fleet Tracker March 16 2026",
+  "carrier_strike_groups": [
+    {
+      "name": "Gerald R. Ford CSG",
+      "flagship": "USS Gerald R. Ford (CVN-78)",
+      "class": "Ford-class",
+      "lat": 33.5,
+      "lon": 33.0,
+      "theater": "Eastern Mediterranean",
+      "operation": "Operation Epic Fury",
+      "notes": "Operating Eastern Mediterranean as of March 16. Transited Suez Canal March 5, operated Red Sea March 9.",
+      "source": "USNI News March 16, 2026",
+      "escorts": ["USS Winston S. Churchill (DDG-81)", "USS Bainbridge (DDG-96)", "USS Mahan (DDG-72)"],
+      "air_wing": ["VFA-31", "VFA-37", "VFA-87", "VFA-213", "VAQ-142", "VAW-124"]
+    },
+    {
+      "name": "Abraham Lincoln CSG",
+      "flagship": "USS Abraham Lincoln (CVN-72)",
+      "class": "Nimitz-class",
+      "lat": 17.0,
+      "lon": 62.0,
+      "theater": "Arabian Sea",
+      "operation": "Operation Epic Fury",
+      "notes": "Operating Arabian Sea. Destroyers forward near Hormuz.",
+      "source": "USNI News March 16, 2026",
+      "escorts": ["USS Frank E. Petersen Jr. (DDG-121)", "USS Michael Murphy (DDG-112)", "USS Mitscher (DDG-57)"],
+      "air_wing": ["VFA-14", "VFA-41", "VFA-151", "VMFA-314", "VAQ-133", "VAW-117"]
+    },
+    {
+      "name": "Charles de Gaulle CSG",
+      "flagship": "FS Charles de Gaulle (R91)",
+      "class": "Charles de Gaulle-class (nuclear)",
+      "lat": 34.2,
+      "lon": 33.1,
+      "theater": "Eastern Mediterranean — South of Cyprus",
+      "operation": "Mission La Fayette 26",
+      "notes": "Confirmed south of Limassol Cyprus as of March 17. Defensive posture.",
+      "source": "itamilradar March 16, Cyprus Mail March 17, 2026",
+      "escorts": ["FS Chevalier Paul (D621)", "FS Languedoc (D653)", "ESPS Cristóbal Colón (F105)", "HNLMS Evertsen (F805)", "ITS Federico Martinengo (F596)"],
+      "air_wing": ["Rafale Marine (x20)", "E-2C Hawkeye"]
+    },
+    {
+      "name": "George Washington CSG",
+      "flagship": "USS George Washington (CVN-73)",
+      "class": "Nimitz-class",
+      "lat": 35.4,
+      "lon": 139.6,
+      "theater": "Yokosuka, Japan (in port)",
+      "operation": "7th Fleet",
+      "notes": "Homeported Yokosuka. Not deployed.",
+      "source": "USNI News March 16, 2026",
+      "escorts": [],
+      "air_wing": []
+    }
+  ],
+  "amphibious_ready_groups": [
+    {
+      "name": "Iwo Jima ARG / 22nd MEU",
+      "flagship": "USS Iwo Jima (LHD-7)",
+      "class": "Wasp-class",
+      "lat": 15.0,
+      "lon": -67.0,
+      "theater": "Caribbean Sea",
+      "notes": "Operating Caribbean Sea as of March 16. Port visit Ponce Puerto Rico. NOT in Mediterranean.",
+      "source": "USNI News March 16, 2026",
+      "escorts": ["USS Fort Lauderdale (LPD-28)", "USS San Antonio (LPD-17)"]
+    },
+    {
+      "name": "USS Tripoli ARG",
+      "flagship": "USS Tripoli (LHA-7)",
+      "class": "America-class",
+      "lat": 12.0,
+      "lon": 112.0,
+      "theater": "South China Sea — en route Middle East",
+      "notes": "En route to Middle East as of March 16.",
+      "source": "USNI News March 16, 2026",
+      "escorts": ["USS San Diego (LPD-22)", "USS New Orleans (LPD-18)"]
+    }
+  ],
+  "notable_surface_units": [
+    {
+      "name": "Hormuz Destroyer Group",
+      "flagship": "USS Mitscher (DDG-57)",
+      "class": "Arleigh Burke-class",
+      "lat": 26.4,
+      "lon": 56.5,
+      "theater": "Persian Gulf / Strait of Hormuz",
+      "notes": "Forward deployed near Strait of Hormuz with LCS mine countermeasure packages.",
+      "source": "USNI News March 9, 2026",
+      "escorts": ["USS Canberra (LCS-30)", "USS Tulsa (LCS-16)", "USS Santa Barbara (LCS-32)"]
+    },
+    {
+      "name": "Med Destroyer Group",
+      "flagship": "USS Roosevelt (DDG-80)",
+      "class": "Arleigh Burke-class",
+      "lat": 35.0,
+      "lon": 24.0,
+      "theater": "Eastern Mediterranean",
+      "notes": "Independent destroyers Eastern Med. USS Oscar Austin (DDG-79) intercepted Iranian ballistic missile with SM-3.",
+      "source": "USNI News March 16, 2026",
+      "escorts": ["USS Bulkeley (DDG-84)", "USS Oscar Austin (DDG-79)"]
+    }
+  ]
+}

@@ -1,0 +1,148 @@
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--akili-surface);
+    color: var(--akili-text-primary);
+    height: 100vh;
+    overflow: hidden;
+    font-size: 13px;
+}
+
+#root {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Scrollbars ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="day"] ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="day"] ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.25);
+}
+
+/* ── Leaflet overrides ───────────────────────────────────────────────────── */
+.leaflet-container {
+    background: #111827;
+}
+
+.leaflet-control-attribution {
+    display: none !important;
+}
+
+.leaflet-control-zoom a {
+    border-radius: 0 !important;
+    border: 1px solid var(--akili-border) !important;
+    background: var(--akili-panel-blur) !important;
+    color: var(--akili-text-primary) !important;
+    backdrop-filter: blur(8px);
+}
+
+.leaflet-popup-content-wrapper {
+    border-radius: 4px !important;
+    border: 1px solid var(--akili-border) !important;
+    background: var(--akili-panel) !important;
+    color: var(--akili-text-primary) !important;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
+    backdrop-filter: blur(16px) !important;
+}
+
+.leaflet-popup-tip-container {
+    display: none !important;
+}
+
+.leaflet-popup-tip {
+    display: none !important;
+}
+
+/* ── Focus rings ─────────────────────────────────────────────────────────── */
+input:focus,
+select:focus,
+textarea:focus {
+    outline: none;
+    border-color: rgba(13, 148, 136, 0.6) !important;
+}
+
+/* ── Select elements global dark ────────────────────────────────────────── */
+select {
+    background: var(--akili-input-bg);
+    border: 1px solid var(--akili-input-border);
+    color: var(--akili-text-primary);
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    appearance: auto;
+}
+
+select option {
+    background: var(--akili-panel-solid, #0e1420);
+    color: var(--akili-text-primary);
+}
+
+/* ── Input global dark ───────────────────────────────────────────────────── */
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+input[type="number"],
+input[type="search"],
+textarea {
+    background: var(--akili-input-bg);
+    border: 1px solid var(--akili-input-border);
+    color: var(--akili-text-primary);
+    border-radius: 3px;
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--akili-text-muted);
+}
+
+/* ── Akili glass panel utility ──────────────────────────────────────────── */
+.akili-glass {
+    background: rgba(14, 20, 32, 0.88);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 4px;
+}
+
+/* ── Section header utility ─────────────────────────────────────────────── */
+.akili-section-header {
+    font-size: 11px;
+    font-weight: 700;
+    color: #0d9488;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}

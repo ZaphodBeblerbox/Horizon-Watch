@@ -1,0 +1,220 @@
+import re
+
+_CONNECTORS = {
+    "of", "the", "and", "de", "da", "di", "al", "el", "es", "la", "le", "bin", "ibn",
+}
+
+_STOPWORDS = {
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    "government", "president", "prime", "minister", "army", "military", "police",
+    "breaking", "update", "news", "world", "analysis", "report", "agency",
+    "official", "officials", "state", "court", "parliament", "security",
+}
+
+_RE_IN_AT = re.compile(
+    r"\b(?:in|at|near|from)\s+([A-Z][A-Za-z'`.-]*(?:\s+(?:[A-Z][A-Za-z'`.-]*|[a-z]{1,3})){0,3})"
+)
+_RE_CITY_COUNTRY = re.compile(
+    r"\b([A-Z][A-Za-z'`.-]*(?:\s+(?:[A-Z][A-Za-z'`.-]*|[a-z]{1,3})){0,2}),\s*([A-Z][A-Za-z'`.-]*(?:\s+(?:[A-Z][A-Za-z'`.-]*|[a-z]{1,3})){0,2})"
+)
+_RE_DASH = re.compile(
+    r"\b([A-Z][A-Za-z'`.-]*(?:\s+(?:[A-Z][A-Za-z'`.-]*|[a-z]{1,3})){0,3})\s+-"
+)
+_RE_CAP_SEQ = re.compile(
+    r"\b([A-Z][A-Za-z'`.-]*(?:\s+(?:[A-Z][A-Za-z'`.-]*|of|the|and|de|da|di|al|el|es|la|le)){0,3})\b"
+)
+
+_COUNTRY_CODE_ALIASES = {
+    "tz": ["tanzania", "united republic of tanzania"],
+    "ke": ["kenya"],
+    "ug": ["uganda"],
+    "rw": ["rwanda"],
+    "bi": ["burundi"],
+    "cd": ["drc", "dr congo", "congo-kinshasa", "democratic republic of congo", "democratic republic of the congo"],
+    "so": ["somalia"],
+    "et": ["ethiopia"],
+    "sd": ["sudan"],
+    "ss": ["south sudan"],
+    "mz": ["mozambique"],
+    "zm": ["zambia"],
+    "mw": ["malawi"],
+    "zw": ["zimbabwe"],
+    "za": ["south africa", "sa"],
+    "cf": ["car", "central african republic"],
+    "ae": ["uae", "united arab emirates"],
+    "gb": ["uk", "united kingdom", "britain", "great britain"],
+    "us": ["us", "u.s.", "usa", "u.s.a.", "united states", "united states of america"],
+}
+
+_COUNTRY_NAME_BY_CODE = {
+    "tz": "Tanzania",
+    "ke": "Kenya",
+    "ug": "Uganda",
+    "rw": "Rwanda",
+    "bi": "Burundi",
+    "cd": "Democratic Republic of the Congo",
+    "so": "Somalia",
+    "et": "Ethiopia",
+    "sd": "Sudan",
+    "ss": "South Sudan",
+    "mz": "Mozambique",
+    "zm": "Zambia",
+    "mw": "Malawi",
+    "zw": "Zimbabwe",
+    "za": "South Africa",
+    "cf": "Central African Republic",
+    "ae": "United Arab Emirates",
+    "gb": "United Kingdom",
+    "us": "United States",
+}
+
+_COUNTRY_ALIAS_TO_CODE = {}
+for _code, _aliases in _COUNTRY_CODE_ALIASES.items():
+    for _alias in _aliases:
+        _COUNTRY_ALIAS_TO_CODE[_alias.lower()] = _code
+
+
+def _clean(candidate: str) -> str:
+    return re.sub(r"\s+", " ", (candidate or "")).strip(" ,.-")
+
+
+def _is_valid_candidate(candidate: str) -> bool:
+    c = _clean(candidate)
+    if not c:
+        return False
+    if any(ch.isdigit() for ch in c):
+        return False
+    tokens = c.split()
+    if len(tokens) == 0 or len(tokens) > 4:
+        return False
+
+    normalized = [t.lower() for t in tokens]
+    if all(t in _STOPWORDS for t in normalized):
+        return False
+    if normalized[0] in _STOPWORDS:
+        return False
+
+    # Require first token to look place-like (capitalized word).
+    first = tokens[0]
+    if not first[0].isupper():
+        return False
+
+    for t in normalized[1:]:
+        if t in _CONNECTORS:
+            continue
+        if t in _STOPWORDS:
+            return False
+    return True
+
+
+def extract_location_candidates(text: str) -> list[str]:
+    """
+    Lightweight location candidate extraction from title+summary text.
+    Returns deduplicated candidates ordered by heuristic confidence.
+    """
+    src = re.sub(r"\s+", " ", text or "").strip()
+    if not src:
+        return []
+
+    scored: list[tuple[int, str]] = []
+
+    for m in _RE_IN_AT.finditer(src):
+        scored.append((100, _clean(m.group(1))))
+
+    for m in _RE_CITY_COUNTRY.finditer(src):
+        city = _clean(m.group(1))
+        country = _clean(m.group(2))
+        scored.append((96, f"{city}, {country}"))
+        scored.append((92, city))
+
+    for m in _RE_DASH.finditer(src):
+        scored.append((88, _clean(m.group(1))))
+
+    for m in _RE_CAP_SEQ.finditer(src):
+        scored.append((70, _clean(m.group(1))))
+
+    # Sort by score descending while preserving first-seen order within same score.
+    dedup: dict[str, tuple[int, int, str]] = {}
+    for idx, (score, candidate) in enumerate(scored):
+        if not _is_valid_candidate(candidate):
+            continue
+        key = candidate.lower()
+        if key not in dedup or score > dedup[key][0]:
+            dedup[key] = (score, idx, candidate)
+
+    ordered = sorted(dedup.values(), key=lambda x: (-x[0], x[1]))
+    return [c for _, _, c in ordered]
+
+
+def rank_location_candidates(title: str, body: str) -> list[str]:
+    """
+    Extract location candidates from title + body, weighted by position.
+
+    Weighting scheme:
+      title          → weight 3  (most reliable — primary subject of article)
+      first 100 words of body → weight 2
+      remainder of body       → weight 1
+
+    This prevents a passing country mention in the middle of an article from
+    out-ranking the headline location, which is the root cause of "Tehran funeral
+    geocoded to Kenya" misclassifications.
+
+    Returns a deduplicated list sorted by weight descending (highest first).
+    """
+    body_words  = (body or "").split()
+    first_100   = " ".join(body_words[:100])
+    rest_body   = " ".join(body_words[100:])
+
+    title_cands  = extract_location_candidates(title or "")
+    first_cands  = extract_location_candidates(first_100) if first_100 else []
+    rest_cands   = extract_location_candidates(rest_body)  if rest_body  else []
+
+    weight_map: dict[str, int]  = {}
+    canonical:  dict[str, str]  = {}
+
+    for c in title_cands:
+        key = c.lower()
+        if key not in weight_map or 3 > weight_map[key]:
+            weight_map[key] = 3
+        if key not in canonical:
+            canonical[key] = c
+
+    for c in first_cands:
+        key = c.lower()
+        if key not in weight_map or 2 > weight_map[key]:
+            weight_map[key] = max(weight_map.get(key, 0), 2)
+        if key not in canonical:
+            canonical[key] = c
+
+    for c in rest_cands:
+        key = c.lower()
+        weight_map[key] = max(weight_map.get(key, 0), 1)
+        if key not in canonical:
+            canonical[key] = c
+
+    sorted_keys = sorted(weight_map.keys(), key=lambda k: -weight_map[k])
+    return [canonical[k] for k in sorted_keys if k in canonical]
+
+
+def extract_country_mentions(text: str) -> set[str]:
+    """
+    Detect country mentions and return ISO2 codes.
+    """
+    src = (text or "").lower()
+    found: set[str] = set()
+    if not src:
+        return found
+    for alias, code in _COUNTRY_ALIAS_TO_CODE.items():
+        if re.search(rf"(?<![a-z]){re.escape(alias)}(?![a-z])", src):
+            found.add(code)
+    return found
+
+
+def country_code_from_name(name: str) -> str | None:
+    return _COUNTRY_ALIAS_TO_CODE.get((name or "").strip().lower())
+
+
+def country_name_from_code(code: str) -> str | None:
+    return _COUNTRY_NAME_BY_CODE.get((code or "").strip().lower())
