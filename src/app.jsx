@@ -218,22 +218,15 @@ export default function App() {
     useEffect(() => {
         if (!currentUser) return
         const post = () => {
-            const center = mapViewport?.center || []
-            const boundsZoom = mapViewport?.bounds?.zoom
             apiFetch("/api/auth/session", {
                 method: "POST",
-                body: JSON.stringify({
-                    lat: Number.isFinite(center[0]) ? center[0] : null,
-                    lon: Number.isFinite(center[1]) ? center[1] : null,
-                    zoom: Number.isFinite(boundsZoom) ? boundsZoom : null,
-                    event: null,
-                }),
+                body: JSON.stringify({ current_view: null }),
             }).catch(() => {})
         }
         post()
         const t = setInterval(post, 60000)
         return () => clearInterval(t)
-    }, [currentUser, mapViewport])
+    }, [currentUser])
 
     // ── Mission profile ───────────────────────────────────────────────────────
     const [profile, setProfile] = useState(() => loadProfile())
@@ -983,7 +976,6 @@ export default function App() {
                         surfaceItems={surfaceItems}
                         onSurfaceItemClick={handleSurfaceItemClick}
                         contextualLayers={contextualLayers}
-                        currentUser={currentUser}
                         selectedSurface={selectedSurface}
                         surfaceContext={surfaceContext}
                         surfaceEnrichment={surfaceEnrichment}

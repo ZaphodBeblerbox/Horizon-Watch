@@ -1,460 +1,296 @@
-import React, { useEffect, useMemo } from "react"
-import API_BASE from "../apiBase.js"
+import { useState, useEffect, useCallback } from "react"
+import { apiFetch } from "../auth.js"
 
-const PANEL_STYLE = {
-    position: "fixed",
-    inset: 0,
-    zIndex: 2000,
-    background: "rgba(6,13,26,0.92)",
-    backdropFilter: "blur(20px)",
-    WebkitBackdropFilter: "blur(20px)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    color: "#e8edf2",
-    display: "flex",
-    flexDirection: "column",
+const ROLE_COLORS = {
+    observer: "rgba(255,255,255,0.3)",
+    analyst:  "#2d8fe8",
+    admin:    "#FFB300",
+}
+const ROLE_LABEL = { observer: "OBSERVER", analyst: "ANALYST", admin: "ADMIN" }
+
+function RoleBadge({ role }) {
+    return (
+        <span style={{
+            fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
+            color: ROLE_COLORS[role] || "rgba(255,255,255,0.3)",
+            border: `1px solid ${ROLE_COLORS[role] || "rgba(255,255,255,0.15)"}`,
+            borderRadius: 3, padding: "2px 5px", whiteSpace: "nowrap",
+        }}>
+            {ROLE_LABEL[role] || (role || "").toUpperCase()}
+        </span>
+    )
 }
 
-const SECTION_STYLE = {
-    background: "rgba(6,13,26,0.92)",
-    backdropFilter: "blur(20px)",
-    WebkitBackdropFilter: "blur(20px)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: 10,
-}
-
-function adminHeaders() {
-    const token = localStorage.getItem("hw_token")
-    return {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+// React error boundary
+class AdminErrorBoundary extends React.Component {
+    constructor(props) { super(props); this.state = { error: null } }
+    static getDerivedStateFromError(err) { return { error: err } }
+    render() {
+        if (this.state.error) {
+            return (
+                <div style={{ padding: 32, color: "#f87171", fontFamily: "Inter, sans-serif", fontSize: 13 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Admin panel error</div>
+                    <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11 }}>{String(this.state.error)}</div>
+                    <button onClick={() => this.setState({ error: null })} style={{ marginTop: 16, padding: "6px 14px", background: "rgba(26,110,181,0.2)", border: "1px solid rgba(26,110,181,0.4)", borderRadius: 4, color: "#60a5fa", cursor: "pointer", fontSize: 11 }}>
+                        Retry
+                    </button>
+                </div>
+            )
+        }
+        return this.props.children
     }
 }
 
-function relTime(iso) {
-    if (!iso) return "Never"
-    const diff = Date.now() - new Date(iso).getTime()
-    const minutes = Math.floor(diff / 60000)
-    if (minutes < 1) return "just now"
-    if (minutes < 60) return `${minutes}m ago`
-    if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`
-    return new Date(iso).toLocaleString()
-}
+// Import React for the error boundary class
+import React from "react"
 
-export default function AdminPanel({ currentUser, onClose }) {
-    const [tab, setTab] = React.useState("users")
-    const [users, setUsers] = React.useState([])
-    const [activeUsers, setActiveUsers] = React.useState([])
-    const [loadingUsers, setLoadingUsers] = React.useState(false)
-    const [loadingActiveUsers, setLoadingActiveUsers] = React.useState(false)
-    const [savingId, setSavingId] = React.useState(null)
-    const [showLocationsOnMap, setShowLocationsOnMap] = React.useState(false)
-    const [error, setError] = React.useState(null)
+function AdminPanelInner({ currentUser, onClose }) {
+    const [tab,     setTab]     = useState("users")
+    const [users,   setUsers]   = useState([])
+    const [loading, setLoading] = useState(false)
+    const [error,   setError]   = useState("")
+    const [notes,   setNotes]   = useState({})
+    const [saving,  setSaving]  = useState({})
 
-    const pendingUsers = useMemo(
-        () => users.filter((user) => !user.approved),
-        [users],
-    )
-
-    const onlineUsers = useMemo(
-        () => activeUsers.filter((user) => user.last_seen),
-        [activeUsers],
-    )
-
-    const dispatchUserLocations = (items) => {
-        window.dispatchEvent(new CustomEvent("akili:show-user-locations", {
-            detail: Array.isArray(items) ? items : [],
-        }))
-    }
-
-    const fetchUsers = React.useCallback(async () => {
-        setLoadingUsers(true)
+    const fetchUsers = useCallback(async () => {
+        setLoading(true)
+        setError("")
         try {
-            const res = await fetch(`${API_BASE}/api/admin/users`, {
-                headers: adminHeaders(),
-            })
+            const res = await apiFetch("/api/admin/users")
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}))
+                setError(err.detail || `Error ${res.status}`)
+                return
+            }
             const data = await res.json()
-            if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
-            const list = Array.isArray(data) ? data : (Array.isArray(data?.users) ? data.users : [])
+            const list = Array.isArray(data) ? data : []
             setUsers(list)
-        } catch (err) {
-            setError(err)
+            const n = {}
+            list.forEach(u => { n[u.id] = u.notes || "" })
+            setNotes(n)
+        } catch (e) {
+            setError("Connection error — check backend.")
         } finally {
-            setLoadingUsers(false)
+            setLoading(false)
         }
     }, [])
 
-    const fetchActiveUsers = React.useCallback(async () => {
-        setLoadingActiveUsers(true)
+    useEffect(() => { if (tab === "users") fetchUsers() }, [tab, fetchUsers])
+
+    async function approve(id) {
         try {
-            const res = await fetch(`${API_BASE}/api/admin/active-users`, {
-                headers: adminHeaders(),
-            })
-            const data = await res.json()
-            if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
-            const list = Array.isArray(data) ? data : []
-            setActiveUsers(list)
-            if (showLocationsOnMap) {
-                dispatchUserLocations(list)
-            }
-        } catch (err) {
-            setError(err)
-        } finally {
-            setLoadingActiveUsers(false)
-        }
-    }, [showLocationsOnMap])
-
-    useEffect(() => {
-        let mounted = true
-        ;(async () => {
-            try {
-                if (tab === "users" && mounted) {
-                    await fetchUsers()
-                }
-            } catch (err) {
-                if (mounted) setError(err)
-            }
-        })()
-        return () => { mounted = false }
-    }, [tab, fetchUsers])
-
-    useEffect(() => {
-        let mounted = true
-        ;(async () => {
-            try {
-                if (tab === "active-users" && mounted) {
-                    await fetchActiveUsers()
-                }
-            } catch (err) {
-                if (mounted) setError(err)
-            }
-        })()
-        return () => { mounted = false }
-    }, [tab, fetchActiveUsers])
-
-    useEffect(() => {
-        if (!showLocationsOnMap) {
-            dispatchUserLocations([])
-            return
-        }
-        dispatchUserLocations(activeUsers)
-    }, [showLocationsOnMap, activeUsers])
-
-    async function runUserAction(url, options = {}, { refresh = true } = {}) {
-        setSavingId(url)
-        try {
-            const res = await fetch(`${API_BASE}${url}`, {
-                ...options,
-                headers: adminHeaders(),
-            })
-            const data = await res.json().catch(() => ({}))
-            if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
-            if (refresh) await fetchUsers()
-            if (tab === "active-users") await fetchActiveUsers()
-            return data
-        } catch (err) {
-            setError(err)
-            return null
-        } finally {
-            setSavingId(null)
-        }
+            await apiFetch(`/api/admin/users/${id}/approve`, { method: "POST" })
+            fetchUsers()
+        } catch { /* ignore */ }
     }
 
-    if (error) return (
-        <div style={{ padding: 24, color: "#dc2626" }}>
-            Admin panel error: {error.message}
-            <button onClick={() => setError(null)} style={{ marginLeft: 8 }}>
-                Retry
-            </button>
+    async function setRole(id, role) {
+        try {
+            await apiFetch(`/api/admin/users/${id}`, {
+                method: "PUT",
+                body: JSON.stringify({ role }),
+            })
+            fetchUsers()
+        } catch { /* ignore */ }
+    }
+
+    async function deleteUser(id) {
+        if (!window.confirm("Delete this user account? This cannot be undone.")) return
+        try {
+            await apiFetch(`/api/admin/users/${id}`, { method: "DELETE" })
+            fetchUsers()
+        } catch { /* ignore */ }
+    }
+
+    async function saveNotes(id) {
+        setSaving(s => ({ ...s, [id]: true }))
+        try {
+            await apiFetch(`/api/admin/users/${id}`, {
+                method: "PUT",
+                body: JSON.stringify({ notes: notes[id] || "" }),
+            })
+        } catch { /* ignore */ }
+        setSaving(s => ({ ...s, [id]: false }))
+    }
+
+    const pending  = users.filter(u => !u.approved)
+    const approved = users.filter(u => u.approved)
+
+    return (
+        <div style={{
+            position: "fixed", inset: 0, zIndex: 2000,
+            background: "rgba(6,13,26,0.96)",
+            backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+            display: "flex", flexDirection: "column",
+            fontFamily: "Inter, -apple-system, sans-serif", color: "#e0e0e0",
+        }}>
+            {/* Header */}
+            <div style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)",
+                flexShrink: 0,
+            }}>
+                <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="rgba(255,179,0,0.8)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                <span style={{ fontWeight: 700, fontSize: 13, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                    Admin Console
+                </span>
+                <div style={{ flex: 1 }} />
+                {pending.length > 0 && (
+                    <span style={{ fontSize: 10, background: "rgba(251,191,36,0.2)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.4)", borderRadius: 10, padding: "2px 8px" }}>
+                        {pending.length} pending
+                    </span>
+                )}
+                <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 4 }}>✕</button>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: "flex", padding: "0 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
+                {["users", "activity"].map(t => (
+                    <button key={t} onClick={() => setTab(t)} style={{
+                        background: "none", border: "none",
+                        borderBottom: tab === t ? "2px solid rgba(26,110,181,0.8)" : "2px solid transparent",
+                        color: tab === t ? "#fff" : "rgba(255,255,255,0.35)",
+                        fontSize: 11, fontWeight: tab === t ? 600 : 400,
+                        letterSpacing: "0.08em", textTransform: "uppercase",
+                        padding: "10px 16px 8px", cursor: "pointer", marginBottom: -1,
+                    }}>
+                        {t}
+                    </button>
+                ))}
+            </div>
+
+            {/* Body */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+                {tab === "activity" && (
+                    <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 12, marginTop: 40, textAlign: "center" }}>
+                        Activity log — coming soon
+                    </div>
+                )}
+
+                {tab === "users" && (
+                    <>
+                        {loading && <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Loading…</div>}
+                        {error && (
+                            <div style={{ color: "#f87171", fontSize: 12, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                                {error}
+                                <button onClick={fetchUsers} style={{ fontSize: 10, color: "#60a5fa", background: "none", border: "none", cursor: "pointer", padding: 0 }}>Retry</button>
+                            </div>
+                        )}
+
+                        {pending.length > 0 && (
+                            <>
+                                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "#fbbf24", textTransform: "uppercase", marginBottom: 10, borderLeft: "2px solid #fbbf24", paddingLeft: 8 }}>
+                                    Pending Approval ({pending.length})
+                                </div>
+                                {pending.map(u => (
+                                    <UserRow key={u.id} user={u} currentUser={currentUser}
+                                        notes={notes[u.id] || ""} onNotesChange={v => setNotes(n => ({ ...n, [u.id]: v }))}
+                                        onSaveNotes={() => saveNotes(u.id)} savingNotes={!!saving[u.id]}
+                                        onApprove={() => approve(u.id)} onSetRole={r => setRole(u.id, r)}
+                                        onDelete={() => deleteUser(u.id)} highlight />
+                                ))}
+                                <div style={{ height: 20 }} />
+                            </>
+                        )}
+
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 10, borderLeft: "2px solid rgba(255,255,255,0.2)", paddingLeft: 8 }}>
+                            Active Users ({approved.length})
+                        </div>
+                        {approved.map(u => (
+                            <UserRow key={u.id} user={u} currentUser={currentUser}
+                                notes={notes[u.id] || ""} onNotesChange={v => setNotes(n => ({ ...n, [u.id]: v }))}
+                                onSaveNotes={() => saveNotes(u.id)} savingNotes={!!saving[u.id]}
+                                onApprove={null} onSetRole={r => setRole(u.id, r)}
+                                onDelete={() => deleteUser(u.id)} highlight={false} />
+                        ))}
+                        {!loading && users.length === 0 && !error && (
+                            <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, marginTop: 20 }}>No users found.</div>
+                        )}
+                    </>
+                )}
+            </div>
         </div>
     )
+}
 
-    try {
-        return (
-            <div style={PANEL_STYLE}>
-                <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "16px 20px",
-                    borderBottom: "1px solid rgba(255,255,255,0.08)",
-                }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                        </svg>
-                        <div>
-                            <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.12em" }}>ADMIN PANEL</div>
-                            <div style={{ fontSize: 10, color: "#8899aa", marginTop: 2 }}>
-                                {currentUser?.email || "Administrator"}
-                            </div>
-                        </div>
+function UserRow({ user, currentUser, notes, onNotesChange, onSaveNotes, savingNotes, onApprove, onSetRole, onDelete, highlight }) {
+    const [notesOpen, setNotesOpen] = useState(false)
+    const isSelf       = user.id === currentUser?.id
+    const isSuperAdmin = !!user.is_super_admin
+    const canModify    = !isSelf && (!isSuperAdmin || !!currentUser?.is_super_admin)
+
+    return (
+        <div style={{
+            background: highlight ? "rgba(251,191,36,0.05)" : "rgba(255,255,255,0.02)",
+            border: `1px solid ${highlight ? "rgba(251,191,36,0.2)" : "rgba(255,255,255,0.06)"}`,
+            borderRadius: 6, marginBottom: 8, padding: "12px 14px",
+        }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                {isSuperAdmin && <span style={{ fontSize: 12, opacity: 0.7 }} title="Super admin">★</span>}
+                <div style={{ flex: 1, minWidth: 160 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: isSuperAdmin ? "#FFB300" : "#fff" }}>
+                        {user.name || <span style={{ color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>No name</span>}
+                        {isSelf && <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginLeft: 6 }}>YOU</span>}
                     </div>
-                    <button
-                        onClick={onClose}
-                        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 18 }}
-                    >
-                        ×
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{user.email}</div>
+                    {user.created_at && (
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginTop: 1 }}>
+                            Joined {new Date(user.created_at).toLocaleDateString()}
+                        </div>
+                    )}
+                </div>
+                <RoleBadge role={user.role} />
+                {canModify && (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        {onApprove && <button onClick={onApprove} style={actionBtn("#22c55e")}>Approve</button>}
+                        {user.approved && user.role === "observer" && (
+                            <button onClick={() => onSetRole("analyst")} style={actionBtn("#2d8fe8")}>→ Analyst</button>
+                        )}
+                        {user.approved && user.role === "analyst" && (
+                            <>
+                                <button onClick={() => onSetRole("observer")} style={actionBtn("rgba(255,255,255,0.2)")}>→ Observer</button>
+                                <button onClick={() => onSetRole("admin")} style={actionBtn("#FFB300")}>→ Admin</button>
+                            </>
+                        )}
+                        {user.approved && user.role === "admin" && !isSuperAdmin && (
+                            <button onClick={() => onSetRole("analyst")} style={actionBtn("rgba(255,255,255,0.2)")}>→ Analyst</button>
+                        )}
+                        <button onClick={() => setNotesOpen(v => !v)} style={actionBtn("rgba(255,255,255,0.2)")}>Notes</button>
+                        <button onClick={onDelete} style={actionBtn("#ef4444")}>Delete</button>
+                    </div>
+                )}
+            </div>
+
+            {notesOpen && (
+                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                    <textarea
+                        value={notes} onChange={e => onNotesChange(e.target.value)}
+                        placeholder="Internal notes…" rows={2}
+                        style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "6px 8px", fontSize: 11, color: "#e0e0e0", resize: "vertical", outline: "none", fontFamily: "inherit" }}
+                    />
+                    <button onClick={onSaveNotes} disabled={savingNotes}
+                        style={{ ...actionBtn("#2d8fe8"), alignSelf: "flex-end", padding: "6px 10px" }}>
+                        {savingNotes ? "…" : "Save"}
                     </button>
                 </div>
+            )}
+        </div>
+    )
+}
 
-                <div style={{
-                    display: "flex",
-                    gap: 8,
-                    padding: "12px 20px 0",
-                }}>
-                    {[
-                        ["users", "USERS"],
-                        ["active-users", "ACTIVE USERS"],
-                    ].map(([id, label]) => (
-                        <button
-                            key={id}
-                            onClick={() => setTab(id)}
-                            style={{
-                                padding: "8px 12px",
-                                borderRadius: 999,
-                                border: `1px solid ${tab === id ? "rgba(26,110,181,0.45)" : "rgba(255,255,255,0.08)"}`,
-                                background: tab === id ? "rgba(26,110,181,0.16)" : "rgba(255,255,255,0.03)",
-                                color: tab === id ? "#dbeafe" : "#94a3b8",
-                                cursor: "pointer",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                letterSpacing: "0.08em",
-                            }}
-                        >
-                            {label}
-                        </button>
-                    ))}
-                </div>
-
-                <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-                    {tab === "users" && (
-                        <>
-                            <div style={{ ...SECTION_STYLE, padding: 16, marginBottom: 16 }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", letterSpacing: "0.1em", marginBottom: 12 }}>
-                                    PENDING APPROVALS
-                                </div>
-                                {pendingUsers.length === 0 && (
-                                    <div style={{ fontSize: 12, color: "#8899aa" }}>
-                                        No pending approvals.
-                                    </div>
-                                )}
-                                {pendingUsers.map((user) => (
-                                    <div
-                                        key={user.id}
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            gap: 12,
-                                            padding: "12px 14px",
-                                            background: "rgba(251,191,36,0.08)",
-                                            border: "1px solid rgba(251,191,36,0.28)",
-                                            borderRadius: 8,
-                                            marginBottom: 10,
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ fontSize: 12, fontWeight: 700 }}>{user.name || "No name"}</div>
-                                            <div style={{ fontSize: 11, color: "#cbd5e1", marginTop: 2 }}>{user.email}</div>
-                                        </div>
-                                        <div style={{ display: "flex", gap: 8 }}>
-                                            <button
-                                                onClick={() => runUserAction(`/api/admin/users/${user.id}/approve`, { method: "POST" })}
-                                                disabled={savingId === `/api/admin/users/${user.id}/approve`}
-                                                style={{
-                                                    padding: "6px 10px",
-                                                    borderRadius: 6,
-                                                    border: "1px solid rgba(34,197,94,0.4)",
-                                                    background: "rgba(34,197,94,0.16)",
-                                                    color: "#4ade80",
-                                                    cursor: "pointer",
-                                                }}
-                                            >
-                                                Approve
-                                            </button>
-                                            <button
-                                                onClick={() => runUserAction(`/api/admin/users/${user.id}`, { method: "DELETE" })}
-                                                disabled={savingId === `/api/admin/users/${user.id}`}
-                                                style={{
-                                                    padding: "6px 10px",
-                                                    borderRadius: 6,
-                                                    border: "1px solid rgba(239,68,68,0.4)",
-                                                    background: "rgba(239,68,68,0.12)",
-                                                    color: "#f87171",
-                                                    cursor: "pointer",
-                                                }}
-                                            >
-                                                Reject
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div style={{ ...SECTION_STYLE, overflow: "hidden" }}>
-                                <div style={{ overflowX: "auto" }}>
-                                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                                        <thead>
-                                            <tr style={{ background: "rgba(255,255,255,0.03)" }}>
-                                                {["Name", "Email", "Role", "Approved", "Last Login", "Actions"].map((label) => (
-                                                    <th
-                                                        key={label}
-                                                        style={{
-                                                            textAlign: "left",
-                                                            padding: "12px 14px",
-                                                            color: "#94a3b8",
-                                                            fontSize: 10,
-                                                            fontWeight: 700,
-                                                            letterSpacing: "0.08em",
-                                                            borderBottom: "1px solid rgba(255,255,255,0.08)",
-                                                        }}
-                                                    >
-                                                        {label}
-                                                    </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {loadingUsers && (
-                                                <tr>
-                                                    <td colSpan={6} style={{ padding: 16, color: "#8899aa" }}>
-                                                        Loading users...
-                                                    </td>
-                                                </tr>
-                                            )}
-                                            {!loadingUsers && users.map((user) => (
-                                                <tr key={user.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                                                    <td style={{ padding: "12px 14px", fontWeight: 600 }}>{user.name || "No name"}</td>
-                                                    <td style={{ padding: "12px 14px", color: "#cbd5e1" }}>{user.email}</td>
-                                                    <td style={{ padding: "12px 14px" }}>
-                                                        <select
-                                                            value={user.role || "observer"}
-                                                            onChange={(e) => runUserAction(`/api/admin/users/${user.id}`, {
-                                                                method: "PUT",
-                                                                body: JSON.stringify({ role: e.target.value }),
-                                                            })}
-                                                            style={{
-                                                                background: "rgba(255,255,255,0.04)",
-                                                                color: "#e8edf2",
-                                                                border: "1px solid rgba(255,255,255,0.12)",
-                                                                borderRadius: 6,
-                                                                padding: "6px 8px",
-                                                            }}
-                                                        >
-                                                            <option value="observer">observer</option>
-                                                            <option value="analyst">analyst</option>
-                                                            <option value="admin">admin</option>
-                                                        </select>
-                                                    </td>
-                                                    <td style={{ padding: "12px 14px" }}>
-                                                        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={!!user.approved}
-                                                                onChange={(e) => runUserAction(`/api/admin/users/${user.id}`, {
-                                                                    method: "PUT",
-                                                                    body: JSON.stringify({ approved: e.target.checked }),
-                                                                })}
-                                                            />
-                                                            <span style={{ color: user.approved ? "#4ade80" : "#fbbf24" }}>
-                                                                {user.approved ? "Yes" : "No"}
-                                                            </span>
-                                                        </label>
-                                                    </td>
-                                                    <td style={{ padding: "12px 14px", color: "#94a3b8" }}>
-                                                        {relTime(user.last_login)}
-                                                    </td>
-                                                    <td style={{ padding: "12px 14px" }}>
-                                                        <button
-                                                            onClick={() => runUserAction(`/api/admin/users/${user.id}`, { method: "DELETE" })}
-                                                            style={{
-                                                                padding: "6px 10px",
-                                                                borderRadius: 6,
-                                                                border: "1px solid rgba(239,68,68,0.35)",
-                                                                background: "rgba(239,68,68,0.12)",
-                                                                color: "#f87171",
-                                                                cursor: "pointer",
-                                                            }}
-                                                        >
-                                                            Delete
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </>
-                    )}
-
-                    {tab === "active-users" && (
-                        <>
-                            <div style={{ ...SECTION_STYLE, padding: 16, marginBottom: 16 }}>
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                                    <div>
-                                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em" }}>ACTIVE USERS</div>
-                                        <div style={{ fontSize: 11, color: "#8899aa", marginTop: 4 }}>
-                                            Users seen within the last 10 minutes
-                                        </div>
-                                    </div>
-                                    {currentUser?.role === "admin" && (
-                                        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-                                            <input
-                                                type="checkbox"
-                                                checked={showLocationsOnMap}
-                                                onChange={(e) => setShowLocationsOnMap(e.target.checked)}
-                                            />
-                                            Show User Locations on Map
-                                        </label>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div style={{ ...SECTION_STYLE, padding: 16 }}>
-                                {loadingActiveUsers && (
-                                    <div style={{ color: "#8899aa", fontSize: 12 }}>Loading active users...</div>
-                                )}
-                                {!loadingActiveUsers && onlineUsers.length === 0 && (
-                                    <div style={{ color: "#8899aa", fontSize: 12 }}>No active users found.</div>
-                                )}
-                                {!loadingActiveUsers && onlineUsers.map((user) => (
-                                    <div
-                                        key={user.id}
-                                        style={{
-                                            display: "grid",
-                                            gridTemplateColumns: "1.4fr 1fr 1fr",
-                                            gap: 12,
-                                            padding: "12px 0",
-                                            borderBottom: "1px solid rgba(255,255,255,0.06)",
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ fontSize: 12, fontWeight: 700 }}>{user.name || "No name"}</div>
-                                            <div style={{ fontSize: 11, color: "#cbd5e1", marginTop: 2 }}>{user.email}</div>
-                                        </div>
-                                        <div style={{ fontSize: 11, color: "#94a3b8" }}>
-                                            {user.location_city || user.current_view?.event || "Location unknown"}
-                                        </div>
-                                        <div style={{ fontSize: 11, color: "#94a3b8", textAlign: "right" }}>
-                                            {relTime(user.last_seen)}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </>
-                    )}
-                </div>
-            </div>
-        )
-    } catch (err) {
-        return (
-            <div style={{ padding: 24, color: "#dc2626" }}>
-                Admin panel error: {err.message}
-                <button onClick={() => setError(null)} style={{ marginLeft: 8 }}>
-                    Retry
-                </button>
-            </div>
-        )
+function actionBtn(color) {
+    return {
+        background: "none", border: `1px solid ${color}`, borderRadius: 4,
+        color, fontSize: 10, padding: "3px 8px", cursor: "pointer", whiteSpace: "nowrap", lineHeight: 1.4,
     }
+}
+
+export default function AdminPanel(props) {
+    return (
+        <AdminErrorBoundary>
+            <AdminPanelInner {...props} />
+        </AdminErrorBoundary>
+    )
 }

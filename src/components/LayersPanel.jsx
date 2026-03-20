@@ -167,7 +167,6 @@ export default function LayersPanel({
     // AIS
     aisStatus,
     aisVesselCount,
-    user,
 }) {
     const aisStatusKey = aisStatus?.error ? "error" : aisStatus?.connected ? "ok" : "pending"
     const ss = { ...(sourceStatus || {}), aisVessels: aisStatusKey }
@@ -542,24 +541,6 @@ export default function LayersPanel({
                     badge={poiCount}
                     isManual={isManual("poi")}
                 />
-                {user?.role === "admin" && (
-                    <div style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "8px 0",
-                    }}>
-                        <div>
-                            <div style={{ fontSize: 13, color: "var(--text-primary, #e8edf2)" }}>
-                                User Locations
-                            </div>
-                            <div style={{ fontSize: 10, color: "var(--text-muted, rgba(232,237,242,0.4))" }}>
-                                Admin only
-                            </div>
-                        </div>
-                        <Toggle value={!!active.userLocations} onChange={() => onToggle("userLocations")} />
-                    </div>
-                )}
 
             </div>
         </div>

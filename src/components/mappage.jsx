@@ -5824,38 +5824,40 @@ export default function MapPage({
                                 const isSelected = selectedDeployment?.name === csg.name
                                 const isHovered  = hoveredDeploymentName === csg.name
                                 const isActive   = (isSelected || isHovered) && deploymentZonesVisible
-                                // zoom < 7: no circles; zoom 7-9: strike only for hovered/selected; zoom 10+: all 3 for selected
-                                const showStrike = isActive && zoom >= 7
-                                const showAll3   = isSelected && deploymentZonesVisible && zoom >= 10
-                                const showLabels = isActive && zoom >= 7
+                                // zoom < 5: no circles; zoom 5+: show all 3 zones for active
+                                const showStrike = isActive && zoom >= 5
+                                const showAll3   = isActive && zoom >= 5
+                                const showLabels = isActive && zoom >= 6
                                 return (
                                     <Fragment key={csg.name}>
                                         {/* Strike radius — visible at zoom 7+ for hovered/selected */}
+                                        {/* Strike radius — amber dashed, 2px */}
                                         {showStrike && (
                                             <Circle
                                                 center={[csg.lat, csg.lon]}
                                                 radius={zones.strike_km * 1000}
                                                 renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#f97316", weight: 1, opacity: 0.5, fillOpacity: 0, dashArray: "6 4" }}
+                                                pathOptions={{ color: "#f97316", weight: 2, opacity: 0.6, fillOpacity: 0, dashArray: "8 5" }}
                                                 interactive={false}
                                             />
                                         )}
-                                        {/* NFZ + extended — only at zoom 10+ for selected */}
+                                        {/* NFZ — solid red, 2px */}
                                         {showAll3 && (
                                             <Circle
                                                 center={[csg.lat, csg.lon]}
                                                 radius={zones.nfz_km * 1000}
                                                 renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#ef4444", weight: 1, opacity: 0.7, fillColor: "#ef4444", fillOpacity: 0.05 }}
+                                                pathOptions={{ color: "#ef4444", weight: 2, opacity: 0.7, fillColor: "#ef4444", fillOpacity: 0.06 }}
                                                 interactive={false}
                                             />
                                         )}
+                                        {/* Extended — dashed white, 1px */}
                                         {showAll3 && (
                                             <Circle
                                                 center={[csg.lat, csg.lon]}
                                                 radius={zones.extended_km * 1000}
                                                 renderer={_depCanvasRenderer}
-                                                pathOptions={{ color: "#eab308", weight: 1, opacity: 0.3, fillOpacity: 0, dashArray: "3 6" }}
+                                                pathOptions={{ color: "#ffffff", weight: 1, opacity: 0.3, fillOpacity: 0, dashArray: "4 8" }}
                                                 interactive={false}
                                             />
                                         )}
