@@ -1,5 +1,6 @@
 import { useState, useRef } from "react"
 import { saveProfileToStorage } from "./MissionProfilePanel.jsx"
+import { apiFetch } from "../auth.js"
 
 const CLEARANCES = [
     { label: "Map Intelligence",   status: "GRANTED" },
@@ -79,6 +80,9 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
     const [curPw,       setCurPw]       = useState("")
     const [newPw,       setNewPw]       = useState("")
     const [confirmPw,   setConfirmPw]   = useState("")
+    const [pwLoading,   setPwLoading]   = useState(false)
+    const [pwError,     setPwError]     = useState("")
+    const [pwSuccess,   setPwSuccess]   = useState(false)
     const [saved,       setSaved]       = useState(false)
     const [requestOpen, setRequestOpen] = useState(false)
     const [requestText, setRequestText] = useState("")
@@ -95,6 +99,29 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
         onSave?.(updated)
         setSaved(true)
         setTimeout(() => setSaved(false), 2000)
+    }
+
+    async function handleChangePassword() {
+        setPwError("")
+        if (!curPw || !newPw || !confirmPw) { setPwError("All fields required"); return }
+        if (newPw !== confirmPw) { setPwError("Passwords do not match"); return }
+        if (newPw.length < 8)   { setPwError("Password must be at least 8 characters"); return }
+        setPwLoading(true)
+        try {
+            const res = await apiFetch("/api/auth/change-password", {
+                method: "POST",
+                body: JSON.stringify({ current_password: curPw, new_password: newPw }),
+            })
+            const data = await res.json()
+            if (!res.ok) { setPwError(data.detail || "Failed to change password"); return }
+            setPwSuccess(true)
+            setCurPw(""); setNewPw(""); setConfirmPw("")
+            setTimeout(() => { setPwExpanded(false); setPwSuccess(false) }, 2000)
+        } catch {
+            setPwError("Connection error.")
+        } finally {
+            setPwLoading(false)
+        }
     }
 
     function handleRequest() {
@@ -260,17 +287,19 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                                     placeholder="New password" style={INPUT_STYLE} />
                                 <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
                                     placeholder="Confirm new password" style={INPUT_STYLE} />
+                                {pwError   && <div style={{ fontSize: 10, color: "#f87171" }}>{pwError}</div>}
+                                {pwSuccess  && <div style={{ fontSize: 10, color: "#34d399" }}>Password updated</div>}
                                 <div style={{ display: "flex", gap: 6 }}>
-                                    <button onClick={() => setPwExpanded(false)} style={{
+                                    <button onClick={() => { setPwExpanded(false); setPwError("") }} style={{
                                         flex: 1, padding: "6px", background: "none",
                                         border: "1px solid var(--akili-border)", borderRadius: 4,
                                         fontSize: 11, color: "var(--akili-text-muted)", cursor: "pointer",
                                     }}>Cancel</button>
-                                    <button style={{
+                                    <button onClick={handleChangePassword} disabled={pwLoading} style={{
                                         flex: 2, padding: "6px", background: "rgba(26,110,181,0.12)",
                                         border: "1px solid rgba(26,110,181,0.35)", borderRadius: 4,
-                                        fontSize: 11, color: "var(--akili-accent)", cursor: "pointer",
-                                    }}>Update Password</button>
+                                        fontSize: 11, color: "var(--akili-accent)", cursor: pwLoading ? "default" : "pointer",
+                                    }}>{pwLoading ? "Updating…" : "Update Password"}</button>
                                 </div>
                             </div>
                         )}

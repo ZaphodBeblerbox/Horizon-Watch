@@ -121,10 +121,10 @@ export default function LoadingScreen({ onComplete }) {
                     opacity:    phase >= 2 ? 1 : 0,
                     transform:  phase >= 2 ? "translateY(0)" : "translateY(24px)",
                     transition: "opacity 0.8s ease-out, transform 0.8s ease-out",
-                    filter:     phase >= 2 ? "drop-shadow(0 0 24px rgba(29,110,181,0.5))" : "none",
+                    filter:     phase >= 2 ? "drop-shadow(0 0 20px rgba(255,255,255,0.3))" : "none",
                     marginBottom: 40,
                 }}>
-                    <Logo size={56} />
+                    <Logo size={100} />
                 </div>
 
                 {/* Progress bar */}

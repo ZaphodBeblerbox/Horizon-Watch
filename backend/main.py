@@ -34,7 +34,7 @@ load_dotenv(BASE_DIR / ".env")
 load_dotenv()
 
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
@@ -83,6 +83,15 @@ try:
 except ImportError:
     _HAS_SHAPELY = False
 
+try:
+    from jose import JWTError, jwt as _jose_jwt
+    from passlib.context import CryptContext as _CryptContext
+    from fastapi.security import HTTPBearer as _HTTPBearer, HTTPAuthorizationCredentials as _HTTPCreds
+    _HAS_AUTH = True
+except ImportError:
+    _HAS_AUTH = False
+    print("[startup] WARNING: Auth deps missing. Run: pip install python-jose[cryptography] passlib[bcrypt]")
+
 app = FastAPI()
 
 app.add_middleware(
@@ -102,6 +111,93 @@ CLAUDE_BUDGET_USD = float(os.getenv("CLAUDE_BUDGET_USD", "5.40"))
 
 _COPERNICUS_CLIENT_ID = os.getenv("COPERNICUS_CLIENT_ID", "").strip()
 _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
+
+# ── Auth configuration ────────────────────────────────────────────────────────
+_JWT_SECRET      = os.getenv("JWT_SECRET", "hw-dev-secret-change-in-prod")
+_JWT_ALGORITHM   = "HS256"
+_JWT_EXPIRE_DAYS = 7
+_FRONTEND_URL    = os.getenv("FRONTEND_URL", "http://localhost:5173")
+_RESEND_API_KEY  = os.getenv("RESEND_API_KEY", "")
+if _HAS_AUTH:
+    _pwd_context  = _CryptContext(schemes=["bcrypt"], deprecated="auto")
+    _auth_bearer  = _HTTPBearer(auto_error=False)
+else:
+    _pwd_context  = None
+    _auth_bearer  = None
+
+def _make_jwt(user_id: str) -> str:
+    expire = datetime.utcnow() + timedelta(days=_JWT_EXPIRE_DAYS)
+    return _jose_jwt.encode({"sub": user_id, "exp": expire}, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+
+def _decode_jwt(token: str):
+    try:
+        return _jose_jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+    except Exception:
+        return None
+
+def _get_db_user(user_id: str):
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        return db.query(DbUser).filter(DbUser.id == user_id).first()
+    finally:
+        db.close()
+
+def _get_user_from_token(credentials) -> "Optional[object]":
+    """Extract user from Bearer token — returns None if invalid/absent."""
+    if not credentials or not _HAS_AUTH:
+        return None
+    token = credentials.credentials if hasattr(credentials, "credentials") else credentials
+    payload = _decode_jwt(token)
+    if not payload:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        user = db.query(DbUser).filter(DbUser.id == user_id).first()
+        return user if (user and user.approved) else None
+    finally:
+        db.close()
+
+def get_optional_user(credentials: Optional[_HTTPCreds] = Depends(_auth_bearer) if _HAS_AUTH else None):
+    """Dependency: returns user or None (never raises)."""
+    return _get_user_from_token(credentials)
+
+def require_approved_user(credentials: Optional[_HTTPCreds] = Depends(_auth_bearer) if _HAS_AUTH else None):
+    """Dependency: raises 401 if no valid token."""
+    user = _get_user_from_token(credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+def require_admin_user(credentials: Optional[_HTTPCreds] = Depends(_auth_bearer) if _HAS_AUTH else None):
+    """Dependency: raises 403 if not admin."""
+    user = _get_user_from_token(credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if user.role != "admin" and not user.is_super_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+def _send_email(to: str, subject: str, html: str):
+    """Send email via Resend if API key is configured, else log."""
+    if not _RESEND_API_KEY:
+        print(f"[email] Would send to {to}: {subject}")
+        return
+    try:
+        import resend
+        resend.api_key = _RESEND_API_KEY
+        resend.Emails.send({
+            "from":    "Horizon Watch <noreply@trifecta-technologies.com>",
+            "to":      [to],
+            "subject": subject,
+            "html":    html,
+        })
+    except Exception as e:
+        print(f"[email] Send failed: {e}")
 if _COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET:
     print("[startup] Copernicus credentials detected — satellite search will prefer OAuth mode.")
 else:
@@ -6530,6 +6626,13 @@ async def api_ais_status():
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
+    # Initialise user database
+    try:
+        from database import init_db
+        init_db()
+        print("[startup] database initialised")
+    except Exception as _e:
+        print(f"[startup] database init failed: {_e}")
     print("[startup] classifier.py loaded")
     print("[startup] significance scorer initialised")
     print("[startup] prefetch cache initialised")
@@ -9390,3 +9493,287 @@ def api_deployments_put(payload: dict = Body(...)):
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTH ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+from pydantic import BaseModel as _BaseModel
+
+class _LoginBody(_BaseModel):
+    email: str
+    password: str
+
+class _RegisterBody(_BaseModel):
+    email: str
+    password: str
+    name: str = ""
+
+class _ChangePwBody(_BaseModel):
+    current_password: str
+    new_password: str
+
+class _ForgotBody(_BaseModel):
+    email: str
+
+class _ResetBody(_BaseModel):
+    token: str
+    new_password: str
+
+
+@app.post("/api/auth/login")
+def auth_login(body: _LoginBody):
+    if not _HAS_AUTH:
+        raise HTTPException(status_code=503, detail="Auth not available")
+    from database import SessionLocal, User as DbUser
+    import datetime as _dt
+    db = SessionLocal()
+    try:
+        user = db.query(DbUser).filter(DbUser.email == body.email.lower().strip()).first()
+        if not user or not _pwd_context.verify(body.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        if not user.approved:
+            raise HTTPException(status_code=401, detail="Account pending approval")
+        user.last_login = _dt.datetime.utcnow()
+        db.commit()
+        token = _make_jwt(user.id)
+        return {
+            "access_token": token,
+            "token_type":   "bearer",
+            "user": {
+                "id":             user.id,
+                "email":          user.email,
+                "name":           user.name,
+                "role":           user.role,
+                "is_super_admin": user.is_super_admin,
+            },
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/register")
+def auth_register(body: _RegisterBody):
+    if not _HAS_AUTH:
+        raise HTTPException(status_code=503, detail="Auth not available")
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        email = body.email.lower().strip()
+        if db.query(DbUser).filter(DbUser.email == email).first():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        user = DbUser(
+            email         = email,
+            name          = body.name.strip(),
+            password_hash = _pwd_context.hash(body.password),
+            role          = "observer",
+            approved      = False,
+        )
+        db.add(user)
+        db.commit()
+        # Notify super admins
+        admins = db.query(DbUser).filter(DbUser.is_super_admin == True).all()
+        for admin in admins:
+            _send_email(
+                admin.email,
+                "New Horizon Watch access request",
+                f"<p><b>{body.name or email}</b> ({email}) has requested access to Horizon Watch.</p>"
+                f"<p>Log in to the admin panel to approve or deny.</p>",
+            )
+        return {"message": "Registration pending approval"}
+    finally:
+        db.close()
+
+
+@app.get("/api/auth/me")
+def auth_me(current_user=Depends(require_approved_user)):
+    return {
+        "id":             current_user.id,
+        "email":          current_user.email,
+        "name":           current_user.name,
+        "role":           current_user.role,
+        "is_super_admin": current_user.is_super_admin,
+        "approved":       current_user.approved,
+    }
+
+
+@app.post("/api/auth/change-password")
+def auth_change_password(body: _ChangePwBody, current_user=Depends(require_approved_user)):
+    if not _HAS_AUTH:
+        raise HTTPException(status_code=503, detail="Auth not available")
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        user = db.query(DbUser).filter(DbUser.id == current_user.id).first()
+        if not user or not _pwd_context.verify(body.current_password, user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        user.password_hash = _pwd_context.hash(body.new_password)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/forgot-password")
+def auth_forgot_password(body: _ForgotBody):
+    if not _HAS_AUTH:
+        raise HTTPException(status_code=503, detail="Auth not available")
+    import uuid as _uuid, datetime as _dt
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        user = db.query(DbUser).filter(DbUser.email == body.email.lower().strip()).first()
+        if user:
+            token = str(_uuid.uuid4())
+            user.reset_token         = token
+            user.reset_token_expires = _dt.datetime.utcnow() + _dt.timedelta(hours=1)
+            db.commit()
+            reset_url = f"{_FRONTEND_URL}/reset-password?token={token}"
+            _send_email(
+                user.email,
+                "Horizon Watch — Password Reset",
+                f"<p>Click the link below to reset your password (valid 1 hour):</p>"
+                f"<p><a href='{reset_url}'>{reset_url}</a></p>",
+            )
+            print(f"[auth] password reset token for {user.email}: {token}")
+        return {"message": "If this email is registered, a reset link has been sent."}
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/reset-password")
+def auth_reset_password(body: _ResetBody):
+    if not _HAS_AUTH:
+        raise HTTPException(status_code=503, detail="Auth not available")
+    import datetime as _dt
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        user = db.query(DbUser).filter(DbUser.reset_token == body.token).first()
+        if not user or not user.reset_token_expires or _dt.datetime.utcnow() > user.reset_token_expires:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        user.password_hash       = _pwd_context.hash(body.new_password)
+        user.reset_token         = None
+        user.reset_token_expires = None
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _user_dict(u):
+    return {
+        "id":             u.id,
+        "email":          u.email,
+        "name":           u.name,
+        "role":           u.role,
+        "is_super_admin": u.is_super_admin,
+        "approved":       u.approved,
+        "created_at":     u.created_at.isoformat() if u.created_at else None,
+        "last_login":     u.last_login.isoformat() if u.last_login else None,
+        "notes":          u.notes or "",
+    }
+
+
+@app.get("/api/admin/users")
+def admin_list_users(current_user=Depends(require_admin_user)):
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        users = db.query(DbUser).order_by(DbUser.created_at.desc()).all()
+        return {"users": [_user_dict(u) for u in users]}
+    finally:
+        db.close()
+
+
+class _UpdateUserBody(_BaseModel):
+    approved: Optional[bool] = None
+    role:     Optional[str]  = None
+    notes:    Optional[str]  = None
+
+
+@app.put("/api/admin/users/{user_id}")
+def admin_update_user(user_id: str, body: _UpdateUserBody, current_user=Depends(require_admin_user)):
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        target = db.query(DbUser).filter(DbUser.id == user_id).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        # Regular admins cannot modify super admins
+        if target.is_super_admin and not current_user.is_super_admin:
+            raise HTTPException(status_code=403, detail="Cannot modify super admin accounts")
+        # Only super admins can promote to admin
+        if body.role == "admin" and not current_user.is_super_admin:
+            raise HTTPException(status_code=403, detail="Only super admins can promote to admin")
+        if body.approved is not None:
+            target.approved = body.approved
+        if body.role is not None:
+            target.role = body.role
+        if body.notes is not None:
+            target.notes = body.notes
+        db.commit()
+        return _user_dict(target)
+    finally:
+        db.close()
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: str, current_user=Depends(require_admin_user)):
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        target = db.query(DbUser).filter(DbUser.id == user_id).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == current_user.id:
+            raise HTTPException(status_code=400, detail="Cannot delete your own account")
+        if target.is_super_admin and not current_user.is_super_admin:
+            raise HTTPException(status_code=403, detail="Cannot delete super admin accounts")
+        db.delete(target)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/users/{user_id}/approve")
+def admin_approve_user(user_id: str, current_user=Depends(require_admin_user)):
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        target = db.query(DbUser).filter(DbUser.id == user_id).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        target.approved = True
+        db.commit()
+        _send_email(
+            target.email,
+            "Horizon Watch — Access Approved",
+            f"<p>Your Horizon Watch account has been approved. You can now log in at <a href='{_FRONTEND_URL}'>{_FRONTEND_URL}</a>.</p>",
+        )
+        return _user_dict(target)
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/users/{user_id}/make-admin")
+def admin_make_admin(user_id: str, current_user=Depends(require_admin_user)):
+    if not current_user.is_super_admin:
+        raise HTTPException(status_code=403, detail="Only super admins can promote to admin")
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        target = db.query(DbUser).filter(DbUser.id == user_id).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        target.role = "admin"
+        db.commit()
+        return _user_dict(target)
+    finally:
+        db.close()

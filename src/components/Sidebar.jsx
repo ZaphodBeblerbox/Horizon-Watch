@@ -95,6 +95,14 @@ function IconTV() {
     )
 }
 
+function IconShield() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 2L16 5V9C16 13 9 16.5 9 16.5S2 13 2 9V5L9 2Z"/>
+        </svg>
+    )
+}
+
 function IconProfile() {
     return (
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -174,22 +182,27 @@ function IconSoundOff() {
 export default function Sidebar({
     rightPanel,
     onRightPanel,
-    activeTabType = "map",
+    activeTabType  = "map",
     onOpenTab,
     profile,
-    alertCount    = 0,
-    budgetPct     = null,
-    notifOpen     = false,
-    notifUnread   = 0,
+    currentUser    = null,
+    alertCount     = 0,
+    budgetPct      = null,
+    notifOpen      = false,
+    notifUnread    = 0,
     onToggleNotif,
     briefingUnread = false,
-    themeMode     = "auto",
+    themeMode      = "auto",
     onThemeCycle,
-    soundMuted    = false,
+    soundMuted     = false,
     onToggleSound,
-    tvOpen        = false,
+    tvOpen         = false,
     onToggleTV,
+    onToggleAdmin,
 }) {
+    const isAdmin    = currentUser?.role === "admin"
+    const isAnalyst  = currentUser?.role === "analyst" || isAdmin
+    const isObserver = !!currentUser
     const [hovered, setHovered] = useState(null)
 
     const iconColor = (id) => {
@@ -360,10 +373,10 @@ export default function Sidebar({
                     </button>
                 )}
 
-                {btn("layers",     <IconLayers />)}
+                {isAnalyst && btn("layers",     <IconLayers />)}
                 {btn("alerts",     <IconAlerts />, alertCount)}
                 {btn("situations", <IconSituations />)}
-                {btn("poi",        <IconPOI />, null, null)}
+                {isAnalyst && btn("poi", <IconPOI />, null, null)}
                 {profile && btn("health", <IconHealth />, null, null)}
 
                 {/* TV button */}
@@ -460,6 +473,30 @@ export default function Sidebar({
                 </button>
                 {btn("settings", <IconSettings />)}
                 {profile && btn("profile", <IconProfile />)}
+                {/* Admin shield — only for admins */}
+                {isAdmin && onToggleAdmin && (
+                    <button
+                        onMouseEnter={() => setHovered("admin")}
+                        onMouseLeave={() => setHovered(null)}
+                        onClick={onToggleAdmin}
+                        title="Admin Console"
+                        style={{
+                            width:          48,
+                            height:         36,
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            background:     "none",
+                            border:         "none",
+                            cursor:         "pointer",
+                            color:          hovered === "admin" ? "rgba(255,179,0,0.8)" : "rgba(255,179,0,0.4)",
+                            transition:     "color 0.12s",
+                            flexShrink:     0,
+                        }}
+                    >
+                        <IconShield />
+                    </button>
+                )}
 
             </div>
         </div>

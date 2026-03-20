@@ -28,7 +28,8 @@
       "Bash(curl -s \"https://raw.githubusercontent.com/GlobalEnergyMonitor/GOPIT/refs/heads/main/data/pipelines.geojson\" -o /tmp/gopit2.json)",
       "Bash(curl -s \"https://api.github.com/repos/GlobalEnergyMonitor/GOPIT/contents/data\")",
       "Bash(python3 -c \"import json,sys; [print\\(f[''''name'''']\\) for f in json.load\\(sys.stdin\\) if isinstance\\(f,dict\\)]\")",
-      "Bash(curl -s \"https://api.github.com/repos/GlobalEnergyMonitor/GOPIT/git/trees/main?recursive=1\")"
+      "Bash(curl -s \"https://api.github.com/repos/GlobalEnergyMonitor/GOPIT/git/trees/main?recursive=1\")",
+      "Bash(\"/Users/marcamaylunau/NAGINI 2.0/backend/.env\":*)"
     ]
   }
 }

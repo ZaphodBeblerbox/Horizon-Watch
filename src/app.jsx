@@ -20,6 +20,9 @@ import API_BASE from "./apiBase.js"
 import LoadingScreen from "./components/LoadingScreen.jsx"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import PreferencesPanel from "./components/PreferencesPanel.jsx"
+import LoginPage from "./components/LoginPage.jsx"
+import AdminPanel from "./components/AdminPanel.jsx"
+import { getToken, clearToken, apiFetch } from "./auth.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -189,8 +192,25 @@ const PANEL_STYLE = {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
-    const [loading, setLoading] = useState(true)
-    const [showTV,  setShowTV]  = useState(false)
+    const [loading,      setLoading]      = useState(true)
+    const [showTV,       setShowTV]       = useState(false)
+    const [authChecked,  setAuthChecked]  = useState(false)
+    const [currentUser,  setCurrentUser]  = useState(null)
+    const [showAdmin,    setShowAdmin]    = useState(false)
+
+    // ── Auth check on mount ───────────────────────────────────────────────────
+    useEffect(() => {
+        const token = getToken()
+        if (!token) { setAuthChecked(true); return }
+        apiFetch("/api/auth/me")
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                if (d?.id) setCurrentUser(d)
+                else clearToken()
+            })
+            .catch(() => clearToken())
+            .finally(() => setAuthChecked(true))
+    }, [])
 
     // ── Mission profile ───────────────────────────────────────────────────────
     const [profile, setProfile] = useState(() => loadProfile())
@@ -825,6 +845,10 @@ export default function App() {
             fontFamily:    "system-ui, -apple-system, sans-serif",
         }}>
             {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
+            {/* Auth gate — show login until token verified */}
+            {authChecked && !currentUser && (
+                <LoginPage onAuthenticated={(user) => setCurrentUser(user)} />
+            )}
             {/* Minimum width guard */}
             {tooNarrow && (
                 <div style={{
@@ -872,6 +896,7 @@ export default function App() {
                     activeTabType={activeTabType}
                     onOpenTab={openTab}
                     profile={profile}
+                    currentUser={currentUser}
                     alertCount={flaggedEvents.length}
                     budgetPct={budgetPct}
                     notifOpen={notifOpen}
@@ -884,6 +909,7 @@ export default function App() {
                     onToggleSound={onToggleSound}
                     tvOpen={showTV}
                     onToggleTV={() => setShowTV(v => !v)}
+                    onToggleAdmin={() => setShowAdmin(v => !v)}
                 />
 
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
@@ -1079,6 +1105,11 @@ export default function App() {
                     </div>
                 )}
             </div>
+
+            {/* Admin panel */}
+            {showAdmin && currentUser?.role === "admin" && (
+                <AdminPanel currentUser={currentUser} onClose={() => setShowAdmin(false)} />
+            )}
 
             {/* Real-time toast notifications */}
             <ToastSystem
