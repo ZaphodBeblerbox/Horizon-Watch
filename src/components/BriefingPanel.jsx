@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { API_BASE } from "../apiBase.js"
+import API_BASE from "../apiBase.js"
 import TabBar from "./TabBar.jsx"
 
 const API = API_BASE

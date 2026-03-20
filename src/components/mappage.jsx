@@ -14,7 +14,7 @@ import CountryPanel from "./CountryPanel.jsx"
 import TVWidget from "./tvwidget.jsx"
 import DraggablePanel from "./DraggablePanel.jsx"
 import LayersPanel from "./LayersPanel.jsx"
-import { API_BASE } from "../apiBase.js"
+import API_BASE from "../apiBase.js"
 
 const API = API_BASE
 

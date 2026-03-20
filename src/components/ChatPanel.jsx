@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react"
 import Markdown from "react-markdown"
-import { API_BASE } from "../apiBase.js"
+import API_BASE from "../apiBase.js"
 
 const API = API_BASE
 
