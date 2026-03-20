@@ -6,6 +6,7 @@ import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
 import SituationsPanel from "./components/SituationsPanel.jsx"
 import ChatPanel from "./components/ChatPanel.jsx"
+import DirectChatPanel from "./components/DirectChatPanel.jsx"
 import TVWidget from "./components/tvwidget.jsx"
 import MissionProfilePanel, { loadProfile, saveProfileToStorage } from "./components/MissionProfilePanel.jsx"
 import NotificationsDrawer from "./components/NotificationsDrawer.jsx"
@@ -197,6 +198,7 @@ export default function App() {
     const [authChecked,  setAuthChecked]  = useState(false)
     const [currentUser,  setCurrentUser]  = useState(null)
     const [showAdmin,    setShowAdmin]    = useState(false)
+    const [showChat,     setShowChat]     = useState(false)
 
     // ── Auth check on mount ───────────────────────────────────────────────────
     useEffect(() => {
@@ -211,6 +213,20 @@ export default function App() {
             .catch(() => clearToken())
             .finally(() => setAuthChecked(true))
     }, [])
+
+    // ── Session tracking — post location/view every 60s ──────────────────────
+    useEffect(() => {
+        if (!currentUser) return
+        const post = () => {
+            apiFetch("/api/auth/session", {
+                method: "POST",
+                body: JSON.stringify({ current_view: null }),
+            }).catch(() => {})
+        }
+        post()
+        const t = setInterval(post, 60000)
+        return () => clearInterval(t)
+    }, [currentUser])
 
     // ── Mission profile ───────────────────────────────────────────────────────
     const [profile, setProfile] = useState(() => loadProfile())
@@ -910,6 +926,8 @@ export default function App() {
                     tvOpen={showTV}
                     onToggleTV={() => setShowTV(v => !v)}
                     onToggleAdmin={() => setShowAdmin(v => !v)}
+                    chatOpen={showChat}
+                    onToggleChat={() => setShowChat(v => !v)}
                 />
 
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
@@ -1011,6 +1029,7 @@ export default function App() {
                             profile={profile}
                             onSave={handleProfileSave}
                             onClose={() => setRightPanel(null)}
+                            currentUser={currentUser}
                         />
                     </div>
                 )}
@@ -1040,7 +1059,7 @@ export default function App() {
                     </div>
                 )}
 
-                {rightPanel === "situations" && (
+                {rightPanel === "situations" && (currentUser?.role === "admin" || currentUser?.role === "super_admin") && (
                     <div style={PANEL_STYLE}>
                         <SituationsPanel
                             situations={situations}
@@ -1049,6 +1068,9 @@ export default function App() {
                             setActiveSituationId={setActiveSituationId}
                             onClose={() => setRightPanel(null)}
                             onDrawTheater={() => { setRightPanel(null); setTheaterDrawing(true) }}
+                            profile={profile}
+                            onProfileSave={handleProfileSave}
+                            currentUser={currentUser}
                         />
                     </div>
                 )}
@@ -1060,6 +1082,14 @@ export default function App() {
                             onClose={() => setRightPanel(null)}
                         />
                     </div>
+                )}
+
+                {/* Direct messaging panel — full screen overlay */}
+                {showChat && (
+                    <DirectChatPanel
+                        currentUser={currentUser}
+                        onClose={() => setShowChat(false)}
+                    />
                 )}
 
                 {rightPanel === "alerts" && (
@@ -1107,7 +1137,7 @@ export default function App() {
             </div>
 
             {/* Admin panel */}
-            {showAdmin && currentUser?.role === "admin" && (
+            {showAdmin && (currentUser?.role === "admin" || currentUser?.role === "super_admin") && (
                 <AdminPanel currentUser={currentUser} onClose={() => setShowAdmin(false)} />
             )}
 

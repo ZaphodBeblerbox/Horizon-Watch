@@ -103,6 +103,14 @@ function IconShield() {
     )
 }
 
+function IconChat() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 2.5h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5.5L2 16V3.5a1 1 0 0 1 1-1z" fill="none"/>
+        </svg>
+    )
+}
+
 function IconProfile() {
     return (
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -199,8 +207,10 @@ export default function Sidebar({
     tvOpen         = false,
     onToggleTV,
     onToggleAdmin,
+    chatOpen       = false,
+    onToggleChat,
 }) {
-    const isAdmin    = currentUser?.role === "admin"
+    const isAdmin    = currentUser?.role === "admin" || currentUser?.role === "super_admin"
     const isAnalyst  = currentUser?.role === "analyst" || isAdmin
     const isObserver = !!currentUser
     const [hovered, setHovered] = useState(null)
@@ -216,7 +226,8 @@ export default function Sidebar({
                        (id === "poi"        && activeTabType === "poi")        ||
                        (id === "map"        && activeTabType === "map")        ||
                        (id === "briefing"   && activeTabType === "briefing")   ||
-                       (id === "notif"      && notifOpen)
+                       (id === "notif"      && notifOpen)                      ||
+                       (id === "chat"       && chatOpen)
         if (active)         return "var(--akili-accent)"
         if (hovered === id) return "var(--akili-text-secondary)"
         return "var(--akili-text-muted)"
@@ -375,9 +386,35 @@ export default function Sidebar({
 
                 {isAnalyst && btn("layers",     <IconLayers />)}
                 {btn("alerts",     <IconAlerts />, alertCount)}
-                {btn("situations", <IconSituations />)}
+                {isAdmin   && btn("situations", <IconSituations />)}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}
-                {profile && btn("health", <IconHealth />, null, null)}
+                {isAdmin   && btn("health", <IconHealth />, null, null)}
+
+                {/* Chat — analyst + admin only */}
+                {isAnalyst && onToggleChat && (
+                    <button
+                        onMouseEnter={() => setHovered("chat")}
+                        onMouseLeave={() => setHovered(null)}
+                        onClick={onToggleChat}
+                        title="Messages"
+                        style={{
+                            position:       "relative",
+                            width:          48,
+                            height:         40,
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            background:     "none",
+                            border:         "none",
+                            cursor:         "pointer",
+                            color:          iconColor("chat"),
+                            transition:     "color 0.12s",
+                            flexShrink:     0,
+                        }}
+                    >
+                        <IconChat />
+                    </button>
+                )}
 
                 {/* TV button */}
                 {onToggleTV && (

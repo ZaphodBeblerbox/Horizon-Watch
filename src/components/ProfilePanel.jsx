@@ -73,9 +73,20 @@ const INPUT_STYLE = {
     boxSizing:    "border-box",
 }
 
-export default function ProfilePanel({ profile, onSave, onClose }) {
-    const [displayName, setDisplayName] = useState(profile?.displayName || "")
-    const [email,       setEmail]       = useState(profile?._email || "")
+function relTimeAgo(iso) {
+    if (!iso) return "—"
+    const diff = Date.now() - new Date(iso)
+    const m = Math.floor(diff / 60000)
+    if (m < 1)    return "just now"
+    if (m < 60)   return `${m} minutes ago`
+    if (m < 1440) return `${Math.floor(m / 60)} hours ago`
+    if (m < 43200) return `${Math.floor(m / 1440)} days ago`
+    return new Date(iso).toLocaleDateString()
+}
+
+export default function ProfilePanel({ profile, onSave, onClose, currentUser }) {
+    const [displayName, setDisplayName] = useState(currentUser?.name || profile?.displayName || "")
+    const [email,       setEmail]       = useState(currentUser?.email || profile?._email || "")
     const [pwExpanded,  setPwExpanded]  = useState(false)
     const [curPw,       setCurPw]       = useState("")
     const [newPw,       setNewPw]       = useState("")
@@ -89,8 +100,13 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
     const [requestDone, setRequestDone] = useState(false)
     const avatarRef = useRef()
 
-    const roleKey = (profile?.role || "").toUpperCase().replace(/\s/g, "")
+    const roleKey = (currentUser?.role || profile?.role || "").toUpperCase().replace(/\s/g, "")
     const badgeColors = BADGE_COLOR[roleKey] || BADGE_COLOR.OBSERVER
+
+    function memberSince(iso) {
+        if (!iso) return null
+        return "Member since " + new Date(iso).toLocaleDateString("en-US", { month: "long", year: "numeric" })
+    }
 
     function handleSave() {
         if (!profile) return
@@ -211,12 +227,12 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                     {/* Name + role */}
                     <div>
                         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--akili-text-primary)", marginBottom: 4 }}>
-                            {profile?.displayName || "No name set"}
+                            {currentUser?.name || profile?.displayName || "No name set"}
                         </div>
                         <div style={{ fontSize: 11, color: "var(--akili-text-muted)", marginBottom: 8 }}>
-                            {profile?._email || "No email set"}
+                            {currentUser?.email || profile?._email || "No email set"}
                         </div>
-                        {profile?.role && (
+                        {(currentUser?.role || profile?.role) && (
                             <span style={{
                                 fontSize:      9,
                                 fontWeight:    700,
@@ -227,8 +243,18 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                                 border:        `1px solid ${badgeColors.border}`,
                                 color:         badgeColors.text,
                             }}>
-                                {profile.role.toUpperCase()}
+                                {(currentUser?.role || profile?.role).toUpperCase()}
                             </span>
+                        )}
+                        {currentUser?.created_at && (
+                            <div style={{ fontSize: 10, color: "var(--akili-text-muted)", marginTop: 6 }}>
+                                {memberSince(currentUser.created_at)}
+                            </div>
+                        )}
+                        {currentUser?.last_login && (
+                            <div style={{ fontSize: 10, color: "var(--akili-text-muted)", marginTop: 2 }}>
+                                Last login: {relTimeAgo(currentUser.last_login)}
+                            </div>
                         )}
                     </div>
                 </div>
@@ -255,10 +281,9 @@ export default function ProfilePanel({ profile, onSave, onClose }) {
                         </label>
                         <input
                             type="email"
-                            value={email}
-                            onChange={e => setEmail(e.target.value)}
-                            placeholder="your@email.com"
-                            style={INPUT_STYLE}
+                            value={currentUser?.email || email}
+                            readOnly
+                            style={{ ...INPUT_STYLE, opacity: 0.6, cursor: "default" }}
                         />
                     </div>
 

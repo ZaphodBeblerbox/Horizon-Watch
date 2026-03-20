@@ -9779,3 +9779,204 @@ def admin_make_admin(user_id: str, current_user=Depends(require_admin_user)):
         return _user_dict(target)
     finally:
         db.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CHAT — Direct messages between users
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _MsgBody(_BaseModel):
+    content:       str
+    message_type:  str = "text"
+    attachment_id: str = None
+
+@app.get("/api/users/search")
+def users_search(q: str = Query(""), current_user=Depends(require_approved_user)):
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        q = q.strip()
+        if not q:
+            return []
+        like = f"%{q}%"
+        results = db.query(DbUser).filter(
+            DbUser.approved == True,
+            DbUser.id != current_user.id,
+            (DbUser.name.ilike(like)) | (DbUser.email.ilike(like))
+        ).limit(10).all()
+        return [{"id": u.id, "name": u.name, "email": u.email, "role": u.role} for u in results]
+    finally:
+        db.close()
+
+@app.get("/api/chat/conversations")
+def chat_conversations(current_user=Depends(require_approved_user)):
+    from database import SessionLocal, DirectMessage as DM, User as DbUser
+    from sqlalchemy import or_, and_, func
+    db = SessionLocal()
+    try:
+        uid = current_user.id
+        # Get distinct partner IDs
+        sent_to  = db.query(DM.recipient_id).filter(DM.sender_id    == uid).distinct()
+        recv_from = db.query(DM.sender_id ).filter(DM.recipient_id == uid).distinct()
+        partner_ids = {r[0] for r in sent_to} | {r[0] for r in recv_from}
+
+        convs = []
+        for pid in partner_ids:
+            partner = db.query(DbUser).filter(DbUser.id == pid).first()
+            if not partner:
+                continue
+            last_msg = (
+                db.query(DM)
+                .filter(or_(
+                    and_(DM.sender_id == uid, DM.recipient_id == pid),
+                    and_(DM.sender_id == pid, DM.recipient_id == uid),
+                ))
+                .order_by(DM.timestamp.desc())
+                .first()
+            )
+            unread = db.query(DM).filter(
+                DM.sender_id == pid,
+                DM.recipient_id == uid,
+                DM.read_at.is_(None),
+            ).count()
+            convs.append({
+                "partner": {"id": partner.id, "name": partner.name, "email": partner.email, "role": partner.role},
+                "last_message": {
+                    "content":   last_msg.content if last_msg else "",
+                    "timestamp": last_msg.timestamp.isoformat() if last_msg else None,
+                    "is_mine":   last_msg.sender_id == uid if last_msg else False,
+                },
+                "unread_count": unread,
+            })
+        # Sort by last message time desc
+        convs.sort(key=lambda c: c["last_message"]["timestamp"] or "", reverse=True)
+        return convs
+    finally:
+        db.close()
+
+@app.get("/api/chat/conversations/{partner_id}/messages")
+def chat_get_messages(partner_id: str, current_user=Depends(require_approved_user)):
+    from database import SessionLocal, DirectMessage as DM
+    from sqlalchemy import or_, and_
+    db = SessionLocal()
+    try:
+        uid  = current_user.id
+        msgs = (
+            db.query(DM)
+            .filter(or_(
+                and_(DM.sender_id == uid, DM.recipient_id == partner_id),
+                and_(DM.sender_id == partner_id, DM.recipient_id == uid),
+            ))
+            .order_by(DM.timestamp.asc())
+            .limit(200)
+            .all()
+        )
+        # Mark unread as read
+        for m in msgs:
+            if m.recipient_id == uid and m.read_at is None:
+                m.read_at = datetime.utcnow()
+        db.commit()
+        return [
+            {
+                "id":             m.id,
+                "sender_id":      m.sender_id,
+                "content":        m.content,
+                "message_type":   m.message_type,
+                "attachment_id":  m.attachment_id,
+                "timestamp":      m.timestamp.isoformat(),
+                "read_at":        m.read_at.isoformat() if m.read_at else None,
+            }
+            for m in msgs
+        ]
+    finally:
+        db.close()
+
+@app.post("/api/chat/conversations/{partner_id}/messages")
+def chat_send_message(partner_id: str, body: _MsgBody, current_user=Depends(require_approved_user)):
+    from database import SessionLocal, DirectMessage as DM, User as DbUser
+    db = SessionLocal()
+    try:
+        partner = db.query(DbUser).filter(DbUser.id == partner_id).first()
+        if not partner:
+            raise HTTPException(status_code=404, detail="User not found")
+        msg = DM(
+            sender_id      = current_user.id,
+            recipient_id   = partner_id,
+            content        = body.content,
+            message_type   = body.message_type,
+            attachment_id  = body.attachment_id,
+        )
+        db.add(msg)
+        db.commit()
+        db.refresh(msg)
+        return {
+            "id":            msg.id,
+            "sender_id":     msg.sender_id,
+            "content":       msg.content,
+            "message_type":  msg.message_type,
+            "attachment_id": msg.attachment_id,
+            "timestamp":     msg.timestamp.isoformat(),
+            "read_at":       None,
+        }
+    finally:
+        db.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SESSION — frontend posts current map view every 60s (admin surveillance)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _SessionBody(_BaseModel):
+    lat:   float = None
+    lon:   float = None
+    zoom:  float = None
+    event: str   = None
+
+@app.post("/api/auth/session")
+def update_session(body: _SessionBody, request: Request, current_user=Depends(require_approved_user)):
+    from database import SessionLocal, User as DbUser
+    import json as _j
+    db = SessionLocal()
+    try:
+        u = db.query(DbUser).filter(DbUser.id == current_user.id).first()
+        if u:
+            u.last_seen    = datetime.utcnow()
+            u.last_ip      = (request.headers.get("X-Forwarded-For") or request.client.host or "").split(",")[0].strip()
+            u.current_view = _j.dumps({"lat": body.lat, "lon": body.lon, "zoom": body.zoom, "event": body.event})
+            db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+@app.get("/api/admin/active-users")
+def admin_active_users(current_user=Depends(require_admin_user)):
+    from database import SessionLocal, User as DbUser
+    import json as _j
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(minutes=10)
+        users  = db.query(DbUser).filter(
+            DbUser.last_seen >= cutoff,
+            DbUser.approved  == True,
+        ).all()
+        result = []
+        for u in users:
+            cv = {}
+            if u.current_view:
+                try: cv = _j.loads(u.current_view)
+                except: pass
+            result.append({
+                "id":           u.id,
+                "name":         u.name,
+                "email":        u.email,
+                "role":         u.role,
+                "is_super_admin": u.is_super_admin,
+                "last_seen":    u.last_seen.isoformat() if u.last_seen else None,
+                "last_ip":      u.last_ip or "",
+                "created_at":   u.created_at.isoformat() if u.created_at else None,
+                "last_login":   u.last_login.isoformat() if u.last_login else None,
+                "current_view": cv,
+            })
+        return result
+    finally:
+        db.close()
