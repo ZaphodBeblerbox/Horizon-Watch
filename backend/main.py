@@ -6429,6 +6429,12 @@ async def _daily_briefing_loop():
 
 
 async def _startup_warmup_tasks():
+    try:
+        from database import init_db
+        init_db()
+        print("[startup] database initialised and admins seeded")
+    except Exception as e:
+        print(f"[startup] database init error: {e}")
     """Run slow cache/data warmups after the API is already accepting requests."""
     loop = asyncio.get_event_loop()
 
