@@ -1,8 +1,0 @@
-fastapi
-uvicorn
-pandas
-anthropic
-python-dotenv
-feedparser
-langdetect
-spacy==3.7.4
