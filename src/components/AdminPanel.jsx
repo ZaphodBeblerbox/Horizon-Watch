@@ -1,28 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react"
-import { apiFetch } from "../auth.js"
 import API_BASE from "../apiBase.js"
 
-const ROLE_COLORS = {
-    observer: "rgba(255,255,255,0.3)",
-    analyst:  "#2d8fe8",
-    admin:    "#FFB300",
-}
-const ROLE_LABEL = { observer: "OBSERVER", analyst: "ANALYST", admin: "ADMIN" }
+const TOKEN_KEY = "hw-auth-token"
+const authHdr = () => ({
+    "Content-Type": "application/json",
+    Authorization: "Bearer " + localStorage.getItem(TOKEN_KEY),
+})
 
-function RoleBadge({ role }) {
-    return (
-        <span style={{
-            fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
-            color: ROLE_COLORS[role] || "rgba(255,255,255,0.3)",
-            border: `1px solid ${ROLE_COLORS[role] || "rgba(255,255,255,0.15)"}`,
-            borderRadius: 3, padding: "2px 5px", whiteSpace: "nowrap",
-        }}>
-            {ROLE_LABEL[role] || (role || "").toUpperCase()}
-        </span>
-    )
-}
-
-// React error boundary
+// ── Error boundary ────────────────────────────────────────────────────────────
 class AdminErrorBoundary extends React.Component {
     constructor(props) { super(props); this.state = { error: null } }
     static getDerivedStateFromError(err) { return { error: err } }
@@ -42,30 +27,43 @@ class AdminErrorBoundary extends React.Component {
     }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtDate(iso) {
+    if (!iso) return "Never"
+    try { return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) }
+    catch { return "—" }
+}
+
+const TH = ({ children, style }) => (
+    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.35)", borderBottom: "1px solid rgba(255,255,255,0.08)", whiteSpace: "nowrap", ...style }}>
+        {children}
+    </th>
+)
+
+const TD = ({ children, style }) => (
+    <td style={{ padding: "10px 12px", fontSize: 12, color: "#e0e0e0", borderBottom: "1px solid rgba(255,255,255,0.04)", verticalAlign: "middle", ...style }}>
+        {children}
+    </td>
+)
+
+// ── Main inner component ──────────────────────────────────────────────────────
 function AdminPanelInner({ user, onClose }) {
-    const [tab,        setTab]        = useState("users")
-    const [users,      setUsers]      = useState([])
-    const [loading,    setLoading]    = useState(false)
-    const [error,      setError]      = useState("")
-    const [notes,      setNotes]      = useState({})
-    const [saving,     setSaving]     = useState({})
+    const [tab,       setTab]      = useState("users")
+    const [users,     setUsers]    = useState([])
+    const [loading,   setLoading]  = useState(false)
+    const [loadError, setLoadError] = useState(null)
     const [panelError, setPanelError] = useState(null)
-    const [loadError,  setLoadError]  = useState(null)
 
     const fetchUsers = useCallback(async () => {
         setLoading(true)
-        setError("")
+        setLoadError(null)
         try {
             const res = await fetch(`${API_BASE}/api/admin/users`, {
-                headers: { Authorization: "Bearer " + localStorage.getItem("hw-auth-token") }
+                headers: { Authorization: "Bearer " + localStorage.getItem(TOKEN_KEY) }
             })
             if (!res.ok) throw new Error(`Server returned ${res.status}`)
             const data = await res.json()
-            const list = Array.isArray(data) ? data : []
-            setUsers(list)
-            const n = {}
-            list.forEach(u => { n[u.id] = u.notes || "" })
-            setNotes(n)
+            setUsers(Array.isArray(data) ? data : [])
         } catch (err) {
             setLoadError(err.message)
         } finally {
@@ -75,45 +73,65 @@ function AdminPanelInner({ user, onClose }) {
 
     useEffect(() => { if (tab === "users") fetchUsers() }, [tab, fetchUsers])
 
-    async function approve(id) {
+    async function handleApprove(id) {
         try {
-            await apiFetch(`/api/admin/users/${id}/approve`, { method: "POST" })
-            fetchUsers()
-        } catch { /* ignore */ }
+            const res = await fetch(`${API_BASE}/api/admin/users/${id}/approve`, {
+                method: "POST",
+                headers: authHdr(),
+            })
+            if (!res.ok) throw new Error(`Server returned ${res.status}`)
+            setUsers(prev => prev.map(u => u.id === id ? { ...u, approved: true } : u))
+        } catch (err) {
+            setPanelError(err.message)
+        }
     }
 
-    async function setRole(id, role) {
+    async function handleReject(id) {
+        if (!window.confirm("Reject and delete this user?")) return
         try {
-            await apiFetch(`/api/admin/users/${id}`, {
+            const res = await fetch(`${API_BASE}/api/admin/users/${id}`, {
+                method: "DELETE",
+                headers: authHdr(),
+            })
+            if (!res.ok) throw new Error(`Server returned ${res.status}`)
+            setUsers(prev => prev.filter(u => u.id !== id))
+        } catch (err) {
+            setPanelError(err.message)
+        }
+    }
+
+    async function handleRoleChange(id, role) {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/users/${id}`, {
                 method: "PUT",
+                headers: authHdr(),
                 body: JSON.stringify({ role }),
             })
-            fetchUsers()
-        } catch { /* ignore */ }
+            if (!res.ok) throw new Error(`Server returned ${res.status}`)
+            setUsers(prev => prev.map(u => u.id === id ? { ...u, role } : u))
+        } catch (err) {
+            setPanelError(err.message)
+        }
     }
 
-    async function deleteUser(id) {
+    async function handleDelete(id) {
         if (!window.confirm("Delete this user account? This cannot be undone.")) return
         try {
-            await apiFetch(`/api/admin/users/${id}`, { method: "DELETE" })
-            fetchUsers()
-        } catch { /* ignore */ }
-    }
-
-    async function saveNotes(id) {
-        setSaving(s => ({ ...s, [id]: true }))
-        try {
-            await apiFetch(`/api/admin/users/${id}`, {
-                method: "PUT",
-                body: JSON.stringify({ notes: notes[id] || "" }),
+            const res = await fetch(`${API_BASE}/api/admin/users/${id}`, {
+                method: "DELETE",
+                headers: authHdr(),
             })
-        } catch { /* ignore */ }
-        setSaving(s => ({ ...s, [id]: false }))
+            if (!res.ok) throw new Error(`Server returned ${res.status}`)
+            setUsers(prev => prev.filter(u => u.id !== id))
+        } catch (err) {
+            setPanelError(err.message)
+        }
     }
 
     const pending  = users.filter(u => !u.approved)
-    const approved = users.filter(u => u.approved)
+    const allUsers = users.filter(u => u.approved)
 
+    // ── Guards ────────────────────────────────────────────────────────────────
     const isAdmin = user?.role === "admin" || user?.is_super_admin === true
     if (!isAdmin) return (
         <div style={{ padding: 32, color: "#8899aa", fontFamily: "Inter, sans-serif", textAlign: "center" }}>
@@ -125,15 +143,7 @@ function AdminPanelInner({ user, onClose }) {
     if (loadError) return (
         <div style={{ padding: 24, color: "#dc2626", fontFamily: "Inter, sans-serif" }}>
             Error: {loadError}
-            <button onClick={() => { setLoadError(null); fetchUsers() }} style={{ marginLeft: 12, padding: "4px 12px", background: "#1a3a6b", color: "white", border: "none", cursor: "pointer" }}>Retry</button>
-        </div>
-    )
-
-    if (panelError) return (
-        <div style={{ padding: 24, color: "#dc2626", fontFamily: "Inter, sans-serif" }}>
-            <div style={{ marginBottom: 8, fontWeight: 600 }}>Admin Panel Error</div>
-            <div style={{ fontSize: 13, color: "#8899aa" }}>{panelError}</div>
-            <button onClick={() => setPanelError(null)} style={{ marginTop: 12, padding: "6px 16px", background: "#1a6eb5", color: "white", border: "none", cursor: "pointer", borderRadius: 3 }}>Retry</button>
+            <button onClick={() => { setLoadError(null); fetchUsers() }} style={{ marginLeft: 12, padding: "4px 12px", background: "#1a3a6b", color: "white", border: "none", cursor: "pointer", borderRadius: 3 }}>Retry</button>
         </div>
     )
 
@@ -146,11 +156,7 @@ function AdminPanelInner({ user, onClose }) {
             fontFamily: "Inter, -apple-system, sans-serif", color: "#e0e0e0",
         }}>
             {/* Header */}
-            <div style={{
-                display: "flex", alignItems: "center", gap: 12,
-                padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)",
-                flexShrink: 0,
-            }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
                 <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="rgba(255,179,0,0.8)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                 </svg>
@@ -161,6 +167,12 @@ function AdminPanelInner({ user, onClose }) {
                 {pending.length > 0 && (
                     <span style={{ fontSize: 10, background: "rgba(251,191,36,0.2)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.4)", borderRadius: 10, padding: "2px 8px" }}>
                         {pending.length} pending
+                    </span>
+                )}
+                {panelError && (
+                    <span style={{ fontSize: 10, color: "#f87171", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {panelError}
+                        <button onClick={() => setPanelError(null)} style={{ marginLeft: 6, background: "none", border: "none", color: "#60a5fa", cursor: "pointer", fontSize: 10 }}>✕</button>
                     </span>
                 )}
                 <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 4 }}>✕</button>
@@ -183,7 +195,7 @@ function AdminPanelInner({ user, onClose }) {
             </div>
 
             {/* Body */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
                 {tab === "activity" && (
                     <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 12, marginTop: 40, textAlign: "center" }}>
                         Activity log — coming soon
@@ -192,120 +204,151 @@ function AdminPanelInner({ user, onClose }) {
 
                 {tab === "users" && (
                     <>
-                        {loading && <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Loading…</div>}
-                        {error && (
-                            <div style={{ color: "#f87171", fontSize: 12, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-                                {error}
-                                <button onClick={fetchUsers} style={{ fontSize: 10, color: "#60a5fa", background: "none", border: "none", cursor: "pointer", padding: 0 }}>Retry</button>
+                        {loading && (
+                            <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, marginBottom: 16 }}>Loading…</div>
+                        )}
+
+                        {/* ── Section 1: Pending Approvals ───────────────────────── */}
+                        {pending.length > 0 && (
+                            <div style={{ marginBottom: 28 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "#fbbf24", textTransform: "uppercase", marginBottom: 10, borderLeft: "2px solid #fbbf24", paddingLeft: 8 }}>
+                                    Pending Approvals ({pending.length})
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                    {pending.map(u => (
+                                        <div key={u.id} style={{
+                                            background: "rgba(217,119,6,0.1)",
+                                            border: "1px solid rgba(217,119,6,0.3)",
+                                            borderRadius: 6,
+                                            padding: "12px 16px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 16,
+                                            flexWrap: "wrap",
+                                        }}>
+                                            <div style={{ flex: 1, minWidth: 200 }}>
+                                                <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>
+                                                    {u.name || <span style={{ fontStyle: "italic", color: "rgba(255,255,255,0.35)" }}>No name</span>}
+                                                </div>
+                                                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>{u.email}</div>
+                                                {u.created_at && (
+                                                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>
+                                                        Registered {fmtDate(u.created_at)}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div style={{ display: "flex", gap: 8 }}>
+                                                <button onClick={() => handleApprove(u.id)} style={{
+                                                    padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer",
+                                                    background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.5)",
+                                                    borderRadius: 4, color: "#22c55e",
+                                                }}>
+                                                    Approve
+                                                </button>
+                                                <button onClick={() => handleReject(u.id)} style={{
+                                                    padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer",
+                                                    background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)",
+                                                    borderRadius: 4, color: "#ef4444",
+                                                }}>
+                                                    Reject
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
 
-                        {pending.length > 0 && (
-                            <>
-                                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "#fbbf24", textTransform: "uppercase", marginBottom: 10, borderLeft: "2px solid #fbbf24", paddingLeft: 8 }}>
-                                    Pending Approval ({pending.length})
+                        {/* ── Section 2: All Users table ─────────────────────────── */}
+                        <div>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 10, borderLeft: "2px solid rgba(255,255,255,0.2)", paddingLeft: 8 }}>
+                                All Users ({allUsers.length})
+                            </div>
+                            {allUsers.length === 0 && !loading ? (
+                                <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, marginTop: 12 }}>No approved users found.</div>
+                            ) : (
+                                <div style={{ overflowX: "auto" }}>
+                                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+                                        <thead>
+                                            <tr>
+                                                <TH>Name</TH>
+                                                <TH>Email</TH>
+                                                <TH>Role</TH>
+                                                <TH style={{ textAlign: "center" }}>Approved</TH>
+                                                <TH>Last Login</TH>
+                                                <TH>Actions</TH>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {allUsers.map(u => (
+                                                <tr key={u.id} style={{ background: u.id === user?.id ? "rgba(26,110,181,0.06)" : "transparent" }}>
+                                                    <TD>
+                                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                            {u.is_super_admin && (
+                                                                <span style={{ color: "#FFB300", fontSize: 13 }} title="Super admin">★</span>
+                                                            )}
+                                                            <span style={{ fontWeight: u.is_super_admin ? 600 : 400, color: u.is_super_admin ? "#FFB300" : "#e0e0e0" }}>
+                                                                {u.name || <span style={{ fontStyle: "italic", color: "rgba(255,255,255,0.3)" }}>No name</span>}
+                                                            </span>
+                                                            {u.id === user?.id && (
+                                                                <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", letterSpacing: "0.08em" }}>YOU</span>
+                                                            )}
+                                                        </div>
+                                                    </TD>
+                                                    <TD style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{u.email}</TD>
+                                                    <TD>
+                                                        <select
+                                                            value={u.role}
+                                                            disabled={!!u.is_super_admin}
+                                                            onChange={e => handleRoleChange(u.id, e.target.value)}
+                                                            style={{
+                                                                background: "rgba(255,255,255,0.06)",
+                                                                border: "1px solid rgba(255,255,255,0.12)",
+                                                                borderRadius: 4,
+                                                                color: u.role === "admin" ? "#FFB300" : u.role === "analyst" ? "#2d8fe8" : "rgba(255,255,255,0.5)",
+                                                                fontSize: 11,
+                                                                padding: "3px 6px",
+                                                                cursor: u.is_super_admin ? "default" : "pointer",
+                                                                opacity: u.is_super_admin ? 0.5 : 1,
+                                                            }}
+                                                        >
+                                                            <option value="observer">Observer</option>
+                                                            <option value="analyst">Analyst</option>
+                                                            <option value="admin">Admin</option>
+                                                        </select>
+                                                    </TD>
+                                                    <TD style={{ textAlign: "center" }}>
+                                                        {u.approved
+                                                            ? <span style={{ color: "#22c55e", fontSize: 14 }}>✓</span>
+                                                            : <span style={{ color: "#ef4444", fontSize: 14 }}>✗</span>
+                                                        }
+                                                    </TD>
+                                                    <TD style={{ color: "rgba(255,255,255,0.4)", fontSize: 11 }}>
+                                                        {fmtDate(u.last_login)}
+                                                    </TD>
+                                                    <TD>
+                                                        {!u.is_super_admin && (
+                                                            <button onClick={() => handleDelete(u.id)} style={{
+                                                                padding: "3px 10px", fontSize: 10, cursor: "pointer",
+                                                                background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.35)",
+                                                                borderRadius: 4, color: "#ef4444",
+                                                            }}>
+                                                                Delete
+                                                            </button>
+                                                        )}
+                                                    </TD>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
                                 </div>
-                                {pending.map(u => (
-                                    <UserRow key={u.id} user={u} currentUser={user}
-                                        notes={notes[u.id] || ""} onNotesChange={v => setNotes(n => ({ ...n, [u.id]: v }))}
-                                        onSaveNotes={() => saveNotes(u.id)} savingNotes={!!saving[u.id]}
-                                        onApprove={() => approve(u.id)} onSetRole={r => setRole(u.id, r)}
-                                        onDelete={() => deleteUser(u.id)} highlight />
-                                ))}
-                                <div style={{ height: 20 }} />
-                            </>
-                        )}
-
-                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 10, borderLeft: "2px solid rgba(255,255,255,0.2)", paddingLeft: 8 }}>
-                            Active Users ({approved.length})
+                            )}
                         </div>
-                        {approved.map(u => (
-                            <UserRow key={u.id} user={u} currentUser={user}
-                                notes={notes[u.id] || ""} onNotesChange={v => setNotes(n => ({ ...n, [u.id]: v }))}
-                                onSaveNotes={() => saveNotes(u.id)} savingNotes={!!saving[u.id]}
-                                onApprove={null} onSetRole={r => setRole(u.id, r)}
-                                onDelete={() => deleteUser(u.id)} highlight={false} />
-                        ))}
-                        {!loading && users.length === 0 && !error && (
-                            <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, marginTop: 20 }}>No users found.</div>
-                        )}
                     </>
                 )}
             </div>
         </div>
     )
-}
-
-function UserRow({ user, currentUser, notes, onNotesChange, onSaveNotes, savingNotes, onApprove, onSetRole, onDelete, highlight }) {
-    const [notesOpen, setNotesOpen] = useState(false)
-    const isSelf       = user.id === currentUser?.id
-    const isSuperAdmin = !!user.is_super_admin
-    const canModify    = !isSelf && (!isSuperAdmin || !!currentUser?.is_super_admin)
-
-    return (
-        <div style={{
-            background: highlight ? "rgba(251,191,36,0.05)" : "rgba(255,255,255,0.02)",
-            border: `1px solid ${highlight ? "rgba(251,191,36,0.2)" : "rgba(255,255,255,0.06)"}`,
-            borderRadius: 6, marginBottom: 8, padding: "12px 14px",
-        }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                {isSuperAdmin && <span style={{ fontSize: 12, opacity: 0.7 }} title="Super admin">★</span>}
-                <div style={{ flex: 1, minWidth: 160 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: isSuperAdmin ? "#FFB300" : "#fff" }}>
-                        {user.name || <span style={{ color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>No name</span>}
-                        {isSelf && <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginLeft: 6 }}>YOU</span>}
-                    </div>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{user.email}</div>
-                    {user.created_at && (
-                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginTop: 1 }}>
-                            Joined {new Date(user.created_at).toLocaleDateString()}
-                        </div>
-                    )}
-                </div>
-                <RoleBadge role={user.role} />
-                {canModify && (
-                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                        {onApprove && <button onClick={onApprove} style={actionBtn("#22c55e")}>Approve</button>}
-                        {user.approved && user.role === "observer" && (
-                            <button onClick={() => onSetRole("analyst")} style={actionBtn("#2d8fe8")}>→ Analyst</button>
-                        )}
-                        {user.approved && user.role === "analyst" && (
-                            <>
-                                <button onClick={() => onSetRole("observer")} style={actionBtn("rgba(255,255,255,0.2)")}>→ Observer</button>
-                                <button onClick={() => onSetRole("admin")} style={actionBtn("#FFB300")}>→ Admin</button>
-                            </>
-                        )}
-                        {user.approved && user.role === "admin" && !isSuperAdmin && (
-                            <button onClick={() => onSetRole("analyst")} style={actionBtn("rgba(255,255,255,0.2)")}>→ Analyst</button>
-                        )}
-                        <button onClick={() => setNotesOpen(v => !v)} style={actionBtn("rgba(255,255,255,0.2)")}>Notes</button>
-                        <button onClick={onDelete} style={actionBtn("#ef4444")}>Delete</button>
-                    </div>
-                )}
-            </div>
-
-            {notesOpen && (
-                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                    <textarea
-                        value={notes} onChange={e => onNotesChange(e.target.value)}
-                        placeholder="Internal notes…" rows={2}
-                        style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "6px 8px", fontSize: 11, color: "#e0e0e0", resize: "vertical", outline: "none", fontFamily: "inherit" }}
-                    />
-                    <button onClick={onSaveNotes} disabled={savingNotes}
-                        style={{ ...actionBtn("#2d8fe8"), alignSelf: "flex-end", padding: "6px 10px" }}>
-                        {savingNotes ? "…" : "Save"}
-                    </button>
-                </div>
-            )}
-        </div>
-    )
-}
-
-function actionBtn(color) {
-    return {
-        background: "none", border: `1px solid ${color}`, borderRadius: 4,
-        color, fontSize: 10, padding: "3px 8px", cursor: "pointer", whiteSpace: "nowrap", lineHeight: 1.4,
-    }
 }
 
 export default function AdminPanel(props) {
