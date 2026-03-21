@@ -97,6 +97,15 @@ ADDITIONAL_SCAN_FEEDS = [
     # ----------------
     ("ReliefWeb", "https://reliefweb.int/rss.xml"),
     ("International Crisis Group", "https://www.crisisgroup.org/rss.xml"),
+
+    # ----------------
+    # ADDITIONAL — missing from above
+    # ----------------
+    ("BBC Middle East", "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml"),
+    ("Iran International", "https://www.iranintl.com/en/rss"),
+    ("Bellingcat", "https://www.bellingcat.com/feed/"),
+    ("ACLED Data", "https://acleddata.com/feed/"),
+    ("DW World English", "https://rss.dw.com/rdf/rss-en-world"),
 ]
 
 _BASE_FEEDS = list(ADDITIONAL_SCAN_FEEDS)

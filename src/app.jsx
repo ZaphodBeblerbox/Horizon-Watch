@@ -23,6 +23,7 @@ import ProfilePanel from "./components/ProfilePanel.jsx"
 import PreferencesPanel from "./components/PreferencesPanel.jsx"
 import LoginPage from "./components/LoginPage.jsx"
 import AdminPanel from "./components/AdminPanel.jsx"
+import NotificationBar from "./components/NotificationBar.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
 
 const API = API_BASE
@@ -901,6 +902,13 @@ export default function App() {
                 onTabReorder={reorderTabs}
                 onTabRename={renameTab}
             />
+
+            {/* ── Notification bar — live intelligence feed ticker ──────────── */}
+            <NotificationBar onEventClick={(n) => {
+                if (n.lat && n.lon) {
+                    window.dispatchEvent(new CustomEvent("akili:jump-to", { detail: { lat: n.lat, lon: n.lon } }))
+                }
+            }} />
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
             <div style={{ flex: 1, display: "flex", minHeight: 0 }}>

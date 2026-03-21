@@ -59,6 +59,8 @@ from gdelt_events import (
 from article_extract import get_article_preview
 import usage_tracker
 from classifier import classify_event
+import event_store as es
+import event_bridge
 
 try:
     from langdetect import detect as _langdetect_detect
@@ -2614,6 +2616,17 @@ def _geocode_from_text_blob(
                     meta["resolved_display_name"] = geo.get("display_name")
                     _record_geo_resolution("strict_success")
                     return geo, candidate, candidates, meta
+                # Explicit title mention overrides country-mismatch rejection:
+                # if the location candidate appears verbatim in the article title,
+                # trust the geocode regardless of expected-country mismatch.
+                _title_lower = (title or "").lower()
+                _cand_lower  = (candidate or "").lower()
+                if _cand_lower and len(_cand_lower) > 3 and _cand_lower in _title_lower:
+                    meta["location_confidence"] = "strict"
+                    meta["resolved_country_code"] = (geo.get("country_code") or "").lower() or None
+                    meta["resolved_display_name"] = geo.get("display_name")
+                    _record_geo_resolution("strict_success")
+                    return geo, candidate, candidates, meta
                 _record_geo_mismatch(candidate)
 
     # Stage 2: relaxed country-only lookup for expected countries.
@@ -4667,6 +4680,10 @@ def _make_news_marker(article: dict) -> Optional[dict]:
         "resolved_display_name": article.get("resolved_display_name"),
         "published": article.get("published", datetime.now(timezone.utc).isoformat()),
         "expires_at": article.get("expires_at", (datetime.now(timezone.utc) + timedelta(hours=_NEWS_MARKER_WINDOW_HOURS)).isoformat()),
+        "image_url":   article.get("image_url") or article.get("og_image") or article.get("image") or None,
+        "summary":     (article.get("summary") or article.get("description") or "")[:400],
+        "source_name": article.get("source_name") or article.get("feed_name") or article.get("source") or "",
+        "num_sources": article.get("num_sources") or 1,
     }
 
 
@@ -4864,6 +4881,23 @@ def _run_news_conflict_extraction_sync():
             total_articles_parsed += 1
             title   = entry.get("title", "") or ""
             summary = entry.get("summary", "") or ""
+            # Extract image URL from RSS entry (media:content, media:thumbnail, enclosures)
+            entry_image_url: Optional[str] = None
+            try:
+                mc = entry.get("media_content", [])
+                if mc:
+                    entry_image_url = mc[0].get("url") or None
+                if not entry_image_url:
+                    mt = entry.get("media_thumbnail", [])
+                    if mt:
+                        entry_image_url = mt[0].get("url") or None
+                if not entry_image_url:
+                    for enc in (entry.get("enclosures") or []):
+                        if (enc.get("type") or "").startswith("image/"):
+                            entry_image_url = enc.get("url") or enc.get("href") or None
+                            break
+            except Exception:
+                entry_image_url = None
 
             try:
                 pp = entry.get("published_parsed") or entry.get("updated_parsed")
@@ -4977,6 +5011,7 @@ def _run_news_conflict_extraction_sync():
                 "resolved_display_name": meta.get("resolved_display_name"),
                 "geocode_candidate": winning_candidate,
                 "event_type": article_event_type,
+                "image_url": entry_image_url,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             _upsert_news_article(article_record)
@@ -5535,7 +5570,7 @@ def _maybe_auto_enrich_batch(items: list) -> None:
 
 def _build_surface_pool() -> list:
     """
-    Build ranked surface pool (top 15 items) from GDELT zones + news conflicts.
+    Build ranked surface pool (top 50 items) from GDELT zones + news conflicts.
     All events are included regardless of geography; scoring naturally ranks
     profile-relevant events higher. No Claude calls — all context is rule-based.
 
@@ -5753,7 +5788,7 @@ def _build_surface_pool() -> list:
         gated.append(item)
 
     gated.sort(key=lambda x: x["relevance_score"], reverse=True)
-    return gated[:15]
+    return gated[:50]
 
 
 # ── Auto-brief helpers ────────────────────────────────────────────────────────
@@ -6021,7 +6056,7 @@ def _generate_briefing_sync(manual: bool = False) -> dict | None:
         pool_items = list(_SURFACE_POOL)
 
     surface_lines: list[str] = []
-    for item in pool_items[:15]:
+    for item in pool_items[:50]:
         surface_lines.append(
             f"  [{item.get('severity_tier','?').upper()}] "
             f"{item.get('headline','')} — {item.get('location','')} "
@@ -6512,6 +6547,19 @@ async def _startup_warmup_tasks():
         print("[startup] infrastructure CSVs loaded and _DS_STATUS updated (airports, ports, power plants all green)")
     except Exception as ex:
         print(f"[startup] infrastructure preload error: {ex}")
+
+    # Start unified event bridge
+    try:
+        def get_news_store():
+            return dict(_NEWS_ARTICLE_STORE)
+        def get_conflict_markers():
+            return list(_NEWS_CONFLICT_MARKERS)
+        def get_gdelt():
+            return get_gdelt_cached_events(limit=5000)
+        asyncio.create_task(event_bridge.bridge_loop(get_news_store, get_conflict_markers, get_gdelt))
+        print("[startup] unified event bridge started")
+    except Exception as ex:
+        print(f"[startup] event bridge error: {ex}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -7216,8 +7264,11 @@ def get_news_conflicts(
         active = [m for m in active
                   if south <= m["lat"] <= north and west <= m["lon"] <= east]
 
-    # Score and filter by mission profile
-    scored = score_news_markers(active, _ACTIVE_PROFILE, apply_filter=True)
+    # Score without score-threshold filter (so low-scoring but geolocated markers still show)
+    scored = score_news_markers(active, _ACTIVE_PROFILE, apply_filter=False)
+    # Apply geo gate manually so theater/region filter still works
+    if _ACTIVE_PROFILE and _ACTIVE_PROFILE.get("focusRegions") and "Global" not in _ACTIVE_PROFILE.get("focusRegions", []):
+        scored = [m for m in scored if geo_gate_passes(float(m.get("lat", 0)), float(m.get("lon", 0)), _ACTIVE_PROFILE)]
     return {"markers": scored, "count": len(scored)}
 
 
@@ -10072,3 +10123,147 @@ def admin_active_users(current_user=Depends(require_admin_user)):
         return result
     finally:
         db.close()
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UNIFIED EVENT SYSTEM — new pipeline alongside existing one
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/v2/events")
+def get_unified_events(
+    south: float = Query(None),
+    north: float = Query(None),
+    west:  float = Query(None),
+    east:  float = Query(None),
+    theater: str = Query(None),
+    min_severity: str = Query("low"),
+    max_age_hours: int = Query(72),
+    limit: int = Query(200),
+    mode: str = Query("threads"),  # "threads" or "events"
+):
+    """
+    Unified event endpoint. Returns threaded or individual events.
+
+    theater: region name from scoring.REGION_BBOXES (e.g. "Middle East")
+    mode: "threads" returns grouped story threads, "events" returns individual events
+    """
+    from scoring import REGION_BBOXES
+
+    # Resolve theater bbox
+    bbox = None
+    if theater and theater in REGION_BBOXES and REGION_BBOXES[theater]:
+        s, n, w, e = REGION_BBOXES[theater]
+        bbox = (s, n, w, e)
+    elif None not in (south, north, west, east):
+        bbox = (south, north, west, east)
+    elif _ACTIVE_PROFILE:
+        focus = _ACTIVE_PROFILE.get('focusRegions', [])
+        for region in focus:
+            if region in REGION_BBOXES and REGION_BBOXES[region]:
+                s, n, w, e = REGION_BBOXES[region]
+                bbox = (s, n, w, e)
+                break
+
+    if mode == "threads":
+        results = es.get_threads(
+            theater_bbox=bbox,
+            min_severity=min_severity,
+            max_age_hours=max_age_hours,
+            limit=limit,
+        )
+    else:
+        results = es.get_active_events(
+            theater_bbox=bbox,
+            min_severity=min_severity,
+            max_age_hours=max_age_hours,
+            limit=limit,
+        )
+
+    return {
+        "events": results,
+        "count": len(results),
+        "theater": theater,
+        "bbox": bbox,
+        "mode": mode,
+        "store_stats": es.get_store_stats(),
+    }
+
+
+@app.get("/api/v2/events/stats")
+def get_event_store_stats():
+    """Debug endpoint — show event store statistics."""
+    return es.get_store_stats()
+
+
+@app.get("/api/v2/events/{event_id}")
+def get_unified_event(event_id: str):
+    """Get a single event or thread by ID."""
+    # Check thread store first
+    with es._THREAD_STORE_LOCK:
+        thread = es._THREAD_STORE.get(event_id) or es._THREAD_STORE.get(f"thread_{event_id}")
+    if thread:
+        return {"type": "thread", "data": thread}
+
+    # Check event store
+    with es._EVENT_STORE_LOCK:
+        event = es._EVENT_STORE.get(event_id)
+    if event:
+        return {"type": "event", "data": event}
+
+    raise HTTPException(status_code=404, detail="Event not found")
+
+
+@app.get("/api/v2/notifications")
+def get_recent_notifications(
+    theater: str = Query(None),
+    limit: int = Query(10),
+    max_age_hours: int = Query(6),
+):
+    """
+    Returns recent significant events for the notification bar.
+    Sorted by published time descending.
+    Only returns elevated+ severity.
+    """
+    from scoring import REGION_BBOXES
+    bbox = None
+    if theater and theater in REGION_BBOXES and REGION_BBOXES[theater]:
+        s, n, w, e = REGION_BBOXES[theater]
+        bbox = (s, n, w, e)
+    elif _ACTIVE_PROFILE:
+        focus = _ACTIVE_PROFILE.get('focusRegions', [])
+        for region in focus:
+            if region in REGION_BBOXES and REGION_BBOXES[region]:
+                s, n, w, e = REGION_BBOXES[region]
+                bbox = (s, n, w, e)
+                break
+
+    events = es.get_active_events(
+        theater_bbox=bbox,
+        min_severity='elevated',
+        max_age_hours=max_age_hours,
+        limit=limit * 3,
+    )
+
+    events.sort(key=lambda e: e.get('published', ''), reverse=True)
+
+    TYPE_ICONS = {
+        'airstrike': '✈', 'missile': '🚀', 'armed_clash': '⚔',
+        'explosion': '💥', 'maritime': '⚓', 'protest': '✊',
+        'earthquake': '⚡', 'fire': '🔥', 'assassination': '🎯',
+        'coerce': '⚠', 'general': '●',
+    }
+    notifications = []
+    for ev in events[:limit]:
+        notifications.append({
+            'id':           ev['id'],
+            'icon':         TYPE_ICONS.get(ev.get('event_type', 'general'), '●'),
+            'clean_title':  ev.get('clean_title', ''),
+            'location':     ev.get('location', ''),
+            'event_type':   ev.get('event_type', 'general'),
+            'severity_tier': ev.get('severity_tier', 'low'),
+            'published':    ev.get('published', ''),
+            'lat':          ev.get('lat'),
+            'lon':          ev.get('lon'),
+            'source_name':  ev.get('source_name', ''),
+        })
+
+    return {"notifications": notifications, "count": len(notifications)}

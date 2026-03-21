@@ -15,6 +15,7 @@ import TVWidget from "./tvwidget.jsx"
 import DraggablePanel from "./DraggablePanel.jsx"
 import LayersPanel from "./LayersPanel.jsx"
 import API_BASE from "../apiBase.js"
+import EventDetailPanel from "./EventDetailPanel.jsx"
 
 const API = API_BASE
 
@@ -29,8 +30,9 @@ const WIDGETS = [
     { id: "adsb",          label: "ADS-B Traffic",      minZoom: 0, color: "#94a3b8" },
     { id: "route",         label: "Route Planner",      minZoom: 0, color: "#f59e0b" },
     { id: "infra",         label: "Infrastructure",     minZoom: 0, color: "#00BCD4" },
-    { id: "newsConflicts", label: "News Conflicts",     minZoom: 0, color: "#FFB300" },
-    { id: "tv",            label: "Live TV",            minZoom: 0, color: "#ef4444" },
+    { id: "newsConflicts",   label: "News Conflicts",     minZoom: 0, color: "#FFB300" },
+    { id: "unifiedEvents",  label: "Intelligence Feed",  minZoom: 0, color: "#ef4444" },
+    { id: "tv",             label: "Live TV",            minZoom: 0, color: "#ef4444" },
     { id: "webcams",       label: "Webcams",            minZoom: 0, color: "#FFB300" },
     { id: "satellite",     label: "Satellite",          minZoom: 0, color: "#00E5FF" },
     { id: "annotate",      label: "Annotate",           minZoom: 0, color: "#FFB300" },
@@ -1019,9 +1021,9 @@ function makeEventMarkerIcon(item, compact = false) {
     const color    = eventColorValue(item?.color)
     const type     = eventTypeValue(item)
     const critical = Number(item?.significance_score || 0) >= 80
-    const glowSize = compact ? 40 : 48
-    const coreSize = compact ? 24 : 32
-    const ringSize = compact ? 30 : 40
+    const glowSize = compact ? 56 : 64
+    const coreSize = compact ? 32 : 40
+    const ringSize = compact ? 42 : 52
     const [r, g, b] = _hexToRgb(color)
     const glowHalf = glowSize / 2
     const svg = (EVENT_ICON_SVG[type] || EVENT_ICON_SVG.general)(color)
@@ -3346,6 +3348,8 @@ export default function MapPage({
     onTheaterDrawEnd = null,  // (polygon: [[lat,lon],...] | null) => void
 }) {
     const [zoom, setZoom] = useState(6)
+    const [showEventLabels, setShowEventLabels] = useState(false)
+    const [selectedEvent, setSelectedEvent] = useState(null)
     const autoActivatedRef = useRef({})
     const manualLayerOverridesRef = useRef({})
     const LAYER_STORAGE_KEY = "akili_layer_state"
@@ -3368,6 +3372,7 @@ export default function MapPage({
             borders: false,
             cityLabels: false,
             newsConflicts: false,
+            unifiedEvents: false,
             infra: false,
             airspace: false,
             news: false,
@@ -3658,9 +3663,8 @@ export default function MapPage({
     // ── News conflicts ────────────────────────────────────────────────────────
     const [newsConflictsData, setNewsConflictsData] = useState([])
     const [newsConflictsCount, setNewsConflictsCount] = useState(0)   // global count for badge
-    const [newsConflictSelected, setNewsConflictSelected] = useState(null)   // clicked marker
-    const [newsConflictAnalysisCache, setNewsConflictAnalysisCache] = useState({})  // url → result
-    const [newsConflictAnalysing, setNewsConflictAnalysing] = useState(false)
+    const [unifiedEvents, setUnifiedEvents]           = useState([])
+    const [unifiedEventsCount, setUnifiedEventsCount] = useState(0)
     const [surveillanceAlerts, setSurveillanceAlerts] = useState([])
 
     // ── POI layer ─────────────────────────────────────────────────────────────
@@ -3718,6 +3722,7 @@ export default function MapPage({
     const cityLabelsLayerRef     = useRef(null)
     const newsConflictsLayerRef  = useRef(null)
     const enrichmentLayerRef     = useRef(null)
+    const unifiedLayerRef        = useRef(null)
     const depLayerRef            = useRef(null)
     const contextBordersLayerRef = useRef(null)
     const contextEezLayerRef     = useRef(null)
@@ -3726,6 +3731,71 @@ export default function MapPage({
     const infraLastBoundsRef     = useRef({})    // per-category last-fetched bounds
     const newsConflictsDebounceRef = useRef(null) // debounce timer (unused, kept for cleanup)
     const tempMarkerTimerRef     = useRef(null)
+
+    // ── Pulse keyframe (injected once) ────────────────────────────────────────
+    useEffect(() => {
+        if (!document.getElementById("hw-pulse-style")) {
+            const style = document.createElement("style")
+            style.id = "hw-pulse-style"
+            style.textContent = `@keyframes hw-pulse {
+                0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.7); }
+                70%  { box-shadow: 0 0 0 12px rgba(239,68,68,0); }
+                100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+            }`
+            document.head.appendChild(style)
+        }
+    }, [])
+
+    // ── Event marker helpers (inside component for closure access) ────────────
+    const cleanEventTitle = useCallback((headline, eventType, location) => {
+        if (!headline) return eventType || "Unknown event"
+        let title = headline
+            .replace(/^\d{4}-\d{2}-\d{2}[T\s][\d:]+\s*/, "")
+            .replace(/^(breaking|update|watch|report):\s*/i, "")
+            .replace(/\s*(says|according to|reports say|officials say).*$/i, "")
+            .replace(/\s*[-–—]\s*(Reuters|AP|AFP|BBC|CNN|Al Jazeera|Guardian|Times).*$/i, "")
+            .replace(/\s+/g, " ")
+            .trim()
+        if (title.length > 60) {
+            title = title.substring(0, 57).replace(/\s+\S*$/, "") + "..."
+        }
+        return title || location || "Event"
+    }, [])
+
+    const getNewsMarkerHTML = useCallback((marker, showLabel) => {
+        const tier = marker.severity_tier || marker.confidence || "medium"
+        const ageHours = marker.published
+            ? (Date.now() - new Date(marker.published).getTime()) / 3600000
+            : 0
+        const size = tier === "critical" ? 32 : (tier === "high" || tier === "significant") ? 26 : (tier === "medium" || tier === "elevated") ? 20 : 16
+        const color = tier === "critical" ? "#ef4444" : (tier === "high" || tier === "significant") ? "#f97316" : (tier === "medium" || tier === "elevated") ? "#eab308" : "#94a3b8"
+        const opacity = Math.max(0.35, 1 - (ageHours / 72) * 0.65)
+        const shouldPulse = (tier === "critical" || tier === "high") && ageHours < 3
+        const typeIcons = { airstrike: "✦", missile: "↑", armed_clash: "✕", explosion: "◉", maritime: "▲", protest: "◆", earthquake: "⊕", fire: "◈", assassination: "◎", coerce: "!", fight: "✕", assault: "✕", general: "●" }
+        const icon = typeIcons[(marker.type || "").toLowerCase()] || typeIcons[(marker.icon || "").toLowerCase()] || "●"
+        const label = showLabel
+            ? `<div style="position:absolute;top:calc(100% + 2px);left:50%;transform:translateX(-50%);font-size:10px;font-family:Inter,sans-serif;color:white;white-space:nowrap;text-shadow:0 1px 4px rgba(0,0,0,1);pointer-events:none;max-width:140px;overflow:hidden;text-overflow:ellipsis;">${(marker.headline || marker.location || "").substring(0, 50)}</div>`
+            : ""
+        return `<div style="position:relative;width:${size}px;height:${size}px;"><div style="width:${size}px;height:${size}px;background:${color};border-radius:50%;border:2px solid rgba(255,255,255,0.7);opacity:${opacity};box-shadow:0 0 ${size * 2.5}px ${color},0 0 ${size * 1.2}px ${color}aa,0 0 ${size * 0.6}px rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;font-size:${Math.max(9, size - 8)}px;cursor:pointer;${shouldPulse ? "animation:hw-pulse 1.8s ease-out infinite;" : ""}">${icon}</div>${label}</div>`
+    }, [])
+
+    const getEventMarkerHTML = useCallback((event, showLabel) => {
+        const tier = event.severity_tier || "low"
+        const publishedAt = event.published_at ? new Date(event.published_at) : new Date()
+        const ageHours = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60)
+        const size  = tier === "critical" ? 30 : tier === "significant" ? 24 : tier === "elevated" ? 18 : 14
+        const color = tier === "critical" ? "#ef4444" : tier === "significant" ? "#f97316" : tier === "elevated" ? "#eab308" : "#6b7280"
+        const opacity = Math.max(0.25, 1 - (ageHours / 48) * 0.75)
+        const shouldPulse = tier === "critical" && ageHours < 2
+        const iconDef = (typeof EVENT_ICONS !== "undefined" && EVENT_ICONS?.[event.icon]) || (typeof EVENT_ICONS !== "undefined" && EVENT_ICONS?.[event.type]) || { symbol: "●" }
+        const label = showLabel
+            ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:3px;font-size:10px;font-family:Inter,sans-serif;color:white;white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,0.9);pointer-events:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;">${cleanEventTitle(event.headline, event.type, event.location)}</div>`
+            : ""
+        return `<div style="position:relative;width:${size}px;height:${size}px;">` +
+            `<div style="width:${size}px;height:${size}px;background:${color};border-radius:50%;border:1.5px solid rgba(255,255,255,0.6);opacity:${opacity};box-shadow:0 0 ${size * 2}px ${color},0 0 ${size}px ${color}88;display:flex;align-items:center;justify-content:center;font-size:${Math.max(11, size - 4)}px;${shouldPulse ? "animation:hw-pulse 2s ease-out infinite;" : ""}">${iconDef.symbol}</div>` +
+            label +
+            `</div>`
+    }, [cleanEventTitle])
 
     const dsActive = useMemo(() => ({
         airport: !!active.airports,
@@ -3871,6 +3941,45 @@ export default function MapPage({
         const t = setTimeout(() => setToastInfo(null), 2200)
         return () => clearTimeout(t)
     }, [toastInfo?.key])
+
+    // akili:show-country — dispatched by GDELT zone marker clicks
+    useEffect(() => {
+        const handler = (e) => {
+            const { location, country } = e.detail || {}
+            const name = location?.split(",")[0]?.trim() || country || ""
+            if (name) setSelectedCountry(name)
+        }
+        window.addEventListener("akili:show-country", handler)
+        return () => window.removeEventListener("akili:show-country", handler)
+    }, [])
+
+    // akili:jump-to — fly map to a coordinate (dispatched by NotificationBar)
+    useEffect(() => {
+        const handler = (e) => {
+            const { lat, lon } = e.detail || {}
+            if (mapRef.current && lat && lon) {
+                mapRef.current.setView([lat, lon], 8, { animate: true })
+            }
+        }
+        window.addEventListener("akili:jump-to", handler)
+        return () => window.removeEventListener("akili:jump-to", handler)
+    }, [])
+
+    // New-events notification from incremental news conflict loader
+    useEffect(() => {
+        const handler = (e) => {
+            const { count, severity, region, items } = e.detail
+            const color = severity === "critical" ? "#ef4444"
+                : severity === "significant" ? "#f97316"
+                : "#eab308"
+            const title = count === 1
+                ? `New event — ${items[0]?.location || region}`
+                : `${count} new events — ${region}`
+            setToastInfo({ count, key: Date.now(), message: title, color })
+        }
+        window.addEventListener("akili:new-events", handler)
+        return () => window.removeEventListener("akili:new-events", handler)
+    }, [])
 
     // Keep viewportBoundsRef current so the polling closure can always read
     // the latest bounds without being in the dependency array.
@@ -4247,23 +4356,154 @@ export default function MapPage({
                 })
 
                 console.info("[news-conflicts/fetch]", { count: deduped.length })
-                setNewsConflictsData(deduped)
+                setNewsConflictsData(prev => {
+                    const existingKeys = new Set(prev.map(m =>
+                        m.url || `${m.headline}_${(m.lat || 0).toFixed(3)}_${(m.lon || 0).toFixed(3)}`
+                    ))
+                    const brandNew = deduped.filter(m => {
+                        const key = m.url || `${m.headline}_${(m.lat || 0).toFixed(3)}_${(m.lon || 0).toFixed(3)}`
+                        return !existingKeys.has(key)
+                    })
+                    if (brandNew.length > 0 && prev.length > 0) {
+                        const hasCritical = brandNew.some(m => m.severity_tier === "critical")
+                        const hasSignificant = brandNew.some(m => m.severity_tier === "significant")
+                        const topRegion = brandNew[0]?.location?.split(",").slice(-1)[0]?.trim() || "region"
+                        window.dispatchEvent(new CustomEvent("akili:new-events", {
+                            detail: {
+                                count: brandNew.length,
+                                severity: hasCritical ? "critical" : hasSignificant ? "significant" : "elevated",
+                                region: topRegion,
+                                items: brandNew.slice(0, 3),
+                            },
+                        }))
+                    }
+                    const combined = [...prev, ...brandNew]
+                    if (combined.length > 200) {
+                        combined.sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0))
+                        return combined.slice(0, 200)
+                    }
+                    return combined
+                })
                 setNewsConflictsCount(deduped.length)
             } catch {
-                setNewsConflictsData([])
-                setNewsConflictsCount(0)
+                // keep existing markers on fetch error
             }
         }
         fetchAll()
-        const iv = setInterval(fetchAll, 15 * 60 * 1000)
+        const iv = setInterval(fetchAll, 30 * 1000)
         return () => clearInterval(iv)
     }, [active.newsConflicts, viewportBounds, events, zoom])
+
+    // ── Unified Intelligence Feed — /api/v2/events ────────────────────────────
+    useEffect(() => {
+        if (!active.unifiedEvents) {
+            setUnifiedEvents([])
+            setUnifiedEventsCount(0)
+            return
+        }
+        const fetchUnified = async () => {
+            try {
+                const res = await fetch(`${API}/api/v2/events?mode=threads&max_age_hours=72&limit=200`)
+                const data = await res.json()
+                const threads = data.events || []
+                setUnifiedEvents(prev => {
+                    const existingIds = new Set(prev.map(t => t.thread_id))
+                    const brandNew = threads.filter(t => !existingIds.has(t.thread_id))
+                    if (brandNew.length > 0 && prev.length > 0) {
+                        const hasCritical = brandNew.some(t => t.severity_tier === "critical")
+                        window.dispatchEvent(new CustomEvent("akili:new-events", {
+                            detail: {
+                                count: brandNew.length,
+                                severity: hasCritical ? "critical" : "significant",
+                                region: brandNew[0]?.location || "region",
+                                items: brandNew.slice(0, 3),
+                            },
+                        }))
+                    }
+                    const combined = [...prev.filter(t => threads.some(nt => nt.thread_id === t.thread_id)), ...brandNew]
+                    return combined
+                })
+                setUnifiedEventsCount(threads.length)
+            } catch (e) {
+                console.error("[unified-events] fetch error:", e)
+            }
+        }
+        fetchUnified()
+        const iv = setInterval(fetchUnified, 30 * 1000)
+        return () => clearInterval(iv)
+    }, [active.unifiedEvents])
 
     // ── Pipeline lines — use hardcoded dataset (remote GOPIT sources are dead) ──
     useEffect(() => {
         if (active.pipelines) setPipelineGeoData(_HARDCODED_PIPELINES)
         else setPipelineGeoData([])
     }, [active.pipelines])
+
+    // ── Unified events render — imperative Leaflet layerGroup ─────────────────
+    useEffect(() => {
+        if (!mapRef.current) return
+        if (!unifiedLayerRef.current) {
+            unifiedLayerRef.current = L.layerGroup()
+        }
+        unifiedLayerRef.current.clearLayers()
+        if (!active.unifiedEvents || unifiedEvents.length === 0) {
+            unifiedLayerRef.current.remove()
+            return
+        }
+        const TYPE_ICONS = {
+            airstrike: "✦", missile: "↑", armed_clash: "✕",
+            explosion: "◉", maritime: "▲", protest: "◆",
+            earthquake: "⊕", fire: "◈", assassination: "◎",
+            coerce: "!", fight: "✕", assault: "✕", general: "●",
+        }
+        const TIER_COLOR_MAP = {
+            critical: "#ef4444", significant: "#f97316", elevated: "#eab308", low: "#94a3b8",
+        }
+        unifiedEvents.forEach(thread => {
+            if (!thread.lat || !thread.lon) return
+            const tier = thread.severity_tier || "low"
+            const color = TIER_COLOR_MAP[tier] || "#94a3b8"
+            const ageHours = thread.latest_event
+                ? (Date.now() - new Date(thread.latest_event).getTime()) / 3600000
+                : 0
+            const opacity = Math.max(0.4, 1 - (ageHours / 72) * 0.6)
+            const shouldPulse = tier === "critical" && ageHours < 2
+            const baseSize = tier === "critical" ? 32 : tier === "significant" ? 26 : tier === "elevated" ? 20 : 14
+            const size = Math.min(48, baseSize + Math.min(10, (thread.event_count || 1) * 2))
+            const typeIcon = TYPE_ICONS[(thread.event_type || "").toLowerCase()] || TYPE_ICONS.general
+            const countBadge = (thread.event_count || 1) > 1
+                ? `<div style="position:absolute;top:-6px;right:-6px;background:#1a6eb5;color:white;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700;border:1px solid rgba(255,255,255,0.5);">${thread.event_count}</div>`
+                : ""
+            const html = `<div style="position:relative;width:${size}px;height:${size}px;"><div style="width:${size}px;height:${size}px;background:${color};border-radius:50%;border:2px solid rgba(255,255,255,0.8);opacity:${opacity};box-shadow:0 0 ${size * 2}px ${color},0 0 ${size}px ${color}88;display:flex;align-items:center;justify-content:center;font-size:${Math.max(11, size - 10)}px;cursor:pointer;${shouldPulse ? "animation:hw-pulse 1.8s ease-out infinite;" : ""}">${typeIcon}</div>${countBadge}</div>`
+            const icon = L.divIcon({
+                className: "",
+                html,
+                iconSize: [size + 8, size + 8],
+                iconAnchor: [(size + 8) / 2, (size + 8) / 2],
+            })
+            const marker = L.marker([thread.lat, thread.lon], { icon })
+            marker.on("click", () => {
+                setSelectedEvent({
+                    ...thread,
+                    headline: thread.clean_title || thread.headline,
+                    published_at: thread.latest_event,
+                    published: thread.latest_event,
+                    type: thread.event_type,
+                    context: thread.body || thread.summary || "",
+                    confidence: thread.corroboration_count > 3 ? 0.9 : thread.corroboration_count > 1 ? 0.7 : 0.5,
+                    num_sources: (thread.sources || []).length,
+                    source_name: (thread.sources || []).join(", "),
+                    auto_brief: null,
+                })
+            })
+            marker.bindTooltip(
+                `<div style="background:rgba(6,13,26,0.9);padding:6px 10px;border:1px solid rgba(255,255,255,0.1);color:#e8edf2;font-size:11px;max-width:200px;"><div style="font-weight:600;margin-bottom:2px;">${thread.clean_title || thread.headline || thread.location || ""}</div><div style="color:#8899aa;font-size:10px;">${thread.event_count || 1} source${(thread.event_count || 1) > 1 ? "s" : ""} · ${tier}</div></div>`,
+                { className: "", permanent: false, direction: "top", opacity: 1 }
+            )
+            unifiedLayerRef.current.addLayer(marker)
+        })
+        unifiedLayerRef.current.addTo(mapRef.current)
+    }, [unifiedEvents, active.unifiedEvents])
 
     // ── Deployments layer fetch ───────────────────────────────────────────────
     useEffect(() => {
@@ -4445,22 +4685,6 @@ export default function MapPage({
             .then(data => setImpactAnalysisCache(prev => ({ ...prev, [impactEvent.id]: data })))
             .catch(err => console.error("[analyse]", err))
             .finally(() => setImpactAnalysing(false))
-    }
-
-    // ── On-demand news conflict analysis ──────────────────────────────────────
-    const analyseNewsConflict = () => {
-        if (!newsConflictSelected || newsConflictAnalysing) return
-        const cacheKey = newsConflictSelected.url
-        if (cacheKey && newsConflictAnalysisCache[cacheKey]) return
-        setNewsConflictAnalysing(true)
-        fetch(`${API}/analyse-news`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ marker: newsConflictSelected, contextual: contextualAnalysis, mission_brief: activeSituation?.mission || "", profile: profile || null }),
-        })
-            .then(r => r.json())
-            .then(data => setNewsConflictAnalysisCache(prev => ({ ...prev, [cacheKey]: data })))
-            .catch(err => console.error("[analyse-news]", err))
-            .finally(() => setNewsConflictAnalysing(false))
     }
 
     // ── On-demand infrastructure analysis ─────────────────────────────────────
@@ -4998,7 +5222,7 @@ export default function MapPage({
 
     // Activate contextual border when a surface event or notification is selected
     useEffect(() => {
-        const ev = selectedSurface || impactEvent || selected || newsConflictSelected
+        const ev = selectedSurface || impactEvent || selected
         if (!ev || !allCountriesGeo) {
             if (!ev) ctxStartFadeOut()
             return
@@ -5010,7 +5234,7 @@ export default function MapPage({
         const feature = findCountryByName(country, allCountriesGeo)
         const shouldShowEez = isMaritimeContext(ev) || ["maritime", "energy"].includes(ev.type)
         if (feature) ctxActivateCountry([feature], shouldShowEez)
-    }, [selectedSurface, surfaceEnrichment, impactEvent, selected, newsConflictSelected])  // eslint-disable-line react-hooks/exhaustive-deps
+    }, [selectedSurface, surfaceEnrichment, impactEvent, selected])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // Also activate when a chokepoint / port infra node is selected
     useEffect(() => {
@@ -5099,8 +5323,10 @@ export default function MapPage({
     }, [active.heatmap, active.newsConflicts, visibleSurfaceItems, events, newsConflictsData, missileAlertItems, earthquakeAlertItems, piracyAlertItems])
 
     const clusterMarkers = useMemo(() => {
-        if (zoom < 7 || zoom > 8 || !visibleSurfaceItems.length) return null
-        const clusters = clusterSurfaceItems(visibleSurfaceItems, 100)
+        // Exclude GDELT zone items — they appear as non-interactive heatmap blobs via SignalSurfaceLayer
+        const clickableItems = visibleSurfaceItems.filter(item => item.source !== "gdelt" && item.source_type !== "conflict_zone")
+        if (zoom > 8 || !clickableItems.length) return null
+        const clusters = clusterSurfaceItems(clickableItems, 30)
         return clusters.map((c, i) => (
             <Marker
                 key={`cluster-${i}-z${zoom}`}
@@ -5110,11 +5336,9 @@ export default function MapPage({
                 eventHandlers={{
                     click: (e) => {
                         L.DomEvent.stopPropagation(e)
-                        // Open detail for highest-scoring item in cluster
-                        const top = c.items.reduce((best, x) =>
-                            (x.relevance_score || 0) > (best.relevance_score || 0) ? x : best, c.items[0])
-                        onSurfaceItemClick?.(top)
-                        if (mapRef.current) mapRef.current.flyTo([c.lat, c.lon], 7, { duration: 0.7 })
+                        if (mapRef.current) {
+                            mapRef.current.setView([c.lat, c.lon], mapRef.current.getZoom() + 3, { animate: true, duration: 0.5 })
+                        }
                     },
                 }}
             />
@@ -5122,8 +5346,10 @@ export default function MapPage({
     }, [visibleSurfaceItems, zoom, onSurfaceItemClick])
 
     const individualMarkers = useMemo(() => {
-        if (zoom < 9 || !visibleSurfaceItems.length) return null
-        return visibleSurfaceItems.map(item => (
+        // Exclude GDELT zone items — non-interactive, shown via SignalSurfaceLayer
+        const clickableItems = visibleSurfaceItems.filter(item => item.source !== "gdelt" && item.source_type !== "conflict_zone")
+        if (zoom < 9 || !clickableItems.length) return null
+        return clickableItems.map(item => (
             <Marker
                 key={`surface-${item.id}`}
                 position={[item.lat, item.lon]}
@@ -5142,6 +5368,30 @@ export default function MapPage({
             />
         ))
     }, [visibleSurfaceItems, zoom, onSurfaceItemClick])
+
+    const gdeltZoneMarkers = useMemo(() => {
+        const gdeltItems = visibleSurfaceItems.filter(item => item.source === "gdelt" || item.source_type === "conflict_zone")
+        if (!gdeltItems.length) return null
+        return gdeltItems.map((item, i) => {
+            const tier = item.severity_tier || "low"
+            const baseColor = tier === "critical" ? "239,68,68" : tier === "significant" ? "249,115,22" : tier === "elevated" ? "234,179,8" : "100,116,139"
+            const radius = tier === "critical" ? 45000 : tier === "significant" ? 35000 : tier === "elevated" ? 25000 : 18000
+            return (
+                <Circle
+                    key={`gdelt-blob-${i}`}
+                    center={[item.lat, item.lon]}
+                    radius={radius}
+                    pathOptions={{
+                        color: "transparent",
+                        fillColor: `rgba(${baseColor},0.18)`,
+                        fillOpacity: 1,
+                        weight: 0,
+                        interactive: false,
+                    }}
+                />
+            )
+        })
+    }, [visibleSurfaceItems])
 
     const surveillanceMarkers = useMemo(() => {
         const items = [...missileAlertItems, ...earthquakeAlertItems, ...piracyAlertItems]
@@ -5189,35 +5439,43 @@ export default function MapPage({
     ), [events])
 
     const conflictEventMarkers = useMemo(() => {
-        if (zoom < 5 || !relevantConflictEvents.length) return null
+        if (!relevantConflictEvents.length) return null
         const pool = zoom < 8
             ? [...relevantConflictEvents].sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0)).slice(0, 30)
             : relevantConflictEvents
-        return pool.map((event) => (
-            <Marker
-                key={`gdelt-event-${event.id}`}
-                position={[event.lat, event.lon]}
-                pane="event-icons"
-                icon={makeConflictIcon(event, impactEvent?.id === event.id)}
-                eventHandlers={{
-                    click: (e) => {
-                        L.DomEvent.stopPropagation(e)
-                        setImpactEvent(event)
-                        fetchContextualItems(event)
-                        setAreaPopup(null)
-                        setInfraSelected(null)
-                        setNewsConflictSelected(null)
-                    },
-                }}
-            >
-                <Tooltip direction="top" offset={[0, -16]}>
-                    <span style={{ fontSize: 10 }}>
-                        {(event.headline || event.title || event.location || "Conflict event").slice(0, 88)}
-                    </span>
-                </Tooltip>
-            </Marker>
-        ))
-    }, [relevantConflictEvents, zoom, impactEvent?.id])
+        return pool.map((event) => {
+            const isSelected = impactEvent?.id === event.id || selectedEvent?.id === event.id
+            const iconHtml = getEventMarkerHTML(event, showEventLabels)
+            const iconSize = event.severity_tier === "critical" ? 30 : event.severity_tier === "significant" ? 24 : event.severity_tier === "elevated" ? 18 : 14
+            const icon = L.divIcon({ html: iconHtml, className: "", iconSize: [iconSize, iconSize], iconAnchor: [iconSize / 2, iconSize / 2] })
+            return (
+                <Marker
+                    key={`gdelt-event-${event.id}`}
+                    position={[event.lat, event.lon]}
+                    pane="event-icons"
+                    icon={isSelected ? makeConflictIcon(event, true) : icon}
+                    eventHandlers={{
+                        click: (e) => {
+                            L.DomEvent.stopPropagation(e)
+                            setSelectedEvent(event)
+                            setImpactEvent(event)
+                            fetchContextualItems(event)
+                            setAreaPopup(null)
+                            setInfraSelected(null)
+                        },
+                    }}
+                >
+                    {!showEventLabels && (
+                        <Tooltip direction="top" offset={[0, -16]}>
+                            <span style={{ fontSize: 10 }}>
+                                {(event.headline || event.title || event.location || "Conflict event").slice(0, 88)}
+                            </span>
+                        </Tooltip>
+                    )}
+                </Marker>
+            )
+        })
+    }, [relevantConflictEvents, zoom, impactEvent?.id, selectedEvent?.id, showEventLabels, getEventMarkerHTML])
 
     useEffect(() => {
         const renderedCount = zoom < 6
@@ -5467,7 +5725,7 @@ export default function MapPage({
                         position={pos}
                         pane="infra-icons"
                         icon={makeInfraIcon(category, props.name || props.operator || category)}
-                        eventHandlers={{ click: () => { setInfraSelected({ feature, category }); setDsSelected(null); setImpactEvent(null); setNewsConflictSelected(null) } }}
+                        eventHandlers={{ click: () => { setInfraSelected({ feature, category }); setDsSelected(null); setImpactEvent(null) } }}
                     >
                         <Tooltip direction="top" offset={[0, -14]}>
                             <span style={{ fontSize: 10 }}>{props.name || props.operator || INFRA_CATS[category]?.label || category}</span>
@@ -5485,7 +5743,7 @@ export default function MapPage({
                 position={[item.lat, item.lon]}
                 pane="infra-icons"
                 icon={makeAirportIcon(item.name)}
-                eventHandlers={{ click: () => { setDsSelected({ ...item, _id: `ap-${i}` }); setInfraSelected(null); setImpactEvent(null); setNewsConflictSelected(null) } }}
+                eventHandlers={{ click: () => { setDsSelected({ ...item, _id: `ap-${i}` }); setInfraSelected(null); setImpactEvent(null) } }}
             >
                 <Tooltip direction="top" offset={[0, -14]}>
                     <span style={{ fontSize: 10 }}>{item.icao} · {item.name}</span>
@@ -5501,7 +5759,7 @@ export default function MapPage({
                 position={[item.lat, item.lon]}
                 pane="infra-icons"
                 icon={makePortIcon(item.name)}
-                eventHandlers={{ click: () => { setDsSelected({ ...item, infra_type: "port", _id: `pt-${i}` }); setInfraSelected(null); setImpactEvent(null); setNewsConflictSelected(null) } }}
+                eventHandlers={{ click: () => { setDsSelected({ ...item, infra_type: "port", _id: `pt-${i}` }); setInfraSelected(null); setImpactEvent(null) } }}
             >
                 <Tooltip direction="top" offset={[0, -12]}>
                     <span style={{ fontSize: 10 }}>{item.name}{item.country ? ` · ${item.country}` : ""}</span>
@@ -5517,7 +5775,7 @@ export default function MapPage({
                 position={[item.lat, item.lon]}
                 pane="infra-icons"
                 icon={makePowerIcon(item.name, item.primary_fuel)}
-                eventHandlers={{ click: () => { setDsSelected({ ...item, _id: `pw-${i}` }); setInfraSelected(null); setImpactEvent(null); setNewsConflictSelected(null) } }}
+                eventHandlers={{ click: () => { setDsSelected({ ...item, _id: `pw-${i}` }); setInfraSelected(null); setImpactEvent(null) } }}
             >
                 <Tooltip direction="top" offset={[0, -14]}>
                     <span style={{ fontSize: 10 }}>{item.name} · {item.primary_fuel}{item.capacity_mw ? ` · ${item.capacity_mw}MW` : ""}</span>
@@ -5565,15 +5823,16 @@ export default function MapPage({
                         url="https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png"
                     />
                 )}
-                <ZoomTracker onZoom={setZoom} />
+                <ZoomTracker onZoom={(z) => { setZoom(z); setShowEventLabels(z >= 9) }} />
                 <BoundsTracker onUpdate={setViewportBounds} onViewportChange={onViewportChange} />
                 <FlyTo event={selected} />
                 <UserLocationMarker />
                 {/* Surface pool — operational signal surface beneath existing icons */}
                 {active.heatmap && <SignalSurfaceLayer items={signalSurfaceItems} zoom={zoom} />}
                 {conflictEventMarkers}
-                {clusterMarkers}
-                {individualMarkers}
+                {!active.unifiedEvents && clusterMarkers}
+                {!active.unifiedEvents && individualMarkers}
+                {gdeltZoneMarkers}
                 {surveillanceMarkers}
                 {/* Severity radius circle + contextual overlays */}
                 {severityCircle}
@@ -5613,7 +5872,6 @@ export default function MapPage({
                                     setAreaPopup(null)
                                     setInfraSelected(null)
                                     setImpactEvent(null)
-                                    setNewsConflictSelected(null)
                                     ctxActivateCountry([feature])
                                     ctxStartFadeOut()
                                 }
@@ -6028,20 +6286,29 @@ export default function MapPage({
                     )
                 })}
 
-                {/* ── News conflict markers — click opens NewsConflictPanel ────── */}
-                {active.newsConflicts && newsConflictsData.map((m, i) => (
-                    <Marker
-                        key={i}
-                        position={[m.lat, m.lon]}
-                        pane="event-icons"
-                        icon={_newsConflictIcon}
-                        eventHandlers={{ click: () => { setNewsConflictSelected(m); setImpactEvent(null); setInfraSelected(null) } }}
-                    >
-                        <Tooltip direction="top" offset={[0, -10]}>
-                            <span style={{ fontSize: 10 }}>{m.headline?.length > 80 ? m.headline.slice(0, 80) + '…' : m.headline}</span>
-                        </Tooltip>
-                    </Marker>
-                ))}
+                {/* ── News conflict markers — click opens EventDetailPanel ─────── */}
+                {active.newsConflicts && newsConflictsData.map((m, i) => {
+                    const showNewsLabel = zoom >= 7
+                    const html = getNewsMarkerHTML(m, showNewsLabel)
+                    const sz = m.severity_tier === "critical" ? 32 : (m.severity_tier === "high" || m.severity_tier === "significant") ? 26 : (m.severity_tier === "medium" || m.severity_tier === "elevated") ? 20 : 16
+                    const hitSz = sz + 8
+                    const icon = L.divIcon({ html, className: "", iconSize: [hitSz, hitSz], iconAnchor: [hitSz / 2, hitSz / 2] })
+                    return (
+                        <Marker
+                            key={i}
+                            position={[m.lat, m.lon]}
+                            pane="event-icons"
+                            icon={icon}
+                            eventHandlers={{ click: () => { setSelectedEvent(m); setImpactEvent(null); setInfraSelected(null) } }}
+                        >
+                            {!showNewsLabel && (
+                                <Tooltip direction="top" offset={[0, -10]}>
+                                    <span style={{ fontSize: 10 }}>{m.headline?.length > 80 ? m.headline.slice(0, 80) + "…" : m.headline}</span>
+                                </Tooltip>
+                            )}
+                        </Marker>
+                    )
+                })}
 
                 {/* ── POI profile markers ───────────────────────────────────── */}
                 {active.poi && poiData.map((poi) => (
@@ -6392,7 +6659,7 @@ export default function MapPage({
                         whiteSpace:     "nowrap",
                     }}
                 >
-                    {toastInfo.count} events loaded
+                    {toastInfo.message || `${toastInfo.count} events loaded`}
                 </div>
             )}
 
@@ -6446,14 +6713,11 @@ export default function MapPage({
                 />
             )}
 
-            {/* ── News Conflict Panel — on-demand news marker analysis ────────── */}
-            {newsConflictSelected && (
-                <NewsConflictPanel
-                    marker={newsConflictSelected}
-                    cachedAnalysis={newsConflictAnalysisCache}
-                    analysing={newsConflictAnalysing}
-                    onAnalyse={analyseNewsConflict}
-                    onClose={() => setNewsConflictSelected(null)}
+            {/* ── Event Detail Panel — slide-in for conflict/news events ─────── */}
+            {selectedEvent && (
+                <EventDetailPanel
+                    event={selectedEvent}
+                    onClose={() => setSelectedEvent(null)}
                 />
             )}
 
