@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 
@@ -13,6 +14,23 @@ _last_request_ts = 0.0
 
 _http_calls = 0
 _cache_hits = 0
+
+# ── 30-day disk cache for Nominatim results ───────────────────────────────────
+_DISK_CACHE_DIR = os.path.join(os.getenv("DATA_DIR", "/var/lib/railway"), "geocode_cache")
+_disk_cache = None
+_disk_cache_init = False
+
+def _get_disk_cache():
+    global _disk_cache, _disk_cache_init
+    if _disk_cache_init:
+        return _disk_cache
+    _disk_cache_init = True
+    try:
+        import diskcache as _dc
+        _disk_cache = _dc.Cache(_DISK_CACHE_DIR)
+    except Exception:
+        _disk_cache = None  # diskcache not installed or dir not writable
+    return _disk_cache
 
 
 def _normalize_bounds(bounds: tuple[float, float, float, float] | None) -> tuple[float, float, float, float] | None:
@@ -56,6 +74,20 @@ def geocode_place(
         if key in _cache:
             _cache_hits += 1
             return _cache[key]
+
+    # Check 30-day disk cache before making an HTTP call
+    disk_key = f"geo:{key}"
+    dc = _get_disk_cache()
+    if dc is not None:
+        try:
+            disk_result = dc.get(disk_key)
+            if disk_result is not None:
+                with _cache_lock:
+                    _cache[key] = disk_result
+                _cache_hits += 1
+                return disk_result
+        except Exception:
+            pass
 
     results: list[dict] = []
 
@@ -123,6 +155,12 @@ def geocode_place(
 
     with _cache_lock:
         _cache[key] = results
+    # Persist successful geocodes to disk for 30 days
+    if results and dc is not None:
+        try:
+            dc.set(disk_key, results, expire=30 * 24 * 3600)
+        except Exception:
+            pass
     return results
 
 

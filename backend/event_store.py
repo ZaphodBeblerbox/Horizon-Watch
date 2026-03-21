@@ -570,3 +570,58 @@ def purge_expired() -> int:
         for k in expired:
             del _EVENT_STORE[k]
     return len(expired)
+
+
+# ── Disk persistence ──────────────────────────────────────────────────────────
+
+def save_to_disk(path: str) -> None:
+    """Atomically persist event and thread stores to a JSON file."""
+    import json
+    import tempfile
+    import os as _os
+    with _EVENT_STORE_LOCK:
+        events = dict(_EVENT_STORE)
+    with _THREAD_STORE_LOCK:
+        threads = dict(_THREAD_STORE)
+    payload = {
+        "events":   events,
+        "threads":  threads,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        _os.replace(tmp, path)
+        print(f"[event-store] saved {len(events)} events / {len(threads)} threads → {path}")
+    except Exception as ex:
+        print(f"[event-store] save error: {ex}")
+        try:
+            _os.unlink(tmp)
+        except Exception:
+            pass
+
+
+def load_from_disk(path: str) -> None:
+    """Load event and thread stores from a JSON file (called at startup)."""
+    import json
+    import os as _os
+    if not _os.path.exists(path):
+        print(f"[event-store] no persisted store at {path} — starting fresh")
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        events  = payload.get("events",  {})
+        threads = payload.get("threads", {})
+        saved_at = payload.get("saved_at", "unknown")
+        # Purge already-expired events before loading
+        now_iso = datetime.now(timezone.utc).isoformat()
+        events  = {k: v for k, v in events.items()  if v.get("expires_at", "") > now_iso}
+        with _EVENT_STORE_LOCK:
+            _EVENT_STORE.update(events)
+        with _THREAD_STORE_LOCK:
+            _THREAD_STORE.update(threads)
+        print(f"[startup] event store loaded: {len(events)} events, {len(threads)} threads (saved {saved_at})")
+    except Exception as ex:
+        print(f"[event-store] load error: {ex}")

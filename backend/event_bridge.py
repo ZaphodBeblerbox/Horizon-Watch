@@ -21,14 +21,16 @@ from datetime import datetime, timezone
 import event_store as es
 
 
-async def bridge_loop(get_news_store_fn, get_conflict_markers_fn, get_gdelt_fn):
+async def bridge_loop(get_news_store_fn, get_conflict_markers_fn, get_gdelt_fn, save_path: str = None):
     """
     Main bridge loop. Runs every 2 minutes.
 
     Args are callables that return the current state of each data store,
     passed in from main.py to avoid circular imports.
+    save_path: if set, persists the event store to disk every 10 minutes.
     """
     print("[event-bridge] starting bridge loop")
+    _last_save = 0.0
     while True:
         try:
             await asyncio.get_event_loop().run_in_executor(
@@ -40,6 +42,13 @@ async def bridge_loop(get_news_store_fn, get_conflict_markers_fn, get_gdelt_fn):
             )
         except Exception as ex:
             print(f"[event-bridge] error: {ex}")
+        # Save to disk every 10 minutes if a path was provided
+        if save_path and time.time() - _last_save >= 600:
+            try:
+                es.save_to_disk(save_path)
+                _last_save = time.time()
+            except Exception as ex:
+                print(f"[event-bridge] disk save error: {ex}")
         await asyncio.sleep(120)  # every 2 minutes
 
 
