@@ -63,7 +63,7 @@ function AdminPanelInner({ user, onClose }) {
             })
             if (!res.ok) throw new Error(`Server returned ${res.status}`)
             const data = await res.json()
-            setUsers(Array.isArray(data) ? data : [])
+            setUsers(Array.isArray(data) ? data : (data.users || []))
         } catch (err) {
             setLoadError(err.message)
         } finally {
