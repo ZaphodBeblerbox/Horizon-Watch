@@ -2669,6 +2669,7 @@ def _enrich_article_geo(
 
 
 @app.get("/news")
+@_response_cache(expire=60)
 def get_news(country: str):
     cache_key = country.lower()
     cached = _news_cache.get(cache_key)
@@ -2871,6 +2872,7 @@ def _best_article_from_feed(feed_entries, source_name, terms: list[str]) -> list
 
 
 @app.get("/news/breaking")
+@_response_cache(expire=30)
 def get_news_breaking():
     """Top 2 global headlines — one from BBC World, one from Al Jazeera."""
     cached = _region_cache.get("breaking")
@@ -2927,6 +2929,7 @@ def get_news_breaking():
 
 
 @app.get("/news/region")
+@_response_cache(expire=30)
 def get_news_region():
     """One top headline per global region. All 8 regions returned in a single call."""
     cached = _region_cache.get("all_regions")
@@ -2989,6 +2992,7 @@ def get_news_region():
 _adsb_cache: dict = {}
 
 @app.get("/adsb")
+@_response_cache(expire=15)
 def get_adsb(
     lat:  float = Query(...),
     lon:  float = Query(...),
@@ -6417,6 +6421,7 @@ async def analyse_surface_item(payload: dict):
 
 
 @app.get("/news-conflicts")
+@_response_cache(expire=120)
 def get_news_conflicts(
     south: float = Query(None),
     west:  float = Query(None),
