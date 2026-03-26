@@ -5,7 +5,6 @@ unified event store.
 Reads from:
 - _NEWS_ARTICLE_STORE (RSS articles, geocoded)
 - _NEWS_CONFLICT_MARKERS (classified conflict markers)
-- GDELT cache (geographic signals)
 
 Writes into:
 - event_store._EVENT_STORE (unified store)
@@ -21,7 +20,7 @@ from datetime import datetime, timezone
 import event_store as es
 
 
-async def bridge_loop(get_news_store_fn, get_conflict_markers_fn, get_gdelt_fn, save_path: str = None):
+async def bridge_loop(get_news_store_fn, get_conflict_markers_fn, save_path: str = None):
     """
     Main bridge loop. Runs every 2 minutes.
 
@@ -38,7 +37,6 @@ async def bridge_loop(get_news_store_fn, get_conflict_markers_fn, get_gdelt_fn, 
                 _run_bridge_sync,
                 get_news_store_fn,
                 get_conflict_markers_fn,
-                get_gdelt_fn,
             )
         except Exception as ex:
             print(f"[event-bridge] error: {ex}")
@@ -52,7 +50,7 @@ async def bridge_loop(get_news_store_fn, get_conflict_markers_fn, get_gdelt_fn, 
         await asyncio.sleep(120)  # every 2 minutes
 
 
-def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn, get_gdelt_fn):
+def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn):
     """Synchronous bridge — ingest all current data into event store."""
     ingested = 0
 
@@ -115,42 +113,6 @@ def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn, get_gdelt_fn):
                 ingested += 1
     except Exception as ex:
         print(f"[event-bridge] conflict marker bridge error: {ex}")
-
-    # ── Bridge GDELT as signal amplifier ──────────────────────────────────
-    try:
-        gdelt_cache = get_gdelt_fn()
-        events = gdelt_cache.get('events', []) if isinstance(gdelt_cache, dict) else []
-        for ev in events:
-            lat = ev.get('lat')
-            lon = ev.get('lon')
-            if lat is None or lon is None:
-                continue
-            goldstein = float(ev.get('goldstein') or 0)
-            if goldstein >= -1.0:  # Only ingest negative (conflict) events
-                continue
-            title = (
-                ev.get('headline') or
-                ev.get('summary') or
-                f"GDELT signal: {ev.get('location_name', 'unknown location')}"
-            )
-            result = es.ingest_event(
-                source='gdelt',
-                title=title,
-                url=ev.get('source_url') or '',
-                lat=float(lat),
-                lon=float(lon),
-                location=ev.get('location_name') or ev.get('location') or '',
-                country_code=ev.get('action_geo_country_code') or ev.get('country_code') or '',
-                published=str(ev.get('event_date') or ev.get('date') or ''),
-                event_type=ev.get('event_type') or 'conflict_zone',
-                gdelt_goldstein=goldstein,
-                gdelt_mentions=int(ev.get('mentions') or ev.get('num_mentions') or 0),
-                significance_score=max(10, min(70, int(abs(goldstein) * 7))),
-            )
-            if result:
-                ingested += 1
-    except Exception as ex:
-        print(f"[event-bridge] GDELT bridge error: {ex}")
 
     # ── Purge expired events ──────────────────────────────────────────────
     purged = es.purge_expired()

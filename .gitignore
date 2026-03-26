@@ -3,6 +3,8 @@ backend/__pycache__/
 backend/*.pyc
 backend/data/*.csv
 backend/data/poi_photos/
+backend/data/event_store.json
+backend/data/geocode_cache/
 node_modules/
 dist/
 .DS_Store

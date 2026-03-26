@@ -144,7 +144,7 @@ const REGION_COORDS = {
 // ── Workspace helpers ─────────────────────────────────────────────────────────
 
 function newWorkspace(name) {
-    return { id: crypto.randomUUID(), name, center: [-6.5, 35.0], zoom: 6, layers: null }
+    return { id: crypto.randomUUID(), name, center: [20, 0], zoom: 2, layers: null }
 }
 
 function loadWorkspaces() {
@@ -566,81 +566,8 @@ export default function App() {
         return () => clearInterval(t)
     }, [])
 
-    // ── Events (for alerts) ───────────────────────────────────────────────────
-    const [events, setEvents] = useState([])
     const [mapViewport, setMapViewport] = useState(null)
-    useEffect(() => {
-        if (!mapViewport?.bounds) return
-        let cancelled = false
-        const fetchEvents = () => {
-            const started = performance.now()
-            const { north, south, east, west, zoom } = mapViewport.bounds
-            const params = new URLSearchParams({
-                north: String(north),
-                south: String(south),
-                east: String(east),
-                west: String(west),
-                zoom: String(zoom || 6),
-                compact: "true",
-            })
-            const url = `${API}/events?${params.toString()}`
-            console.info("[events/request]", {
-                url,
-                north, south, east, west, zoom: zoom || 6,
-                focusRegions: profile?.focusRegions || [],
-            })
-            fetch(url)
-                .then(async (r) => {
-                    if (!r.ok) {
-                        throw new Error(`HTTP ${r.status}`)
-                    }
-                    return r.json()
-                })
-                .then(d => {
-                    if (cancelled) return
-                    const rawItems = Array.isArray(d?.events) ? d.events : []
-                    const items = rawItems
-                        .map((item) => ({
-                            ...item,
-                            lat: Number(item?.lat),
-                            lon: Number(item?.lon),
-                        }))
-                        .filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon))
-                    console.info("[events/response]", {
-                        url,
-                        rawCount: rawItems.length,
-                        normalizedCount: items.length,
-                        sample: rawItems[0] || null,
-                        diagnostics: d?.diagnostics || null,
-                    })
-                    console.info("[events/fetch]", {
-                        ms: Math.round(performance.now() - started),
-                        count: items.length,
-                        diagnostics: d.diagnostics || null,
-                    })
-                    setEvents(items)
-                })
-                .catch((error) => {
-                    if (cancelled) return
-                    console.error("[events/error]", {
-                        url,
-                        message: error?.message || String(error),
-                    })
-                    setEvents([])
-                })
-        }
-        fetchEvents()
-        const t = setInterval(fetchEvents, 120000)
-        return () => {
-            cancelled = true
-            clearInterval(t)
-        }
-    }, [mapViewport, profile])
-
-    const flaggedEvents = useMemo(
-        () => events.filter(ev => isFlagged(ev, profile)),
-        [events, profile]
-    )
+    const flaggedEvents = []
 
     // ── Workspace state ───────────────────────────────────────────────────────
     const [workspaces,        setWorkspaces]        = useState(() => loadWorkspaces())
@@ -961,7 +888,6 @@ export default function App() {
                     )}
                     <MapPage
                         key={activeWorkspaceId}
-                        events={events}
                         selected={null}
                         onSelect={() => {}}
                         activeSituation={activeSituation}

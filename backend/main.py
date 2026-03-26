@@ -33,7 +33,11 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 load_dotenv()
 
-DATA_DIR = os.getenv("DATA_DIR", "/var/lib/railway")
+DATA_DIR = (
+    "/var/lib/railway"
+    if os.getenv("RAILWAY_ENVIRONMENT")
+    else os.path.join(os.path.dirname(__file__), "data")
+)
 os.makedirs(DATA_DIR, exist_ok=True)
 
 from typing import Optional
@@ -47,17 +51,12 @@ from email.utils import parsedate_to_datetime
 from tanzania_context import get_context_for_prompt, get_minimal_context, get_full_context
 from rss_feeds import ADDITIONAL_SCAN_FEEDS, RSS_FEED_META
 from geocode_utils import geocode_place, get_geocode_stats
-from scoring import batch_score, score_news_markers, geo_gate_passes
+from scoring import score_news_markers, geo_gate_passes
 from location_extract import (
     rank_location_candidates,
     extract_country_mentions,
     country_code_from_name,
     country_name_from_code,
-)
-from gdelt_events import (
-    get_cached_events as get_gdelt_cached_events,
-    get_debug_status as get_gdelt_debug_status,
-    refresh_cache as refresh_gdelt_cache,
 )
 from article_extract import get_article_preview
 import usage_tracker
@@ -196,7 +195,7 @@ def _format_profile_context(profile: dict | None) -> str:
         "Prioritise information relevant to their stated focus regions, "
         "infrastructure domains, and monitored chokepoints. "
         "Be explicit about relevance or lack thereof to their specific focus areas. "
-        "If their focus regions differ from Tanzania, adapt geopolitical framing accordingly."
+        "Frame analysis relative to the analyst's stated focus regions and interests, not any default geography."
     )
     return "\n".join(lines) + "\n\n"
 
@@ -211,28 +210,32 @@ def _profile_cache_suffix(profile: dict | None) -> str:
 
 
 # ── Mock POI infrastructure database ─────────────────────────────────────────
-# Major airports, ports, and government sites across East/Southern Africa.
+# Major global airports, ports, and government sites.
 # Used in /route/analyse to flag critical infrastructure near a route.
 _POIS = [
-    {"name": "Julius Nyerere Int'l Airport", "type": "airport",    "lat": -6.878,  "lon": 39.203},
-    {"name": "Kilimanjaro Int'l Airport",    "type": "airport",    "lat": -3.429,  "lon": 37.075},
-    {"name": "Mwanza Airport",               "type": "airport",    "lat": -2.444,  "lon": 32.933},
-    {"name": "Songwe Airport",               "type": "airport",    "lat": -8.921,  "lon": 33.274},
-    {"name": "Nairobi Wilson Airport",       "type": "airport",    "lat": -1.321,  "lon": 36.814},
-    {"name": "JKIA Nairobi",                 "type": "airport",    "lat": -1.319,  "lon": 36.926},
-    {"name": "Entebbe Int'l Airport",        "type": "airport",    "lat":  0.042,  "lon": 32.443},
-    {"name": "Dar es Salaam Port",           "type": "port",       "lat": -6.823,  "lon": 39.289},
-    {"name": "Mombasa Port",                 "type": "port",       "lat": -4.066,  "lon": 39.661},
-    {"name": "Zanzibar Port",                "type": "port",       "lat": -6.163,  "lon": 39.189},
-    {"name": "Tanga Port",                   "type": "port",       "lat": -5.069,  "lon": 39.098},
-    {"name": "Beira Port",                   "type": "port",       "lat": -19.838, "lon": 34.838},
-    {"name": "Nacala Port",                  "type": "port",       "lat": -14.543, "lon": 40.675},
-    {"name": "Tanzania State House",         "type": "government", "lat": -6.800,  "lon": 39.279},
-    {"name": "Dodoma Parliament (Tanzania)", "type": "government", "lat": -6.173,  "lon": 35.739},
-    {"name": "Uganda Parliament",            "type": "government", "lat":  0.317,  "lon": 32.578},
-    {"name": "Kenya Parliament",             "type": "government", "lat": -1.289,  "lon": 36.821},
-    {"name": "Nairobi State House",          "type": "government", "lat": -1.278,  "lon": 36.806},
-    {"name": "Rwanda Parliament",            "type": "government", "lat": -1.945,  "lon": 30.061},
+    # Airports — Global
+    {"name": "Dubai International Airport",    "type": "airport",    "lat":  25.253,  "lon":  55.365},
+    {"name": "Istanbul Airport",               "type": "airport",    "lat":  41.275,  "lon":  28.752},
+    {"name": "Singapore Changi Airport",       "type": "airport",    "lat":   1.359,  "lon": 103.989},
+    {"name": "Frankfurt Airport",              "type": "airport",    "lat":  50.037,  "lon":   8.563},
+    {"name": "Nairobi JKIA",                   "type": "airport",    "lat":  -1.319,  "lon":  36.926},
+    {"name": "Cairo International Airport",    "type": "airport",    "lat":  30.122,  "lon":  31.406},
+    {"name": "Karachi Jinnah Airport",         "type": "airport",    "lat":  24.907,  "lon":  67.161},
+    {"name": "Lagos Murtala Muhammed Airport", "type": "airport",    "lat":   6.577,  "lon":   3.321},
+    # Ports — Global
+    {"name": "Port of Singapore",              "type": "port",       "lat":   1.265,  "lon": 103.820},
+    {"name": "Port of Rotterdam",              "type": "port",       "lat":  51.950,  "lon":   4.130},
+    {"name": "Jebel Ali Port (Dubai)",         "type": "port",       "lat":  24.990,  "lon":  55.058},
+    {"name": "Port of Mombasa",                "type": "port",       "lat":  -4.066,  "lon":  39.661},
+    {"name": "Djibouti Port",                  "type": "port",       "lat":  11.589,  "lon":  43.145},
+    {"name": "Port of Aden",                   "type": "port",       "lat":  12.779,  "lon":  45.029},
+    {"name": "Bandar Abbas Port",              "type": "port",       "lat":  27.183,  "lon":  56.277},
+    {"name": "Port of Dar es Salaam",          "type": "port",       "lat":  -6.823,  "lon":  39.289},
+    # Government — Global
+    {"name": "UN Headquarters (New York)",     "type": "government", "lat":  40.749,  "lon": -73.968},
+    {"name": "EU Council (Brussels)",          "type": "government", "lat":  50.846,  "lon":   4.365},
+    {"name": "African Union HQ (Addis Ababa)", "type": "government", "lat":   9.024,  "lon":  38.763},
+    {"name": "Arab League HQ (Cairo)",         "type": "government", "lat":  30.060,  "lon":  31.228},
 ]
 
 # ── Infrastructure layer — Overpass query strings per category ────────────────
@@ -359,7 +362,6 @@ _SURFACE_POOL_LOCK = threading.Lock()
 _SURFACE_POOL_UPDATED_AT: str | None = None
 _SURFACE_POOL_LAST_NONEMPTY: float = 0.0   # time.time() of last pool with items
 _SURFACE_BUILD_LOCK = threading.Lock()
-_LAST_SURFACE_GDELT_BOOTSTRAP: float = 0.0
 
 # ── Prefetch + enrichment caches ──────────────────────────────────────────────
 _PREFETCH_CACHE: dict  = {}   # event_id → {infra_nodes: [...], fetched_at: ts, ttl: 7200}
@@ -396,7 +398,6 @@ _DS_STATUS: dict = {
     "usgs":     {"last_poll": None, "last_event": None, "failures": 0},
     "gdacs":    {"last_poll": None, "failures": 0},
     "rss":      {"last_run": None,  "feeds_ok": 0, "feeds_total": 0, "failures": 0},
-    "gdelt":    {"last_fetch": None, "event_count": 0, "failures": 0},
     "ais":      {"connected": False, "failures": 0, "message": None},
     "airports": {"last_download": None, "count": 0},
     "ports":    {"last_download": None, "count": 0},
@@ -467,15 +468,7 @@ MEDIUM_CONFIDENCE_SOURCES = {
     # Tabloid / opinion-heavy — capped at medium regardless of specificity
     "Bild", "Fox News",
 }
-TANZANIA_BBOX    = (-11.7, 29.3, -0.9, 40.4)   # (south, west, north, east)
-EAST_AFRICA_BBOX = (-15.0, 28.0,  5.0, 42.0)   # wider: TZ + KE + UG + RW + BI + DRC east + MZ north
 
-
-def _zoom_cap(zoom: int) -> int:
-    if zoom < 4:  return 150
-    if zoom < 6:  return 400
-    if zoom < 8:  return 800
-    return 1500
 
 def _location_key(item: dict) -> str | None:
     lat = item.get("lat")
@@ -548,133 +541,6 @@ def _score_significance(item: dict, classification: dict, profile: dict | None, 
     return max(0, min(100, score))
 
 
-def _gdelt_event_to_frontend(ev: dict) -> dict:
-    root = str(ev.get("event_root_code") or "")
-    type_label = ev.get("event_type") or ev.get("event_label") or f"CAMEO {root or '?'}"
-    actor1 = str(ev.get("actor1") or "").strip()
-    actor2 = str(ev.get("actor2") or "").strip()
-    actor = ev.get("actor") or " -> ".join([a for a in [actor1, actor2] if a]) or "Unknown actors"
-    mentions = int(ev.get("mentions", ev.get("num_mentions", 0)) or 0)
-    sources = int(ev.get("sources", ev.get("num_sources", 0)) or 0)
-    articles = int(ev.get("articles", ev.get("num_articles", 0)) or 0)
-    goldstein = ev.get("goldstein")
-    location = str(
-        ev.get("location")
-        or ev.get("action_geo_full_name")
-        or ev.get("action_geo_country_code")
-        or "Unknown"
-    )
-    country_code = str(ev.get("country_code") or ev.get("action_geo_country_code") or "")
-    event_id = str(ev.get("id") or ev.get("event_id") or "")
-    event_date = str(ev.get("date") or ev.get("event_date") or "")
-    event_code = str(ev.get("event_code") or "")
-    event_base_code = str(ev.get("event_base_code") or "")
-    description = (
-        f"GDELT {event_code or '?'} / root {root or '?'} — "
-        f"mentions={mentions}, sources={sources}, articles={articles}, "
-        f"goldstein={goldstein if goldstein is not None else '?'}"
-    )
-    summary = str(ev.get("summary") or "").strip()
-    if not summary:
-        summary = description
-    return {
-        "id": event_id,
-        "date": event_date,
-        "type": str(type_label),
-        "subtype": event_code,
-        "actor": str(actor),
-        "location": location,
-        "lat": float(ev.get("lat")),
-        "lon": float(ev.get("lon")),
-        "lng": float(ev.get("lon")),
-        "latitude": float(ev.get("lat")),
-        "longitude": float(ev.get("lon")),
-        # GDELT event export has no direct fatality count.
-        "fatalities": 0,
-        "description": description,
-        "summary": summary,
-        "source_url": str(ev.get("source_url") or ""),
-        "country_code": country_code,
-        "dataset": str(ev.get("dataset") or "GDELT"),
-        "event_type": str(type_label),
-        "event_code": event_code,
-        "event_base_code": event_base_code,
-        "event_root_code": root,
-        "goldstein": goldstein,
-        "actor1": actor1,
-        "actor2": actor2,
-        "actor1_country": str(ev.get("actor1_country") or ""),
-        "actor2_country": str(ev.get("actor2_country") or ""),
-        "mentions": mentions,
-        "sources": sources,
-        "articles": articles,
-        "num_mentions": mentions,
-        "num_sources": sources,
-        "num_articles": articles,
-    }
-
-
-def _compact_event_record(ev: dict) -> dict:
-    """Trim scored event payload to the fields the map and detail panels actually use."""
-    return {
-        "id": ev.get("id"),
-        "date": ev.get("date"),
-        "type": ev.get("type"),
-        "subtype": ev.get("subtype"),
-        "event_type": ev.get("event_type") or ev.get("type"),
-        "actor": ev.get("actor"),
-        "location": ev.get("location"),
-        "lat": ev.get("lat"),
-        "lon": ev.get("lon"),
-        "lng": ev.get("lng", ev.get("lon")),
-        "fatalities": ev.get("fatalities", 0),
-        "description": ev.get("description"),
-        "summary": ev.get("summary"),
-        "country_code": ev.get("country_code"),
-        "severity_tier": ev.get("severity_tier"),
-        "relevance_score": ev.get("relevance_score"),
-        "pattern_detected": ev.get("pattern_detected", False),
-        "goldstein": ev.get("goldstein"),
-        "mentions": ev.get("mentions", ev.get("num_mentions")),
-        "sources": ev.get("sources", ev.get("num_sources")),
-        "articles": ev.get("articles", ev.get("num_articles")),
-        "source_url": ev.get("source_url"),
-    }
-
-
-_CONFLICT_SIGNAL_RE = re.compile(
-    r"\b("
-    r"fight|conflict|clash|attack|raid|assault|ambush|strike|airstrike|shelling|"
-    r"artillery|missile|rocket|drone|explosion|blast|bomb|ied|shooting|gunfire|"
-    r"killed|troops|military operation|militant|insurgent|ceasefire violation|"
-    r"hostilities|battle|war"
-    r")\b",
-    re.IGNORECASE,
-)
-
-
-def _is_operational_conflict_event(event: dict) -> bool:
-    root = str(event.get("event_root_code") or "").strip()
-    try:
-        if root and 14 <= int(root) <= 20:
-            return True
-    except Exception:
-        pass
-
-    try:
-        if float(event.get("goldstein")) < 0:
-            return True
-    except Exception:
-        pass
-
-    haystack = " ".join(
-        str(event.get(field) or "")
-        for field in ("type", "subtype", "event_type", "location", "summary", "description", "actor")
-    )
-    return bool(_CONFLICT_SIGNAL_RE.search(haystack))
-
-
-_EVENTS_ROUTE_HITS = 0
 
 
 def _parse_event_ts(event: dict) -> float:
@@ -789,94 +655,8 @@ def get_events(
     country: Optional[str] = Query(None),
     compact: bool = Query(True),
 ):
-    """
-    Viewport-scoped conflict events for the operational map.
-    Compact payload by default; keeps AOI-visible conflict items even when profile scoring is modest.
-    """
-    global _EVENTS_ROUTE_HITS
-    _EVENTS_ROUTE_HITS += 1
-    started = time.perf_counter()
-    bbox_enabled = all(v is not None for v in [north, south, east, west])
-    print(
-        f"[events] request hit={_EVENTS_ROUTE_HITS} north={north} south={south} "
-        f"east={east} west={west} zoom={zoom} country={country or '-'} compact={compact}"
-    )
-    cache_key = None
-    if bbox_enabled:
-        cache_key = (
-            round(float(north), 2), round(float(south), 2),
-            round(float(east), 2), round(float(west), 2),
-            int(zoom or 6), str(country or "").upper(), bool(compact),
-            tuple((_ACTIVE_PROFILE or {}).get("focusRegions", [])),
-            int((_ACTIVE_PROFILE or {}).get("threshold", 1)),
-        )
-        cached = _EVENTS_VIEW_CACHE.get(cache_key)
-        if cached and (time.time() - cached["ts"]) < _EVENTS_VIEW_CACHE_TTL:
-            return cached["data"]
-
-    t_norm = time.perf_counter()
-    cache = get_gdelt_cached_events(limit=12000 if bbox_enabled else 5000)
-    raw_events = cache.get("events", [])
-    all_records = []
-    for ev in raw_events:
-        try:
-            all_records.append(_gdelt_event_to_frontend(ev))
-        except Exception:
-            continue
-    normalize_ms = (time.perf_counter() - t_norm) * 1000
-
-    t_filter = time.perf_counter()
-    if bbox_enabled:
-        bbox_records = [
-            ev for ev in all_records
-            if south <= ev["lat"] <= north and west <= ev["lon"] <= east
-        ]
-    else:
-        bbox_records = all_records
-    if country:
-        country_upper = str(country).upper()
-        bbox_records = [ev for ev in bbox_records if str(ev.get("country_code") or "").upper() == country_upper]
-
-    scored = batch_score(bbox_records, _ACTIVE_PROFILE, apply_filter=False)
-    prioritized = [
-        ev for ev in scored
-        if _is_operational_conflict_event(ev) or float(ev.get("relevance_score") or 0) >= 45
-    ]
-    if not prioritized:
-        prioritized = scored
-    filter_ms = (time.perf_counter() - t_filter) * 1000
-
-    cap = _zoom_cap(zoom or 6) if bbox_enabled else 150
-    selected = prioritized[:cap]
-    payload_events = [_compact_event_record(ev) for ev in selected] if compact else selected
-    payload_bytes = len(_json.dumps(payload_events, ensure_ascii=False).encode("utf-8"))
-    total_ms = (time.perf_counter() - started) * 1000
-
-    print(
-        f"[events] hit={_EVENTS_ROUTE_HITS} bbox={bbox_enabled} z={zoom} "
-        f"normalize_ms={normalize_ms:.1f} filter_ms={filter_ms:.1f} total_ms={total_ms:.1f} "
-        f"source_events={len(raw_events)} bbox={len(bbox_records)} scored={len(scored)} "
-        f"prioritized={len(prioritized)} returned={len(payload_events)} "
-        f"payload={payload_bytes}B cap={cap}"
-    )
-
-    result = {
-        "events": payload_events,
-        "updated_at": cache.get("updated_at"),
-        "diagnostics": {
-            "normalize_ms": round(normalize_ms, 1),
-            "filter_ms": round(filter_ms, 1),
-            "fetch_ms": round(total_ms, 1),
-            "payload_bytes": payload_bytes,
-            "returned": len(payload_events),
-            "route_hits": _EVENTS_ROUTE_HITS,
-            "source_events": len(raw_events),
-            "bbox_candidates": len(bbox_records),
-        },
-    }
-    if cache_key:
-        _EVENTS_VIEW_CACHE[cache_key] = {"ts": time.time(), "data": result}
-    return result
+    """Removed — GDELT data source removed. Use /api/v2/events instead."""
+    return {"events": [], "updated_at": None, "diagnostics": {"returned": 0}}
 
 
 @app.get("/conflict-zones")
@@ -888,107 +668,8 @@ def get_conflict_zones(
     zoom: Optional[int] = Query(None),
     country: Optional[str] = Query(None),
 ):
-    """
-    AOI-scoped conflict zones derived from actual conflict events.
-    Returns area polygons and intensity metadata, never point markers.
-    """
-    started = time.perf_counter()
-    bbox_enabled = all(v is not None for v in [north, south, east, west])
-
-    cache = get_gdelt_cached_events(limit=12000 if bbox_enabled else 4000)
-    raw_events = cache.get("events", [])
-    if not raw_events:
-        return {
-            "zones": [],
-            "updated_at": cache.get("updated_at"),
-            "diagnostics": {"fetch_ms": round((time.perf_counter() - started) * 1000, 1), "returned": 0},
-        }
-
-    norm_started = time.perf_counter()
-    records = []
-    for ev in raw_events:
-        try:
-            records.append(_gdelt_event_to_frontend(ev))
-        except Exception:
-            continue
-    normalize_ms = (time.perf_counter() - norm_started) * 1000
-
-    filter_started = time.perf_counter()
-    if bbox_enabled:
-        filtered = [
-            ev for ev in records
-            if south <= ev["lat"] <= north and west <= ev["lon"] <= east
-        ]
-    else:
-        filtered = records
-    if country:
-        country_upper = str(country).upper()
-        filtered = [ev for ev in filtered if str(ev.get("country_code") or "").upper() == country_upper]
-
-    scored = batch_score(filtered, _ACTIVE_PROFILE, apply_filter=False)
-    relevant = [
-        ev for ev in scored
-        if _is_operational_conflict_event(ev)
-        and str(ev.get("severity_tier") or "low") in {"critical", "significant", "elevated"}
-    ]
-    filter_ms = (time.perf_counter() - filter_started) * 1000
-
-    threshold_km = 180.0 if (zoom or 4) <= 4 else 120.0 if (zoom or 4) <= 6 else 80.0
-    clusters = _cluster_conflict_events(relevant, threshold_km=threshold_km)
-    now_ts = time.time()
-    zones = []
-    for idx, cluster in enumerate(clusters):
-        if len(cluster) < 2:
-            continue
-        weights = [_event_zone_weight(ev, now_ts) for ev in cluster]
-        total_weight = sum(weights)
-        avg_weight = total_weight / max(1, len(weights))
-        severity_rank = {"critical": 3, "significant": 2, "elevated": 1, "low": 0}
-        top = max(cluster, key=lambda ev: (severity_rank.get(str(ev.get("severity_tier")), 0), ev.get("relevance_score", 0)))
-        hull = _convex_hull_latlon([(ev["lat"], ev["lon"]) for ev in cluster])
-        if len(hull) < 3:
-            min_lat = min(ev["lat"] for ev in cluster)
-            max_lat = max(ev["lat"] for ev in cluster)
-            min_lon = min(ev["lon"] for ev in cluster)
-            max_lon = max(ev["lon"] for ev in cluster)
-            hull = [(min_lat, min_lon), (min_lat, max_lon), (max_lat, max_lon), (max_lat, min_lon)]
-        polygon = _expand_latlon_polygon(hull, expand_km=28.0 if len(cluster) >= 4 else 20.0)
-        centroid_lat = sum(ev["lat"] for ev in cluster) / len(cluster)
-        centroid_lon = sum(ev["lon"] for ev in cluster) / len(cluster)
-        intensity = min(1.0, max(0.18, (len(cluster) / 8.0) * 0.45 + avg_weight * 0.55))
-        zones.append({
-            "id": f"zone_cluster_{idx}_{round(centroid_lat,2)}_{round(centroid_lon,2)}",
-            "centroid": {"lat": round(centroid_lat, 4), "lon": round(centroid_lon, 4)},
-            "polygon": polygon,
-            "count": len(cluster),
-            "intensity": round(intensity, 3),
-            "severity_tier": top.get("severity_tier", "elevated"),
-            "headline": top.get("summary") or top.get("description") or top.get("location"),
-            "location": top.get("location"),
-            "event_ids": [ev.get("id") for ev in cluster[:24]],
-            "latest_event_at": top.get("date"),
-        })
-
-    zones.sort(key=lambda z: (z["intensity"], z["count"]), reverse=True)
-    zones = zones[:18]
-    total_ms = (time.perf_counter() - started) * 1000
-    payload_bytes = len(_json.dumps(zones, ensure_ascii=False).encode("utf-8"))
-    print(
-        f"[conflict-zones] bbox={bbox_enabled} z={zoom} normalize_ms={normalize_ms:.1f} "
-        f"filter_ms={filter_ms:.1f} total_ms={total_ms:.1f} relevant={len(relevant)} zones={len(zones)} payload={payload_bytes}B"
-    )
-    return {
-        "zones": zones,
-        "updated_at": cache.get("updated_at"),
-        "diagnostics": {
-            "normalize_ms": round(normalize_ms, 1),
-            "filter_ms": round(filter_ms, 1),
-            "fetch_ms": round(total_ms, 1),
-            "payload_bytes": payload_bytes,
-            "returned": len(zones),
-            "source_events": len(relevant),
-        },
-    }
+    """Removed — GDELT data source removed."""
+    return {"zones": [], "updated_at": None, "diagnostics": {"returned": 0}}
 
 
 @app.get("/api/usage")
@@ -1073,15 +754,6 @@ def get_health_detailed():
             "feeds_successful": _FEED_RUN_STATS.get("feeds_ok", 0),
             "feeds_failed": len(_FEED_RUN_STATS.get("failed_feeds", {})),
             "last_error_message": next(iter(_FEED_RUN_STATS.get("failed_feeds", {}).values()), None),
-        },
-        {
-            "id":        "gdelt",
-            "name":      "GDELT Conflict Events",
-            "type":      "conflict",
-            "last_fetch": ds["gdelt"].get("last_fetch"),
-            "status":    _status(ds["gdelt"].get("failures", 0), ds["gdelt"].get("last_fetch")),
-            "failures":  ds["gdelt"].get("failures", 0),
-            "event_count": ds["gdelt"].get("event_count", 0),
         },
         {
             "id":        "ais",
@@ -1194,39 +866,6 @@ async def init_source(source: str):
     return {"ok": True, "source": source, "message": f"{source} status reset — next poll will update"}
 
 
-@app.get("/debug/events-shape")
-def debug_events_shape():
-    """
-    Lightweight shape check for /events payload consumed by the map layer.
-    """
-    cache = get_gdelt_cached_events(limit=100)
-    raw = cache.get("events", [])
-    normalized = []
-    for ev in raw:
-        try:
-            normalized.append(_gdelt_event_to_frontend(ev))
-        except Exception:
-            continue
-    sample = normalized[0] if normalized else None
-    return {
-        "count": len(normalized),
-        "sample": sample,
-        "keys": list(sample.keys()) if sample else [],
-    }
-
-
-@app.get("/debug/gdelt")
-def debug_gdelt():
-    """
-    Return current GDELT cache/refresh diagnostics without triggering refresh.
-    """
-    return get_gdelt_debug_status()
-
-
-@app.get("/gdelt/event/preview")
-def gdelt_event_preview(url: str = Query(..., min_length=6)):
-    preview = get_article_preview(url)
-    return {"url": url, "preview": preview}
 
 
 @app.get("/geocode")
@@ -1349,8 +988,8 @@ async def analyse_event(payload: dict):
     )
 
     if contextual:
-        prompt = f"""{context_block}You are Akili, a senior intelligence analyst advising a Tanzanian strategic decision-maker.
-Your job is not to describe what happened — it is to tell them what it means and what they should consider doing. The person reading this brief is intelligent but not an intelligence professional. They need clarity, not jargon. They need action options, not scores.
+        prompt = f"""{context_block}You are Akili, a senior intelligence analyst.
+Your job is not to describe what happened — it is to tell the analyst what it means and what they should consider doing. The person reading this brief is intelligent but not an intelligence professional. They need clarity, not jargon. They need action options, not scores.
 
 EVENT:
 {_event_data}
@@ -1360,23 +999,23 @@ Write a structured brief with exactly these five sections. Be direct. Be specifi
 ## WHAT HAPPENED
 One paragraph. Plain language. What is this event, who is involved, where, when. No jargon. If something is unconfirmed, say so plainly.
 
-## WHY THIS MATTERS TO TANZANIA
-One to three paragraphs. Be specific about Tanzania's actual interests at stake. Reference real assets, relationships, trade routes, or vulnerabilities from the strategic context. If it does not matter to Tanzania, say so directly and explain why. Do not inflate relevance.
+## WHY THIS MATTERS
+One to three paragraphs. Be specific about the interests at stake relative to the analyst's focus regions. Reference real assets, relationships, trade routes, or vulnerabilities. If it is not relevant to their focus areas, say so directly and explain why. Do not inflate relevance.
 
 ## WHAT THIS COULD MEAN IN 30, 90, AND 180 DAYS
 Three short bullet points — one per time horizon. What is the realistic trajectory if nothing changes? What could accelerate or reverse it?
 
-## WHAT TANZANIA SHOULD CONSIDER
-Two to four concrete, specific options for how a Tanzanian decision-maker could respond, position, or exploit this situation. Real options — diplomatic, economic, security, or commercial. For each: what it is, what it achieves, what it risks or costs. If there is a clear best option, say so. If Tanzania should do nothing, say so and explain why that is itself a strategic choice.
+## WHAT TO CONSIDER
+Two to four concrete, specific options — diplomatic, economic, security, or commercial. For each: what it is, what it achieves, what it risks or costs. If there is a clear best option, say so.
 
 ## CONFIDENCE AND SOURCE QUALITY
 One sentence on how reliable this information is and what would change the assessment.
 
-Tanzania Relevance: [X]/10 — [one sentence, focused on concrete Tanzania interest, not abstract geopolitics]"""
+Regional Relevance: [X]/10 — [one sentence on concrete interest, not abstract geopolitics]"""
     else:
-        prompt = f"""You are a geopolitical intelligence analyst specialising in Tanzania and East Africa.
+        prompt = f"""You are a geopolitical intelligence analyst.
 
-Produce a structured intelligence brief for the following GDELT-sourced conflict event. Be concise, analytical, and intelligence-grade — not journalistic. Total response must be under 500 tokens.
+Produce a structured intelligence brief for the following conflict event. Be concise, analytical, and intelligence-grade — not journalistic. Total response must be under 500 tokens.
 
 EVENT DATA:
 {_event_data}
@@ -1390,13 +1029,13 @@ What happened, when, where, and who was involved.
 Civilian risk level, displacement likelihood, and any infrastructure affected.
 
 ## Actor Context
-Who this actor is, their known behaviour patterns, and affiliations relevant to Tanzania.
+Who this actor is, their known behaviour patterns, and regional affiliations.
 
 ## Nearby Sites & Areas Affected
 Based on the location name and coordinates, reason about what is likely nearby — ports, roads, borders, urban centres, key infrastructure — and how this event may affect them.
 
 ## Escalation Outlook
-Likelihood of escalation given the event type, fatality count, actor profile, and regional context. Rate as Low / Medium / High and justify briefly."""
+Likelihood of escalation given the event type, actor profile, and regional context. Rate as Low / Medium / High and justify briefly."""
 
     try:
         message = client.messages.create(
@@ -1616,30 +1255,30 @@ async def analyse_news_marker(payload: dict):
     )
 
     if contextual:
-        prompt = f"""{context_block}You are Akili, a senior intelligence analyst advising a Tanzanian strategic decision-maker.
-Your job is not to describe what happened — it is to tell them what it means and what they should consider doing. This report is unverified — apply scepticism proportionate to the source quality.
+        prompt = f"""{context_block}You are Akili, a senior intelligence analyst.
+Your job is not to describe what happened — it is to tell the analyst what it means and what they should consider. This report is unverified — apply scepticism proportionate to the source quality.
 
 NEWS REPORT:
 {_news_data}
 
-Write a structured brief with exactly these five sections. Be direct. If the report is low-confidence or irrelevant to Tanzania, say so plainly — do not manufacture importance.
+Write a structured brief with exactly these five sections. Be direct. If the report is low-confidence or irrelevant to the analyst's focus, say so plainly — do not manufacture importance.
 
 ## WHAT HAPPENED
 One paragraph. Plain language. What does this report describe — who, what, where, when. Note explicitly if unconfirmed.
 
-## WHY THIS MATTERS TO TANZANIA
-One to two paragraphs. Be specific about Tanzania's actual interests at stake. Reference real assets, relationships, trade routes, or vulnerabilities from the strategic context. If it does not matter to Tanzania, say so directly. Do not inflate relevance.
+## WHY THIS MATTERS
+One to two paragraphs. Be specific about actual interests at stake. Reference real assets, relationships, trade routes, or vulnerabilities from the strategic context. If it is not relevant, say so directly. Do not inflate relevance.
 
 ## WHAT THIS COULD MEAN IN 30, 90, AND 180 DAYS
 Three short bullet points — one per time horizon. Realistic trajectory if nothing changes. What could accelerate or reverse it.
 
-## WHAT TANZANIA SHOULD CONSIDER
-One to three concrete options — diplomatic, economic, security, or commercial. For each: what it is, what it achieves, what it risks. If Tanzania should monitor but not act, say so and explain the trigger that would change that.
+## WHAT TO CONSIDER
+One to three concrete options — diplomatic, economic, security, or commercial. For each: what it is, what it achieves, what it risks. If the right response is to monitor but not act, say so and explain the trigger that would change that.
 
 ## CONFIDENCE AND SOURCE QUALITY
 One sentence on source reliability. Note if state-affiliated, unverified, or corroborated. State what additional information would change the assessment.
 
-Tanzania Relevance: [X]/10 — [one sentence, focused on concrete Tanzania interest, not abstract geopolitics]"""
+Regional Relevance: [X]/10 — [one sentence on concrete interest, not abstract geopolitics]"""
     else:
         prompt = f"""You are a geopolitical intelligence analyst.
 
@@ -2847,8 +2486,6 @@ _REGION_TERMS: dict[str, list[str]] = {
 
 _region_cache: dict = {}
 REGION_CACHE_TTL = 15 * 60  # seconds
-_EVENTS_VIEW_CACHE: dict = {}
-_EVENTS_VIEW_CACHE_TTL = 20  # seconds
 
 
 def _best_article_from_feed(feed_entries, source_name, terms: list[str]) -> list[dict]:
@@ -3145,23 +2782,6 @@ def _min_dist_to_route(pt_lat: float, pt_lon: float, route_pts: list) -> float:
     return min(_haversine_km(pt_lat, pt_lon, rlat, rlon) for rlat, rlon in route_pts)
 
 
-def _get_recent_gdelt_events(days: int = 90, limit: int = 20000) -> list[dict]:
-    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
-    cached = get_gdelt_cached_events(limit=limit).get("events", [])
-    out: list[dict] = []
-    for ev in cached:
-        raw_date = str(ev.get("event_date", "")).strip()
-        try:
-            ev_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
-        except ValueError:
-            try:
-                ev_date = datetime.strptime(raw_date, "%Y%m%d").date()
-            except ValueError:
-                continue
-        if ev_date >= cutoff_date:
-            out.append(ev)
-    return out
-
 
 _SAFETY_TYPE_WEIGHT = {
     "Battles":                      10,
@@ -3283,9 +2903,9 @@ def analyse_route(body: dict = Body(...)):
     route_pts = _sample_coords(coords, every=5)   # (lat, lon) tuples
 
     # ── 1. Conflict events within 15km in last 90 days ────────────────────
-    gdelt_events = _get_recent_gdelt_events(days=90, limit=20000)
+    recent_events = es.get_active_events(max_age_hours=2160, limit=1000)
     conflict_events = []
-    for ev in gdelt_events:
+    for ev in recent_events:
         try:
             ev_lat = float(ev.get("lat"))
             ev_lon = float(ev.get("lon"))
@@ -3293,15 +2913,12 @@ def analyse_route(body: dict = Body(...)):
             continue
         dist = _min_dist_to_route(ev_lat, ev_lon, route_pts)
         if dist <= 15.0:
-            event_date = str(ev.get("event_date") or "")
-            event_label = str(ev.get("event_label") or "GDELT Event")
-            event_code = str(ev.get("event_code") or "")
-            actor = str(ev.get("actor") or "Unknown actors")
+            event_date = str(ev.get("published") or "")[:10]
             conflict_events.append({
-                "type":       event_label,
-                "subtype":    event_code,
-                "actor":      actor,
-                "location":   str(ev.get("action_geo_full_name") or ev.get("action_geo_country_code") or ""),
+                "type":       ev.get("event_type") or ev.get("severity_tier") or "Conflict",
+                "subtype":    ev.get("source") or "",
+                "actor":      ev.get("source_name") or "Unknown",
+                "location":   ev.get("location") or ev.get("country_code") or "",
                 "date":       event_date,
                 "fatalities": 0,
                 "lat":        ev_lat,
@@ -3387,8 +3004,8 @@ def analyse_route(body: dict = Body(...)):
     )
 
     if contextual:
-        prompt = f"""{context_block}You are Akili, a senior intelligence analyst advising a Tanzanian strategic decision-maker.
-Your job is not to list what is along this route — it is to tell the decision-maker whether to use it, how, and what to watch for. Be direct. If the route is dangerous, say so. If it is safe, say so.
+        prompt = f"""{context_block}You are Akili, a senior intelligence analyst.
+Your job is not to list what is along this route — it is to tell the analyst whether to use it, how, and what to watch for. Be direct. If the route is dangerous, say so. If it is safe, say so.
 
 ROUTE:
 {_route_data}
@@ -3398,8 +3015,8 @@ Write a structured brief with exactly these five sections.
 ## WHAT THIS ROUTE IS
 One paragraph. Describe the corridor in plain terms — what kind of road, what terrain, what it connects, and who typically uses it. Note any known chokepoints or border crossings.
 
-## WHY THIS MATTERS TO TANZANIA
-Be specific about Tanzania's strategic interest in this corridor — trade flows, military access, regional connectivity, or economic exposure. If the route has no special strategic significance, say so.
+## WHY THIS MATTERS
+Be specific about the strategic interest in this corridor — trade flows, military access, regional connectivity, or economic exposure. If the route has no special strategic significance, say so.
 
 ## WHAT THIS COULD MEAN IN 30, 90, AND 180 DAYS
 Three bullet points — one per time horizon. Security trajectory given current conflict data. What events would make this route safer or more dangerous.
@@ -3410,9 +3027,9 @@ State the verdict directly: is this route advisable right now, with precautions,
 ## CONFIDENCE AND SOURCE QUALITY
 One sentence on data reliability. Note the age of conflict data and what ground truth would change this assessment.
 
-Tanzania Relevance: [X]/10 — [one sentence, focused on concrete Tanzania interest in this specific corridor]"""
+Regional Relevance: [X]/10 — [one sentence on concrete interest in this specific corridor]"""
     else:
-        prompt = f"""You are an intelligence analyst producing a route security brief for East Africa.
+        prompt = f"""You are an intelligence analyst producing a route security brief.
 
 {_route_data}
 
@@ -4413,21 +4030,6 @@ async def _background_news_geocode_loop():
         await asyncio.sleep(180)  # every 3 minutes
 
 
-async def _gdelt_refresh_loop():
-    """Refresh GDELT cache every 15 minutes."""
-    loop = asyncio.get_event_loop()
-    try:
-        await loop.run_in_executor(_executor, refresh_gdelt_cache)
-        print("[gdelt] initial refresh complete")
-    except Exception as ex:
-        print(f"[gdelt] initial refresh error: {ex}")
-    while True:
-        await asyncio.sleep(900)  # 15 minutes
-        try:
-            await loop.run_in_executor(_executor, refresh_gdelt_cache)
-        except Exception as ex:
-            print(f"[gdelt] periodic refresh error: {ex}")
-
 
 def _prefetch_event_infra(item: dict) -> list:
     """
@@ -4790,105 +4392,11 @@ def _maybe_auto_enrich_batch(items: list) -> None:
 
 def _build_surface_pool() -> list:
     """
-    Build ranked surface pool (top 50 items) from GDELT zones + news conflicts.
+    Build ranked surface pool (top 50 items) from news conflicts.
     All events are included regardless of geography; scoring naturally ranks
     profile-relevant events higher. No Claude calls — all context is rule-based.
-
-    Fallback: if fewer than 3 items pass the normal thresholds, a second pass
-    runs with relaxed settings (goldstein ≥ -1.0, no geo gate) so the pool
-    never returns empty during quiet periods.
     """
     import hashlib
-
-    def _collect_gdelt_items(goldstein_threshold: float, apply_geo_gate: bool) -> list[dict]:
-        """Inner helper — build GDELT zone items with configurable thresholds."""
-        global _LAST_SURFACE_GDELT_BOOTSTRAP
-        result: list[dict] = []
-        try:
-            cache     = get_gdelt_cached_events(limit=20000)
-            events    = cache.get("events", [])
-            if not events and (time.time() - _LAST_SURFACE_GDELT_BOOTSTRAP) > 60:
-                _LAST_SURFACE_GDELT_BOOTSTRAP = time.time()
-                print("[surface] GDELT cache empty during pool build — forcing synchronous refresh")
-                try:
-                    cache = refresh_gdelt_cache()
-                    events = cache.get("events", [])
-                except Exception as ex:
-                    print(f"[surface] forced GDELT refresh failed: {type(ex).__name__}: {ex}")
-            cutoff_dt = (datetime.now(timezone.utc) - timedelta(days=3)).date()
-            grid: dict = {}
-
-            for ev in events:
-                lat = ev.get("lat");  lon = ev.get("lon")
-                if lat is None or lon is None:
-                    continue
-                g = float(ev.get("goldstein") or 0)
-                if g >= goldstein_threshold:
-                    continue
-                raw_date = str(ev.get("event_date") or ev.get("date") or "").strip().replace("-", "")
-                if len(raw_date) == 8 and raw_date.isdigit():
-                    try:
-                        ev_date = datetime(int(raw_date[:4]), int(raw_date[4:6]), int(raw_date[6:8])).date()
-                        if ev_date < cutoff_dt:
-                            continue
-                    except Exception:
-                        pass
-                cell_lat = round(float(lat) * 2) / 2
-                cell_lon = round(float(lon) * 2) / 2
-                key = (cell_lat, cell_lon)
-                grid.setdefault(key, []).append(ev)
-
-            for (cell_lat, cell_lon), zone_evs in grid.items():
-                if len(zone_evs) < 1:
-                    continue
-                goldsteins = [float(ev.get("goldstein") or 0) for ev in zone_evs]
-                avg_g      = sum(goldsteins) / len(goldsteins)
-                intensity  = min(1.0, max(0.0, (abs(avg_g) - 3) / 7))
-
-                count = len(zone_evs)
-                location_name = (
-                    zone_evs[0].get("action_geo_fullname") or
-                    zone_evs[0].get("location") or
-                    f"{cell_lat:.1f}°, {cell_lon:.1f}°"
-                )
-                ev_types = [ev.get("event_type", "") for ev in zone_evs]
-                top_type = max(set(ev_types), key=ev_types.count) if ev_types else "conflict"
-                context  = usage_tracker.rule_based_summary(
-                    event_type=top_type, location=location_name, count=count, hours=72
-                )
-
-                if apply_geo_gate and not geo_gate_passes(cell_lat, cell_lon, _ACTIVE_PROFILE):
-                    continue
-
-                tier = (
-                    "critical"    if intensity > 0.7 else
-                    "significant" if intensity > 0.4 else
-                    "elevated"    if intensity > 0.2 else "low"
-                )
-                zone_id = f"zone_{cell_lat}_{cell_lon}"
-                result.append({
-                    "id":              zone_id,
-                    "source_type":     "conflict_zone",
-                    "type":            "conflict_zone",
-                    "lat":             cell_lat,
-                    "lon":             cell_lon,
-                    "location":        location_name,
-                    "severity_tier":   tier,
-                    "headline":        f"{count} conflict incidents near {location_name}",
-                    "context":         context,
-                    "relevance_score": int(intensity * 100),
-                    "analysed":        usage_tracker.check_dedup(zone_id) is not None,
-                    "source":          "gdelt",
-                    "count":           count,
-                    "avg_goldstein":   round(avg_g, 2),
-                    "intensity":       round(intensity, 3),
-                    "published_at":    datetime.now(timezone.utc).isoformat(),
-                })
-        except Exception as ex:
-            import traceback
-            print(f"[surface] GDELT source error: {ex}")
-            traceback.print_exc()
-        return result
 
     def _collect_news_items(apply_geo_gate: bool) -> list[dict]:
         """Inner helper — build news marker items with configurable geo gate."""
@@ -4942,21 +4450,18 @@ def _build_surface_pool() -> list:
             traceback.print_exc()
         return result
 
-    # ── First pass: strict thresholds ─────────────────────────────────────────
-    items = _collect_gdelt_items(goldstein_threshold=-3.0, apply_geo_gate=True)
-    items += _collect_news_items(apply_geo_gate=True)
+    # ── First pass ────────────────────────────────────────────────────────────
+    items = _collect_news_items(apply_geo_gate=True)
 
-    # ── Fallback: if pool is sparse, relax thresholds ─────────────────────────
+    # ── Fallback: if pool is sparse, relax geo gate ───────────────────────────
     if len(items) < 3:
         print(
             f"[surface] WARNING: only {len(items)} items after strict pass "
-            f"(gdelt events={bool(get_gdelt_cached_events(limit=1).get('events'))}, "
-            f"news_markers={len(_NEWS_CONFLICT_MARKERS)}) — "
-            f"retrying with relaxed thresholds (goldstein<-1.0, no geo gate)"
+            f"(news_markers={len(_NEWS_CONFLICT_MARKERS)}) — "
+            f"retrying without geo gate"
         )
-        fallback_gdelt = _collect_gdelt_items(goldstein_threshold=-1.0, apply_geo_gate=False)
         fallback_news  = _collect_news_items(apply_geo_gate=False)
-        fallback_all   = fallback_gdelt + fallback_news
+        fallback_all   = fallback_news
 
         # Merge: keep strict items, add fallback items not already in pool
         existing_ids = {i["id"] for i in items}
@@ -5189,8 +4694,7 @@ async def _surface_pool_loop():
                 if not new_pool:
                     prev_len = len(_SURFACE_POOL)
                     print(f"[surface] WARNING: rebuild returned 0 items — retaining previous pool ({prev_len} items). "
-                          f"Feeds active: GDELT={bool(get_gdelt_cached_events(limit=1).get('events'))}, "
-                          f"news={len(_NEWS_CONFLICT_MARKERS)}")
+                          f"news_markers={len(_NEWS_CONFLICT_MARKERS)}")
             # Fire off auto-brief generation for this fresh pool (non-blocking)
             if new_pool:
                 asyncio.create_task(_run_auto_cluster_briefs(new_pool))
@@ -5260,7 +4764,7 @@ def _next_0800_utc() -> str:
 
 def _generate_briefing_sync(manual: bool = False) -> dict | None:
     """
-    Gather context from the surface pool, GDELT, and news markers, then call
+    Gather context from the surface pool and news markers, then call
     Claude to produce a structured daily intelligence briefing.
     Returns the briefing dict (persisted to briefings.json) or None on failure.
     """
@@ -5295,36 +4799,6 @@ def _generate_briefing_sync(manual: bool = False) -> dict | None:
             f"{m.get('headline','')} — {m.get('location','')}"
         )
 
-    # ── GDELT cluster summaries ───────────────────────────────────────────────
-    gdelt_lines: list[str] = []
-    try:
-        gdelt_cache = get_gdelt_cached_events(limit=20000)
-        events      = gdelt_cache.get("events", [])
-        cutoff_dt   = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-        grid: dict  = {}
-        for ev in events:
-            lat = ev.get("lat"); lon = ev.get("lon")
-            if lat is None or lon is None:
-                continue
-            if float(ev.get("goldstein") or 0) >= -2.0:
-                continue
-            raw_date = str(ev.get("event_date") or ev.get("date") or "").strip().replace("-", "")
-            if len(raw_date) == 8 and raw_date.isdigit():
-                try:
-                    ev_date = datetime(int(raw_date[:4]), int(raw_date[4:6]), int(raw_date[6:8])).date()
-                    if ev_date < cutoff_dt:
-                        continue
-                except Exception:
-                    pass
-            cell = (round(float(lat) * 2) / 2, round(float(lon) * 2) / 2)
-            grid.setdefault(cell, []).append(ev)
-        for (clat, clon), evs in sorted(grid.items(), key=lambda kv: -len(kv[1]))[:10]:
-            loc = evs[0].get("action_geo_fullname") or evs[0].get("location") or f"{clat:.1f},{clon:.1f}"
-            gs  = [float(e.get("goldstein") or 0) for e in evs]
-            gdelt_lines.append(f"  {len(evs)} events near {loc} (avg Goldstein {sum(gs)/len(gs):.1f})")
-    except Exception as ex:
-        gdelt_lines = [f"  [GDELT unavailable: {ex}]"]
-
     # ── Chokepoint status (from auto-brief store) ─────────────────────────────
     cp_lines: list[str] = []
     with _AUTO_BRIEF_LOCK:
@@ -5343,7 +4817,6 @@ def _generate_briefing_sync(manual: bool = False) -> dict | None:
     context_block = (
         f"SURFACE POOL (top scored items):\n"  + ("\n".join(surface_lines) or "  No items.") +
         f"\n\nNEWS CONFLICT MARKERS (past 24h):\n" + ("\n".join(news_lines) or "  None.") +
-        f"\n\nGDELT CONFLICT CLUSTERS (past 24h):\n" + ("\n".join(gdelt_lines) or "  No clusters.") +
         f"\n\nCHOKEPOINT STATUS:\n" + "\n".join(cp_lines)
     )
 
@@ -5739,14 +5212,6 @@ async def _startup_warmup_tasks():
     loop = asyncio.get_event_loop()
 
     try:
-        await asyncio.wait_for(
-            loop.run_in_executor(_executor, refresh_gdelt_cache),
-            timeout=45,
-        )
-    except Exception as ex:
-        print(f"[startup] initial GDELT refresh failed: {ex}")
-
-    try:
         if _geo_needs_refresh(_GEO_COUNTRIES_FILE):
             await asyncio.wait_for(
                 loop.run_in_executor(
@@ -5774,10 +5239,8 @@ async def _startup_warmup_tasks():
             return dict(_NEWS_ARTICLE_STORE)
         def get_conflict_markers():
             return list(_NEWS_CONFLICT_MARKERS)
-        def get_gdelt():
-            return get_gdelt_cached_events(limit=5000)
         asyncio.create_task(event_bridge.bridge_loop(
-            get_news_store, get_conflict_markers, get_gdelt,
+            get_news_store, get_conflict_markers,
             save_path=os.path.join(DATA_DIR, "event_store.json"),
         ))
         print("[startup] unified event bridge started")
@@ -5979,7 +5442,6 @@ async def startup_event():
         _BRIEFING_STORE = _load_briefing_store()
     print(f"[startup] loaded {len(_BRIEFING_STORE)} briefing(s) from disk")
 
-    asyncio.create_task(_gdelt_refresh_loop())
     asyncio.create_task(_extract_news_conflicts_loop())
     asyncio.create_task(_background_news_geocode_loop())
     asyncio.create_task(_surface_pool_loop())
@@ -5991,9 +5453,9 @@ async def startup_event():
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
     if _HAS_SPACY:
-        print("[startup] GDELT + news conflict + geo worker + briefing loops started (spaCy NER)")
+        print("[startup] news conflict + geo worker + briefing loops started (spaCy NER)")
     else:
-        print("[startup] GDELT + news conflict + geo worker + briefing loops started (keyword fallback mode)")
+        print("[startup] news conflict + geo worker + briefing loops started (keyword fallback mode)")
 
 
 # ── Pikud HaOref (Israel missile alerts) ─────────────────────────────────────
@@ -6399,7 +5861,7 @@ async def analyse_surface_item(payload: dict):
             "id":          item.get("id"),
             "date":        (item.get("published_at") or "")[:10],
             "type":        "Conflict Cluster",
-            "subtype":     "GDELT",
+            "subtype":     "News",
             "actor":       "Multiple actors",
             "location":    item.get("location", "Unknown"),
             "lat":         item.get("lat"),
@@ -6559,13 +6021,10 @@ def debug_news_conflicts():
         ("AllAfrica Kenya",       "https://allafrica.com/tools/headlines/rdf/kenya/headlines.rdf"),
         ("AllAfrica Uganda",      "https://allafrica.com/tools/headlines/rdf/uganda/headlines.rdf"),
     ]
-    TZ_S, TZ_W, TZ_N, TZ_E = TANZANIA_BBOX
-
     report = {
         "spacy_available":  _HAS_SPACY,
         "extraction_mode":  "spaCy NER" if _HAS_SPACY else "keyword fallback",
         "ea_locations_count": len(_EA_LOCATIONS),
-        "tanzania_bbox":    TANZANIA_BBOX,
         "feeds":            [],
     }
 
@@ -6626,9 +6085,8 @@ def debug_news_conflicts():
                 nom_url = (
                     f"https://nominatim.openstreetmap.org/search"
                     f"?q={urllib.parse.quote(loc)}&format=json&limit=1"
-                    f"&viewbox={TZ_W},{TZ_N},{TZ_E},{TZ_S}&bounded=1"
                 )
-                geo = {"location": loc, "nominatim_url": nom_url, "raw": None, "in_bbox": False, "confidence": None}
+                geo = {"location": loc, "nominatim_url": nom_url, "raw": None, "confidence": None}
                 try:
                     req = urllib.request.Request(nom_url, headers={"User-Agent": "Akili/1.0"})
                     with urllib.request.urlopen(req, timeout=6) as resp:
@@ -6638,21 +6096,19 @@ def debug_news_conflicts():
                         lat = float(r.get("lat", 0))
                         lon = float(r.get("lon", 0))
                         conf = _score_confidence(source_name, r)
-                        in_bbox = TZ_S <= lat <= TZ_N and TZ_W <= lon <= TZ_E
                         geo.update({
                             "raw":        {"lat": lat, "lon": lon, "display_name": r.get("display_name", "")[:100]},
-                            "in_bbox":    in_bbox,
                             "confidence": conf,
                         })
-                        if in_bbox and conf != "low":
+                        if conf != "low":
                             marker_added = True
                     else:
-                        geo["raw"] = "EMPTY — Nominatim returned no results (bounded to TZ bbox)"
+                        geo["raw"] = "EMPTY — Nominatim returned no results"
                 except Exception as ex:
                     geo["raw"] = f"ERROR: {ex}"
                 art["geocode"].append(geo)
 
-            art["outcome"] = "MARKER_ADDED" if marker_added else "SKIP — geocode empty/out-of-bbox/low-confidence"
+            art["outcome"] = "MARKER_ADDED" if marker_added else "SKIP — geocode empty/low-confidence"
             if marker_added:
                 feed_report["markers_produced"] += 1
             feed_report["articles"].append(art)
@@ -7729,7 +7185,7 @@ _CHOKEPOINT_DEFS = [
 
 def _compute_chokepoint_status(cp: dict) -> dict:
     """
-    Check last 48h of GDELT events and news conflict markers for keyword matches.
+    Check last 48h of news conflict markers for keyword matches.
     >= 5 matches → disrupted
     >= 2 matches → elevated
     else → normal
@@ -7738,26 +7194,6 @@ def _compute_chokepoint_status(cp: dict) -> dict:
     cutoff   = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     matches  = 0
     matched_headlines: list[str] = []
-
-    # Check GDELT events
-    try:
-        cache  = get_gdelt_cached_events(limit=20000)
-        events = cache.get("events", [])
-        for ev in events:
-            ev_date = str(ev.get("event_date") or ev.get("date") or "")
-            if ev_date.replace("-", "") < cutoff[:10].replace("-", ""):
-                continue
-            haystack = " ".join([
-                str(ev.get("action_geo_fullname") or ""),
-                str(ev.get("actor1_name") or ""),
-                str(ev.get("source_url") or ""),
-            ]).lower()
-            if any(kw in haystack for kw in keywords):
-                matches += 1
-                if len(matched_headlines) < 5:
-                    matched_headlines.append(ev.get("action_geo_fullname") or "GDELT event")
-    except Exception:
-        pass
 
     # Check news conflict markers
     try:

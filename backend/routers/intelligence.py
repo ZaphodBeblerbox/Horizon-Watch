@@ -18,7 +18,7 @@ def get_unified_events(
     theater:       str   = Query(None),
     min_severity:  str   = Query("low"),
     max_age_hours: int   = Query(72),
-    limit:         int   = Query(200),
+    limit:         int   = Query(10000),
     mode:          str   = Query("threads"),  # "threads" or "events"
 ):
     """
@@ -27,8 +27,6 @@ def get_unified_events(
     mode: "threads" returns grouped story threads, "events" returns individual events
     """
     from scoring import REGION_BBOXES
-    # Late import to access _ACTIVE_PROFILE from main without circular dep
-    import main as _m
 
     bbox = None
     if theater and theater in REGION_BBOXES and REGION_BBOXES[theater]:
@@ -36,13 +34,6 @@ def get_unified_events(
         bbox = (s, n, w, e)
     elif None not in (south, north, west, east):
         bbox = (south, north, west, east)
-    elif _m._ACTIVE_PROFILE:
-        focus = _m._ACTIVE_PROFILE.get("focusRegions", [])
-        for region in focus:
-            if region in REGION_BBOXES and REGION_BBOXES[region]:
-                s, n, w, e = REGION_BBOXES[region]
-                bbox = (s, n, w, e)
-                break
 
     if mode == "threads":
         results = es.get_threads(

@@ -21,7 +21,6 @@ const API = API_BASE
 
 // Widget definitions with zoom thresholds
 const WIDGETS = [
-    { id: "conflictZones", label: "Conflict Zones",     minZoom: 0, color: "#FF6B35" },
     { id: "borders",       label: "Land Border",        minZoom: 0, color: "#00ff88" },
     { id: "seaborder",     label: "Sea Boundary (EEZ)", minZoom: 0, color: "#00cfff" },
     { id: "airspace",      label: "Airspace (FIR)",     minZoom: 0, color: "#ffb300" },
@@ -120,31 +119,6 @@ const ADSB_LEGEND = [
     { label: "Unknown",          color: "#FF6D00" },
 ]
 
-// Hardcoded approximate Tanzania EEZ (200nm / ~370km offshore boundary)
-// GeoJSON uses [longitude, latitude] coordinate order
-const TANZANIA_EEZ = {
-    type: "Feature",
-    geometry: {
-        type: "Polygon",
-        coordinates: [[
-            [39.22, -4.67],
-            [39.07, -5.07],
-            [38.99, -5.44],
-            [38.90, -6.43],
-            [39.29, -6.80],
-            [39.52, -8.91],
-            [39.71, -10.00],
-            [40.46, -10.47],
-            [44.20, -10.47],
-            [44.50, -9.00],
-            [44.60, -7.50],
-            [44.50, -6.00],
-            [43.50, -4.67],
-            [39.22, -4.67],
-        ]]
-    },
-    properties: { name: "Tanzania EEZ (approx. 200nm)" }
-}
 
 const CABLE_API   = "/data/cable-geo.json"
 const LANDING_API = "/data/landing-point-geo.json"
@@ -3324,7 +3298,6 @@ function PoiOverlay({ poi, onClose, apiBase }) {
 }
 
 export default function MapPage({
-    events,
     selected,
     onSelect,
     activeSituation,
@@ -3367,7 +3340,6 @@ export default function MapPage({
             shippingLanes: false,
             chokepoints: false,
             heatmap: true,
-            conflictZones: false,
             eez: false,
             borders: false,
             cityLabels: false,
@@ -3440,14 +3412,11 @@ export default function MapPage({
     const [selectedSat, setSelectedSat]       = useState(null)
     const [satLoading, setSatLoading]         = useState(false)
 
-    const [tanzaniaGeo, setTanzaniaGeo]         = useState(null)
     const [allCountriesGeo, setAllCountriesGeo] = useState(null)
     const [cableGeo, setCableGeo]               = useState({ cables: [], points: [], associations: {} })
     const [selectedCountry, setSelectedCountry] = useState(null)
     const [countryData, setCountryData]         = useState(null)
     const [countryLoading, setCountryLoading]   = useState(false)
-    const [conflictZones, setConflictZones]         = useState([])
-    const [conflictZonesLoading, setConflictZonesLoading] = useState(false)
     const [viewportBounds, setViewportBounds]   = useState(null)
 
     // ── UI state ──────────────────────────────────────────────────────────────
@@ -3716,7 +3685,6 @@ export default function MapPage({
     const shippingLanesLayerRef  = useRef(null)
     const chokepointsLayerRef    = useRef(null)
     const heatmapLayerRef        = useRef(null)
-    const conflictZonesLayerRef  = useRef(null)
     const eezLayerRef            = useRef(null)
     const bordersLayerRef        = useRef(null)
     const cityLabelsLayerRef     = useRef(null)
@@ -3843,12 +3811,6 @@ export default function MapPage({
             .then(r => r.json())
             .then(data => {
                 setAllCountriesGeo(data)
-                const feature = data.features.find(f =>
-                    f.properties?.name === "United Republic of Tanzania" ||
-                    f.properties?.ADMIN === "Tanzania" ||
-                    f.properties?.ADMIN === "United Republic of Tanzania"
-                )
-                if (feature) setTanzaniaGeo(feature)
             })
             .catch(() => { })
     }, [])
@@ -3882,58 +3844,6 @@ export default function MapPage({
             setCountryLoading(false)
         })
     }, [selectedCountry])
-
-    // Conflict zones — fetched for the current AOI only and derived from actual conflict events.
-    useEffect(() => {
-        if (!active.conflictZones || !viewportBounds || (viewportBounds.zoom || zoom || 4) > 6) {
-            setConflictZones([])
-            return
-        }
-        const { north, south, east, west, zoom: viewportZoom } = viewportBounds
-        const params = new URLSearchParams({
-            north: String(north),
-            south: String(south),
-            east: String(east),
-            west: String(west),
-            zoom: String(viewportZoom || zoom || 4),
-        })
-        const started = performance.now()
-        setConflictZonesLoading(true)
-        fetch(`${API}/conflict-zones?${params.toString()}`)
-            .then(r => r.json())
-            .then(data => {
-                console.info("[conflict-zones/fetch]", {
-                    ms: Math.round(performance.now() - started),
-                    count: Array.isArray(data?.zones) ? data.zones.length : 0,
-                    diagnostics: data?.diagnostics || null,
-                })
-                setConflictZones(Array.isArray(data?.zones) ? data.zones : [])
-                setConflictZonesLoading(false)
-            })
-            .catch(() => {
-                setConflictZones([])
-                setConflictZonesLoading(false)
-            })
-    }, [active.conflictZones, viewportBounds, zoom])
-
-    useEffect(() => {
-        if (!active.conflictZones || !viewportBounds || (viewportBounds.zoom || zoom || 4) > 6) return
-        const iv = setInterval(() => {
-            const { north, south, east, west, zoom: viewportZoom } = viewportBounds
-            const params = new URLSearchParams({
-                north: String(north),
-                south: String(south),
-                east: String(east),
-                west: String(west),
-                zoom: String(viewportZoom || zoom || 4),
-            })
-            fetch(`${API}/conflict-zones?${params.toString()}`)
-                .then(r => r.json())
-                .then(data => setConflictZones(Array.isArray(data?.zones) ? data.zones : []))
-                .catch(() => {})
-        }, 10 * 60 * 1000)
-        return () => clearInterval(iv)
-    }, [active.conflictZones, viewportBounds, zoom])
 
     // Auto-clear toast after 2.2s (matches CSS animation duration)
     useEffect(() => {
@@ -4346,9 +4256,7 @@ export default function MapPage({
                 const fallback = normalizeMarkers(raw2).filter(m => pointInBounds(m, viewportBounds))
                 const combined = [...normalizeMarkers(raw1), ...fallback]
                 const seen = new Set()
-                const existingUrls = new Set((events || []).map(e => e.url).filter(Boolean))
                 const deduped = combined.filter((m) => {
-                    if (existingUrls.has(m.url)) return false
                     const key = m.url || `${m.headline}_${m.lat.toFixed(4)}_${m.lon.toFixed(4)}`
                     if (seen.has(key)) return false
                     seen.add(key)
@@ -4392,7 +4300,7 @@ export default function MapPage({
         fetchAll()
         const iv = setInterval(fetchAll, 30 * 1000)
         return () => clearInterval(iv)
-    }, [active.newsConflicts, viewportBounds, events, zoom])
+    }, [active.newsConflicts, viewportBounds, zoom])
 
     // ── Unified Intelligence Feed — /api/v2/events ────────────────────────────
     useEffect(() => {
@@ -4403,7 +4311,9 @@ export default function MapPage({
         }
         const fetchUnified = async () => {
             try {
-                const res = await fetch(`${API}/api/v2/events?mode=threads&max_age_hours=72&limit=200`)
+                const b = viewportBoundsRef.current
+                const bboxQ = b ? `&south=${b.south.toFixed(4)}&north=${b.north.toFixed(4)}&west=${b.west.toFixed(4)}&east=${b.east.toFixed(4)}` : ""
+                const res = await fetch(`${API}/api/v2/events?mode=threads&max_age_hours=72&limit=10000${bboxQ}`)
                 const data = await res.json()
                 const threads = data.events || []
                 setUnifiedEvents(prev => {
@@ -4632,11 +4542,9 @@ export default function MapPage({
                 // Save current state and hide conflict layers
                 prePOILayersRef.current = {
                     heatmap: active.heatmap,
-                    conflictZones: active.conflictZones,
-                    acled: active.acled,
                     newsConflicts: active.newsConflicts,
                 }
-                setActive(a => ({ ...a, heatmap: false, conflictZones: false, acled: false, newsConflicts: false }))
+                setActive(a => ({ ...a, heatmap: false, newsConflicts: false }))
             } else {
                 // Restore saved state
                 if (prePOILayersRef.current) {
@@ -5293,8 +5201,8 @@ export default function MapPage({
 
     const piracyAlertItems = useMemo(() => {
         if (!active.imbPiracy) return []
-        return [...events, ...newsConflictsData].filter(isPiracySignal)
-    }, [active.imbPiracy, events, newsConflictsData, isPiracySignal])
+        return [...newsConflictsData].filter(isPiracySignal)
+    }, [active.imbPiracy, newsConflictsData, isPiracySignal])
 
     const visibleSurfaceItems = useMemo(() => (
         (surfaceItems || []).filter(item => pointInBounds(item, viewportBounds))
@@ -5304,7 +5212,6 @@ export default function MapPage({
         if (!active.heatmap) return []
         const merged = [
             ...visibleSurfaceItems,
-            ...events,
             ...(active.newsConflicts ? newsConflictsData : []),
             ...missileAlertItems,
             ...earthquakeAlertItems,
@@ -5320,11 +5227,10 @@ export default function MapPage({
             seen.add(key)
             return true
         })
-    }, [active.heatmap, active.newsConflicts, visibleSurfaceItems, events, newsConflictsData, missileAlertItems, earthquakeAlertItems, piracyAlertItems])
+    }, [active.heatmap, active.newsConflicts, visibleSurfaceItems, newsConflictsData, missileAlertItems, earthquakeAlertItems, piracyAlertItems])
 
     const clusterMarkers = useMemo(() => {
-        // Exclude GDELT zone items — they appear as non-interactive heatmap blobs via SignalSurfaceLayer
-        const clickableItems = visibleSurfaceItems.filter(item => item.source !== "gdelt" && item.source_type !== "conflict_zone")
+        const clickableItems = visibleSurfaceItems.filter(item => item.source_type !== "conflict_zone")
         if (zoom > 8 || !clickableItems.length) return null
         const clusters = clusterSurfaceItems(clickableItems, 30)
         return clusters.map((c, i) => (
@@ -5369,29 +5275,6 @@ export default function MapPage({
         ))
     }, [visibleSurfaceItems, zoom, onSurfaceItemClick])
 
-    const gdeltZoneMarkers = useMemo(() => {
-        const gdeltItems = visibleSurfaceItems.filter(item => item.source === "gdelt" || item.source_type === "conflict_zone")
-        if (!gdeltItems.length) return null
-        return gdeltItems.map((item, i) => {
-            const tier = item.severity_tier || "low"
-            const baseColor = tier === "critical" ? "239,68,68" : tier === "significant" ? "249,115,22" : tier === "elevated" ? "234,179,8" : "100,116,139"
-            const radius = tier === "critical" ? 45000 : tier === "significant" ? 35000 : tier === "elevated" ? 25000 : 18000
-            return (
-                <Circle
-                    key={`gdelt-blob-${i}`}
-                    center={[item.lat, item.lon]}
-                    radius={radius}
-                    pathOptions={{
-                        color: "transparent",
-                        fillColor: `rgba(${baseColor},0.18)`,
-                        fillOpacity: 1,
-                        weight: 0,
-                        interactive: false,
-                    }}
-                />
-            )
-        })
-    }, [visibleSurfaceItems])
 
     const surveillanceMarkers = useMemo(() => {
         const items = [...missileAlertItems, ...earthquakeAlertItems, ...piracyAlertItems]
@@ -5433,75 +5316,6 @@ export default function MapPage({
         })
     }, [zoom, missileAlertItems, earthquakeAlertItems, piracyAlertItems])
 
-    const relevantConflictEvents = useMemo(() => (
-        (events || []).filter(ev => Number.isFinite(Number(ev?.lat)) && Number.isFinite(Number(ev?.lon)))
-            .map(ev => ({ ...ev, lat: Number(ev.lat), lon: Number(ev.lon) }))
-    ), [events])
-
-    const conflictEventMarkers = useMemo(() => {
-        if (!relevantConflictEvents.length) return null
-        const pool = zoom < 8
-            ? [...relevantConflictEvents].sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0)).slice(0, 30)
-            : relevantConflictEvents
-        return pool.map((event) => {
-            const isSelected = impactEvent?.id === event.id || selectedEvent?.id === event.id
-            const iconHtml = getEventMarkerHTML(event, showEventLabels)
-            const iconSize = event.severity_tier === "critical" ? 30 : event.severity_tier === "significant" ? 24 : event.severity_tier === "elevated" ? 18 : 14
-            const icon = L.divIcon({ html: iconHtml, className: "", iconSize: [iconSize, iconSize], iconAnchor: [iconSize / 2, iconSize / 2] })
-            return (
-                <Marker
-                    key={`gdelt-event-${event.id}`}
-                    position={[event.lat, event.lon]}
-                    pane="event-icons"
-                    icon={isSelected ? makeConflictIcon(event, true) : icon}
-                    eventHandlers={{
-                        click: (e) => {
-                            L.DomEvent.stopPropagation(e)
-                            setSelectedEvent(event)
-                            setImpactEvent(event)
-                            fetchContextualItems(event)
-                            setAreaPopup(null)
-                            setInfraSelected(null)
-                        },
-                    }}
-                >
-                    {!showEventLabels && (
-                        <Tooltip direction="top" offset={[0, -16]}>
-                            <span style={{ fontSize: 10 }}>
-                                {(event.headline || event.title || event.location || "Conflict event").slice(0, 88)}
-                            </span>
-                        </Tooltip>
-                    )}
-                </Marker>
-            )
-        })
-    }, [relevantConflictEvents, zoom, impactEvent?.id, selectedEvent?.id, showEventLabels, getEventMarkerHTML])
-
-    useEffect(() => {
-        const renderedCount = zoom < 6
-            ? 0
-            : zoom < 8
-                ? Math.min(relevantConflictEvents.length, 24)
-                : relevantConflictEvents.length
-        console.info("[events/render]", {
-            zoom,
-            fetchedCount: events?.length || 0,
-            validCoordinateCount: relevantConflictEvents.length,
-            renderedCount,
-            suppressedByZoom: zoom < 6,
-            sample: relevantConflictEvents[0] || null,
-        })
-        if (!relevantConflictEvents.length) return
-        const started = performance.now()
-        const raf = requestAnimationFrame(() => {
-            console.info("[events/render/commit]", {
-                ms: Math.round(performance.now() - started),
-                renderedCount,
-                zoom,
-            })
-        })
-        return () => cancelAnimationFrame(raf)
-    }, [events, relevantConflictEvents, zoom])
 
     // ── Conflict cluster theater polygons — intentionally disabled ───────────
     const conflictClusterPolygons = useMemo(() => null, [])
@@ -5673,45 +5487,6 @@ export default function MapPage({
         )
     }, [surfaceEnrichment, selectedSurface, contextReferencePoints, allCountriesGeo])
 
-    // Conflict zones — AOI-scoped area surfaces derived from underlying events.
-    const conflictZoneElements = useMemo(() => {
-        if (!active.conflictZones || !conflictZones.length || zoom > 6) return null
-        return conflictZones.map((z, i) => {
-            const polygon = Array.isArray(z.polygon) ? z.polygon : []
-            if (polygon.length < 3) return null
-            const t = z.intensity  // 0–1
-            const fillColor = t > 0.6 ? "#ef4444" : t > 0.3 ? "#f97316" : "#f59e0b"
-            const pulseOpacity = t > 0.72 ? 0.1 : 0.04
-            return (
-                <Fragment key={z.id || i}>
-                    <Polygon
-                        positions={polygon}
-                        pane="zone-surface"
-                        pathOptions={{
-                            fillColor,
-                            fillOpacity: 0.06 + t * 0.16,
-                            color: fillColor,
-                            weight: 1.2,
-                            opacity: 0.25 + t * 0.18,
-                        }}
-                        interactive={false}
-                    />
-                    <Polygon
-                        positions={polygon}
-                        pane="zone-surface"
-                        pathOptions={{
-                            fillColor,
-                            fillOpacity: pulseOpacity,
-                            color: fillColor,
-                            weight: 3,
-                            opacity: 0.08 + t * 0.1,
-                        }}
-                        interactive={false}
-                    />
-                </Fragment>
-            )
-        })
-    }, [active.conflictZones, conflictZones, zoom])
 
     const osmInfraMarkers = useMemo(() => (
         Object.entries(infraData).flatMap(([category, features]) => (
@@ -5829,17 +5604,13 @@ export default function MapPage({
                 <UserLocationMarker />
                 {/* Surface pool — operational signal surface beneath existing icons */}
                 {active.heatmap && <SignalSurfaceLayer items={signalSurfaceItems} zoom={zoom} />}
-                {conflictEventMarkers}
                 {!active.unifiedEvents && clusterMarkers}
                 {!active.unifiedEvents && individualMarkers}
-                {gdeltZoneMarkers}
                 {surveillanceMarkers}
                 {/* Severity radius circle + contextual overlays */}
                 {severityCircle}
                 {surfaceContextElements}
                 {surfaceEnrichmentElements}
-                {/* Conflict zone glows — GDELT regional aggregation */}
-                {conflictZoneElements}
                 <MapClickHandler
                     enabled={active.route}
                     origin={routeOrigin}
@@ -6010,13 +5781,6 @@ export default function MapPage({
                         }}
                     />
                 )}
-
-                {/* ── Airspace FIR ──────────────────────────────────────────── */}
-                {active.airspace && tanzaniaGeo && (<>
-                    <GeoJSON key="airspace-glow3" data={tanzaniaGeo} style={{ color: "#FFB300", weight: 6, opacity: 0.15, fill: false }} />
-                    <GeoJSON key="airspace-glow2" data={tanzaniaGeo} style={{ color: "#FFB300", weight: 4, opacity: 0.3,  fill: false }} />
-                    <GeoJSON key="airspace-core"  data={tanzaniaGeo} style={{ color: "#FFB300", weight: 2, opacity: 1.0,  fill: true, fillColor: "#FFB300", fillOpacity: 0.04 }} />
-                </>)}
 
                 {/* ── Submarine Cable Routes ────────────────────────────────── */}
                 {active.cables && cableGeo.cables.map(feature => {
@@ -6618,26 +6382,6 @@ export default function MapPage({
 
             </MapContainer>
 
-            {/* ── Conflict zones loading indicator ──────────────────────────── */}
-            {conflictZonesLoading && (
-                <div style={{
-                    position:       "absolute",
-                    top:            14,
-                    left:           "50%",
-                    transform:      "translateX(-50%)",
-                    background:     "rgba(10,10,10,0.65)",
-                    color:          "#fff",
-                    padding:        "5px 14px",
-                    fontSize:       11,
-                    letterSpacing:  "0.05em",
-                    zIndex:         1500,
-                    pointerEvents:  "none",
-                    backdropFilter: "blur(4px)",
-                }}>
-                    Loading events…
-                </div>
-            )}
-
             {/* ── Toast notification ────────────────────────────────────────── */}
             {toastInfo && (
                 <div
@@ -7050,8 +6794,6 @@ export default function MapPage({
                         distance: routeInfo.distance_km != null ? `${routeInfo.distance_km.toFixed(0)} km` : null,
                         duration: routeInfo.duration_min != null ? `${Math.round(routeInfo.duration_min)} min` : null,
                     } : routeLoading ? { calculating: true } : null}
-                    conflictZoneCount={conflictZones.length}
-                    conflictZonesLoading={conflictZonesLoading}
                     newsConflictCount={newsConflictsData.length}
                     newsConflictTotal={newsConflictsCount}
                     infraLoading={infraLoading}
