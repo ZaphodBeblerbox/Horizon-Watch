@@ -7954,6 +7954,7 @@ async def poi_investigate_results(poi_id: str):
 _PIPELINES_PATH          = BASE_DIR / "data" / "pipelines.json"
 _SHIPPING_ROUTES_PATH    = BASE_DIR / "data" / "shipping_routes.json"
 _DEPLOYMENTS_PATH        = BASE_DIR / "data" / "deployments.json"
+print(f"[init] BASE_DIR={BASE_DIR} DATA_DIR={DATA_DIR} deployments_exists={_DEPLOYMENTS_PATH.exists()}")
 _MIL_ENRICHMENT_PATH     = BASE_DIR / "data" / "military_enrichment.json"
 _CABLE_GEO_PATH          = BASE_DIR.parent / "public" / "data" / "cable-geo.json"
 _LANDING_GEO_PATH        = BASE_DIR.parent / "public" / "data" / "landing-point-geo.json"
@@ -8109,6 +8110,7 @@ def _get_cable_data() -> dict:
 
 # ── Deployments dataset ────────────────────────────────────────────────────────
 def _load_deployments() -> dict:
+    print(f"[deployments] reading from {_DEPLOYMENTS_PATH} (exists={_DEPLOYMENTS_PATH.exists()})")
     try:
         return _json.loads(_DEPLOYMENTS_PATH.read_text())
     except Exception as ex:
