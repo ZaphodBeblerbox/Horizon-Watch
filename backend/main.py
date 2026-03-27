@@ -11,6 +11,7 @@
 import os
 import math
 import re
+import socket as _socket
 import time as time_module
 import time
 import asyncio
@@ -39,6 +40,10 @@ DATA_DIR = (
     else os.path.join(os.path.dirname(__file__), "data")
 )
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# Set global socket timeout so feedparser (urllib) and other stdlib HTTP calls
+# never hang indefinitely — critical for Railway where some RSS feeds time out.
+_socket.setdefaulttimeout(20)
 
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Depends
@@ -420,7 +425,7 @@ _NEWS_ARTICLE_STORE: dict[str, dict] = {}   # url -> enriched article snapshot (
 _NEWS_STORE_LOCK = threading.Lock()
 _PROCESSED_URLS: set = set()
 _FIRST_EXTRACTION_DONE = False   # cleared on first cycle so all current articles are processed fresh
-_executor = ThreadPoolExecutor(max_workers=2)   # for blocking I/O in sync extraction
+_executor = ThreadPoolExecutor(max_workers=4)   # for blocking I/O in sync extraction
 _NEWS_STORE_MAX_ARTICLES = 2000
 _NEWS_WINDOW_HOURS = 168
 _NEWS_MARKER_WINDOW_HOURS = 168
@@ -3717,7 +3722,7 @@ def _run_news_conflict_extraction_sync():
     def _prefetch_feed(args):
         sn, fu = args
         try:
-            return sn, fu, feedparser.parse(fu), None
+            return sn, fu, feedparser.parse(fu, agent="Mozilla/5.0", request_headers={"Accept": "application/rss+xml, application/xml, text/xml"}), None
         except Exception as ex:
             return sn, fu, None, ex
 
@@ -4070,15 +4075,21 @@ async def _extract_news_conflicts_loop():
     """Async wrapper: immediate first run on startup, then every 30 minutes."""
     loop = asyncio.get_event_loop()
     # Run immediately — no startup delay
-    print("[news-conflicts] Starting first extraction cycle…")
+    print(f"[news-conflicts] Starting first extraction cycle (feeds={len(_SCAN_FEEDS)})…")
+    t0 = asyncio.get_event_loop().time()
     try:
         await loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
+        elapsed = asyncio.get_event_loop().time() - t0
+        print(f"[news-conflicts] First cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
     except Exception as ex:
         print(f"[news-conflicts] startup run error: {ex}")
     while True:
         await asyncio.sleep(1800)   # 30 minutes
+        t0 = asyncio.get_event_loop().time()
         try:
             await loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
+            elapsed = asyncio.get_event_loop().time() - t0
+            print(f"[news-conflicts] Cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
         except Exception as ex:
             print(f"[news-conflicts] loop error: {ex}")
 
@@ -5479,6 +5490,7 @@ async def api_ais_status():
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
+    print(f"[startup] *** HORIZON WATCH STARTING — env='{os.getenv('RAILWAY_ENVIRONMENT','local')}' DATA_DIR={DATA_DIR} ***")
     # Initialise response cache
     if _HAS_RESPONSE_CACHE:
         FastAPICache.init(InMemoryBackend())
@@ -5517,10 +5529,8 @@ async def startup_event():
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
-    if _HAS_SPACY:
-        print("[startup] news conflict + geo worker + briefing loops started (spaCy NER)")
-    else:
-        print("[startup] news conflict + geo worker + briefing loops started (keyword fallback mode)")
+    spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
+    print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
 
 
 # ── Pikud HaOref (Israel missile alerts) ─────────────────────────────────────
@@ -8283,6 +8293,28 @@ def api_cables(
 
 
 # ── Endpoints: Deployments ────────────────────────────────────────────────────
+
+@app.get("/api/debug/paths")
+def api_debug_paths():
+    """Debug: return resolved filesystem paths and file existence."""
+    import os as _os
+    dep = _DEPLOYMENTS_PATH
+    data_dir = Path(DATA_DIR)
+    event_store_path = data_dir / "event_store.json"
+    return {
+        "BASE_DIR": str(BASE_DIR),
+        "DATA_DIR": DATA_DIR,
+        "deployments_path": str(dep),
+        "deployments_exists": dep.exists(),
+        "deployments_size": dep.stat().st_size if dep.exists() else None,
+        "event_store_path": str(event_store_path),
+        "event_store_exists": event_store_path.exists(),
+        "cwd": _os.getcwd(),
+        "railway_env": _os.getenv("RAILWAY_ENVIRONMENT", ""),
+        "data_dir_files": sorted([f.name for f in data_dir.iterdir()]) if data_dir.exists() else [],
+        "base_dir_data_files": sorted([f.name for f in (BASE_DIR / "data").iterdir()]) if (BASE_DIR / "data").exists() else [],
+    }
+
 
 @app.get("/api/deployments")
 def api_deployments_get():
