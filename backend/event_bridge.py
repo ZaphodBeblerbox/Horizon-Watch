@@ -77,7 +77,8 @@ def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn):
                 body=article.get('body') or article.get('content') or '',
                 summary=article.get('summary') or article.get('description') or '',
                 image_url=article.get('image_url') or article.get('og_image') or article.get('urlToImage') or '',
-                source_name=article.get('source_name') or article.get('feed_name') or '',
+                source_name=article.get('source_name') or article.get('feed_name') or article.get('source') or '',
+                event_type=article.get('event_type') or '',
                 significance_score=int(article.get('relevance_score') or 50),
             )
             if result:

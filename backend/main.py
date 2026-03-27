@@ -3512,13 +3512,25 @@ def _make_news_marker(article: dict) -> Optional[dict]:
 
 
 _REGION_FALLBACK_CENTROIDS = {
-    "east_africa": {"lat": -2.0, "lon": 35.0, "display_name": "East Africa (regional fallback)"},
-    "africa": {"lat": 1.5, "lon": 20.0, "display_name": "Africa (regional fallback)"},
-    "middle_east": {"lat": 29.0, "lon": 42.0, "display_name": "Middle East (regional fallback)"},
-    "europe": {"lat": 51.0, "lon": 12.0, "display_name": "Europe (regional fallback)"},
-    "asia": {"lat": 30.0, "lon": 100.0, "display_name": "Asia (regional fallback)"},
-    "americas": {"lat": 10.0, "lon": -75.0, "display_name": "Americas (regional fallback)"},
-    "global": {"lat": 20.0, "lon": 0.0, "display_name": "Global (fallback)"},
+    "east_africa":    {"lat": -2.0,  "lon":  35.0,  "display_name": "East Africa (regional fallback)"},
+    "africa":         {"lat":  1.5,  "lon":  20.0,  "display_name": "Africa (regional fallback)"},
+    "west_africa":    {"lat":  8.0,  "lon":  -1.0,  "display_name": "West Africa (regional fallback)"},
+    "north_africa":   {"lat": 25.0,  "lon":  17.0,  "display_name": "North Africa (regional fallback)"},
+    "southern_africa":{"lat":-25.0,  "lon":  28.0,  "display_name": "Southern Africa (regional fallback)"},
+    "middle_east":    {"lat": 29.0,  "lon":  42.0,  "display_name": "Middle East (regional fallback)"},
+    "europe":         {"lat": 51.0,  "lon":  12.0,  "display_name": "Europe (regional fallback)"},
+    "eastern_europe": {"lat": 50.0,  "lon":  27.0,  "display_name": "Eastern Europe (regional fallback)"},
+    "russia":         {"lat": 61.0,  "lon":  60.0,  "display_name": "Russia (regional fallback)"},
+    "asia":           {"lat": 30.0,  "lon": 100.0,  "display_name": "Asia (regional fallback)"},
+    "south_asia":     {"lat": 25.0,  "lon":  78.0,  "display_name": "South Asia (regional fallback)"},
+    "southeast_asia": {"lat":  5.0,  "lon": 115.0,  "display_name": "Southeast Asia (regional fallback)"},
+    "central_asia":   {"lat": 43.0,  "lon":  60.0,  "display_name": "Central Asia (regional fallback)"},
+    "east_asia":      {"lat": 36.0,  "lon": 120.0,  "display_name": "East Asia (regional fallback)"},
+    "americas":       {"lat": 10.0,  "lon": -75.0,  "display_name": "Americas (regional fallback)"},
+    "north_america":  {"lat": 45.0,  "lon": -95.0,  "display_name": "North America (regional fallback)"},
+    "latin_america":  {"lat": -8.0,  "lon": -60.0,  "display_name": "Latin America (regional fallback)"},
+    "caucasus":       {"lat": 42.0,  "lon":  45.0,  "display_name": "Caucasus (regional fallback)"},
+    "global":         {"lat": 20.0,  "lon":   0.0,  "display_name": "Global (fallback)"},
 }
 
 
@@ -3932,11 +3944,40 @@ def _run_background_news_geocode_sync(max_articles: int = 120):
             allow_live_lookup=True,
         )
         if not geo:
-            still_missing += 1
-            _upsert_news_article({
-                "url": article["url"],
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            })
+            # Use feed_region centroid as fallback when Nominatim fails
+            if feed_region and feed_region != "global" and feed_region in _REGION_FALLBACK_CENTROIDS:
+                centroid = _REGION_FALLBACK_CENTROIDS[feed_region]
+                lat = centroid["lat"]
+                lon = centroid["lon"]
+                updated_article = {
+                    "url": article["url"],
+                    "title": title,
+                    "source": source,
+                    "feed_region": feed_region,
+                    "summary": summary[:400],
+                    "published": article.get("published", datetime.now(timezone.utc).isoformat()),
+                    "expires_at": article.get("expires_at", (datetime.now(timezone.utc) + timedelta(hours=_NEWS_MARKER_WINDOW_HOURS)).isoformat()),
+                    "location_name": feed_region.replace("_", " ").title(),
+                    "lat": lat,
+                    "lon": lon,
+                    "confidence": "low",
+                    "location_confidence": "fallback_region",
+                    "resolved_country_code": "",
+                    "resolved_display_name": feed_region.replace("_", " ").title(),
+                    "geocode_candidate": feed_region,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                _upsert_news_article(updated_article)
+                marker = _make_news_marker(updated_article)
+                if marker:
+                    added_markers.append(marker)
+                updated += 1
+            else:
+                still_missing += 1
+                _upsert_news_article({
+                    "url": article["url"],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
             continue
 
         try:
