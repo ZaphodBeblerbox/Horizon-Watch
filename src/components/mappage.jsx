@@ -5697,8 +5697,8 @@ export default function MapPage({
             <div style={{ flex: 1, minWidth: 0, position: "relative", height: "100%" }}>
 
             <MapContainer
-                center={[15.0, 30.0]}
-                zoom={4}
+                center={[20, 0]}
+                zoom={2}
                 style={{ height: "100%", width: "100%" }}
                 zoomControl={true}
                 preferCanvas={true}

@@ -65,6 +65,17 @@ def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn):
             title = article.get('title') or article.get('headline') or ''
             if not title:
                 continue
+            # Only pass specific subcategory types that the frontend recognises.
+            # main.py classifies into broad buckets (conflict/energy/aviation/telecom)
+            # which have no matching icons. Passing '' lets event_store.ingest_event
+            # reclassify using its finer-grained keyword matcher.
+            _KNOWN_TYPES = {
+                'airstrike','missile','armed_clash','explosion','maritime',
+                'protest','earthquake','fire','assassination','coerce',
+                'fight','assault',
+            }
+            raw_type = article.get('event_type') or ''
+            bridge_event_type = raw_type if raw_type in _KNOWN_TYPES else ''
             result = es.ingest_event(
                 source='rss',
                 title=title,
@@ -78,7 +89,7 @@ def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn):
                 summary=article.get('summary') or article.get('description') or '',
                 image_url=article.get('image_url') or article.get('og_image') or article.get('urlToImage') or '',
                 source_name=article.get('source_name') or article.get('feed_name') or article.get('source') or '',
-                event_type=article.get('event_type') or '',
+                event_type=bridge_event_type,
                 significance_score=int(article.get('relevance_score') or 50),
             )
             if result:

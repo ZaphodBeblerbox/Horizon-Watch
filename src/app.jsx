@@ -488,11 +488,14 @@ export default function App() {
         if (!profile || initialProfilePanRef.current) return
         const firstRegion = (profile.focusRegions || []).find(r => REGION_COORDS[r])
         if (!firstRegion) return
-        const isDefaultWorkspaceView =
-            Array.isArray(activeWorkspace?.center) &&
-            Math.abs((activeWorkspace.center[0] ?? 0) - (-6.5)) < 0.01 &&
-            Math.abs((activeWorkspace.center[1] ?? 0) - 35.0) < 0.01 &&
-            (activeWorkspace?.zoom ?? 6) === 6
+        // Pan only if the workspace is at a default starting position, not a
+        // user-chosen one. Checks both the current default [20, 0] zoom≤3 and
+        // the old Tanzania default [-6.5, 35] that may be in saved workspaces.
+        const c = activeWorkspace?.center
+        const z = activeWorkspace?.zoom ?? 2
+        const isGlobalDefault   = !c || (Math.abs((c[0] ?? 0) - 20) < 0.5 && Math.abs((c[1] ?? 0) - 0) < 0.5 && z <= 3)
+        const isTanzaniaDefault = Array.isArray(c) && Math.abs((c[0] ?? 0) - (-6.5)) < 0.5 && Math.abs((c[1] ?? 0) - 35) < 0.5
+        const isDefaultWorkspaceView = isGlobalDefault || isTanzaniaDefault
         if (!isDefaultWorkspaceView) {
             initialProfilePanRef.current = true
             return
