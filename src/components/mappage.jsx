@@ -3428,7 +3428,15 @@ export default function MapPage({
         }
         let stored = {}
         try { stored = JSON.parse(localStorage.getItem(LAYER_STORAGE_KEY) || "{}") } catch {}
-        return { ...defaults, ...stored, ...(initialActive || {}) }
+        // v2 migration: unifiedEvents default changed false→true
+        // If stored state predates v2, strip the stale value so defaults win
+        const isPreV2 = !stored._layerStateV || stored._layerStateV < 2
+        if (isPreV2) delete stored.unifiedEvents
+        // Also strip from workspace initialActive if it was saved pre-v2
+        const safeInitial = (initialActive && isPreV2 && initialActive.unifiedEvents === false)
+            ? { ...initialActive, unifiedEvents: true }
+            : (initialActive || {})
+        return { ...defaults, ...stored, ...safeInitial }
     })
     const [activeWebcam, setActiveWebcam] = useState(null)
     const [contextualAnalysis, setContextualAnalysis] = useState(false)
@@ -3440,7 +3448,7 @@ export default function MapPage({
     void contextualLayers
 
     useEffect(() => {
-        try { localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify(active)) } catch {}
+        try { localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify({ ...active, _layerStateV: 2 })) } catch {}
         onActiveChange?.(active)
     }, [active, onActiveChange])
 
