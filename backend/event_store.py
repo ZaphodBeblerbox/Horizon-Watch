@@ -44,18 +44,21 @@ INFRA_RELEVANCE: dict[str, list[str]] = {
 }
 
 # ── Event type classifier keywords ───────────────────────────────────────────
+# Keywords use whole-word matching via _kw_match() below.
+# Short words like "sea" and "port" caused massive false positives via
+# substring matching ("transport"→port, "disease"→sea, "reports"→port).
 EVENT_TYPE_KEYWORDS: dict[str, list[str]] = {
-    "airstrike":    ["airstrike", "air strike", "bombing", "warplane", "jet", "f-16", "f-35", "bomber", "drone strike", "air raid"],
-    "missile":      ["missile", "rocket", "ballistic", "cruise missile", "projectile", "launched", "fired missile"],
-    "armed_clash":  ["clash", "fighting", "battle", "gunfire", "shooting", "troops", "soldiers", "killed", "wounded", "combat"],
-    "explosion":    ["explosion", "blast", "bomb", "detonation", "ied", "car bomb", "suicide bomb"],
-    "maritime":     ["ship", "vessel", "tanker", "warship", "navy", "naval", "sea", "strait", "port", "harbor", "drone boat"],
-    "protest":      ["protest", "demonstration", "rally", "march", "riot", "unrest", "uprising"],
-    "earthquake":   ["earthquake", "tremor", "seismic", "magnitude", "richter"],
-    "fire":         ["fire", "blaze", "burning", "inferno", "wildfire"],
-    "chemical":     ["chemical", "gas attack", "nerve agent", "chlorine", "sarin"],
-    "assassination":["assassinated", "killed", "targeted killing", "eliminated", "shot dead"],
-    "coerce":       ["sanctions", "warning", "threatens", "ultimatum", "demands"],
+    "airstrike":    ["airstrike", "airstrikes", "air strike", "bombing", "warplane", "bomber", "drone strike", "air raid", "aerial bombardment"],
+    "missile":      ["missile", "missiles", "rocket attack", "ballistic", "cruise missile", "rocket fire", "rocket barrage"],
+    "armed_clash":  ["clash", "clashes", "fighting", "battle", "gunfire", "shooting", "troops killed", "soldiers killed", "killed in", "wounded", "combat", "offensive"],
+    "explosion":    ["explosion", "blast", "bomb attack", "detonation", "ied", "car bomb", "suicide bomb", "bombed"],
+    "maritime":     ["warship", "naval vessel", "naval attack", "navy", "naval", "tanker attack", "piracy", "sea mine", "naval base", "coast guard attack", "drone boat", "ship seized", "vessel seized"],
+    "protest":      ["protest", "protests", "demonstration", "rally", "riot", "riots", "unrest", "uprising"],
+    "earthquake":   ["earthquake", "tremor", "seismic", "magnitude", "quake"],
+    "fire":         ["wildfire", "forest fire", "blaze", "inferno", "arson"],
+    "chemical":     ["chemical attack", "gas attack", "nerve agent", "chlorine", "sarin"],
+    "assassination":["assassinated", "targeted killing", "shot dead", "executed", "political killing"],
+    "coerce":       ["sanctions", "threatens", "ultimatum", "ceasefire"],
 }
 
 # ── Actor extraction patterns ─────────────────────────────────────────────────
@@ -91,12 +94,14 @@ def clean_title(headline: str, max_len: int = 80) -> str:
 
 
 def classify_event_type(title: str, body: str = '') -> str:
-    """Classify event type from title and body text using keyword matching."""
+    """Classify event type from title and body text using whole-word matching."""
     text = (title + ' ' + body).lower()
     scores = {etype: 0 for etype in EVENT_TYPE_KEYWORDS}
     for etype, keywords in EVENT_TYPE_KEYWORDS.items():
         for kw in keywords:
-            if kw in text:
+            # Use word-boundary regex to avoid substring false positives:
+            # "port" must not match "transport", "sea" must not match "disease".
+            if re.search(r'\b' + re.escape(kw) + r'\b', text):
                 scores[etype] += 1
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else 'general'
