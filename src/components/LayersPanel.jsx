@@ -541,6 +541,13 @@ export default function LayersPanel({
                     badge={poiCount}
                     isManual={isManual("poi")}
                 />
+                <LayerRow
+                    label="Live Ticker"
+                    hint="scrolling events bar"
+                    toggled={active.liveTicker}
+                    onToggle={() => onToggle("liveTicker")}
+                    isManual={isManual("liveTicker")}
+                />
 
             </div>
         </div>

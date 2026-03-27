@@ -4324,45 +4324,63 @@ export default function MapPage({
         return () => clearInterval(iv)
     }, [active.newsConflicts, viewportBounds, zoom])
 
-    // ── Unified Intelligence Feed — /api/v2/events ────────────────────────────
+    // ── Unified Intelligence Feed — two-phase: fast preload then full set ────────
     useEffect(() => {
         if (!active.unifiedEvents) {
             setUnifiedEvents([])
             setUnifiedEventsCount(0)
             return
         }
-        const fetchUnified = async () => {
+        let cancelled = false
+
+        // Phase 1: fetch top 50 raw events immediately — shows markers within ~1s
+        const fetchPreload = async () => {
+            try {
+                const res = await fetch(`${API}/api/v2/events?mode=events&max_age_hours=72&limit=50`)
+                const data = await res.json()
+                if (cancelled) return
+                const events = data.events || []
+                if (events.length > 0) setUnifiedEvents(events)
+            } catch { /* ignore — full fetch will recover */ }
+        }
+
+        // Phase 2: fetch full threaded dataset, replaces preload
+        const fetchFull = async (isRefresh = false) => {
             try {
                 const b = viewportBoundsRef.current
                 const bboxQ = b ? `&south=${b.south.toFixed(4)}&north=${b.north.toFixed(4)}&west=${b.west.toFixed(4)}&east=${b.east.toFixed(4)}` : ""
                 const res = await fetch(`${API}/api/v2/events?mode=threads&max_age_hours=72&limit=10000${bboxQ}`)
                 const data = await res.json()
+                if (cancelled) return
                 const threads = data.events || []
                 setUnifiedEvents(prev => {
-                    const existingIds = new Set(prev.map(t => t.thread_id))
-                    const brandNew = threads.filter(t => !existingIds.has(t.thread_id))
-                    if (brandNew.length > 0 && prev.length > 0) {
-                        const hasCritical = brandNew.some(t => t.severity_tier === "critical")
-                        window.dispatchEvent(new CustomEvent("akili:new-events", {
-                            detail: {
-                                count: brandNew.length,
-                                severity: hasCritical ? "critical" : "significant",
-                                region: brandNew[0]?.location || "region",
-                                items: brandNew.slice(0, 3),
-                            },
-                        }))
+                    if (isRefresh && prev.length > 0) {
+                        const prevIds = new Set(prev.map(t => t.thread_id || t.id))
+                        const brandNew = threads.filter(t => !prevIds.has(t.thread_id || t.id))
+                        if (brandNew.length > 0) {
+                            const hasCritical = brandNew.some(t => t.severity_tier === "critical")
+                            window.dispatchEvent(new CustomEvent("akili:new-events", {
+                                detail: {
+                                    count: brandNew.length,
+                                    severity: hasCritical ? "critical" : "significant",
+                                    region: brandNew[0]?.location || "region",
+                                    items: brandNew.slice(0, 3),
+                                },
+                            }))
+                        }
                     }
-                    const combined = [...prev.filter(t => threads.some(nt => nt.thread_id === t.thread_id)), ...brandNew]
-                    return combined
+                    return threads
                 })
                 setUnifiedEventsCount(threads.length)
             } catch (e) {
                 console.error("[unified-events] fetch error:", e)
             }
         }
-        fetchUnified()
-        const iv = setInterval(fetchUnified, 30 * 1000)
-        return () => clearInterval(iv)
+
+        fetchPreload()
+        fetchFull(false)
+        const iv = setInterval(() => fetchFull(true), 30 * 1000)
+        return () => { cancelled = true; clearInterval(iv) }
     }, [active.unifiedEvents])
 
     // ── Pipeline lines — use hardcoded dataset (remote GOPIT sources are dead) ──
@@ -6448,13 +6466,13 @@ export default function MapPage({
             {/* ── Country info + news panel ─────────────────────────────────── */}
             {selectedCountry && (
                 <div style={{
-                    position:  "absolute",
-                    top:       0,
+                    position:  "fixed",
+                    top:       44,
                     right:     0,
                     bottom:    0,
                     width:     300,
-                    zIndex:    500,
-                    background: "rgba(14,20,32,0.95)",
+                    zIndex:    1150,
+                    background: "rgba(14,20,32,0.97)",
                     backdropFilter: "blur(20px) saturate(1.4)",
                     WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                     borderLeft: "1px solid rgba(255,255,255,0.07)",
