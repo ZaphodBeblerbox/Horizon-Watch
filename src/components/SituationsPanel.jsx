@@ -4,9 +4,23 @@ import { apiFetch } from "../auth.js"
 const ACCENT_COLOURS = ["#FF8C00", "#2979FF", "#ef4444", "#22c55e", "#9333ea", "#e5e7eb"]
 
 const FOCUS_REGIONS = [
-    "East Africa", "Great Lakes Region", "Sahel", "Horn of Africa",
-    "Red Sea / Arabian Peninsula", "North Africa", "West Africa",
-    "Central Africa", "Southern Africa", "Middle East",
+    // Africa
+    "East Africa", "Horn of Africa", "Great Lakes Region", "Sahel",
+    "West Africa", "North Africa", "Central Africa", "Southern Africa",
+    // Middle East
+    "Red Sea / Arabian Peninsula", "Gulf States", "Middle East",
+    "Levant", "Iran", "Iraq", "Yemen",
+    // Asia
+    "Indian Ocean", "Mediterranean", "South Asia", "Southeast Asia",
+    "Central Asia", "East Asia",
+    // Europe
+    "Europe", "Eastern Europe", "Ukraine", "Balkans", "Russia",
+    // Americas
+    "North America", "Central America", "South America",
+    // Oceania
+    "Australia",
+    // Global
+    "Global",
 ]
 
 function relTime(iso) {

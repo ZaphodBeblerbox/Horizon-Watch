@@ -1,4 +1,5 @@
-import { useRef } from "react"
+import { useRef, useEffect, useState } from "react"
+import API_BASE from "../apiBase.js"
 
 const TIER_COLOR = {
     critical: "#ef4444", significant: "#f97316", elevated: "#eab308", low: "#94a3b8",
@@ -15,8 +16,27 @@ const TICKER_CSS = `
 }
 `
 
-export default function LiveTicker({ events, onItemClick }) {
+export default function LiveTicker({ events: propEvents, onItemClick }) {
     const trackRef = useRef(null)
+    const [ownEvents, setOwnEvents] = useState([])
+
+    // Fetch own events if parent provides none (Intelligence Feed may be off)
+    useEffect(() => {
+        if (propEvents && propEvents.length > 0) return
+        let cancelled = false
+        const load = async () => {
+            try {
+                const res  = await fetch(`${API_BASE}/api/v2/events?mode=events&max_age_hours=24&limit=60`)
+                const data = await res.json()
+                if (!cancelled) setOwnEvents(data.events || [])
+            } catch { /* ignore */ }
+        }
+        load()
+        const iv = setInterval(load, 60000)
+        return () => { cancelled = true; clearInterval(iv) }
+    }, [propEvents])
+
+    const events = (propEvents && propEvents.length > 0) ? propEvents : ownEvents
 
     if (!events || events.length === 0) return null
 

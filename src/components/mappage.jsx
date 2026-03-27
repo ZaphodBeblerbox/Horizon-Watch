@@ -1149,6 +1149,66 @@ function AreaClickHandler({ enabled, onAreaClick }) {
     return null
 }
 
+// ── Point-in-polygon helpers for country detection ───────────────────────────
+function _pip(pt, ring) {
+    const [x, y] = pt
+    let inside = false
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i], [xj, yj] = ring[j]
+        if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)
+            inside = !inside
+    }
+    return inside
+}
+function _pointInFeature(lngLat, feature) {
+    const g = feature?.geometry
+    if (!g) return false
+    const polys = g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : []
+    return polys.some(poly => _pip(lngLat, poly[0]))
+}
+
+// ── CountryClickHandler — map-level click → point-in-polygon country lookup ──
+function CountryClickHandler({ countriesGeo, onCountryClick, onNoCountry }) {
+    const idxRef = useRef(null)
+    useEffect(() => {
+        if (!countriesGeo?.features) { idxRef.current = null; return }
+        idxRef.current = countriesGeo.features.map(f => {
+            const coords = []
+            const g = f.geometry
+            if (g?.type === "Polygon") coords.push(...g.coordinates[0])
+            else if (g?.type === "MultiPolygon") g.coordinates.forEach(p => coords.push(...p[0]))
+            if (!coords.length) return { f, minLat: -90, maxLat: 90, minLng: -180, maxLng: 180 }
+            const lngs = coords.map(c => c[0]), lats = coords.map(c => c[1])
+            return { f, minLat: Math.min(...lats), maxLat: Math.max(...lats), minLng: Math.min(...lngs), maxLng: Math.max(...lngs) }
+        })
+    }, [countriesGeo])
+    useMapEvents({
+        click(ev) {
+            const idx = idxRef.current
+            if (!idx) return
+            // Skip clicks that land directly on a marker/icon element
+            const tgt = ev.originalEvent?.target
+            if (tgt) {
+                const tag = tgt.tagName?.toLowerCase()
+                const cls = String(tgt.className || "") + String(tgt.parentElement?.className || "")
+                if (tag === "img" || cls.includes("leaflet-marker") || cls.includes("hw-marker") ||
+                    tgt.closest?.(".leaflet-marker-pane") || tgt.closest?.(".leaflet-shadow-pane")) return
+            }
+            const lat = ev.latlng.lat, lng = ev.latlng.lng
+            for (const entry of idx) {
+                const { f, minLat, maxLat, minLng, maxLng } = entry
+                if (lat < minLat || lat > maxLat || lng < minLng || lng > maxLng) continue
+                if (_pointInFeature([lng, lat], f)) {
+                    const name = f.properties?.ADMIN || f.properties?.name
+                    if (name) { onCountryClick(f, name); return }
+                }
+            }
+            onNoCountry?.()
+        },
+    })
+    return null
+}
+
 // ── makeWebcamIcon ─────────────────────────────────────────────────────────────
 const _webcamIcon = L.divIcon({
     className: "",
@@ -3417,9 +3477,10 @@ export default function MapPage({
 
     const [allCountriesGeo, setAllCountriesGeo] = useState(null)
     const [cableGeo, setCableGeo]               = useState({ cables: [], points: [], associations: {} })
-    const [selectedCountry, setSelectedCountry] = useState(null)
-    const [countryData, setCountryData]         = useState(null)
-    const [countryLoading, setCountryLoading]   = useState(false)
+    const [selectedCountry, setSelectedCountry]         = useState(null)
+    const [selectedCountryFeature, setSelectedCountryFeature] = useState(null)
+    const [countryData, setCountryData]                 = useState(null)
+    const [countryLoading, setCountryLoading]           = useState(false)
     const [viewportBounds, setViewportBounds]   = useState(null)
 
     // ── UI state ──────────────────────────────────────────────────────────────
@@ -4444,7 +4505,8 @@ export default function MapPage({
                 iconAnchor: [(size + 8) / 2, (size + 8) / 2],
             })
             const marker = L.marker([thread.lat, thread.lon], { icon })
-            marker.on("click", () => {
+            marker.on("click", (ev) => {
+                L.DomEvent.stopPropagation(ev)
                 setSelectedEvent({
                     ...thread,
                     headline: thread.clean_title || thread.headline,
@@ -5679,30 +5741,36 @@ export default function MapPage({
                     onAreaClick={handleAreaClick}
                 />
 
-                {/* ── Country click layer ───────────────────────────────────── */}
-                {allCountriesGeo && (
+                {/* ── Country click — map-level PIP detection ───────────────── */}
+                <CountryClickHandler
+                    countriesGeo={allCountriesGeo}
+                    onCountryClick={(feature, name) => {
+                        setSelectedCountry(name)
+                        setSelectedCountryFeature(feature)
+                        setAreaPopup(null)
+                        setInfraSelected(null)
+                        setImpactEvent(null)
+                        try { ctxActivateCountry([feature]) } catch { /* ignore */ }
+                    }}
+                    onNoCountry={() => {
+                        if (selectedCountry) {
+                            setSelectedCountry(null)
+                            setSelectedCountryFeature(null)
+                        }
+                    }}
+                />
+                {/* ── Selected country golden glow highlight ─────────────────── */}
+                {selectedCountryFeature && (
                     <GeoJSON
-                        key="countries-click"
-                        pane="country-click"
-                        data={allCountriesGeo}
-                        style={{ weight: 0, fillOpacity: 0.001, color: "transparent" }}
-                        onEachFeature={(feature, layer) => {
-                            layer.on("click", (e) => {
-                                L.DomEvent.stopPropagation(e)
-                                const name = feature.properties?.name || feature.properties?.ADMIN
-                                if (name) {
-                                    console.info("[country/click]", {
-                                        name,
-                                        code: feature.properties?.ISO_A3 || feature.properties?.iso_a3 || null,
-                                    })
-                                    setSelectedCountry(name)
-                                    setAreaPopup(null)
-                                    setInfraSelected(null)
-                                    setImpactEvent(null)
-                                    ctxActivateCountry([feature])
-                                    ctxStartFadeOut()
-                                }
-                            })
+                        key={`country-glow-${selectedCountry}`}
+                        pane="context-polygons"
+                        data={selectedCountryFeature}
+                        style={{
+                            weight:       2.5,
+                            color:        "#f5c518",
+                            opacity:      0.9,
+                            fillColor:    "#f5c518",
+                            fillOpacity:  0.12,
                         }}
                     />
                 )}
@@ -6482,7 +6550,7 @@ export default function MapPage({
                         country={selectedCountry}
                         data={countryData}
                         loading={countryLoading}
-                        onClose={() => { setSelectedCountry(null); setCountryData(null) }}
+                        onClose={() => { setSelectedCountry(null); setSelectedCountryFeature(null); setCountryData(null) }}
                     />
                 </div>
             )}
