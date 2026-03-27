@@ -48,16 +48,16 @@ INFRA_RELEVANCE: dict[str, list[str]] = {
 # Short words like "sea" and "port" caused massive false positives via
 # substring matching ("transport"→port, "disease"→sea, "reports"→port).
 EVENT_TYPE_KEYWORDS: dict[str, list[str]] = {
-    "airstrike":    ["airstrike", "airstrikes", "air strike", "bombing", "warplane", "bomber", "drone strike", "air raid", "aerial bombardment"],
-    "missile":      ["missile", "missiles", "rocket attack", "ballistic", "cruise missile", "rocket fire", "rocket barrage"],
-    "armed_clash":  ["clash", "clashes", "fighting", "battle", "gunfire", "shooting", "troops killed", "soldiers killed", "killed in", "wounded", "combat", "offensive"],
-    "explosion":    ["explosion", "blast", "bomb attack", "detonation", "ied", "car bomb", "suicide bomb", "bombed"],
-    "maritime":     ["warship", "naval vessel", "naval attack", "navy", "naval", "tanker attack", "piracy", "sea mine", "naval base", "coast guard attack", "drone boat", "ship seized", "vessel seized"],
+    "airstrike":    ["airstrike", "airstrikes", "air strike", "bombing", "bombed", "warplane", "bomber", "drone strike", "air raid"],
+    "missile":      ["missile", "missiles", "ballistic", "cruise missile", "rocket attack", "rocket fire"],
+    "armed_clash":  ["clash", "clashes", "fighting", "battle", "gunfire", "shooting", "killed", "wounded", "combat", "offensive", "troops", "soldiers", "rebels", "casualties"],
+    "explosion":    ["explosion", "blast", "bomb", "detonation", "ied", "car bomb", "suicide bomb"],
+    "maritime":     ["warship", "naval", "navy", "tanker", "piracy", "sea mine", "drone boat", "ship seized", "vessel seized", "coast guard"],
     "protest":      ["protest", "protests", "demonstration", "rally", "riot", "riots", "unrest", "uprising"],
     "earthquake":   ["earthquake", "tremor", "seismic", "magnitude", "quake"],
     "fire":         ["wildfire", "forest fire", "blaze", "inferno", "arson"],
     "chemical":     ["chemical attack", "gas attack", "nerve agent", "chlorine", "sarin"],
-    "assassination":["assassinated", "targeted killing", "shot dead", "executed", "political killing"],
+    "assassination":["assassinated", "targeted killing", "shot dead", "executed"],
     "coerce":       ["sanctions", "threatens", "ultimatum", "ceasefire"],
 }
 
