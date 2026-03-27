@@ -165,13 +165,26 @@ export default function NotificationBar({ onEventClick }) {
     if (!current) return null
 
     return (
-        <div style={{
+        <div className="hw-notif-container" style={{
             position:      "fixed",
             top:           54,
             right:         16,
             zIndex:        2000,
             pointerEvents: "none",
         }}>
+            <style>{`
+                @media (max-width: 767px) {
+                    .hw-notif-container {
+                        left: 8px !important;
+                        right: 8px !important;
+                        top: 8px !important;
+                    }
+                    .hw-notif-container > div {
+                        width: 100% !important;
+                        transform: translateX(0) !important;
+                    }
+                }
+            `}</style>
             <Toast
                 key={current.toastKey}
                 toast={current}

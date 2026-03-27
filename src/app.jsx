@@ -24,6 +24,8 @@ import PreferencesPanel from "./components/PreferencesPanel.jsx"
 import LoginPage from "./components/LoginPage.jsx"
 import AdminPanel from "./components/AdminPanel.jsx"
 import NotificationBar from "./components/NotificationBar.jsx"
+import BottomNav from "./components/BottomNav.jsx"
+import MobileDrawer from "./components/MobileDrawer.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
 
 const API = API_BASE
@@ -200,6 +202,14 @@ export default function App() {
     const [currentUser,  setCurrentUser]  = useState(null)
     const [showAdmin,    setShowAdmin]    = useState(false)
     const [showChat,     setShowChat]     = useState(false)
+    const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
+    const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+
+    useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", handler)
+        return () => window.removeEventListener("resize", handler)
+    }, [])
 
     // ── Auth check on mount ───────────────────────────────────────────────────
     useEffect(() => {
@@ -775,8 +785,20 @@ export default function App() {
 
     // ── Render ────────────────────────────────────────────────────────────────
 
-    // Below 1280px: show a warning
-    const tooNarrow = typeof window !== "undefined" && window.innerWidth < 1280
+    const panelStyle = isMobile ? {
+        position:    "fixed",
+        top:         0,
+        left:        0,
+        right:       0,
+        bottom:      56,
+        zIndex:      1500,
+        background:  "var(--akili-panel-blur)",
+        backdropFilter: "blur(20px) saturate(1.4)",
+        WebkitBackdropFilter: "blur(20px) saturate(1.4)",
+        overflowY:   "auto",
+        boxSizing:   "border-box",
+        fontFamily:  "system-ui, -apple-system, sans-serif",
+    } : PANEL_STYLE
 
     return (
         <div style={{
@@ -793,25 +815,6 @@ export default function App() {
             {authChecked && !currentUser && (
                 <LoginPage onAuthenticated={(user) => setCurrentUser(user)} />
             )}
-            {/* Minimum width guard */}
-            {tooNarrow && (
-                <div style={{
-                    position:   "fixed",
-                    inset:      0,
-                    background: "#0a0e14",
-                    display:    "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    zIndex:     9999,
-                    color:      "var(--akili-text-secondary)",
-                    fontSize:   13,
-                    textAlign:  "center",
-                }}>
-                    Minimum supported width is 1280px.
-                    <br/>Please use a wider window.
-                </div>
-            )}
-
             {/* Onboarding — blocks everything until profile is set */}
             {!profile && (
                 <div style={{ position: "fixed", inset: 0, zIndex: 200 }}>
@@ -839,32 +842,34 @@ export default function App() {
             }} />
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
-            <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+            <div style={{ flex: 1, display: "flex", minHeight: 0, paddingBottom: isMobile ? 56 : 0 }}>
 
-                {/* Sidebar — 48px */}
-                <Sidebar
-                    rightPanel={rightPanel}
-                    onRightPanel={openRightPanel}
-                    activeTabType={activeTabType}
-                    onOpenTab={openTab}
-                    profile={profile}
-                    currentUser={currentUser}
-                    alertCount={flaggedEvents.length}
-                    budgetPct={budgetPct}
-                    notifOpen={notifOpen}
-                    notifUnread={unreadCount}
-                    onToggleNotif={() => setNotifOpen(v => !v)}
-                    briefingUnread={briefingUnread}
-                    themeMode={themeMode}
-                    onThemeCycle={onThemeCycle}
-                    soundMuted={soundMuted}
-                    onToggleSound={onToggleSound}
-                    tvOpen={showTV}
-                    onToggleTV={() => setShowTV(v => !v)}
-                    onToggleAdmin={() => setShowAdmin(v => !v)}
-                    chatOpen={showChat}
-                    onToggleChat={() => setShowChat(v => !v)}
-                />
+                {/* Sidebar — 48px, desktop only */}
+                {!isMobile && (
+                    <Sidebar
+                        rightPanel={rightPanel}
+                        onRightPanel={openRightPanel}
+                        activeTabType={activeTabType}
+                        onOpenTab={openTab}
+                        profile={profile}
+                        currentUser={currentUser}
+                        alertCount={flaggedEvents.length}
+                        budgetPct={budgetPct}
+                        notifOpen={notifOpen}
+                        notifUnread={unreadCount}
+                        onToggleNotif={() => setNotifOpen(v => !v)}
+                        briefingUnread={briefingUnread}
+                        themeMode={themeMode}
+                        onThemeCycle={onThemeCycle}
+                        soundMuted={soundMuted}
+                        onToggleSound={onToggleSound}
+                        tvOpen={showTV}
+                        onToggleTV={() => setShowTV(v => !v)}
+                        onToggleAdmin={() => setShowAdmin(v => !v)}
+                        chatOpen={showChat}
+                        onToggleChat={() => setShowChat(v => !v)}
+                    />
+                )}
 
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
 
@@ -952,14 +957,14 @@ export default function App() {
                             setSurfaceContext(null)
                             setSurfaceEnrichment(null)
                         }}
-                        panelStyle={PANEL_STYLE}
+                        panelStyle={panelStyle}
                         onContextUpdate={handleContextUpdate}
                         onEnrichmentUpdate={handleEnrichmentUpdate}
                     />
                 )}
 
                 {rightPanel === "profile" && profile && (
-                    <div style={PANEL_STYLE}>
+                    <div style={panelStyle}>
                         <ProfilePanel
                             profile={profile}
                             onSave={handleProfileSave}
@@ -970,19 +975,19 @@ export default function App() {
                 )}
 
                 {rightPanel === "settings" && (
-                    <div style={PANEL_STYLE}>
+                    <div style={panelStyle}>
                         <PreferencesPanel onClose={() => setRightPanel(null)} />
                     </div>
                 )}
 
                 {rightPanel === "health" && (
-                    <div style={PANEL_STYLE}>
+                    <div style={panelStyle}>
                         <HealthPanel onClose={() => setRightPanel(null)} />
                     </div>
                 )}
 
                 {rightPanel === "workspaces" && (
-                    <div style={PANEL_STYLE}>
+                    <div style={panelStyle}>
                         <WorkspacesPanel
                             workspaces={workspaces}
                             activeWorkspaceId={activeWorkspaceId}
@@ -995,7 +1000,7 @@ export default function App() {
                 )}
 
                 {rightPanel === "situations" && (currentUser?.role === "admin" || currentUser?.role === "super_admin") && (
-                    <div style={PANEL_STYLE}>
+                    <div style={panelStyle}>
                         <SituationsPanel
                             situations={situations}
                             setSituations={setSituations}
@@ -1011,7 +1016,7 @@ export default function App() {
                 )}
 
                 {rightPanel === "chat" && (
-                    <div style={PANEL_STYLE}>
+                    <div style={panelStyle}>
                         <ChatPanel
                             activeSituation={activeSituation}
                             onClose={() => setRightPanel(null)}
@@ -1028,7 +1033,7 @@ export default function App() {
                 )}
 
                 {rightPanel === "alerts" && (
-                    <div style={{ ...PANEL_STYLE, padding: "12px" }}>
+                    <div style={{ ...panelStyle, padding: "12px" }}>
                         <div style={{
                             height:        36,
                             display:       "flex",
@@ -1082,6 +1087,46 @@ export default function App() {
                 onDismiss={dismissToast}
                 onOpen={openToast}
             />
+
+            {/* Mobile bottom nav */}
+            {isMobile && (
+                <BottomNav
+                    activeTabType={activeTabType}
+                    onSwitchToMap={() => openTab("map")}
+                    onSwitchToBriefing={() => openTab("briefing")}
+                    onSwitchToPOI={() => openTab("poi")}
+                    notifUnread={unreadCount}
+                    onToggleNotif={() => setNotifOpen(v => !v)}
+                    onOpenMenu={() => setMobileDrawerOpen(true)}
+                />
+            )}
+
+            {/* Mobile drawer overlay */}
+            {isMobile && (
+                <MobileDrawer
+                    open={mobileDrawerOpen}
+                    onClose={() => setMobileDrawerOpen(false)}
+                    rightPanel={rightPanel}
+                    onRightPanel={openRightPanel}
+                    activeTabType={activeTabType}
+                    onOpenTab={openTab}
+                    profile={profile}
+                    currentUser={currentUser}
+                    alertCount={flaggedEvents.length}
+                    notifUnread={unreadCount}
+                    onToggleNotif={() => setNotifOpen(v => !v)}
+                    briefingUnread={briefingUnread}
+                    themeMode={themeMode}
+                    onThemeCycle={onThemeCycle}
+                    soundMuted={soundMuted}
+                    onToggleSound={onToggleSound}
+                    tvOpen={showTV}
+                    onToggleTV={() => setShowTV(v => !v)}
+                    onToggleAdmin={() => setShowAdmin(v => !v)}
+                    chatOpen={showChat}
+                    onToggleChat={() => setShowChat(v => !v)}
+                />
+            )}
         </div>
     )
 }

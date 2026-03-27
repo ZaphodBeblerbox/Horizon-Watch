@@ -1,6 +1,16 @@
 import { useRef, useEffect, useState } from "react"
 import API_BASE from "../apiBase.js"
 
+function useIsMobile() {
+    const [v, setV] = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
+    useEffect(() => {
+        const h = () => setV(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+    return v
+}
+
 const TIER_COLOR = {
     critical: "#ef4444", significant: "#f97316", elevated: "#eab308", low: "#94a3b8",
 }
@@ -19,6 +29,7 @@ const TICKER_CSS = `
 export default function LiveTicker({ events: propEvents, onItemClick }) {
     const trackRef = useRef(null)
     const [ownEvents, setOwnEvents] = useState([])
+    const isMobile = useIsMobile()
 
     // Fetch own events if parent provides none (Intelligence Feed may be off)
     useEffect(() => {
@@ -57,8 +68,8 @@ export default function LiveTicker({ events: propEvents, onItemClick }) {
     return (
         <div style={{
             position:       "fixed",
-            bottom:         0,
-            left:           48,
+            bottom:         isMobile ? 56 : 0,
+            left:           isMobile ? 0 : 48,
             right:          0,
             height:         34,
             background:     "rgba(4,10,20,0.92)",

@@ -146,3 +146,63 @@ textarea::placeholder {
     letter-spacing: 0.1em;
     text-transform: uppercase;
 }
+
+/* ── Mobile / responsive utilities ──────────────────────────────────────── */
+
+/* Safe area padding for iOS notch/home indicator */
+.akili-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Hide on mobile (< 768px) */
+@media (max-width: 767px) {
+    .hw-hide-mobile {
+        display: none !important;
+    }
+}
+
+/* Hide on desktop (>= 768px) */
+@media (min-width: 768px) {
+    .hw-hide-desktop {
+        display: none !important;
+    }
+}
+
+/* Mobile right panel overlay (full screen) */
+@media (max-width: 767px) {
+    .hw-right-panel-mobile {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 56px !important;
+        width: 100% !important;
+        z-index: 1500 !important;
+        border-left: none !important;
+        border-radius: 0 !important;
+    }
+}
+
+/* Map controls on the right on mobile */
+@media (max-width: 767px) {
+    .leaflet-top.leaflet-left {
+        left: auto !important;
+        right: 8px !important;
+        top: 10px !important;
+    }
+}
+
+/* Touch-friendly tap targets */
+@media (max-width: 767px) {
+    button {
+        min-height: 36px;
+        touch-action: manipulation;
+    }
+}
+
+/* Body safe area on iOS for bottom nav */
+@media (max-width: 767px) {
+    body {
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+}

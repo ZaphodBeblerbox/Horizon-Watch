@@ -140,7 +140,7 @@ export default function LoginPage({ onAuthenticated }) {
             <div style={{
                 position:     "relative",
                 zIndex:       2,
-                width:        400,
+                width:        "min(400px, calc(100vw - 32px))",
                 background:   "rgba(10,16,28,0.85)",
                 backdropFilter: "blur(20px)",
                 WebkitBackdropFilter: "blur(20px)",
