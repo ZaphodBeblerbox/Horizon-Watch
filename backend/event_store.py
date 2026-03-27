@@ -205,6 +205,16 @@ def ingest_event(
                 existing.setdefault('sources', []).append(source_name)
             # Boost significance for corroborated events
             existing['significance_score'] = min(100, existing.get('significance_score', 0) + 10)
+            # Upgrade generic event_type to a specific one if we have better info.
+            # This corrects events that were stored before the bridge classifier was
+            # refined (previously everything mapped to "conflict" or "general").
+            _GENERIC_TYPES = {'general', 'conflict', 'energy', 'telecom', 'aviation', ''}
+            stored_type = existing.get('event_type', 'general')
+            if stored_type in _GENERIC_TYPES:
+                reclassified = classify_event_type(title, body or summary)
+                if reclassified not in _GENERIC_TYPES:
+                    existing['event_type'] = reclassified
+                    existing['infra_types'] = INFRA_RELEVANCE.get(reclassified, INFRA_RELEVANCE['general'])
             return event_id
 
         # Classify event type if not provided
