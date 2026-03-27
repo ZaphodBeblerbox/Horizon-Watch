@@ -830,11 +830,12 @@ export default function App() {
                 onTabRename={renameTab}
             />
 
-            {/* ── Notification bar — live intelligence feed ticker ──────────── */}
+            {/* ── Notification toasts — new event alerts ─────────────────────── */}
             <NotificationBar onEventClick={(n) => {
                 if (n.lat && n.lon) {
                     window.dispatchEvent(new CustomEvent("akili:jump-to", { detail: { lat: n.lat, lon: n.lon } }))
                 }
+                window.dispatchEvent(new CustomEvent("akili:show-event", { detail: n }))
             }} />
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}

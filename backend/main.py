@@ -3512,25 +3512,49 @@ def _make_news_marker(article: dict) -> Optional[dict]:
 
 
 _REGION_FALLBACK_CENTROIDS = {
-    "east_africa":    {"lat": -2.0,  "lon":  35.0,  "display_name": "East Africa (regional fallback)"},
-    "africa":         {"lat":  1.5,  "lon":  20.0,  "display_name": "Africa (regional fallback)"},
-    "west_africa":    {"lat":  8.0,  "lon":  -1.0,  "display_name": "West Africa (regional fallback)"},
-    "north_africa":   {"lat": 25.0,  "lon":  17.0,  "display_name": "North Africa (regional fallback)"},
-    "southern_africa":{"lat":-25.0,  "lon":  28.0,  "display_name": "Southern Africa (regional fallback)"},
-    "middle_east":    {"lat": 29.0,  "lon":  42.0,  "display_name": "Middle East (regional fallback)"},
-    "europe":         {"lat": 51.0,  "lon":  12.0,  "display_name": "Europe (regional fallback)"},
-    "eastern_europe": {"lat": 50.0,  "lon":  27.0,  "display_name": "Eastern Europe (regional fallback)"},
-    "russia":         {"lat": 61.0,  "lon":  60.0,  "display_name": "Russia (regional fallback)"},
-    "asia":           {"lat": 30.0,  "lon": 100.0,  "display_name": "Asia (regional fallback)"},
-    "south_asia":     {"lat": 25.0,  "lon":  78.0,  "display_name": "South Asia (regional fallback)"},
-    "southeast_asia": {"lat":  5.0,  "lon": 115.0,  "display_name": "Southeast Asia (regional fallback)"},
-    "central_asia":   {"lat": 43.0,  "lon":  60.0,  "display_name": "Central Asia (regional fallback)"},
-    "east_asia":      {"lat": 36.0,  "lon": 120.0,  "display_name": "East Asia (regional fallback)"},
-    "americas":       {"lat": 10.0,  "lon": -75.0,  "display_name": "Americas (regional fallback)"},
-    "north_america":  {"lat": 45.0,  "lon": -95.0,  "display_name": "North America (regional fallback)"},
-    "latin_america":  {"lat": -8.0,  "lon": -60.0,  "display_name": "Latin America (regional fallback)"},
-    "caucasus":       {"lat": 42.0,  "lon":  45.0,  "display_name": "Caucasus (regional fallback)"},
-    "global":         {"lat": 20.0,  "lon":   0.0,  "display_name": "Global (fallback)"},
+    # Africa
+    "east_africa":    {"lat": -2.0,  "lon":  35.0,  "display_name": "East Africa"},
+    "horn_of_africa": {"lat": 10.0,  "lon":  45.0,  "display_name": "Horn of Africa"},
+    "great_lakes":    {"lat": -4.0,  "lon":  30.0,  "display_name": "Great Lakes Region"},
+    "sahel":          {"lat": 15.0,  "lon":   3.5,  "display_name": "Sahel"},
+    "africa":         {"lat":  1.5,  "lon":  20.0,  "display_name": "Africa"},
+    "west_africa":    {"lat": 12.0,  "lon":  -0.5,  "display_name": "West Africa"},
+    "north_africa":   {"lat": 28.0,  "lon":  17.0,  "display_name": "North Africa"},
+    "southern_africa":{"lat":-23.5,  "lon":  24.0,  "display_name": "Southern Africa"},
+    "central_africa": {"lat":  0.0,  "lon":  20.0,  "display_name": "Central Africa"},
+    # Middle East
+    "middle_east":    {"lat": 33.5,  "lon":  45.5,  "display_name": "Middle East"},
+    "levant":         {"lat": 33.5,  "lon":  38.5,  "display_name": "Levant"},
+    "gulf_states":    {"lat": 26.0,  "lon":  53.0,  "display_name": "Gulf States"},
+    "red_sea":        {"lat": 21.0,  "lon":  46.0,  "display_name": "Red Sea / Arabian Peninsula"},
+    "iran":           {"lat": 32.5,  "lon":  54.0,  "display_name": "Iran"},
+    "iraq":           {"lat": 33.5,  "lon":  43.7,  "display_name": "Iraq"},
+    "yemen":          {"lat": 15.5,  "lon":  48.5,  "display_name": "Yemen"},
+    # Asia
+    "asia":           {"lat": 30.0,  "lon": 100.0,  "display_name": "Asia"},
+    "south_asia":     {"lat": 21.5,  "lon":  77.5,  "display_name": "South Asia"},
+    "southeast_asia": {"lat":  9.0,  "lon": 116.0,  "display_name": "Southeast Asia"},
+    "central_asia":   {"lat": 45.5,  "lon":  68.0,  "display_name": "Central Asia"},
+    "east_asia":      {"lat": 36.0,  "lon": 109.5,  "display_name": "East Asia"},
+    "mediterranean":  {"lat": 38.0,  "lon":  18.0,  "display_name": "Mediterranean"},
+    "indian_ocean":   {"lat": -5.0,  "lon":  70.0,  "display_name": "Indian Ocean"},
+    # Europe
+    "europe":         {"lat": 53.5,  "lon":  10.0,  "display_name": "Europe"},
+    "eastern_europe": {"lat": 51.5,  "lon":  27.0,  "display_name": "Eastern Europe"},
+    "ukraine":        {"lat": 48.5,  "lon":  31.5,  "display_name": "Ukraine"},
+    "balkans":        {"lat": 42.5,  "lon":  21.2,  "display_name": "Balkans"},
+    "russia":         {"lat": 63.5,  "lon":  47.0,  "display_name": "Russia"},
+    "caucasus":       {"lat": 42.0,  "lon":  45.0,  "display_name": "Caucasus"},
+    # Americas
+    "americas":       {"lat": 10.0,  "lon": -75.0,  "display_name": "Americas"},
+    "north_america":  {"lat": 48.0,  "lon": -95.0,  "display_name": "North America"},
+    "central_america":{"lat": 16.0,  "lon": -75.5,  "display_name": "Central America"},
+    "latin_america":  {"lat":-22.0,  "lon": -58.0,  "display_name": "South America"},
+    "south_america":  {"lat":-22.0,  "lon": -58.0,  "display_name": "South America"},
+    # Oceania
+    "australia":      {"lat":-27.5,  "lon": 133.0,  "display_name": "Australia"},
+    # Global
+    "global":         {"lat": 20.0,  "lon":   0.0,  "display_name": "Global"},
 }
 
 

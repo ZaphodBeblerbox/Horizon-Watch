@@ -11,6 +11,7 @@ import { MapContainer, TileLayer, Circle, CircleMarker, Tooltip, Polyline, Popup
 import L from "leaflet"
 import Markdown from "react-markdown"
 import CountryPanel from "./CountryPanel.jsx"
+import LiveTicker from "./LiveTicker.jsx"
 import TVWidget from "./tvwidget.jsx"
 import DraggablePanel from "./DraggablePanel.jsx"
 import LayersPanel from "./LayersPanel.jsx"
@@ -31,6 +32,7 @@ const WIDGETS = [
     { id: "infra",         label: "Infrastructure",     minZoom: 0, color: "#00BCD4" },
     { id: "newsConflicts",   label: "News Conflicts",     minZoom: 0, color: "#FFB300" },
     { id: "unifiedEvents",  label: "Intelligence Feed",  minZoom: 0, color: "#ef4444" },
+    { id: "liveTicker",    label: "Live Ticker",        minZoom: 0, color: "#ef4444" },
     { id: "tv",             label: "Live TV",            minZoom: 0, color: "#ef4444" },
     { id: "webcams",       label: "Webcams",            minZoom: 0, color: "#FFB300" },
     { id: "satellite",     label: "Satellite",          minZoom: 0, color: "#00E5FF" },
@@ -3345,6 +3347,7 @@ export default function MapPage({
             cityLabels: false,
             newsConflicts: false,
             unifiedEvents: true,
+            liveTicker: false,
             infra: false,
             airspace: false,
             news: false,
@@ -3863,16 +3866,35 @@ export default function MapPage({
         return () => window.removeEventListener("akili:show-country", handler)
     }, [])
 
-    // akili:jump-to — fly map to a coordinate (dispatched by NotificationBar)
+    // akili:jump-to — fly map to a coordinate (dispatched by NotificationBar / toasts)
     useEffect(() => {
         const handler = (e) => {
             const { lat, lon } = e.detail || {}
             if (mapRef.current && lat && lon) {
-                mapRef.current.setView([lat, lon], 8, { animate: true })
+                const targetZoom = Math.max(mapRef.current.getZoom(), 8)
+                mapRef.current.flyTo([lat, lon], targetZoom, { duration: 1.5, easeLinearity: 0.3 })
             }
         }
         window.addEventListener("akili:jump-to", handler)
         return () => window.removeEventListener("akili:jump-to", handler)
+    }, [])
+
+    // akili:show-event — open EventDetailPanel for an event (dispatched by toast click)
+    useEffect(() => {
+        const handler = (e) => {
+            const ev = e.detail
+            if (!ev) return
+            setSelectedEvent({
+                ...ev,
+                headline:     ev.clean_title || ev.headline || "",
+                published_at: ev.latest_event || ev.published || "",
+                published:    ev.latest_event || ev.published || "",
+                type:         ev.event_type || "general",
+                context:      ev.body || ev.summary || "",
+            })
+        }
+        window.addEventListener("akili:show-event", handler)
+        return () => window.removeEventListener("akili:show-event", handler)
     }, [])
 
     // New-events notification from incremental news conflict loader
@@ -4417,6 +4439,10 @@ export default function MapPage({
                     source_name: (thread.sources || []).join(", "),
                     auto_brief: null,
                 })
+                if (mapRef.current && thread.lat && thread.lon) {
+                    const targetZoom = Math.max(mapRef.current.getZoom(), 8)
+                    mapRef.current.flyTo([thread.lat, thread.lon], targetZoom, { duration: 1.5, easeLinearity: 0.3 })
+                }
             })
             marker.bindTooltip(
                 `<div style="background:rgba(6,13,26,0.9);padding:6px 10px;border:1px solid rgba(255,255,255,0.1);color:#e8edf2;font-size:11px;max-width:200px;"><div style="font-weight:600;margin-bottom:2px;">${thread.clean_title || thread.headline || thread.location || ""}</div><div style="color:#8899aa;font-size:10px;">${thread.event_count || 1} source${(thread.event_count || 1) > 1 ? "s" : ""} · ${tier}</div></div>`,
@@ -6829,6 +6855,27 @@ export default function MapPage({
                     aisVesselCount={aisVessels.length}
                 />
             )}
+
+        {/* ── Live Ticker ──────────────────────────────────────────────────────── */}
+        {active.liveTicker && (
+            <LiveTicker
+                events={unifiedEvents}
+                onItemClick={(item) => {
+                    setSelectedEvent({
+                        ...item,
+                        headline:     item.clean_title || item.headline || "",
+                        published_at: item.latest_event || item.published || "",
+                        published:    item.latest_event || item.published || "",
+                        type:         item.event_type || "general",
+                        context:      item.body || item.summary || "",
+                    })
+                    if (mapRef.current && item.lat && item.lon) {
+                        const targetZoom = Math.max(mapRef.current.getZoom(), 8)
+                        mapRef.current.flyTo([item.lat, item.lon], targetZoom, { duration: 1.5, easeLinearity: 0.3 })
+                    }
+                }}
+            />
+        )}
 
         </div>
     )

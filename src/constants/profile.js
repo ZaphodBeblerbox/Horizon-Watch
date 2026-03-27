@@ -4,6 +4,7 @@
 export const PROFILE_KEY = "akili-profile-v1"
 
 export const FOCUS_REGIONS = [
+    // Africa
     "East Africa",
     "Horn of Africa",
     "Great Lakes Region",
@@ -12,15 +13,34 @@ export const FOCUS_REGIONS = [
     "North Africa",
     "Central Africa",
     "Southern Africa",
+    // Middle East
     "Red Sea / Arabian Peninsula",
     "Gulf States",
     "Middle East",
+    "Levant",
+    "Iran",
+    "Iraq",
+    "Yemen",
+    // Asia
     "Indian Ocean",
     "Mediterranean",
     "South Asia",
     "Southeast Asia",
     "Central Asia",
+    "East Asia",
+    // Europe
     "Europe",
+    "Eastern Europe",
+    "Ukraine",
+    "Balkans",
+    "Russia",
+    // Americas
+    "North America",
+    "Central America",
+    "South America",
+    // Oceania
+    "Australia",
+    // Global
     "Global",
 ]
 
