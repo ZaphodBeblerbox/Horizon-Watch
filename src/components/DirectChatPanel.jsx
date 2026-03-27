@@ -39,7 +39,18 @@ function Avatar({ user, size = 32 }) {
 
 const ROLE_COLOR = { observer: "rgba(255,255,255,0.3)", analyst: "#2d8fe8", admin: "#FFB300" }
 
+function useIsMobile() {
+    const [v, setV] = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
+    useEffect(() => {
+        const h = () => setV(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+    return v
+}
+
 export default function DirectChatPanel({ currentUser, onClose }) {
+    const isMobile = useIsMobile()
     const [conversations,    setConversations]    = useState([])
     const [activePartner,    setActivePartner]    = useState(null)
     const [messages,         setMessages]         = useState([])
@@ -136,10 +147,13 @@ export default function DirectChatPanel({ currentUser, onClose }) {
             background: "rgba(6,13,26,0.97)",
             backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
         }}>
-            {/* ── Left: conversation list (220px) ───────────────────── */}
+            {/* ── Left: conversation list ────────────────────────────── */}
             <div style={{
-                width: 240, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.07)",
-                display: "flex", flexDirection: "column",
+                width: isMobile ? "100%" : 240,
+                flexShrink: 0,
+                borderRight: isMobile ? "none" : "1px solid rgba(255,255,255,0.07)",
+                display: isMobile && activePartner ? "none" : "flex",
+                flexDirection: "column",
             }}>
                 {/* Header */}
                 <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -224,7 +238,7 @@ export default function DirectChatPanel({ currentUser, onClose }) {
             </div>
 
             {/* ── Right: conversation view ───────────────────────────── */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+            <div style={{ flex: 1, display: isMobile && !activePartner ? "none" : "flex", flexDirection: "column", minWidth: 0 }}>
                 {!activePartner ? (
                     <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.2)", fontSize: 13 }}>
                         Select a conversation or search for a user
@@ -233,6 +247,9 @@ export default function DirectChatPanel({ currentUser, onClose }) {
                     <>
                         {/* Conversation header */}
                         <div style={{ padding: "12px 20px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                            {isMobile && (
+                                <button onClick={() => setActivePartner(null)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 4px 0 0", flexShrink: 0 }}>←</button>
+                            )}
                             <Avatar user={activePartner} size={36} />
                             <div>
                                 <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{activePartner.name || activePartner.email}</div>
@@ -278,7 +295,7 @@ export default function DirectChatPanel({ currentUser, onClose }) {
                         </div>
 
                         {/* Input bar */}
-                        <div style={{ padding: "10px 16px 14px", borderTop: "1px solid rgba(255,255,255,0.07)", flexShrink: 0, display: "flex", gap: 8 }}>
+                        <div style={{ padding: "10px 16px", paddingBottom: "calc(14px + env(safe-area-inset-bottom, 0px))", borderTop: "1px solid rgba(255,255,255,0.07)", flexShrink: 0, display: "flex", gap: 8 }}>
                             <textarea
                                 ref={inputRef}
                                 value={input}
@@ -289,7 +306,7 @@ export default function DirectChatPanel({ currentUser, onClose }) {
                                 style={{
                                     flex: 1, background: "rgba(255,255,255,0.06)",
                                     border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8,
-                                    padding: "8px 10px", fontSize: 13, color: "#fff",
+                                    padding: "8px 10px", fontSize: 16, color: "#fff",
                                     outline: "none", resize: "none", lineHeight: 1.5, fontFamily: "inherit",
                                 }}
                             />

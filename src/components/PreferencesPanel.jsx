@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import API_BASE from "../apiBase.js"
 
 const API = API_BASE
 const STORAGE_KEY = "akili-settings-v1"
 
 const DEFAULTS = {
-    themeMode:        "auto",
     soundMuted:       false,
     briefingHourUTC:  6,
     refreshInterval:  15,
@@ -126,12 +125,7 @@ export default function PreferencesPanel({ onClose }) {
         })
     }
 
-    useEffect(() => {
-        const event = new CustomEvent("akili-theme-change", { detail: s.themeMode })
-        window.dispatchEvent(event)
-    }, [s.themeMode])
-
-    return (
+return (
         <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
             {/* Header */}
             <div style={{
@@ -156,18 +150,6 @@ export default function PreferencesPanel({ onClose }) {
 
                 {/* ── DISPLAY ────────────────────────────────────────────── */}
                 <SectionHeader>Display</SectionHeader>
-
-                <div style={ROW}>
-                    <div>
-                        <div style={LABEL}>Theme</div>
-                        <div style={SUB}>Auto uses sunrise/sunset at your location</div>
-                    </div>
-                    <select value={s.themeMode} onChange={e => update("themeMode", e.target.value)} style={SELECT_STYLE}>
-                        <option value="auto">Auto</option>
-                        <option value="day">Day</option>
-                        <option value="night">Night</option>
-                    </select>
-                </div>
 
                 <div style={ROW}>
                     <div>

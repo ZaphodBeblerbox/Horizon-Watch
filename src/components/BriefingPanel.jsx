@@ -50,11 +50,19 @@ function BriefingSections({ content }) {
     const sections = parseSections(content)
     const hasAny   = Object.keys(sections).length > 0
 
-    if (!hasAny) return (
-        <div style={{ fontSize: 13, color: "var(--akili-text-primary)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-            {content}
-        </div>
-    )
+    if (!hasAny) {
+        // Strip common markdown symbols for clean rendering
+        const clean = content
+            .replace(/\*\*(.+?)\*\*/g, "$1")
+            .replace(/\*(.+?)\*/g, "$1")
+            .replace(/^#+\s*/gm, "")
+            .replace(/^[-•]\s*/gm, "• ")
+        return (
+            <div style={{ fontSize: 13, color: "var(--akili-text-primary)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                {clean}
+            </div>
+        )
+    }
 
     const prose = (text) => (
         <p style={{ fontSize: 13, lineHeight: 1.65, color: "var(--akili-text-primary)", margin: 0 }}>{text}</p>
@@ -142,8 +150,21 @@ function ChevronIcon({ open }) {
     )
 }
 
+function useIsMobile() {
+    const [v, setV] = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
+    useEffect(() => {
+        const h = () => setV(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+    return v
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function BriefingPanel({ onClose, onMarkRead }) {
+    const isMobile = useIsMobile()
+    const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true)
+
     // ── Document list state ───────────────────────────────────────────────────
     const [docs,            setDocs]            = useState([])
     const [folderCounts,    setFolderCounts]    = useState({})
@@ -217,6 +238,8 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
 
     // ── Load a document ───────────────────────────────────────────────────────
     const loadDoc = useCallback((docId, folder, title) => {
+        // On mobile: switch to content view when a doc is selected
+        setMobileSidebarOpen(false)
         // Track as open sub-tab
         setOpenDocIds(prev => prev.includes(docId) ? prev : [...prev, docId])
         setOpenDocMeta(prev => ({
@@ -347,10 +370,16 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
             borderBottom: "1px solid var(--akili-border)",
         },
         body: { flex: 1, display: "flex", minHeight: 0 },
-        sidebar: {
-            width: 220, flexShrink: 0, display: "flex", flexDirection: "column",
-            borderRight: "1px solid var(--akili-border)", overflowY: "auto",
-        },
+        sidebar: isMobile
+            ? {
+                display: mobileSidebarOpen ? "flex" : "none",
+                flexDirection: "column", overflowY: "auto",
+                width: "100%",
+            }
+            : {
+                width: 220, flexShrink: 0, display: "flex", flexDirection: "column",
+                borderRight: "1px solid var(--akili-border)", overflowY: "auto",
+            },
         folderRow: (active) => ({
             display: "flex", alignItems: "center", gap: 6,
             padding: "5px 10px 5px 10px", cursor: "pointer",
@@ -366,9 +395,14 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
             fontSize: 11, color: active ? "var(--akili-text-primary)" : "var(--akili-text-secondary)",
             lineHeight: 1.4, transition: "background 0.08s",
         }),
-        content: {
-            flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden",
-        },
+        content: isMobile
+            ? {
+                display: mobileSidebarOpen ? "none" : "flex",
+                flexDirection: "column", minWidth: 0, overflow: "hidden", flex: 1,
+            }
+            : {
+                flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden",
+            },
         toolbar: {
             flexShrink: 0, height: 36, display: "flex", alignItems: "center",
             gap: 4, padding: "0 14px",
@@ -598,6 +632,13 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                         <>
                             {/* Toolbar */}
                             <div style={S.toolbar}>
+                                {/* Mobile back button */}
+                                {isMobile && (
+                                    <button
+                                        onClick={() => setMobileSidebarOpen(true)}
+                                        style={{ background: "none", border: "none", color: "var(--akili-text-secondary)", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 8px 0 0", flexShrink: 0 }}
+                                    >←</button>
+                                )}
                                 {/* Title */}
                                 <input
                                     value={editTitle}

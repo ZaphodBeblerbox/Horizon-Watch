@@ -52,76 +52,6 @@ function loadTabsFromStorage() {
     return defaultTabs()
 }
 
-// ── NOAA Solar Calculation ─────────────────────────────────────────────────────
-
-function _jd(date) {
-    return date.getTime() / 86400000 + 2440587.5
-}
-
-function _calcSunTimes(lat, lon, date) {
-    const JD = _jd(date)
-    const T  = (JD - 2451545.0) / 36525.0
-    const L0 = ((280.46646 + T * (36000.76983 + T * 0.0003032)) % 360 + 360) % 360
-    const M  = 357.52911 + T * (35999.05029 - 0.0001537 * T)
-    const Mr = M * Math.PI / 180
-    const C  = Math.sin(Mr) * (1.914602 - T * (0.004817 + 0.000014 * T))
-             + Math.sin(2 * Mr) * (0.019993 - 0.000101 * T)
-             + Math.sin(3 * Mr) * 0.000289
-    const sunLon    = L0 + C
-    const omega     = 125.04 - 1934.136 * T
-    const sunAppLon = sunLon - 0.00569 - 0.00478 * Math.sin(omega * Math.PI / 180)
-    const meanObl   = 23 + (26 + (21.448 - T * (46.815 + T * (0.00059 - T * 0.001813))) / 60) / 60
-    const oblCorr   = meanObl + 0.00256 * Math.cos(omega * Math.PI / 180)
-    const oblR      = oblCorr * Math.PI / 180
-    const sinDec    = Math.sin(oblR) * Math.sin(sunAppLon * Math.PI / 180)
-    const dec       = Math.asin(sinDec)
-    const y         = Math.tan(oblR / 2) ** 2
-    const L0r       = L0 * Math.PI / 180
-    const ecc       = 0.016708634 - T * (0.000042037 + 0.0000001267 * T)
-    const EqMin     = (
-          y * Math.sin(2 * L0r)
-        - 2 * ecc * Math.sin(Mr)
-        + 4 * ecc * y * Math.sin(Mr) * Math.cos(2 * L0r)
-        - 0.5 * y * y * Math.sin(4 * L0r)
-        - 1.25 * ecc * ecc * Math.sin(2 * Mr)
-    ) * 4 * 180 / Math.PI
-    const solarNoon = (720 - 4 * lon - EqMin) / 1440
-    const latR      = lat * Math.PI / 180
-    const cosHA     = (Math.cos(90.833 * Math.PI / 180) - Math.sin(latR) * sinDec)
-                    / (Math.cos(latR) * Math.cos(dec))
-    if (cosHA < -1) return { sunriseUTC: null, sunsetUTC: null, polarDay: true }
-    if (cosHA >  1) return { sunriseUTC: null, sunsetUTC: null, polarNight: true }
-    const HA = Math.acos(cosHA) * 180 / Math.PI
-    return {
-        sunriseUTC: (solarNoon - HA / 360) * 24,
-        sunsetUTC:  (solarNoon + HA / 360) * 24,
-    }
-}
-
-function _isDaytime(lat, lon) {
-    const now  = new Date()
-    const { sunriseUTC, sunsetUTC, polarDay, polarNight } = _calcSunTimes(lat, lon, now)
-    if (polarDay)   return true
-    if (polarNight) return false
-    const utcH = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600
-    return utcH >= sunriseUTC && utcH < sunsetUTC
-}
-
-function _applyTheme(mode, lat, lon) {
-    let theme
-    if      (mode === "day")   theme = "day"
-    else if (mode === "night") theme = ""
-    else {
-        if (lat != null && lon != null) {
-            theme = _isDaytime(lat, lon) ? "day" : ""
-        } else {
-            const h = new Date().getHours()
-            theme = (h >= 6 && h < 19) ? "day" : ""
-        }
-    }
-    if (theme) document.documentElement.setAttribute("data-theme", theme)
-    else       document.documentElement.removeAttribute("data-theme")
-}
 
 const REGION_COORDS = {
     "East Africa":    { lat: -2,  lon: 37, zoom: 5 },
@@ -528,40 +458,7 @@ export default function App() {
         return () => clearInterval(tid)
     }, [profile])  // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Theme mode (auto / day / night) ──────────────────────────────────────
-    const [themeMode, setThemeMode] = useState(() =>
-        localStorage.getItem("akili-theme-v1") || "auto"
-    )
-    const themePosRef = useRef({ lat: null, lon: null })
-
-    const onThemeCycle = useCallback(() => {
-        setThemeMode(prev => {
-            const next = prev === "auto" ? "day" : prev === "day" ? "night" : "auto"
-            localStorage.setItem("akili-theme-v1", next)
-            return next
-        })
-    }, [])
-
-    useEffect(() => {
-        _applyTheme(themeMode, themePosRef.current.lat, themePosRef.current.lon)
-        if (themeMode !== "auto") return
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                pos => {
-                    themePosRef.current = { lat: pos.coords.latitude, lon: pos.coords.longitude }
-                    _applyTheme("auto", pos.coords.latitude, pos.coords.longitude)
-                },
-                () => {},
-                { timeout: 10000 }
-            )
-        }
-        const tid = setInterval(() => {
-            _applyTheme("auto", themePosRef.current.lat, themePosRef.current.lon)
-        }, 60000)
-        return () => clearInterval(tid)
-    }, [themeMode])
-
-    // ── Budget (for sidebar indicator) ────────────────────────────────────────
+// ── Budget (for sidebar indicator) ────────────────────────────────────────
     const [budgetPct, setBudgetPct] = useState(null)
 
     useEffect(() => {
@@ -859,8 +756,6 @@ export default function App() {
                         notifUnread={unreadCount}
                         onToggleNotif={() => setNotifOpen(v => !v)}
                         briefingUnread={briefingUnread}
-                        themeMode={themeMode}
-                        onThemeCycle={onThemeCycle}
                         soundMuted={soundMuted}
                         onToggleSound={onToggleSound}
                         tvOpen={showTV}
@@ -1116,8 +1011,6 @@ export default function App() {
                     notifUnread={unreadCount}
                     onToggleNotif={() => setNotifOpen(v => !v)}
                     briefingUnread={briefingUnread}
-                    themeMode={themeMode}
-                    onThemeCycle={onThemeCycle}
                     soundMuted={soundMuted}
                     onToggleSound={onToggleSound}
                     tvOpen={showTV}

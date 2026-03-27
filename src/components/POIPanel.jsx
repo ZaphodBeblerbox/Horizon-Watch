@@ -1055,7 +1055,18 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
 }
 
 // ── Full-page POI workspace ───────────────────────────────────────────────────
+function useIsMobile() {
+    const [v, setV] = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
+    useEffect(() => {
+        const h = () => setV(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+    return v
+}
+
 export default function POIPanel({ onClose }) {
+    const isMobile = useIsMobile()
     const [pois, setPois] = useState([])
     const [selected, setSelected] = useState(null)
     const [loading, setLoading] = useState(true)
@@ -1167,8 +1178,8 @@ export default function POIPanel({ onClose }) {
 
             {/* Body */}
             <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-                {/* Sidebar */}
-                <div style={{ width: 200, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", background: "rgba(10,14,20,0.5)", position: "relative" }}>
+                {/* Sidebar — hidden on mobile when a profile is selected */}
+                <div style={{ width: isMobile ? "100%" : 200, flexShrink: 0, borderRight: isMobile ? "none" : "1px solid rgba(255,255,255,0.07)", display: isMobile && selected ? "none" : "flex", flexDirection: "column", background: "rgba(10,14,20,0.5)", position: "relative" }}>
                     <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
                         {[{ id: "main", label: "Profiles" }, { id: "locked", label: "Locked" }].map(tab => (
                             <button key={tab.id} onClick={() => tab.id === "locked" ? (lockedAuth ? setSidebarTab("locked") : setShowPin(true)) : setSidebarTab("main")} style={{
@@ -1211,8 +1222,19 @@ export default function POIPanel({ onClose }) {
                 </div>
 
                 {selectedPoi
-                    ? <ProfileWorkspace key={selectedPoi.id} poi={selectedPoi} isNew={selectedPoi.id === newlyCreated} onUpdate={handleUpdate} onDuplicate={handleDuplicate} onDelete={handleDelete} onExport={handleExport} onLockToggle={handleLockToggle} allPois={pois} isInLockedView={isInLockedView} onSwitchPoi={handleSwitchPoi} />
-                    : <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a5568", fontSize: 13 }}>No profile selected</div>
+                    ? (
+                        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                            {isMobile && (
+                                <div style={{ padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
+                                    <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: 13, padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
+                                        ← Back to profiles
+                                    </button>
+                                </div>
+                            )}
+                            <ProfileWorkspace key={selectedPoi.id} poi={selectedPoi} isNew={selectedPoi.id === newlyCreated} onUpdate={handleUpdate} onDuplicate={handleDuplicate} onDelete={handleDelete} onExport={handleExport} onLockToggle={handleLockToggle} allPois={pois} isInLockedView={isInLockedView} onSwitchPoi={handleSwitchPoi} />
+                        </div>
+                    )
+                    : !isMobile && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a5568", fontSize: 13 }}>No profile selected</div>
                 }
             </div>
         </div>

@@ -137,36 +137,6 @@ function IconPOI() {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
-function IconSun() {
-    return (
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-            <circle cx="8" cy="8" r="3"/>
-            <line x1="8" y1="1" x2="8" y2="3"/><line x1="8" y1="13" x2="8" y2="15"/>
-            <line x1="1" y1="8" x2="3" y2="8"/><line x1="13" y1="8" x2="15" y2="8"/>
-            <line x1="3.1" y1="3.1" x2="4.5" y2="4.5"/><line x1="11.5" y1="11.5" x2="12.9" y2="12.9"/>
-            <line x1="12.9" y1="3.1" x2="11.5" y2="4.5"/><line x1="4.5" y1="11.5" x2="3.1" y2="12.9"/>
-        </svg>
-    )
-}
-
-function IconMoon() {
-    return (
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-            <path d="M13.5 9.5A6 6 0 1 1 6.5 2.5a5 5 0 0 0 7 7z"/>
-        </svg>
-    )
-}
-
-function IconAutoTheme() {
-    // half-filled circle (half sun / half moon)
-    return (
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" strokeLinecap="round">
-            <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4"/>
-            <path d="M8 2.5 A5.5 5.5 0 0 1 8 13.5 Z" fill="currentColor"/>
-        </svg>
-    )
-}
-
 function IconSoundOn() {
     return (
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
@@ -200,8 +170,6 @@ export default function Sidebar({
     notifUnread    = 0,
     onToggleNotif,
     briefingUnread = false,
-    themeMode      = "auto",
-    onThemeCycle,
     soundMuted     = false,
     onToggleSound,
     tvOpen         = false,
@@ -484,31 +452,7 @@ export default function Sidebar({
                         {soundMuted ? <IconSoundOff /> : <IconSoundOn />}
                     </button>
                 )}
-                {/* Day / Night / Auto toggle */}
-                <button
-                    onMouseEnter={() => setHovered("theme")}
-                    onMouseLeave={() => setHovered(null)}
-                    onClick={onThemeCycle}
-                    title={`Theme: ${themeMode} — click to cycle`}
-                    style={{
-                        width:          48,
-                        height:         36,
-                        display:        "flex",
-                        alignItems:     "center",
-                        justifyContent: "center",
-                        background:     "none",
-                        border:         "none",
-                        cursor:         "pointer",
-                        color:          hovered === "theme" ? "var(--akili-text-secondary)" : "var(--akili-text-muted)",
-                        transition:     "color 0.12s",
-                        flexShrink:     0,
-                    }}
-                >
-                    {themeMode === "day"  ? <IconSun />       :
-                     themeMode === "night"? <IconMoon />      :
-                                           <IconAutoTheme />}
-                </button>
-                {btn("settings", <IconSettings />)}
+{btn("settings", <IconSettings />)}
                 {profile && btn("profile", <IconProfile />)}
                 {/* Admin shield — only for admins */}
                 {isAdmin && onToggleAdmin && (

@@ -40,13 +40,6 @@ body {
     background: rgba(255, 255, 255, 0.2);
 }
 
-[data-theme="day"] ::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.15);
-}
-
-[data-theme="day"] ::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.25);
-}
 
 /* ── Leaflet overrides ───────────────────────────────────────────────────── */
 .leaflet-container {
@@ -203,6 +196,35 @@ textarea::placeholder {
 /* Body safe area on iOS for bottom nav */
 @media (max-width: 767px) {
     body {
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+}
+
+/* Prevent horizontal scroll on mobile */
+@media (max-width: 767px) {
+    body, #root {
+        overflow-x: hidden;
+        max-width: 100vw;
+    }
+}
+
+/* Inputs font-size 16px on mobile prevents iOS auto-zoom */
+@media (max-width: 767px) {
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    input[type="number"],
+    input[type="search"],
+    input[type="password"],
+    textarea,
+    select {
+        font-size: 16px !important;
+    }
+}
+
+/* Bottom nav safe area padding */
+@media (max-width: 767px) {
+    .hw-bottom-nav {
         padding-bottom: env(safe-area-inset-bottom, 0px);
     }
 }

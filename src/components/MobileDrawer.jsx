@@ -66,8 +66,6 @@ export default function MobileDrawer({
     notifUnread,
     onToggleNotif,
     briefingUnread,
-    themeMode,
-    onThemeCycle,
     soundMuted,
     onToggleSound,
     tvOpen,
@@ -78,9 +76,7 @@ export default function MobileDrawer({
 }) {
     const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin"
 
-    const themeLabel = themeMode === "day" ? "Theme: Day" : themeMode === "night" ? "Theme: Night" : "Theme: Auto"
-
-    function panelRow(id, label, badge) {
+function panelRow(id, label, badge) {
         return (
             <Row
                 label={label}
@@ -185,11 +181,6 @@ export default function MobileDrawer({
                     {panelRow("profile", "Profile")}
                     {panelRow("settings", "Preferences")}
                     {panelRow("health", "System Health")}
-                    <Row
-                        label={themeLabel}
-                        active={false}
-                        onClick={onThemeCycle}
-                    />
                     <Row
                         label={soundMuted ? "Sound: Muted" : "Sound: On"}
                         active={false}

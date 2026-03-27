@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import API_BASE from "../apiBase.js"
 
 const API = API_BASE
 const STORAGE_KEY = "akili-settings-v1"
 
 const DEFAULTS = {
-    themeMode:        "auto",       // "auto" | "day" | "night"
     soundMuted:       false,
     briefingHourUTC:  6,            // 0–23
     refreshInterval:  15,           // minutes: 5 | 10 | 15 | 30
@@ -104,13 +103,7 @@ export default function SettingsPanel({ onClose }) {
         })
     }
 
-    // Apply theme change immediately when changed here
-    useEffect(() => {
-        const event = new CustomEvent("akili-theme-change", { detail: s.themeMode })
-        window.dispatchEvent(event)
-    }, [s.themeMode])
-
-    const H = {
+const H = {
         fontSize:      11,
         fontWeight:    700,
         color:         "var(--akili-accent)",
@@ -142,21 +135,6 @@ export default function SettingsPanel({ onClose }) {
 
             {/* Body */}
             <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 16px" }}>
-
-                {/* Display */}
-                <div style={H}>Display</div>
-
-                <div style={ROW}>
-                    <div>
-                        <div style={LABEL}>Theme</div>
-                        <div style={SUB}>Auto uses sunrise/sunset at your location</div>
-                    </div>
-                    <select value={s.themeMode} onChange={e => update("themeMode", e.target.value)} style={SELECT_STYLE}>
-                        <option value="auto">Auto</option>
-                        <option value="day">Day</option>
-                        <option value="night">Night</option>
-                    </select>
-                </div>
 
                 {/* Sound */}
                 <div style={H}>Sound</div>
