@@ -134,50 +134,63 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
     return (
         <div style={{
             position:             "fixed",
-            top:                  0,
+            top:                  44,
             right:                0,
+            bottom:               0,
             width:                380,
-            height:               "100vh",
-            background:           "rgba(15,23,42,0.85)",
+            background:           "rgba(15,23,42,0.92)",
             backdropFilter:       "blur(12px)",
             WebkitBackdropFilter: "blur(12px)",
-            borderLeft:           "1px solid rgba(56,189,248,0.15)",
+            borderLeft:           "1px solid rgba(56,189,248,0.2)",
             boxShadow:            "-8px 0 32px rgba(0, 0, 0, 0.5)",
             zIndex:               2100,
+            display:              "flex",
+            flexDirection:        "column",
             overflow:             "hidden",
             transform:            visible ? "translateX(0)" : "translateX(100%)",
             transition:           "transform 0.25s ease-out",
             fontFamily:           "Inter, -apple-system, sans-serif",
             color:                "#e0e0e0",
         }}>
-            {/* X button — lives on outer (non-scrolling) container, always visible */}
-            <button
-                onClick={handleClose}
-                onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.15)"; e.currentTarget.style.color = "#ffffff" }}
-                onMouseOut={e => { e.currentTarget.style.background = "rgba(15,23,42,0.9)"; e.currentTarget.style.color = "#e2e8f0" }}
-                style={{
-                    position:      "absolute",
-                    top:           12,
-                    right:         12,
-                    width:         28,
-                    height:        28,
-                    background:    "rgba(15,23,42,0.9)",
-                    border:        "1px solid rgba(148,163,184,0.5)",
-                    borderRadius:  6,
-                    color:         "#e2e8f0",
-                    fontSize:      16,
-                    cursor:        "pointer",
-                    display:       "flex",
-                    alignItems:    "center",
-                    justifyContent: "center",
-                    zIndex:        9999,
-                    boxShadow:     "0 2px 8px rgba(0,0,0,0.4)",
-                    lineHeight:    1,
-                }}
-            >✕</button>
+            {/* Fixed header bar — always visible, contains X button */}
+            <div style={{
+                height:         44,
+                minHeight:      44,
+                background:     "rgba(15,23,42,0.98)",
+                borderBottom:   "1px solid rgba(56,189,248,0.15)",
+                display:        "flex",
+                alignItems:     "center",
+                justifyContent: "space-between",
+                padding:        "0 12px",
+                flexShrink:     0,
+            }}>
+                <span style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700 }}>
+                    Event Details
+                </span>
+                <button
+                    onClick={handleClose}
+                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#ffffff" }}
+                    onMouseOut={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#94a3b8" }}
+                    style={{
+                        background:     "transparent",
+                        border:         "1px solid rgba(148,163,184,0.3)",
+                        borderRadius:   4,
+                        color:          "#94a3b8",
+                        width:          28,
+                        height:         28,
+                        cursor:         "pointer",
+                        display:        "flex",
+                        alignItems:     "center",
+                        justifyContent: "center",
+                        fontSize:       14,
+                        lineHeight:     1,
+                        flexShrink:     0,
+                    }}
+                >✕</button>
+            </div>
 
-            {/* Scrollable content wrapper — X button stays outside this */}
-            <div style={{ height: "100%", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            {/* Scrollable content — header stays pinned above this */}
+            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
 
             {/* Image */}
             {imgUrl && !imgError && (
@@ -193,7 +206,7 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
             )}
 
             {/* Header */}
-            <div style={{ padding: "14px 48px 10px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
+            <div style={{ padding: "14px 16px 10px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
                     {(event.type || event.event_type) && (
                         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", background: `${typeColor}22`, color: typeColor, border: `1px solid ${typeColor}44`, padding: "2px 7px", borderRadius: 8 }}>

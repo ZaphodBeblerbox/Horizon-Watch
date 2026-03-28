@@ -319,33 +319,6 @@ function StepIdentity({ draft, upd }) {
                 </div>
             </div>
 
-            <div>
-                <SectionLabel>Role</SectionLabel>
-                <div style={{ display: "flex", gap: 5 }}>
-                    {ROLES.map(r => (
-                        <button
-                            key={r}
-                            onClick={() => upd("role", r)}
-                            style={{
-                                flex:          1,
-                                padding:       "8px 4px",
-                                fontSize:      10,
-                                fontWeight:    draft.role === r ? 700 : 400,
-                                letterSpacing: "0.06em",
-                                border:        `1px solid ${draft.role === r ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.10)"}`,
-                                borderRadius:  4,
-                                background:    draft.role === r ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.03)",
-                                color:         draft.role === r ? "#fff" : "rgba(255,255,255,0.38)",
-                                cursor:        "pointer",
-                                transition:    "all 0.12s",
-                                userSelect:    "none",
-                            }}
-                        >
-                            {r}
-                        </button>
-                    ))}
-                </div>
-            </div>
         </div>
     )
 }
@@ -365,16 +338,6 @@ function StepFocus({ draft, upd }) {
                     selected={draft.focusRegions}
                     onToggle={item => upd("focusRegions", toggle(draft.focusRegions, item))}
                     color="#00E5FF"
-                />
-            </div>
-
-            <div>
-                <SectionLabel>Infrastructure Domains of Interest</SectionLabel>
-                <ChipGrid
-                    items={INFRA_DOMAINS}
-                    selected={draft.infraDomains}
-                    onToggle={item => upd("infraDomains", toggle(draft.infraDomains, item))}
-                    color="#00BCD4"
                 />
             </div>
 
@@ -402,35 +365,6 @@ function StepCalibration({ draft, upd }) {
                     Controls what crosses the relevance threshold and surfaces as an alert.
                 </div>
                 <ThresholdSlider value={draft.threshold} onChange={v => upd("threshold", v)} />
-            </div>
-
-            <div>
-                <SectionLabel>POI Proximity Alerts</SectionLabel>
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", marginBottom: 8 }}>
-                    Alert when a person of interest is near a significant event.
-                </div>
-                <button
-                    onClick={() => upd("poiProximityAlerts", !draft.poiProximityAlerts)}
-                    style={{
-                        display: "flex", alignItems: "center", gap: 8,
-                        background: "none", border: "none", cursor: "pointer", padding: 0,
-                    }}
-                >
-                    <div style={{
-                        width: 32, height: 18, borderRadius: 9, flexShrink: 0,
-                        background: draft.poiProximityAlerts !== false ? "var(--akili-accent)" : "#2d3748",
-                        position: "relative", transition: "background 0.2s",
-                    }}>
-                        <span style={{
-                            position: "absolute", top: 2, width: 14, height: 14, borderRadius: "50%",
-                            background: "#fff", transition: "left 0.2s",
-                            left: draft.poiProximityAlerts !== false ? 16 : 2,
-                        }} />
-                    </div>
-                    <span style={{ fontSize: 11, color: draft.poiProximityAlerts !== false ? "var(--akili-accent)" : "rgba(255,255,255,0.3)" }}>
-                        {draft.poiProximityAlerts !== false ? "On" : "Off"}
-                    </span>
-                </button>
             </div>
 
             <div>

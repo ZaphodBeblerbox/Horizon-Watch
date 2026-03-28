@@ -25,6 +25,8 @@ import LoginPage from "./components/LoginPage.jsx"
 import AdminPanel from "./components/AdminPanel.jsx"
 import NotificationBar from "./components/NotificationBar.jsx"
 import StartupModal from "./components/StartupModal.jsx"
+import WelcomeBackModal from "./components/WelcomeBackModal.jsx"
+import NewsPage from "./components/NewsPage.jsx"
 import BottomNav from "./components/BottomNav.jsx"
 import MobileDrawer from "./components/MobileDrawer.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
@@ -131,9 +133,10 @@ export default function App() {
     const [showTV,       setShowTV]       = useState(false)
     const [authChecked,  setAuthChecked]  = useState(false)
     const [currentUser,  setCurrentUser]  = useState(null)
-    const [showAdmin,        setShowAdmin]        = useState(false)
-    const [showChat,         setShowChat]         = useState(false)
-    const [showStartupModal, setShowStartupModal] = useState(false)
+    const [showAdmin,         setShowAdmin]         = useState(false)
+    const [showChat,          setShowChat]          = useState(false)
+    const [showStartupModal,  setShowStartupModal]  = useState(false)
+    const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
 
@@ -171,25 +174,43 @@ export default function App() {
         return () => clearInterval(t)
     }, [currentUser])
 
-    // ── Startup modal — show once per user session ────────────────────────────
+    // ── Welcome back modal — show once per browser session on login ──────────
     useEffect(() => {
-        if (currentUser && !localStorage.getItem("hw-skip-startup-modal")) {
-            setShowStartupModal(true)
+        if (!currentUser) return
+        const sessionKey = "hw-welcome-shown-" + currentUser.id
+        if (!sessionStorage.getItem(sessionKey)) {
+            sessionStorage.setItem(sessionKey, "1")
+            // First-ever login uses StartupModal; returning users see WelcomeBackModal
+            if (!localStorage.getItem("hw-skip-startup-modal")) {
+                setShowStartupModal(true)
+            } else {
+                setShowWelcomeBack(true)
+            }
         }
     }, [currentUser])
 
     // ── GPS location tracking — send to backend on login, then every 5 min ───
     useEffect(() => {
-        if (!currentUser || !navigator.geolocation) return
+        if (!currentUser) return
+        if (!navigator.geolocation) {
+            console.warn("[location] navigator.geolocation not available")
+            return
+        }
         const send = (pos) => {
+            const { latitude, longitude, accuracy } = pos.coords
+            console.log("[location] Sending:", { lat: latitude, lon: longitude, accuracy })
             apiFetch("/api/user/location", {
                 method: "POST",
-                body: JSON.stringify({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-            }).catch(() => {})
+                body: JSON.stringify({ lat: latitude, lon: longitude }),
+            }).then(r => console.log("[location] Response:", r.status)).catch(e => console.error("[location] Error:", e))
         }
-        navigator.geolocation.getCurrentPosition(send, () => {})
+        const onError = (err) => {
+            console.warn("[location] Geolocation error:", err.code, err.message)
+        }
+        const opts = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+        navigator.geolocation.getCurrentPosition(send, onError, opts)
         const t = setInterval(() => {
-            navigator.geolocation.getCurrentPosition(send, () => {})
+            navigator.geolocation.getCurrentPosition(send, onError, opts)
         }, 5 * 60 * 1000)
         return () => clearInterval(t)
     }, [currentUser])
@@ -592,7 +613,7 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News" }
+        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed" }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
         const newId = crypto.randomUUID()
@@ -640,6 +661,7 @@ export default function App() {
         const order = [
             { type: "poi",      label: "POI" },
             { type: "briefing", label: "Briefings" },
+            { type: "news",     label: "News Feed" },
         ]
         for (const { type } of order) {
             if (!tabs.find(t => t.type === type)) { openTab(type); return }
@@ -875,6 +897,13 @@ export default function App() {
                     </div>
                 )}
 
+                {/* News Feed — mounted only while a news tab exists */}
+                {tabs.some(t => t.type === "news") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "news" ? "flex" : "none", flexDirection: "column" }}>
+                        <NewsPage onClose={() => closeTab(tabs.find(t => t.type === "news")?.id)} />
+                    </div>
+                )}
+
                 {/* ── Right panel slot — 300px, only one at a time ──────────── */}
                 {rightPanel === "detail" && selectedSurface && (
                     <SurfaceDetailPanel
@@ -1012,12 +1041,22 @@ export default function App() {
                 <AdminPanel user={currentUser} onClose={() => setShowAdmin(false)} />
             )}
 
-            {/* Startup modal */}
+            {/* Startup modal — first ever login */}
             {showStartupModal && (
                 <StartupModal
                     onDismiss={() => setShowStartupModal(false)}
                     onReadBriefing={() => openTab("briefing")}
                     onViewAlerts={() => openRightPanel("alerts")}
+                />
+            )}
+
+            {/* Welcome back modal — returning users */}
+            {showWelcomeBack && (
+                <WelcomeBackModal
+                    user={currentUser}
+                    onDismiss={() => setShowWelcomeBack(false)}
+                    onReadBriefing={() => { openTab("briefing"); setShowWelcomeBack(false) }}
+                    onViewMessages={() => { setShowChat(true); setShowWelcomeBack(false) }}
                 />
             )}
 

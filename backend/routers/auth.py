@@ -258,3 +258,42 @@ def update_user_location(body: LocationBody, request: Request, current_user=Depe
         return {"status": "ok"}
     finally:
         db.close()
+
+
+@router.get("/api/user/missed-activity")
+def get_missed_activity(current_user=Depends(require_approved_user)):
+    from database import SessionLocal, DirectMessage as DM
+    from app_shared import ACTIVITY_LOG
+    db = SessionLocal()
+    try:
+        last_login = current_user.last_login
+        # Unread DMs
+        unread_dms = db.query(DM).filter(
+            DM.recipient_id == current_user.id,
+            DM.read_at.is_(None),
+        ).count()
+        dm_senders = db.query(DM.sender_id).filter(
+            DM.recipient_id == current_user.id,
+            DM.read_at.is_(None),
+        ).distinct().count()
+
+        # Events since last login from activity log
+        critical_events = 0
+        total_events = 0
+        if last_login:
+            since = last_login.isoformat()
+            for entry in ACTIVITY_LOG:
+                if entry.get("timestamp", "") > since:
+                    if entry.get("action") == "event_critical":
+                        critical_events += 1
+                    total_events += 1
+
+        return {
+            "unread_messages": unread_dms,
+            "message_senders": dm_senders,
+            "critical_events": critical_events,
+            "total_events":    total_events,
+            "since":           last_login.isoformat() if last_login else None,
+        }
+    finally:
+        db.close()

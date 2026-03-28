@@ -4641,6 +4641,7 @@ export default function MapPage({
     // ── User Locations layer (superadmin only) ────────────────────────────────
     useEffect(() => {
         const isSuperAdmin = currentUser?.is_super_admin || currentUser?.role === "superadmin"
+        console.log("[user-locations] toggle:", { active: active.userLocations, isSuperAdmin, currentUser: currentUser?.email })
         if (!active.userLocations || !isSuperAdmin) {
             setUserLocationsData([])
             return
@@ -4651,10 +4652,12 @@ export default function MapPage({
                 const res = await fetch(`${API}/api/admin/user-locations`, {
                     headers: { Authorization: "Bearer " + localStorage.getItem("hw-auth-token") }
                 })
+                console.log("[user-locations] fetch status:", res.status)
                 if (!res.ok) return
                 const data = await res.json()
+                console.log("[user-locations] fetched:", data)
                 if (!cancelled) setUserLocationsData(Array.isArray(data) ? data : [])
-            } catch { /* ignore */ }
+            } catch (e) { console.error("[user-locations] fetch error:", e) }
         }
         load()
         const iv = setInterval(load, 30000)
@@ -4662,6 +4665,7 @@ export default function MapPage({
     }, [active.userLocations, currentUser])
 
     useEffect(() => {
+        console.log("[user-locations] render effect:", { mapReady: !!mapRef.current, count: userLocationsData.length, active: active.userLocations })
         if (!mapRef.current) return
         if (!userLocationsLayerRef.current) {
             userLocationsLayerRef.current = L.layerGroup()
@@ -4673,6 +4677,10 @@ export default function MapPage({
         }
         const isSA = currentUser?.is_super_admin || currentUser?.role === "superadmin"
         userLocationsData.forEach(u => {
+            if (typeof u.lat !== "number" || typeof u.lon !== "number" || isNaN(u.lat) || isNaN(u.lon)) {
+                console.warn("[user-locations] skipping invalid coords for", u.email, u)
+                return
+            }
             const isMe = u.user_id === currentUser?.id
             let color, pulse, size
             if (isMe) {
