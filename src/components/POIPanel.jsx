@@ -786,8 +786,26 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
     }
     const mobileBtn = { ...BTN_SECONDARY, minHeight: "unset", padding: "7px 12px", fontSize: 12, whiteSpace: "nowrap" }
 
-    // ── MOBILE: Instagram-style vertical layout ──────────────────────────────
+    // ── MOBILE: expanded vertical layout ────────────────────────────────────
     if (isMobile) {
+        // Shared styles for this layout
+        const mSec = { padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }
+        const mGrid2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }
+        const mLabel = { fontSize: 10, color: "#4a6080", marginBottom: 3, letterSpacing: "0.04em" }
+        const mInput = { ...INPUT, fontSize: 14 }
+        const mIdRow = (icon, field, placeholder, type = "text") => (
+            <div key={field} style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, padding: "8px 12px" }}>
+                <span style={{ color: "#4a5568", flexShrink: 0 }}>{icon}</span>
+                <input type={type} value={ids[field] || ""} onChange={e => patchId(field, e.target.value)} placeholder={placeholder} style={{ ...INPUT, background: "transparent", border: "none", padding: 0, fontSize: 14 }} />
+            </div>
+        )
+        const mField = (label, field, placeholder, type = "text") => (
+            <div>
+                <div style={mLabel}>{label}</div>
+                <input type={type} value={local[field] || ""} onChange={e => patch(field, e.target.value)} placeholder={placeholder} style={mInput} />
+            </div>
+        )
+
         return (
             <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "calc(100vh - 96px)", overflowY: "auto", fontFamily: "inherit", color: "#e8edf2" }}>
                 <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) loadPhoto(f); e.target.value = "" }} />
@@ -832,32 +850,103 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
                 </div>
 
                 {/* DESCRIPTION */}
-                <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                <div style={mSec}>
                     <div style={{ ...SEC_HDR, marginBottom: 8 }}>Description</div>
                     <textarea rows={3} placeholder="Short description or alias…" value={local.description || ""} onChange={e => patch("description", e.target.value)} style={{ ...INPUT, resize: "none", lineHeight: 1.5 }} />
                 </div>
 
+                {/* BASIC INFO */}
+                <div style={mSec}>
+                    <div style={{ ...SEC_HDR, marginBottom: 10 }}>Basic Information</div>
+                    <div style={{ ...mGrid2, marginBottom: 8 }}>
+                        {mField("Age", "age", "e.g. 35", "number")}
+                        <div>
+                            <div style={mLabel}>Sex</div>
+                            <select value={local.sex || ""} onChange={e => patch("sex", e.target.value)} style={mInput}>
+                                <option value="">Unknown</option>
+                                {["Male", "Female", "Other"].map(v => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                        </div>
+                        {mField("Nationality", "nationality", "e.g. German")}
+                        {mField("Ethnicity", "ethnicity", "e.g. Caucasian")}
+                        {mField("Date of Birth", "date_of_birth", "YYYY-MM-DD", "date")}
+                        {mField("Place of Birth", "place_of_birth", "City, Country")}
+                    </div>
+                </div>
+
+                {/* PHYSICAL DESCRIPTION */}
+                <div style={mSec}>
+                    <div style={{ ...SEC_HDR, marginBottom: 10 }}>Physical Description</div>
+                    <div style={{ ...mGrid2, marginBottom: 8 }}>
+                        {mField("Height", "height", "e.g. 180cm")}
+                        {mField("Weight", "weight", "e.g. 75kg")}
+                        {mField("Hair Color", "hair_color", "e.g. Brown")}
+                        {mField("Eye Color", "eye_color", "e.g. Blue")}
+                    </div>
+                    <div style={mLabel}>Distinguishing Features</div>
+                    <input value={local.distinguishing_features || ""} onChange={e => patch("distinguishing_features", e.target.value)} placeholder="Scars, tattoos, marks…" style={mInput} />
+                </div>
+
+                {/* LOCATION */}
+                <div style={mSec}>
+                    <div style={{ ...SEC_HDR, marginBottom: 10 }}>Location</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {mField("Last Known Location", "location", "Address or coordinates")}
+                        {mField("Residence", "residence", "Primary residence")}
+                        {mField("Workplace", "workplace", "Company or organization")}
+                    </div>
+                </div>
+
                 {/* IDENTIFIERS */}
-                <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                <div style={mSec}>
                     <div style={{ ...SEC_HDR, marginBottom: 10 }}>Identifiers</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {mIdRow(<IconEmail />, "email",     "Email address",     "email")}
+                        {mIdRow(<IconAt />,    "username",  "Username / handle", "text")}
+                        {mIdRow(<IconPhone />, "phone",     "Phone number",      "tel")}
+                        {mIdRow(<IconPerson />, "full_name", "Full name",        "text")}
+                        {mIdRow("🆔", "id_number", "ID / national number", "text")}
+                        {mIdRow("🛂", "passport",  "Passport number",     "text")}
+                    </div>
+                </div>
+
+                {/* SOCIAL ACCOUNTS */}
+                <div style={mSec}>
+                    <div style={{ ...SEC_HDR, marginBottom: 10 }}>Social Accounts</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                         {[
-                            { icon: <IconEmail />, field: "email",     placeholder: "Email address", type: "email" },
-                            { icon: <IconAt />,    field: "username",  placeholder: "Username / handle", type: "text" },
-                            { icon: <IconPhone />, field: "phone",     placeholder: "Phone number", type: "tel" },
-                            { icon: <IconPerson />, field: "full_name", placeholder: "Full name", type: "text" },
-                        ].map(({ icon, field, placeholder, type }) => (
+                            { platform: "Instagram", field: "instagram" },
+                            { platform: "Twitter / X", field: "twitter" },
+                            { platform: "LinkedIn",   field: "linkedin" },
+                            { platform: "Facebook",   field: "facebook" },
+                            { platform: "TikTok",     field: "tiktok" },
+                            { platform: "Telegram",   field: "telegram" },
+                        ].map(({ platform, field }) => (
                             <div key={field} style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, padding: "8px 12px" }}>
-                                <span style={{ color: "#4a5568", flexShrink: 0 }}>{icon}</span>
-                                <input type={type} value={ids[field] || ""} onChange={e => patchId(field, e.target.value)} placeholder={placeholder} style={{ ...INPUT, background: "transparent", border: "none", padding: 0, fontSize: 14 }} />
+                                <span style={{ fontSize: 11, fontWeight: 700, color: SOCIAL_PLATFORM_COLOR[platform.split(" ")[0]] || "#4a5568", minWidth: 72, flexShrink: 0 }}>{platform}</span>
+                                <input value={ids[field] || ""} onChange={e => patchId(field, e.target.value)} placeholder="@handle or URL" style={{ ...INPUT, background: "transparent", border: "none", padding: 0, fontSize: 14 }} />
                             </div>
                         ))}
                     </div>
                 </div>
 
+                {/* OCCUPATION & AFFILIATIONS */}
+                <div style={mSec}>
+                    <div style={{ ...SEC_HDR, marginBottom: 10 }}>Occupation & Affiliations</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {mField("Occupation", "occupation", "Job title or profession")}
+                        {mField("Organization", "organization", "Company, group, or entity")}
+                        {mField("Role / Rank", "org_role", "Position within organization")}
+                        <div>
+                            <div style={mLabel}>Other affiliations</div>
+                            <textarea rows={2} value={local.affiliations || ""} onChange={e => patch("affiliations", e.target.value)} placeholder="Memberships, connections…" style={{ ...INPUT, resize: "none", lineHeight: 1.5 }} />
+                        </div>
+                    </div>
+                </div>
+
                 {/* RELATIONS */}
-                <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                    <div style={{ ...SEC_HDR, marginBottom: 8 }}>Relations</div>
+                <div style={mSec}>
+                    <div style={{ ...SEC_HDR, marginBottom: 8 }}>Known Relations</div>
                     {(local.relations || []).length === 0 && !addingRelation && (
                         <div style={{ fontSize: 11, color: "#4a5568", marginBottom: 8 }}>No relations recorded.</div>
                     )}
@@ -888,9 +977,82 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
                     )}
                 </div>
 
-                {/* NETWORK GRAPH — only shown when relations exist */}
+                {/* INTELLIGENCE NOTES */}
+                <div style={mSec}>
+                    <div style={{ ...SEC_HDR, marginBottom: 8 }}>Intelligence Notes</div>
+                    <textarea rows={4} value={local.notes || ""} onChange={e => patch("notes", e.target.value)} placeholder="Additional intelligence, observations, or analyst notes…" style={{ ...INPUT, resize: "none", lineHeight: 1.6 }} />
+                </div>
+
+                {/* INVESTIGATE BUTTON */}
+                <div style={{ padding: "16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    {investErr && (
+                        <div style={{ fontSize: 11, color: "#f87171", marginBottom: 8, padding: "6px 10px", background: "rgba(239,68,68,0.08)", borderRadius: 4 }}>{investErr}</div>
+                    )}
+                    <button
+                        onClick={investigate}
+                        disabled={investing || !canInvestigate}
+                        style={{
+                            width: "100%",
+                            background: investing
+                                ? "rgba(139,92,246,0.3)"
+                                : canInvestigate
+                                    ? "linear-gradient(135deg,#7c3aed,#4f46e5)"
+                                    : "rgba(255,255,255,0.06)",
+                            border: canInvestigate ? "none" : "1px solid rgba(255,255,255,0.1)",
+                            borderRadius: 10,
+                            padding: "15px",
+                            color: canInvestigate ? "#fff" : "#4a5568",
+                            fontSize: 15,
+                            fontWeight: 600,
+                            cursor: (investing || !canInvestigate) ? "not-allowed" : "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 10,
+                            minHeight: "unset",
+                            letterSpacing: "0.04em",
+                        }}
+                    >
+                        {investing ? (
+                            <>
+                                <span style={{ width: 16, height: 16, border: "2px solid #fff", borderTopColor: "transparent", borderRadius: "50%", animation: "poi-spin 1s linear infinite", display: "inline-block" }} />
+                                Investigating…
+                            </>
+                        ) : "Investigate"}
+                    </button>
+                    {!canInvestigate && <div style={{ fontSize: 10, color: "#4a5568", textAlign: "center", marginTop: 6 }}>Add identifiers or photo to enable investigation</div>}
+                    <style>{`@keyframes poi-spin { to { transform: rotate(360deg); } }`}</style>
+                </div>
+
+                {/* INVESTIGATION RESULTS */}
+                {investStatus === "complete" && investRunAt && (
+                    <div style={mSec}>
+                        <div style={{ ...SEC_HDR, marginBottom: 8 }}>
+                            Investigation Results
+                            <span style={{ marginLeft: 8, fontSize: 9, color: "#4a6080", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                                {new Date(investRunAt).toLocaleDateString()}
+                            </span>
+                        </div>
+                        {Object.entries(investRes).map(([platform, data]) => {
+                            if (!data || typeof data !== "object") return null
+                            return (
+                                <div key={platform} style={{ marginBottom: 10, padding: "10px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.06)" }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: SOCIAL_PLATFORM_COLOR[platform] || "#0d9488", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>{platform}</div>
+                                    {data.found === false && <div style={{ fontSize: 11, color: "#4a5568" }}>No profile found.</div>}
+                                    {data.username && <div style={{ fontSize: 12, color: "#c0ccd8", marginBottom: 2 }}>@{data.username}</div>}
+                                    {data.followers && <div style={{ fontSize: 11, color: "#4a6080" }}>{Number(data.followers).toLocaleString()} followers</div>}
+                                    {data.bio && <div style={{ fontSize: 11, color: "#8899aa", marginTop: 4, lineHeight: 1.4 }}>{data.bio}</div>}
+                                    {data.location && <div style={{ fontSize: 11, color: "#4a6080", marginTop: 2 }}>{data.location}</div>}
+                                    {data.error && <div style={{ fontSize: 11, color: "#f87171" }}>{data.error}</div>}
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
+
+                {/* NETWORK GRAPH — shown when relations exist */}
                 {(local.relations || []).length > 0 && (
-                    <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div style={mSec}>
                         <div style={{ ...SEC_HDR, marginBottom: 8 }}>Network</div>
                         <div style={{ height: 220, background: "rgba(14,20,32,0.6)", borderRadius: 6, overflow: "hidden" }}>
                             <ThreeGraph poi={local} results={investRes} relations={local.relations} allPois={allPois} isInLockedView={isInLockedView} onSwitchPoi={onSwitchPoi} />
@@ -898,19 +1060,8 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
                     </div>
                 )}
 
-                {/* SOCIAL ACCOUNTS */}
-                {(local.social_accounts || []).length > 0 && (
-                    <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                        <div style={{ ...SEC_HDR, marginBottom: 8 }}>Social Accounts</div>
-                        {(local.social_accounts || []).map((acct, i) => (
-                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 4, marginBottom: 4 }}>
-                                <span style={{ fontSize: 11, fontWeight: 700, color: SOCIAL_PLATFORM_COLOR[acct.platform] || "#4a5568", flexShrink: 0, minWidth: 60 }}>{acct.platform}</span>
-                                <span style={{ flex: 1, fontSize: 12, color: "#c0ccd8" }}>{acct.handle}</span>
-                                <button onClick={() => removeSocialAccount(i)} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, padding: 0, minHeight: "unset", lineHeight: 1 }}>×</button>
-                            </div>
-                        ))}
-                    </div>
-                )}
+                {/* BOTTOM SPACER for last section visibility */}
+                <div style={{ height: 24, flexShrink: 0 }} />
             </div>
         )
     }
