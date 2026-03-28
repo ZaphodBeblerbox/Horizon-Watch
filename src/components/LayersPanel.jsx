@@ -583,7 +583,7 @@ export default function LayersPanel({
     if (isMobile) {
         return (
             <BottomSheet isOpen title="Layers" onClose={onClose} height="full">
-                <div style={{ padding: "8px 12px 16px" }}>
+                <div style={{ padding: "16px 12px 24px" }}>
                     {/* Route status banner */}
                     {active.route && routeInfo && !routeInfo.calculating && routeInfo.distance && (
                         <div style={{

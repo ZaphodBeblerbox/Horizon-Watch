@@ -784,9 +784,140 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
         background: saveState === "saved" ? "#16a34a" : saveState === "error" ? "#dc2626" : "#0d9488",
         display: "flex", alignItems: "center", gap: 4, transition: "background 0.2s",
     }
+    const mobileBtn = { ...BTN_SECONDARY, minHeight: "unset", padding: "7px 12px", fontSize: 12, whiteSpace: "nowrap" }
 
+    // ── MOBILE: Instagram-style vertical layout ──────────────────────────────
+    if (isMobile) {
+        return (
+            <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "calc(100vh - 96px)", overflowY: "auto", fontFamily: "inherit", color: "#e8edf2" }}>
+                <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) loadPhoto(f); e.target.value = "" }} />
+
+                {/* HEADER — circular photo + name + tag */}
+                <div style={{ display: "flex", gap: 14, padding: "16px", borderBottom: "1px solid rgba(255,255,255,0.07)", alignItems: "center" }}>
+                    <div onClick={() => fileRef.current?.click()} style={{ width: 80, height: 80, borderRadius: "50%", flexShrink: 0, overflow: "hidden", background: "rgba(255,255,255,0.04)", border: `2px solid ${TAG_COLOR[local.tag || "unknown"]}66`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {(photoPreview || local.photo_path)
+                            ? <img src={photoPreview || `${API}/api/poi/${local.id}/photo`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
+                            : <Silhouette size={52} />
+                        }
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <input ref={nameRef} value={local.name || ""} onChange={e => patch("name", e.target.value)} placeholder="Name" style={{ ...INPUT, fontSize: 20, fontWeight: 700, padding: "2px 0", background: "transparent", border: "none", borderBottom: "1px solid rgba(255,255,255,0.1)", borderRadius: 0, marginBottom: 10 }} />
+                        <select value={local.tag || "unknown"} onChange={e => patch("tag", e.target.value)} style={{ background: `${TAG_COLOR[local.tag || "unknown"]}22`, border: `1px solid ${TAG_COLOR[local.tag || "unknown"]}66`, color: TAG_COLOR[local.tag || "unknown"], borderRadius: 12, padding: "3px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                            {["target", "suspect", "associate", "unknown"].map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+                        </select>
+                    </div>
+                </div>
+
+                {/* ACTION BUTTONS — horizontal scroll */}
+                <div style={{ display: "flex", gap: 6, padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)", overflowX: "auto", flexShrink: 0, WebkitOverflowScrolling: "touch" }}>
+                    <button onClick={() => doSave()} style={{ ...saveBtnStyle, minHeight: "unset", padding: "7px 14px", fontSize: 12, whiteSpace: "nowrap" }}>
+                        {saveState === "saving" && <Spinner />}
+                        {saveState === "saved" ? "✓ Saved" : saveState === "error" ? "✗ Failed" : "Save"}
+                    </button>
+                    <button onClick={() => onLockToggle(local)} style={{ ...mobileBtn, color: local.locked ? "#f59e0b" : "#8899aa", display: "flex", alignItems: "center", gap: 3 }}>
+                        <IconLock locked={local.locked} />{local.locked ? "Locked" : "Lock"}
+                    </button>
+                    {(local.lat && local.lon) && (
+                        <button onClick={showOnMap} style={{ ...mobileBtn, display: "flex", alignItems: "center", gap: 3 }}><IconMap />Map</button>
+                    )}
+                    <button onClick={() => onDuplicate(local)} style={mobileBtn}>Duplicate</button>
+                    {confirmDel
+                        ? <>
+                            <span style={{ fontSize: 11, color: "#dc2626", whiteSpace: "nowrap", alignSelf: "center" }}>Confirm?</span>
+                            <button onClick={() => { setConfirmDel(false); onDelete(local.id) }} style={{ ...BTN_DANGER, minHeight: "unset", padding: "7px 10px", fontSize: 12 }}>Yes</button>
+                            <button onClick={() => setConfirmDel(false)} style={{ ...mobileBtn }}>No</button>
+                          </>
+                        : <button onClick={() => setConfirmDel(true)} style={{ ...BTN_DANGER, minHeight: "unset", padding: "7px 12px", fontSize: 12, whiteSpace: "nowrap" }}>Delete</button>
+                    }
+                </div>
+
+                {/* DESCRIPTION */}
+                <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div style={{ ...SEC_HDR, marginBottom: 8 }}>Description</div>
+                    <textarea rows={3} placeholder="Short description or alias…" value={local.description || ""} onChange={e => patch("description", e.target.value)} style={{ ...INPUT, resize: "none", lineHeight: 1.5 }} />
+                </div>
+
+                {/* IDENTIFIERS */}
+                <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div style={{ ...SEC_HDR, marginBottom: 10 }}>Identifiers</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {[
+                            { icon: <IconEmail />, field: "email",     placeholder: "Email address", type: "email" },
+                            { icon: <IconAt />,    field: "username",  placeholder: "Username / handle", type: "text" },
+                            { icon: <IconPhone />, field: "phone",     placeholder: "Phone number", type: "tel" },
+                            { icon: <IconPerson />, field: "full_name", placeholder: "Full name", type: "text" },
+                        ].map(({ icon, field, placeholder, type }) => (
+                            <div key={field} style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, padding: "8px 12px" }}>
+                                <span style={{ color: "#4a5568", flexShrink: 0 }}>{icon}</span>
+                                <input type={type} value={ids[field] || ""} onChange={e => patchId(field, e.target.value)} placeholder={placeholder} style={{ ...INPUT, background: "transparent", border: "none", padding: 0, fontSize: 14 }} />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* RELATIONS */}
+                <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div style={{ ...SEC_HDR, marginBottom: 8 }}>Relations</div>
+                    {(local.relations || []).length === 0 && !addingRelation && (
+                        <div style={{ fontSize: 11, color: "#4a5568", marginBottom: 8 }}>No relations recorded.</div>
+                    )}
+                    {(local.relations || []).map((rel, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.06)", marginBottom: 6 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: REL_COLOR[rel.relation_type] || "#4a5568", textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>{rel.relation_type}</span>
+                            <span style={{ flex: 1, fontSize: 13, color: "#c0ccd8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rel.poi_name}</span>
+                            <button onClick={() => removeRelation(i)} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, padding: 0, minHeight: "unset", lineHeight: 1, flexShrink: 0 }}>×</button>
+                        </div>
+                    ))}
+                    {!addingRelation && (
+                        <button onClick={() => setAddingRelation(true)} style={{ ...mobileBtn, width: "100%", textAlign: "center", justifyContent: "center", padding: "9px 0", marginTop: 4 }}>+ Add Relation</button>
+                    )}
+                    {addingRelation && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                            <select value={newRelation.poi_id} onChange={e => { const p = availableForRelation.find(x => x.id === e.target.value); setNewRelation(r => ({ ...r, poi_id: e.target.value, poi_name: p?.name || "" })) }} style={{ ...INPUT }}>
+                                <option value="">Select person…</option>
+                                {availableForRelation.map(p => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+                            </select>
+                            <select value={newRelation.relation_type} onChange={e => setNewRelation(r => ({ ...r, relation_type: e.target.value }))} style={{ ...INPUT }}>
+                                {REL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                            <div style={{ display: "flex", gap: 6 }}>
+                                <button onClick={addRelation} style={{ ...BTN_PRIMARY, flex: 1, padding: "9px 0", minHeight: "unset", justifyContent: "center" }}>Add</button>
+                                <button onClick={() => setAddingRelation(false)} style={{ ...mobileBtn, flex: 1, padding: "9px 0" }}>Cancel</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* NETWORK GRAPH — only shown when relations exist */}
+                {(local.relations || []).length > 0 && (
+                    <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                        <div style={{ ...SEC_HDR, marginBottom: 8 }}>Network</div>
+                        <div style={{ height: 220, background: "rgba(14,20,32,0.6)", borderRadius: 6, overflow: "hidden" }}>
+                            <ThreeGraph poi={local} results={investRes} relations={local.relations} allPois={allPois} isInLockedView={isInLockedView} onSwitchPoi={onSwitchPoi} />
+                        </div>
+                    </div>
+                )}
+
+                {/* SOCIAL ACCOUNTS */}
+                {(local.social_accounts || []).length > 0 && (
+                    <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                        <div style={{ ...SEC_HDR, marginBottom: 8 }}>Social Accounts</div>
+                        {(local.social_accounts || []).map((acct, i) => (
+                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 4, marginBottom: 4 }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: SOCIAL_PLATFORM_COLOR[acct.platform] || "#4a5568", flexShrink: 0, minWidth: 60 }}>{acct.platform}</span>
+                                <span style={{ flex: 1, fontSize: 12, color: "#c0ccd8" }}>{acct.handle}</span>
+                                <button onClick={() => removeSocialAccount(i)} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, padding: 0, minHeight: "unset", lineHeight: 1 }}>×</button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        )
+    }
+
+    // ── DESKTOP: grid layout ─────────────────────────────────────────────────
     return (
-        <div style={isMobile ? { display: "flex", flexDirection: "column", width: "100%", height: "calc(100vh - 96px)", overflowY: "auto" } : { display: "grid", gridTemplateColumns: "240px 1fr 380px", gridTemplateRows: "220px 1fr", width: "100%", height: "calc(100vh - 88px)", overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "240px 1fr 380px", gridTemplateRows: "220px 1fr", width: "100%", height: "calc(100vh - 88px)", overflow: "hidden" }}>
             {/* Cell 1 [row1, col1] — Photo zone */}
             <div
                 onDragOver={e => { e.preventDefault(); setDragging(true) }}
