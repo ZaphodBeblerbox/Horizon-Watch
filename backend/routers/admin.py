@@ -7,7 +7,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app_shared import require_approved_user, require_admin_user, require_superadmin_user, send_email, user_dict, FRONTEND_URL, ACTIVITY_LOG
+from app_shared import (
+    require_approved_user, require_admin_user, require_superadmin_user,
+    send_email, user_dict, FRONTEND_URL,
+    ACTIVITY_LOG, USER_LOCATION_HISTORY, USER_POI_LINKS,
+)
 
 router = APIRouter(tags=["admin"])
 
@@ -316,3 +320,25 @@ def get_activity_log(
     if action_type:
         logs = [l for l in logs if l["action"] == action_type]
     return logs[:limit]
+
+
+@router.get("/api/admin/user-track/{user_id}")
+def get_user_track(user_id: str, current_user=Depends(require_superadmin_user)):
+    return USER_LOCATION_HISTORY.get(user_id, [])
+
+
+# ── User ↔ POI links ──────────────────────────────────────────────────────────
+
+class LinkPoiBody(BaseModel):
+    poi_id: str
+
+
+@router.post("/api/admin/user/{user_id}/link-poi")
+def link_user_to_poi(user_id: str, body: LinkPoiBody, current_user=Depends(require_superadmin_user)):
+    USER_POI_LINKS[user_id] = body.poi_id
+    return {"status": "linked", "user_id": user_id, "poi_id": body.poi_id}
+
+
+@router.get("/api/admin/user/{user_id}/poi-link")
+def get_user_poi_link(user_id: str, current_user=Depends(require_superadmin_user)):
+    return {"poi_id": USER_POI_LINKS.get(user_id)}

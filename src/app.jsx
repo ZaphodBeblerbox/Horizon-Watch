@@ -24,6 +24,7 @@ import PreferencesPanel from "./components/PreferencesPanel.jsx"
 import LoginPage from "./components/LoginPage.jsx"
 import AdminPanel from "./components/AdminPanel.jsx"
 import NotificationBar from "./components/NotificationBar.jsx"
+import StartupModal from "./components/StartupModal.jsx"
 import BottomNav from "./components/BottomNav.jsx"
 import MobileDrawer from "./components/MobileDrawer.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
@@ -130,8 +131,9 @@ export default function App() {
     const [showTV,       setShowTV]       = useState(false)
     const [authChecked,  setAuthChecked]  = useState(false)
     const [currentUser,  setCurrentUser]  = useState(null)
-    const [showAdmin,    setShowAdmin]    = useState(false)
-    const [showChat,     setShowChat]     = useState(false)
+    const [showAdmin,        setShowAdmin]        = useState(false)
+    const [showChat,         setShowChat]         = useState(false)
+    const [showStartupModal, setShowStartupModal] = useState(false)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
 
@@ -167,6 +169,13 @@ export default function App() {
         post()
         const t = setInterval(post, 60000)
         return () => clearInterval(t)
+    }, [currentUser])
+
+    // ── Startup modal — show once per user session ────────────────────────────
+    useEffect(() => {
+        if (currentUser && !localStorage.getItem("hw-skip-startup-modal")) {
+            setShowStartupModal(true)
+        }
     }, [currentUser])
 
     // ── GPS location tracking — send to backend on login, then every 5 min ───
@@ -1001,6 +1010,15 @@ export default function App() {
             {/* Admin panel */}
             {showAdmin && (currentUser?.role === "admin" || currentUser?.role === "super_admin") && (
                 <AdminPanel user={currentUser} onClose={() => setShowAdmin(false)} />
+            )}
+
+            {/* Startup modal */}
+            {showStartupModal && (
+                <StartupModal
+                    onDismiss={() => setShowStartupModal(false)}
+                    onReadBriefing={() => openTab("briefing")}
+                    onViewAlerts={() => openRightPanel("alerts")}
+                />
             )}
 
             {/* Real-time toast notifications */}

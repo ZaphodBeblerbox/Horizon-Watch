@@ -144,51 +144,40 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
             borderLeft:           "1px solid rgba(56,189,248,0.15)",
             boxShadow:            "-8px 0 32px rgba(0, 0, 0, 0.5)",
             zIndex:               2100,
-            display:              "flex",
-            flexDirection:        "column",
-            overflowY:            "auto",
+            overflow:             "hidden",
             transform:            visible ? "translateX(0)" : "translateX(100%)",
             transition:           "transform 0.25s ease-out",
             fontFamily:           "Inter, -apple-system, sans-serif",
             color:                "#e0e0e0",
         }}>
-            {/* Gradient header bar — always on top of image */}
-            <div style={{
-                position:   "absolute",
-                top:        0,
-                left:       0,
-                right:      0,
-                height:     44,
-                background: "linear-gradient(to bottom, rgba(10,14,24,0.92) 0%, rgba(10,14,24,0.0) 100%)",
-                zIndex:     100,
-                display:    "flex",
-                alignItems: "flex-start",
-                justifyContent: "flex-end",
-                padding:    "8px 8px 0 0",
-                pointerEvents: "none",
-            }}>
-                <button
-                    onClick={handleClose}
-                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.15)"; e.currentTarget.style.color = "#ffffff" }}
-                    onMouseOut={e => { e.currentTarget.style.background = "rgba(0,0,0,0.45)"; e.currentTarget.style.color = "#94a3b8" }}
-                    style={{
-                        background:   "rgba(0,0,0,0.45)",
-                        border:       "1px solid rgba(148,163,184,0.25)",
-                        color:        "#94a3b8",
-                        fontSize:     14,
-                        cursor:       "pointer",
-                        width:        28,
-                        height:       28,
-                        borderRadius: 4,
-                        display:      "flex",
-                        alignItems:   "center",
-                        justifyContent: "center",
-                        lineHeight:   1,
-                        pointerEvents: "auto",
-                        flexShrink:   0,
-                    }}
-                >✕</button>
-            </div>
+            {/* X button — lives on outer (non-scrolling) container, always visible */}
+            <button
+                onClick={handleClose}
+                onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.15)"; e.currentTarget.style.color = "#ffffff" }}
+                onMouseOut={e => { e.currentTarget.style.background = "rgba(15,23,42,0.9)"; e.currentTarget.style.color = "#e2e8f0" }}
+                style={{
+                    position:      "absolute",
+                    top:           12,
+                    right:         12,
+                    width:         28,
+                    height:        28,
+                    background:    "rgba(15,23,42,0.9)",
+                    border:        "1px solid rgba(148,163,184,0.5)",
+                    borderRadius:  6,
+                    color:         "#e2e8f0",
+                    fontSize:      16,
+                    cursor:        "pointer",
+                    display:       "flex",
+                    alignItems:    "center",
+                    justifyContent: "center",
+                    zIndex:        9999,
+                    boxShadow:     "0 2px 8px rgba(0,0,0,0.4)",
+                    lineHeight:    1,
+                }}
+            >✕</button>
+
+            {/* Scrollable content wrapper — X button stays outside this */}
+            <div style={{ height: "100%", overflowY: "auto", display: "flex", flexDirection: "column" }}>
 
             {/* Image */}
             {imgUrl && !imgError && (
@@ -384,6 +373,7 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
                     <div style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.3)", padding: "10px 0" }}>Generating intelligence brief…</div>
                 )}
             </div>
+            </div>{/* end scrollable wrapper */}
         </div>
     )
 }

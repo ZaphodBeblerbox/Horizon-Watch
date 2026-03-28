@@ -128,6 +128,25 @@ def log_activity(user_id: str, email: str, action: str, details: dict = None, ip
         ACTIVITY_LOG.pop(0)
 
 
+# ── Location history (in-memory, 7-day rolling window) ───────────────────────
+
+USER_LOCATION_HISTORY: dict = {}   # user_id -> [{lat, lon, timestamp}, ...]
+USER_POI_LINKS:        dict = {}   # user_id -> poi_id
+_HISTORY_DAYS = 7
+
+
+def append_location_history(user_id: str, lat: float, lon: float):
+    now = datetime.utcnow()
+    if user_id not in USER_LOCATION_HISTORY:
+        USER_LOCATION_HISTORY[user_id] = []
+    USER_LOCATION_HISTORY[user_id].append({"lat": lat, "lon": lon, "timestamp": now.isoformat()})
+    cutoff = now - timedelta(days=_HISTORY_DAYS)
+    USER_LOCATION_HISTORY[user_id] = [
+        p for p in USER_LOCATION_HISTORY[user_id]
+        if datetime.fromisoformat(p["timestamp"]) > cutoff
+    ]
+
+
 # ── Email helper ──────────────────────────────────────────────────────────────
 
 def send_email(to: str, subject: str, html: str) -> None:

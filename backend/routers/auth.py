@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app_shared import (
     HAS_AUTH, pwd_context, make_jwt, send_email,
     require_approved_user, FRONTEND_URL, user_dict,
-    log_activity,
+    log_activity, append_location_history,
 )
 
 router = APIRouter(tags=["auth"])
@@ -253,6 +253,7 @@ def update_user_location(body: LocationBody, request: Request, current_user=Depe
             u.location_updated = datetime.utcnow()
             db.commit()
         ip = (request.headers.get("X-Forwarded-For") or request.client.host or "").split(",")[0].strip()
+        append_location_history(current_user.id, body.lat, body.lon)
         log_activity(current_user.id, current_user.email, "location_update", {"lat": body.lat, "lon": body.lon}, ip)
         return {"status": "ok"}
     finally:

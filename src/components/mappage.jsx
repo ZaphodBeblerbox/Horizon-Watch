@@ -278,6 +278,14 @@ const MAP_STYLES = `
     72%  { opacity: 1; transform: translateX(-50%) translateY(0);   }
     100% { opacity: 0; transform: translateX(-50%) translateY(4px); }
 }
+@keyframes hw-pulse-blue {
+    0%,100% { box-shadow: 0 0 20px #3b82f688, 0 0 40px #3b82f644; }
+    50%     { box-shadow: 0 0 32px #3b82f6aa, 0 0 64px #3b82f666; }
+}
+@keyframes hw-pulse-orange {
+    0%,100% { box-shadow: 0 0 14px #f9731688, 0 0 28px #f9731644; }
+    50%     { box-shadow: 0 0 24px #f97316aa, 0 0 48px #f9731666; }
+}
 @keyframes legendDot {
     0%, 100% { opacity: 1;   }
     50%       { opacity: 0.3; }
@@ -3771,6 +3779,9 @@ export default function MapPage({
 
     const [userLocationsData, setUserLocationsData] = useState([])
     const userLocationsLayerRef                  = useRef(null)
+    const [userTrackUserId, setUserTrackUserId]   = useState(null)
+    const [userTrackData,   setUserTrackData]     = useState([])
+    const userTrackLayerRef                      = useRef(null)
 
     // ── Contextual borders + EEZ ──────────────────────────────────────────────
     const [ctxBorderFeatures, setCtxBorderFeatures] = useState([])   // GeoJSON features to highlight
@@ -4660,23 +4671,100 @@ export default function MapPage({
             userLocationsLayerRef.current.remove()
             return
         }
+        const isSA = currentUser?.is_super_admin || currentUser?.role === "superadmin"
         userLocationsData.forEach(u => {
-            const color = u.is_live ? "#22c55e" : "#eab308"
-            const html = `<div style="width:32px;height:32px;background:rgba(15,23,42,0.92);border:2.5px solid ${color};border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px ${color}55;font-size:14px;">&#128100;</div>`
-            const icon = L.divIcon({ className: "", html, iconSize: [32, 32], iconAnchor: [16, 16] })
+            const isMe = u.user_id === currentUser?.id
+            let color, pulse, size
+            if (isMe) {
+                color = "#3b82f6"; pulse = "hw-pulse-blue 2s ease-in-out infinite"; size = 40
+            } else if (u.is_live) {
+                color = "#22c55e"; pulse = "none"; size = 32
+            } else {
+                color = "#f97316"; pulse = "hw-pulse-orange 2.5s ease-in-out infinite"; size = 32
+            }
+            const border = isMe ? 3 : 2
+            const html = `<div style="width:${size}px;height:${size}px;background:rgba(15,23,42,0.92);border:${border}px solid ${color};border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 0 16px ${color}66;animation:${pulse};font-size:${isMe ? 18 : 14}px;">&#128100;</div>`
+            const icon = L.divIcon({ className: "", html, iconSize: [size, size], iconAnchor: [size/2, size/2] })
             const marker = L.marker([u.lat, u.lon], { icon })
-            marker.bindTooltip(
-                `<div style="background:rgba(15,23,42,0.95);padding:8px 10px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);font-family:Inter,sans-serif;">` +
-                `<div style="font-weight:600;font-size:12px;color:#e2e8f0;">${u.name}</div>` +
-                `<div style="font-size:10px;color:#94a3b8;margin-top:2px;">${u.role}</div>` +
-                `<div style="font-size:10px;color:${color};margin-top:3px;">${u.is_live ? "Live" : `${u.age_minutes}m ago`}</div>` +
+            const statusLabel = u.is_live ? `<span style="color:#22c55e;">Live</span>` : `<span style="color:#f97316;">${u.age_minutes}m ago</span>`
+            const trackBtn = isSA && !isMe
+                ? `<button onclick="window.__akiliShowTrack('${u.user_id}')" style="margin-top:6px;width:100%;padding:4px 0;background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.3);border-radius:4px;color:#38bdf8;font-size:10px;cursor:pointer;font-family:Inter,sans-serif;">Show track</button>` +
+                  `<button onclick="window.__akiliLinkPOI('${u.user_id}')" style="margin-top:4px;width:100%;padding:4px 0;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.3);border-radius:4px;color:#a78bfa;font-size:10px;cursor:pointer;font-family:Inter,sans-serif;">Link to POI</button>`
+                : ""
+            marker.bindPopup(
+                `<div style="background:rgba(15,23,42,0.98);padding:10px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);font-family:Inter,sans-serif;min-width:140px;">` +
+                `<div style="font-weight:700;font-size:12px;color:#e2e8f0;">${u.name}${isMe ? " <span style='color:#3b82f6;font-size:9px;'>(you)</span>" : ""}</div>` +
+                `<div style="font-size:10px;color:#64748b;margin-top:2px;">${u.role}</div>` +
+                `<div style="font-size:10px;margin-top:4px;">${statusLabel}</div>` +
+                trackBtn +
                 `</div>`,
-                { className: "", direction: "top", offset: [0, -4] }
+                { className: "hw-user-popup", maxWidth: 200 }
             )
             userLocationsLayerRef.current.addLayer(marker)
         })
         userLocationsLayerRef.current.addTo(mapRef.current)
-    }, [userLocationsData, active.userLocations])
+    }, [userLocationsData, active.userLocations, currentUser])
+
+    // ── User track polyline ───────────────────────────────────────────────────
+    // Expose globals for popup button onclick handlers
+    useEffect(() => {
+        window.__akiliShowTrack = (userId) => setUserTrackUserId(userId)
+        window.__akiliLinkPOI = async (userId) => {
+            if (!poiData.length) {
+                alert("No POI profiles loaded. Enable the POI layer first.")
+                return
+            }
+            const names = poiData.map((p, i) => `${i + 1}. ${p.name || p.id}`).join("\n")
+            const input = prompt(`Link user to POI:\n${names}\n\nEnter number:`)
+            if (!input) return
+            const idx = parseInt(input, 10) - 1
+            const poi = poiData[idx]
+            if (!poi) return
+            try {
+                await fetch(`${API}/api/admin/user/${userId}/link-poi`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", Authorization: "Bearer " + localStorage.getItem("hw-auth-token") },
+                    body: JSON.stringify({ poi_id: poi.id }),
+                })
+                // Refresh markers so tooltip updates
+                setUserLocationsData(d => [...d])
+            } catch { /* ignore */ }
+        }
+        return () => { delete window.__akiliShowTrack; delete window.__akiliLinkPOI }
+    }, [poiData])
+
+    useEffect(() => {
+        if (!userTrackUserId) return
+        fetch(`${API}/api/admin/user-track/${userTrackUserId}`, {
+            headers: { Authorization: "Bearer " + localStorage.getItem("hw-auth-token") }
+        })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setUserTrackData(Array.isArray(d) ? d : []))
+            .catch(() => setUserTrackData([]))
+    }, [userTrackUserId])
+
+    useEffect(() => {
+        // Clean up previous track
+        if (userTrackLayerRef.current) {
+            userTrackLayerRef.current.remove()
+            userTrackLayerRef.current = null
+        }
+        if (!mapRef.current || userTrackData.length < 2) return
+        const group = L.layerGroup()
+        const coords = userTrackData.map(p => [p.lat, p.lon])
+        L.polyline(coords, { color: "#3b82f6", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(group)
+        userTrackData.forEach((pt, i) => {
+            const opacity = 0.25 + (i / userTrackData.length) * 0.75
+            L.circleMarker([pt.lat, pt.lon], {
+                radius: 3.5, fillColor: "#3b82f6", fillOpacity: opacity, stroke: false,
+            })
+            .bindTooltip(new Date(pt.timestamp).toLocaleString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" }), { className: "" })
+            .addTo(group)
+        })
+        group.addTo(mapRef.current)
+        userTrackLayerRef.current = group
+        return () => { group.remove() }
+    }, [userTrackData])
 
     // ── POI layer: fetch all profiles when layer toggled on ───────────────────
     useEffect(() => {
