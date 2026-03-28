@@ -169,6 +169,22 @@ export default function App() {
         return () => clearInterval(t)
     }, [currentUser])
 
+    // ── GPS location tracking — send to backend on login, then every 5 min ───
+    useEffect(() => {
+        if (!currentUser || !navigator.geolocation) return
+        const send = (pos) => {
+            apiFetch("/api/user/location", {
+                method: "POST",
+                body: JSON.stringify({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+            }).catch(() => {})
+        }
+        navigator.geolocation.getCurrentPosition(send, () => {})
+        const t = setInterval(() => {
+            navigator.geolocation.getCurrentPosition(send, () => {})
+        }, 5 * 60 * 1000)
+        return () => clearInterval(t)
+    }, [currentUser])
+
     // ── Mission profile ───────────────────────────────────────────────────────
     const [profile, setProfile] = useState(() => loadProfile())
     const [focusRegions, setFocusRegions] = useState(() => loadProfile()?.focusRegions || [])
@@ -796,6 +812,7 @@ export default function App() {
                         key={activeWorkspaceId}
                         selected={null}
                         onSelect={() => {}}
+                        currentUser={currentUser}
                         activeSituation={activeSituation}
                         searchTarget={searchTarget}
                         profile={profile}

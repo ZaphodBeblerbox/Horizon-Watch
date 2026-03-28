@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app_shared import (
     HAS_AUTH, pwd_context, make_jwt, send_email,
     require_approved_user, FRONTEND_URL, user_dict,
+    log_activity,
 )
 
 router = APIRouter(tags=["auth"])
@@ -52,7 +53,7 @@ class SessionBody(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/api/auth/login")
-def auth_login(body: LoginBody):
+def auth_login(body: LoginBody, request: Request):
     if not HAS_AUTH:
         raise HTTPException(status_code=503, detail="Auth not available")
     import datetime as _dt
@@ -66,6 +67,8 @@ def auth_login(body: LoginBody):
             raise HTTPException(status_code=401, detail="Account pending approval")
         user.last_login = _dt.datetime.utcnow()
         db.commit()
+        ip = (request.headers.get("X-Forwarded-For") or request.client.host or "").split(",")[0].strip()
+        log_activity(user.id, user.email, "login", {"method": "password"}, ip)
         token = make_jwt(user.id)
         return {
             "access_token": token,
@@ -229,5 +232,28 @@ def users_search(q: str = Query(""), current_user=Depends(require_approved_user)
             (DbUser.name.ilike(like) | DbUser.email.ilike(like)),
         ).limit(10).all()
         return [{"id": u.id, "name": u.name, "email": u.email, "role": u.role} for u in results]
+    finally:
+        db.close()
+
+
+class LocationBody(BaseModel):
+    lat: float
+    lon: float
+
+
+@router.post("/api/user/location")
+def update_user_location(body: LocationBody, request: Request, current_user=Depends(require_approved_user)):
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        u = db.query(DbUser).filter(DbUser.id == current_user.id).first()
+        if u:
+            u.location_lat     = body.lat
+            u.location_lon     = body.lon
+            u.location_updated = datetime.utcnow()
+            db.commit()
+        ip = (request.headers.get("X-Forwarded-For") or request.client.host or "").split(",")[0].strip()
+        log_activity(current_user.id, current_user.email, "location_update", {"lat": body.lat, "lon": body.lon}, ip)
+        return {"status": "ok"}
     finally:
         db.close()

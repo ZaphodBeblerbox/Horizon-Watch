@@ -167,6 +167,8 @@ export default function LayersPanel({
     // AIS
     aisStatus,
     aisVesselCount,
+    // Auth
+    currentUser,
 }) {
     const aisStatusKey = aisStatus?.error ? "error" : aisStatus?.connected ? "ok" : "pending"
     const ss = { ...(sourceStatus || {}), aisVessels: aisStatusKey }
@@ -548,6 +550,19 @@ export default function LayersPanel({
                     onToggle={() => onToggle("liveTicker")}
                     isManual={isManual("liveTicker")}
                 />
+
+                {/* INTELLIGENCE — superadmin only */}
+                {(currentUser?.is_super_admin || currentUser?.role === "superadmin") && (
+                    <>
+                        <SectionHeader label="Intelligence" />
+                        <LayerRow
+                            label="User Locations"
+                            hint="live operator positions"
+                            toggled={active.userLocations}
+                            onToggle={() => onToggle("userLocations")}
+                        />
+                    </>
+                )}
 
             </div>
         </div>

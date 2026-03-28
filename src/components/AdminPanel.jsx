@@ -48,11 +48,14 @@ const TD = ({ children, style }) => (
 
 // ── Main inner component ──────────────────────────────────────────────────────
 function AdminPanelInner({ user, onClose }) {
-    const [tab,       setTab]      = useState("users")
-    const [users,     setUsers]    = useState([])
-    const [loading,   setLoading]  = useState(false)
-    const [loadError, setLoadError] = useState(null)
-    const [panelError, setPanelError] = useState(null)
+    const [tab,          setTab]         = useState("users")
+    const [users,        setUsers]       = useState([])
+    const [loading,      setLoading]     = useState(false)
+    const [loadError,    setLoadError]   = useState(null)
+    const [panelError,   setPanelError]  = useState(null)
+    const [activityLog,  setActivityLog] = useState([])
+    const [logFilter,    setLogFilter]   = useState("")
+    const [logLoading,   setLogLoading]  = useState(false)
 
     const fetchUsers = useCallback(async () => {
         setLoading(true)
@@ -72,6 +75,17 @@ function AdminPanelInner({ user, onClose }) {
     }, [])
 
     useEffect(() => { if (tab === "users") fetchUsers() }, [tab, fetchUsers])
+
+    useEffect(() => {
+        if (tab !== "activity" || !user?.is_super_admin) return
+        setLogLoading(true)
+        const url = `${API_BASE}/api/admin/activity-log?limit=200${logFilter ? `&action_type=${logFilter}` : ""}`
+        fetch(url, { headers: { Authorization: "Bearer " + localStorage.getItem(TOKEN_KEY) } })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setActivityLog(Array.isArray(d) ? d : []))
+            .catch(() => setActivityLog([]))
+            .finally(() => setLogLoading(false))
+    }, [tab, logFilter, user?.is_super_admin])
 
     async function handleApprove(id) {
         try {
@@ -197,8 +211,70 @@ function AdminPanelInner({ user, onClose }) {
             {/* Body */}
             <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
                 {tab === "activity" && (
-                    <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 12, marginTop: 40, textAlign: "center" }}>
-                        Activity log — coming soon
+                    <div>
+                        {!user?.is_super_admin ? (
+                            <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 12, marginTop: 40, textAlign: "center" }}>Superadmin access required</div>
+                        ) : (
+                            <>
+                                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                                    <select
+                                        value={logFilter}
+                                        onChange={e => setLogFilter(e.target.value)}
+                                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, color: "#e0e0e0", fontSize: 11, padding: "4px 8px", cursor: "pointer" }}
+                                    >
+                                        <option value="">All Actions</option>
+                                        <option value="login">Logins</option>
+                                        <option value="logout">Logouts</option>
+                                        <option value="location_update">Location Updates</option>
+                                    </select>
+                                    {logLoading && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Loading…</span>}
+                                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginLeft: "auto" }}>{activityLog.length} entries</span>
+                                </div>
+                                {activityLog.length === 0 && !logLoading ? (
+                                    <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, textAlign: "center", marginTop: 32 }}>No activity recorded yet</div>
+                                ) : (
+                                    <div style={{ overflowX: "auto" }}>
+                                        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+                                            <thead>
+                                                <tr>
+                                                    <TH>Time</TH>
+                                                    <TH>User</TH>
+                                                    <TH>Action</TH>
+                                                    <TH>Details</TH>
+                                                    <TH>IP</TH>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {activityLog.map(log => (
+                                                    <tr key={log.id}>
+                                                        <TD style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, whiteSpace: "nowrap" }}>
+                                                            {new Date(log.timestamp).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                                                        </TD>
+                                                        <TD style={{ fontSize: 11 }}>{log.email}</TD>
+                                                        <TD>
+                                                            <span style={{
+                                                                fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+                                                                padding: "2px 6px", borderRadius: 3,
+                                                                background: log.action === "login" ? "rgba(34,197,94,0.15)" : log.action === "location_update" ? "rgba(56,189,248,0.15)" : "rgba(255,255,255,0.06)",
+                                                                color: log.action === "login" ? "#22c55e" : log.action === "location_update" ? "#38bdf8" : "rgba(255,255,255,0.4)",
+                                                            }}>
+                                                                {log.action}
+                                                            </span>
+                                                        </TD>
+                                                        <TD style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, fontFamily: "monospace" }}>
+                                                            {log.action === "location_update"
+                                                                ? `${Number(log.details?.lat).toFixed(4)}, ${Number(log.details?.lon).toFixed(4)}`
+                                                                : JSON.stringify(log.details)}
+                                                        </TD>
+                                                        <TD style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, fontFamily: "monospace" }}>{log.ip}</TD>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </>
+                        )}
                     </div>
                 )}
 

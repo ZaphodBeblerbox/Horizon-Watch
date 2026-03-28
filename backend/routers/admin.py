@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app_shared import require_approved_user, require_admin_user, send_email, user_dict, FRONTEND_URL
+from app_shared import require_approved_user, require_admin_user, require_superadmin_user, send_email, user_dict, FRONTEND_URL, ACTIVITY_LOG
 
 router = APIRouter(tags=["admin"])
 
@@ -270,3 +270,49 @@ def chat_send_message(partner_id: str, body: MsgBody, current_user=Depends(requi
         }
     finally:
         db.close()
+
+
+# ── User location tracking ────────────────────────────────────────────────────
+
+@router.get("/api/admin/user-locations")
+def get_user_locations(current_user=Depends(require_superadmin_user)):
+    from database import SessionLocal, User as DbUser
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        users = db.query(DbUser).filter(
+            DbUser.approved == True,
+            DbUser.location_updated >= cutoff,
+            DbUser.location_lat != None,
+            DbUser.location_lon != None,
+        ).all()
+        now = datetime.utcnow()
+        result = []
+        for u in users:
+            age_minutes = round((now - u.location_updated).total_seconds() / 60) if u.location_updated else 9999
+            result.append({
+                "user_id":     u.id,
+                "lat":         u.location_lat,
+                "lon":         u.location_lon,
+                "timestamp":   u.location_updated.isoformat() if u.location_updated else None,
+                "email":       u.email,
+                "name":        u.name or u.email,
+                "role":        u.role,
+                "is_live":     age_minutes < 5,
+                "age_minutes": age_minutes,
+            })
+        return result
+    finally:
+        db.close()
+
+
+@router.get("/api/admin/activity-log")
+def get_activity_log(
+    limit: int = 200,
+    action_type: str = None,
+    current_user=Depends(require_superadmin_user),
+):
+    logs = list(reversed(ACTIVITY_LOG))
+    if action_type:
+        logs = [l for l in logs if l["action"] == action_type]
+    return logs[:limit]

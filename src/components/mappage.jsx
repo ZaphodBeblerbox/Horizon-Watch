@@ -3384,6 +3384,7 @@ export default function MapPage({
     focusRegions     = [],    // string[] — active focus regions for event filtering
     onPanelOpen      = null,  // () => void — called when map opens a fixed side panel
     externalPanelOpen = false, // bool — when true, close map's fixed panels
+    currentUser      = null,  // authenticated user object — for superadmin-only features
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -3428,6 +3429,7 @@ export default function MapPage({
             poi: false,
             deployments: false,
             aisVessels: false,
+            userLocations: false,
         }
         let stored = {}
         try { stored = JSON.parse(localStorage.getItem(LAYER_STORAGE_KEY) || "{}") } catch {}
@@ -3766,6 +3768,9 @@ export default function MapPage({
     const [selectedPoiMarker, setSelectedPoiMarker] = useState(null)
     const poiMapRef                             = useRef(null)
     const prePOILayersRef                       = useRef(null)
+
+    const [userLocationsData, setUserLocationsData] = useState([])
+    const userLocationsLayerRef                  = useRef(null)
 
     // ── Contextual borders + EEZ ──────────────────────────────────────────────
     const [ctxBorderFeatures, setCtxBorderFeatures] = useState([])   // GeoJSON features to highlight
@@ -4621,6 +4626,57 @@ export default function MapPage({
     }, [active.deployments])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // Shipping lanes use hardcoded _SHIPPING_ROUTES_HARDCODED constant — no fetch needed
+
+    // ── User Locations layer (superadmin only) ────────────────────────────────
+    useEffect(() => {
+        const isSuperAdmin = currentUser?.is_super_admin || currentUser?.role === "superadmin"
+        if (!active.userLocations || !isSuperAdmin) {
+            setUserLocationsData([])
+            return
+        }
+        let cancelled = false
+        const load = async () => {
+            try {
+                const res = await fetch(`${API}/api/admin/user-locations`, {
+                    headers: { Authorization: "Bearer " + localStorage.getItem("hw-auth-token") }
+                })
+                if (!res.ok) return
+                const data = await res.json()
+                if (!cancelled) setUserLocationsData(Array.isArray(data) ? data : [])
+            } catch { /* ignore */ }
+        }
+        load()
+        const iv = setInterval(load, 30000)
+        return () => { cancelled = true; clearInterval(iv) }
+    }, [active.userLocations, currentUser])
+
+    useEffect(() => {
+        if (!mapRef.current) return
+        if (!userLocationsLayerRef.current) {
+            userLocationsLayerRef.current = L.layerGroup()
+        }
+        userLocationsLayerRef.current.clearLayers()
+        if (!active.userLocations || userLocationsData.length === 0) {
+            userLocationsLayerRef.current.remove()
+            return
+        }
+        userLocationsData.forEach(u => {
+            const color = u.is_live ? "#22c55e" : "#eab308"
+            const html = `<div style="width:32px;height:32px;background:rgba(15,23,42,0.92);border:2.5px solid ${color};border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px ${color}55;font-size:14px;">&#128100;</div>`
+            const icon = L.divIcon({ className: "", html, iconSize: [32, 32], iconAnchor: [16, 16] })
+            const marker = L.marker([u.lat, u.lon], { icon })
+            marker.bindTooltip(
+                `<div style="background:rgba(15,23,42,0.95);padding:8px 10px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);font-family:Inter,sans-serif;">` +
+                `<div style="font-weight:600;font-size:12px;color:#e2e8f0;">${u.name}</div>` +
+                `<div style="font-size:10px;color:#94a3b8;margin-top:2px;">${u.role}</div>` +
+                `<div style="font-size:10px;color:${color};margin-top:3px;">${u.is_live ? "Live" : `${u.age_minutes}m ago`}</div>` +
+                `</div>`,
+                { className: "", direction: "top", offset: [0, -4] }
+            )
+            userLocationsLayerRef.current.addLayer(marker)
+        })
+        userLocationsLayerRef.current.addTo(mapRef.current)
+    }, [userLocationsData, active.userLocations])
 
     // ── POI layer: fetch all profiles when layer toggled on ───────────────────
     useEffect(() => {
@@ -6974,6 +7030,7 @@ export default function MapPage({
                     onInfraToggle={toggleInfra}
                     zoom={zoom}
                     onClose={onLayersPanelClose}
+                    currentUser={currentUser}
                     sourceStatus={sourceStatus}
                     adsbLive={adsbLive}
                     adsbCount={adsbCount}

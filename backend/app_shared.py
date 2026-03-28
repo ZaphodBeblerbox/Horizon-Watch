@@ -10,6 +10,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
+import uuid as _uuid_mod
 from fastapi import HTTPException, Depends
 
 # ── JWT / auth config ─────────────────────────────────────────────────────────
@@ -95,6 +96,36 @@ def require_admin_user(credentials: Optional[_HTTPCreds] = Depends(auth_bearer) 
     if user.role != "admin" and not user.is_super_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
+def require_superadmin_user(credentials: Optional[_HTTPCreds] = Depends(auth_bearer) if HAS_AUTH else None):
+    """Raises 403 if not super-admin."""
+    user = get_user_from_token(credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not user.is_super_admin:
+        raise HTTPException(status_code=403, detail="Superadmin only")
+    return user
+
+
+# ── Activity log (in-memory) ──────────────────────────────────────────────────
+
+ACTIVITY_LOG: list = []
+_ACTIVITY_LOG_MAX = 10000
+
+
+def log_activity(user_id: str, email: str, action: str, details: dict = None, ip: str = None):
+    ACTIVITY_LOG.append({
+        "id":        str(_uuid_mod.uuid4()),
+        "user_id":   user_id,
+        "email":     email,
+        "action":    action,
+        "details":   details or {},
+        "ip":        ip or "",
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    if len(ACTIVITY_LOG) > _ACTIVITY_LOG_MAX:
+        ACTIVITY_LOG.pop(0)
 
 
 # ── Email helper ──────────────────────────────────────────────────────────────
