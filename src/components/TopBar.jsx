@@ -36,6 +36,13 @@ export default function TopBar({
     const [time,       setTime]       = useState(new Date())
     const [fullscreen, setFullscreen] = useState(false)
     const [fsHover,    setFsHover]    = useState(false)
+    const [isMobile,   setIsMobile]   = useState(() => window.innerWidth < 768)
+
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
 
     useEffect(() => {
         const t = setInterval(() => setTime(new Date()), 1000)
@@ -96,7 +103,7 @@ export default function TopBar({
                 paddingRight: 14,
                 userSelect:   "none",
                 borderRight:  "1px solid rgba(255,255,255,0.06)",
-                minWidth:     172,
+                minWidth:     isMobile ? "auto" : 172,
             }}>
                 <Logo size={48} />
                 <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
@@ -121,70 +128,75 @@ export default function TopBar({
                 </div>
             </div>
 
-            {/* Centre: Tab bar — fills remaining space */}
-            <TabBar
-                tabs={tabs}
-                activeTabId={activeTabId}
-                height={32}
-                iconSize={14}
-                onSwitch={onTabSwitch}
-                onClose={onTabClose}
-                onNew={onTabNew}
-                onReorder={onTabReorder}
-                onRename={onTabRename}
-                canClose={tab => tab.type !== "map"}
-            />
+            {/* Centre: Tab bar — desktop only; BottomNav handles mobile nav */}
+            {!isMobile && (
+                <TabBar
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    height={32}
+                    iconSize={14}
+                    onSwitch={onTabSwitch}
+                    onClose={onTabClose}
+                    onNew={onTabNew}
+                    onReorder={onTabReorder}
+                    onRename={onTabRename}
+                    canClose={tab => tab.type !== "map"}
+                />
+            )}
+            {isMobile && <div style={{ flex: 1 }} />}
 
-            {/* Right: fullscreen button + clock */}
-            <div style={{
-                display:      "flex",
-                alignItems:   "center",
-                flexShrink:   0,
-                borderLeft:   "1px solid rgba(255,255,255,0.06)",
-            }}>
-                {/* Fullscreen toggle */}
-                <button
-                    onClick={toggleFullscreen}
-                    onMouseEnter={() => setFsHover(true)}
-                    onMouseLeave={() => setFsHover(false)}
-                    title={fullscreen ? "Exit fullscreen (F)" : "Enter fullscreen (F)"}
-                    style={{
-                        width:      36,
-                        height:     "100%",
-                        display:    "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: "none",
-                        border:     "none",
-                        cursor:     "pointer",
-                        color:      fsHover ? "var(--akili-text-secondary)" : "var(--akili-text-muted)",
-                        transition: "color 0.12s",
-                        flexShrink: 0,
-                    }}
-                >
-                    {fullscreen ? <IconCompress /> : <IconExpand />}
-                </button>
-
-                {/* UTC Clock */}
+            {/* Right: fullscreen button + clock — desktop only */}
+            {!isMobile && (
                 <div style={{
                     display:      "flex",
                     alignItems:   "center",
-                    paddingLeft:  8,
-                    paddingRight: 16,
+                    flexShrink:   0,
                     borderLeft:   "1px solid rgba(255,255,255,0.06)",
                 }}>
-                    <span style={{
-                        fontSize:           11,
-                        color:              "var(--akili-text-muted)",
-                        fontVariantNumeric: "tabular-nums",
-                        fontFamily:         "monospace",
-                        letterSpacing:      "0.04em",
-                        whiteSpace:         "nowrap",
+                    {/* Fullscreen toggle */}
+                    <button
+                        onClick={toggleFullscreen}
+                        onMouseEnter={() => setFsHover(true)}
+                        onMouseLeave={() => setFsHover(false)}
+                        title={fullscreen ? "Exit fullscreen (F)" : "Enter fullscreen (F)"}
+                        style={{
+                            width:      36,
+                            height:     "100%",
+                            display:    "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            background: "none",
+                            border:     "none",
+                            cursor:     "pointer",
+                            color:      fsHover ? "var(--akili-text-secondary)" : "var(--akili-text-muted)",
+                            transition: "color 0.12s",
+                            flexShrink: 0,
+                        }}
+                    >
+                        {fullscreen ? <IconCompress /> : <IconExpand />}
+                    </button>
+
+                    {/* UTC Clock */}
+                    <div style={{
+                        display:      "flex",
+                        alignItems:   "center",
+                        paddingLeft:  8,
+                        paddingRight: 16,
+                        borderLeft:   "1px solid rgba(255,255,255,0.06)",
                     }}>
-                        {clock}
-                    </span>
+                        <span style={{
+                            fontSize:           11,
+                            color:              "var(--akili-text-muted)",
+                            fontVariantNumeric: "tabular-nums",
+                            fontFamily:         "monospace",
+                            letterSpacing:      "0.04em",
+                            whiteSpace:         "nowrap",
+                        }}>
+                            {clock}
+                        </span>
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     )
 }

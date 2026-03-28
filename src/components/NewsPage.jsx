@@ -55,6 +55,7 @@ function formatAge(ts) {
     return new Date(ts).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
 }
 
+// ── Desktop article card ───────────────────────────────────────────────────────
 function ArticleCard({ a, borderOverride }) {
     const title   = a.headline || a.clean_title || a.title || "Untitled"
     const ts      = a.latest_event || a.published_at || a.timestamp || a.published
@@ -172,6 +173,119 @@ function ArticleCard({ a, borderOverride }) {
     )
 }
 
+// ── Mobile news card (Ground News style) ──────────────────────────────────────
+function MobileNewsCard({ a }) {
+    const title  = a.headline || a.clean_title || a.title || "Untitled"
+    const ts     = a.latest_event || a.published_at || a.timestamp || a.published
+    const tier   = a.severity_tier
+    const tierC  = TIER_COLOR[tier]
+    const href   = a.url || a.link
+    const src    = a.source_name || a.source || ""
+    const img    = a.image_url || a.og_image || null
+
+    const barWidth = tier === "critical" ? "100%" : tier === "significant" ? "75%" : tier === "elevated" ? "50%" : tier === "low" ? "25%" : null
+
+    return (
+        <div
+            onClick={() => href && window.open(href, "_blank")}
+            style={{
+                display:      "flex",
+                gap:          12,
+                padding:      "14px 0",
+                borderBottom: "1px solid rgba(255,255,255,0.05)",
+                cursor:       href ? "pointer" : "default",
+                WebkitTapHighlightColor: "transparent",
+            }}
+        >
+            {/* Left: text content */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+                {/* Meta row */}
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
+                    <span style={{
+                        color:         tierC || "#38bdf8",
+                        fontSize:      10,
+                        fontWeight:    700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                        flexShrink:    0,
+                    }}>
+                        {tier || a.event_type || "News"}
+                    </span>
+                    <span style={{
+                        color:        "#64748b",
+                        fontSize:     10,
+                        textAlign:    "right",
+                        overflow:     "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace:   "nowrap",
+                    }}>
+                        {a.region || a.country || ""}
+                    </span>
+                </div>
+
+                {/* Headline */}
+                <div style={{
+                    color:               "#e2e8f0",
+                    fontSize:            14,
+                    fontWeight:          500,
+                    lineHeight:          1.45,
+                    marginBottom:        10,
+                    display:             "-webkit-box",
+                    WebkitLineClamp:     3,
+                    WebkitBoxOrient:     "vertical",
+                    overflow:            "hidden",
+                }}>
+                    {title}
+                </div>
+
+                {/* Severity bar */}
+                {barWidth && (
+                    <div style={{ height: 3, borderRadius: 2, background: "rgba(148,163,184,0.12)", marginBottom: 8, overflow: "hidden" }}>
+                        <div style={{ width: barWidth, height: "100%", background: tierC }} />
+                    </div>
+                )}
+
+                {/* Source + time */}
+                <div style={{ display: "flex", gap: 6, color: "#64748b", fontSize: 11, flexWrap: "wrap" }}>
+                    {src && <span>{src}</span>}
+                    {src && ts && <span>·</span>}
+                    {ts && <span>{formatAge(ts)}</span>}
+                </div>
+            </div>
+
+            {/* Right: thumbnail */}
+            {img ? (
+                <div style={{
+                    width:       72,
+                    height:      72,
+                    borderRadius: 6,
+                    background:  `url(${img}) center/cover`,
+                    flexShrink:  0,
+                }} />
+            ) : (
+                <div style={{
+                    width:          72,
+                    height:         72,
+                    borderRadius:   6,
+                    background:     "rgba(30,41,59,0.8)",
+                    flexShrink:     0,
+                    display:        "flex",
+                    alignItems:     "center",
+                    justifyContent: "center",
+                }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <line x1="7" y1="8"  x2="17" y2="8"/>
+                        <line x1="7" y1="12" x2="17" y2="12"/>
+                        <line x1="7" y1="16" x2="12" y2="16"/>
+                    </svg>
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
 export default function NewsPage({ onClose }) {
     const [articles,       setArticles]       = useState([])
     const [loading,        setLoading]        = useState(true)
@@ -179,6 +293,14 @@ export default function NewsPage({ onClose }) {
     const [channelIdx,     setChannelIdx]     = useState(0)
     const [regionFilter,   setRegionFilter]   = useState("All")
     const [categoryFilter, setCategoryFilter] = useState("All")
+    const [tvCollapsed,    setTvCollapsed]    = useState(true)
+    const [isMobile,       setIsMobile]       = useState(() => window.innerWidth < 768)
+
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
 
     const channels = section === "space" ? SPACE_CHANNELS : TV_CHANNELS
     const channel  = channels[channelIdx] || channels[0]
@@ -190,12 +312,10 @@ export default function NewsPage({ onClose }) {
         const fetchNews = async () => {
             try {
                 const token = localStorage.getItem("hw-auth-token")
-                console.log("[news] fetching /api/surface")
                 const res  = await fetch(`${API_BASE}/api/surface`, {
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                 })
                 const data = await res.json()
-                console.log("[news] items:", (data.items || []).length)
                 if (!cancelled) setArticles(data.items || [])
             } catch (e) {
                 console.error("[news] fetch error:", e)
@@ -209,8 +329,8 @@ export default function NewsPage({ onClose }) {
     }, [])
 
     // ── Channel navigation ────────────────────────────────────────────────────
-    const prevChannel = () => setChannelIdx(i => (i === 0 ? channels.length - 1 : i - 1))
-    const nextChannel = () => setChannelIdx(i => (i === channels.length - 1 ? 0 : i + 1))
+    const prevChannel   = () => setChannelIdx(i => (i === 0 ? channels.length - 1 : i - 1))
+    const nextChannel   = () => setChannelIdx(i => (i === channels.length - 1 ? 0 : i + 1))
     const switchSection = (s) => { setSection(s); setChannelIdx(0) }
 
     // ── Filter ────────────────────────────────────────────────────────────────
@@ -244,7 +364,7 @@ export default function NewsPage({ onClose }) {
         return true
     })
 
-    // ── Featured card (first item) ────────────────────────────────────────────
+    // ── Featured card — desktop only (first item as wide card) ───────────────
     const renderFeatured = (a) => {
         const title   = a.headline || a.clean_title || a.title || "Untitled"
         const ts      = a.latest_event || a.published_at || a.timestamp || a.published
@@ -344,7 +464,192 @@ export default function NewsPage({ onClose }) {
         )
     }
 
-    // ── Render ────────────────────────────────────────────────────────────────
+    // ── TV player block (shared between mobile collapsed/expanded and desktop) ─
+    const renderTVPlayer = (compact) => (
+        <div>
+            <div style={{ position: "relative", paddingBottom: "56.25%", background: "#000", borderRadius: compact ? 6 : 8, overflow: "hidden" }}>
+                <iframe
+                    key={channel.id}
+                    src={channel.src}
+                    title={channel.name}
+                    allow="autoplay; encrypted-media"
+                    allowFullScreen
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
+                />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: compact ? 8 : 12 }}>
+                <button onClick={prevChannel} style={{ background: "rgba(56,189,248,0.08)", border: "none", borderRadius: 4, color: "#94a3b8", padding: "7px 12px", cursor: "pointer", fontSize: 13 }}>&#9664;</button>
+                <div style={{ textAlign: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#ef4444", display: "inline-block", animation: "pulse 2s infinite" }} />
+                        <span style={{ color: "#ef4444", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em" }}>LIVE</span>
+                    </div>
+                    <div style={{ color: "#e2e8f0", fontSize: 12, marginTop: 2 }}>{channel.name}</div>
+                    <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10, marginTop: 1 }}>{channelIdx + 1} / {channels.length}</div>
+                </div>
+                <button onClick={nextChannel} style={{ background: "rgba(56,189,248,0.08)", border: "none", borderRadius: 4, color: "#94a3b8", padding: "7px 12px", cursor: "pointer", fontSize: 13 }}>&#9654;</button>
+            </div>
+            {section === "space" && (
+                <div style={{ marginTop: 8, padding: "7px 10px", background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.15)", borderRadius: 6, fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.4 }}>
+                    Space streams are only live during launches and events. If inactive, try another channel.
+                </div>
+            )}
+        </div>
+    )
+
+    // ── Empty / loading state ─────────────────────────────────────────────────
+    const renderEmpty = () => (
+        loading ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} style={{ height: isMobile ? 90 : 220, borderRadius: 8, background: "rgba(30,41,59,0.5)", animation: "pulse 1.5s infinite" }} />
+                ))}
+            </div>
+        ) : (
+            <div style={{ color: "rgba(255,255,255,0.28)", textAlign: "center", paddingTop: 60, fontSize: 13 }}>
+                {articles.length === 0 ? "No articles loaded — check console for fetch errors." : "No articles match this filter."}
+                {articles.length > 0 && (
+                    <div style={{ fontSize: 11, marginTop: 8, color: "rgba(255,255,255,0.18)" }}>
+                        {articles.length} total articles loaded
+                    </div>
+                )}
+            </div>
+        )
+    )
+
+    // ── Section tab button helper ─────────────────────────────────────────────
+    const sectionTab = (id, label) => (
+        <button key={id} onClick={() => switchSection(id)} style={{
+            padding:      "8px 16px",
+            fontSize:     12,
+            fontWeight:   section === id ? 600 : 400,
+            background:   "transparent",
+            border:       "none",
+            borderBottom: `2px solid ${section === id ? "#38bdf8" : "transparent"}`,
+            color:        section === id ? "#38bdf8" : "#64748b",
+            cursor:       "pointer",
+            whiteSpace:   "nowrap",
+            transition:   "color 0.12s, border-color 0.12s",
+            WebkitTapHighlightColor: "transparent",
+        }}>{label}</button>
+    )
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MOBILE LAYOUT
+    // ─────────────────────────────────────────────────────────────────────────
+    if (isMobile) {
+        return (
+            <div style={{
+                display:       "flex",
+                flexDirection: "column",
+                height:        "100%",
+                background:    "#0f172a",
+                color:         "#e2e8f0",
+                fontFamily:    "Inter, system-ui, -apple-system, sans-serif",
+                overflow:      "hidden",
+            }}>
+                {/* Header */}
+                <div style={{
+                    flexShrink:   0,
+                    background:   "rgba(15,23,42,0.98)",
+                    borderBottom: "1px solid rgba(56,189,248,0.1)",
+                }}>
+                    {/* Title row */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px 0" }}>
+                        <div>
+                            <div style={{ fontSize: 11, color: "#64748b" }}>
+                                {new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" })}
+                            </div>
+                            <div style={{ fontSize: 20, fontWeight: 600, color: "#e2e8f0", marginTop: 2 }}>
+                                News Feed
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Section tabs */}
+                    <div style={{ display: "flex", gap: 0, padding: "4px 12px 0", borderBottom: "1px solid rgba(56,189,248,0.08)" }}>
+                        {sectionTab("news", "World News")}
+                        {sectionTab("space", "Spaceflight")}
+                    </div>
+
+                    {/* Region filter — horizontal scroll */}
+                    <div style={{
+                        display:         "flex",
+                        gap:             6,
+                        overflowX:       "auto",
+                        padding:         "10px 16px",
+                        scrollbarWidth:  "none",
+                        WebkitOverflowScrolling: "touch",
+                    }}>
+                        {WORLD_REGIONS.map(r => (
+                            <button key={r} onClick={() => setRegionFilter(r)} style={{
+                                padding:      "6px 14px",
+                                fontSize:     12,
+                                fontWeight:   regionFilter === r ? 600 : 400,
+                                background:   regionFilter === r ? "rgba(56,189,248,0.15)" : "rgba(30,41,59,0.6)",
+                                border:       `1px solid ${regionFilter === r ? "rgba(56,189,248,0.4)" : "transparent"}`,
+                                borderRadius: 20,
+                                color:        regionFilter === r ? "#38bdf8" : "#94a3b8",
+                                cursor:       "pointer",
+                                whiteSpace:   "nowrap",
+                                transition:   "all 0.12s",
+                                WebkitTapHighlightColor: "transparent",
+                            }}>{r}</button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Collapsible TV player */}
+                <div style={{
+                    flexShrink:   0,
+                    background:   "rgba(10,14,20,0.7)",
+                    borderBottom: "1px solid rgba(56,189,248,0.08)",
+                }}>
+                    <div
+                        onClick={() => setTvCollapsed(v => !v)}
+                        style={{
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "space-between",
+                            padding:        "10px 16px",
+                            cursor:         "pointer",
+                            WebkitTapHighlightColor: "transparent",
+                        }}
+                    >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#ef4444", display: "inline-block" }} />
+                            <span style={{ color: "#ef4444", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em" }}>LIVE</span>
+                            <span style={{ color: "#e2e8f0", fontSize: 13 }}>{channel.name}</span>
+                        </div>
+                        <span style={{ color: "#64748b", fontSize: 18, lineHeight: 1 }}>
+                            {tvCollapsed ? "+" : "−"}
+                        </span>
+                    </div>
+                    {!tvCollapsed && (
+                        <div style={{ padding: "0 16px 12px" }}>
+                            {renderTVPlayer(true)}
+                        </div>
+                    )}
+                </div>
+
+                {/* Article list */}
+                <div style={{
+                    flex:      1,
+                    overflowY: "auto",
+                    padding:   "0 16px",
+                    WebkitOverflowScrolling: "touch",
+                }}>
+                    {(loading || filtered.length === 0) ? renderEmpty() : (
+                        filtered.map((a, i) => <MobileNewsCard key={a.id || i} a={a} />)
+                    )}
+                </div>
+            </div>
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DESKTOP LAYOUT
+    // ─────────────────────────────────────────────────────────────────────────
     return (
         <div style={{
             display:       "flex",
@@ -417,39 +722,7 @@ export default function NewsPage({ onClose }) {
                 }}>
                     {/* TV player */}
                     <div style={{ padding: 16, borderBottom: "1px solid rgba(56,189,248,0.08)", flexShrink: 0 }}>
-                        <div style={{ position: "relative", paddingBottom: "56.25%", background: "#000", borderRadius: 8, overflow: "hidden" }}>
-                            <iframe
-                                key={channel.id}
-                                src={channel.src}
-                                title={channel.name}
-                                allow="autoplay; encrypted-media"
-                                allowFullScreen
-                                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
-                            />
-                        </div>
-
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
-                            <button onClick={prevChannel} style={{ background: "rgba(56,189,248,0.08)", border: "none", borderRadius: 4, color: "#94a3b8", padding: "7px 12px", cursor: "pointer", fontSize: 13 }}>
-                                &#9664;
-                            </button>
-                            <div style={{ textAlign: "center" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
-                                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", display: "inline-block", animation: "pulse 2s infinite" }} />
-                                    <span style={{ color: "#ef4444", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em" }}>LIVE</span>
-                                </div>
-                                <div style={{ color: "#e2e8f0", fontSize: 12, marginTop: 4 }}>{channel.name}</div>
-                                <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10, marginTop: 2 }}>{channelIdx + 1} / {channels.length}</div>
-                            </div>
-                            <button onClick={nextChannel} style={{ background: "rgba(56,189,248,0.08)", border: "none", borderRadius: 4, color: "#94a3b8", padding: "7px 12px", cursor: "pointer", fontSize: 13 }}>
-                                &#9654;
-                            </button>
-                        </div>
-
-                        {section === "space" && (
-                            <div style={{ marginTop: 10, padding: "8px 10px", background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.15)", borderRadius: 6, fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.4 }}>
-                                Space streams are only live during launches and events. If inactive, try another channel.
-                            </div>
-                        )}
+                        {renderTVPlayer(false)}
                     </div>
 
                     {/* Filters (news) or channel list (space) */}
@@ -515,27 +788,9 @@ export default function NewsPage({ onClose }) {
 
                 {/* Article feed */}
                 <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-                    {loading ? (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
-                            {Array.from({ length: 9 }).map((_, i) => (
-                                <div key={i} style={{ height: 220, borderRadius: 8, background: "rgba(30,41,59,0.5)", animation: "pulse 1.5s infinite" }} />
-                            ))}
-                        </div>
-                    ) : filtered.length === 0 ? (
-                        <div style={{ color: "rgba(255,255,255,0.28)", textAlign: "center", paddingTop: 60, fontSize: 13 }}>
-                            {articles.length === 0 ? "No articles loaded — check console for fetch errors." : "No articles match this filter."}
-                            {articles.length > 0 && (
-                                <div style={{ fontSize: 11, marginTop: 8, color: "rgba(255,255,255,0.18)" }}>
-                                    {articles.length} total articles loaded
-                                </div>
-                            )}
-                        </div>
-                    ) : (
+                    {(loading || filtered.length === 0) ? renderEmpty() : (
                         <>
-                            {/* Featured story */}
                             {renderFeatured(filtered[0])}
-
-                            {/* Grid */}
                             {filtered.length > 1 && (
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
                                     {filtered.slice(1).map((a, i) => (

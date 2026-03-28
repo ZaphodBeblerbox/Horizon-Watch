@@ -3,8 +3,8 @@
 export default function BottomNav({
     activeTabType,
     onSwitchToMap,
+    onSwitchToNews,
     onSwitchToBriefing,
-    onSwitchToPOI,
     notifUnread,
     onToggleNotif,
     onOpenMenu,
@@ -24,6 +24,20 @@ export default function BottomNav({
             active: activeTabType === "map",
         },
         {
+            id:    "news",
+            label: "News",
+            icon:  (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="3" width="16" height="14" rx="1.5" fill="none"/>
+                    <line x1="6" y1="7"  x2="14" y2="7"/>
+                    <line x1="6" y1="10" x2="14" y2="10"/>
+                    <line x1="6" y1="13" x2="10" y2="13"/>
+                </svg>
+            ),
+            onClick: onSwitchToNews,
+            active: activeTabType === "news",
+        },
+        {
             id:    "briefing",
             label: "Briefs",
             icon:  (
@@ -36,18 +50,6 @@ export default function BottomNav({
             ),
             onClick: onSwitchToBriefing,
             active: activeTabType === "briefing",
-        },
-        {
-            id:    "poi",
-            label: "POI",
-            icon:  (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M10 2C7 2 4.5 4.5 4.5 7.5C4.5 11.5 10 18 10 18C10 18 15.5 11.5 15.5 7.5C15.5 4.5 13 2 10 2Z" fill="none"/>
-                    <circle cx="10" cy="7.5" r="2" fill="none"/>
-                </svg>
-            ),
-            onClick: onSwitchToPOI,
-            active: activeTabType === "poi",
         },
         {
             id:    "alerts",

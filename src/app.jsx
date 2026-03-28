@@ -211,7 +211,13 @@ export default function App() {
         const onError = (err) => {
             console.warn("[location] Geolocation error:", err.code, err.message)
         }
-        const opts = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+        // Use less aggressive settings on mobile to reduce battery drain
+        const mobileUA = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+        const opts = {
+            enableHighAccuracy: !mobileUA,
+            timeout:            15000,
+            maximumAge:         mobileUA ? 300000 : 60000,
+        }
         navigator.geolocation.getCurrentPosition(send, onError, opts)
         const t = setInterval(() => {
             navigator.geolocation.getCurrentPosition(send, onError, opts)
@@ -1062,8 +1068,8 @@ export default function App() {
                 <BottomNav
                     activeTabType={activeTabType}
                     onSwitchToMap={() => openTab("map")}
+                    onSwitchToNews={() => openTab("news")}
                     onSwitchToBriefing={() => openTab("briefing")}
-                    onSwitchToPOI={() => openTab("poi")}
                     notifUnread={unreadCount}
                     onToggleNotif={() => setNotifOpen(v => !v)}
                     onOpenMenu={() => setMobileDrawerOpen(true)}

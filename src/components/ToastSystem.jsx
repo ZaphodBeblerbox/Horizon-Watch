@@ -50,9 +50,12 @@ function TypeIcon({ type, color }) {
 const DURATION_MS = 6000
 
 function Toast({ toast, onDismiss, onClick }) {
-    const [progress, setProgress] = useState(100)
+    const [progress,    setProgress]    = useState(100)
+    const [touchDelta,  setTouchDelta]  = useState(0)
+    const [swiping,     setSwiping]     = useState(false)
     const startRef  = useRef(Date.now())
     const frameRef  = useRef(null)
+    const touchXRef = useRef(0)
 
     useEffect(() => {
         const tick = () => {
@@ -69,13 +72,39 @@ function Toast({ toast, onDismiss, onClick }) {
         return () => cancelAnimationFrame(frameRef.current)
     }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
+    const handleTouchStart = useCallback((e) => {
+        touchXRef.current = e.touches[0].clientX
+        setSwiping(true)
+    }, [])
+
+    const handleTouchMove = useCallback((e) => {
+        const delta = e.touches[0].clientX - touchXRef.current
+        setTouchDelta(delta)
+    }, [])
+
+    const handleTouchEnd = useCallback(() => {
+        setSwiping(false)
+        if (Math.abs(touchDelta) > 80) {
+            onDismiss(toast.id)
+        } else {
+            setTouchDelta(0)
+        }
+    }, [touchDelta, toast.id, onDismiss])
+
     const color = severityColor(toast)
+    const swipeOpacity  = swiping ? Math.max(0, 1 - Math.abs(touchDelta) / 160) : 1
+    const swipeTransform = touchDelta !== 0
+        ? `translateX(${touchDelta}px)`
+        : "none"
 
     return (
         <div
             onClick={() => { onDismiss(toast.id); onClick(toast) }}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
             style={{
-                width:              400,
+                width:              "100%",
                 background:         "var(--akili-panel)",
                 backdropFilter:     "blur(20px) saturate(1.4)",
                 WebkitBackdropFilter: "blur(20px) saturate(1.4)",
@@ -86,6 +115,11 @@ function Toast({ toast, onDismiss, onClick }) {
                 cursor:             "pointer",
                 animation:          "akiliToastIn 0.22s ease",
                 fontFamily:         "system-ui, -apple-system, sans-serif",
+                transform:          swipeTransform,
+                opacity:            swipeOpacity,
+                transition:         swiping ? "none" : "transform 0.2s ease, opacity 0.2s ease",
+                touchAction:        "pan-y",
+                userSelect:         "none",
             }}
         >
             {/* Body */}
@@ -141,6 +175,14 @@ function Toast({ toast, onDismiss, onClick }) {
 // ── Toast system container ────────────────────────────────────────────────────
 
 export default function ToastSystem({ toasts, onDismiss, onOpen }) {
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+
     return (
         <>
             <style>{`
@@ -149,20 +191,32 @@ export default function ToastSystem({ toasts, onDismiss, onOpen }) {
                     to   { opacity: 1; transform: translateY(0); }
                 }
             `}</style>
-            <div style={{
-                position:       "fixed",
-                top:            52,
-                left:           "50%",
-                transform:      "translateX(-50%)",
-                zIndex:         3000,
-                display:        "flex",
-                flexDirection:  "column",
-                alignItems:     "center",
-                gap:            8,
-                pointerEvents:  "none",
+            <div style={isMobile ? {
+                position:      "fixed",
+                top:           52,
+                left:          12,
+                right:         12,
+                zIndex:        3000,
+                display:       "flex",
+                flexDirection: "column",
+                alignItems:    "stretch",
+                gap:           8,
+                pointerEvents: "none",
+            } : {
+                position:      "fixed",
+                top:           52,
+                left:          "50%",
+                transform:     "translateX(-50%)",
+                width:         400,
+                zIndex:        3000,
+                display:       "flex",
+                flexDirection: "column",
+                alignItems:    "center",
+                gap:           8,
+                pointerEvents: "none",
             }}>
                 {toasts.map(t => (
-                    <div key={t.id} style={{ pointerEvents: "auto" }}>
+                    <div key={t.id} style={{ pointerEvents: "auto", width: "100%" }}>
                         <Toast
                             toast={t}
                             onDismiss={onDismiss}

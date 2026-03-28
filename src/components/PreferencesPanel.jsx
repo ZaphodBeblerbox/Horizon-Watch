@@ -5,16 +5,18 @@ const API = API_BASE
 const STORAGE_KEY = "akili-settings-v1"
 
 const DEFAULTS = {
-    soundMuted:       false,
-    briefingHourUTC:  6,
-    refreshInterval:  15,
-    alertInterval:    15,
-    cacheMaxDays:     7,
-    mapStyle:         "satellite",
-    toastDuration:    4,
-    soundCritical:    true,
-    soundSignificant: true,
-    soundElevated:    false,
+    soundMuted:          false,
+    briefingHourUTC:     6,
+    refreshInterval:     15,
+    alertInterval:       15,
+    cacheMaxDays:        7,
+    mapStyle:            "satellite",
+    toastDuration:       4,
+    soundCritical:       true,
+    soundSignificant:    true,
+    soundElevated:       false,
+    toastsEnabled:       true,
+    toastsCriticalOnly:  false,
 }
 
 export function loadSettings() {
@@ -199,6 +201,22 @@ return (
 
                 {/* ── NOTIFICATIONS ──────────────────────────────────────── */}
                 <SectionHeader>Notifications</SectionHeader>
+
+                <div style={ROW}>
+                    <div>
+                        <div style={LABEL}>In-app toast notifications</div>
+                        <div style={SUB}>Show pop-up alerts for new events</div>
+                    </div>
+                    <Toggle value={s.toastsEnabled} onChange={v => update("toastsEnabled", v)} />
+                </div>
+
+                <div style={ROW}>
+                    <div>
+                        <div style={LABEL}>Critical events only</div>
+                        <div style={SUB}>Only show toasts for critical severity</div>
+                    </div>
+                    <Toggle value={s.toastsCriticalOnly} onChange={v => update("toastsCriticalOnly", v)} />
+                </div>
 
                 <div style={ROW}>
                     <div>
