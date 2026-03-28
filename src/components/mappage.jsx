@@ -4469,49 +4469,20 @@ export default function MapPage({
             unifiedLayerRef.current.remove()
             return
         }
-        // Geometric SVG icons — keyed by event_type
-        const TYPE_SVGS = {
-            airstrike:    (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><polygon points="10,1 13,8 19,8 14,13 16,19 10,15 4,19 6,13 1,8 7,8" fill="${c}" stroke="rgba(255,255,255,0.7)" stroke-width="0.8"/></svg>`,
-            missile:      (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><polygon points="10,1 14,8 14,14 10,19 6,14 6,8" fill="${c}" stroke="rgba(255,255,255,0.7)" stroke-width="0.8"/></svg>`,
-            armed_clash:  (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><line x1="3" y1="3" x2="17" y2="17" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/><line x1="17" y1="3" x2="3" y2="17" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/></svg>`,
-            explosion:    (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><circle cx="10" cy="10" r="4" fill="${c}"/><circle cx="10" cy="10" r="8" fill="none" stroke="${c}" stroke-width="1.5" stroke-dasharray="3,2"/></svg>`,
-            maritime:     (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><polygon points="10,2 18,16 2,16" fill="${c}" stroke="rgba(255,255,255,0.7)" stroke-width="0.8"/></svg>`,
-            protest:      (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><rect x="4" y="4" width="12" height="12" rx="2" fill="${c}" stroke="rgba(255,255,255,0.7)" stroke-width="0.8"/></svg>`,
-            earthquake:   (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><polyline points="2,10 6,4 9,13 12,7 16,10 18,10" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-            fire:         (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><path d="M10 2 C8 6 5 8 5 12 C5 16 7.5 18 10 18 C12.5 18 15 16 15 12 C15 8 12 6 10 2Z" fill="${c}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/></svg>`,
-            assassination:(c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><circle cx="10" cy="10" r="8" fill="none" stroke="${c}" stroke-width="1.5"/><circle cx="10" cy="10" r="3" fill="${c}"/><line x1="10" y1="1" x2="10" y2="19" stroke="${c}" stroke-width="0.8"/><line x1="1" y1="10" x2="19" y2="10" stroke="${c}" stroke-width="0.8"/></svg>`,
-            coerce:       (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><text x="10" y="16" text-anchor="middle" font-size="16" font-weight="bold" fill="${c}" stroke="rgba(0,0,0,0.5)" stroke-width="0.5">!</text></svg>`,
-            fight:        (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><line x1="3" y1="3" x2="17" y2="17" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/><line x1="17" y1="3" x2="3" y2="17" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/></svg>`,
-            assault:      (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><line x1="3" y1="3" x2="17" y2="17" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/><line x1="17" y1="3" x2="3" y2="17" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/></svg>`,
-            general:      (c,s) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}"><circle cx="10" cy="10" r="7" fill="${c}" stroke="rgba(255,255,255,0.6)" stroke-width="1"/></svg>`,
-        }
-        const getSvgIcon = (type, color, size) => (TYPE_SVGS[type] || TYPE_SVGS.general)(color, size)
-        const TIER_COLOR_MAP = {
-            critical: "#ef4444", significant: "#f97316", elevated: "#eab308", low: "#94a3b8",
+        const _TYPE_COLORS = {
+            missile: "#ef4444", airstrike: "#ef4444", explosion: "#f97316",
+            armed_clash: "#f97316", fight: "#f97316", assault: "#f97316",
+            maritime: "#3b82f6", protest: "#eab308", earthquake: "#a855f7",
+            fire: "#f97316", assassination: "#ef4444", coerce: "#eab308",
+            general: "#64748b",
         }
         unifiedEvents.forEach(thread => {
             if (!thread.lat || !thread.lon) return
-            const tier = thread.severity_tier || "low"
-            const color = TIER_COLOR_MAP[tier] || "#94a3b8"
-            const ageHours = thread.latest_event
-                ? (Date.now() - new Date(thread.latest_event).getTime()) / 3600000
-                : 0
-            const opacity = Math.max(0.4, 1 - (ageHours / 72) * 0.6)
-            const shouldPulse = tier === "critical" && ageHours < 2
-            const baseSize = tier === "critical" ? 32 : tier === "significant" ? 26 : tier === "elevated" ? 20 : 14
-            const size = Math.min(48, baseSize + Math.min(10, (thread.event_count || 1) * 2))
-            const svgIcon = getSvgIcon((thread.event_type || "").toLowerCase(), color, size)
-            const countBadge = (thread.event_count || 1) > 1
-                ? `<div style="position:absolute;top:-6px;right:-6px;background:#1a6eb5;color:white;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700;border:1px solid rgba(255,255,255,0.5);">${thread.event_count}</div>`
-                : ""
-            const glowFilter = `drop-shadow(0 0 ${size * 0.5}px ${color}) drop-shadow(0 0 ${size * 0.25}px ${color}88)`
-            const html = `<div style="position:relative;width:${size}px;height:${size}px;opacity:${opacity};filter:${glowFilter};cursor:pointer;${shouldPulse ? "animation:hw-pulse 1.8s ease-out infinite;" : ""}">${svgIcon}${countBadge}</div>`
-            const icon = L.divIcon({
-                className: "",
-                html,
-                iconSize: [size + 8, size + 8],
-                iconAnchor: [(size + 8) / 2, (size + 8) / 2],
-            })
+            const icon = makeEventMarkerIcon({
+                type: thread.event_type || "general",
+                color: _TYPE_COLORS[(thread.event_type || "").toLowerCase()] || "#64748b",
+                significance_score: thread.significance_score,
+            }, true)
             const marker = L.marker([thread.lat, thread.lon], { icon })
             marker.on("click", (ev) => {
                 L.DomEvent.stopPropagation(ev)
