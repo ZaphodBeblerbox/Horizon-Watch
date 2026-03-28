@@ -4504,7 +4504,7 @@ export default function MapPage({
                 }
             })
             marker.bindTooltip(
-                `<div style="background:rgba(6,13,26,0.9);padding:6px 10px;border:1px solid rgba(255,255,255,0.1);color:#e8edf2;font-size:11px;max-width:200px;"><div style="font-weight:600;margin-bottom:2px;">${thread.clean_title || thread.headline || thread.location || ""}</div><div style="color:#8899aa;font-size:10px;">${thread.event_count || 1} source${(thread.event_count || 1) > 1 ? "s" : ""} · ${tier}</div></div>`,
+                `<div style="background:rgba(6,13,26,0.9);padding:6px 10px;border:1px solid rgba(255,255,255,0.1);color:#e8edf2;font-size:11px;max-width:200px;"><div style="font-weight:600;margin-bottom:2px;">${thread.clean_title || thread.headline || thread.location || ""}</div><div style="color:#8899aa;font-size:10px;">${thread.event_count || 1} source${(thread.event_count || 1) > 1 ? "s" : ""} · ${thread.severity_tier || "low"}</div></div>`,
                 { className: "", permanent: false, direction: "top", opacity: 1 }
             )
             unifiedLayerRef.current.addLayer(marker)
