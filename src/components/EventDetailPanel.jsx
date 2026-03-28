@@ -142,7 +142,7 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
             backdropFilter:       "blur(12px)",
             WebkitBackdropFilter: "blur(12px)",
             borderLeft:           "1px solid rgba(56,189,248,0.2)",
-            boxShadow:            "-8px 0 32px rgba(0, 0, 0, 0.5)",
+            boxShadow:            "-8px 0 32px rgba(0,0,0,0.5)",
             zIndex:               2100,
             display:              "flex",
             flexDirection:        "column",
@@ -152,61 +152,60 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
             fontFamily:           "Inter, -apple-system, sans-serif",
             color:                "#e0e0e0",
         }}>
-            {/* Fixed header bar — always visible, contains X button */}
+            {/* Fixed header bar — flexShrink:0 keeps it outside the scroll */}
             <div style={{
+                flexShrink:     0,
                 height:         44,
-                minHeight:      44,
                 background:     "rgba(15,23,42,0.98)",
                 borderBottom:   "1px solid rgba(56,189,248,0.15)",
                 display:        "flex",
                 alignItems:     "center",
                 justifyContent: "space-between",
                 padding:        "0 12px",
-                flexShrink:     0,
             }}>
-                <span style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700 }}>
+                <span style={{ color: "#94a3b8", fontSize: 11, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 500 }}>
                     Event Details
                 </span>
                 <button
                     onClick={handleClose}
-                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#ffffff" }}
-                    onMouseOut={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#94a3b8" }}
+                    onMouseOver={e => { e.currentTarget.style.background = "rgba(148,163,184,0.2)" }}
+                    onMouseOut={e => { e.currentTarget.style.background = "rgba(148,163,184,0.1)" }}
                     style={{
-                        background:     "transparent",
+                        background:     "rgba(148,163,184,0.1)",
                         border:         "1px solid rgba(148,163,184,0.3)",
                         borderRadius:   4,
-                        color:          "#94a3b8",
+                        color:          "#e2e8f0",
                         width:          28,
                         height:         28,
                         cursor:         "pointer",
                         display:        "flex",
                         alignItems:     "center",
                         justifyContent: "center",
-                        fontSize:       14,
-                        lineHeight:     1,
+                        fontSize:       16,
+                        fontWeight:     300,
                         flexShrink:     0,
                     }}
-                >✕</button>
+                >×</button>
             </div>
 
-            {/* Scrollable content — header stays pinned above this */}
-            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            {/* Single scrollable area — image + event header + all body content */}
+            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
 
             {/* Image */}
             {imgUrl && !imgError && (
-                <div style={{ position: "relative", flexShrink: 0 }}>
+                <div style={{ position: "relative" }}>
                     <img
                         src={imgUrl}
                         alt={title}
                         onError={() => setImgError(true)}
-                        style={{ width: "100%", maxHeight: 200, objectFit: "cover", display: "block" }}
+                        style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }}
                     />
                     <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: "linear-gradient(transparent, rgba(6,13,26,0.96))", pointerEvents: "none" }} />
                 </div>
             )}
 
-            {/* Header */}
-            <div style={{ padding: "14px 16px 10px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
+            {/* Event badges + title */}
+            <div style={{ padding: "14px 16px 10px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
                     {(event.type || event.event_type) && (
                         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", background: `${typeColor}22`, color: typeColor, border: `1px solid ${typeColor}44`, padding: "2px 7px", borderRadius: 8 }}>
@@ -232,8 +231,8 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
                 </div>
             </div>
 
-            {/* Scrollable body */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 20px" }}>
+            {/* Body content */}
+            <div style={{ padding: "14px 16px 20px" }}>
 
                 {/* SITUATION REPORT table */}
                 {sitrep.length > 0 && (
@@ -386,7 +385,7 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
                     <div style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.3)", padding: "10px 0" }}>Generating intelligence brief…</div>
                 )}
             </div>
-            </div>{/* end scrollable wrapper */}
+            </div>{/* end single scrollable area */}
         </div>
     )
 }

@@ -120,6 +120,17 @@ function IconProfile() {
     )
 }
 
+function IconNews() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="1.5" y="2" width="15" height="14" rx="1.5"/>
+            <line x1="5" y1="6"  x2="13" y2="6"/>
+            <line x1="5" y1="9"  x2="13" y2="9"/>
+            <line x1="5" y1="12" x2="9"  y2="12"/>
+        </svg>
+    )
+}
+
 function IconPOI() {
     return (
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -193,6 +204,7 @@ export default function Sidebar({
                        (id === "health"     && rightPanel === "health")        ||
                        (id === "poi"        && activeTabType === "poi")        ||
                        (id === "map"        && activeTabType === "map")        ||
+                       (id === "news"       && activeTabType === "news")       ||
                        (id === "briefing"   && activeTabType === "briefing")   ||
                        (id === "notif"      && notifOpen)                      ||
                        (id === "chat"       && chatOpen)
@@ -207,8 +219,10 @@ export default function Sidebar({
             onMouseEnter={() => setHovered(id)}
             onMouseLeave={() => setHovered(null)}
             onClick={() => {
-                if (id === "map") { onOpenTab?.("map"); return }
-                if (id === "poi") { onOpenTab?.("poi"); return }
+                if (id === "map")     { onOpenTab?.("map");     return }
+                if (id === "poi")     { onOpenTab?.("poi");     return }
+                if (id === "news")    { onOpenTab?.("news");    return }
+                if (id === "briefing") { onOpenTab?.("briefing"); return }
                 onRightPanel(rightPanel === id ? null : id)
             }}
             title={id.charAt(0).toUpperCase() + id.slice(1)}
@@ -267,6 +281,7 @@ export default function Sidebar({
             {/* Top nav icons */}
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
                 {btn("map", <IconMap />)}
+                {btn("news", <IconNews />)}
 
                 {/* Notification bell */}
                 {profile && (
