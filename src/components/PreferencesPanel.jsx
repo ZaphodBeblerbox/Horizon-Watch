@@ -1,5 +1,6 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
+import { initPushNotifications, getPushSubscription, requestPushPermission, unsubscribePush } from "../utils/pushNotifications.js"
 
 const API = API_BASE
 const STORAGE_KEY = "akili-settings-v1"
@@ -116,6 +117,78 @@ function SectionHeader({ children }) {
     )
 }
 
+function PushNotificationToggle() {
+    const [supported, setSupported] = useState(false)
+    const [enabled,   setEnabled]   = useState(false)
+    const [loading,   setLoading]   = useState(true)
+
+    useEffect(() => {
+        initPushNotifications().then(({ supported: s }) => {
+            setSupported(s)
+            if (s) {
+                getPushSubscription().then(sub => {
+                    setEnabled(!!sub)
+                    setLoading(false)
+                })
+            } else {
+                setLoading(false)
+            }
+        })
+    }, [])
+
+    const toggle = async () => {
+        setLoading(true)
+        if (enabled) {
+            await unsubscribePush()
+            setEnabled(false)
+        } else {
+            const { granted } = await requestPushPermission()
+            setEnabled(granted)
+        }
+        setLoading(false)
+    }
+
+    const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
+
+    return (
+        <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", gap: 12 }}>
+                <div>
+                    <div style={{ fontSize: 12, color: "var(--akili-text-primary)", marginBottom: 2 }}>Push notifications</div>
+                    <div style={{ fontSize: 11, color: "var(--akili-text-muted)" }}>
+                        {supported ? "Receive alerts when app is closed" : isIOS ? "Add to Home Screen to enable" : "Not supported on this browser"}
+                    </div>
+                </div>
+                <button
+                    onClick={toggle}
+                    disabled={!supported || loading}
+                    style={{
+                        width: 40, height: 22, borderRadius: 11, border: "none", flexShrink: 0,
+                        background: (supported && enabled) ? "var(--akili-accent)" : "var(--akili-hover-strong)",
+                        cursor: (supported && !loading) ? "pointer" : "not-allowed",
+                        position: "relative",
+                        opacity: loading ? 0.5 : 1,
+                        transition: "background 0.2s",
+                        minHeight: "unset",
+                    }}
+                >
+                    <div style={{
+                        position: "absolute", top: 2, borderRadius: "50%",
+                        width: 18, height: 18, background: "#fff",
+                        left: (supported && enabled) ? 20 : 2,
+                        transition: "left 0.2s",
+                    }} />
+                </button>
+            </div>
+            {isIOS && !supported && (
+                <div style={{ fontSize: 11, color: "var(--akili-text-muted)", padding: "6px 10px", background: "rgba(245,158,11,0.08)", borderRadius: 4, border: "1px solid rgba(245,158,11,0.2)", marginBottom: 4 }}>
+                    iOS: tap Share → "Add to Home Screen", then open from home screen.
+                </div>
+            )}
+        </>
+    )
+}
+
 export default function PreferencesPanel({ onClose }) {
     const [s, setS] = useState(loadSettings)
 
@@ -217,6 +290,8 @@ return (
                     </div>
                     <Toggle value={s.toastsCriticalOnly} onChange={v => update("toastsCriticalOnly", v)} />
                 </div>
+
+                <PushNotificationToggle />
 
                 <div style={ROW}>
                     <div>

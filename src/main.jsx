@@ -2,6 +2,19 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './app.jsx'
 import './index.css'
+import { initPushNotifications } from './utils/pushNotifications.js'
+
+// Register service worker and listen for notification-click messages
+initPushNotifications().then(({ supported }) => {
+    if (!supported) return
+    navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'NOTIFICATION_CLICK' && event.data.eventId) {
+            window.dispatchEvent(new CustomEvent('akili:open-alert', {
+                detail: { id: event.data.eventId },
+            }))
+        }
+    })
+})
 
 window.onerror = function(msg, src, line, col, err) {
   console.error('GLOBAL CRASH:', msg, 'at', src, line, col)

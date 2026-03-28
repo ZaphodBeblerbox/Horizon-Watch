@@ -55,6 +55,22 @@ from email.utils import parsedate_to_datetime
 
 from tanzania_context import get_context_for_prompt, get_minimal_context, get_full_context
 from rss_feeds import ADDITIONAL_SCAN_FEEDS, RSS_FEED_META
+
+# ── Web push (optional — gracefully disabled if pywebpush not installed) ──────
+try:
+    from pywebpush import webpush, WebPushException as _WebPushException
+    _WEBPUSH_OK = True
+except ImportError:
+    _WEBPUSH_OK = False
+
+_VAPID_PRIVATE_KEY = """-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgIXmUByMl47z+93/q
+w8OYINpr7eTh+lAh7ARnAMvU0CShRANCAATqXQyqJfz9pQC4GLtN8m1ybdgjVzYG
+jqn+AMFKug9IJvJSs8ivbu1NfjVPIHeNuwsxeDknR8HEyLNQwntQ+MdP
+-----END PRIVATE KEY-----"""
+_VAPID_CLAIMS     = {"sub": "mailto:admin@trifectatechnologies.co"}
+_PUSH_SUBS: dict  = {}          # user_id → subscription JSON
+_PUSH_SUBS_LOCK   = threading.Lock()
 from geocode_utils import geocode_place, get_geocode_stats
 from scoring import score_news_markers, geo_gate_passes
 from location_extract import (
@@ -707,6 +723,57 @@ def get_settings():
     with _SETTINGS_LOCK:
         return dict(_SYSTEM_SETTINGS)
 
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    """Store a browser push subscription for the current user."""
+    user = _get_current_user(request)
+    uid  = user["id"] if user else request.headers.get("x-forwarded-for", "anon")
+    data = await request.json()
+    with _PUSH_SUBS_LOCK:
+        _PUSH_SUBS[uid] = data
+    return {"status": "subscribed"}
+
+@app.post("/api/push/unsubscribe")
+async def push_unsubscribe(request: Request):
+    """Remove push subscription for current user."""
+    user = _get_current_user(request)
+    uid  = user["id"] if user else None
+    if uid:
+        with _PUSH_SUBS_LOCK:
+            _PUSH_SUBS.pop(uid, None)
+    return {"status": "unsubscribed"}
+
+def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> None:
+    """Send a Web Push notification to one subscribed user (fire-and-forget)."""
+    if not _WEBPUSH_OK:
+        return
+    with _PUSH_SUBS_LOCK:
+        sub = _PUSH_SUBS.get(uid)
+    if not sub:
+        return
+    import json as _j
+    payload = _j.dumps({"title": title, "body": body, **(data or {})})
+    try:
+        webpush(
+            subscription_info=sub,
+            data=payload,
+            vapid_private_key=_VAPID_PRIVATE_KEY,
+            vapid_claims=_VAPID_CLAIMS,
+        )
+    except Exception as e:
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        if status == 410:           # Subscription expired
+            with _PUSH_SUBS_LOCK:
+                _PUSH_SUBS.pop(uid, None)
+        print(f"[push] send failed for {uid}: {e}")
+
+def _broadcast_push(title: str, body: str, data: dict | None = None) -> None:
+    """Send a push notification to all subscribed users (background thread)."""
+    with _PUSH_SUBS_LOCK:
+        uids = list(_PUSH_SUBS.keys())
+    for uid in uids:
+        threading.Thread(target=_send_push, args=(uid, title, body, data), daemon=True).start()
 
 @app.get("/api/health/detailed")
 def get_health_detailed():
@@ -2767,6 +2834,24 @@ def _push_real_time_alert(alert: dict) -> None:
         threading.Thread(target=_prefetch_event_infra, args=(alert,), daemon=True).start()
     if alert.get("auto_enrichment_gate") == "AUTO_ENRICH":
         threading.Thread(target=_maybe_auto_enrich_batch, args=([alert],), daemon=True).start()
+
+    # Browser push notification for critical / significant alerts
+    tier = alert.get("severity_tier", "")
+    if tier in ("critical", "significant") and _WEBPUSH_OK and _PUSH_SUBS:
+        headline = (alert.get("headline") or alert.get("title") or "New alert")[:120]
+        location = alert.get("location") or ""
+        body     = f"{location} — {headline}" if location else headline
+        title    = "CRITICAL ALERT" if tier == "critical" else "Horizon Watch"
+        push_data = {
+            "severity": tier,
+            "id":       alert.get("id"),
+            "url":      "/",
+        }
+        threading.Thread(
+            target=_broadcast_push,
+            args=(title, body, push_data),
+            daemon=True,
+        ).start()
 
 
 # ── Route intelligence helpers ────────────────────────────────────────────────

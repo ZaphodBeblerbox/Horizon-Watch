@@ -175,13 +175,23 @@ function Toast({ toast, onDismiss, onClick }) {
 // ── Toast system container ────────────────────────────────────────────────────
 
 export default function ToastSystem({ toasts, onDismiss, onOpen }) {
-    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+    const [isMobile,   setIsMobile]   = useState(() => window.innerWidth < 768)
+    const [tabVisible, setTabVisible] = useState(() => document.visibilityState === "visible")
 
     useEffect(() => {
         const h = () => setIsMobile(window.innerWidth < 768)
         window.addEventListener("resize", h)
         return () => window.removeEventListener("resize", h)
     }, [])
+
+    useEffect(() => {
+        const h = () => setTabVisible(document.visibilityState === "visible")
+        document.addEventListener("visibilitychange", h)
+        return () => document.removeEventListener("visibilitychange", h)
+    }, [])
+
+    // Don't render toasts when tab is backgrounded — push notifications handle that case
+    if (!tabVisible) return null
 
     return (
         <>

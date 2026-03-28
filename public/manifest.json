@@ -1,0 +1,24 @@
+{
+    "name": "Horizon Watch",
+    "short_name": "Horizon",
+    "description": "Real-time geopolitical intelligence platform by Trifecta Technologies",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#060d1a",
+    "theme_color": "#060d1a",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ]
+}
