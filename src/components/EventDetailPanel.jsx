@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import Markdown from "react-markdown"
+import BottomSheet from "./BottomSheet.jsx"
 
 function useIsMobile() {
     const [v, setV] = useState(() => window.innerWidth < 768)
@@ -142,102 +143,9 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
         { label: "Confidence",      value: event.confidence || null },
     ].filter(r => r.value)
 
-    return (
-        <div style={isMobile ? {
-            // Mobile: bottom sheet — above BottomNav, does NOT cover TopBar
-            position:             "fixed",
-            left:                 0,
-            right:                0,
-            bottom:               56,
-            top:                  "auto",
-            maxHeight:            "70vh",
-            borderRadius:         "18px 18px 0 0",
-            background:           "rgba(10,14,22,0.98)",
-            backdropFilter:       "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            borderTop:            "1px solid rgba(56,189,248,0.2)",
-            boxShadow:            "0 -8px 40px rgba(0,0,0,0.6)",
-            zIndex:               2100,
-            display:              "flex",
-            flexDirection:        "column",
-            overflow:             "hidden",
-            transform:            visible ? "translateY(0)" : "translateY(100%)",
-            transition:           "transform 0.28s ease-out",
-            fontFamily:           "Inter, -apple-system, sans-serif",
-            color:                "#e0e0e0",
-        } : {
-            // Desktop: right side panel
-            position:             "fixed",
-            top:                  40,
-            right:                0,
-            bottom:               0,
-            width:                380,
-            background:           "rgba(15,23,42,0.92)",
-            backdropFilter:       "blur(12px)",
-            WebkitBackdropFilter: "blur(12px)",
-            borderLeft:           "1px solid rgba(56,189,248,0.2)",
-            boxShadow:            "-8px 0 32px rgba(0,0,0,0.5)",
-            zIndex:               2100,
-            display:              "flex",
-            flexDirection:        "column",
-            overflow:             "hidden",
-            transform:            visible ? "translateX(0)" : "translateX(100%)",
-            transition:           "transform 0.25s ease-out",
-            fontFamily:           "Inter, -apple-system, sans-serif",
-            color:                "#e0e0e0",
-        }}>
-            {/* Fixed header bar — flexShrink:0 keeps it outside the scroll */}
-            <div style={{
-                flexShrink:     0,
-                background:     "rgba(15,23,42,0.98)",
-                borderBottom:   "1px solid rgba(56,189,248,0.15)",
-                display:        "flex",
-                alignItems:     "center",
-                justifyContent: "space-between",
-                padding:        isMobile ? "8px 12px 10px" : "0 12px",
-                minHeight:      44,
-                position:       "relative",
-            }}>
-                {/* Mobile drag handle */}
-                {isMobile && (
-                    <div style={{
-                        position:     "absolute",
-                        top:          6,
-                        left:         "50%",
-                        transform:    "translateX(-50%)",
-                        width:        36,
-                        height:       4,
-                        borderRadius: 2,
-                        background:   "rgba(148,163,184,0.35)",
-                    }} />
-                )}
-                <span style={{ color: "#94a3b8", fontSize: 11, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 500, marginTop: isMobile ? 8 : 0 }}>
-                    Event Details
-                </span>
-                <button
-                    onClick={handleClose}
-                    onMouseOver={e => { e.currentTarget.style.background = "rgba(148,163,184,0.2)" }}
-                    onMouseOut={e => { e.currentTarget.style.background = "rgba(148,163,184,0.1)" }}
-                    style={{
-                        background:     "rgba(148,163,184,0.1)",
-                        border:         "1px solid rgba(148,163,184,0.3)",
-                        borderRadius:   4,
-                        color:          "#e2e8f0",
-                        width:          28,
-                        height:         28,
-                        cursor:         "pointer",
-                        display:        "flex",
-                        alignItems:     "center",
-                        justifyContent: "center",
-                        fontSize:       16,
-                        fontWeight:     300,
-                        flexShrink:     0,
-                    }}
-                >×</button>
-            </div>
-
-            {/* Single scrollable area — image + event header + all body content */}
-            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+    // Shared scrollable content used by both mobile and desktop
+    const scrollContent = (
+        <div style={{ color: "#e0e0e0", fontFamily: "Inter, -apple-system, sans-serif" }}>
 
             {/* Image */}
             {imgUrl && !imgError && (
@@ -433,7 +341,76 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
                     <div style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.3)", padding: "10px 0" }}>Generating intelligence brief…</div>
                 )}
             </div>
-            </div>{/* end single scrollable area */}
+        </div>
+    )   // end scrollContent
+
+    if (isMobile) {
+        return (
+            <BottomSheet isOpen onClose={handleClose} title="Event Details">
+                {scrollContent}
+            </BottomSheet>
+        )
+    }
+
+    return (
+        <div style={{
+            position:             "fixed",
+            top:                  40,
+            right:                0,
+            bottom:               0,
+            width:                380,
+            background:           "rgba(15,23,42,0.92)",
+            backdropFilter:       "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            borderLeft:           "1px solid rgba(56,189,248,0.2)",
+            boxShadow:            "-8px 0 32px rgba(0,0,0,0.5)",
+            zIndex:               2100,
+            display:              "flex",
+            flexDirection:        "column",
+            overflow:             "hidden",
+            transform:            visible ? "translateX(0)" : "translateX(100%)",
+            transition:           "transform 0.25s ease-out",
+            fontFamily:           "Inter, -apple-system, sans-serif",
+            color:                "#e0e0e0",
+        }}>
+            {/* Desktop header */}
+            <div style={{
+                flexShrink:     0,
+                background:     "rgba(15,23,42,0.98)",
+                borderBottom:   "1px solid rgba(56,189,248,0.15)",
+                display:        "flex",
+                alignItems:     "center",
+                justifyContent: "space-between",
+                padding:        "0 12px",
+                minHeight:      44,
+            }}>
+                <span style={{ color: "#94a3b8", fontSize: 11, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 500 }}>
+                    Event Details
+                </span>
+                <button
+                    onClick={handleClose}
+                    onMouseOver={e => { e.currentTarget.style.background = "rgba(148,163,184,0.2)" }}
+                    onMouseOut={e => { e.currentTarget.style.background = "rgba(148,163,184,0.1)" }}
+                    style={{
+                        background:     "rgba(148,163,184,0.1)",
+                        border:         "1px solid rgba(148,163,184,0.3)",
+                        borderRadius:   4,
+                        color:          "#e2e8f0",
+                        width:          28,
+                        height:         28,
+                        cursor:         "pointer",
+                        display:        "flex",
+                        alignItems:     "center",
+                        justifyContent: "center",
+                        fontSize:       16,
+                        fontWeight:     300,
+                        flexShrink:     0,
+                    }}
+                >×</button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+                {scrollContent}
+            </div>
         </div>
     )
 }

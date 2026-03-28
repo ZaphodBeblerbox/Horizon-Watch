@@ -1,4 +1,5 @@
-import { useMemo } from "react"
+import { useMemo, useState, useEffect } from "react"
+import BottomSheet from "./BottomSheet.jsx"
 
 const TIER_COLOR = {
     critical:    "#dc2626",
@@ -39,6 +40,13 @@ export default function NotificationsDrawer({
     sortMode,
     onSortModeChange,
 }) {
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+
     const sorted = useMemo(() => {
         return [...items].sort((a, b) =>
             sortMode === "time"
@@ -47,27 +55,8 @@ export default function NotificationsDrawer({
         )
     }, [items, sortMode])
 
-    if (!open) return null
-
-    return (
-        <>
-        <style>{`@keyframes notifSlideIn{from{transform:translateX(-100%);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
-        <div style={{
-            position:            "absolute",
-            top:                 0,
-            left:                0,
-            bottom:              0,
-            width:               320,
-            display:             "flex",
-            flexDirection:       "column",
-            background:          "var(--akili-panel)",
-            backdropFilter:      "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            borderRight:         "1px solid var(--akili-border)",
-            fontFamily:          "system-ui, -apple-system, sans-serif",
-            zIndex:              50,
-            animation:           "notifSlideIn 0.15s ease",
-        }}>
+    const itemList = (
+        <div style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
             {/* Header */}
             <div style={{
                 height:         36,
@@ -257,6 +246,61 @@ export default function NotificationsDrawer({
             }}>
                 {items.filter(i => !readIds?.has(i.id)).length} unread · {items.length} total
             </div>
+        </div>
+    )   // end itemList
+
+    if (!open) return null
+
+    if (isMobile) {
+        return (
+            <BottomSheet isOpen onClose={onClose} title="Notifications" height="half">
+                {/* Sort controls */}
+                <div style={{ display: "flex", gap: 4, padding: "8px 12px 0", justifyContent: "flex-end" }}>
+                    {["relevance", "time"].map(mode => (
+                        <button
+                            key={mode}
+                            onClick={() => onSortModeChange(mode)}
+                            style={{
+                                background:    "none",
+                                border:        "none",
+                                cursor:        "pointer",
+                                fontSize:      10,
+                                fontWeight:    600,
+                                letterSpacing: "0.04em",
+                                color:         sortMode === mode ? "var(--akili-accent)" : "var(--akili-text-muted)",
+                                padding:       "4px 6px",
+                                minHeight:     36,
+                            }}
+                        >
+                            {mode === "relevance" ? "SCORE" : "TIME"}
+                        </button>
+                    ))}
+                </div>
+                {itemList}
+            </BottomSheet>
+        )
+    }
+
+    return (
+        <>
+        <style>{`@keyframes notifSlideIn{from{transform:translateX(-100%);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
+        <div style={{
+            position:             "absolute",
+            top:                  0,
+            left:                 0,
+            bottom:               0,
+            width:                320,
+            display:              "flex",
+            flexDirection:        "column",
+            background:           "var(--akili-panel)",
+            backdropFilter:       "blur(20px)",
+            WebkitBackdropFilter: "blur(20px)",
+            borderRight:          "1px solid var(--akili-border)",
+            fontFamily:           "system-ui, -apple-system, sans-serif",
+            zIndex:               50,
+            animation:            "notifSlideIn 0.15s ease",
+        }}>
+            {itemList}
         </div>
         </>
     )

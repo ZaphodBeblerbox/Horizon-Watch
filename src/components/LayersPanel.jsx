@@ -1,5 +1,7 @@
 // LayersPanel.jsx — Grouped layer toggle panel for Akili
 // Purely controlled: all state owned by parent (MapPage)
+import { useState, useEffect } from "react"
+import BottomSheet from "./BottomSheet.jsx"
 
 function Toggle({ value, onChange }) {
     return (
@@ -170,6 +172,13 @@ export default function LayersPanel({
     // Auth
     currentUser,
 }) {
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+
     const aisStatusKey = aisStatus?.error ? "error" : aisStatus?.connected ? "ok" : "pending"
     const ss = { ...(sourceStatus || {}), aisVessels: aisStatusKey }
     const il = infraLoading || {}
@@ -184,7 +193,7 @@ export default function LayersPanel({
         return Object.prototype.hasOwnProperty.call(mo, key)
     }
 
-    return (
+    const body = (
         <div style={{
             position:        "fixed",
             top:             54,
@@ -567,4 +576,52 @@ export default function LayersPanel({
             </div>
         </div>
     )
+
+    if (isMobile) {
+        return (
+            <BottomSheet isOpen title="Layers" onClose={onClose} height="full">
+                <div style={{ padding: "0 12px 16px" }}>
+                    {/* Route status banner */}
+                    {active.route && routeInfo && !routeInfo.calculating && routeInfo.distance && (
+                        <div style={{
+                            margin: "8px 0 0", padding: "6px 8px",
+                            background: "rgba(41,121,255,0.12)", borderRadius: 4,
+                            border: "1px solid rgba(41,121,255,0.3)",
+                            fontSize: 10, color: "rgba(232,237,242,0.6)",
+                        }}>
+                            Route: {routeInfo.distance} — {routeInfo.duration}
+                        </div>
+                    )}
+                    <SectionHeader label="Events" />
+                    <LayerRow label="Surface Feed"       statusKey="rss"   sourceStatus={ss} toggled={active.news}            onToggle={() => onToggle("news")}            isManual={isManual("news")} />
+                    <LayerRow label="Conflict Zones"     statusKey="gdelt" sourceStatus={ss} toggled={active.conflictZones}   onToggle={() => onToggle("conflictZones")}   badge={conflictZoneCount} loading={conflictZonesLoading} isManual={isManual("conflictZones")} />
+                    <LayerRow label="Heatmap"                               toggled={active.heatmap}          onToggle={() => onToggle("heatmap")}          isManual={isManual("heatmap")} />
+                    <LayerRow label="Missile Alerts"     statusKey="oref"  sourceStatus={ss} toggled={active.missileAlerts}   onToggle={() => onToggle("missileAlerts")}   isManual={isManual("missileAlerts")} />
+                    <LayerRow label="Earthquake Events"  statusKey="usgs"  sourceStatus={ss} toggled={active.earthquakeEvents} onToggle={() => onToggle("earthquakeEvents")} isManual={isManual("earthquakeEvents")} />
+                    <SectionHeader label="Infrastructure" />
+                    <LayerRow label="Airports"       toggled={active.airports}    onToggle={() => onToggle("airports")}    isManual={isManual("airports")} />
+                    <LayerRow label="Ports"          toggled={active.ports}       onToggle={() => onToggle("ports")}       isManual={isManual("ports")} />
+                    <LayerRow label="Power Plants"   toggled={active.powerPlants} onToggle={() => onToggle("powerPlants")} isManual={isManual("powerPlants")} />
+                    <LayerRow label="Hospitals"      toggled={active.hospitals}   onToggle={() => onToggle("hospitals")}   isManual={isManual("hospitals")} />
+                    <LayerRow label="Police & Security" toggled={active.police}   onToggle={() => onToggle("police")}      isManual={isManual("police")} />
+                    <LayerRow label="Military"       toggled={active.military}    onToggle={() => onToggle("military")}    isManual={isManual("military")} />
+                    <LayerRow label="Submarine Cables" toggled={active.cables}   onToggle={() => onToggle("cables")}      isManual={isManual("cables")} />
+                    <SectionHeader label="Maritime" />
+                    <LayerRow label="Shipping Lanes" toggled={active.shippingLanes} onToggle={() => onToggle("shippingLanes")} isManual={isManual("shippingLanes")} />
+                    <LayerRow label="IMB Piracy"     toggled={active.imbPiracy}     onToggle={() => onToggle("imbPiracy")}     isManual={isManual("imbPiracy")} />
+                    <LayerRow label="EEZ Boundaries" toggled={active.eez}           onToggle={() => onToggle("eez")}           isManual={isManual("eez")} />
+                    <LayerRow label="Chokepoints"    toggled={active.chokepoints}   onToggle={() => onToggle("chokepoints")}   isManual={isManual("chokepoints")} />
+                    <LayerRow label="Live Vessels (AIS)" statusKey="aisVessels" sourceStatus={ss} toggled={active.aisVessels} onToggle={() => onToggle("aisVessels")} badge={active.aisVessels && aisVesselCount > 0 ? aisVesselCount : undefined} isManual={isManual("aisVessels")} />
+                    <SectionHeader label="Overlays" />
+                    <LayerRow label="Country Borders"   toggled={active.borders}       onToggle={() => onToggle("borders")}       isManual={isManual("borders")} />
+                    <LayerRow label="Airspace"          toggled={active.airspace}      onToggle={() => onToggle("airspace")}      isManual={isManual("airspace")} />
+                    <LayerRow label="News Conflicts"    statusKey="rss" sourceStatus={ss} toggled={active.newsConflicts} onToggle={() => onToggle("newsConflicts")} badge={newsConflictCount} isManual={isManual("newsConflicts")} />
+                    <LayerRow label="ADS-B Traffic"     toggled={active.adsb}          onToggle={() => onToggle("adsb")}          isManual={isManual("adsb")} />
+                    <LayerRow label="POI Profiles"      toggled={active.poi}           onToggle={() => onToggle("poi")}           badge={poiCount} isManual={isManual("poi")} />
+                </div>
+            </BottomSheet>
+        )
+    }
+
+    return body
 }

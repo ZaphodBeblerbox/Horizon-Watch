@@ -176,6 +176,13 @@ textarea::placeholder {
     }
 }
 
+/* Hide zoom +/- controls on mobile */
+@media (max-width: 767px) {
+    .leaflet-control-zoom {
+        display: none !important;
+    }
+}
+
 /* Map controls on the right on mobile */
 @media (max-width: 767px) {
     .leaflet-top.leaflet-left {
