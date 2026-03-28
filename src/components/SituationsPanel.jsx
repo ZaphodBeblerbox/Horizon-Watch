@@ -130,6 +130,8 @@ export default function SituationsPanel({
     onClose, onDrawTheater,
     profile, onProfileSave,
     currentUser,
+    focusRegions: externalFocusRegions,
+    onFocusRegionsChange,
 }) {
     const [showNew,       setShowNew]       = useState(false)
     const [name,          setName]          = useState("")
@@ -139,7 +141,7 @@ export default function SituationsPanel({
     const [activeUsers,   setActiveUsers]   = useState([])
     const [selectedUser,  setSelectedUser]  = useState(null)
     const [missionText,   setMissionText]   = useState(profile?.activeSituations || "")
-    const [focusRegions,  setFocusRegions]  = useState(profile?.focusRegions || [])
+    const [focusRegions,  setFocusRegions]  = useState(externalFocusRegions ?? profile?.focusRegions ?? [])
     const [threshold,     setThreshold]     = useState(profile?.threshold ?? 1)
     const [savedMission,  setSavedMission]  = useState(false)
 
@@ -223,7 +225,11 @@ export default function SituationsPanel({
                         <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginBottom: 6 }}>Focus Regions</div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
                             {FOCUS_REGIONS.map(r => (
-                                <button key={r} onClick={() => setFocusRegions(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r])} style={{
+                                <button key={r} onClick={() => {
+                                    const next = focusRegions.includes(r) ? focusRegions.filter(x => x !== r) : [...focusRegions, r]
+                                    setFocusRegions(next)
+                                    onFocusRegionsChange?.(next)
+                                }} style={{
                                     padding: "3px 8px", fontSize: 9, fontWeight: 600, borderRadius: 4,
                                     border: `1px solid ${focusRegions.includes(r) ? "rgba(26,110,181,0.6)" : "rgba(255,255,255,0.12)"}`,
                                     background: focusRegions.includes(r) ? "rgba(26,110,181,0.2)" : "none",

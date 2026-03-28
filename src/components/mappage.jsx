@@ -3381,6 +3381,9 @@ export default function MapPage({
     surfaceEnrichment = null, // { item, enrichment, prose } — loaded by detail panel
     theaterDrawing   = false, // bool — when true, map accepts clicks to draw theater polygon
     onTheaterDrawEnd = null,  // (polygon: [[lat,lon],...] | null) => void
+    focusRegions     = [],    // string[] — active focus regions for event filtering
+    onPanelOpen      = null,  // () => void — called when map opens a fixed side panel
+    externalPanelOpen = false, // bool — when true, close map's fixed panels
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -3706,6 +3709,56 @@ export default function MapPage({
     const [newsConflictsCount, setNewsConflictsCount] = useState(0)   // global count for badge
     const [unifiedEvents, setUnifiedEvents]           = useState([])
     const [unifiedEventsCount, setUnifiedEventsCount] = useState(0)
+
+    // Region bboxes for event filtering — (south, north, west, east)
+    const REGION_BBOXES = {
+        "East Africa":                 { south: -12, north:  18, west:  28, east:  52 },
+        "Horn of Africa":              { south:   2, north:  18, west:  38, east:  52 },
+        "Great Lakes Region":          { south: -10, north:   2, west:  27, east:  33 },
+        "Sahel":                       { south:  10, north:  20, west: -17, east:  24 },
+        "West Africa":                 { south:   4, north:  20, west: -17, east:  16 },
+        "North Africa":                { south:  18, north:  38, west: -17, east:  37 },
+        "Central Africa":              { south: -10, north:  10, west:   8, east:  32 },
+        "Southern Africa":             { south: -35, north: -12, west:  12, east:  36 },
+        "Red Sea / Arabian Peninsula": { south:  12, north:  30, west:  32, east:  60 },
+        "Gulf States":                 { south:  22, north:  30, west:  46, east:  60 },
+        "Middle East":                 { south:  25, north:  42, west:  28, east:  63 },
+        "Levant":                      { south:  29, north:  38, west:  34, east:  42 },
+        "Iran":                        { south:  25, north:  40, west:  44, east:  64 },
+        "Iraq":                        { south:  29, north:  38, west:  38, east:  49 },
+        "Yemen":                       { south:  12, north:  19, west:  42, east:  55 },
+        "Indian Ocean":                { south: -35, north:  25, west:  30, east: 110 },
+        "Mediterranean":               { south:  30, north:  46, west:  -6, east:  42 },
+        "South Asia":                  { south:   5, north:  38, west:  60, east:  95 },
+        "Southeast Asia":              { south: -10, north:  28, west:  92, east: 140 },
+        "Central Asia":                { south:  36, north:  55, west:  46, east:  90 },
+        "East Asia":                   { south:  18, north:  54, west:  73, east: 146 },
+        "Europe":                      { south:  35, north:  72, west: -25, east:  45 },
+        "Eastern Europe":              { south:  43, north:  60, west:  14, east:  40 },
+        "Ukraine":                     { south:  44, north:  53, west:  22, east:  41 },
+        "Balkans":                     { south:  38, north:  47, west:  13, east:  29 },
+        "Russia":                      { south:  50, north:  77, west:  26, east:  68 },
+        "North America":               { south:  24, north:  72, west:-170, east: -52 },
+        "Central America":             { south:   7, north:  25, west: -92, east: -59 },
+        "South America":               { south: -57, north:  13, west: -82, east: -34 },
+        "Australia":                   { south: -45, north: -10, west: 112, east: 154 },
+        "Global":                      null,
+    }
+
+    const filteredUnifiedEvents = useMemo(() => {
+        if (focusRegions.length === 0) return unifiedEvents
+        const hasGlobal = focusRegions.includes("Global")
+        if (hasGlobal) return unifiedEvents
+        return unifiedEvents.filter(ev => {
+            if (!ev.lat || !ev.lon) return false
+            return focusRegions.some(r => {
+                const bbox = REGION_BBOXES[r]
+                if (!bbox) return false
+                return ev.lat >= bbox.south && ev.lat <= bbox.north &&
+                       ev.lon >= bbox.west  && ev.lon <= bbox.east
+            })
+        })
+    }, [unifiedEvents, focusRegions])
     const [surveillanceAlerts, setSurveillanceAlerts] = useState([])
 
     // ── POI layer ─────────────────────────────────────────────────────────────
@@ -4465,7 +4518,7 @@ export default function MapPage({
             unifiedLayerRef.current = L.layerGroup()
         }
         unifiedLayerRef.current.clearLayers()
-        if (!active.unifiedEvents || unifiedEvents.length === 0) {
+        if (!active.unifiedEvents || filteredUnifiedEvents.length === 0) {
             unifiedLayerRef.current.remove()
             return
         }
@@ -4476,7 +4529,7 @@ export default function MapPage({
             fire: "#f97316", assassination: "#ef4444", coerce: "#eab308",
             general: "#64748b",
         }
-        unifiedEvents.forEach(thread => {
+        filteredUnifiedEvents.forEach(thread => {
             if (!thread.lat || !thread.lon) return
             const icon = makeEventMarkerIcon({
                 type: thread.event_type || "general",
@@ -4506,14 +4559,10 @@ export default function MapPage({
                     mapRef.current.flyTo([thread.lat, thread.lon], targetZoom, { duration: 1.5, easeLinearity: 0.3 })
                 }
             })
-            marker.bindTooltip(
-                `<div style="background:rgba(15,23,42,0.95);backdrop-filter:blur(8px);padding:8px 12px;border:1px solid rgba(56,189,248,0.3);border-radius:6px;color:#e2e8f0;font-size:12px;max-width:250px;box-shadow:0 4px 12px rgba(0,0,0,0.4);"><div style="font-weight:600;margin-bottom:4px;">${thread.clean_title || thread.headline || thread.location || ""}</div><div style="color:#94a3b8;font-size:10px;">${thread.event_count || 1} source${(thread.event_count || 1) > 1 ? "s" : ""} · ${thread.severity_tier || "elevated"}</div></div>`,
-                { className: "", permanent: false, direction: "top", opacity: 1, offset: [0, -10] }
-            )
             unifiedLayerRef.current.addLayer(marker)
         })
         unifiedLayerRef.current.addTo(mapRef.current)
-    }, [unifiedEvents, active.unifiedEvents])
+    }, [filteredUnifiedEvents, active.unifiedEvents])
 
     // ── Deployments layer fetch ───────────────────────────────────────────────
     useEffect(() => {
@@ -4968,6 +5017,21 @@ export default function MapPage({
             } catch { /* ignore */ }
         }
     }, [activeSituation?.id])
+
+    // Panel mutual exclusion — when map opens a fixed panel, close external right panel
+    useEffect(() => {
+        if (selectedEvent || selectedCountry) onPanelOpen?.()
+    }, [selectedEvent, selectedCountry])  // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Panel mutual exclusion — when external right panel opens, close map's fixed panels
+    useEffect(() => {
+        if (externalPanelOpen) {
+            setSelectedEvent(null)
+            setSelectedCountry(null)
+            setSelectedCountryFeature(null)
+            setCountryData(null)
+        }
+    }, [externalPanelOpen])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // When active situation changes, load its annotations into local state
     useEffect(() => {
@@ -6944,7 +7008,7 @@ export default function MapPage({
         {/* ── Live Ticker ──────────────────────────────────────────────────────── */}
         {active.liveTicker && (
             <LiveTicker
-                events={unifiedEvents}
+                events={filteredUnifiedEvents}
                 onItemClick={(item) => {
                     setSelectedEvent({
                         ...item,

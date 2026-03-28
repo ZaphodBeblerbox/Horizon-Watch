@@ -113,10 +113,10 @@ const PANEL_STYLE = {
     width:       RIGHT_PANEL_W,
     flexShrink:  0,
     height:      "100%",
-    background:  "var(--akili-panel-blur)",
-    backdropFilter: "blur(20px) saturate(1.4)",
-    WebkitBackdropFilter: "blur(20px) saturate(1.4)",
-    borderLeft:  "1px solid var(--akili-border)",
+    background:  "rgba(15,23,42,0.85)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    borderLeft:  "1px solid rgba(56,189,248,0.2)",
     overflowY:   "auto",
     boxSizing:   "border-box",
     fontFamily:  "system-ui, -apple-system, sans-serif",
@@ -171,6 +171,7 @@ export default function App() {
 
     // ── Mission profile ───────────────────────────────────────────────────────
     const [profile, setProfile] = useState(() => loadProfile())
+    const [focusRegions, setFocusRegions] = useState(() => loadProfile()?.focusRegions || [])
     const initialProfilePanRef = useRef(false)
 
     useEffect(() => {
@@ -181,6 +182,7 @@ export default function App() {
                 if (d.profile) {
                     saveProfileToStorage(d.profile)
                     setProfile(d.profile)
+                    setFocusRegions(d.profile.focusRegions || [])
                 }
             })
             .catch(() => {})
@@ -819,6 +821,9 @@ export default function App() {
                         surfaceEnrichment={surfaceEnrichment}
                         theaterDrawing={theaterDrawing}
                         onTheaterDrawEnd={handleTheaterDrawEnd}
+                        focusRegions={focusRegions}
+                        onPanelOpen={() => setRightPanel(null)}
+                        externalPanelOpen={rightPanel !== null}
                     />
                 </div>
 
@@ -909,6 +914,8 @@ export default function App() {
                             profile={profile}
                             onProfileSave={handleProfileSave}
                             currentUser={currentUser}
+                            focusRegions={focusRegions}
+                            onFocusRegionsChange={setFocusRegions}
                         />
                     </div>
                 )}

@@ -152,24 +152,24 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
             fontFamily:           "Inter, -apple-system, sans-serif",
             color:                "#e0e0e0",
         }}>
-            {/* Absolute close button — always visible */}
+            {/* Absolute close button — always visible, above image */}
             <button
-                onClick={handleClose}
+                onClick={onClose}
                 onMouseOver={e => e.currentTarget.style.color = "#ffffff"}
                 onMouseOut={e => e.currentTarget.style.color = "#94a3b8"}
                 style={{
-                    position:     "absolute",
-                    top:          12,
-                    right:        12,
-                    background:   "transparent",
-                    border:       "none",
-                    color:        "#94a3b8",
-                    fontSize:     20,
-                    cursor:       "pointer",
-                    padding:      "4px 8px",
+                    position:   "absolute",
+                    top:        8,
+                    right:      8,
+                    background: "rgba(15,23,42,0.8)",
+                    border:     "1px solid rgba(148,163,184,0.3)",
+                    color:      "#94a3b8",
+                    fontSize:   16,
+                    cursor:     "pointer",
+                    padding:    "4px 8px",
                     borderRadius: 4,
-                    zIndex:       10,
-                    lineHeight:   1,
+                    zIndex:     20,
+                    lineHeight: 1,
                 }}
             >✕</button>
 
