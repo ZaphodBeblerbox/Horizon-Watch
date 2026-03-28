@@ -5398,6 +5398,7 @@ export default function MapPage({
             ...piracyAlertItems,
         ]
         const seen = new Set()
+        const hasRegionFilter = focusRegions.length > 0 && !focusRegions.includes("Global")
         return merged.filter((item, index) => {
             const lat = Number(item?.lat)
             const lon = Number(item?.lon ?? item?.lng)
@@ -5405,9 +5406,16 @@ export default function MapPage({
             const key = item?.id || item?.url || `${lat.toFixed(3)}_${lon.toFixed(3)}_${item?.headline || item?.title || index}`
             if (seen.has(key)) return false
             seen.add(key)
+            if (hasRegionFilter) {
+                return focusRegions.some(r => {
+                    const bbox = REGION_BBOXES[r]
+                    if (!bbox) return false
+                    return lat >= bbox.south && lat <= bbox.north && lon >= bbox.west && lon <= bbox.east
+                })
+            }
             return true
         })
-    }, [active.heatmap, active.newsConflicts, visibleSurfaceItems, newsConflictsData, missileAlertItems, earthquakeAlertItems, piracyAlertItems])
+    }, [active.heatmap, active.newsConflicts, visibleSurfaceItems, newsConflictsData, missileAlertItems, earthquakeAlertItems, piracyAlertItems, focusRegions])
 
     const clusterMarkers = useMemo(() => {
         const clickableItems = visibleSurfaceItems.filter(item => item.source_type !== "conflict_zone")

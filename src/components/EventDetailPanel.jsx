@@ -138,10 +138,10 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
             right:                0,
             width:                380,
             height:               "100vh",
-            background:           "rgba(6, 13, 26, 0.92)",
-            backdropFilter:       "blur(24px)",
-            WebkitBackdropFilter: "blur(24px)",
-            borderLeft:           "1px solid rgba(255, 255, 255, 0.08)",
+            background:           "rgba(15,23,42,0.85)",
+            backdropFilter:       "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            borderLeft:           "1px solid rgba(56,189,248,0.15)",
             boxShadow:            "-8px 0 32px rgba(0, 0, 0, 0.5)",
             zIndex:               2100,
             display:              "flex",
@@ -152,26 +152,43 @@ export default function EventDetailPanel({ event, profile, onClose, onAnalyse, a
             fontFamily:           "Inter, -apple-system, sans-serif",
             color:                "#e0e0e0",
         }}>
-            {/* Absolute close button — always visible, above image */}
-            <button
-                onClick={onClose}
-                onMouseOver={e => e.currentTarget.style.color = "#ffffff"}
-                onMouseOut={e => e.currentTarget.style.color = "#94a3b8"}
-                style={{
-                    position:   "absolute",
-                    top:        8,
-                    right:      8,
-                    background: "rgba(15,23,42,0.8)",
-                    border:     "1px solid rgba(148,163,184,0.3)",
-                    color:      "#94a3b8",
-                    fontSize:   16,
-                    cursor:     "pointer",
-                    padding:    "4px 8px",
-                    borderRadius: 4,
-                    zIndex:     20,
-                    lineHeight: 1,
-                }}
-            >✕</button>
+            {/* Gradient header bar — always on top of image */}
+            <div style={{
+                position:   "absolute",
+                top:        0,
+                left:       0,
+                right:      0,
+                height:     44,
+                background: "linear-gradient(to bottom, rgba(10,14,24,0.92) 0%, rgba(10,14,24,0.0) 100%)",
+                zIndex:     100,
+                display:    "flex",
+                alignItems: "flex-start",
+                justifyContent: "flex-end",
+                padding:    "8px 8px 0 0",
+                pointerEvents: "none",
+            }}>
+                <button
+                    onClick={handleClose}
+                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.15)"; e.currentTarget.style.color = "#ffffff" }}
+                    onMouseOut={e => { e.currentTarget.style.background = "rgba(0,0,0,0.45)"; e.currentTarget.style.color = "#94a3b8" }}
+                    style={{
+                        background:   "rgba(0,0,0,0.45)",
+                        border:       "1px solid rgba(148,163,184,0.25)",
+                        color:        "#94a3b8",
+                        fontSize:     14,
+                        cursor:       "pointer",
+                        width:        28,
+                        height:       28,
+                        borderRadius: 4,
+                        display:      "flex",
+                        alignItems:   "center",
+                        justifyContent: "center",
+                        lineHeight:   1,
+                        pointerEvents: "auto",
+                        flexShrink:   0,
+                    }}
+                >✕</button>
+            </div>
 
             {/* Image */}
             {imgUrl && !imgError && (
