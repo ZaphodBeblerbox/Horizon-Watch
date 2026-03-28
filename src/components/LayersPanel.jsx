@@ -11,27 +11,30 @@ function Toggle({ value, onChange }) {
                 onChange(!value)
             }}
             style={{
-                width:        32,
-                height:       18,
-                borderRadius: 9,
+                width:        44,
+                height:       24,
+                borderRadius: 12,
                 border:       "none",
                 background:   value ? "var(--akili-accent)" : "#2d3748",
                 cursor:       "pointer",
                 position:     "relative",
                 transition:   "background 0.2s",
                 flexShrink:   0,
+                minHeight:    "unset",   // override mobile CSS min-height: 44px
+                padding:      0,
             }}
         >
             <span style={{
                 position:     "absolute",
                 top:          2,
-                left:         value ? 16 : 2,
-                width:        14,
-                height:       14,
+                left:         value ? 22 : 2,
+                width:        20,
+                height:       20,
                 borderRadius: "50%",
                 background:   "#fff",
                 transition:   "left 0.2s",
                 display:      "block",
+                boxShadow:    "0 1px 3px rgba(0,0,0,0.3)",
             }} />
         </button>
     )
@@ -580,7 +583,7 @@ export default function LayersPanel({
     if (isMobile) {
         return (
             <BottomSheet isOpen title="Layers" onClose={onClose} height="full">
-                <div style={{ padding: "0 12px 16px" }}>
+                <div style={{ padding: "8px 12px 16px" }}>
                     {/* Route status banner */}
                     {active.route && routeInfo && !routeInfo.calculating && routeInfo.distance && (
                         <div style={{

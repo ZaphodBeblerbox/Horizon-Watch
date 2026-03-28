@@ -140,6 +140,7 @@ export default function BottomSheet({
                     overflowY:               "auto",
                     overflowX:               "hidden",
                     WebkitOverflowScrolling: "touch",
+                    paddingBottom:           "env(safe-area-inset-bottom, 8px)",
                 }}>
                     {children}
                 </div>

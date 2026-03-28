@@ -55,67 +55,71 @@ export default function NotificationsDrawer({
         )
     }, [items, sortMode])
 
+    // Desktop-only header (title + sort + close)
+    const desktopHeader = (
+        <div style={{
+            height:         36,
+            flexShrink:     0,
+            display:        "flex",
+            alignItems:     "center",
+            justifyContent: "space-between",
+            padding:        "0 12px",
+            borderBottom:   "1px solid var(--akili-border)",
+        }}>
+            <span style={{
+                fontSize:      12,
+                fontWeight:    700,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color:         "var(--akili-text-secondary)",
+            }}>
+                Notifications
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                    {["relevance", "time"].map(mode => (
+                        <button
+                            key={mode}
+                            onClick={() => onSortModeChange(mode)}
+                            style={{
+                                background:    "none",
+                                border:        "none",
+                                cursor:        "pointer",
+                                fontSize:      10,
+                                fontWeight:    600,
+                                letterSpacing: "0.04em",
+                                color:         sortMode === mode ? "var(--akili-accent)" : "var(--akili-text-muted)",
+                                padding:       "0 4px",
+                                transition:    "color 0.1s",
+                                minHeight:     "unset",
+                            }}
+                        >
+                            {mode === "relevance" ? "SCORE" : "TIME"}
+                        </button>
+                    ))}
+                </div>
+                <button
+                    onClick={onClose}
+                    style={{
+                        background: "none",
+                        border:     "none",
+                        color:      "var(--akili-text-muted)",
+                        cursor:     "pointer",
+                        fontSize:   18,
+                        lineHeight: 1,
+                        padding:    0,
+                        minHeight:  "unset",
+                    }}
+                >
+                    ×
+                </button>
+            </div>
+        </div>
+    )
+
+    // Shared items list (used by both mobile and desktop)
     const itemList = (
         <div style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
-            {/* Header */}
-            <div style={{
-                height:         36,
-                flexShrink:     0,
-                display:        "flex",
-                alignItems:     "center",
-                justifyContent: "space-between",
-                padding:        "0 12px",
-                borderBottom:   "1px solid var(--akili-border)",
-            }}>
-                <span style={{
-                    fontSize:      12,
-                    fontWeight:    700,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    color:         "var(--akili-text-secondary)",
-                }}>
-                    Notifications
-                </span>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {/* Sort toggle */}
-                    <div style={{ display: "flex", gap: 4 }}>
-                        {["relevance", "time"].map(mode => (
-                            <button
-                                key={mode}
-                                onClick={() => onSortModeChange(mode)}
-                                style={{
-                                    background:    "none",
-                                    border:        "none",
-                                    cursor:        "pointer",
-                                    fontSize:      10,
-                                    fontWeight:    600,
-                                    letterSpacing: "0.04em",
-                                    color:         sortMode === mode ? "var(--akili-accent)" : "var(--akili-text-muted)",
-                                    padding:       "0 4px",
-                                    transition:    "color 0.1s",
-                                }}
-                            >
-                                {mode === "relevance" ? "SCORE" : "TIME"}
-                            </button>
-                        ))}
-                    </div>
-                    <button
-                        onClick={onClose}
-                        style={{
-                            background: "none",
-                            border:     "none",
-                            color:      "var(--akili-text-muted)",
-                            cursor:     "pointer",
-                            fontSize:   18,
-                            lineHeight: 1,
-                            padding:    0,
-                        }}
-                    >
-                        ×
-                    </button>
-                </div>
-            </div>
-
             {/* Items — scrollable */}
             <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
                 {sorted.length === 0 ? (
@@ -254,8 +258,8 @@ export default function NotificationsDrawer({
     if (isMobile) {
         return (
             <BottomSheet isOpen onClose={onClose} title="Notifications" height="half">
-                {/* Sort controls */}
-                <div style={{ display: "flex", gap: 4, padding: "8px 12px 0", justifyContent: "flex-end" }}>
+                {/* Sort controls — only row needed; BottomSheet already has title + close */}
+                <div style={{ display: "flex", gap: 4, padding: "6px 12px", justifyContent: "flex-end", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                     {["relevance", "time"].map(mode => (
                         <button
                             key={mode}
@@ -269,7 +273,7 @@ export default function NotificationsDrawer({
                                 letterSpacing: "0.04em",
                                 color:         sortMode === mode ? "var(--akili-accent)" : "var(--akili-text-muted)",
                                 padding:       "4px 6px",
-                                minHeight:     36,
+                                minHeight:     "unset",
                             }}
                         >
                             {mode === "relevance" ? "SCORE" : "TIME"}
@@ -300,6 +304,7 @@ export default function NotificationsDrawer({
             zIndex:               50,
             animation:            "notifSlideIn 0.15s ease",
         }}>
+            {desktopHeader}
             {itemList}
         </div>
         </>

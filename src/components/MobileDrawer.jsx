@@ -118,9 +118,9 @@ export default function MobileDrawer({
                 top:            40,   // Below TopBar
                 right:          0,
                 bottom:         56,   // Above BottomNav
-                width:          280,
-                maxWidth:       "80vw",
-                background:     "rgba(6,13,26,0.98)",
+                width:          240,
+                maxWidth:       "65vw",
+                background:     "rgba(6,13,26,0.92)",
                 backdropFilter: "blur(20px)",
                 WebkitBackdropFilter: "blur(20px)",
                 borderLeft:     "1px solid rgba(255,255,255,0.08)",
