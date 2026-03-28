@@ -1032,73 +1032,30 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
                     <style>{`@keyframes poi-spin { to { transform: rotate(360deg); } }`}</style>
                 </div>
 
-                {/* INVESTIGATION RESULTS */}
-                {investStatus === "complete" && (
+                {/* INVESTIGATION RESULTS — same components as desktop */}
+                {investStatus !== "idle" && (
                     <div style={mSec}>
                         <div style={{ ...SEC_HDR, marginBottom: 10 }}>
-                            Investigation Results
-                            {investRunAt && (
+                            Intelligence Report
+                            {investRunAt && investStatus === "complete" && (
                                 <span style={{ marginLeft: 8, fontSize: 9, color: "#4a6080", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
                                     {new Date(investRunAt).toLocaleDateString()}
                                 </span>
                             )}
                         </div>
-                        {/* Completion badge */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, padding: "8px 10px", background: "rgba(34,197,94,0.08)", borderRadius: 6, border: "1px solid rgba(34,197,94,0.2)" }}>
-                            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }} />
-                            <span style={{ fontSize: 11, color: "#22c55e", fontWeight: 600 }}>Investigation Complete</span>
-                        </div>
-                        {/* Stats row */}
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
-                            {[
-                                { label: "Relations", value: (local.relations || []).length },
-                                { label: "Socials", value: [ids.instagram, ids.twitter, ids.linkedin, ids.facebook, ids.tiktok, ids.telegram].filter(Boolean).length + (local.social_accounts || []).length },
-                                {
-                                    label: "Risk",
-                                    value: ["target", "suspect"].includes(local.tag) ? "HIGH" : local.tag === "unknown" ? "MED" : "LOW",
-                                    color: ["target", "suspect"].includes(local.tag) ? "#ef4444" : local.tag === "unknown" ? "#f59e0b" : "#22c55e",
-                                },
-                            ].map(({ label, value, color }) => (
-                                <div key={label} style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "10px 8px", textAlign: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
-                                    <div style={{ fontSize: 18, fontWeight: 700, color: color || "#0d9488", letterSpacing: "-0.02em" }}>{value}</div>
-                                    <div style={{ fontSize: 9, color: "#4a6080", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 2 }}>{label}</div>
-                                </div>
-                            ))}
-                        </div>
-                        {/* CSS network graph */}
-                        {(local.relations || []).length > 0 && (
-                            <div style={{ height: 180, background: "rgba(14,20,32,0.6)", borderRadius: 6, overflow: "hidden", position: "relative", marginBottom: 12 }}>
-                                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 52, height: 52, borderRadius: "50%", background: "linear-gradient(135deg,#0d9488,#0f766e)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 9, fontWeight: 700, textAlign: "center", zIndex: 2, boxShadow: "0 0 16px rgba(13,148,136,0.5)", padding: 4 }}>
-                                    {(local.name || "POI").split(" ")[0].slice(0, 6)}
-                                </div>
-                                {(local.relations || []).slice(0, 6).map((rel, i) => {
-                                    const total = Math.min((local.relations || []).length, 6)
-                                    const angle = (i / total) * 2 * Math.PI - Math.PI / 2
-                                    const x = 50 + Math.cos(angle) * 38
-                                    const y = 50 + Math.sin(angle) * 35
-                                    return (
-                                        <div key={i} style={{ position: "absolute", top: `${y}%`, left: `${x}%`, transform: "translate(-50%,-50%)", width: 36, height: 36, borderRadius: "50%", background: `${REL_COLOR[rel.relation_type] || "#4a5568"}22`, border: `2px solid ${REL_COLOR[rel.relation_type] || "#4a5568"}88`, display: "flex", alignItems: "center", justifyContent: "center", color: REL_COLOR[rel.relation_type] || "#8899aa", fontSize: 7, fontWeight: 600, textAlign: "center", padding: 2 }}>
-                                            {(rel.poi_name || "?").split(" ")[0].slice(0, 5)}
-                                        </div>
-                                    )
-                                })}
+                        <InvestResults results={investRes} status={investStatus} />
+                        {investStatus === "complete" && (
+                            <div style={{ height: 260, background: "rgba(14,20,32,0.6)", borderRadius: 8, overflow: "hidden", marginTop: 12 }}>
+                                <ThreeGraph
+                                    poi={local}
+                                    results={investRes}
+                                    relations={local.relations}
+                                    allPois={allPois}
+                                    isInLockedView={isInLockedView}
+                                    onSwitchPoi={onSwitchPoi}
+                                />
                             </div>
                         )}
-                        {/* Per-platform results if backend returned data */}
-                        {Object.entries(investRes).map(([platform, data]) => {
-                            if (!data || typeof data !== "object") return null
-                            return (
-                                <div key={platform} style={{ marginBottom: 8, padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.06)" }}>
-                                    <div style={{ fontSize: 10, fontWeight: 700, color: SOCIAL_PLATFORM_COLOR[platform] || "#0d9488", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{platform}</div>
-                                    {data.found === false && <div style={{ fontSize: 11, color: "#4a5568" }}>No profile found.</div>}
-                                    {data.username && <div style={{ fontSize: 12, color: "#c0ccd8", marginBottom: 2 }}>@{data.username}</div>}
-                                    {data.followers && <div style={{ fontSize: 11, color: "#4a6080" }}>{Number(data.followers).toLocaleString()} followers</div>}
-                                    {data.bio && <div style={{ fontSize: 11, color: "#8899aa", marginTop: 4, lineHeight: 1.4 }}>{data.bio}</div>}
-                                    {data.location && <div style={{ fontSize: 11, color: "#4a6080", marginTop: 2 }}>{data.location}</div>}
-                                    {data.error && <div style={{ fontSize: 11, color: "#f87171" }}>{data.error}</div>}
-                                </div>
-                            )
-                        })}
                     </div>
                 )}
 
