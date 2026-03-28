@@ -6,7 +6,7 @@ const TIER_COLOR = {
 }
 
 // Single toast card — slides in from top-right, auto-dismisses after 6 s
-function Toast({ toast, onDismiss, onClick }) {
+function Toast({ toast, onDismiss, onClick, isMobile }) {
     const [visible, setVisible] = useState(false)
 
     useEffect(() => {
@@ -27,7 +27,7 @@ function Toast({ toast, onDismiss, onClick }) {
         <div
             onClick={onClick}
             style={{
-                width:        320,
+                width:        isMobile ? "100%" : 320,
                 background:   "rgba(6,13,26,0.95)",
                 backdropFilter: "blur(16px)",
                 WebkitBackdropFilter: "blur(16px)",
@@ -91,9 +91,16 @@ function Toast({ toast, onDismiss, onClick }) {
 
 export default function NotificationBar({ onEventClick }) {
     const [current, setCurrent] = useState(null)   // active toast
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
     const queue     = useRef([])                    // pending toasts
     const seenIds   = useRef(new Set())
     const mountedAt = useRef(Date.now())
+
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
 
     // Advance queue: show next if nothing visible
     const advance = useCallback(() => {
@@ -165,7 +172,14 @@ export default function NotificationBar({ onEventClick }) {
     if (!current) return null
 
     return (
-        <div className="hw-notif-container" style={{
+        <div style={isMobile ? {
+            position:      "fixed",
+            top:           50,
+            left:          8,
+            right:         8,
+            zIndex:        2000,
+            pointerEvents: "none",
+        } : {
             position:      "fixed",
             top:           60,
             left:          "50%",
@@ -173,23 +187,11 @@ export default function NotificationBar({ onEventClick }) {
             zIndex:        2000,
             pointerEvents: "none",
         }}>
-            <style>{`
-                @media (max-width: 767px) {
-                    .hw-notif-container {
-                        left: 8px !important;
-                        right: 8px !important;
-                        top: 8px !important;
-                    }
-                    .hw-notif-container > div {
-                        width: 100% !important;
-                        transform: translateX(0) !important;
-                    }
-                }
-            `}</style>
             <Toast
                 key={current.toastKey}
                 toast={current}
                 onDismiss={dismiss}
+                isMobile={isMobile}
                 onClick={() => {
                     onEventClick?.(current)
                     dismiss()
