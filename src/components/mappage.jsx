@@ -4486,6 +4486,9 @@ export default function MapPage({
             const marker = L.marker([thread.lat, thread.lon], { icon })
             marker.on("click", (ev) => {
                 L.DomEvent.stopPropagation(ev)
+                setSelectedCountry(null)
+                setSelectedCountryFeature(null)
+                setCountryData(null)
                 setSelectedEvent({
                     ...thread,
                     headline: thread.clean_title || thread.headline,
@@ -4504,8 +4507,8 @@ export default function MapPage({
                 }
             })
             marker.bindTooltip(
-                `<div style="background:rgba(6,13,26,0.9);padding:6px 10px;border:1px solid rgba(255,255,255,0.1);color:#e8edf2;font-size:11px;max-width:200px;"><div style="font-weight:600;margin-bottom:2px;">${thread.clean_title || thread.headline || thread.location || ""}</div><div style="color:#8899aa;font-size:10px;">${thread.event_count || 1} source${(thread.event_count || 1) > 1 ? "s" : ""} · ${thread.severity_tier || "low"}</div></div>`,
-                { className: "", permanent: false, direction: "top", opacity: 1 }
+                `<div style="background:rgba(15,23,42,0.95);backdrop-filter:blur(8px);padding:8px 12px;border:1px solid rgba(56,189,248,0.3);border-radius:6px;color:#e2e8f0;font-size:12px;max-width:250px;box-shadow:0 4px 12px rgba(0,0,0,0.4);"><div style="font-weight:600;margin-bottom:4px;">${thread.clean_title || thread.headline || thread.location || ""}</div><div style="color:#94a3b8;font-size:10px;">${thread.event_count || 1} source${(thread.event_count || 1) > 1 ? "s" : ""} · ${thread.severity_tier || "elevated"}</div></div>`,
+                { className: "", permanent: false, direction: "top", opacity: 1, offset: [0, -10] }
             )
             unifiedLayerRef.current.addLayer(marker)
         })
@@ -4949,6 +4952,22 @@ export default function MapPage({
             }))
             .catch(() => {})
     }, [])
+
+    // When active situation changes, clear events and fly to theater if present
+    useEffect(() => {
+        if (!activeSituation?.id) return
+        setUnifiedEvents([])
+        if (mapRef.current && Array.isArray(activeSituation.theater) && activeSituation.theater.length >= 3) {
+            try {
+                const lats = activeSituation.theater.map(p => p[0])
+                const lons = activeSituation.theater.map(p => p[1])
+                mapRef.current.flyToBounds(
+                    [[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]],
+                    { duration: 1.5, padding: [40, 40] }
+                )
+            } catch { /* ignore */ }
+        }
+    }, [activeSituation?.id])
 
     // When active situation changes, load its annotations into local state
     useEffect(() => {
@@ -5724,6 +5743,7 @@ export default function MapPage({
                 <CountryClickHandler
                     countriesGeo={allCountriesGeo}
                     onCountryClick={(feature, name) => {
+                        setSelectedEvent(null)
                         setSelectedCountry(name)
                         setSelectedCountryFeature(feature)
                         setAreaPopup(null)
@@ -6517,11 +6537,11 @@ export default function MapPage({
                     top:       44,
                     right:     0,
                     bottom:    0,
-                    width:     300,
+                    width:     380,
                     zIndex:    1150,
-                    background: "rgba(14,20,32,0.97)",
-                    backdropFilter: "blur(20px) saturate(1.4)",
-                    WebkitBackdropFilter: "blur(20px) saturate(1.4)",
+                    background: "rgba(15,23,42,0.85)",
+                    backdropFilter: "blur(12px)",
+                    WebkitBackdropFilter: "blur(12px)",
                     borderLeft: "1px solid rgba(255,255,255,0.07)",
                     fontFamily: "system-ui, -apple-system, sans-serif",
                 }}>

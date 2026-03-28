@@ -63,7 +63,7 @@ export default function LiveTicker({ events: propEvents, onItemClick }) {
 
     // Double items for seamless infinite loop (translateX(-50%) lands at start)
     const displayItems = [...items, ...items]
-    const duration = Math.max(40, items.length * 7) // seconds
+    const duration = Math.max(80, items.length * 14) // seconds
 
     return (
         <div style={{
@@ -72,9 +72,9 @@ export default function LiveTicker({ events: propEvents, onItemClick }) {
             left:           isMobile ? 0 : 48,
             right:          0,
             height:         34,
-            background:     "rgba(4,10,20,0.92)",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
+            background:     "rgba(15,23,42,0.85)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
             borderTop:      "1px solid rgba(255,255,255,0.08)",
             zIndex:         900,
             overflow:       "hidden",
