@@ -311,6 +311,17 @@ GLOBAL_EXPANDED_FEEDS = [
     ("Amnesty International", "https://www.amnesty.org/en/latest/rss/"),
 ]
 
+# ----------------
+# SPACE / AEROSPACE
+# ----------------
+SPACE_FEEDS = [
+    ("SpaceNews",          "https://spacenews.com/feed/"),
+    ("NASASpaceflight",    "https://www.nasaspaceflight.com/feed/"),
+    ("Ars Technica Space", "https://arstechnica.com/tag/space/feed/"),
+    ("Space.com",          "https://www.space.com/feeds/all"),
+    ("Universe Today",     "https://www.universetoday.com/feed/"),
+]
+
 # Append without removing existing items.
 ADDITIONAL_SCAN_FEEDS.extend(
     MIDDLE_EAST_EXPANDED_FEEDS
@@ -319,6 +330,7 @@ ADDITIONAL_SCAN_FEEDS.extend(
     + ASIA_EXPANDED_FEEDS
     + AMERICAS_EXPANDED_FEEDS
     + GLOBAL_EXPANDED_FEEDS
+    + SPACE_FEEDS
 )
 
 
@@ -360,3 +372,4 @@ _register_region(EUROPE_EXPANDED_FEEDS, "europe")
 _register_region(ASIA_EXPANDED_FEEDS, "asia")
 _register_region(AMERICAS_EXPANDED_FEEDS, "americas")
 _register_region(GLOBAL_EXPANDED_FEEDS, "global")
+_register_region(SPACE_FEEDS, "space")
