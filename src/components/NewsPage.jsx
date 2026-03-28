@@ -1,18 +1,20 @@
 import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
+import { TV_CHANNELS as RAW_CHANNELS } from "./tvchannels.js"
 
-const TV_CHANNELS = [
-    { id: "aljazeera", name: "Al Jazeera English",  src: "https://www.youtube.com/embed/F-POY4Q0QSI?autoplay=1&mute=1" },
-    { id: "france24",  name: "France 24 English",   src: "https://www.youtube.com/embed/h3MuIUNCCzI?autoplay=1&mute=1" },
-    { id: "dw",        name: "DW News",              src: "https://www.youtube.com/embed/V7Cf5JLGO38?autoplay=1&mute=1" },
-    { id: "sky",       name: "Sky News",             src: "https://www.youtube.com/embed/9Auq9mYxFEE?autoplay=1&mute=1" },
-    { id: "cnbc",      name: "CNBC",                 src: "https://www.youtube.com/embed/9NyxcX3rhQs?autoplay=1&mute=1" },
-]
+// Build embed src from the verified youtubeId list in tvchannels.js
+const YT = (id) => `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`
+
+const TV_CHANNELS = RAW_CHANNELS.map(ch => ({
+    id:   String(ch.id),
+    name: ch.name,
+    src:  YT(ch.youtubeId),
+}))
 
 const SPACE_CHANNELS = [
-    { id: "nasatv",    name: "NASA TV",              src: "https://www.youtube.com/embed/21X5lGlDOfg?autoplay=1&mute=1" },
-    { id: "spacex",    name: "SpaceX",               src: "https://www.youtube.com/embed/nA9UZF-SZoQ?autoplay=1&mute=1" },
-    { id: "everyday",  name: "Everyday Astronaut",   src: "https://www.youtube.com/embed/5HqXGeDuWnE?autoplay=1&mute=1" },
+    { id: "nasatv",   name: "NASA TV",            src: YT("21X5lGlDOfg") },
+    { id: "spacex",   name: "SpaceX",             src: YT("nA9UZF-SZoQ") },
+    { id: "everyday", name: "Everyday Astronaut", src: YT("5HqXGeDuWnE") },
 ]
 
 const WORLD_REGIONS = ["All", "Africa", "Middle East", "Europe", "Asia", "Americas"]
@@ -47,35 +49,31 @@ export default function NewsPage({ onClose }) {
     const channels = section === "space" ? SPACE_CHANNELS : TV_CHANNELS
     const channel  = channels[channelIdx] || channels[0]
 
-    // ── Fetch articles ────────────────────────────────────────────────────────
+    // ── Fetch articles from /api/surface ─────────────────────────────────────
     useEffect(() => {
         let cancelled = false
         setLoading(true)
 
-        const tryFetch = async () => {
-            const token = localStorage.getItem("hw-auth-token")
-            const headers = token ? { Authorization: `Bearer ${token}` } : {}
-
-            // Priority order: scored surface pool → raw events
-            for (const path of ["/api/surface", "/api/events", "/news"]) {
-                try {
-                    console.log("[news] trying", API_BASE + path)
-                    const res = await fetch(`${API_BASE}${path}`, { headers })
-                    if (!res.ok) { console.log("[news]", path, "→", res.status); continue }
-                    const data = await res.json()
-                    console.log("[news]", path, "→ ok, keys:", Object.keys(data))
-                    const list = data.items || data.threads || data.events || (Array.isArray(data) ? data : [])
-                    console.log("[news] article count:", list.length)
-                    if (!cancelled) setArticles(list)
-                    return
-                } catch (e) {
-                    console.error("[news]", path, "error:", e)
-                }
+        const fetchNews = async () => {
+            try {
+                const token = localStorage.getItem("hw-auth-token")
+                console.log("[news] fetching /api/surface")
+                const res = await fetch(`${API_BASE}/api/surface`, {
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                })
+                const data = await res.json()
+                console.log("[news] /api/surface response keys:", Object.keys(data), "item count:", (data.items || []).length)
+                // /api/surface returns { items: [...], updated_at, count, diagnostics }
+                if (!cancelled) setArticles(data.items || [])
+            } catch (e) {
+                console.error("[news] fetch error:", e)
+                if (!cancelled) setArticles([])
+            } finally {
+                if (!cancelled) setLoading(false)
             }
-            if (!cancelled) setArticles([])
         }
 
-        tryFetch().finally(() => { if (!cancelled) setLoading(false) })
+        fetchNews()
         return () => { cancelled = true }
     }, [])
 

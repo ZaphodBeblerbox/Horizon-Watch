@@ -27,6 +27,7 @@ import NotificationBar from "./components/NotificationBar.jsx"
 import StartupModal from "./components/StartupModal.jsx"
 import WelcomeBackModal from "./components/WelcomeBackModal.jsx"
 import NewsPage from "./components/NewsPage.jsx"
+import StartupChoiceModal from "./components/StartupChoiceModal.jsx"
 import BottomNav from "./components/BottomNav.jsx"
 import MobileDrawer from "./components/MobileDrawer.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
@@ -137,6 +138,7 @@ export default function App() {
     const [showChat,          setShowChat]          = useState(false)
     const [showStartupModal,  setShowStartupModal]  = useState(false)
     const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
+    const [showStartupChoice, setShowStartupChoice] = useState(false)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
 
@@ -174,20 +176,22 @@ export default function App() {
         return () => clearInterval(t)
     }, [currentUser])
 
-    // ── Welcome back modal — show once per browser session on login ──────────
+    // ── Startup choice modal — show once per browser session after login ─────
     useEffect(() => {
         if (!currentUser) return
-        const sessionKey = "hw-welcome-shown-" + currentUser.id
+        const sessionKey = "hw-startup-choice-" + currentUser.id
         if (!sessionStorage.getItem(sessionKey)) {
             sessionStorage.setItem(sessionKey, "1")
-            // First-ever login uses StartupModal; returning users see WelcomeBackModal
-            if (!localStorage.getItem("hw-skip-startup-modal")) {
-                setShowStartupModal(true)
-            } else {
-                setShowWelcomeBack(true)
-            }
+            setShowStartupChoice(true)
         }
     }, [currentUser])
+
+    const handleStartupChoice = (choice) => {
+        setShowStartupChoice(false)
+        if (choice === "news")     { openTab("news") }
+        if (choice === "briefing") { openTab("briefing") }
+        // "map" just closes
+    }
 
     // ── GPS location tracking — send to backend on login, then every 5 min ───
     useEffect(() => {
@@ -1041,23 +1045,9 @@ export default function App() {
                 <AdminPanel user={currentUser} onClose={() => setShowAdmin(false)} />
             )}
 
-            {/* Startup modal — first ever login */}
-            {showStartupModal && (
-                <StartupModal
-                    onDismiss={() => setShowStartupModal(false)}
-                    onReadBriefing={() => openTab("briefing")}
-                    onViewAlerts={() => openRightPanel("alerts")}
-                />
-            )}
-
-            {/* Welcome back modal — returning users */}
-            {showWelcomeBack && (
-                <WelcomeBackModal
-                    user={currentUser}
-                    onDismiss={() => setShowWelcomeBack(false)}
-                    onReadBriefing={() => { openTab("briefing"); setShowWelcomeBack(false) }}
-                    onViewMessages={() => { setShowChat(true); setShowWelcomeBack(false) }}
-                />
+            {/* Startup choice modal — once per session, shown immediately after login */}
+            {showStartupChoice && (
+                <StartupChoiceModal onChoice={handleStartupChoice} />
             )}
 
             {/* Real-time toast notifications */}
