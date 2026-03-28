@@ -592,6 +592,13 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
     const [newSocial, setNewSocial] = useState({ platform: "Instagram", handle: "", url: "" })
     const [addingRelation, setAddingRelation] = useState(false)
     const [newRelation, setNewRelation] = useState({ poi_id: "", poi_name: "", relation_type: "associate", notes: "" })
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
 
     const pollRef = useRef(null)
     const fileRef = useRef(null)
@@ -779,7 +786,7 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
     }
 
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "240px 1fr 380px", gridTemplateRows: "220px 1fr", width: "100%", height: "calc(100vh - 88px)", overflow: "hidden" }}>
+        <div style={isMobile ? { display: "flex", flexDirection: "column", width: "100%", height: "calc(100vh - 96px)", overflowY: "auto" } : { display: "grid", gridTemplateColumns: "240px 1fr 380px", gridTemplateRows: "220px 1fr", width: "100%", height: "calc(100vh - 88px)", overflow: "hidden" }}>
             {/* Cell 1 [row1, col1] — Photo zone */}
             <div
                 onDragOver={e => { e.preventDefault(); setDragging(true) }}
@@ -787,8 +794,8 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
                 onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f?.type.startsWith("image/")) loadPhoto(f) }}
                 onClick={() => fileRef.current?.click()}
                 style={{
-                    gridColumn: "1", gridRow: "1",
-                    borderRight: `1px solid ${dragging ? "#0d9488" : "rgba(255,255,255,0.07)"}`,
+                    ...(isMobile ? { height: 180, flexShrink: 0 } : { gridColumn: "1", gridRow: "1" }),
+                    borderRight: isMobile ? "none" : `1px solid ${dragging ? "#0d9488" : "rgba(255,255,255,0.07)"}`,
                     borderBottom: "1px solid rgba(255,255,255,0.07)",
                     cursor: "pointer", overflow: "hidden", position: "relative",
                     background: dragging ? "rgba(13,148,136,0.06)" : "rgba(255,255,255,0.02)",
@@ -805,7 +812,7 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
             <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) loadPhoto(f); e.target.value = "" }} />
 
             {/* Cell 2 [row1, col2-3] — Info + buttons */}
-            <div style={{ gridColumn: "2 / 4", gridRow: "1", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8, position: "relative", minWidth: 0, borderBottom: "1px solid rgba(255,255,255,0.07)", overflow: "hidden" }}>
+            <div style={{ ...(isMobile ? {} : { gridColumn: "2 / 4", gridRow: "1" }), padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8, position: "relative", minWidth: 0, borderBottom: "1px solid rgba(255,255,255,0.07)", overflow: "hidden" }}>
                 {/* Action buttons row */}
                 <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "nowrap", justifyContent: "flex-end" }}>
                     <button onClick={() => doSave()} style={saveBtnStyle}>
@@ -842,7 +849,7 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
             </div>
 
             {/* Cell 3 [row2, col1] — Relations */}
-            <div style={{ gridColumn: "1", gridRow: "2", overflowY: "auto", borderRight: "1px solid rgba(255,255,255,0.07)", padding: "10px 14px" }}>
+            <div style={{ ...(isMobile ? {} : { gridColumn: "1", gridRow: "2", overflowY: "auto", borderRight: "1px solid rgba(255,255,255,0.07)" }), padding: "10px 14px" }}>
                 <div style={{ ...SEC_HDR, marginBottom: 8 }}>Relations</div>
                 {(local.relations || []).length === 0 && !addingRelation && <div style={{ fontSize: 11, color: "#4a5568" }}>No relations recorded.</div>}
                 {(local.relations || []).map((rel, i) => (
@@ -872,12 +879,12 @@ function ProfileWorkspace({ poi, isNew, onUpdate, onDuplicate, onDelete, onExpor
             </div>
 
             {/* Cell 4 [row2, col2] — 3D Graph */}
-            <div style={{ gridColumn: "2", gridRow: "2", overflow: "hidden", background: "rgba(14,20,32,0.6)" }}>
+            <div style={{ ...(isMobile ? { height: 240, flexShrink: 0, borderBottom: "1px solid rgba(255,255,255,0.07)" } : { gridColumn: "2", gridRow: "2" }), overflow: "hidden", background: "rgba(14,20,32,0.6)" }}>
                 <ThreeGraph poi={local} results={investRes} relations={local.relations} allPois={allPois} isInLockedView={isInLockedView} onSwitchPoi={onSwitchPoi} />
             </div>
 
             {/* Cell 5 [row2, col3] — Right fields */}
-            <div style={{ gridColumn: "3", gridRow: "2", overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ ...(isMobile ? {} : { gridColumn: "3", gridRow: "2", overflowY: "auto" }), padding: "14px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
 
                     {/* IDENTIFIERS */}
                     <CollapsibleSection title="Identifiers">

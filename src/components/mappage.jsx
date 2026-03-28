@@ -3397,6 +3397,12 @@ export default function MapPage({
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
     const [selectedEvent, setSelectedEvent] = useState(null)
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
     const autoActivatedRef = useRef({})
     const manualLayerOverridesRef = useRef({})
     const LAYER_STORAGE_KEY = "akili_layer_state"
@@ -6756,9 +6762,24 @@ export default function MapPage({
 
             {/* ── Country info + news panel ─────────────────────────────────── */}
             {selectedCountry && (
-                <div style={{
+                <div style={isMobile ? {
+                    // Mobile: bottom sheet — above BottomNav, does NOT cover TopBar
+                    position:             "fixed",
+                    left:                 0,
+                    right:                0,
+                    bottom:               56,
+                    top:                  "auto",
+                    maxHeight:            "65vh",
+                    borderRadius:         "18px 18px 0 0",
+                    zIndex:               1150,
+                    background:           "rgba(10,14,22,0.98)",
+                    backdropFilter:       "blur(20px)",
+                    WebkitBackdropFilter: "blur(20px)",
+                    borderTop:            "1px solid rgba(255,255,255,0.12)",
+                    boxShadow:            "0 -8px 40px rgba(0,0,0,0.5)",
+                } : {
                     position:  "fixed",
-                    top:       44,
+                    top:       40,
                     right:     0,
                     bottom:    0,
                     width:     380,

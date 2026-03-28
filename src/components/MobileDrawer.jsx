@@ -1,4 +1,5 @@
 // MobileDrawer — slide-in overlay replacing Sidebar on mobile
+// Sits between TopBar (40px) and BottomNav (56px) — does NOT cover either.
 
 const SECTION_HEADER = {
     fontSize:      9,
@@ -29,6 +30,7 @@ function Row({ label, active, onClick, badge }) {
                 textAlign:      "left",
                 transition:     "background 0.1s, color 0.1s",
                 WebkitTapHighlightColor: "transparent",
+                minHeight:      44,
             }}
         >
             {label}
@@ -76,7 +78,7 @@ export default function MobileDrawer({
 }) {
     const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin"
 
-function panelRow(id, label, badge) {
+    function panelRow(id, label, badge) {
         return (
             <Row
                 label={label}
@@ -90,11 +92,11 @@ function panelRow(id, label, badge) {
         )
     }
 
-    if (!open) return null
-
+    // Always rendered — slide in/out with CSS transform.
+    // Backdrop shown only when open.
     return (
         <>
-            {/* Backdrop */}
+            {/* Backdrop — tap to close */}
             <div
                 onClick={onClose}
                 style={{
@@ -104,16 +106,20 @@ function panelRow(id, label, badge) {
                     zIndex:     1400,
                     backdropFilter: "blur(2px)",
                     WebkitBackdropFilter: "blur(2px)",
+                    opacity:    open ? 1 : 0,
+                    pointerEvents: open ? "auto" : "none",
+                    transition: "opacity 0.3s ease",
                 }}
             />
 
-            {/* Drawer panel */}
+            {/* Drawer panel — slides from right, bounded by TopBar + BottomNav */}
             <div style={{
                 position:       "fixed",
-                top:            0,
+                top:            40,   // Below TopBar
                 right:          0,
-                bottom:         0,
+                bottom:         56,   // Above BottomNav
                 width:          280,
+                maxWidth:       "80vw",
                 background:     "rgba(6,13,26,0.98)",
                 backdropFilter: "blur(20px)",
                 WebkitBackdropFilter: "blur(20px)",
@@ -123,6 +129,8 @@ function panelRow(id, label, badge) {
                 flexDirection:  "column",
                 overflowY:      "auto",
                 fontFamily:     "Inter, -apple-system, sans-serif",
+                transform:      open ? "translateX(0)" : "translateX(100%)",
+                transition:     "transform 0.3s ease",
             }}>
                 {/* Header */}
                 <div style={{
@@ -146,6 +154,11 @@ function panelRow(id, label, badge) {
                             cursor:     "pointer",
                             padding:    "0 4px",
                             lineHeight: 1,
+                            minHeight:  44,
+                            minWidth:   44,
+                            display:    "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
                         }}
                     >×</button>
                 </div>
@@ -189,18 +202,18 @@ function panelRow(id, label, badge) {
                     <Row
                         label="Live TV"
                         active={tvOpen}
-                        onClick={() => { onToggleTV(); onClose() }}
+                        onClick={() => { onToggleTV?.(); onClose() }}
                     />
                     <Row
                         label="Direct Messages"
                         active={chatOpen}
-                        onClick={() => { onToggleChat(); onClose() }}
+                        onClick={() => { onToggleChat?.(); onClose() }}
                     />
                     {isAdmin && (
                         <Row
                             label="Admin Console"
                             active={false}
-                            onClick={() => { onToggleAdmin(); onClose() }}
+                            onClick={() => { onToggleAdmin?.(); onClose() }}
                         />
                     )}
                 </div>

@@ -188,7 +188,7 @@ textarea::placeholder {
 /* Touch-friendly tap targets */
 @media (max-width: 767px) {
     button {
-        min-height: 36px;
+        min-height: 44px;
         touch-action: manipulation;
     }
 }
@@ -200,11 +200,12 @@ textarea::placeholder {
     }
 }
 
-/* Prevent horizontal scroll on mobile */
+/* Prevent horizontal scroll on mobile; prevent iOS bounce scroll */
 @media (max-width: 767px) {
-    body, #root {
+    html, body, #root {
         overflow-x: hidden;
         max-width: 100vw;
+        overscroll-behavior: none;
     }
 }
 
