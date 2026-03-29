@@ -241,3 +241,44 @@ textarea::placeholder {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
 }
+
+/* ── Shipping lane tooltip ───────────────────────────────────────────────── */
+.shipping-tooltip {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+.shipping-tooltip .leaflet-tooltip-tip {
+    display: none !important;
+}
+.shipping-tooltip-inner {
+    background: rgba(10, 14, 20, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    color: #e2e8f0;
+    padding: 7px 11px;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1.5;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    white-space: nowrap;
+}
+.shipping-tooltip-inner strong {
+    color: #f0f4f8;
+    font-size: 12px;
+}
+
+/* EEZ layer tooltips */
+.eez-tooltip {
+    background: rgba(10, 14, 20, 0.92) !important;
+    border: 1px solid rgba(13, 148, 136, 0.35) !important;
+    border-radius: 6px !important;
+    color: #e2e8f0 !important;
+    padding: 5px 10px !important;
+    font-size: 12px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+}
+.eez-tooltip::before {
+    display: none !important;
+}

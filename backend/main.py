@@ -5143,12 +5143,67 @@ async def geo_countries_endpoint():
     return data
 
 
+_EEZ_CACHE: dict | None = None
+
+
+def _ensure_eez_cache():
+    global _EEZ_CACHE
+    if _EEZ_CACHE is None and _GEO_EEZ_FILE.exists():
+        _EEZ_CACHE = _json.loads(_GEO_EEZ_FILE.read_text(encoding="utf-8"))
+        print(f"[eez] loaded {len(_EEZ_CACHE.get('features', []))} zones into cache")
+
+
 @app.get("/geo/eez")
 async def geo_eez_endpoint():
-    if not _GEO_EEZ_FILE.exists():
-        return {"type": "FeatureCollection", "features": []}
-    data = _json.loads(_GEO_EEZ_FILE.read_text(encoding="utf-8"))
-    return data
+    _ensure_eez_cache()
+    if _EEZ_CACHE:
+        return _EEZ_CACHE
+    return {"type": "FeatureCollection", "features": []}
+
+
+async def _fetch_wiki_eez(name: str) -> str:
+    """Fetch Wikipedia extract for an EEZ zone name."""
+    try:
+        slug = urllib.parse.quote(name.replace(" ", "_"))
+        url  = f"https://en.wikipedia.org/api/rest_v1/page/summary/{slug}"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(url)
+            if r.status_code == 200:
+                return r.json().get("extract", "")
+    except Exception:
+        pass
+    return ""
+
+
+@app.get("/geo/eez/{mrgid}")
+async def geo_eez_detail(mrgid: int):
+    """Return detail + Wikipedia extract for a single EEZ zone."""
+    _ensure_eez_cache()
+    if not _EEZ_CACHE:
+        raise HTTPException(503, "EEZ data not loaded")
+
+    feature = next(
+        (f for f in _EEZ_CACHE.get("features", [])
+         if f.get("properties", {}).get("mrgid") == mrgid),
+        None,
+    )
+    if not feature:
+        raise HTTPException(404, "EEZ zone not found")
+
+    p    = feature["properties"]
+    name = p.get("geoname", "")
+    wiki = await _fetch_wiki_eez(name)
+
+    return {
+        "mrgid":     mrgid,
+        "name":      name,
+        "country":   p.get("territory1"),
+        "iso_code":  p.get("iso_ter1"),
+        "sovereign": p.get("sovereign1"),
+        "area_km2":  p.get("area_km2"),
+        "pol_type":  p.get("pol_type"),
+        "wikipedia": wiki,
+    }
 
 
 def _load_doc(folder: str, doc_id: str) -> dict | None:
@@ -7480,18 +7535,6 @@ async def api_airports_nearby(lat: float, lon: float, radius_km: float = 150, li
     results.sort(key=lambda x: (_AIRPORT_TYPE_RANK.get(x["type"], 5), x["distance_km"]))
     return {"airports": results[:limit], "total": len(results)}
 
-
-@app.get("/api/adsb/nearby")
-async def api_adsb_nearby(lat: float, lon: float, radius_nm: int = 100):
-    url = f"https://api.adsb.fi/v1/aircraft?lat={lat}&lon={lon}&radius={radius_nm}"
-    try:
-        async with httpx.AsyncClient(timeout=10) as cli:
-            r    = await cli.get(url, headers={"Accept": "application/json", "User-Agent": "NAGINI/2.0"})
-            data = r.json()
-            ac   = data.get("ac", data.get("aircraft", []))
-            return {"aircraft": ac[:50], "count": len(ac)}
-    except Exception as exc:
-        return {"aircraft": [], "count": 0, "error": str(exc)}
 
 
 @app.get("/api/annotations")

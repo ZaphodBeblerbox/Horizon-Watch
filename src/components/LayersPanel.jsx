@@ -432,7 +432,7 @@ export default function LayersPanel({
                 <SectionHeader label="Maritime" />
 
                 <LayerRow
-                    label="Shipping Lanes"
+                    label="Nautical Chart"
                     toggled={active.shippingLanes}
                     onToggle={() => onToggle("shippingLanes")}
                     isManual={isManual("shippingLanes")}
@@ -610,7 +610,7 @@ export default function LayersPanel({
                     <LayerRow label="Military"       toggled={active.military}    onToggle={() => onToggle("military")}    isManual={isManual("military")} />
                     <LayerRow label="Submarine Cables" toggled={active.cables}   onToggle={() => onToggle("cables")}      isManual={isManual("cables")} />
                     <SectionHeader label="Maritime" />
-                    <LayerRow label="Shipping Lanes" toggled={active.shippingLanes} onToggle={() => onToggle("shippingLanes")} isManual={isManual("shippingLanes")} />
+                    <LayerRow label="Nautical Chart" toggled={active.shippingLanes} onToggle={() => onToggle("shippingLanes")} isManual={isManual("shippingLanes")} />
                     <LayerRow label="IMB Piracy"     toggled={active.imbPiracy}     onToggle={() => onToggle("imbPiracy")}     isManual={isManual("imbPiracy")} />
                     <LayerRow label="EEZ Boundaries" toggled={active.eez}           onToggle={() => onToggle("eez")}           isManual={isManual("eez")} />
                     <LayerRow label="Chokepoints"    toggled={active.chokepoints}   onToggle={() => onToggle("chokepoints")}   isManual={isManual("chokepoints")} />

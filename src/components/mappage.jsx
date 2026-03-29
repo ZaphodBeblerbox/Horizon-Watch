@@ -11,6 +11,7 @@ import { MapContainer, TileLayer, Circle, CircleMarker, Tooltip, Polyline, Popup
 import L from "leaflet"
 import Markdown from "react-markdown"
 import CountryPanel from "./CountryPanel.jsx"
+import EEZPanel from "./EEZPanel.jsx"
 import LiveTicker from "./LiveTicker.jsx"
 import TVWidget from "./tvwidget.jsx"
 import DraggablePanel from "./DraggablePanel.jsx"
@@ -1269,12 +1270,60 @@ function makePortIcon(name) {
     return L.divIcon({ html, className: "", iconSize: [36, 36], iconAnchor: [18, 18], popupAnchor: [0, -20] })
 }
 
-const _AIS_TYPE_COLOR = { tanker: "#f59e0b", cargo: "#0d9488", military: "#ef4444", passenger: "#3b82f6", other: "#6b7280" }
+const _AIS_TYPE_COLOR = { tanker: "#f59e0b", cargo: "#14b8a6", container: "#06b6d4", military: "#ef4444", passenger: "#3b82f6", fishing: "#84cc16", other: "#64748b" }
+
+function _vesselShipType(vessel) {
+    const t = (vessel.ship_type || "").toLowerCase()
+    if (t.includes("tanker") || t.includes("oil") || t.includes("lng") || t.includes("lpg")) return "tanker"
+    if (t.includes("container")) return "container"
+    if (t.includes("cargo") || t.includes("bulk") || t.includes("general")) return "cargo"
+    if (t.includes("passenger") || t.includes("cruise") || t.includes("ferry")) return "passenger"
+    if (t.includes("military") || t.includes("naval") || t.includes("warship")) return "military"
+    if (t.includes("fishing") || t.includes("trawler")) return "fishing"
+    return "other"
+}
+
+// Top-down vessel silhouettes — bow points up (north = 0°), rotated by heading
 function makeAisVesselIcon(shipType, heading) {
-    const color = _AIS_TYPE_COLOR[shipType] || _AIS_TYPE_COLOR.other
-    const hdg   = isFinite(Number(heading)) ? Number(heading) : 0
-    const svg   = `<svg width="16" height="24" viewBox="0 0 16 24" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${hdg}deg);transform-origin:50% 50%;display:block;overflow:visible"><polygon points="8,0 14,8 14,22 2,22 2,8" fill="${color}" opacity="0.85" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/><polygon points="8,0 13,7 3,7" fill="rgba(255,255,255,0.4)"/></svg>`
-    return L.divIcon({ html: svg, className: "", iconSize: [16, 24], iconAnchor: [8, 12] })
+    const color  = _AIS_TYPE_COLOR[shipType] || _AIS_TYPE_COLOR.other
+    const hdg    = isFinite(Number(heading)) && Number(heading) !== 511 ? Number(heading) : 0
+    const r      = parseInt(color.slice(1,3),16), g = parseInt(color.slice(3,5),16), b = parseInt(color.slice(5,7),16)
+    const glow   = `rgba(${r},${g},${b},0.55)`
+
+    // Shape variants by type — all in a 16×28 viewBox, bow at top
+    const hull = {
+        tanker:    "M8,1 L13,7 L14,14 L14,24 L11,27 L5,27 L2,24 L2,14 L3,7 Z",
+        container: "M8,1 L14,8 L14,25 L12,27 L4,27 L2,25 L2,8 Z",
+        cargo:     "M8,1 L13,7 L13,24 L11,27 L5,27 L3,24 L3,7 Z",
+        passenger: "M8,1 L12,6 L13,12 L13,24 L10,27 L6,27 L3,24 L3,12 L4,6 Z",
+        military:  "M8,0 L12,5 L14,10 L14,24 L11,27 L5,27 L2,24 L2,10 L4,5 Z",
+        fishing:   "M8,2 L12,8 L12,22 L10,25 L6,25 L4,22 L4,8 Z",
+        other:     "M8,2 L13,8 L13,23 L11,26 L5,26 L3,23 L3,8 Z",
+    }[shipType] || "M8,2 L13,8 L13,23 L11,26 L5,26 L3,23 L3,8 Z"
+
+    // Deck detail markings
+    const detail = {
+        tanker:    `<ellipse cx="8" cy="14" rx="4" ry="3" fill="rgba(0,0,0,0.22)"/><ellipse cx="8" cy="21" rx="4" ry="3" fill="rgba(0,0,0,0.22)"/>`,
+        container: `<rect x="4" y="10" width="8" height="3" fill="rgba(0,0,0,0.2)"/><rect x="4" y="15" width="8" height="3" fill="rgba(0,0,0,0.2)"/><rect x="4" y="20" width="8" height="3" fill="rgba(0,0,0,0.2)"/>`,
+        cargo:     `<rect x="5" y="12" width="6" height="8" rx="1" fill="rgba(0,0,0,0.2)"/>`,
+        passenger: `<rect x="5" y="8" width="6" height="5" rx="1" fill="rgba(0,0,0,0.22)"/><rect x="5" y="15" width="6" height="5" rx="1" fill="rgba(0,0,0,0.22)"/>`,
+        military:  `<rect x="6" y="12" width="4" height="9" fill="rgba(0,0,0,0.3)"/><circle cx="8" cy="8" r="2" fill="rgba(0,0,0,0.35)"/>`,
+        fishing:   `<circle cx="8" cy="13" r="2.5" fill="rgba(0,0,0,0.25)"/>`,
+        other:     `<rect x="5" y="13" width="6" height="6" fill="rgba(0,0,0,0.18)"/>`,
+    }[shipType] || ""
+
+    const svg = `<svg width="16" height="28" viewBox="0 0 16 28" xmlns="http://www.w3.org/2000/svg" `
+              + `style="transform:rotate(${hdg}deg);transform-origin:50% 50%;display:block;overflow:visible;`
+              + `filter:drop-shadow(0 0 3px ${glow});">`
+              + `<path d="${hull}" fill="${color}" stroke="rgba(255,255,255,0.25)" stroke-width="0.7" opacity="0.92"/>`
+              + detail
+              + `</svg>`
+    return L.divIcon({ html: svg, className: "", iconSize: [16, 28], iconAnchor: [8, 14] })
+}
+
+// Wrapper that accepts a full vessel object (uses ship_type + heading from it)
+function makeAisVesselIconFromVessel(vessel) {
+    return makeAisVesselIcon(_vesselShipType(vessel), vessel.heading)
 }
 
 function makePowerIcon(name, fuelType) {
@@ -1609,52 +1658,6 @@ const _HARDCODED_PIPELINES = [
       properties:{ name:"Thailand–Singapore Gas Pipeline", operator:"PTT/Petronas", type:"lng", status:"operating", countries:"Thailand, Malaysia, Singapore" }},
 ]
 
-// Hardcoded shipping routes — renders immediately on toggle, no fetch required
-const _SHIPPING_LANES = [
-    // Persian Gulf / Hormuz
-    { name: "Persian Gulf — Strait of Hormuz",  coords: [[29,48],[28,50],[27,52],[26.5,56.5]],                                                         weight: 3, type: "major"     },
-    { name: "Hormuz — Arabian Sea",             coords: [[26.5,56.5],[24,58],[22,60],[18,65],[15,68],[12,65]],                                          weight: 3, type: "major"     },
-    { name: "Arabian Sea — Indian Ocean W",     coords: [[12,65],[10,60],[8,55],[5,50],[0,45],[-5,42],[-10,42]],                                        weight: 2, type: "major"     },
-    // Red Sea / Suez
-    { name: "Suez Canal",                       coords: [[30.7,32.3],[30,32.5],[28,32.6],[25,33],[23,37],[20,38],[18,39],[16,40],[14,41],[12.6,43.3]],  weight: 3, type: "major"     },
-    { name: "Bab el-Mandeb — Gulf of Aden",     coords: [[12.6,43.3],[12,45],[11,48],[10,50],[9,52],[8,55]],                                            weight: 2, type: "major"     },
-    // Mediterranean
-    { name: "Mediterranean W-E",                coords: [[-5.4,36],[0,37],[5,38],[10,38],[16,38],[20,37],[25,35],[30,34],[33,34],[35,35]],              weight: 2, type: "major"     },
-    { name: "Gibraltar Approach W",             coords: [[-10,36],[-7,36],[-5.4,36]],                                                                  weight: 2, type: "major"     },
-    // East Africa
-    { name: "East Africa Coast N-S",            coords: [[-10,40],[-12,41],[-15,40],[-17,40],[-20,39],[-25,36],[-28,34],[-30,31]],                     weight: 2, type: "secondary" },
-    { name: "Mozambique Channel",               coords: [[-10,40],[-15,42],[-20,44],[-25,44],[-30,33]],                                                weight: 2, type: "secondary" },
-    // Cape Route
-    { name: "Cape of Good Hope",                coords: [[-30,31],[-32,28],[-34,25],[-34,20],[-34,18],[-33,17],[-30,15]],                              weight: 2, type: "major"     },
-    { name: "Cape — Atlantic N",                coords: [[-30,15],[-25,10],[-20,5],[-15,0],[-10,-5],[-5,-10],[0,-15],[5,-20],[10,-15],[15,-10],[20,-5]], weight: 2, type: "major"    },
-    // Indian Ocean cross routes
-    { name: "India W Coast",                    coords: [[8,77],[10,76],[12,75],[15,74],[18,73],[20,70],[18,65]],                                       weight: 2, type: "secondary" },
-    { name: "Sri Lanka — Malacca",              coords: [[6,80],[5,82],[4,85],[3,88],[2,92],[2,96],[1.5,103]],                                          weight: 2, type: "major"     },
-    { name: "Indian Ocean E-W",                 coords: [[0,45],[2,55],[3,65],[4,75],[4,80],[3,85],[2,92]],                                             weight: 1.5, type: "secondary" },
-    // Malacca / Asia
-    { name: "Strait of Malacca",                coords: [[1.5,103],[2,105],[3,106],[4,107],[5,108],[6,110],[8,111]],                                    weight: 3, type: "major"     },
-    { name: "South China Sea N",                coords: [[8,111],[10,113],[14,115],[18,116],[22,115],[25,122]],                                         weight: 2, type: "major"     },
-    { name: "South China Sea S",                coords: [[1.5,103],[3,106],[5,109],[8,111]],                                                            weight: 2, type: "secondary" },
-    // Trans-Pacific
-    { name: "Pacific N Trans",                  coords: [[25,122],[30,135],[35,145],[38,155],[40,170],[42,180],[40,-170],[38,-160],[35,-145],[32,-130],[25,-115]], weight: 1.5, type: "secondary" },
-    // Trans-Atlantic
-    { name: "N Atlantic Main",                  coords: [[51,-6],[50,-10],[48,-20],[45,-30],[42,-40],[38,-50],[35,-60],[30,-65],[25,-70],[20,-70]],       weight: 2, type: "major"     },
-    { name: "S Atlantic",                       coords: [[-5,-35],[-10,-35],[-15,-37],[-20,-38],[-25,-40],[-30,-43],[-30,-15]],                        weight: 1.5, type: "secondary" },
-    // North Sea / Europe
-    { name: "English Channel",                  coords: [[51,-6],[51,-3],[51,0],[51,2],[52,4],[53,5],[54,8]],                                           weight: 2, type: "major"     },
-    { name: "North Sea",                        coords: [[54,8],[55,10],[56,10],[57,11],[58,10],[59,8],[58,5],[56,4],[54,4]],                           weight: 1.5, type: "secondary" },
-    // Additional routes — Arabian Sea, West Africa, Indian Ocean, Asia
-    { name: "Arabian Sea W Cross",              coords: [[24,60],[20,58],[15,55],[10,52],[8,55]],                                                        weight: 2,   type: "major"     },
-    { name: "Gulf of Oman",                     coords: [[26.5,56.5],[24,58],[22,59],[20,60],[18,58]],                                                   weight: 2,   type: "major"     },
-    { name: "West Africa N",                    coords: [[14,-17],[10,-15],[5,-3],[0,3],[-5,10],[-10,14]],                                               weight: 1.5, type: "secondary" },
-    { name: "West Africa S",                    coords: [[-10,14],[-15,12],[-20,13],[-25,15],[-30,17]],                                                  weight: 1.5, type: "secondary" },
-    { name: "Indian Ocean Central",             coords: [[0,70],[3,65],[5,60],[5,55],[3,50],[0,45]],                                                     weight: 1.5, type: "secondary" },
-    { name: "Bay of Bengal",                    coords: [[8,77],[10,82],[12,86],[14,88],[16,90],[18,92]],                                                 weight: 1.5, type: "secondary" },
-    { name: "Australia NW",                     coords: [[-15,115],[-18,118],[-20,118],[-22,114],[-25,112]],                                             weight: 1.5, type: "secondary" },
-    { name: "SE Asia W",                        coords: [[1.5,103],[0,100],[-2,98],[-4,96],[-6,94],[-8,92]],                                             weight: 2,   type: "major"     },
-    { name: "Black Sea",                        coords: [[43,28],[43,32],[43,36],[43,40],[42,41]],                                                        weight: 1.5, type: "secondary" },
-    { name: "Persian Gulf S",                   coords: [[24,55],[24,53],[24,51],[25,50],[26,49],[27,50],[27,52]],                                        weight: 1.5, type: "secondary" },
-]
 
 // Top-down carrier silhouette — white fill with nation-colour stroke for visibility on water
 function _carrierSvg(color, size = 44) {
@@ -3509,6 +3512,8 @@ export default function MapPage({
     const [selectedCountryFeature, setSelectedCountryFeature] = useState(null)
     const [countryData, setCountryData]                 = useState(null)
     const [countryLoading, setCountryLoading]           = useState(false)
+    const [selectedEez, setSelectedEez]                 = useState(null)
+    const selectedEezRef                                = useRef(null)
     const [viewportBounds, setViewportBounds]   = useState(null)
 
     // ── UI state ──────────────────────────────────────────────────────────────
@@ -3548,8 +3553,7 @@ export default function MapPage({
     const [selectedAisVessel, setSelectedAisVessel] = useState(null)
     const aisIntervalRef                      = useRef(null)
 
-    // ── Shipping lanes ─────────────────────────────────────────────────────────
-    const [shippingLaneData, setShippingLaneData] = useState({ neFeatures: [], namedRoutes: [] })
+    // ── Shipping lanes (OpenSeaMap tile overlay) ──────────────────────────────
 
     // ── Impact panel (on-demand event analysis) ───────────────────────────────
     const [impactEvent, setImpactEvent]         = useState(null)
@@ -3838,7 +3842,7 @@ export default function MapPage({
     const militaryLayerRef       = useRef(null)
     const pipelinesLayerRef      = useRef(null)
     const cablesLayerRef         = useRef(null)
-    const shippingLanesLayerRef  = useRef(null)
+    const shippingLanesLayerRef  = useRef(null)   // OpenSeaMap tile layer
     const chokepointsLayerRef    = useRef(null)
     const heatmapLayerRef        = useRef(null)
     const eezLayerRef            = useRef(null)
@@ -4374,6 +4378,84 @@ export default function MapPage({
         aisIntervalRef.current = setInterval(fetchVessels, 30000)
         return () => { if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null } }
     }, [active.aisVessels])  // eslint-disable-line
+
+    // ── OpenSeaMap seamark tiles — shown at zoom ≥ 6, anti-flicker options ─────
+    useEffect(() => {
+        if (!mapRef.current) return
+        if (shippingLanesLayerRef.current) {
+            shippingLanesLayerRef.current.remove()
+            shippingLanesLayerRef.current = null
+        }
+        if (!active.shippingLanes) return
+        shippingLanesLayerRef.current = L.tileLayer(
+            "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",
+            {
+                attribution: "© OpenSeaMap contributors",
+                opacity: 0.9,
+                minZoom: 6,
+                maxZoom: 18,
+                zIndex: 400,
+                updateWhenIdle: true,
+                updateWhenZooming: false,
+                keepBuffer: 4,
+            }
+        ).addTo(mapRef.current)
+    }, [active.shippingLanes])
+
+    // ── EEZ interactive layer ─────────────────────────────────────────────────────
+    useEffect(() => {
+        if (!mapRef.current) return
+        if (eezLayerRef.current) { eezLayerRef.current.remove(); eezLayerRef.current = null }
+        if (!active.eez || !eezGeo) return
+
+        const defaultStyle = { color: "#0d9488", weight: 1.5, opacity: 0.45, fill: true, fillColor: "#0d9488", fillOpacity: 0.04 }
+        const hoverStyle   = { weight: 2.5, opacity: 0.75, fillOpacity: 0.10 }
+        const selectStyle  = { color: "#38bdf8", weight: 2.5, opacity: 1, fillColor: "#38bdf8", fillOpacity: 0.14 }
+
+        eezLayerRef.current = L.geoJSON(eezGeo, {
+            style: () => ({ ...defaultStyle }),
+            onEachFeature: (feature, layer) => {
+                const p    = feature.properties || {}
+                const name = p.geoname || p.territory1 || "EEZ"
+
+                layer.bindTooltip(name, {
+                    sticky: true, direction: "top",
+                    className: "eez-tooltip",
+                })
+
+                layer.on("mouseover", () => {
+                    if (selectedEezRef.current?.mrgid !== p.mrgid) {
+                        layer.setStyle(hoverStyle)
+                    }
+                })
+                layer.on("mouseout", () => {
+                    if (selectedEezRef.current?.mrgid !== p.mrgid) {
+                        layer.setStyle(defaultStyle)
+                    }
+                })
+                layer.on("click", (ev) => {
+                    L.DomEvent.stopPropagation(ev)
+                    // Reset all to default, then highlight clicked
+                    eezLayerRef.current?.eachLayer(l => l.setStyle && l.setStyle(defaultStyle))
+                    layer.setStyle(selectStyle)
+
+                    const detail = {
+                        mrgid:    p.mrgid,
+                        name:     p.geoname || p.territory1,
+                        country:  p.territory1,
+                        sovereign: p.sovereign1,
+                        area_km2: p.area_km2,
+                        iso_code: p.iso_ter1,
+                    }
+                    selectedEezRef.current = detail
+                    setSelectedEez(detail)
+                })
+            },
+        }).addTo(mapRef.current)
+    }, [active.eez, eezGeo])
+
+    // ── Sync selectedEezRef with state ────────────────────────────────────────────
+    useEffect(() => { selectedEezRef.current = selectedEez }, [selectedEez])
 
     // ── News conflicts: fetch all markers globally, refresh every 15 min ─────────
     useEffect(() => {
@@ -5045,10 +5127,16 @@ export default function MapPage({
         }
     }
 
-    // ── Stop ADS-B polling when the layer is toggled off ─────────────────────
+    // ── Auto-start / stop ADS-B polling with layer toggle ────────────────────
     useEffect(() => {
-        if (!active.adsb) setAdsbLive(false)
-    }, [active.adsb])
+        if (active.adsb) {
+            setAdsbRefreshRate(adsbSliderVal || 15)
+            setAdsbActivateKey(k => k + 1)
+            setAdsbLive(true)
+        } else {
+            setAdsbLive(false)
+        }
+    }, [active.adsb])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Alternative routes: fetch when requested ──────────────────────────────
     const requestAlternatives = () => {
@@ -5931,6 +6019,11 @@ export default function MapPage({
                 style={{ height: "100%", width: "100%" }}
                 zoomControl={true}
                 preferCanvas={true}
+                worldCopyJump={false}
+                maxBounds={[[-90, -180], [90, 180]]}
+                maxBoundsViscosity={1.0}
+                minZoom={2}
+                maxZoom={19}
             >
                 <MapPaneSetup />
                 <MapInstanceTracker mapRef={mapRef} depLayerRef={depLayerRef} />
@@ -5942,6 +6035,7 @@ export default function MapPage({
                         key="satellite"
                         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                         attribution="Tiles &copy; Esri &mdash; Source: Esri, Maxar, GeoEye, Earthstar Geographics"
+                        maxZoom={19}
                     />
                 )}
                 {mapType === "dark" && (
@@ -6128,21 +6222,7 @@ export default function MapPage({
                     />
                 ))}
 
-                {/* ── Global EEZ view when manually toggled on ──────────────── */}
-                {active.eez && eezGeo && (
-                    <GeoJSON
-                        data={eezGeo}
-                        style={{
-                            color: "#0d9488",
-                            weight: 1,
-                            opacity: 0.35,
-                            dashArray: "6 4",
-                            fill: true,
-                            fillColor: "#0d9488",
-                            fillOpacity: 0.02,
-                        }}
-                    />
-                )}
+                {/* ── Global EEZ view — rendered imperatively via eezLayerRef ── */}
 
                 {/* ── Submarine Cable Routes ────────────────────────────────── */}
                 {active.cables && cableGeo.cables.map(feature => {
@@ -6223,26 +6303,7 @@ export default function MapPage({
                     ))
                 })}
 
-                {/* ── Shipping Lanes ────────────────────────────────────────── */}
-                {active.shippingLanes && _SHIPPING_LANES.map((lane, li) => {
-                    const isMajor = lane.type === "major"
-                    return (
-                        <Polyline
-                            key={`sl-${li}`}
-                            positions={lane.coords}
-                            pathOptions={{
-                                color:     isMajor ? "rgba(13,148,136,0.45)" : "rgba(13,148,136,0.25)",
-                                weight:    isMajor ? lane.weight : lane.weight - 0.5,
-                                opacity:   1,
-                                dashArray: isMajor ? undefined : "8 6",
-                            }}
-                        >
-                            <Tooltip sticky>
-                                <div style={{ fontSize: 11 }}><strong>{lane.name}</strong></div>
-                            </Tooltip>
-                        </Polyline>
-                    )
-                })}
+                {/* Shipping lanes rendered imperatively via useEffect + shippingLanesLayerRef */}
 
                 {/* ── Deployments layer — managed via vanilla Leaflet in useEffect above ── */}
 
@@ -6303,7 +6364,7 @@ export default function MapPage({
                         <Marker
                             key={`ais-${v.mmsi || i}`}
                             position={[v.lat, v.lon]}
-                            icon={makeAisVesselIcon(v.ship_type, v.heading)}
+                            icon={makeAisVesselIconFromVessel(v)}
                             eventHandlers={{ click: () => setSelectedAisVessel(v) }}
                         >
                             <Tooltip direction="top" offset={[0, -10]}>
@@ -6806,6 +6867,25 @@ export default function MapPage({
                         onClose={() => { setSelectedCountry(null); setSelectedCountryFeature(null); setCountryData(null) }}
                     />
                 </div>
+            )}
+
+            {/* ── EEZ Detail Panel ──────────────────────────────────────────── */}
+            {selectedEez && (
+                <EEZPanel
+                    eez={selectedEez}
+                    isMobile={isMobile}
+                    onClose={() => {
+                        selectedEezRef.current = null
+                        setSelectedEez(null)
+                        // Reset all EEZ layer styles to default
+                        if (eezLayerRef.current) {
+                            eezLayerRef.current.eachLayer(l => l.setStyle && l.setStyle({
+                                color: "#0d9488", weight: 1.5, opacity: 0.45,
+                                fill: true, fillColor: "#0d9488", fillOpacity: 0.04,
+                            }))
+                        }
+                    }}
+                />
             )}
 
             {/* ── Impact Panel — on-demand event analysis ───────────────────── */}
