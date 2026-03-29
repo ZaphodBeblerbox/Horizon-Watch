@@ -20,7 +20,7 @@ import POIPanel from "./components/POIPanel.jsx"
 import API_BASE from "./apiBase.js"
 import LoadingScreen from "./components/LoadingScreen.jsx"
 import ProfilePanel from "./components/ProfilePanel.jsx"
-import PreferencesPanel from "./components/PreferencesPanel.jsx"
+import PreferencesPanel, { loadSettings } from "./components/PreferencesPanel.jsx"
 import LoginPage from "./components/LoginPage.jsx"
 import AdminPanel from "./components/AdminPanel.jsx"
 import NotificationBar from "./components/NotificationBar.jsx"
@@ -453,19 +453,30 @@ export default function App() {
         return () => clearInterval(t)
     }, [profile])  // eslint-disable-line react-hooks/exhaustive-deps
 
+    // ── App settings (from PreferencesPanel) ─────────────────────────────────
+    const [appSettings, setAppSettings] = useState(loadSettings)
+    const settingsRef = useRef(appSettings)
+    useEffect(() => { settingsRef.current = appSettings }, [appSettings])
+
+    // Re-sync whenever PreferencesPanel saves to localStorage
+    useEffect(() => {
+        const h = () => setAppSettings(loadSettings())
+        window.addEventListener("akili:settings-changed", h)
+        return () => window.removeEventListener("akili:settings-changed", h)
+    }, [])
+
     // ── Real-time alert toasts ────────────────────────────────────────────────
     const [toasts,           setToasts]           = useState([])
     const alertSinceRef = useRef(new Date().toISOString())
-    const [soundMuted, setSoundMuted] = useState(() =>
-        localStorage.getItem("akili-sound-muted") === "true"
-    )
-    const soundMutedRef = useRef(soundMuted)
-    useEffect(() => { soundMutedRef.current = soundMuted }, [soundMuted])
+
+    // Derived from unified settings (fixes dual-key conflict with old "akili-sound-muted")
+    const soundMuted = appSettings.soundMuted
 
     const onToggleSound = useCallback(() => {
-        setSoundMuted(prev => {
-            const next = !prev
-            localStorage.setItem("akili-sound-muted", String(next))
+        setAppSettings(prev => {
+            const next = { ...prev, soundMuted: !prev.soundMuted }
+            try { localStorage.setItem("akili-settings-v1", JSON.stringify(next)) } catch {}
+            window.dispatchEvent(new CustomEvent("akili:settings-changed"))
             return next
         })
     }, [])
@@ -486,24 +497,40 @@ export default function App() {
     useEffect(() => {
         if (!profile) return
         const poll = () => {
+            const s = settingsRef.current
             const since = alertSinceRef.current
             fetch(`${API}/api/alerts/new?since=${encodeURIComponent(since)}`)
                 .then(r => r.ok ? r.json() : null)
                 .then(d => {
                     if (!d?.alerts?.length) return
                     alertSinceRef.current = new Date().toISOString()
-                    const incoming = d.alerts.filter(a => a.priority !== false)
+                    let incoming = d.alerts.filter(a => a.priority !== false)
                     if (!incoming.length) return
+                    // Toast filtering
+                    if (!s.toastsEnabled) return
+                    if (s.toastsCriticalOnly) {
+                        incoming = incoming.filter(a => a.severity_tier === "critical")
+                        if (!incoming.length) return
+                    }
                     setToasts(prev => {
                         const existingIds = new Set(prev.map(t => t.id))
                         const fresh = incoming.filter(a => !existingIds.has(a.id))
-                        if (fresh.length && !soundMutedRef.current) {
-                            resumeAudio()
+                        if (fresh.length && !s.soundMuted) {
                             const top = fresh.reduce((a, b) =>
                                 (["critical","significant","elevated","low"].indexOf(a.severity_tier) <=
                                  ["critical","significant","elevated","low"].indexOf(b.severity_tier)) ? a : b
                             )
-                            playAlert(top.severity_tier, top.type)
+                            // Per-tier sound gate
+                            const tier = top.severity_tier
+                            const shouldPlay =
+                                (tier === "critical"    && s.soundCritical)    ||
+                                (tier === "significant" && s.soundSignificant) ||
+                                (tier === "elevated"    && s.soundElevated)    ||
+                                (tier === "low")
+                            if (shouldPlay) {
+                                resumeAudio()
+                                playAlert(tier, top.type)
+                            }
                         }
                         return [...prev, ...fresh].slice(-5)   // cap at 5 visible toasts
                     })
@@ -512,9 +539,10 @@ export default function App() {
                 })
                 .catch(() => {})
         }
-        const tid = setInterval(poll, 15000)
+        const intervalMs = (settingsRef.current.alertInterval || 15) * 1000
+        const tid = setInterval(poll, intervalMs)
         return () => clearInterval(tid)
-    }, [profile])  // eslint-disable-line react-hooks/exhaustive-deps
+    }, [profile, appSettings.alertInterval])  // eslint-disable-line react-hooks/exhaustive-deps
 
 // ── Budget (for sidebar indicator) ────────────────────────────────────────
     const [budgetPct, setBudgetPct] = useState(null)
@@ -854,6 +882,7 @@ export default function App() {
                         selected={null}
                         onSelect={() => {}}
                         currentUser={currentUser}
+                        initialMapStyle={appSettings.mapStyle}
                         activeSituation={activeSituation}
                         searchTarget={searchTarget}
                         profile={profile}
@@ -1061,6 +1090,7 @@ export default function App() {
                 toasts={toasts}
                 onDismiss={dismissToast}
                 onOpen={openToast}
+                toastDuration={appSettings.toastDuration}
             />
 
             {/* Mobile bottom nav */}

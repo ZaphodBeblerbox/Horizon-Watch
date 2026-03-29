@@ -47,9 +47,8 @@ function TypeIcon({ type, color }) {
 }
 
 // ── Single Toast ──────────────────────────────────────────────────────────────
-const DURATION_MS = 6000
 
-function Toast({ toast, onDismiss, onClick }) {
+function Toast({ toast, onDismiss, onClick, durationMs = 6000 }) {
     const [progress,    setProgress]    = useState(100)
     const [touchDelta,  setTouchDelta]  = useState(0)
     const [swiping,     setSwiping]     = useState(false)
@@ -60,7 +59,7 @@ function Toast({ toast, onDismiss, onClick }) {
     useEffect(() => {
         const tick = () => {
             const elapsed = Date.now() - startRef.current
-            const pct     = Math.max(0, 100 - (elapsed / DURATION_MS) * 100)
+            const pct     = Math.max(0, 100 - (elapsed / durationMs) * 100)
             setProgress(pct)
             if (pct > 0) {
                 frameRef.current = requestAnimationFrame(tick)
@@ -174,7 +173,7 @@ function Toast({ toast, onDismiss, onClick }) {
 
 // ── Toast system container ────────────────────────────────────────────────────
 
-export default function ToastSystem({ toasts, onDismiss, onOpen }) {
+export default function ToastSystem({ toasts, onDismiss, onOpen, toastDuration = 6 }) {
     const [isMobile,   setIsMobile]   = useState(() => window.innerWidth < 768)
     const [tabVisible, setTabVisible] = useState(() => document.visibilityState === "visible")
 
@@ -231,6 +230,7 @@ export default function ToastSystem({ toasts, onDismiss, onOpen }) {
                             toast={t}
                             onDismiss={onDismiss}
                             onClick={onOpen}
+                            durationMs={toastDuration * 1000}
                         />
                     </div>
                 ))}

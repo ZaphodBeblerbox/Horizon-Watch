@@ -3393,6 +3393,7 @@ export default function MapPage({
     onPanelOpen      = null,  // () => void — called when map opens a fixed side panel
     externalPanelOpen = false, // bool — when true, close map's fixed panels
     currentUser      = null,  // authenticated user object — for superadmin-only features
+    initialMapStyle  = "satellite", // "satellite" | "street" | "terrain" — from preferences
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -3521,8 +3522,16 @@ export default function MapPage({
     const [adsbLive, setAdsbLive]               = useState(false)
     const [adsbActivateKey, setAdsbActivateKey] = useState(0)
     const [sourceStatus, setSourceStatus]       = useState({})
-    const [mapType, setMapType]                 = useState("satellite")
+    const [mapType, setMapType]                 = useState(() => {
+        const MAP = { satellite: "satellite", street: "standard", terrain: "dark" }
+        return MAP[initialMapStyle] || "satellite"
+    })
     const [satLabels, setSatLabels]             = useState(false)
+    useEffect(() => {
+        const MAP = { satellite: "satellite", street: "standard", terrain: "dark" }
+        const t = MAP[initialMapStyle]
+        if (t) setMapType(t)
+    }, [initialMapStyle])
 
     // ── Pipeline GeoJSON lines ────────────────────────────────────────────────
     const [pipelineGeoData, setPipelineGeoData] = useState([])

@@ -30,6 +30,7 @@ export function loadSettings() {
 
 function saveSettings(s) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)) } catch {}
+    window.dispatchEvent(new CustomEvent("akili:settings-changed"))
     fetch(`${API}/api/settings`, {
         method:  "PUT",
         headers: { "Content-Type": "application/json" },
