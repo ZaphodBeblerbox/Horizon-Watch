@@ -3549,6 +3549,9 @@ export default function MapPage({
         if (t) setMapType(t)
     }, [initialMapStyle])
 
+    // Map-type-aware colour — must be declared before the borders useEffect that uses it
+    const borderGlowColor = mapType === "satellite" ? "#ffffff" : "#00FF88"
+
     // ── Pipeline GeoJSON lines ────────────────────────────────────────────────
     const [pipelineGeoData, setPipelineGeoData] = useState([])
 
@@ -5506,10 +5509,6 @@ export default function MapPage({
 
     // Event types currently visible (used for legend pulsing)
 
-
-    // Map-type-aware colours — satellite imagery is dark so borders need
-    // high-contrast white; on light/dark tiles the themed green is fine.
-    const borderGlowColor      = mapType === "satellite" ? "#ffffff" : "#00FF88"
 
     // ── Contextual border helpers ──────────────────────────────────────────────
     const ctxActivateCountry = useCallback((features, withEez = false) => {
