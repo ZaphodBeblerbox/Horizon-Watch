@@ -269,6 +269,20 @@ textarea::placeholder {
     font-size: 12px;
 }
 
+/* Country border tooltips */
+.country-tooltip {
+    background: rgba(10, 14, 20, 0.92) !important;
+    border: 1px solid rgba(56, 189, 248, 0.3) !important;
+    border-radius: 6px !important;
+    color: #e2e8f0 !important;
+    padding: 5px 10px !important;
+    font-size: 12px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+}
+.country-tooltip::before {
+    display: none !important;
+}
+
 /* EEZ layer tooltips */
 .eez-tooltip {
     background: rgba(10, 14, 20, 0.92) !important;

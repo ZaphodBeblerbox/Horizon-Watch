@@ -4457,6 +4457,34 @@ export default function MapPage({
     // ── Sync selectedEezRef with state ────────────────────────────────────────────
     useEffect(() => { selectedEezRef.current = selectedEez }, [selectedEez])
 
+    // ── Country borders — imperative with hover tooltip ───────────────────────────
+    useEffect(() => {
+        if (!mapRef.current) return
+        if (bordersLayerRef.current) { bordersLayerRef.current.remove(); bordersLayerRef.current = null }
+        if (!active.borders || !allCountriesGeo) return
+
+        const baseColor   = borderGlowColor
+        const defaultStyle = { color: baseColor, weight: 1.25, opacity: 0.5, fill: true, fillColor: baseColor, fillOpacity: 0.02, pane: "context-polygons" }
+        const hoverStyle   = { weight: 2,    opacity: 0.85, fillOpacity: 0.08 }
+
+        bordersLayerRef.current = L.geoJSON(allCountriesGeo, {
+            style:          () => ({ ...defaultStyle }),
+            pane:           "context-polygons",
+            onEachFeature:  (feature, layer) => {
+                const name = feature.properties?.name || ""
+                if (name) {
+                    layer.bindTooltip(name, {
+                        sticky:    true,
+                        direction: "top",
+                        className: "country-tooltip",
+                    })
+                }
+                layer.on("mouseover", () => layer.setStyle(hoverStyle))
+                layer.on("mouseout",  () => layer.setStyle(defaultStyle))
+            },
+        }).addTo(mapRef.current)
+    }, [active.borders, allCountriesGeo, borderGlowColor])
+
     // ── News conflicts: fetch all markers globally, refresh every 15 min ─────────
     useEffect(() => {
         if (!active.newsConflicts || !viewportBounds) {
@@ -6195,21 +6223,7 @@ export default function MapPage({
                     />
                 ))}
 
-                {/* ── Global country borders when manually toggled on ───────── */}
-                {active.borders && allCountriesGeo && (
-                    <GeoJSON
-                        pane="context-polygons"
-                        data={allCountriesGeo}
-                        style={{
-                            color: borderGlowColor,
-                            weight: 1.25,
-                            opacity: 0.55,
-                            fill: true,
-                            fillColor: "#0d9488",
-                            fillOpacity: 0.025,
-                        }}
-                    />
-                )}
+                {/* ── Country borders rendered imperatively via bordersLayerRef ─ */}
 
                 {/* ── City Labels (static major cities, zoom-aware) ─────────── */}
                 {active.cityLabels && zoom >= 4 && MAJOR_CITIES.map(c => (
@@ -6847,6 +6861,9 @@ export default function MapPage({
                     WebkitBackdropFilter: "blur(20px)",
                     borderTop:            "1px solid rgba(255,255,255,0.12)",
                     boxShadow:            "0 -8px 40px rgba(0,0,0,0.5)",
+                    display:              "flex",
+                    flexDirection:        "column",
+                    overflow:             "hidden",
                 } : {
                     position:  "fixed",
                     top:       40,

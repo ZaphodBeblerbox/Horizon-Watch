@@ -54,9 +54,10 @@ export default function EEZPanel({ eez, onClose, isMobile }) {
         background:           "rgba(10, 14, 22, 0.98)",
         backdropFilter:       "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
-        borderTop:            "1px solid rgba(56, 189, 248, 0.2)",
-        overflowY:            "auto",
-        fontFamily:           "system-ui, -apple-system, sans-serif",
+        borderTop:               "1px solid rgba(56, 189, 248, 0.2)",
+        overflowY:               "auto",
+        WebkitOverflowScrolling: "touch",
+        fontFamily:              "system-ui, -apple-system, sans-serif",
     } : {
         position:             "fixed",
         top:                  48,
@@ -123,7 +124,7 @@ export default function EEZPanel({ eez, onClose, isMobile }) {
             </div>
 
             {/* Body */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+            <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "16px" }}>
                 {/* Stats */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
                     <StatCard label="Area"    value={areaFmt} />

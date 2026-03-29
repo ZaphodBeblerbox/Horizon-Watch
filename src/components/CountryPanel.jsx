@@ -66,7 +66,7 @@ export default function CountryPanel({ country, data, loading, onClose }) {
             </div>
 
             {/* Scrollable body */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "14px 12px", display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "14px 12px", display: "flex", flexDirection: "column", gap: 20, paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 14px)" }}>
 
                 {/* Loading skeleton */}
                 {loading && (
