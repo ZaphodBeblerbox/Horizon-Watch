@@ -1219,12 +1219,15 @@ function CountryClickHandler({ countriesGeo, onCountryClick, onNoCountry }) {
 }
 
 // ── makeWebcamIcon ─────────────────────────────────────────────────────────────
-const _webcamIcon = L.divIcon({
-    className: "",
-    html: `<div style="width:28px;height:28px;background:rgba(20,20,30,0.9);border:2px solid #FFB300;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 8px rgba(255,179,0,0.4);"><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='14' height='14'><path d='M12 15.2A3.2 3.2 0 1 1 12 8.8a3.2 3.2 0 0 1 0 6.4zm6.8-10.4H17l-1.35-1.6H8.35L7 4.8H5.2A2.2 2.2 0 0 0 3 7v11.2A2.2 2.2 0 0 0 5.2 20.4h13.6a2.2 2.2 0 0 0 2.2-2.2V7a2.2 2.2 0 0 0-2.2-2.2z' fill='#FFB300'/></svg></div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
-})
+let _webcamIcon = null
+function getWebcamIcon() {
+    return _webcamIcon ??= L.divIcon({
+        className: "",
+        html: `<div style="width:28px;height:28px;background:rgba(20,20,30,0.9);border:2px solid #FFB300;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 8px rgba(255,179,0,0.4);"><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='14' height='14'><path d='M12 15.2A3.2 3.2 0 1 1 12 8.8a3.2 3.2 0 0 1 0 6.4zm6.8-10.4H17l-1.35-1.6H8.35L7 4.8H5.2A2.2 2.2 0 0 0 3 7v11.2A2.2 2.2 0 0 0 5.2 20.4h13.6a2.2 2.2 0 0 0 2.2-2.2V7a2.2 2.2 0 0 0-2.2-2.2z' fill='#FFB300'/></svg></div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+    })
+}
 
 // ── makeInfraIcon — OSM categories with glow-disc pattern ─────────────────────
 function makeInfraIcon(category, label) {
@@ -1414,13 +1417,15 @@ function zoneAreaKm2(vertices) {
 
 // ── makeNewsConflictIcon ──────────────────────────────────────────────────────
 // Plain amber circle — verifies marker rendering pipeline independently of diamond icon
-const _newsConflictIcon = L.divIcon({
-    className: "",
-    html: '<div style="width:16px;height:16px;background:#FFB300;border-radius:50%;border:2px solid #FF8F00;"></div>',
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-    popupAnchor: [0, -10],
-})
+function getNewsConflictIcon() {
+    return L.divIcon({
+        className: "",
+        html: '<div style="width:16px;height:16px;background:#FFB300;border-radius:50%;border:2px solid #FF8F00;"></div>',
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+        popupAnchor: [0, -10],
+    })
+}
 
 // ── POI marker icons ──────────────────────────────────────────────────────────
 const _POI_TAG_COLOR = { target: "#dc2626", suspect: "#d97706", associate: "#0d9488", unknown: "#6b7280" }
@@ -1436,16 +1441,22 @@ function makePoiIcon(poi, apiBase) {
         iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -26],
     })
 }
-const _homeIcon = L.divIcon({
-    className: "",
-    html: `<div style="width:28px;height:28px;background:rgba(13,148,136,0.85);border:1.5px solid #0d9488;border-radius:6px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.4);"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 6L7 1l6 5v6a1 1 0 01-1 1H2a1 1 0 01-1-1V6z" stroke="#fff" stroke-width="1.2" fill="rgba(255,255,255,0.15)"/><rect x="5" y="8" width="4" height="5" rx="0.5" fill="#fff" opacity="0.9"/></svg></div>`,
-    iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -16],
-})
-const _workIcon = L.divIcon({
-    className: "",
-    html: `<div style="width:28px;height:28px;background:rgba(217,119,6,0.85);border:1.5px solid #d97706;border-radius:6px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.4);"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="5" width="12" height="8" rx="1" stroke="#fff" stroke-width="1.2" fill="rgba(255,255,255,0.15)"/><path d="M4 5V3a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#fff" stroke-width="1.2"/><line x1="7" y1="5" x2="7" y2="13" stroke="#fff" stroke-width="1" opacity="0.6"/></svg></div>`,
-    iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -16],
-})
+let _homeIcon = null
+function getHomeIcon() {
+    return _homeIcon ??= L.divIcon({
+        className: "",
+        html: `<div style="width:28px;height:28px;background:rgba(13,148,136,0.85);border:1.5px solid #0d9488;border-radius:6px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.4);"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 6L7 1l6 5v6a1 1 0 01-1 1H2a1 1 0 01-1-1V6z" stroke="#fff" stroke-width="1.2" fill="rgba(255,255,255,0.15)"/><rect x="5" y="8" width="4" height="5" rx="0.5" fill="#fff" opacity="0.9"/></svg></div>`,
+        iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -16],
+    })
+}
+let _workIcon = null
+function getWorkIcon() {
+    return _workIcon ??= L.divIcon({
+        className: "",
+        html: `<div style="width:28px;height:28px;background:rgba(217,119,6,0.85);border:1.5px solid #d97706;border-radius:6px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.4);"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="5" width="12" height="8" rx="1" stroke="#fff" stroke-width="1.2" fill="rgba(255,255,255,0.15)"/><path d="M4 5V3a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#fff" stroke-width="1.2"/><line x1="7" y1="5" x2="7" y2="13" stroke="#fff" stroke-width="1" opacity="0.6"/></svg></div>`,
+        iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -16],
+    })
+}
 
 // ── AircraftLayer ─────────────────────────────────────────────────────────────
 // Isolated child component: aircraft state and polling live here so that
@@ -6595,7 +6606,7 @@ export default function MapPage({
                 {/* ── POI home/work address markers ────────────────────────── */}
                 {active.poi && selectedPoiMarker?.home_lat && selectedPoiMarker?.home_lon && (
                     <>
-                        <Marker position={[selectedPoiMarker.home_lat, selectedPoiMarker.home_lon]} icon={_homeIcon}>
+                        <Marker position={[selectedPoiMarker.home_lat, selectedPoiMarker.home_lon]} icon={getHomeIcon()}>
                             <Tooltip direction="top" offset={[0, -16]}><span style={{ fontSize: 10 }}>Home{selectedPoiMarker.home_address ? ` — ${selectedPoiMarker.home_address}` : ""}</span></Tooltip>
                         </Marker>
                         {selectedPoiMarker.lat && <Polyline positions={[[selectedPoiMarker.lat, selectedPoiMarker.lon], [selectedPoiMarker.home_lat, selectedPoiMarker.home_lon]]} pathOptions={{ color: "#0d9488", weight: 1.5, dashArray: "5 5", opacity: 0.5 }} />}
@@ -6603,7 +6614,7 @@ export default function MapPage({
                 )}
                 {active.poi && selectedPoiMarker?.work_lat && selectedPoiMarker?.work_lon && (
                     <>
-                        <Marker position={[selectedPoiMarker.work_lat, selectedPoiMarker.work_lon]} icon={_workIcon}>
+                        <Marker position={[selectedPoiMarker.work_lat, selectedPoiMarker.work_lon]} icon={getWorkIcon()}>
                             <Tooltip direction="top" offset={[0, -16]}><span style={{ fontSize: 10 }}>Work{selectedPoiMarker.occupation_address ? ` — ${selectedPoiMarker.occupation_address}` : ""}</span></Tooltip>
                         </Marker>
                         {selectedPoiMarker.lat && <Polyline positions={[[selectedPoiMarker.lat, selectedPoiMarker.lon], [selectedPoiMarker.work_lat, selectedPoiMarker.work_lon]]} pathOptions={{ color: "#d97706", weight: 1.5, dashArray: "5 5", opacity: 0.5 }} />}
@@ -6624,7 +6635,7 @@ export default function MapPage({
                     <Marker
                         key={cam.id}
                         position={[cam.lat, cam.lon]}
-                        icon={_webcamIcon}
+                        icon={getWebcamIcon()}
                         eventHandlers={{ click: () => setActiveWebcam(cam.id) }}
                     >
                         <Tooltip direction="top" offset={[0, -14]}>
