@@ -516,6 +516,132 @@ function FlyTo({ event }) {
     return null
 }
 
+// ── Chokepoint hatch pattern component ───────────────────────────────────────
+// Rendered into the React tree so SVG patterns are available document-wide.
+// Leaflet's SVG overlay paths can reference url(#hatch-*) since both are inline
+// in the same HTML document.
+function ChokepointPatternDefs() {
+    return (
+        <svg width="0" height="0" style={{ position: "absolute", overflow: "hidden", pointerEvents: "none" }}>
+            <defs>
+                <pattern id="hatch-critical" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                    <line x1="0" y1="0" x2="0" y2="8" stroke="#ef4444" strokeWidth="4" strokeOpacity="0.65" />
+                </pattern>
+                <pattern id="hatch-high" patternUnits="userSpaceOnUse" width="10" height="10" patternTransform="rotate(45)">
+                    <line x1="0" y1="0" x2="0" y2="10" stroke="#f59e0b" strokeWidth="4" strokeOpacity="0.6" />
+                </pattern>
+                <pattern id="hatch-moderate" patternUnits="userSpaceOnUse" width="12" height="12" patternTransform="rotate(45)">
+                    <line x1="0" y1="0" x2="0" y2="12" stroke="#14b8a6" strokeWidth="4" strokeOpacity="0.6" />
+                </pattern>
+                <pattern id="hatch-low" patternUnits="userSpaceOnUse" width="14" height="14" patternTransform="rotate(45)">
+                    <line x1="0" y1="0" x2="0" y2="14" stroke="#3b82f6" strokeWidth="4" strokeOpacity="0.55" />
+                </pattern>
+            </defs>
+        </svg>
+    )
+}
+
+// ── Single chokepoint polygon (outer glow + hatched fill + label) ─────────────
+function ChokepointPolygon({ cp, zoom, onSelect }) {
+    // ALL hooks MUST come before any conditional return — React rules of hooks
+    const fillRef           = useRef(null)
+    const [hovered, setHovered] = useState(false)
+
+    const color = _THREAT_COLORS[cp.threatLevel] || "#14b8a6"
+    const level = (cp.threatLevel || "moderate").toLowerCase()
+
+    const fillOpacity = cp.threatLevel === "CRITICAL" ? (hovered ? 0.45 : 0.30)
+        : cp.threatLevel === "HIGH"     ? (hovered ? 0.38 : 0.25)
+        : cp.threatLevel === "MODERATE" ? (hovered ? 0.30 : 0.20)
+        :                                  (hovered ? 0.25 : 0.16)
+
+    // Imperatively set the SVG fill to the hatch pattern URL after each render.
+    // pathOptions.fillColor can't express url() references, so we set it directly.
+    useEffect(() => {
+        const el = fillRef.current?.getElement?.()
+        if (!el) return
+        el.setAttribute("fill", `url(#hatch-${level})`)
+        el.setAttribute("fill-opacity", String(fillOpacity * 1.8))  // patterns need boosted opacity
+    })
+
+    // Zoom gate comes AFTER all hooks — no hooks below this point
+    if (cp.minZoom && zoom < cp.minZoom) return null
+
+    const handlers = {
+        click:     () => onSelect(cp),
+        mouseover: () => setHovered(true),
+        mouseout:  () => setHovered(false),
+    }
+
+    const strokeWeight   = cp.threatLevel === "CRITICAL" ? 3 : cp.threatLevel === "HIGH" ? 2.5 : 2
+    const strokeOpacity  = hovered ? 1 : (cp.threatLevel === "CRITICAL" ? 1 : 0.8)
+    const labelSize      = cp.threatLevel === "CRITICAL" ? 14 : cp.threatLevel === "HIGH" ? 13 : 12
+
+    return (
+        <Fragment>
+            {/* Outer glow halo — wide soft stroke, no fill */}
+            <Polygon
+                positions={cp.polygon}
+                pathOptions={{
+                    fill:    false,
+                    color,
+                    weight:  12,
+                    opacity: hovered ? 0.45 : 0.28,
+                    className: "",
+                }}
+                interactive={false}
+            />
+            {/* Main dashed border */}
+            <Polygon
+                positions={cp.polygon}
+                pathOptions={{
+                    fill:      false,
+                    color,
+                    weight:    hovered ? strokeWeight + 1 : strokeWeight,
+                    opacity:   strokeOpacity,
+                    dashArray: cp.threatLevel === "CRITICAL" ? "8 4" : cp.threatLevel === "HIGH" ? "10 5" : "6 8",
+                    className: cp.threatLevel === "CRITICAL" ? "chokepoint-pulse" : "",
+                }}
+                eventHandlers={handlers}
+            />
+            {/* Hatched fill layer — pattern set imperatively via useEffect */}
+            <Polygon
+                ref={fillRef}
+                positions={cp.polygon}
+                pathOptions={{
+                    fillColor:   color,
+                    fillOpacity,
+                    color:       "transparent",
+                    weight:      0,
+                    opacity:     0,
+                }}
+                eventHandlers={handlers}
+            >
+                <Tooltip
+                    permanent
+                    direction="center"
+                    className="chokepoint-label"
+                    offset={[0, 0]}
+                    interactive={false}
+                >
+                    <span style={{
+                        color,
+                        fontSize: labelSize,
+                        fontWeight: 700,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                        textShadow: "0 0 8px rgba(0,0,0,0.9), 0 0 3px rgba(0,0,0,0.95), 0 1px 4px rgba(0,0,0,1)",
+                        whiteSpace: "nowrap",
+                        pointerEvents: "none",
+                    }}>
+                        {cp.name}
+                    </span>
+                </Tooltip>
+            </Polygon>
+        </Fragment>
+    )
+}
+
 // ── Operational signal surface ───────────────────────────────────────────────
 // Additive glow layer beneath existing markers. Canvas-backed via preferCanvas.
 function SignalSurfaceLayer({ items, zoom }) {
@@ -623,23 +749,439 @@ const MAJOR_CITIES = [
     { name:"Jakarta",        lat:-6.211,  lon:106.845 }, { name:"Yangon",        lat:16.867,  lon:96.195  },
 ]
 
-// ── Chokepoint precise polygons — [lat, lon] pairs per point ──────────────────
-// Spec-supplied coordinates converted from GeoJSON [lon,lat] to Leaflet [lat,lon].
-// Remaining 9 are approximate narrow polygons following geographic shape.
-const CHOKEPOINT_POLYS = {
-    "Strait of Hormuz":      [[26.8,56.3],[26.3,57.2],[25.8,57.8],[25.4,58.5],[24.8,57.9],[25.2,57.1],[25.9,56.5],[26.8,56.3]],
-    "Bab el-Mandeb":         [[12.8,43.1],[12.4,43.5],[11.8,43.8],[11.5,43.2],[11.9,42.8],[12.4,42.7],[12.8,43.1]],
-    "Suez Canal":            [[30.7,32.3],[30.5,32.6],[29.9,32.6],[29.3,32.5],[28.6,32.3],[28.6,32.1],[29.3,32.2],[29.9,32.3],[30.7,32.3]],
-    "Strait of Malacca":     [[5.8,100.4],[5.0,101.2],[3.8,102.5],[2.5,103.8],[1.5,104.3],[1.2,103.5],[2.2,102.8],[3.5,101.5],[4.8,100.2],[5.8,100.4]],
-    "Strait of Gibraltar":   [[36.0,-5.6],[36.2,-5.2],[36.1,-4.9],[35.9,-4.9],[35.8,-5.2],[35.7,-5.6],[35.9,-5.9],[36.0,-5.6]],
-    "Turkish Straits / Bosphorus": [[41.5,28.8],[41.6,29.0],[41.4,29.1],[41.1,29.0],[40.9,28.8],[41.0,28.6],[41.2,28.6],[41.5,28.8]],
-    "Danish Straits":        [[57.8,9.8],[57.9,11.5],[57.0,12.5],[55.7,12.6],[55.3,12.0],[55.3,10.5],[56.0,9.5],[57.0,9.5],[57.8,9.8]],
-    "Strait of Lombok":      [[-8.1,115.4],[-8.0,115.7],[-8.2,116.0],[-8.6,116.1],[-8.9,115.9],[-8.8,115.5],[-8.5,115.3],[-8.1,115.4]],
-    "Mozambique Channel":    [[-11.0,43.5],[-14.0,46.0],[-18.0,47.0],[-23.0,46.0],[-26.0,43.0],[-24.0,39.0],[-19.0,36.0],[-14.0,37.0],[-11.0,40.5],[-11.0,43.5]],
-    "Cape of Good Hope":     [[-33.8,18.0],[-33.7,18.8],[-34.3,19.2],[-35.2,18.8],[-35.4,18.0],[-34.8,17.5],[-34.0,17.5],[-33.8,18.0]],
-    "Panama Canal":          [[9.3,-79.5],[9.4,-79.3],[9.2,-79.2],[8.9,-79.4],[8.7,-79.7],[8.8,-80.0],[9.1,-80.1],[9.3,-80.0],[9.3,-79.5]],
-    "Luzon Strait":          [[21.8,120.2],[21.8,121.8],[20.5,122.4],[19.2,121.8],[19.2,120.2],[20.5,119.6],[21.8,120.2]],
+// ── Chokepoints — rich dataset with threat levels, metadata, and polygons ────
+const CHOKEPOINTS = [
+    {
+        name: "Strait of Hormuz",
+        threatLevel: "CRITICAL",
+        // Iran south coast (N side, W→E) → Oman/Musandam coast (S side, E→W) — 40 pts
+        polygon: [
+            // Iran coast westward entrance → east toward Bandar Abbas
+            [26.08,54.88],[26.22,55.05],[26.38,55.22],[26.48,55.40],
+            [26.55,55.60],[26.65,55.85],[26.78,56.08],[26.98,56.22],
+            [27.12,56.28],[27.18,56.45],[27.15,56.65],[27.05,56.88],
+            [26.92,57.02],[26.72,57.15],[26.48,57.28],[26.22,57.42],
+            [25.92,57.55],
+            // Cross to Oman Gulf of Oman entrance
+            [25.45,57.45],
+            // Oman coast W → Musandam tip → back W along UAE coast
+            [25.62,57.18],[25.78,56.92],[25.90,56.65],[26.00,56.40],
+            [26.10,56.18],[26.22,56.08],[26.35,56.18],[26.40,56.42],
+            [26.30,56.58],[26.15,56.45],[25.98,56.28],[25.82,56.05],
+            [25.65,55.80],[25.48,55.55],[25.30,55.28],[25.15,55.02],
+            [25.08,54.88],[25.28,54.75],[25.52,54.72],[25.72,54.78],
+            [25.90,54.82],[26.08,54.88],
+        ],
+        center: [26.1, 57.2],
+        width: "39 km",
+        dailyTraffic: "21 million bbl oil/day",
+        globalTradeShare: "~20% of global petroleum",
+        borderingNations: ["Iran", "Oman", "United Arab Emirates"],
+        wikipedia: "Strait_of_Hormuz",
+        whyItMatters: "The world's most critical oil chokepoint. Roughly one-fifth of all globally traded petroleum passes through each day. A closure would immediately spike global oil prices and trigger strategic reserve releases across NATO and allied nations.",
+        currentThreats: [
+            "IRGCN vessel harassment of commercial tankers",
+            "Iranian seizure of flagged vessels (ongoing since 2019)",
+            "Houthi drone and anti-ship missile threat in approach waters",
+            "Subsurface mine placement risk in contested zones",
+        ],
+        minZoom: 3,
+    },
+    {
+        name: "Bab el-Mandeb",
+        threatLevel: "CRITICAL",
+        // Yemen coast (N side, W→E) → Djibouti/Eritrea coast (S side, E→W) — 24 pts
+        polygon: [
+            // Yemen western tip → east toward Gulf of Aden
+            [12.82,43.02],[12.88,43.18],[12.92,43.35],[12.88,43.52],
+            [12.78,43.65],[12.62,43.72],[12.45,43.72],[12.28,43.68],
+            [12.10,43.72],[11.88,43.75],[11.72,43.62],
+            // Cross to Djibouti/Eritrea side
+            [11.58,43.40],[11.62,43.18],[11.68,43.00],
+            // Djibouti/Eritrea coast going N
+            [11.80,42.98],[11.90,42.88],[12.02,42.80],
+            [12.15,42.72],[12.28,42.70],[12.42,42.75],
+            [12.55,42.82],[12.65,42.88],[12.75,43.00],
+            [12.82,43.02],
+        ],
+        center: [12.3, 43.2],
+        width: "29 km",
+        dailyTraffic: "6.2 million bbl oil/day · 3.3M TEU cargo",
+        globalTradeShare: "~10% of global trade",
+        borderingNations: ["Yemen", "Djibouti", "Eritrea"],
+        wikipedia: "Bab-el-Mandeb",
+        whyItMatters: "Gateway between the Red Sea and Gulf of Aden linking Europe to Asia via Suez. Houthi missile attacks since 2023 have diverted major shipping lines around the Cape of Good Hope, adding 10–14 days and $1–2M per voyage.",
+        currentThreats: [
+            "Houthi anti-ship ballistic missile attacks (active 2023–present)",
+            "Drone boat swarm attacks on commercial vessels",
+            "Iranian arms smuggling routes through strait",
+            "US/UK Operation Prosperity Guardian interdiction operations",
+        ],
+        minZoom: 3,
+    },
+    {
+        name: "Suez Canal",
+        threatLevel: "CRITICAL",
+        // Canal corridor from Mediterranean (Port Said) to Red Sea (Suez) — 20 pts
+        polygon: [
+            // Mediterranean/north approach
+            [31.48,32.08],[31.48,32.52],
+            // East side of canal zone (N→S)
+            [31.28,32.52],[31.08,32.48],[30.85,32.48],[30.62,32.52],
+            [30.38,32.55],[30.18,32.58],[29.98,32.60],
+            // South entrance toward Red Sea / Gulf of Suez
+            [29.88,32.70],[29.72,32.75],[29.58,32.62],
+            // West side (S→N)
+            [29.72,32.38],[29.98,32.38],[30.22,32.35],[30.48,32.35],
+            [30.72,32.35],[30.98,32.35],[31.22,32.35],
+            [31.48,32.08],
+        ],
+        center: [29.9, 32.4],
+        width: "205 m (canal width)",
+        dailyTraffic: "~50 vessels/day",
+        globalTradeShare: "12% of global trade volume",
+        borderingNations: ["Egypt"],
+        wikipedia: "Suez_Canal",
+        whyItMatters: "Shortens the Europe–Asia route by 7,000 km versus rounding Africa. The 2021 Ever Given grounding demonstrated vulnerability: 6 days of blockage cost an estimated $9.6 billion per day in delayed trade.",
+        currentThreats: [
+            "Egyptian political instability risk to canal operations",
+            "Houthi threat diverting traffic to Cape route (indirect closure)",
+            "Terrorist attack risk on Sinai approach channels",
+            "Cyber attack risk on canal traffic management systems",
+        ],
+        minZoom: 4,
+    },
+    {
+        name: "Strait of Malacca",
+        threatLevel: "CRITICAL",
+        // Malaysia/Malay Peninsula coast (NE side, NW→SE) → Sumatra coast (SW side, SE→NW) — 40 pts
+        polygon: [
+            // Malay Peninsula coast from Penang area to Singapore
+            [5.65,100.42],[5.42,100.45],[5.18,100.62],[4.95,100.72],
+            [4.72,100.82],[4.52,101.02],[4.22,101.12],[3.98,101.38],
+            [3.78,101.52],[3.55,101.68],[3.28,101.88],[3.02,102.12],
+            [2.72,102.35],[2.48,102.58],[2.22,102.85],[1.98,103.08],
+            [1.72,103.32],[1.45,103.58],[1.28,103.82],
+            // Singapore Strait / cross to Sumatra
+            [1.08,104.08],[1.05,103.88],[1.08,103.68],
+            // Sumatra NE coast (SE→NW)
+            [1.18,103.52],[1.42,103.25],[1.70,102.92],
+            [2.00,102.58],[2.30,102.22],[2.62,101.85],
+            [2.95,101.52],[3.28,101.18],[3.62,100.85],
+            [3.98,100.62],[4.35,100.48],[4.68,100.35],
+            [5.00,100.22],[5.30,100.05],[5.55,99.92],
+            [5.78,100.10],[5.65,100.42],
+        ],
+        center: [3.3, 102.5],
+        width: "2.8 km (narrowest point)",
+        dailyTraffic: "85,000 vessels/year · 16M bbl oil/day",
+        globalTradeShare: "~25% of global trade",
+        borderingNations: ["Malaysia", "Singapore", "Indonesia"],
+        wikipedia: "Strait_of_Malacca",
+        whyItMatters: "The world's busiest shipping lane connecting the Indian Ocean to the South China Sea. A closure would force rerouting through Sunda or Lombok Straits, adding 1,000–1,600 km per voyage and disrupting East Asian supply chains.",
+        currentThreats: [
+            "Piracy and armed robbery against vessels (persistent low-level)",
+            "Territorial disputes between Malaysia, Singapore and Indonesia",
+            "South China Sea tension spillover risk",
+            "High traffic density collision and grounding risk",
+        ],
+        minZoom: 4,
+    },
+    {
+        name: "Strait of Gibraltar",
+        threatLevel: "HIGH",
+        // Spain/Gibraltar coast (N side, W→E) → Morocco coast (S side, E→W) — 23 pts
+        polygon: [
+            // Spain Atlantic coast → Tarifa → Gibraltar → Mediterranean entrance
+            [36.02,-6.15],[36.05,-5.98],[35.98,-5.82],[35.92,-5.68],
+            [36.00,-5.58],[36.02,-5.45],[36.08,-5.32],[36.15,-5.22],
+            [36.18,-5.12],[36.12,-4.98],
+            // Cross to Morocco (Mediterranean side)
+            [35.90,-4.92],
+            // Morocco coast E→W
+            [35.78,-5.08],[35.76,-5.22],[35.78,-5.38],
+            [35.85,-5.52],[35.88,-5.65],[35.82,-5.80],
+            [35.80,-5.95],[35.78,-6.08],[35.75,-6.22],
+            // Cross back to Spain (Atlantic side)
+            [35.90,-6.28],[36.02,-6.15],
+        ],
+        center: [35.95, -5.4],
+        width: "14 km",
+        dailyTraffic: "~300 vessels/day",
+        globalTradeShare: "~10% of global maritime trade",
+        borderingNations: ["Spain", "Morocco", "United Kingdom (Gibraltar)"],
+        wikipedia: "Strait_of_Gibraltar",
+        whyItMatters: "The only sea passage between the Mediterranean and the Atlantic Ocean. Sole exit point for Mediterranean naval forces including NATO Southern Fleet. Contested between Spain, Morocco and the UK over Gibraltar sovereignty.",
+        currentThreats: [
+            "Morocco–Spain territorial tensions over Ceuta and Melilla",
+            "Drug and irregular migration smuggling traffic",
+            "Submarine transit corridor for Russian and Chinese vessels",
+            "NATO monitoring of non-allied submarine activity",
+        ],
+        minZoom: 4,
+    },
+    {
+        name: "Turkish Straits / Bosphorus",
+        threatLevel: "HIGH",
+        // Bosphorus channel zone: Black Sea (N) through Istanbul to Sea of Marmara (S) — 18 pts
+        polygon: [
+            // Black Sea approach
+            [41.40,28.82],[41.42,29.05],[41.42,29.20],[41.35,29.28],[41.22,29.22],
+            // Asian (E) coast going S
+            [41.15,29.12],[41.05,29.02],[40.98,28.95],[40.88,28.88],
+            // Marmara southern approach
+            [40.82,28.80],[40.82,28.65],
+            // European (W) coast going N
+            [40.88,28.62],[40.98,28.72],[41.08,28.80],
+            [41.18,28.86],[41.28,28.82],[41.40,28.82],
+        ],
+        center: [41.2, 28.9],
+        width: "0.7 km (narrowest point)",
+        dailyTraffic: "~45,000 vessels/year · 3M bbl oil/day",
+        globalTradeShare: "3% of global oil trade",
+        borderingNations: ["Turkey", "Bulgaria", "Ukraine", "Russia"],
+        wikipedia: "Turkish_Straits",
+        whyItMatters: "The only sea link between the Black Sea and the Mediterranean. Turkey controls passage under the 1936 Montreux Convention — critical for Russian Black Sea Fleet egress and Ukrainian grain export routes. Turkey invoked Montreux in 2022 to block warship passage from both sides.",
+        currentThreats: [
+            "Russia–Ukraine war impact on Black Sea navigation",
+            "Turkey leveraging Montreux Convention for geopolitical bargaining",
+            "Maritime mine drift risk from Black Sea conflict zones",
+            "Ultra-narrow channel catastrophic accident risk",
+        ],
+        minZoom: 4,
+    },
+    {
+        name: "Luzon Strait",
+        threatLevel: "HIGH",
+        // Taiwan S tip → Luzon N tip: water between Taiwan and Philippines — 24 pts
+        polygon: [
+            // Taiwan southern coast (W→E)
+            [22.05,120.05],[21.98,120.40],[21.82,120.72],[21.60,121.05],
+            [21.38,121.38],[21.12,121.62],[20.85,121.88],[20.52,122.08],
+            // Philippines northern cape (Luzon, E→W)
+            [20.12,122.25],[19.72,122.22],[19.35,122.02],[19.02,121.72],
+            [18.80,121.40],[18.68,121.10],[18.65,120.80],
+            [18.72,120.48],[18.88,120.22],[19.12,120.00],
+            // West side
+            [19.42,119.85],[20.00,119.90],[20.62,119.95],
+            [21.22,120.02],[22.05,120.05],
+        ],
+        center: [20.5, 121.0],
+        width: "250 km",
+        dailyTraffic: "~150 vessels/day",
+        globalTradeShare: "Major trans-Pacific route",
+        borderingNations: ["Philippines", "Taiwan", "China"],
+        wikipedia: "Luzon_Strait",
+        whyItMatters: "Critical US Navy transit corridor between the Western Pacific and South China Sea. Primary route for US carrier strike groups entering the South China Sea. Chinese PLAN submarine operations in the strait complicate strategic positioning regarding Taiwan.",
+        currentThreats: [
+            "PLA Navy surveillance and submarine operations",
+            "Taiwan Strait crisis spillover risk",
+            "Chinese coast guard confrontations with Philippine vessels",
+            "US–China naval incident risk in contested waters",
+        ],
+        minZoom: 4,
+    },
+    {
+        name: "Taiwan Strait",
+        threatLevel: "HIGH",
+        // China coast (W side, N→S) → Taiwan W coast (E side, S→N) — 26 pts
+        polygon: [
+            // Northern entrance
+            [25.35,120.52],[25.18,121.05],[25.02,121.42],
+            // Taiwan west coast (N→S)
+            [24.72,121.48],[24.38,121.45],[24.02,121.42],
+            [23.62,120.85],[23.22,120.38],[22.82,120.22],[22.42,120.28],
+            // Southern entrance
+            [22.05,120.15],[21.88,119.95],
+            // China coast (Fujian/Guangdong, S→N)
+            [21.95,118.98],[22.25,118.82],[22.55,118.62],
+            [22.85,118.52],[23.18,118.50],[23.52,118.62],
+            [23.82,118.78],[24.12,118.92],[24.42,119.08],
+            [24.72,119.28],[25.00,119.58],[25.28,119.92],
+            [25.35,120.52],
+        ],
+        center: [23.5, 120.2],
+        width: "130 km",
+        dailyTraffic: "~50,000 vessels/year",
+        globalTradeShare: "~50% of global container traffic passes nearby",
+        borderingNations: ["China", "Taiwan"],
+        wikipedia: "Taiwan_Strait",
+        whyItMatters: "One of the world's most geopolitically volatile waterways. Closure or conflict would disrupt global semiconductor supply chains (TSMC) and trigger US treaty obligations. China conducts regular military exercises simulating a blockade scenario.",
+        currentThreats: [
+            "PLA military exercises simulating Taiwan blockade (annual)",
+            "Chinese grey zone operations with coast guard and militia vessels",
+            "US Freedom of Navigation Operations (routine)",
+            "Escalation risk from miscalculation or incident at sea",
+        ],
+        minZoom: 4,
+    },
+    {
+        name: "Danish Straits",
+        threatLevel: "MODERATE",
+        // Kattegat → Sound (Øresund) → Baltic exit: Denmark (W) and Sweden (E) — 24 pts
+        polygon: [
+            // Northern entrance (Kattegat)
+            [57.85,9.80],[57.92,10.15],[57.95,10.50],[57.88,11.00],[57.78,11.52],
+            // Sweden coast going S (E side)
+            [57.55,11.95],[57.18,12.28],[56.78,12.55],[56.28,12.75],
+            [55.82,12.78],[55.48,12.68],[55.25,12.50],[55.18,12.25],
+            // Southern passage
+            [55.08,12.00],[55.05,11.60],[55.18,11.18],
+            // Denmark coast going N (W side)
+            [55.35,10.82],[55.55,10.55],[55.80,10.25],
+            [56.15,9.92],[56.55,9.75],[57.05,9.65],
+            [57.50,9.72],[57.85,9.80],
+        ],
+        center: [56.6, 11.0],
+        width: "~15 km",
+        dailyTraffic: "~40,000 vessels/year",
+        globalTradeShare: "Baltic Sea access route",
+        borderingNations: ["Denmark", "Sweden", "Germany"],
+        wikipedia: "Danish_straits",
+        whyItMatters: "The only access to and from the Baltic Sea, controlling all maritime trade for Sweden, Finland, Estonia, Latvia, Lithuania, Poland, and Russia's Baltic ports. Enhanced NATO presence has made the straits a key chokepoint for Russian Baltic Fleet operations.",
+        currentThreats: [
+            "Russia–NATO Baltic Sea tensions following Ukraine invasion",
+            "Sabotage risk to undersea cables (Balticconnector incident 2023)",
+            "Russian Baltic Fleet egress restriction risk",
+            "Hybrid warfare and grey zone operations in the Baltic",
+        ],
+        minZoom: 4,
+    },
+    {
+        name: "Strait of Lombok",
+        threatLevel: "MODERATE",
+        // Bali E coast (W side) → Lombok W coast (E side) — 18 pts
+        polygon: [
+            // North entrance
+            [-7.98,115.52],[-8.05,115.72],[-8.12,115.90],
+            // Lombok W coast (N→S)
+            [-8.20,116.02],[-8.38,116.08],[-8.55,116.10],
+            [-8.70,116.02],[-8.85,115.90],
+            // South entrance
+            [-8.88,115.68],[-8.85,115.42],
+            // Bali E coast (S→N)
+            [-8.80,115.25],[-8.65,115.18],[-8.45,115.22],
+            [-8.28,115.28],[-8.12,115.38],[-7.98,115.52],
+        ],
+        center: [-8.5, 115.7],
+        width: "40 km",
+        dailyTraffic: "~200 vessels/week",
+        globalTradeShare: "Malacca alternative route",
+        borderingNations: ["Indonesia"],
+        wikipedia: "Lombok_Strait",
+        whyItMatters: "Primary alternative to the Strait of Malacca for large-draught vessels and US nuclear submarines transiting between the Indian and Pacific Oceans. Deeper than Malacca, it accommodates supertankers and VLCCs that cannot use the shallower northern route.",
+        currentThreats: [
+            "Indonesian maritime jurisdiction enforcement",
+            "Increased US submarine transit activity monitored by China",
+            "Piracy risk in approach waters",
+        ],
+        minZoom: 5,
+    },
+    {
+        name: "Panama Canal",
+        threatLevel: "MODERATE",
+        // Canal corridor from Caribbean (Colón) to Pacific (Balboa) — 18 pts
+        polygon: [
+            // Caribbean/Atlantic entrance (N)
+            [9.42,-79.98],[9.52,-79.88],[9.50,-79.72],[9.42,-79.62],
+            // East side of canal zone (N→S)
+            [9.28,-79.55],[9.12,-79.48],[8.98,-79.45],[8.90,-79.50],
+            // Pacific entrance (S)
+            [8.82,-79.58],[8.78,-79.72],[8.82,-79.88],[8.92,-80.00],
+            // West side (S→N)
+            [9.00,-80.08],[9.12,-80.05],[9.25,-79.98],
+            [9.35,-80.08],[9.42,-79.98],
+        ],
+        center: [9.1, -79.7],
+        width: "91 m (Neopanamax locks)",
+        dailyTraffic: "~36–40 vessels/day",
+        globalTradeShare: "5% of global maritime trade",
+        borderingNations: ["Panama", "United States (historical)"],
+        wikipedia: "Panama_Canal",
+        whyItMatters: "Connects the Atlantic and Pacific Oceans through Central America, saving 12,800 km versus rounding Cape Horn. Critical for US Navy inter-ocean fleet repositioning. 2023 drought forced vessel draught restrictions reducing capacity by 30%.",
+        currentThreats: [
+            "Climate change–driven drought (Gatun Lake water level critical)",
+            "Chinese port operator presence at canal approaches (Hutchison Ports)",
+            "US political statements on retaking canal control (2025)",
+            "Canal authority capacity restrictions during low water events",
+        ],
+        minZoom: 5,
+    },
+    {
+        name: "Cape of Good Hope",
+        threatLevel: "LOW",
+        // Cape tip + traffic zone: hugs Cape Peninsula coast — 18 pts
+        polygon: [
+            // NW approach
+            [-33.62,17.85],[-33.80,17.75],[-34.05,17.62],
+            // Cape coast (N→Cape Point→E)
+            [-34.22,17.72],[-34.38,17.92],[-34.52,18.18],
+            [-34.58,18.38],[-34.50,18.52],
+            [-34.35,18.58],[-34.20,18.68],
+            [-34.05,18.78],[-33.88,18.88],[-33.68,18.78],
+            // NE return
+            [-33.55,18.60],[-33.45,18.42],
+            [-33.42,18.22],[-33.52,18.02],
+            [-33.62,17.85],
+        ],
+        center: [-34.4, 18.5],
+        width: "Open ocean",
+        dailyTraffic: "~15,000 vessels/year (diverted from Suez)",
+        globalTradeShare: "Emergency alternative route",
+        borderingNations: ["South Africa"],
+        wikipedia: "Cape_of_Good_Hope",
+        whyItMatters: "The primary alternative route when the Suez Canal or Bab el-Mandeb is disrupted. Houthi attacks on Red Sea shipping since 2023 have rerouted over 60% of container ships around the Cape, adding 10–14 days and dramatically increasing voyage costs.",
+        currentThreats: [
+            "Surge in traffic due to Houthi Red Sea disruption",
+            "Extreme weather and Cape Rollers sea state risk",
+            "Fuel and supply logistics constraints for diverted vessels",
+            "South African port capacity constraints (Durban, Cape Town)",
+        ],
+        minZoom: 5,
+    },
+    {
+        name: "Mozambique Channel",
+        threatLevel: "LOW",
+        // Channel between Mozambique (W coast) and Madagascar (W coast) — 26 pts
+        polygon: [
+            // Northern entrance
+            [-10.85,40.50],[-11.30,41.55],[-11.78,43.22],[-12.05,44.18],
+            // Madagascar W coast (N→S)
+            [-12.88,44.40],[-14.28,44.42],[-15.88,44.22],
+            [-17.38,43.82],[-18.85,43.62],[-20.28,44.08],
+            [-21.62,43.68],[-22.92,43.28],[-24.25,43.58],
+            // Southern exit
+            [-25.55,43.75],[-26.18,43.48],
+            // Mozambique coast (S→N)
+            [-26.22,33.90],[-25.00,34.20],[-23.62,35.48],
+            [-21.98,35.02],[-20.18,34.85],[-18.45,36.55],
+            [-16.58,36.62],[-15.38,40.65],
+            [-14.22,40.55],[-13.05,40.40],
+            [-10.85,40.50],
+        ],
+        center: [-18.0, 42.5],
+        width: "422 km",
+        dailyTraffic: "~2,000 vessels/year",
+        globalTradeShare: "Eastern Africa access route",
+        borderingNations: ["Mozambique", "Madagascar", "Tanzania", "Comoros"],
+        wikipedia: "Mozambique_Channel",
+        whyItMatters: "A secondary alternative route for vessels avoiding the Cape of Good Hope or serving East African ports. Critical for access to Mozambican LNG terminals — a growing strategic energy asset for European supply diversification away from Russia.",
+        currentThreats: [
+            "Islamist insurgency in northern Mozambique (Cabo Delgado province)",
+            "Piracy risk from Somalia in northern approaches",
+            "LNG terminal security (TotalEnergies, Eni operations)",
+        ],
+        minZoom: 5,
+    },
+]
+
+// Lookup helper for backward compatibility with profile/enrichment features
+function _cpPoly(name) {
+    return CHOKEPOINTS.find(c => c.name === name)?.polygon || null
 }
+
+// Threat level colors (defined here so ChokepointPolygon & ChokepointPanel can both reference)
+const _THREAT_COLORS = { CRITICAL: "#ef4444", HIGH: "#f59e0b", MODERATE: "#14b8a6", LOW: "#3b82f6" }
 
 // ── Convex hull (gift-wrapping) + polygon expansion helpers ──────────────────
 function _cross2d(O, A, B) {
@@ -1260,17 +1802,19 @@ function makeAirportIcon(name) {
 }
 
 function makePortIcon(name) {
+    const size = 28, half = 14
     const html =
-        `<div style="width:36px;height:36px;position:relative;display:flex;align-items:center;justify-content:center;pointer-events:auto;" title="${name||'Port'}">` +
-        `<div style="position:absolute;width:44px;height:44px;border-radius:50%;background:radial-gradient(circle,rgba(13,148,136,0.35) 0%,transparent 70%);top:-4px;left:-4px;"></div>` +
-        `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">` +
-        `<circle cx="12" cy="5" r="3" stroke="#0d9488" stroke-width="2"/>` +
-        `<line x1="12" y1="8" x2="12" y2="20" stroke="#0d9488" stroke-width="2"/>` +
-        `<path d="M6 20 C6 20 6 16 12 16 C18 16 18 20 18 20" stroke="#0d9488" stroke-width="2" fill="none"/>` +
-        `<line x1="6" y1="11" x2="18" y2="11" stroke="#0d9488" stroke-width="1.5"/>` +
+        `<div style="width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;position:relative;pointer-events:auto;filter:drop-shadow(0 0 6px rgba(56,189,248,0.6));" title="${name||'Port'}">` +
+        `<div style="position:absolute;inset:0;border-radius:50%;border:1.5px solid #38bdf8;background:rgba(56,189,248,0.08);"></div>` +
+        `<svg width="18" height="11" viewBox="0 0 26 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:relative;">` +
+        `<path d="M1 10 L5 5 L23 5 L25 10 L25 13 L1 13 Z" fill="#38bdf8"/>` +
+        `<rect x="15" y="1" width="7" height="4" rx="0.5" fill="#38bdf8"/>` +
+        `<rect x="20" y="0" width="2" height="1" fill="#38bdf8"/>` +
+        `<line x1="8" y1="5" x2="8" y2="1" stroke="#38bdf8" stroke-width="1.2"/>` +
+        `<line x1="8" y1="1" x2="14" y2="4" stroke="#38bdf8" stroke-width="0.8" opacity="0.6"/>` +
         `</svg>` +
         `</div>`
-    return L.divIcon({ html, className: "", iconSize: [36, 36], iconAnchor: [18, 18], popupAnchor: [0, -20] })
+    return L.divIcon({ html, className: "", iconSize: [size, size], iconAnchor: [half, half], popupAnchor: [0, -half-2] })
 }
 
 const _AIS_TYPE_COLOR = { tanker: "#f59e0b", cargo: "#14b8a6", container: "#06b6d4", military: "#ef4444", passenger: "#3b82f6", fishing: "#84cc16", other: "#64748b" }
@@ -1327,6 +1871,29 @@ function makeAisVesselIcon(shipType, heading) {
 // Wrapper that accepts a full vessel object (uses ship_type + heading from it)
 function makeAisVesselIconFromVessel(vessel) {
     return makeAisVesselIcon(_vesselShipType(vessel), vessel.heading)
+}
+
+// Zoom-aware icon: tiny colored dot at low zoom, full SVG ship at zoom ≥ 9
+function makeAisVesselIconForZoom(vessel, zoom) {
+    if (zoom >= 9) return makeAisVesselIconFromVessel(vessel)
+    const color = _AIS_TYPE_COLOR[_vesselShipType(vessel)] || _AIS_TYPE_COLOR.other
+    const sz = zoom >= 7 ? 8 : 6
+    const dot = `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${color};`
+              + `box-shadow:0 0 4px ${color};opacity:0.85;"></div>`
+    return L.divIcon({ html: dot, className: "", iconSize: [sz, sz], iconAnchor: [sz/2, sz/2] })
+}
+
+// Returns hull SVG path for a given ship type (same paths as makeAisVesselIcon, for reuse in popup)
+function _vesselHullPath(shipType) {
+    return {
+        tanker:    "M8,1 L13,7 L14,14 L14,24 L11,27 L5,27 L2,24 L2,14 L3,7 Z",
+        container: "M8,1 L14,8 L14,25 L12,27 L4,27 L2,25 L2,8 Z",
+        cargo:     "M8,1 L13,7 L13,24 L11,27 L5,27 L3,24 L3,7 Z",
+        passenger: "M8,1 L12,6 L13,12 L13,24 L10,27 L6,27 L3,24 L3,12 L4,6 Z",
+        military:  "M8,0 L12,5 L14,10 L14,24 L11,27 L5,27 L2,24 L2,10 L4,5 Z",
+        fishing:   "M8,2 L12,8 L12,22 L10,25 L6,25 L4,22 L4,8 Z",
+        other:     "M8,2 L13,8 L13,23 L11,26 L5,26 L3,23 L3,8 Z",
+    }[shipType] || "M8,2 L13,8 L13,23 L11,26 L5,26 L3,23 L3,8 Z"
 }
 
 function makePowerIcon(name, fuelType) {
@@ -1528,6 +2095,12 @@ const AircraftLayer = memo(function AircraftLayer({
     // Checking live zoom avoids stale prop when the interval fires.
     if (!visible || map.getZoom() < 4) return null
 
+    // Client-side viewport filter with 20% buffer to avoid pop-in near edges
+    const vpBounds = map.getBounds().pad(0.2)
+    const visibleAircraft = aircraft.filter(ac =>
+        ac.lat != null && ac.lon != null && vpBounds.contains([ac.lat, ac.lon])
+    )
+
     return (
         <Fragment>
             {/* Track polyline — dashed, coloured to match the aircraft */}
@@ -1537,7 +2110,7 @@ const AircraftLayer = memo(function AircraftLayer({
                     pathOptions={{ color: trackState.color, weight: 1.5, opacity: 0.75, dashArray: "5 5" }}
                 />
             )}
-            {aircraft.map(ac => (
+            {visibleAircraft.map(ac => (
                 <Marker
                     key={ac.icao || `${ac.lat}-${ac.lon}`}
                     position={[ac.lat, ac.lon]}
@@ -1616,6 +2189,210 @@ const CARRIER_ZONES = {
     "Charles de Gaulle-class (nuclear)":{ nfz_km: 92.6,  strike_km: 648,  extended_km: 1019, aircraft: "Rafale Marine",           nfz_nm: 50,  strike_nm: 350, extended_nm: 550 },
     "default":                          { nfz_km: 92.6,  strike_km: 740,  extended_km: 1100, aircraft: "Embarked aircraft",        nfz_nm: 50,  strike_nm: 400, extended_nm: 600 },
 }
+
+// ── Hardcoded CSG/ARG deployment data — used directly so production never needs
+//    a populated backend file.  Update here to change what appears on the map.
+// Country color palette for carrier icons
+const _CARRIER_COUNTRY_COLORS = {
+    US:          "#3b82f6",
+    China:       "#ef4444",
+    UK:          "#a855f7",
+    France:      "#f97316",
+    India:       "#22c55e",
+    Russia:      "#64748b",
+    Italy:       "#06b6d4",
+    Japan:       "#ec4899",
+    SouthKorea:  "#eab308",
+    Turkey:      "#f43f5e",
+    Spain:       "#d97706",
+    Egypt:       "#84cc16",
+    Brazil:      "#8b5cf6",
+    Thailand:    "#14b8a6",
+    Australia:   "#0ea5e9",
+}
+
+// Combat-radius distances in metres by country (for range ring 1)
+const _CARRIER_COMBAT_RADIUS_M = {
+    US:     1019000,  // ~550 nm — F/A-18E/F
+    France: 1112000,  // ~600 nm — Rafale-M
+    China:   926000,  // ~500 nm — J-15
+    UK:      926000,  // ~500 nm — F-35B
+    India:   741000,  // ~400 nm — MiG-29K
+    default: 926000,
+}
+
+// Global carrier / LHD roster — March 2026, from USNI / Wikipedia / open source
+const _CSG_HARDCODED_DATA = [
+    // ── UNITED STATES ─────────────────────────────────────────────────────────
+    {
+        name:      "Carrier Strike Group 12",
+        flagship:  "USS Gerald R. Ford (CVN-78)",
+        hull:      "CVN-78",
+        lat: 35.5,  lon: 24.0,
+        country:   "US", flag: "🇺🇸",
+        status:    "DEPLOYED",
+        theater:   "Eastern Mediterranean (Souda Bay repairs)",
+        operation: "Operation Epic Fury",
+        air_wing:  "CVW-8 — ~75 aircraft",
+        heading:   120,
+        wikipedia: "https://en.wikipedia.org/wiki/USS_Gerald_R._Ford",
+        wiki_title: "USS Gerald R. Ford",
+        escorts: [
+            { name: "USS Winston S. Churchill", hull: "DDG-81",  type: "Destroyer" },
+            { name: "USS Bainbridge",           hull: "DDG-96",  type: "Destroyer" },
+            { name: "USS Mahan",                hull: "DDG-72",  type: "Destroyer" },
+        ],
+    },
+    {
+        name:      "Carrier Strike Group 3",
+        flagship:  "USS Abraham Lincoln (CVN-72)",
+        hull:      "CVN-72",
+        lat: 23.5,  lon: 65.0,
+        country:   "US", flag: "🇺🇸",
+        status:    "DEPLOYED",
+        theater:   "North Arabian Sea",
+        operation: "Operation Epic Fury",
+        air_wing:  "CVW-9 — ~75 aircraft",
+        heading:   270,
+        wikipedia: "https://en.wikipedia.org/wiki/USS_Abraham_Lincoln_(CVN-72)",
+        wiki_title: "USS Abraham Lincoln (CVN-72)",
+        escorts: [
+            { name: "USS Frank E. Petersen Jr.", hull: "DDG-121", type: "Destroyer" },
+            { name: "USS Spruance",              hull: "DDG-111", type: "Destroyer" },
+            { name: "USS Michael Murphy",        hull: "DDG-112", type: "Destroyer" },
+            { name: "USS Preble",                hull: "DDG-88",  type: "Destroyer" },
+            { name: "USS Delbert D. Black",      hull: "DDG-119", type: "Destroyer" },
+        ],
+    },
+    {
+        name:      "USS George Washington (CVN-73)",
+        flagship:  "USS George Washington (CVN-73)",
+        hull:      "CVN-73",
+        lat: 35.28, lon: 139.67,
+        country:   "US", flag: "🇺🇸",
+        status:    "IN PORT",
+        theater:   "Yokosuka, Japan (FDNF)",
+        air_wing:  "CVW-5",
+        heading:   0,
+        wikipedia: "https://en.wikipedia.org/wiki/USS_George_Washington_(CVN-73)",
+        wiki_title: "USS George Washington (CVN-73)",
+        escorts: [],
+    },
+    {
+        name:      "Iwo Jima Amphibious Ready Group",
+        flagship:  "USS Iwo Jima (LHD-7)",
+        hull:      "LHD-7",
+        lat: 18.0,  lon: -66.5,
+        country:   "US", flag: "🇺🇸",
+        status:    "DEPLOYED",
+        theater:   "Caribbean Sea",
+        operation: "Operation Southern Spear",
+        air_wing:  "22nd MEU — MV-22B, AH-1Z, UH-1Y",
+        heading:   200,
+        wikipedia: "https://en.wikipedia.org/wiki/USS_Iwo_Jima_(LHD-7)",
+        wiki_title: "USS Iwo Jima (LHD-7)",
+        escorts: [
+            { name: "USS Fort Lauderdale", hull: "LPD-28",  type: "Amphibious Transport Dock" },
+            { name: "USS San Antonio",     hull: "LPD-17",  type: "Amphibious Transport Dock" },
+            { name: "USS Lake Erie",       hull: "CG-70",   type: "Cruiser" },
+            { name: "USS Stockdale",       hull: "DDG-106", type: "Destroyer" },
+        ],
+    },
+    {
+        name:      "Tripoli Amphibious Ready Group",
+        flagship:  "USS Tripoli (LHA-7)",
+        hull:      "LHA-7",
+        lat: -7.3,  lon: 72.4,
+        country:   "US", flag: "🇺🇸",
+        status:    "DEPLOYED",
+        theater:   "Indian Ocean (Diego Garcia)",
+        air_wing:  "31st MEU aviation",
+        heading:   315,
+        wikipedia: "https://en.wikipedia.org/wiki/USS_Tripoli_(LHA-7)",
+        wiki_title: "USS Tripoli (LHA-7)",
+        escorts: [
+            { name: "USS New Orleans", hull: "LPD-18", type: "Amphibious Transport Dock" },
+        ],
+    },
+    {
+        name:      "Boxer Amphibious Ready Group",
+        flagship:  "USS Boxer (LHD-4)",
+        hull:      "LHD-4",
+        lat: 25.0,  lon: -130.0,
+        country:   "US", flag: "🇺🇸",
+        status:    "DEPLOYED",
+        theater:   "Eastern Pacific",
+        air_wing:  "11th MEU aviation",
+        heading:   225,
+        wikipedia: "https://en.wikipedia.org/wiki/USS_Boxer_(LHD-4)",
+        wiki_title: "USS Boxer (LHD-4)",
+        escorts: [
+            { name: "USS Comstock", hull: "LSD-45", type: "Dock Landing Ship" },
+            { name: "USS Portland", hull: "LPD-27", type: "Amphibious Transport Dock" },
+        ],
+    },
+    // US carriers in port / refit
+    { name: "USS Nimitz (CVN-68)",               flagship: "USS Nimitz (CVN-68)",               hull: "CVN-68", lat: 47.56,  lon: -122.65, country: "US", flag: "🇺🇸", status: "IN PORT",        theater: "Bremerton, WA",   heading: 0, wikipedia: "https://en.wikipedia.org/wiki/USS_Nimitz",                        wiki_title: "USS Nimitz",                        air_wing: null, escorts: [] },
+    { name: "USS Theodore Roosevelt (CVN-71)",   flagship: "USS Theodore Roosevelt (CVN-71)",   hull: "CVN-71", lat: 32.68,  lon: -117.15, country: "US", flag: "🇺🇸", status: "IN PORT",        theater: "San Diego, CA",   heading: 0, wikipedia: "https://en.wikipedia.org/wiki/USS_Theodore_Roosevelt_(CVN-71)", wiki_title: "USS Theodore Roosevelt (CVN-71)", air_wing: null, escorts: [] },
+    { name: "USS Carl Vinson (CVN-70)",          flagship: "USS Carl Vinson (CVN-70)",          hull: "CVN-70", lat: 32.71,  lon: -117.18, country: "US", flag: "🇺🇸", status: "IN PORT",        theater: "San Diego, CA",   heading: 0, wikipedia: "https://en.wikipedia.org/wiki/USS_Carl_Vinson",                  wiki_title: "USS Carl Vinson",                  air_wing: null, escorts: [] },
+    { name: "USS John C. Stennis (CVN-74)",      flagship: "USS John C. Stennis (CVN-74)",      hull: "CVN-74", lat: 36.95,  lon: -76.33,  country: "US", flag: "🇺🇸", status: "REFIT",          theater: "Norfolk, VA (RCOH)", heading: 0, wikipedia: "https://en.wikipedia.org/wiki/USS_John_C._Stennis",             wiki_title: "USS John C. Stennis",             air_wing: null, escorts: [] },
+    { name: "USS Harry S. Truman (CVN-75)",      flagship: "USS Harry S. Truman (CVN-75)",      hull: "CVN-75", lat: 36.96,  lon: -76.32,  country: "US", flag: "🇺🇸", status: "IN PORT",        theater: "Norfolk, VA",     heading: 0, wikipedia: "https://en.wikipedia.org/wiki/USS_Harry_S._Truman",             wiki_title: "USS Harry S. Truman",             air_wing: null, escorts: [] },
+    { name: "USS Ronald Reagan (CVN-76)",        flagship: "USS Ronald Reagan (CVN-76)",        hull: "CVN-76", lat: 47.57,  lon: -122.67, country: "US", flag: "🇺🇸", status: "IN PORT",        theater: "Bremerton, WA",   heading: 0, wikipedia: "https://en.wikipedia.org/wiki/USS_Ronald_Reagan",               wiki_title: "USS Ronald Reagan",               air_wing: null, escorts: [] },
+    { name: "USS Dwight D. Eisenhower (CVN-69)", flagship: "USS Dwight D. Eisenhower (CVN-69)", hull: "CVN-69", lat: 36.97,  lon: -76.31,  country: "US", flag: "🇺🇸", status: "IN PORT",        theater: "Norfolk, VA",     heading: 0, wikipedia: "https://en.wikipedia.org/wiki/USS_Dwight_D._Eisenhower",        wiki_title: "USS Dwight D. Eisenhower",       air_wing: null, escorts: [] },
+    // ── CHINA ─────────────────────────────────────────────────────────────────
+    { name: "Liaoning (CV-16)",  flagship: "Liaoning (CV-16)",  hull: "CV-16", lat: 38.95, lon: 121.6,  country: "China", flag: "🇨🇳", status: "IN PORT",          theater: "Dalian, China",           heading: 0,   wikipedia: "https://en.wikipedia.org/wiki/Chinese_aircraft_carrier_Liaoning", wiki_title: "Chinese aircraft carrier Liaoning", air_wing: "~24 J-15 + helicopters", escorts: [] },
+    { name: "Shandong (CV-17)",  flagship: "Shandong (CV-17)",  hull: "CV-17", lat: 18.22, lon: 109.53, country: "China", flag: "🇨🇳", status: "IN PORT",          theater: "Yulin Naval Base, Hainan", heading: 180, wikipedia: "https://en.wikipedia.org/wiki/Chinese_aircraft_carrier_Shandong", wiki_title: "Chinese aircraft carrier Shandong", air_wing: "~36 J-15 + helicopters", escorts: [] },
+    { name: "Fujian (CV-18)",    flagship: "Fujian (CV-18)",    hull: "CV-18", lat: 31.35, lon: 121.65, country: "China", flag: "🇨🇳", status: "REFIT",            theater: "Shanghai — maintenance",   heading: 90,  wikipedia: "https://en.wikipedia.org/wiki/Chinese_aircraft_carrier_Fujian",  wiki_title: "Chinese aircraft carrier Fujian",  air_wing: "J-15T, J-35 (working up)", escorts: [] },
+    // ── UNITED KINGDOM ────────────────────────────────────────────────────────
+    { name: "HMS Queen Elizabeth (R08)",  flagship: "HMS Queen Elizabeth (R08)",  hull: "R08", lat: 56.03, lon: -3.44, country: "UK", flag: "🇬🇧", status: "REFIT",          theater: "Rosyth, Scotland",              heading: 0, wikipedia: "https://en.wikipedia.org/wiki/HMS_Queen_Elizabeth_(R08)", wiki_title: "HMS Queen Elizabeth (R08)", air_wing: "None embarked", escorts: [] },
+    { name: "HMS Prince of Wales (R09)",  flagship: "HMS Prince of Wales (R09)",  hull: "R09", lat: 50.8,  lon: -1.1,  country: "UK", flag: "🇬🇧", status: "HIGH READINESS", theater: "Portsmouth (5 days notice)",   heading: 45, wikipedia: "https://en.wikipedia.org/wiki/HMS_Prince_of_Wales_(R09)", wiki_title: "HMS Prince of Wales (R09)", air_wing: "F-35B (617 Sqn), Merlin",  escorts: [] },
+    // ── FRANCE ────────────────────────────────────────────────────────────────
+    {
+        name:      "French Carrier Strike Group",
+        flagship:  "FS Charles de Gaulle (R91)",
+        hull:      "R91",
+        lat: 34.5,  lon: 26.0,
+        country:   "France", flag: "🇫🇷",
+        status:    "DEPLOYED",
+        theater:   "Eastern Mediterranean",
+        air_wing:  "~30 Rafale-M, 2× E-2C Hawkeye, helicopters",
+        heading:   90,
+        wikipedia: "https://en.wikipedia.org/wiki/French_aircraft_carrier_Charles_de_Gaulle",
+        wiki_title: "French aircraft carrier Charles de Gaulle",
+        escorts: [
+            { name: "FNS Chevalier Paul",    hull: "D621",    type: "Frigate" },
+            { name: "Cristóbal Colón",       hull: "F105",    type: "Spanish Frigate" },
+            { name: "HNLMS Evertsen",        hull: "F805",    type: "Dutch Frigate" },
+        ],
+    },
+    // ── INDIA ─────────────────────────────────────────────────────────────────
+    { name: "INS Vikramaditya (R33)", flagship: "INS Vikramaditya (R33)", hull: "R33", lat: 14.82,  lon: 74.13, country: "India", flag: "🇮🇳", status: "IN PORT",   theater: "INS Kadamba, Karwar",  heading: 0,   wikipedia: "https://en.wikipedia.org/wiki/INS_Vikramaditya", wiki_title: "INS Vikramaditya", air_wing: "MiG-29K/KUB, Ka-31",         escorts: [] },
+    { name: "INS Vikrant (R11)",      flagship: "INS Vikrant (R11)",      hull: "R11", lat: 9.95,   lon: 76.27, country: "India", flag: "🇮🇳", status: "OPERATIONAL", theater: "Kochi, Kerala",        heading: 180, wikipedia: "https://en.wikipedia.org/wiki/INS_Vikrant_(2013)", wiki_title: "INS Vikrant (2013)", air_wing: "MiG-29K, Kamov helicopters", escorts: [] },
+    // ── RUSSIA ────────────────────────────────────────────────────────────────
+    { name: "Admiral Kuznetsov", flagship: "Admiral Kuznetsov", hull: "063", lat: 69.08, lon: 33.12, country: "Russia", flag: "🇷🇺", status: "REFIT", theater: "Murmansk (refit since 2017)", heading: 0, wikipedia: "https://en.wikipedia.org/wiki/Russian_aircraft_carrier_Admiral_Kuznetsov", wiki_title: "Russian aircraft carrier Admiral Kuznetsov", air_wing: "Su-33, MiG-29K (not embarked)", escorts: [] },
+    // ── ITALY ─────────────────────────────────────────────────────────────────
+    { name: "ITS Cavour (C550)",   flagship: "ITS Cavour (C550)",   hull: "C550",  lat: 40.44, lon: 17.23, country: "Italy", flag: "🇮🇹", status: "OPERATIONAL", theater: "Taranto", heading: 90, wikipedia: "https://en.wikipedia.org/wiki/Italian_aircraft_carrier_Cavour",         wiki_title: "Italian aircraft carrier Cavour",       air_wing: "F-35B, AV-8B+, helicopters",    escorts: [] },
+    { name: "ITS Trieste (L9890)", flagship: "ITS Trieste (L9890)", hull: "L9890", lat: 40.42, lon: 17.25, country: "Italy", flag: "🇮🇹", status: "OPERATIONAL", theater: "Taranto", heading: 90, wikipedia: "https://en.wikipedia.org/wiki/Italian_ship_Trieste_(L_9890)",           wiki_title: "Italian ship Trieste (L 9890)",         air_wing: "F-35B capable, helicopters",    escorts: [] },
+    // ── JAPAN ─────────────────────────────────────────────────────────────────
+    { name: "JS Izumo (DDH-183)", flagship: "JS Izumo (DDH-183)", hull: "DDH-183", lat: 35.28,  lon: 139.67, country: "Japan", flag: "🇯🇵", status: "OPERATIONAL", theater: "Yokosuka",           heading: 0, wikipedia: "https://en.wikipedia.org/wiki/JS_Izumo",           wiki_title: "JS Izumo",          air_wing: "F-35B (modification ongoing)", escorts: [] },
+    { name: "JS Kaga (DDH-184)",  flagship: "JS Kaga (DDH-184)",  hull: "DDH-184", lat: 34.23,  lon: 132.57, country: "Japan", flag: "🇯🇵", status: "REFIT",       theater: "Kure (F-35B mod)", heading: 0, wikipedia: "https://en.wikipedia.org/wiki/JS_Kaga_(DDH-184)", wiki_title: "JS Kaga (DDH-184)", air_wing: "F-35B (undergoing modification)", escorts: [] },
+    // ── SOUTH KOREA ───────────────────────────────────────────────────────────
+    { name: "ROKS Marado (LPH-6112)", flagship: "ROKS Marado (LPH-6112)", hull: "LPH-6112", lat: 35.1, lon: 129.08, country: "SouthKorea", flag: "🇰🇷", status: "OPERATIONAL", theater: "Busan",               heading: 45, wikipedia: "https://en.wikipedia.org/wiki/ROKS_Marado_(LPH-6112)", wiki_title: "ROKS Marado (LPH-6112)", air_wing: "AW159, UH-60, helicopters", escorts: [] },
+    // ── TURKEY ────────────────────────────────────────────────────────────────
+    { name: "TCG Anadolu (L400)", flagship: "TCG Anadolu (L400)", hull: "L400", lat: 40.68, lon: 29.42, country: "Turkey", flag: "🇹🇷", status: "OPERATIONAL", theater: "Gölcük Naval Base", heading: 180, wikipedia: "https://en.wikipedia.org/wiki/TCG_Anadolu", wiki_title: "TCG Anadolu", air_wing: "TB-3 drones, helicopters", escorts: [] },
+    // ── SPAIN ─────────────────────────────────────────────────────────────────
+    { name: "Juan Carlos I (L61)", flagship: "Juan Carlos I (L61)", hull: "L61", lat: 36.54, lon: -6.29, country: "Spain", flag: "🇪🇸", status: "OPERATIONAL", theater: "Rota, Spain", heading: 270, wikipedia: "https://en.wikipedia.org/wiki/Spanish_ship_Juan_Carlos_I", wiki_title: "Spanish ship Juan Carlos I", air_wing: "AV-8B Harrier II+, helicopters", escorts: [] },
+    // ── EGYPT ─────────────────────────────────────────────────────────────────
+    { name: "ENS Gamal Abdel Nasser (L1010)", flagship: "ENS Gamal Abdel Nasser (L1010)", hull: "L1010", lat: 31.15, lon: 29.85, country: "Egypt", flag: "🇪🇬", status: "OPERATIONAL", theater: "Alexandria", heading: 90, wikipedia: "https://en.wikipedia.org/wiki/Egyptian_ship_Gamal_Abdel_Nasser", wiki_title: "Egyptian ship Gamal Abdel Nasser", air_wing: "Ka-52K, NH-90, helicopters",          escorts: [] },
+    { name: "ENS Anwar El Sadat (L1020)",     flagship: "ENS Anwar El Sadat (L1020)",     hull: "L1020", lat: 31.13, lon: 29.87, country: "Egypt", flag: "🇪🇬", status: "OPERATIONAL", theater: "Alexandria", heading: 90, wikipedia: "https://en.wikipedia.org/wiki/Egyptian_ship_Anwar_El_Sadat",     wiki_title: "Egyptian ship Anwar El Sadat",     air_wing: "Helicopters",                         escorts: [] },
+    // ── BRAZIL ────────────────────────────────────────────────────────────────
+    { name: "PHM Atlântico (A140)", flagship: "PHM Atlântico (A140)", hull: "A140", lat: -22.9, lon: -43.15, country: "Brazil", flag: "🇧🇷", status: "OPERATIONAL", theater: "Rio de Janeiro", heading: 0, wikipedia: "https://en.wikipedia.org/wiki/PHM_Atl%C3%A2ntico", wiki_title: "PHM Atlântico", air_wing: "Helicopters, AH-11A Super Lynx", escorts: [] },
+    // ── THAILAND ──────────────────────────────────────────────────────────────
+    { name: "HTMS Chakri Naruebet", flagship: "HTMS Chakri Naruebet", hull: "CVH-911", lat: 12.68, lon: 100.9, country: "Thailand", flag: "🇹🇭", status: "IN PORT", theater: "Sattahip Naval Base", heading: 0, wikipedia: "https://en.wikipedia.org/wiki/HTMS_Chakri_Naruebet", wiki_title: "HTMS Chakri Naruebet", air_wing: "Helicopters only (rarely sails)", escorts: [] },
+    // ── AUSTRALIA ─────────────────────────────────────────────────────────────
+    { name: "HMAS Canberra (L02)",  flagship: "HMAS Canberra (L02)",  hull: "L02", lat: -33.86, lon: 151.21, country: "Australia", flag: "🇦🇺", status: "OPERATIONAL", theater: "Sydney", heading: 0, wikipedia: "https://en.wikipedia.org/wiki/HMAS_Canberra_(L02)", wiki_title: "HMAS Canberra (L02)", air_wing: "MRH-90, CH-47F, helicopters", escorts: [] },
+    { name: "HMAS Adelaide (L01)",  flagship: "HMAS Adelaide (L01)",  hull: "L01", lat: -33.88, lon: 151.19, country: "Australia", flag: "🇦🇺", status: "OPERATIONAL", theater: "Sydney", heading: 0, wikipedia: "https://en.wikipedia.org/wiki/HMAS_Adelaide_(L01)", wiki_title: "HMAS Adelaide (L01)", air_wing: "MRH-90, CH-47F, helicopters", escorts: [] },
+]
 
 // Hardcoded major global pipelines — GeoJSON-style features, [lon,lat] coords.
 // Remote sources (GOPIT) are dead (404). This gives reliable rendering.
@@ -1760,6 +2537,36 @@ function makeDestroyerDivIcon() {
       ${_destroyerSvg(color)}
     </div>`
     return L.divIcon({ html, className: "", iconSize: [24, 24], iconAnchor: [12, 12] })
+}
+
+// ── Military top-down AIS-style icons — color-coded by country ───────────────
+function makeCarrierAisIcon(heading = 0, color = "#3b82f6", opacity = 1) {
+    const hdg = isFinite(Number(heading)) ? Number(heading) : 0
+    const [r, g, b] = _hexToRgb(color)
+    const glowA = opacity >= 0.9 ? 0.7 : opacity >= 0.5 ? 0.35 : 0
+    const glowFilter = glowA > 0 ? `drop-shadow(0 0 8px rgba(${r},${g},${b},${glowA}))` : "none"
+    const svg =
+        `<svg width="22" height="48" viewBox="0 0 22 48" xmlns="http://www.w3.org/2000/svg" ` +
+        `style="transform:rotate(${hdg}deg);transform-origin:50% 50%;display:block;overflow:visible;opacity:${opacity};` +
+        `filter:${glowFilter};">` +
+        `<path d="M11,1 L16,5 L17,12 L17,38 L14,47 L8,47 L5,38 L5,12 L6,5 Z" fill="${color}" stroke="rgba(255,255,255,0.3)" stroke-width="0.6" opacity="0.93"/>` +
+        `<path d="M5,10 L1,14 L1,36 L5,38" fill="${color}" stroke="rgba(255,255,255,0.2)" stroke-width="0.4" opacity="0.85"/>` +
+        `<rect x="15" y="17" width="4" height="11" rx="0.5" fill="rgba(255,255,255,0.35)" stroke="rgba(255,255,255,0.2)" stroke-width="0.4"/>` +
+        `</svg>`
+    return L.divIcon({ html: svg, className: "", iconSize: [22, 48], iconAnchor: [11, 24] })
+}
+
+function makeEscortAisIcon(heading = 0, color = "#3b82f6") {
+    const hdg = isFinite(Number(heading)) ? Number(heading) : 0
+    const [r, g, b] = _hexToRgb(color)
+    const svg =
+        `<svg width="14" height="30" viewBox="0 0 14 30" xmlns="http://www.w3.org/2000/svg" ` +
+        `style="transform:rotate(${hdg}deg);transform-origin:50% 50%;display:block;overflow:visible;` +
+        `filter:drop-shadow(0 0 6px rgba(${r},${g},${b},0.6));">` +
+        `<path d="M7,1 L11,5 L12,11 L12,24 L10,29 L4,29 L2,24 L2,11 L3,5 Z" fill="${color}" stroke="rgba(255,255,255,0.25)" stroke-width="0.6" opacity="0.92"/>` +
+        `<rect x="4" y="12" width="6" height="7" rx="0.5" fill="rgba(255,255,255,0.28)"/>` +
+        `</svg>`
+    return L.divIcon({ html: svg, className: "", iconSize: [14, 30], iconAnchor: [7, 15] })
 }
 
 // ── DeploymentCard panel ──────────────────────────────────────────────────────
@@ -2718,6 +3525,149 @@ const AisVesselPanel = memo(function AisVesselPanel({ vessel, onClose }) {
     )
 })
 
+// ── PortPanel ─────────────────────────────────────────────────────────────────
+const PortPanel = memo(function PortPanel({ item, onClose, isMobile }) {
+    if (!item) return null
+    const wikiUrl = item.wikipedia || `https://en.wikipedia.org/wiki/${encodeURIComponent((item.name || "Port").replace(/ /g, "_"))}`
+    const rows = [
+        ["Country",     item.country],
+        ["Harbor Size", item.harbor_size],
+        ["Max Vessel",  item.max_vessel_size],
+        ["Operator",    item.operator],
+        ["Coords",      item.lat != null ? `${item.lat.toFixed(4)}, ${item.lon.toFixed(4)}` : null],
+    ].filter(([, v]) => v)
+
+    const panelStyle = isMobile ? {
+        position: "fixed", left: 0, right: 0, bottom: 0,
+        maxHeight: "65vh", borderRadius: "18px 18px 0 0", zIndex: 1150,
+        background: "rgba(10,14,22,0.98)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderTop: "1px solid rgba(56,189,248,0.2)", overflowY: "auto",
+        fontFamily: "system-ui,-apple-system,sans-serif",
+    } : {
+        position: "fixed", top: 48, right: 0, bottom: 0, width: 380, zIndex: 1150,
+        background: "rgba(15,23,42,0.95)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderLeft: "1px solid rgba(56,189,248,0.2)", display: "flex", flexDirection: "column",
+        fontFamily: "system-ui,-apple-system,sans-serif",
+    }
+
+    return (
+        <div style={panelStyle}>
+            <div style={{ padding: 16, borderBottom: "1px solid rgba(56,189,248,0.15)", display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexShrink: 0 }}>
+                <div>
+                    <div style={{ color: "#38bdf8", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "1px", marginBottom: 4 }}>Port</div>
+                    <h2 style={{ color: "#e2e8f0", fontSize: 20, fontWeight: 500, margin: 0 }}>{item.name || "Unnamed Port"}</h2>
+                    {item.country && <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{item.country}</div>}
+                </div>
+                <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22, lineHeight: 1, paddingTop: 2 }}>×</button>
+            </div>
+            {/* Port image placeholder */}
+            <div style={{ height: 140, background: "linear-gradient(135deg,rgba(8,15,30,1) 0%,rgba(12,30,52,1) 100%)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, borderBottom: "1px solid rgba(56,189,248,0.1)", position: "relative", overflow: "hidden" }}>
+                <div style={{ opacity: 0.12, position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 18px,rgba(56,189,248,0.4) 18px,rgba(56,189,248,0.4) 19px),repeating-linear-gradient(90deg,transparent,transparent 18px,rgba(56,189,248,0.4) 18px,rgba(56,189,248,0.4) 19px)" }} />
+                <svg width="90" height="56" viewBox="0 0 90 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M5 36 L13 20 L75 20 L83 32 L84 40 L5 40 Z" fill="#38bdf8" opacity="0.65"/>
+                    <rect x="50" y="8" width="22" height="12" rx="1" fill="#38bdf8" opacity="0.65"/>
+                    <rect x="66" y="3" width="5" height="5" rx="1" fill="#38bdf8" opacity="0.65"/>
+                    <line x1="22" y1="20" x2="22" y2="6" stroke="#38bdf8" strokeWidth="2" opacity="0.45"/>
+                    <line x1="22" y1="6" x2="40" y2="16" stroke="#38bdf8" strokeWidth="1" opacity="0.4"/>
+                    <line x1="0" y1="44" x2="90" y2="44" stroke="#38bdf8" strokeWidth="1" opacity="0.25" strokeDasharray="5 4"/>
+                </svg>
+                <div style={{ position: "absolute", bottom: 8, right: 14, color: "rgba(56,189,248,0.4)", fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase" }}>Port Facility</div>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px" }}>
+                {rows.map(([label, val]) => (
+                    <div key={label} style={{ display: "flex", gap: 10, fontSize: 12, marginBottom: 8, alignItems: "flex-start" }}>
+                        <span style={{ color: "#64748b", flexShrink: 0, width: 100, fontSize: 11 }}>{label}</span>
+                        <span style={{ color: "#e2e8f0" }}>{String(val)}</span>
+                    </div>
+                ))}
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid rgba(56,189,248,0.1)" }}>
+                    <a href={wikiUrl} target="_blank" rel="noreferrer" style={{ color: "#38bdf8", fontSize: 12, textDecoration: "none" }}>
+                        Wikipedia ↗
+                    </a>
+                </div>
+            </div>
+        </div>
+    )
+})
+
+// ── VesselPopupContent ────────────────────────────────────────────────────────
+function VesselPopupContent({ vessel, onClose }) {
+    const shipType  = _vesselShipType(vessel)
+    const typeColor = _AIS_TYPE_COLOR[shipType] || _AIS_TYPE_COLOR.other
+    const hullPath  = _vesselHullPath(shipType)
+    const fields = [
+        ["Type",        vessel.ship_type],
+        ["Speed",       vessel.speed != null ? `${vessel.speed} kn` : null],
+        ["Heading",     vessel.heading != null ? `${Math.round(vessel.heading)}°` : null],
+        ["Destination", vessel.destination],
+        ["MMSI",        vessel.mmsi],
+    ].filter(([, v]) => v)
+    return (
+        <div style={{ width: 280, fontFamily: "system-ui,-apple-system,sans-serif", color: "#e2e8f0" }}>
+            <div style={{ height: 80, background: `linear-gradient(135deg,rgba(10,14,24,1) 0%,rgba(18,28,48,1) 100%)`, display: "flex", alignItems: "center", gap: 12, padding: "0 14px", position: "relative", borderBottom: `1px solid ${typeColor}40` }}>
+                <div style={{ width: 46, height: 46, borderRadius: "50%", border: `1.5px solid ${typeColor}70`, background: `${typeColor}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg width="14" height="22" viewBox="0 0 16 28" fill={typeColor} opacity="0.9"><path d={hullPath}/></svg>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: typeColor, marginBottom: 3 }}>AIS Vessel</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {vessel.name || `MMSI ${vessel.mmsi}`}
+                    </div>
+                </div>
+                <button onClick={onClose} style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 }}>✕</button>
+            </div>
+            <div style={{ padding: "10px 14px" }}>
+                {fields.map(([label, val]) => (
+                    <div key={label} style={{ display: "flex", gap: 8, fontSize: 11, marginBottom: 5 }}>
+                        <span style={{ color: "rgba(232,237,242,0.4)", flexShrink: 0, width: 80 }}>{label}</span>
+                        <span style={{ color: "#e2e8f0", textTransform: "capitalize", wordBreak: "break-all" }}>{String(val)}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
+
+// ── VesselMarkerItem — vessel marker with floating popup that follows the vessel ──
+const VesselMarkerItem = memo(function VesselMarkerItem({ v, isSelected, onSelect, onClose, zoom }) {
+    const markerRef = useRef(null)
+    useEffect(() => {
+        if (isSelected && markerRef.current) {
+            requestAnimationFrame(() => { markerRef.current?.openPopup?.() })
+        }
+    }, [isSelected])
+    return (
+        <Marker
+            ref={markerRef}
+            position={[v.lat, v.lon]}
+            icon={makeAisVesselIconForZoom(v, zoom || 5)}
+            eventHandlers={{ click: () => onSelect(v) }}
+        >
+            <Tooltip direction="top" offset={[0, -10]}>
+                <span style={{ fontSize: 10 }}>
+                    {v.name || `MMSI ${v.mmsi}`}
+                    {v.ship_type ? ` · ${v.ship_type}` : ""}
+                    {v.speed != null ? ` · ${v.speed}kn` : ""}
+                    {v.destination ? ` → ${v.destination}` : ""}
+                </span>
+            </Tooltip>
+            {isSelected && (
+                <Popup
+                    className="vessel-popup"
+                    offset={[0, -12]}
+                    closeButton={false}
+                    autoClose={false}
+                    closeOnClick={false}
+                    autoPan={false}
+                    onClose={onClose}
+                >
+                    <VesselPopupContent vessel={v} onClose={onClose} />
+                </Popup>
+            )}
+        </Marker>
+    )
+})
+
 // ── DsInfraPanel ──────────────────────────────────────────────────────────────
 // Detail panel for dataset-sourced infrastructure items (airports, ports, power).
 const DsInfraPanel = memo(function DsInfraPanel({ item, onClose }) {
@@ -2796,60 +3746,358 @@ const DsInfraPanel = memo(function DsInfraPanel({ item, onClose }) {
     )
 })
 
-// ── ChokepointPanel ────────────────────────────────────────────────────────────
-const ChokepointPanel = memo(function ChokepointPanel({ cp, onClose }) {
-    if (!cp) return null
-    const statusColor = cp.current_status === "disrupted" ? "#ef4444"
-        : cp.current_status === "elevated" ? "#f59e0b"
-        : "#0d9488"
-    const statusLabel = cp.current_status === "disrupted" ? "DISRUPTED"
-        : cp.current_status === "elevated" ? "ELEVATED"
-        : "NORMAL"
+// ── CSGPanel — slide-in carrier detail panel, color-coded by country ─────────
+const _STATUS_META = {
+    "DEPLOYED":       { color: "#22c55e", bg: "rgba(34,197,94,0.1)",   border: "rgba(34,197,94,0.35)" },
+    "IN PORT":        { color: "#f59e0b", bg: "rgba(245,158,11,0.1)",  border: "rgba(245,158,11,0.35)" },
+    "REFIT":          { color: "#64748b", bg: "rgba(100,116,139,0.1)", border: "rgba(100,116,139,0.35)" },
+    "HIGH READINESS": { color: "#06b6d4", bg: "rgba(6,182,212,0.1)",   border: "rgba(6,182,212,0.35)" },
+    "OPERATIONAL":    { color: "#22c55e", bg: "rgba(34,197,94,0.1)",   border: "rgba(34,197,94,0.35)" },
+    "SEA TRIALS / MAINTENANCE": { color: "#f59e0b", bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.35)" },
+}
+
+const CSGPanel = memo(function CSGPanel({ csg, onClose, isMobile }) {
+    const [wikiImg,     setWikiImg]     = useState(null)
+    const [wikiExtract, setWikiExtract] = useState(null)
+    const [imgLoaded,   setImgLoaded]   = useState(false)
+
+    useEffect(() => {
+        if (!csg) return
+        setWikiImg(null); setWikiExtract(null); setImgLoaded(false)
+        // Prefer pre-known images, fall back to Wikipedia thumbnail API
+        const known = CARRIER_IMAGES[csg.flagship]
+        if (known) { setWikiImg(known); return }
+        const title = csg.wiki_title || csg.flagship
+        fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                if (!d) return
+                if (d.thumbnail?.source) setWikiImg(d.thumbnail.source)
+                if (d.extract)           setWikiExtract(d.extract.split(". ").slice(0, 3).join(". ") + ".")
+            })
+            .catch(() => {})
+    }, [csg?.flagship])  // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (!csg) return null
+    const escorts  = Array.isArray(csg.escorts) ? csg.escorts : []
+    const color    = _CARRIER_COUNTRY_COLORS[csg.country] || "#3b82f6"
+    const statusM  = _STATUS_META[csg.status] || _STATUS_META["IN PORT"]
+    const isARG    = csg.name?.toLowerCase().includes("amphibious") || csg.hull?.startsWith("LH") || csg.hull?.startsWith("LP") || csg.hull?.startsWith("L9")
+    const typeLabel= isARG ? "Amphibious Ready Group" : "Carrier Strike Group"
+
+    const panelStyle = isMobile ? {
+        position: "fixed", left: 0, right: 0, bottom: 0,
+        maxHeight: "80vh", borderRadius: "18px 18px 0 0", zIndex: 1150,
+        background: "rgba(10,15,26,0.98)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderTop: `1px solid ${color}44`, overflowY: "auto",
+        fontFamily: "system-ui,-apple-system,sans-serif",
+    } : {
+        position: "fixed", top: 48, right: 0, bottom: 0, width: 380, zIndex: 1150,
+        background: "rgba(10,15,26,0.97)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderLeft: `1px solid ${color}44`, display: "flex", flexDirection: "column",
+        fontFamily: "system-ui,-apple-system,sans-serif",
+    }
 
     return (
-        <div style={{
-            position: "absolute", top: 24, right: 16, width: 300,
-            maxHeight: "calc(100vh - 60px)",
-            background: "rgba(10,14,20,0.92)", backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
-            border: "1px solid rgba(255,255,255,0.10)", borderRadius: 8,
-            display: "flex", flexDirection: "column", overflow: "hidden", zIndex: 2005,
-        }}>
-            <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: statusColor }}>
-                        {statusLabel}
-                    </span>
-                    <span style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Chokepoint</span>
+        <div style={panelStyle}>
+            {/* Header */}
+            <div style={{ padding: "16px 16px 12px", borderBottom: `1px solid ${color}22`, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexShrink: 0 }}>
+                <div style={{ minWidth: 0 }}>
+                    <div style={{ color, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "1px", marginBottom: 4 }}>
+                        {csg.flag} {typeLabel}
+                    </div>
+                    <h2 style={{ color: "#e2e8f0", fontSize: 17, fontWeight: 600, margin: 0, lineHeight: 1.3, wordBreak: "break-word" }}>{csg.flagship}</h2>
+                    {csg.hull && <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>{csg.hull}</div>}
                 </div>
-                <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0 }}>×</button>
+                <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22, lineHeight: 1, paddingTop: 2, flexShrink: 0, marginLeft: 8 }}>×</button>
             </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#e8edf2", marginBottom: 8 }}>{cp.name}</div>
-                <div style={{ fontSize: 11, color: "#8899aa", lineHeight: 1.65, marginBottom: 12, borderLeft: `2px solid ${statusColor}44`, paddingLeft: 10 }}>
-                    {cp.strategic_description}
+
+            {/* Image */}
+            <div style={{ height: 200, background: `linear-gradient(135deg,rgba(8,14,28,1) 0%,rgba(12,22,44,1) 100%)`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden", borderBottom: `1px solid ${color}22` }}>
+                {wikiImg && (
+                    <img
+                        src={wikiImg} alt={csg.flagship}
+                        onLoad={() => setImgLoaded(true)}
+                        onError={() => setWikiImg(null)}
+                        style={{ width: "100%", height: "100%", objectFit: "cover", opacity: imgLoaded ? 0.82 : 0, transition: "opacity 0.4s" }}
+                    />
+                )}
+                {(!wikiImg || !imgLoaded) && (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <div style={{ opacity: 0.07, position: "absolute", inset: 0, backgroundImage: `repeating-linear-gradient(0deg,transparent,transparent 18px,${color}66 18px,${color}66 19px),repeating-linear-gradient(90deg,transparent,transparent 18px,${color}66 18px,${color}66 19px)` }} />
+                        <div dangerouslySetInnerHTML={{ __html: _carrierSvg(color, 80) }} style={{ opacity: 0.5, position: "relative" }} />
+                    </div>
+                )}
+                <div style={{ position: "absolute", bottom: 8, left: 12, right: 12, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                    <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 10 }}>{csg.flag} {csg.country}</span>
                 </div>
-                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "rgba(255,255,255,0.3)", marginBottom: 6 }}>
-                    Monitored Keywords
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 12 }}>
-                    {cp.monitored_keywords?.map(kw => (
-                        <span key={kw} style={{ fontSize: 9, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 3, padding: "2px 6px", color: "#6b7a8d" }}>{kw}</span>
-                    ))}
-                </div>
-                {cp.recent_headlines?.length > 0 && (
+            </div>
+
+            {/* Status badge */}
+            <div style={{ padding: "10px 16px", borderBottom: `1px solid ${color}18`, flexShrink: 0, display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: statusM.bg, border: `1px solid ${statusM.border}`, borderRadius: 4, padding: "3px 10px", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: statusM.color }}>
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: statusM.color, display: "inline-block" }} />
+                    {csg.status || "UNKNOWN"}
+                </span>
+            </div>
+
+            {/* Scrollable body */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px" }}>
+                {/* Info rows */}
+                {[
+                    ["Ship / Group",  csg.name !== csg.flagship ? csg.name : null],
+                    ["Location",      csg.theater],
+                    ["Air Wing",      csg.air_wing],
+                    ["Escorts",       escorts.length ? `${escorts.length} surface combatants` : null],
+                    ["Operation",     csg.operation],
+                ].filter(([, v]) => v).map(([label, val]) => (
+                    <div key={label} style={{ display: "flex", gap: 12, fontSize: 12, marginBottom: 10, alignItems: "flex-start" }}>
+                        <span style={{ color: "#64748b", flexShrink: 0, width: 82, fontSize: 11, paddingTop: 1 }}>{label}</span>
+                        <span style={{ color: "#e2e8f0", lineHeight: 1.4 }}>{val}</span>
+                    </div>
+                ))}
+
+                {/* Wikipedia extract */}
+                {wikiExtract && (
+                    <div style={{ fontSize: 11, color: "rgba(226,232,240,0.6)", lineHeight: 1.6, marginTop: 4, padding: "10px 12px", background: `${color}08`, borderRadius: 6, border: `1px solid ${color}18` }}>
+                        {wikiExtract}
+                    </div>
+                )}
+
+                {/* Escort list */}
+                {escorts.length > 0 && (
                     <>
-                        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: statusColor, marginBottom: 6 }}>
-                            Recent Activity ({cp.match_count} matches / 48h)
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b", marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: `1px solid ${color}18` }}>
+                            Escort Ships
                         </div>
-                        {cp.recent_headlines.map((h, i) => (
-                            <div key={i} style={{ fontSize: 10, color: "#8899aa", padding: "3px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", lineHeight: 1.5 }}>{h}</div>
-                        ))}
+                        {escorts.map((e, i) => {
+                            const eName = typeof e === "string" ? e : e.name
+                            const eHull = typeof e === "string" ? "" : e.hull
+                            const eType = typeof e === "string" ? "" : e.type
+                            return (
+                                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, marginBottom: 6, padding: "6px 8px", background: `${color}08`, borderRadius: 4, border: `1px solid ${color}18` }}>
+                                    <svg width="8" height="16" viewBox="0 0 14 30" fill={color} opacity="0.7"><path d="M7,1 L11,5 L12,11 L12,24 L10,29 L4,29 L2,24 L2,11 L3,5 Z"/></svg>
+                                    <div>
+                                        <div style={{ color: "#e2e8f0", fontWeight: 500 }}>{eName}{eHull ? <span style={{ color: "#64748b" }}> ({eHull})</span> : null}</div>
+                                        {eType && <div style={{ color: "#64748b", fontSize: 10 }}>{eType}</div>}
+                                    </div>
+                                </div>
+                            )
+                        })}
                     </>
                 )}
-                {(!cp.recent_headlines?.length) && (
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>No recent activity detected.</div>
+
+                {/* Wikipedia link */}
+                {csg.wikipedia && (
+                    <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${color}18` }}>
+                        <a href={csg.wikipedia} target="_blank" rel="noreferrer" style={{ color, fontSize: 12, textDecoration: "none" }}>
+                            Read on Wikipedia →
+                        </a>
+                    </div>
                 )}
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.18)", marginTop: 12 }}>⚠ Positions approximate — public OSINT</div>
+            </div>
+        </div>
+    )
+})
+
+// ── ChokepointPanel ────────────────────────────────────────────────────────────
+const _THREAT_BADGE_BG = { CRITICAL: "rgba(239,68,68,0.15)", HIGH: "rgba(245,158,11,0.15)", MODERATE: "rgba(20,184,166,0.15)", LOW: "rgba(59,130,246,0.15)" }
+
+const ChokepointPanel = memo(function ChokepointPanel({ cp, onClose, isMobile }) {
+    const [wikiImg, setWikiImg]     = useState(null)
+    const [imgLoaded, setImgLoaded] = useState(false)
+    const [wikiText, setWikiText]   = useState(null)
+
+    useEffect(() => {
+        if (!cp?.wikipedia) { setWikiImg(null); setWikiText(null); return }
+        setWikiImg(null); setImgLoaded(false); setWikiText(null)
+        fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cp.wikipedia)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                if (d?.thumbnail?.source) setWikiImg(d.thumbnail.source)
+                if (d?.extract) setWikiText(d.extract.split(". ").slice(0, 3).join(". ") + ".")
+            })
+            .catch(() => {})
+    }, [cp?.wikipedia])
+
+    if (!cp) return null
+
+    // Support both new rich format (threatLevel) and legacy API format (current_status)
+    const isRich      = !!cp.threatLevel
+    const color       = isRich ? (_THREAT_COLORS[cp.threatLevel] || "#14b8a6")
+        : (cp.current_status === "disrupted" ? "#ef4444" : cp.current_status === "elevated" ? "#f59e0b" : "#14b8a6")
+    const badgeBg     = isRich ? (_THREAT_BADGE_BG[cp.threatLevel] || "rgba(20,184,166,0.15)") : "rgba(20,184,166,0.15)"
+    const badgeLabel  = isRich ? cp.threatLevel : (cp.current_status === "disrupted" ? "DISRUPTED" : cp.current_status === "elevated" ? "ELEVATED" : "NORMAL")
+
+    const panelStyle = isMobile ? {
+        position: "fixed", left: 0, right: 0, bottom: 0,
+        maxHeight: "70vh", borderRadius: "18px 18px 0 0",
+        zIndex: 1150,
+        background: "rgba(10,14,22,0.98)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderTop: `1px solid ${color}33`,
+        overflowY: "auto", WebkitOverflowScrolling: "touch",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+    } : {
+        position: "fixed", top: 48, right: 0, bottom: 0, width: 380,
+        zIndex: 1150,
+        background: "rgba(10,14,22,0.95)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderLeft: `1px solid ${color}33`,
+        display: "flex", flexDirection: "column",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+    }
+
+    return (
+        <div style={panelStyle}>
+            {/* Header */}
+            <div style={{
+                padding: "16px", borderBottom: `1px solid ${color}22`,
+                display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexShrink: 0,
+            }}>
+                <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{
+                            fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
+                            color, background: badgeBg, border: `1px solid ${color}44`,
+                            borderRadius: 4, padding: "2px 8px",
+                        }}>
+                            {badgeLabel}
+                        </span>
+                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                            Strategic Chokepoint
+                        </span>
+                    </div>
+                    <h2 style={{ color: "#e2e8f0", fontSize: 20, fontWeight: 500, margin: 0 }}>{cp.name}</h2>
+                    {isRich && cp.borderingNations?.length > 0 && (
+                        <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
+                            {cp.borderingNations.join(" · ")}
+                        </div>
+                    )}
+                </div>
+                <button onClick={onClose} style={{
+                    background: "rgba(30,41,59,0.8)", border: "1px solid rgba(148,163,184,0.3)",
+                    borderRadius: 6, color: "#e2e8f0", padding: "6px 12px",
+                    cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0,
+                }}>×</button>
+            </div>
+
+            {/* Body */}
+            <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+                {/* Wikipedia image */}
+                <div style={{
+                    height: 180, background: `linear-gradient(135deg,rgba(8,14,28,1) 0%,rgba(12,22,44,1) 100%)`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    position: "relative", overflow: "hidden", borderBottom: `1px solid ${color}18`,
+                }}>
+                    {wikiImg && (
+                        <img src={wikiImg} alt={cp.name}
+                            onLoad={() => setImgLoaded(true)}
+                            onError={() => setWikiImg(null)}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", opacity: imgLoaded ? 0.8 : 0, transition: "opacity 0.4s" }}
+                        />
+                    )}
+                    {(!wikiImg || !imgLoaded) && (
+                        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                                <path d="M4 36 L8 28 L22 16 L36 28 L44 20" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.5"/>
+                                <path d="M4 42 L44 42" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.3"/>
+                                <circle cx="24" cy="18" r="4" fill={color} opacity="0.25"/>
+                            </svg>
+                            <div style={{ fontSize: 11, color: `${color}66`, letterSpacing: "0.08em", textTransform: "uppercase" }}>Maritime Chokepoint</div>
+                        </div>
+                    )}
+                    {/* Gradient overlay */}
+                    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 60, background: "linear-gradient(to top,rgba(10,14,22,0.9),transparent)", pointerEvents: "none" }} />
+                </div>
+
+                <div style={{ padding: 16 }}>
+                    {/* Stats grid */}
+                    {isRich && (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                            {[
+                                { label: "Daily Traffic", value: cp.dailyTraffic },
+                                { label: "Width", value: cp.width },
+                                { label: "Global Trade Share", value: cp.globalTradeShare },
+                                { label: "Threat Level", value: cp.threatLevel },
+                            ].map(({ label, value }) => (
+                                <div key={label} style={{
+                                    background: "rgba(30,41,59,0.6)", border: `1px solid ${color}18`,
+                                    borderRadius: 8, padding: "10px 12px",
+                                }}>
+                                    <div style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</div>
+                                    <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 500 }}>{value || "—"}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Why it matters */}
+                    {isRich && cp.whyItMatters && (
+                        <div style={{ marginBottom: 16 }}>
+                            <div style={{ color, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                                Strategic Significance
+                            </div>
+                            <p style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.65, margin: 0, borderLeft: `2px solid ${color}44`, paddingLeft: 12 }}>
+                                {cp.whyItMatters}
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Wikipedia extract (if different from whyItMatters) */}
+                    {wikiText && !isRich && (
+                        <div style={{ marginBottom: 16 }}>
+                            <div style={{ color, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>About</div>
+                            <p style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.65, margin: 0 }}>{wikiText}</p>
+                        </div>
+                    )}
+
+                    {/* Current threats */}
+                    {isRich && cp.currentThreats?.length > 0 && (
+                        <div style={{ marginBottom: 16 }}>
+                            <div style={{ color, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                                Active Threat Vectors
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                {cp.currentThreats.map((threat, i) => (
+                                    <div key={i} style={{
+                                        display: "flex", alignItems: "flex-start", gap: 8,
+                                        background: `${color}08`, border: `1px solid ${color}18`,
+                                        borderRadius: 6, padding: "8px 10px",
+                                    }}>
+                                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0, marginTop: 4 }} />
+                                        <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>{threat}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Legacy: recent headlines */}
+                    {!isRich && cp.recent_headlines?.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color, marginBottom: 6 }}>
+                                Recent Activity ({cp.match_count} matches / 48h)
+                            </div>
+                            {cp.recent_headlines.map((h, i) => (
+                                <div key={i} style={{ fontSize: 10, color: "#8899aa", padding: "3px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", lineHeight: 1.5 }}>{h}</div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Wikipedia link */}
+                    {cp.wikipedia && (
+                        <button
+                            onClick={() => window.open(`https://en.wikipedia.org/wiki/${encodeURIComponent(cp.wikipedia)}`, "_blank", "noopener")}
+                            style={{
+                                width: "100%", background: `${color}18`, border: `1px solid ${color}44`,
+                                borderRadius: 8, padding: 12, color, fontSize: 13,
+                                cursor: "pointer", textAlign: "left", marginTop: 4,
+                            }}
+                        >
+                            Read more on Wikipedia →
+                        </button>
+                    )}
+                </div>
             </div>
         </div>
     )
@@ -3459,6 +4707,7 @@ export default function MapPage({
             deployments: false,
             aisVessels: false,
             userLocations: false,
+            conflictZones: false,
         }
         let stored = {}
         try { stored = JSON.parse(localStorage.getItem(LAYER_STORAGE_KEY) || "{}") } catch {}
@@ -3531,6 +4780,16 @@ export default function MapPage({
     const [hoveredWidget, setHoveredWidget] = useState(null)
     const [markerBatch, setMarkerBatch] = useState(0)   // incremented on each fetch → replays marker CSS anim
     const [toastInfo, setToastInfo]     = useState(null) // {count, key}
+    const [notificationsEnabled, setNotificationsEnabled] = useState(
+        () => localStorage.getItem("hw-notifications-enabled") !== "false"
+    )
+    const notificationsEnabledRef = useRef(notificationsEnabled)
+    useEffect(() => { notificationsEnabledRef.current = notificationsEnabled }, [notificationsEnabled])
+    const toggleNotifications = useCallback((val) => {
+        const next = val ?? !notificationsEnabled
+        setNotificationsEnabled(next)
+        localStorage.setItem("hw-notifications-enabled", next ? "true" : "false")
+    }, [notificationsEnabled])
 
     const [adsbCount, setAdsbCount]             = useState(0)
     const [adsbRefreshRate, setAdsbRefreshRate] = useState(10)   // applied rate
@@ -3834,6 +5093,7 @@ export default function MapPage({
     const [dsData, setDsData]               = useState({ airport: [], port: [], power: [] })
     const [dsLoading, setDsLoading]         = useState({ airport: false, port: false, power: false })
     const [dsSelected, setDsSelected]       = useState(null)   // clicked dataset item
+    const [portSelected, setPortSelected]   = useState(null)   // clicked port item
     // ── Ports: dedicated bbox-based layer (separate from radius dsData) ────────
     const [portsData, setPortsData]         = useState([])
     const portsLastBboxRef                  = useRef(null)
@@ -3857,6 +5117,7 @@ export default function MapPage({
     const pipelinesLayerRef      = useRef(null)
     const cablesLayerRef         = useRef(null)
     const shippingLanesLayerRef  = useRef(null)   // OpenSeaMap tile layer
+    const airspaceLayerRef       = useRef(null)   // OpenFlightMaps airspace tile overlay
     const chokepointsLayerRef    = useRef(null)
     const heatmapLayerRef        = useRef(null)
     const eezLayerRef            = useRef(null)
@@ -4078,7 +5339,9 @@ export default function MapPage({
             const title = count === 1
                 ? `New event — ${items[0]?.location || region}`
                 : `${count} new events — ${region}`
-            setToastInfo({ count, key: Date.now(), message: title, color })
+            if (notificationsEnabledRef.current) {
+                setToastInfo({ count, key: Date.now(), message: title, color })
+            }
         }
         window.addEventListener("akili:new-events", handler)
         return () => window.removeEventListener("akili:new-events", handler)
@@ -4416,6 +5679,43 @@ export default function MapPage({
         ).addTo(mapRef.current)
     }, [active.shippingLanes])
 
+    // ── Airspace tile overlay (Open Flightmaps / Newaya) ─────────────────────────
+    // Free, CORS-open XYZ tiles showing airspace classes, restricted zones, CTRs.
+    // URL pattern: https://nwy-tiles-api.prod.newaydata.com/tiles/{z}/{x}/{y}.png?path=latest/aero/lo
+    useEffect(() => {
+        if (!mapRef.current) return
+        if (airspaceLayerRef.current) {
+            airspaceLayerRef.current.remove()
+            airspaceLayerRef.current = null
+        }
+        if (!active.airspace) return
+        const layer = L.tileLayer(
+            "https://nwy-tiles-api.prod.newaydata.com/tiles/{z}/{x}/{y}.png?path=latest/aero/lo",
+            {
+                attribution: "© OpenFlightMaps contributors",
+                opacity: 1.0,
+                minZoom: 4,
+                maxZoom: 18,
+                maxNativeZoom: 14,
+                zIndex: 9999,
+            }
+        )
+        layer.on("tileload", () => console.log("[airspace] tile loaded OK"))
+        layer.on("tileerror", (e) => console.error("[airspace] tile error:", e.tile?.src))
+        airspaceLayerRef.current = layer
+        console.log("[airspace] adding layer to map, active.airspace=", active.airspace, "mapRef=", !!mapRef.current)
+        layer.addTo(mapRef.current)
+    }, [active.airspace])
+
+    // ── Conflict zones layer ──────────────────────────────────────────────────────
+    // Backend endpoint is currently stubbed (GDELT source removed). The toggle still
+    // exists in LayersPanel for future use. Wire up the state so toggling doesn't
+    // throw "active.conflictZones is undefined" errors and so the badge/loading props
+    // passed from LayersPanel don't cause warnings. No visual layer is rendered
+    // until the backend provides data.
+    // (No useEffect needed — conflictZones just controls the active flag; when the
+    // backend is restored, add a fetch + GeoJSON render here.)
+
     // ── EEZ interactive layer ─────────────────────────────────────────────────────
     useEffect(() => {
         if (!mapRef.current) return
@@ -4719,61 +6019,120 @@ export default function MapPage({
         unifiedLayerRef.current.addTo(mapRef.current)
     }, [filteredUnifiedEvents, active.unifiedEvents])
 
-    // ── Deployments layer fetch ───────────────────────────────────────────────
+    // ── Global carrier layer — visibility follows AIS toggle ─────────────────
+    // Re-renders on viewport change so distant carriers (and their range rings)
+    // are culled when zoomed in. At global zoom the viewport is large enough
+    // that nearly all carriers pass the check anyway.
     useEffect(() => {
         const depLayer = depLayerRef.current
-        if (!active.deployments) {
+        if (!active.aisVessels) {
             if (depLayer) { depLayer.remove(); depLayer.clearLayers() }
             setDeploymentsData(null)
             return
         }
-        fetch(`${API}/api/deployments`)
-            .then(r => r.json())
-            .then(data => {
-                setDeploymentsData(data)
-                if (!depLayerRef.current || !mapRef.current) return
-                const layer = depLayerRef.current
-                layer.clearLayers()
+        if (!depLayerRef.current || !mapRef.current) return
 
-                ;(data.carrier_strike_groups || []).forEach(csg => {
-                    if (!csg.lat || !csg.lon) return
-                    const isUSN = !csg.flagship?.includes("FS ")
-                    const nationColor = isUSN ? "#1a3a6b" : "#002395"
-                    const carrierIcon = L.divIcon({
-                        className: "",
-                        html: `<div style="width:52px;height:22px;background:rgba(255,255,255,0.9);border:2px solid ${nationColor};border-radius:2px;display:flex;align-items:center;justify-content:center;"><div style="width:8px;height:8px;background:${nationColor};border-radius:50%;"></div></div>`,
-                        iconSize: [52, 22],
-                        iconAnchor: [26, 11],
-                    })
-                    const marker = L.marker([csg.lat, csg.lon], { icon: carrierIcon })
-                    marker.bindPopup(`<div style="background:rgba(6,13,26,0.95);padding:12px;color:#e8edf2;min-width:220px;border:1px solid rgba(255,255,255,0.1);">
-                        <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${csg.name}</div>
-                        <div style="font-size:12px;color:#8899aa;">${csg.flagship}</div>
-                        <div style="font-size:12px;color:#1a6eb5;margin-top:4px;">${csg.theater}</div>
-                        ${csg.operation ? `<div style="font-size:11px;color:#d97706;margin-top:2px;">${csg.operation}</div>` : ""}
-                        <div style="font-size:11px;color:#4a5568;margin-top:8px;">Escorts: ${(csg.escorts || []).join(", ")}</div>
-                        <div style="font-size:10px;color:#3d5068;margin-top:8px;font-style:italic;">⚠ Position approximate — public OSINT</div>
-                    </div>`, { className: "" })
-                    layer.addLayer(marker)
-                    const nfz = L.circle([csg.lat, csg.lon], { radius: 92600, color: "#dc2626", weight: 2, fill: false, dashArray: "6 4", opacity: 0.7 })
-                    layer.addLayer(nfz)
-                    const strikeKm = isUSN ? 833000 : 648000
-                    const strike = L.circle([csg.lat, csg.lon], { radius: strikeKm, color: "#d97706", weight: 1.5, fill: false, dashArray: "10 6", opacity: 0.5 })
-                    layer.addLayer(strike)
+        setDeploymentsData(_CSG_HARDCODED_DATA)
+        const layer = depLayerRef.current
+        layer.clearLayers()
+
+        // Viewport bounds for culling — extend by largest range ring (~16.7° for 1852 km)
+        const vb = viewportBoundsRef.current
+        const MAX_RING_DEG = 17  // 1,852,000 m ÷ 111,000 m/deg ≈ 16.7°
+
+        _CSG_HARDCODED_DATA.forEach(carrier => {
+            if (!carrier.lat || !carrier.lon) return
+
+            // Viewport cull: skip carrier if its position + largest ring can't reach the viewport
+            if (vb) {
+                const inRange = (
+                    carrier.lat >= vb.south - MAX_RING_DEG &&
+                    carrier.lat <= vb.north + MAX_RING_DEG &&
+                    carrier.lon >= vb.west  - MAX_RING_DEG &&
+                    carrier.lon <= vb.east  + MAX_RING_DEG
+                )
+                if (!inRange) return
+            }
+
+            const color   = _CARRIER_COUNTRY_COLORS[carrier.country] || "#3b82f6"
+            const escorts = Array.isArray(carrier.escorts) ? carrier.escorts : []
+            const isDeployed = carrier.status === "DEPLOYED" || carrier.status === "OPERATIONAL"
+            const isRefit    = carrier.status === "REFIT"
+            const iconOpacity = isRefit ? 0.28 : isDeployed ? 1 : 0.5
+
+            // ── Concentric range rings (deployed only) ────────────────────────
+            if (isDeployed) {
+                const [r, g, b] = _hexToRgb(color)
+                const combatR   = _CARRIER_COMBAT_RADIUS_M[carrier.country] || _CARRIER_COMBAT_RADIUS_M.default
+
+                // Ring 1 — Aircraft combat radius (pulsing)
+                const ring1 = L.circle([carrier.lat, carrier.lon], {
+                    radius:      combatR,
+                    color:       `rgba(${r},${g},${b},0.3)`,
+                    weight:      1, dashArray: "8 6",
+                    fillColor:   `rgba(${r},${g},${b},0.04)`,
+                    fillOpacity: 0.04,
+                    className:   "csg-radius-ring",
+                    interactive: true,
                 })
+                ring1.bindTooltip("Aircraft Combat Radius", { direction: "top", className: "country-tooltip" })
+                ring1.on("click", () => setSelectedDeployment({ ...carrier }))
+                layer.addLayer(ring1)
 
-                ;(data.notable_surface_units || []).forEach(unit => {
-                    if (!unit.lat || !unit.lon) return
-                    const icon = L.divIcon({ className: "", html: `<div style="width:10px;height:10px;background:#1a3a6b;border:1px solid white;border-radius:2px;"></div>`, iconSize: [10, 10], iconAnchor: [5, 5] })
-                    const m = L.marker([unit.lat, unit.lon], { icon })
-                    m.bindTooltip(unit.name || "Naval unit")
-                    layer.addLayer(m)
+                // Ring 2 — Cruise missile range
+                const ring2 = L.circle([carrier.lat, carrier.lon], {
+                    radius:      1668000,
+                    color:       `rgba(${r},${g},${b},0.18)`,
+                    weight:      1, dashArray: "3 7",
+                    fillOpacity: 0,
+                    interactive: true,
                 })
+                ring2.bindTooltip("Cruise Missile Range (~900 nm)", { direction: "top", className: "country-tooltip" })
+                ring2.on("click", () => setSelectedDeployment({ ...carrier }))
+                layer.addLayer(ring2)
 
-                layer.addTo(mapRef.current)
+                // Ring 3 — Extended air-ops range
+                const ring3 = L.circle([carrier.lat, carrier.lon], {
+                    radius:      1852000,
+                    color:       `rgba(${r},${g},${b},0.08)`,
+                    weight:      1,
+                    fillOpacity: 0,
+                    interactive: true,
+                })
+                ring3.bindTooltip("Extended Air Ops (~1,000 nm)", { direction: "top", className: "country-tooltip" })
+                ring3.on("click", () => setSelectedDeployment({ ...carrier }))
+                layer.addLayer(ring3)
+            }
+
+            // ── Carrier / LHD marker ─────────────────────────────────────────
+            const carrierMarker = L.marker([carrier.lat, carrier.lon], {
+                icon: makeCarrierAisIcon(carrier.heading, color, iconOpacity),
             })
-            .catch(() => {})
-    }, [active.deployments])  // eslint-disable-line react-hooks/exhaustive-deps
+            carrierMarker.bindTooltip(`${carrier.flag || ""} ${carrier.flagship}`, { direction: "top", className: "country-tooltip" })
+            carrierMarker.on("click", () => setSelectedDeployment({ ...carrier }))
+            layer.addLayer(carrierMarker)
+
+            // ── Escort formation around deployed carriers ─────────────────────
+            if (isDeployed && escorts.length > 0) {
+                const n      = escorts.length
+                const radDeg = 0.1
+                const cosLat = Math.cos(carrier.lat * Math.PI / 180)
+                escorts.forEach((escort, i) => {
+                    const angle    = (i / n) * 2 * Math.PI
+                    const escLat   = carrier.lat + Math.cos(angle) * radDeg
+                    const escLon   = carrier.lon + Math.sin(angle) * radDeg / cosLat
+                    const escHdg   = ((90 - angle * 180 / Math.PI) % 360 + 360) % 360
+                    const escName  = typeof escort === "string" ? escort : `${escort.name}${escort.hull ? " (" + escort.hull + ")" : ""}`
+                    const escMarker = L.marker([escLat, escLon], { icon: makeEscortAisIcon(escHdg, color) })
+                    escMarker.bindTooltip(escName, { direction: "top", className: "country-tooltip" })
+                    escMarker.on("click", () => setSelectedDeployment({ ...carrier }))
+                    layer.addLayer(escMarker)
+                })
+            }
+        })
+
+        layer.addTo(mapRef.current)
+    }, [active.aisVessels, viewportBounds])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // Shipping lanes use hardcoded _SHIPPING_ROUTES_HARDCODED constant — no fetch needed
 
@@ -5969,11 +7328,21 @@ export default function MapPage({
     }, [surfaceEnrichment, selectedSurface, contextReferencePoints, allCountriesGeo])
 
 
+    // Viewport filter helper for marker useMemos — 25% buffer around visible bounds
+    const vpFilter = useCallback((lat, lon) => {
+        if (!viewportBounds) return true
+        const { north, south, east, west } = viewportBounds
+        const latBuf = (north - south) * 0.25
+        const lonBuf = (east - west) * 0.25
+        return lat >= south - latBuf && lat <= north + latBuf &&
+               lon >= west  - lonBuf && lon <= east  + lonBuf
+    }, [viewportBounds])
+
     const osmInfraMarkers = useMemo(() => (
         Object.entries(infraData).flatMap(([category, features]) => (
             (features || []).map((feature, i) => {
                 const pos = featureLatLon(feature)
-                if (!pos) return null
+                if (!pos || !vpFilter(pos[0], pos[1])) return null
                 const props = feature.properties || {}
                 return (
                     <Marker
@@ -5990,12 +7359,12 @@ export default function MapPage({
                 )
             })
         ))
-    ), [infraData])
+    ), [infraData, vpFilter])
 
     const airportMarkers = useMemo(() => (
-        !active.airports || !dsActive.airport ? null : dsData.airport.map((item, i) => (
+        !active.airports || !dsActive.airport ? null : dsData.airport.filter(item => vpFilter(item.lat, item.lon)).map((item, i) => (
             <Marker
-                key={`ap-${i}`}
+                key={`ap-${item.icao || i}`}
                 position={[item.lat, item.lon]}
                 pane="infra-icons"
                 icon={makeAirportIcon(item.name)}
@@ -6006,28 +7375,28 @@ export default function MapPage({
                 </Tooltip>
             </Marker>
         ))
-    ), [active.airports, dsActive.airport, dsData.airport])
+    ), [active.airports, dsActive.airport, dsData.airport, vpFilter])
 
     const portMarkers = useMemo(() => (
-        !active.ports ? null : portsData.slice(0, 300).map((item, i) => (
+        !active.ports ? null : portsData.filter(item => vpFilter(item.lat, item.lon)).slice(0, 300).map((item, i) => (
             <Marker
-                key={`pt-${i}`}
+                key={`pt-${item.name || i}`}
                 position={[item.lat, item.lon]}
                 pane="infra-icons"
                 icon={makePortIcon(item.name)}
-                eventHandlers={{ click: () => { setDsSelected({ ...item, infra_type: "port", _id: `pt-${i}` }); setInfraSelected(null); setImpactEvent(null) } }}
+                eventHandlers={{ click: () => { setPortSelected({ ...item, _id: `pt-${i}` }); setDsSelected(null); setInfraSelected(null); setImpactEvent(null) } }}
             >
                 <Tooltip direction="top" offset={[0, -12]}>
                     <span style={{ fontSize: 10 }}>{item.name}{item.country ? ` · ${item.country}` : ""}</span>
                 </Tooltip>
             </Marker>
         ))
-    ), [active.ports, portsData])
+    ), [active.ports, portsData, vpFilter])
 
     const powerPlantMarkers = useMemo(() => (
-        !active.powerPlants || !dsActive.power ? null : dsData.power.map((item, i) => (
+        !active.powerPlants || !dsActive.power ? null : dsData.power.filter(item => vpFilter(item.lat, item.lon)).map((item, i) => (
             <Marker
-                key={`pw-${i}`}
+                key={`pw-${item.name || i}`}
                 position={[item.lat, item.lon]}
                 pane="infra-icons"
                 icon={makePowerIcon(item.name, item.primary_fuel)}
@@ -6038,7 +7407,7 @@ export default function MapPage({
                 </Tooltip>
             </Marker>
         ))
-    ), [active.powerPlants, dsActive.power, dsData.power])
+    ), [active.powerPlants, dsActive.power, dsData.power, vpFilter])
 
     return (
         <div
@@ -6047,6 +7416,9 @@ export default function MapPage({
             style={{ height: "100%", display: "flex", width: "100%", animation: "mapFadeIn 300ms ease forwards" }}
         >
             <style>{MAP_STYLES}</style>
+
+            {/* SVG pattern defs for chokepoint hatching — must be in DOM before map renders */}
+            <ChokepointPatternDefs />
 
             {/* Map area — flex:1, all overlays position relative to this */}
             <div style={{ flex: 1, minWidth: 0, position: "relative", height: "100%" }}>
@@ -6384,121 +7756,63 @@ export default function MapPage({
 
                 {/* ── AIS live vessel markers ──────────────────────────────── */}
                 {active.aisVessels && aisVessels.map((v, i) => (
-                    v.lat != null && v.lon != null ? (
-                        <Marker
+                    v.lat != null && v.lon != null && vpFilter(v.lat, v.lon) ? (
+                        <VesselMarkerItem
                             key={`ais-${v.mmsi || i}`}
-                            position={[v.lat, v.lon]}
-                            icon={makeAisVesselIconFromVessel(v)}
-                            eventHandlers={{ click: () => setSelectedAisVessel(v) }}
-                        >
-                            <Tooltip direction="top" offset={[0, -10]}>
-                                <span style={{ fontSize:10 }}>
-                                    {v.name || `MMSI ${v.mmsi}`}
-                                    {v.ship_type ? ` · ${v.ship_type}` : ""}
-                                    {v.speed != null ? ` · ${v.speed}kn` : ""}
-                                    {v.destination ? ` → ${v.destination}` : ""}
-                                </span>
-                            </Tooltip>
-                        </Marker>
+                            v={v}
+                            zoom={zoom}
+                            isSelected={selectedAisVessel?.mmsi === v.mmsi}
+                            onSelect={setSelectedAisVessel}
+                            onClose={() => setSelectedAisVessel(null)}
+                        />
                     ) : null
                 ))}
 
                 {/* ── Chokepoints layer — polygon outlines, toggled via layers panel ── */}
-                {!active.chokepoints && profileChokepoints.map((cp, i) => (
-                    <Fragment key={`profile-cp-${i}`}>
-                        {CHOKEPOINT_POLYS[cp.name] ? (
-                            <Polygon
-                                positions={CHOKEPOINT_POLYS[cp.name]}
-                                pathOptions={{
-                                    fill: false,
-                                    color: "#0d9488",
-                                    weight: 1,
-                                    opacity: 0.24,
-                                    dashArray: "5 6",
-                                }}
-                                interactive={false}
-                            />
-                        ) : (
-                            <Rectangle
-                                bounds={[[cp.polygon_bounds[0], cp.polygon_bounds[1]], [cp.polygon_bounds[2], cp.polygon_bounds[3]]]}
-                                pathOptions={{
-                                    fill: false,
-                                    color: "#0d9488",
-                                    weight: 1,
-                                    opacity: 0.24,
-                                    dashArray: "5 6",
-                                }}
-                                interactive={false}
-                            />
-                        )}
-                        <Marker
-                            position={[cp.lat, cp.lon]}
-                            interactive={false}
-                            icon={L.divIcon({
-                                className: "",
-                                html: `<div style="background:transparent;color:#0d9488;font-size:9px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;opacity:0.55;text-shadow:0 0 4px rgba(0,0,0,0.75);pointer-events:none">${cp.name}</div>`,
-                                iconSize: [120, 14],
-                                iconAnchor: [60, 7],
-                            })}
-                        />
-                    </Fragment>
-                ))}
-                {active.chokepoints && chokepointData.map((cp, i) => {
-                    // Highlight if referenced in area analysis
-                    const highlighted = areaAnalysis?.enrichment?.highlight_chokepoints?.some(
-                        n => n.toLowerCase() === cp.name.toLowerCase()
-                    )
-                    const statusColor = cp.current_status === "disrupted" ? "#ef4444"
-                        : cp.current_status === "elevated" ? "#f59e0b"
-                        : highlighted ? "#FF6D00" : "#0d9488"
-                    const poly = CHOKEPOINT_POLYS[cp.name]
-                    const [s, w2, n, e] = cp.polygon_bounds
+                {!active.chokepoints && profileChokepoints.map((cp, i) => {
+                    const poly = _cpPoly(cp.name)
                     return (
-                        <Fragment key={`cp-${i}`}>
+                        <Fragment key={`profile-cp-${i}`}>
                             {poly ? (
                                 <Polygon
                                     positions={poly}
-                                    pathOptions={{
-                                        fill:        highlighted,
-                                        fillColor:   statusColor,
-                                        fillOpacity: highlighted ? 0.08 : 0,
-                                        color:       statusColor,
-                                        weight:      highlighted ? 2 : 1,
-                                        opacity:     highlighted ? 0.85 : 0.4,
-                                    }}
-                                    eventHandlers={{ click: () => setChokepointSelected(cp) }}
+                                    pathOptions={{ fill: false, color: "#0d9488", weight: 1, opacity: 0.24, dashArray: "5 6" }}
+                                    interactive={false}
                                 />
-                            ) : (
+                            ) : cp.polygon_bounds ? (
                                 <Rectangle
-                                    bounds={[[s, w2], [n, e]]}
-                                    pathOptions={{
-                                        fill:        highlighted,
-                                        fillColor:   statusColor,
-                                        fillOpacity: highlighted ? 0.08 : 0,
-                                        color:       statusColor,
-                                        weight:      highlighted ? 2 : 1,
-                                        dashArray:   highlighted ? undefined : "4 5",
-                                        opacity:     highlighted ? 0.85 : 0.4,
-                                    }}
-                                    eventHandlers={{ click: () => setChokepointSelected(cp) }}
+                                    bounds={[[cp.polygon_bounds[0], cp.polygon_bounds[1]], [cp.polygon_bounds[2], cp.polygon_bounds[3]]]}
+                                    pathOptions={{ fill: false, color: "#0d9488", weight: 1, opacity: 0.24, dashArray: "5 6" }}
+                                    interactive={false}
+                                />
+                            ) : null}
+                            {(cp.lat && cp.lon) && (
+                                <Marker
+                                    position={[cp.lat, cp.lon]}
+                                    interactive={false}
+                                    icon={L.divIcon({
+                                        className: "",
+                                        html: `<div style="background:transparent;color:#0d9488;font-size:9px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;opacity:0.55;text-shadow:0 0 4px rgba(0,0,0,0.75);pointer-events:none">${cp.name}</div>`,
+                                        iconSize: [120, 14], iconAnchor: [60, 7],
+                                    })}
                                 />
                             )}
-                            <Marker
-                                position={[cp.lat, cp.lon]}
-                                icon={L.divIcon({
-                                    className: "",
-                                    html: `<div style="background:transparent;color:${statusColor};font-size:${highlighted ? 10 : 9}px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;text-shadow:0 0 4px rgba(0,0,0,0.8),0 0 8px rgba(0,0,0,0.6);pointer-events:none${highlighted ? ";text-decoration:underline" : ""}">${cp.name}</div>`,
-                                    iconSize:  [120, 16],
-                                    iconAnchor:[60, 8],
-                                })}
-                                eventHandlers={{ click: () => setChokepointSelected(cp) }}
-                            />
                         </Fragment>
                     )
                 })}
+                {/* ── Active chokepoints layer — rich hatched polygons from CHOKEPOINTS data ── */}
+                {active.chokepoints && CHOKEPOINTS.map((cp) => (
+                    <ChokepointPolygon
+                        key={`cp-${cp.name}`}
+                        cp={cp}
+                        zoom={zoom}
+                        onSelect={setChokepointSelected}
+                    />
+                ))}
 
                 {/* ── News conflict markers — click opens EventDetailPanel ─────── */}
                 {active.newsConflicts && newsConflictsData.map((m, i) => {
+                    if (!vpFilter(m.lat, m.lon)) return null
                     const showNewsLabel = zoom >= 7
                     const html = getNewsMarkerHTML(m, showNewsLabel)
                     const sz = m.severity_tier === "critical" ? 32 : (m.severity_tier === "high" || m.severity_tier === "significant") ? 26 : (m.severity_tier === "medium" || m.severity_tier === "elevated") ? 20 : 16
@@ -6931,12 +8245,11 @@ export default function MapPage({
                 />
             )}
 
-            {/* ── Deployment Detail Card ────────────────────────────────────── */}
+            {/* ── CSG / ARG Detail Panel ───────────────────────────────────── */}
             {selectedDeployment && (
-                <DeploymentCard
-                    deployment={selectedDeployment}
-                    zonesVisible={deploymentZonesVisible}
-                    onToggleZones={() => setDeploymentZonesVisible(v => !v)}
+                <CSGPanel
+                    csg={selectedDeployment}
+                    isMobile={isMobile}
                     onClose={() => setSelectedDeployment(null)}
                 />
             )}
@@ -6966,16 +8279,18 @@ export default function MapPage({
                     onClose={() => setDsSelected(null)}
                 />
             )}
-            {chokepointSelected && !infraSelected && !dsSelected && (
+            {portSelected && !infraSelected && !dsSelected && (
+                <PortPanel
+                    item={portSelected}
+                    onClose={() => setPortSelected(null)}
+                    isMobile={isMobile}
+                />
+            )}
+            {chokepointSelected && !infraSelected && !dsSelected && !portSelected && (
                 <ChokepointPanel
                     cp={chokepointSelected}
                     onClose={() => setChokepointSelected(null)}
-                />
-            )}
-            {selectedAisVessel && (
-                <AisVesselPanel
-                    vessel={selectedAisVessel}
-                    onClose={() => setSelectedAisVessel(null)}
+                    isMobile={isMobile}
                 />
             )}
 
@@ -7279,6 +8594,9 @@ export default function MapPage({
                         distance: routeInfo.distance_km != null ? `${routeInfo.distance_km.toFixed(0)} km` : null,
                         duration: routeInfo.duration_min != null ? `${Math.round(routeInfo.duration_min)} min` : null,
                     } : routeLoading ? { calculating: true } : null}
+                    unifiedEventsCount={filteredUnifiedEvents.length}
+                    conflictZoneCount={0}
+                    conflictZonesLoading={false}
                     newsConflictCount={newsConflictsData.length}
                     newsConflictTotal={newsConflictsCount}
                     infraLoading={infraLoading}
@@ -7300,6 +8618,8 @@ export default function MapPage({
                     manualOverrides={manualOverrides}
                     aisStatus={aisStatus}
                     aisVesselCount={aisVessels.length}
+                    notificationsEnabled={notificationsEnabled}
+                    onNotificationsToggle={toggleNotifications}
                 />
             )}
 

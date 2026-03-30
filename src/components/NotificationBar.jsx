@@ -89,6 +89,8 @@ function Toast({ toast, onDismiss, onClick, isMobile }) {
 // NotificationBar — ONE toast visible at a time, remainder queued
 // ──────────────────────────────────────────────────────────────────────────────
 
+const notifEnabled = () => localStorage.getItem("hw-notifications-enabled") !== "false"
+
 export default function NotificationBar({ onEventClick }) {
     const [current, setCurrent] = useState(null)   // active toast
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
@@ -135,6 +137,7 @@ export default function NotificationBar({ onEventClick }) {
                     notifs.forEach(n => seenIds.current.add(n.id))
                     return
                 }
+                if (!notifEnabled()) return
                 for (const n of notifs) enqueue(n)
             } catch { /* ignore */ }
         }
@@ -148,6 +151,7 @@ export default function NotificationBar({ onEventClick }) {
         const handler = (e) => {
             const { items } = e.detail || {}
             if (!items || Date.now() - mountedAt.current < 30000) return
+            if (!notifEnabled()) return
             for (const item of items) {
                 const id = item.thread_id || item.id
                 if (!id) continue

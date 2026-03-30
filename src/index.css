@@ -75,6 +75,50 @@ body {
     display: none !important;
 }
 
+/* ── CSG action-radius ring pulse ───────────────────────────────────────── */
+@keyframes csg-radius-pulse {
+    0%, 100% { opacity: 0.45; }
+    50%       { opacity: 1;    }
+}
+.csg-radius-ring {
+    animation: csg-radius-pulse 4s ease-in-out infinite;
+}
+
+/* ── Vessel floating popup ───────────────────────────────────────────────── */
+.vessel-popup .leaflet-popup-content-wrapper {
+    background: rgba(15, 23, 42, 0.95) !important;
+    border: 1px solid rgba(56, 189, 248, 0.35) !important;
+    border-radius: 8px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 20px rgba(56,189,248,0.08) !important;
+    backdrop-filter: blur(20px) !important;
+}
+.vessel-popup .leaflet-popup-content {
+    margin: 0 !important;
+    width: 280px !important;
+}
+.vessel-popup .leaflet-popup-tip-container {
+    display: flex !important;
+    justify-content: center;
+    align-items: flex-start;
+    width: 4px !important;
+    height: 20px !important;
+    left: 50%;
+    margin-left: -2px;
+    overflow: visible;
+}
+.vessel-popup .leaflet-popup-tip {
+    display: block !important;
+    width: 2px !important;
+    height: 20px !important;
+    background: #38bdf8 !important;
+    box-shadow: 0 0 6px rgba(56,189,248,0.7) !important;
+    transform: none !important;
+    margin: 0 auto !important;
+    border-radius: 1px;
+}
+
 /* ── Focus rings ─────────────────────────────────────────────────────────── */
 input:focus,
 select:focus,
@@ -294,5 +338,25 @@ textarea::placeholder {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
 }
 .eez-tooltip::before {
+    display: none !important;
+}
+
+/* ── Chokepoint polygon pulse animation (CRITICAL threat level) ─────────────── */
+@keyframes chokepoint-pulse {
+    0%, 100% { opacity: 0.7; }
+    50%       { opacity: 1;   }
+}
+.chokepoint-pulse {
+    animation: chokepoint-pulse 2.5s ease-in-out infinite;
+}
+
+/* ── Chokepoint permanent label tooltip ──────────────────────────────────────── */
+.chokepoint-label {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+.chokepoint-label::before {
     display: none !important;
 }

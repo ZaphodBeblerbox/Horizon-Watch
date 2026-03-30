@@ -153,6 +153,8 @@ export default function LayersPanel({
     onAdsbLabelsToggle,
     // Route
     routeInfo,
+    // Unified events
+    unifiedEventsCount,
     // Conflict zones
     conflictZoneCount,
     conflictZonesLoading,
@@ -172,6 +174,9 @@ export default function LayersPanel({
     // AIS
     aisStatus,
     aisVesselCount,
+    // Notifications
+    notificationsEnabled,
+    onNotificationsToggle,
     // Auth
     currentUser,
 }) {
@@ -335,6 +340,16 @@ export default function LayersPanel({
                 <SectionHeader label="Events" />
 
                 <LayerRow
+                    label="Intelligence Events"
+                    hint="filtered + scored markers"
+                    statusKey="rss"
+                    sourceStatus={ss}
+                    toggled={active.unifiedEvents}
+                    onToggle={() => onToggle("unifiedEvents")}
+                    badge={unifiedEventsCount}
+                    isManual={isManual("unifiedEvents")}
+                />
+                <LayerRow
                     label="Surface Feed"
                     statusKey="rss"
                     sourceStatus={ss}
@@ -455,35 +470,6 @@ export default function LayersPanel({
                     onToggle={() => onToggle("chokepoints")}
                     isManual={isManual("chokepoints")}
                 />
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <div style={{ flex: 1 }}>
-                        <LayerRow
-                            label="Deployments"
-                            hint="naval CSG / ARG positions"
-                            toggled={active.deployments}
-                            onToggle={() => onToggle("deployments")}
-                            badge={deploymentsCount}
-                            isManual={isManual("deployments")}
-                        />
-                    </div>
-                    {active.deployments && onEditDeployments && (
-                        <button
-                            onClick={onEditDeployments}
-                            title="Edit deployment data"
-                            style={{
-                                background: "rgba(255,255,255,0.07)",
-                                border: "1px solid rgba(255,255,255,0.15)",
-                                borderRadius: 4,
-                                color: "#94a3b8",
-                                cursor: "pointer",
-                                fontSize: 11,
-                                padding: "2px 6px",
-                                flexShrink: 0,
-                            }}
-                        >edit</button>
-                    )}
-                </div>
-
                 <LayerRow
                     label="Live Vessels (AIS)"
                     hint={
@@ -563,6 +549,16 @@ export default function LayersPanel({
                     isManual={isManual("liveTicker")}
                 />
 
+                {/* APP */}
+                <SectionHeader label="App" />
+
+                <LayerRow
+                    label="Notifications"
+                    hint="event toast alerts"
+                    toggled={!!notificationsEnabled}
+                    onToggle={() => onNotificationsToggle?.()}
+                />
+
                 {/* INTELLIGENCE — superadmin only */}
                 {(currentUser?.is_super_admin || currentUser?.role === "superadmin") && (
                     <>
@@ -596,6 +592,7 @@ export default function LayersPanel({
                         </div>
                     )}
                     <SectionHeader label="Events" />
+                    <LayerRow label="Intelligence Events" hint="filtered + scored markers" statusKey="rss" sourceStatus={ss} toggled={active.unifiedEvents} onToggle={() => onToggle("unifiedEvents")} badge={unifiedEventsCount} isManual={isManual("unifiedEvents")} />
                     <LayerRow label="Surface Feed"       statusKey="rss"   sourceStatus={ss} toggled={active.news}            onToggle={() => onToggle("news")}            isManual={isManual("news")} />
                     <LayerRow label="Conflict Zones"     statusKey="gdelt" sourceStatus={ss} toggled={active.conflictZones}   onToggle={() => onToggle("conflictZones")}   badge={conflictZoneCount} loading={conflictZonesLoading} isManual={isManual("conflictZones")} />
                     <LayerRow label="Heatmap"                               toggled={active.heatmap}          onToggle={() => onToggle("heatmap")}          isManual={isManual("heatmap")} />
@@ -621,6 +618,8 @@ export default function LayersPanel({
                     <LayerRow label="News Conflicts"    statusKey="rss" sourceStatus={ss} toggled={active.newsConflicts} onToggle={() => onToggle("newsConflicts")} badge={newsConflictCount} isManual={isManual("newsConflicts")} />
                     <LayerRow label="ADS-B Traffic"     toggled={active.adsb}          onToggle={() => onToggle("adsb")}          isManual={isManual("adsb")} />
                     <LayerRow label="POI Profiles"      toggled={active.poi}           onToggle={() => onToggle("poi")}           badge={poiCount} isManual={isManual("poi")} />
+                    <SectionHeader label="App" />
+                    <LayerRow label="Notifications" hint="event toast alerts" toggled={!!notificationsEnabled} onToggle={() => onNotificationsToggle?.()} />
                 </div>
             </BottomSheet>
         )
