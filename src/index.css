@@ -383,3 +383,21 @@ textarea::placeholder {
 .leaflet-tooltip-pane .ac-tooltip-custom {
     z-index: 10000 !important;
 }
+
+/* Overwatch detection permanent labels */
+.ow-det-label {
+    background: rgba(0, 0, 0, 0.82) !important;
+    border: none !important;
+    border-radius: 3px !important;
+    padding: 2px 6px !important;
+    font-family: Inter, system-ui, sans-serif !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    color: #f0f4f8 !important;
+    white-space: nowrap !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5) !important;
+    pointer-events: none !important;
+}
+.ow-det-label::before {
+    display: none !important;
+}

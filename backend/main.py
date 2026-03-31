@@ -47,7 +47,7 @@ _socket.setdefaulttimeout(20)
 
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Depends
-from fastapi.responses import Response as FastAPIResponse
+from fastapi.responses import Response as FastAPIResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
 import feedparser
@@ -5660,15 +5660,17 @@ def _get_overwatch_model():
             return _overwatch_model, _overwatch_model_name
         try:
             from ultralytics import YOLO as _YOLO
+            _obb_path = str(BASE_DIR / "yolov8n-obb.pt")
+            _coco_path = str(BASE_DIR / "yolov8n.pt")
             # Try DOTA OBB model first (aerial imagery, 15 classes)
             try:
-                m = _YOLO("yolov8n-obb.pt")
+                m = _YOLO(_obb_path)
                 _overwatch_model = m
                 _overwatch_model_name = "dota-obb"
-                print("[overwatch] YOLOv8n-OBB (DOTA) model loaded")
+                print(f"[overwatch] YOLOv8n-OBB (DOTA) model loaded from {_obb_path}")
             except Exception as e1:
                 print(f"[overwatch] OBB model failed ({e1}), trying COCO fallback")
-                m = _YOLO("yolov8n.pt")
+                m = _YOLO(_coco_path)
                 _overwatch_model = m
                 _overwatch_model_name = "coco"
                 print("[overwatch] YOLOv8n COCO model loaded (fallback)")
@@ -5701,7 +5703,7 @@ def _fetch_esri_tile(z, x, y):
     with urllib.request.urlopen(req, timeout=12) as r:
         return Image.open(_io.BytesIO(r.read())).convert("RGB")
 
-def _run_overwatch_inference(bounds, zoom, confidence):
+def _run_overwatch_inference(bounds, zoom, confidence, enhance=False):
     """Blocking: fetch Esri tiles, stitch, crop, run YOLO, return detections."""
     import math, concurrent.futures
     from PIL import Image
@@ -5778,6 +5780,7 @@ def _run_overwatch_inference(bounds, zoom, confidence):
                     "confidence": round(conf, 3),
                     "center":     [py_to_lat(cy_px), px_to_lon(cx_px)],
                     "corners":    corners,
+                    "pixel_box":  pts,
                 })
         # COCO fallback (regular bounding boxes)
         elif result.boxes is not None and len(result.boxes):
@@ -5796,32 +5799,94 @@ def _run_overwatch_inference(bounds, zoom, confidence):
                     "confidence": round(conf, 3),
                     "center":     [py_to_lat((y1+y2)/2), px_to_lon((x1+x2)/2)],
                     "corners":    corners,
+                    "pixel_box":  [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
                 })
 
-    print(f"[overwatch] {len(detections)} detections (model={model_name}, conf≥{confidence})")
+    # ── Optional Claude vision enhance pass ──────────────────────────────────
+    if enhance and detections:
+        import base64 as _b64
+        _ant_key = os.getenv("ANTHROPIC_API_KEY")
+        if _ant_key:
+            try:
+                _ant = anthropic.Anthropic(api_key=_ant_key)
+                classify_limit = min(len(detections), 10)
+                for det in detections[:classify_limit]:
+                    px_box = det.pop("pixel_box", None)
+                    if not px_box:
+                        continue
+                    xs = [p[0] for p in px_box]
+                    ys = [p[1] for p in px_box]
+                    x1c = max(0, int(min(xs)) - 20)
+                    y1c = max(0, int(min(ys)) - 20)
+                    x2c = min(img_w, int(max(xs)) + 20)
+                    y2c = min(img_h, int(max(ys)) + 20)
+                    if x2c <= x1c or y2c <= y1c:
+                        continue
+                    crop_obj = cropped.crop((x1c, y1c, x2c, y2c))
+                    buf = _io.BytesIO()
+                    crop_obj.save(buf, format="PNG")
+                    crop_b64 = _b64.b64encode(buf.getvalue()).decode()
+                    try:
+                        resp = _ant.messages.create(
+                            model="claude-sonnet-4-6",
+                            max_tokens=80,
+                            messages=[{
+                                "role": "user",
+                                "content": [
+                                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": crop_b64}},
+                                    {"type": "text", "text": f"YOLO detected '{det['class']}' in satellite imagery. Give specific type. Reply ONLY with JSON: {{\"specific_type\": \"...\"}}"},
+                                ],
+                            }],
+                        )
+                        parsed = _json.loads(resp.content[0].text)
+                        det["specific_type"] = parsed.get("specific_type", det["class"])
+                    except Exception as e_cls:
+                        print(f"[overwatch] classify error: {e_cls}")
+                # Remove pixel_box from remaining (unclassified) detections
+                for det in detections[classify_limit:]:
+                    det.pop("pixel_box", None)
+            except Exception as e_enh:
+                print(f"[overwatch] enhance pass error: {e_enh}")
+                for det in detections:
+                    det.pop("pixel_box", None)
+        else:
+            print("[overwatch] ANTHROPIC_API_KEY not set — skipping enhance")
+            for det in detections:
+                det.pop("pixel_box", None)
+    else:
+        for det in detections:
+            det.pop("pixel_box", None)
+
+    print(f"[overwatch] {len(detections)} detections (model={model_name}, conf≥{confidence}, enhance={enhance})")
     return {
         "detections":  detections,
         "count":       len(detections),
         "image_size":  [img_w, img_h],
         "zoom_used":   zoom,
         "model":       model_name,
+        "enhanced":    enhance,
     }
 
 @app.post("/api/overwatch/detect")
 async def overwatch_detect(request: Request):
     """Fetch Esri satellite tiles for bounds, run YOLOv8 object detection, return geo detections."""
-    body       = await request.json()
-    bounds     = body.get("bounds")
-    zoom       = int(body.get("zoom", 15))
-    confidence = float(body.get("confidence", 0.25))
-    if not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
-        raise HTTPException(400, "bounds {north, south, east, west} required")
-    zoom = max(10, min(zoom, 18))
-    loop   = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _run_overwatch_inference, bounds, zoom, confidence)
-    if "error" in result and result.get("count", 0) == 0:
-        return JSONResponse(result, status_code=200)   # return error as 200 so frontend can read it
-    return result
+    try:
+        body       = await request.json()
+        bounds     = body.get("bounds")
+        zoom       = int(body.get("zoom", 15))
+        confidence = float(body.get("confidence", 0.25))
+        enhance    = bool(body.get("enhance", False))
+        if not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
+            return JSONResponse({"error": "bounds {north, south, east, west} required", "count": 0, "detections": []}, status_code=200)
+        zoom = max(10, min(zoom, 18))
+        import functools
+        loop   = asyncio.get_event_loop()
+        fn     = functools.partial(_run_overwatch_inference, bounds, zoom, confidence, enhance)
+        result = await loop.run_in_executor(None, fn)
+        return JSONResponse(result, status_code=200)
+    except Exception as e:
+        print(f"[overwatch] endpoint error: {e}")
+        return JSONResponse({"error": str(e), "count": 0, "detections": []}, status_code=200)
 
 
 @app.on_event("startup")
