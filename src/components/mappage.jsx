@@ -6,7 +6,8 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import * as SatelliteJS from "satellite.js"
-import { useState, useEffect, useRef, Fragment, useMemo, memo, useCallback, createPortal } from "react"
+import { useState, useEffect, useRef, Fragment, useMemo, memo, useCallback } from "react"
+import { createPortal } from "react-dom"
 import { MapContainer, TileLayer, Circle, CircleMarker, Tooltip, Polyline, Popup, GeoJSON, Marker, Rectangle, ImageOverlay, Polygon, useMapEvents, useMap } from "react-leaflet"
 import L from "leaflet"
 import Markdown from "react-markdown"
@@ -25,7 +26,6 @@ const API = API_BASE
 const WIDGETS = [
     { id: "borders",       label: "Land Border",        minZoom: 0, color: "#00ff88" },
     { id: "seaborder",     label: "Sea Boundary (EEZ)", minZoom: 0, color: "#00cfff" },
-    { id: "airspace",      label: "Airspace (FIR)",     minZoom: 0, color: "#ffb300" },
     { id: "cables",        label: "Submarine Cables",   minZoom: 0, color: "#00cfff" },
     { id: "news",          label: "News Overlay",       minZoom: 0, color: "#7c3aed" },
     { id: "adsb",          label: "ADS-B Traffic",      minZoom: 0, color: "#94a3b8" },
@@ -1349,6 +1349,168 @@ function makeAircraftIcon(ac, showLabel) {
     })
 }
 
+// ── Aircraft type + airline databases ────────────────────────────────────────
+
+const AIRCRAFT_TYPES = {
+  'B738': { name: 'Boeing 737-800',           image: 'Boeing_737_Next_Generation' },
+  'B38M': { name: 'Boeing 737 MAX 8',         image: 'Boeing_737_MAX' },
+  'B739': { name: 'Boeing 737-900',           image: 'Boeing_737_Next_Generation' },
+  'B734': { name: 'Boeing 737-400',           image: 'Boeing_737_Classic' },
+  'B737': { name: 'Boeing 737-700',           image: 'Boeing_737_Next_Generation' },
+  'B39M': { name: 'Boeing 737 MAX 9',         image: 'Boeing_737_MAX' },
+  'B3XM': { name: 'Boeing 737 MAX 10',        image: 'Boeing_737_MAX' },
+  'B752': { name: 'Boeing 757-200',           image: 'Boeing_757' },
+  'B753': { name: 'Boeing 757-300',           image: 'Boeing_757' },
+  'B744': { name: 'Boeing 747-400',           image: 'Boeing_747' },
+  'B748': { name: 'Boeing 747-8',             image: 'Boeing_747-8' },
+  'B772': { name: 'Boeing 777-200',           image: 'Boeing_777' },
+  'B773': { name: 'Boeing 777-300',           image: 'Boeing_777' },
+  'B77W': { name: 'Boeing 777-300ER',         image: 'Boeing_777' },
+  'B77L': { name: 'Boeing 777-200LR',         image: 'Boeing_777' },
+  'B788': { name: 'Boeing 787-8',             image: 'Boeing_787_Dreamliner' },
+  'B789': { name: 'Boeing 787-9',             image: 'Boeing_787_Dreamliner' },
+  'B78X': { name: 'Boeing 787-10',            image: 'Boeing_787_Dreamliner' },
+  'B764': { name: 'Boeing 767-400',           image: 'Boeing_767' },
+  'B763': { name: 'Boeing 767-300',           image: 'Boeing_767' },
+  'B1':   { name: 'B-1 Lancer',               image: 'Rockwell_B-1_Lancer' },
+  'B52':  { name: 'B-52 Stratofortress',       image: 'Boeing_B-52_Stratofortress' },
+  'A318': { name: 'Airbus A318',              image: 'Airbus_A318' },
+  'A319': { name: 'Airbus A319',              image: 'Airbus_A319' },
+  'A19N': { name: 'Airbus A319neo',           image: 'Airbus_A320neo_family' },
+  'A320': { name: 'Airbus A320',              image: 'Airbus_A320_family' },
+  'A20N': { name: 'Airbus A320neo',           image: 'Airbus_A320neo_family' },
+  'A321': { name: 'Airbus A321',              image: 'Airbus_A320_family' },
+  'A21N': { name: 'Airbus A321neo',           image: 'Airbus_A321neo' },
+  'A310': { name: 'Airbus A310',              image: 'Airbus_A310' },
+  'A332': { name: 'Airbus A330-200',          image: 'Airbus_A330' },
+  'A333': { name: 'Airbus A330-300',          image: 'Airbus_A330' },
+  'A339': { name: 'Airbus A330neo',           image: 'Airbus_A330neo' },
+  'A346': { name: 'Airbus A340-600',          image: 'Airbus_A340' },
+  'A359': { name: 'Airbus A350-900',          image: 'Airbus_A350' },
+  'A35K': { name: 'Airbus A350-1000',         image: 'Airbus_A350' },
+  'A388': { name: 'Airbus A380-800',          image: 'Airbus_A380' },
+  'A400': { name: 'Airbus A400M Atlas',       image: 'Airbus_A400M_Atlas' },
+  'BCS1': { name: 'Airbus A220-100',          image: 'Airbus_A220' },
+  'BCS3': { name: 'Airbus A220-300',          image: 'Airbus_A220' },
+  'E170': { name: 'Embraer E170',             image: 'Embraer_E-Jet_family' },
+  'E75L': { name: 'Embraer E175',             image: 'Embraer_E-Jet_family' },
+  'E190': { name: 'Embraer E190',             image: 'Embraer_E-Jet_family' },
+  'E195': { name: 'Embraer E195',             image: 'Embraer_E-Jet_family' },
+  'E290': { name: 'Embraer E190-E2',          image: 'Embraer_E-Jet_E2_family' },
+  'E295': { name: 'Embraer E195-E2',          image: 'Embraer_E-Jet_E2_family' },
+  'CRJ2': { name: 'CRJ-200',                 image: 'Bombardier_CRJ200' },
+  'CRJ7': { name: 'CRJ-700',                 image: 'Bombardier_CRJ700_series' },
+  'CRJ9': { name: 'CRJ-900',                 image: 'Bombardier_CRJ700_series' },
+  'DH8D': { name: 'Dash 8 Q400',             image: 'Bombardier_Q_Series' },
+  'AT45': { name: 'ATR 42-500',              image: 'ATR_42' },
+  'AT75': { name: 'ATR 72-500',              image: 'ATR_72' },
+  'AT76': { name: 'ATR 72-600',              image: 'ATR_72' },
+  'C172': { name: 'Cessna 172',              image: 'Cessna_172' },
+  'C208': { name: 'Cessna 208 Caravan',      image: 'Cessna_208_Caravan' },
+  'C56X': { name: 'Cessna Citation Excel',   image: 'Cessna_Citation_Excel' },
+  'C130': { name: 'C-130 Hercules',          image: 'Lockheed_C-130_Hercules' },
+  'C17':  { name: 'C-17 Globemaster III',    image: 'Boeing_C-17_Globemaster_III' },
+  'C5M':  { name: 'C-5M Super Galaxy',       image: 'Lockheed_C-5_Galaxy' },
+  'K35R': { name: 'KC-135 Stratotanker',     image: 'Boeing_KC-135_Stratotanker' },
+  'KC10': { name: 'KC-10 Extender',          image: 'McDonnell_Douglas_KC-10_Extender' },
+  'E3CF': { name: 'E-3 Sentry AWACS',        image: 'Boeing_E-3_Sentry' },
+  'P8':   { name: 'P-8 Poseidon',            image: 'Boeing_P-8_Poseidon' },
+  'E6B':  { name: 'E-6B Mercury',            image: 'Boeing_E-6_Mercury' },
+  'EUFI': { name: 'Eurofighter Typhoon',     image: 'Eurofighter_Typhoon' },
+  'F16':  { name: 'F-16 Fighting Falcon',    image: 'General_Dynamics_F-16_Fighting_Falcon' },
+  'F15':  { name: 'F-15 Eagle',              image: 'McDonnell_Douglas_F-15_Eagle' },
+  'F18H': { name: 'F/A-18 Super Hornet',     image: 'Boeing_F/A-18E/F_Super_Hornet' },
+  'F35':  { name: 'F-35 Lightning II',       image: 'Lockheed_Martin_F-35_Lightning_II' },
+  'V22':  { name: 'V-22 Osprey',             image: 'Bell_Boeing_V-22_Osprey' },
+  'H60':  { name: 'Black Hawk',              image: 'Sikorsky_UH-60_Black_Hawk' },
+  'CONC': { name: 'Concorde',                image: 'Aérospatiale/BAC_Concorde' },
+  'A124': { name: 'Antonov An-124',          image: 'Antonov_An-124_Ruslan' },
+  'AN12': { name: 'Antonov An-12',           image: 'Antonov_An-12' },
+  'IL76': { name: 'Ilyushin Il-76',          image: 'Ilyushin_Il-76' },
+  'MD11': { name: 'McDonnell Douglas MD-11', image: 'McDonnell_Douglas_MD-11' },
+  'DC10': { name: 'McDonnell Douglas DC-10', image: 'McDonnell_Douglas_DC-10' },
+  'F900': { name: 'Dassault Falcon 900',     image: 'Dassault_Falcon_900' },
+  'GLEX': { name: 'Bombardier Global',       image: 'Bombardier_Global_Express' },
+  'GL7T': { name: 'Bombardier Global 7500',  image: 'Bombardier_Global_7500' },
+  'GLF5': { name: 'Gulfstream G550',         image: 'Gulfstream_V' },
+  'GLF6': { name: 'Gulfstream G650',         image: 'Gulfstream_G650' },
+  'H25B': { name: 'Hawker 800',              image: 'Hawker_Siddeley_HS_125' },
+  'LJ45': { name: 'Learjet 45',              image: 'Learjet_45' },
+  'PC12': { name: 'Pilatus PC-12',           image: 'Pilatus_PC-12' },
+  'PC24': { name: 'Pilatus PC-24',           image: 'Pilatus_PC-24' },
+  'BE20': { name: 'Beechcraft King Air 200', image: 'Beechcraft_Super_King_Air' },
+}
+
+const AIRLINES = {
+  // Middle East
+  'UAE': 'Emirates',           'ETD': 'Etihad Airways',        'FDB': 'flydubai',
+  'QTR': 'Qatar Airways',      'GFA': 'Gulf Air',               'SVA': 'Saudia',
+  'MEA': 'Middle East Airlines','RJA': 'Royal Jordanian',       'OMA': 'Oman Air',
+  'KAC': 'Kuwait Airways',     'JZR': 'Jazeera Airways',        'ABY': 'Air Arabia',
+  'KNE': 'Flynas',             'MSR': 'EgyptAir',               'ELY': 'El Al',
+  'IRA': 'Iran Air',           'IAW': 'Iraqi Airways',
+  // Europe
+  'BAW': 'British Airways',    'DLH': 'Lufthansa',              'AFR': 'Air France',
+  'KLM': 'KLM',                'RYR': 'Ryanair',                'EZY': 'easyJet',
+  'WZZ': 'Wizz Air',           'SWR': 'Swiss',                  'AUA': 'Austrian Airlines',
+  'BEL': 'Brussels Airlines',  'EWG': 'Eurowings',              'VLG': 'Vueling',
+  'NAX': 'Norwegian',          'SAS': 'SAS',                    'FIN': 'Finnair',
+  'LOT': 'LOT Polish Airlines','TAP': 'TAP Air Portugal',       'IBE': 'Iberia',
+  'AZA': 'ITA Airways',        'NOS': 'Neos',                   'PGT': 'Pegasus Airlines',
+  'SXS': 'SunExpress',         'THY': 'Turkish Airlines',
+  // Americas
+  'AAL': 'American Airlines',  'UAL': 'United Airlines',        'DAL': 'Delta Air Lines',
+  'SWA': 'Southwest Airlines', 'ACA': 'Air Canada',             'LAN': 'LATAM',
+  'AVA': 'Avianca',            'GLO': 'GOL',
+  // Asia-Pacific
+  'SIA': 'Singapore Airlines', 'CPA': 'Cathay Pacific',         'ANA': 'All Nippon Airways',
+  'JAL': 'Japan Airlines',     'CCA': 'Air China',              'CES': 'China Eastern',
+  'CSN': 'China Southern',     'KAL': 'Korean Air',             'AAR': 'Asiana Airlines',
+  'CAL': 'China Airlines',     'EVA': 'EVA Air',                'MAS': 'Malaysia Airlines',
+  'THA': 'Thai Airways',       'HVN': 'Vietnam Airlines',       'VJC': 'VietJet Air',
+  'BKP': 'Bangkok Airways',    'PAL': 'Philippine Airlines',    'CEB': 'Cebu Pacific',
+  'LIO': 'Lion Air',           'GIA': 'Garuda Indonesia',       'AXM': 'AirAsia',
+  'QFA': 'Qantas',             'VOZ': 'Virgin Australia',       'ANZ': 'Air New Zealand',
+  'JST': 'Jetstar',
+  // South Asia
+  'AIC': 'Air India',          'IGO': 'IndiGo',                 'PIA': 'PIA',
+  'SEJ': 'SpiceJet',           'AXB': 'Air India Express',
+  // Africa / CIS
+  'ETH': 'Ethiopian Airlines', 'SAA': 'South African Airways',  'RAM': 'Royal Air Maroc',
+  'AFL': 'Aeroflot',           'SDM': 'Rossiya',                'SBI': 'S7 Airlines',
+  'TUA': 'Turkmenistan Airlines','UZB': 'Uzbekistan Airways',   'AHY': 'Azerbaijan Airlines',
+  'FLY': 'FlyArystan',
+  // Cargo
+  'FDX': 'FedEx Express',      'UPS': 'UPS Airlines',           'GTI': 'Atlas Air',
+  'CLX': 'Cargolux',           'BOX': 'AeroLogic',              'MPH': 'Martinair',
+  // Japan
+  'AKJ': 'Air Japan',          'JJA': 'Jeju Air',
+  // Military
+  'RRR': 'Royal Air Force',    'RFR': 'French Air Force',       'GAF': 'German Air Force',
+  'IAM': 'Italian Air Force',  'AME': 'Spanish Air Force',      'HVK': 'Royal Netherlands AF',
+  'BAF': 'Belgian Air Force',  'PLF': 'Polish Air Force',       'TKF': 'Turkish Air Force',
+  'RSD': 'Russian Air Force',  'CHN': 'PLA Air Force',          'IAF': 'Indian Air Force',
+  'IRI': 'IRIAF',              'ISR': 'Israeli Air Force',      'RJF': 'Royal Jordanian AF',
+  'RSF': 'Royal Saudi AF',     'QAF': 'Qatar Emiri AF',         'EGF': 'Egyptian Air Force',
+  'RCH': 'USAF / AMC',         'AIO': 'USAF Special Ops',       'CNV': 'US Navy',
+  'PAT': 'USAF',               'NAVY': 'US Navy',               'USAF': 'US Air Force',
+}
+
+const _AC_IMG_CACHE = {}  // typeCode → Wikipedia thumbnail URL or null
+
+function _fetchAcTypeImage(typeCode) {
+    if (!typeCode) return Promise.resolve(null)
+    const code = typeCode.toUpperCase()
+    const info = AIRCRAFT_TYPES[code]
+    if (!info) return Promise.resolve(null)
+    if (_AC_IMG_CACHE[code] !== undefined) return Promise.resolve(_AC_IMG_CACHE[code])
+    _AC_IMG_CACHE[code] = null  // mark fetching to prevent duplicate requests
+    return fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(info.image)}`)
+        .then(r => r.json())
+        .then(d => { _AC_IMG_CACHE[code] = d.thumbnail?.source || null; return _AC_IMG_CACHE[code] })
+        .catch(() => { _AC_IMG_CACHE[code] = null; return null })
+}
+
 // ── Conflict glow icon ────────────────────────────────────────────────────────
 // ── Marker colours and sizes — shared by all surface/conflict icon builders ───
 //   Centre:     8px white disc, always visible against any terrain
@@ -2025,20 +2187,50 @@ function getWorkIcon() {
     })
 }
 
+// ── ADS-B track altitude coloring ────────────────────────────────────────────
+function _altColor(alt) {
+    if (alt == null || isNaN(alt)) return "#94a3b8"
+    if (alt < 10000) return "#22c55e"   // green  — low
+    if (alt < 25000) return "#38bdf8"   // cyan   — medium
+    if (alt < 35000) return "#3b82f6"   // blue   — high
+    return "#a855f7"                     // purple — cruise
+}
+
+// Group consecutive track points by altitude band into colored segments
+function _segmentTrack(points) {
+    if (!points.length) return []
+    const segments = []
+    let cur = { color: _altColor(points[0].alt), coords: [[points[0].lat, points[0].lon]] }
+    for (let i = 1; i < points.length; i++) {
+        const p = points[i]
+        const c = _altColor(p.alt)
+        if (c === cur.color) {
+            cur.coords.push([p.lat, p.lon])
+        } else {
+            cur.coords.push([p.lat, p.lon])   // bridge point to avoid gap
+            segments.push(cur)
+            cur = { color: c, coords: [[points[i - 1].lat, points[i - 1].lon], [p.lat, p.lon]] }
+        }
+    }
+    segments.push(cur)
+    return segments.filter(s => s.coords.length >= 2)
+}
+
 // ── AircraftLayer ─────────────────────────────────────────────────────────────
-// Isolated child component: aircraft state and polling live here so that
-// setAircraft() on each interval tick never re-renders the parent (MapPage).
-// useMap() is called explicitly to anchor this component in the Leaflet context,
-// which ensures markers are positioned correctly on initial load and each poll.
 const AircraftLayer = memo(function AircraftLayer({
-    visible, showLabels, refreshRate, boundsRef, onCount, polling, activateKey,
+    visible, showLabels, boundsRef, onCount, polling, activateKey,
 }) {
     const map = useMap()
-    const [aircraft, setAircraft] = useState([])
-    const [trackState, setTrackState] = useState({ icao: null, coords: [], status: "idle", color: "#94a3b8" })
-    const intervalRef = useRef(null)
+    const [aircraft,   setAircraft]   = useState([])
+    const [trackState, setTrackState] = useState({ icao: null, segments: [], status: "idle", pointCount: 0 })
+    const [selectedAc, setSelectedAc] = useState(null)   // compact tooltip
+    const [detailAc,   setDetailAc]   = useState(null)   // full detail panel
+    const [followAc,   setFollowAc]   = useState(null)   // followed aircraft (latest snapshot)
+    const [acImgUrl,   setAcImgUrl]   = useState({})     // typeCode → Wikipedia thumbnail url
+    const intervalRef   = useRef(null)
+    const followIcaoRef = useRef(null)                   // ref so panTo effect never goes stale
 
-    // Polling restarts only when activate is clicked (activateKey bumps) or stopped
+    // ── 500ms polling ────────────────────────────────────────────────────────
     useEffect(() => {
         if (!polling) {
             clearInterval(intervalRef.current)
@@ -2062,112 +2254,387 @@ const AircraftLayer = memo(function AircraftLayer({
                 })
                 .catch(err => console.error("[adsb] fetch error:", err))
         }
+        clearInterval(intervalRef.current)
         fetchAdsb()
-        intervalRef.current = setInterval(fetchAdsb, refreshRate * 1000)
+        intervalRef.current = setInterval(fetchAdsb, 500)
         return () => clearInterval(intervalRef.current)
     }, [polling, activateKey])
 
-    const fetchTrack = (ac) => {
-        const color = getAircraftColor(ac)
-        // Second click on same aircraft clears the track
-        if (trackState.icao === ac.icao) {
-            setTrackState({ icao: null, coords: [], status: "idle", color: "#94a3b8" })
+    // ── Follow mode: soft pan toward aircraft on each update ─────────────────
+    // Uses panTo (not flyTo) so the user can freely pan away between ticks.
+    useEffect(() => {
+        if (!followIcaoRef.current || !aircraft.length) return
+        const liveAc = aircraft.find(a => a.icao === followIcaoRef.current)
+        if (!liveAc || liveAc.lat == null || liveAc.lon == null) return
+        setFollowAc(liveAc)
+        map.panTo([liveAc.lat, liveAc.lon], { animate: true, duration: 0.4 })
+    }, [aircraft]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Click handler ─────────────────────────────────────────────────────────
+    const handleAcClick = useCallback((ac) => {
+        // Prefetch aircraft type image
+        const typeCode = (ac.t || ac.type || "").toUpperCase()
+        if (typeCode) {
+            if (_AC_IMG_CACHE[typeCode] !== undefined) {
+                if (_AC_IMG_CACHE[typeCode]) setAcImgUrl(prev => ({ ...prev, [typeCode]: _AC_IMG_CACHE[typeCode] }))
+            } else {
+                _fetchAcTypeImage(typeCode).then(url => {
+                    if (url) setAcImgUrl(prev => ({ ...prev, [typeCode]: url }))
+                })
+            }
+        }
+
+        // Second click on same aircraft → open detail panel
+        if (selectedAc?.icao === ac.icao) {
+            setDetailAc(ac)
             return
         }
-        setTrackState({ icao: ac.icao, coords: [], status: "loading", color })
+
+        // First click → show tooltip + load track
+        setSelectedAc(ac)
+        setDetailAc(null)
+
+        setTrackState({ icao: ac.icao, segments: [], status: "loading", pointCount: 0 })
+        console.log("[adsb track] fetching for", ac.icao)
         fetch(`https://api.adsb.lol/v2/icao/${ac.icao}/track`)
-            .then(r => r.json())
+            .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
             .then(data => {
-                const path = data.path || []
-                const coords = path
-                    .filter(p => Array.isArray(p) && p[1] != null && p[2] != null)
-                    .map(p => [p[1], p[2]])   // [lat, lon]
-                if (coords.length > 0) {
-                    setTrackState({ icao: ac.icao, coords, status: "ok", color })
+                console.log("[adsb track] response keys:", Object.keys(data))
+                const rawPos = data.positions || data.path || data.track || []
+                console.log("[adsb track] raw position count:", rawPos.length)
+                const points = rawPos
+                    .map(p => {
+                        if (Array.isArray(p)) {
+                            // format: [timestamp, lat, lon, alt_baro, ...]
+                            return (p[1] != null && p[2] != null) ? { lat: p[1], lon: p[2], alt: p[3] ?? null } : null
+                        }
+                        return (p.lat != null && p.lon != null) ? { lat: p.lat, lon: p.lon, alt: p.alt_baro ?? p.alt ?? null } : null
+                    })
+                    .filter(Boolean)
+                console.log("[adsb track] parsed points:", points.length)
+                if (points.length > 0) {
+                    setTrackState({ icao: ac.icao, segments: _segmentTrack(points), status: "ok", pointCount: points.length })
                 } else {
-                    setTrackState({ icao: ac.icao, coords: [], status: "unavailable", color })
+                    setTrackState({ icao: ac.icao, segments: [], status: "unavailable", pointCount: 0 })
                 }
             })
-            .catch(() => setTrackState(s => ({ ...s, status: "unavailable" })))
+            .catch(err => {
+                console.error("[adsb track] error:", err)
+                setTrackState(s => ({ ...s, status: "unavailable" }))
+            })
+    }, [selectedAc])
+
+    // ── Tooltip renderer ──────────────────────────────────────────────────────
+    const renderTooltip = (ac) => {
+        const callsign    = (ac.flight || "").trim() || ac.icao || ""
+        const icaoPrefix  = callsign.slice(0, 3).toUpperCase()
+        const airline     = AIRLINES[icaoPrefix] || null
+        const typeCode    = (ac.t || ac.type || "").toUpperCase()
+        const typeInfo    = AIRCRAFT_TYPES[typeCode] || null
+        const imgUrl      = acImgUrl[typeCode] || null
+        const altNum      = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
+        const altText     = altNum != null ? `${altNum.toLocaleString()} ft` : null
+        const spdText     = ac.gs != null ? `${Math.round(ac.gs)} kts` : null
+        const squawk      = ac.squawk
+        const isEmergency = squawk === "7500" || squawk === "7600" || squawk === "7700"
+        const isMil       = ac.military || Object.prototype.hasOwnProperty.call(AIRLINES, icaoPrefix + "_MIL")
+
+        return (
+            <Tooltip permanent interactive direction="top" offset={[0, -12]} className="ac-tooltip-custom">
+                <div style={{
+                    background: "rgba(6,13,26,0.96)", border: "1px solid rgba(56,189,248,0.35)",
+                    borderRadius: 8, padding: "10px 12px", minWidth: 210, maxWidth: 270,
+                    fontFamily: "Inter,-apple-system,sans-serif", boxShadow: "0 4px 24px rgba(0,0,0,0.65)",
+                    fontSize: 12, color: "#e8edf2",
+                }}>
+                    {imgUrl && (
+                        <img src={imgUrl} alt={typeInfo?.name || typeCode}
+                            style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 4, marginBottom: 8, display: "block" }}
+                            onError={e => { e.target.style.display = "none" }}
+                        />
+                    )}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 5 }}>
+                        <div>
+                            {airline && <div style={{ fontSize: 10, color: "#38bdf8", fontWeight: 600, marginBottom: 1 }}>{airline}</div>}
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{callsign}</div>
+                        </div>
+                        <button onClick={e => { e.stopPropagation(); setSelectedAc(null) }}
+                            style={{ background: "none", border: "none", color: "rgba(232,237,242,0.35)", cursor: "pointer", fontSize: 15, padding: "0 2px", lineHeight: 1 }}>✕</button>
+                    </div>
+                    {typeInfo && <div style={{ fontSize: 10, color: "rgba(232,237,242,0.45)", marginBottom: 4 }}>{typeInfo.name}</div>}
+                    {(altText || spdText) && (
+                        <div style={{ fontSize: 10, color: "rgba(232,237,242,0.6)", marginBottom: 7 }}>
+                            {[altText, spdText].filter(Boolean).join(" · ")}
+                        </div>
+                    )}
+                    {isEmergency && (
+                        <div style={{ fontSize: 9, background: "rgba(239,68,68,0.18)", color: "#ef4444", padding: "3px 6px", borderRadius: 4, fontWeight: 700, marginBottom: 6 }}>
+                            ⚠ SQUAWK {squawk}
+                        </div>
+                    )}
+                    {trackState.icao === ac.icao && trackState.status === "loading" && (
+                        <div style={{ fontSize: 9, color: "#38bdf8", marginBottom: 5 }}>Loading track…</div>
+                    )}
+                    {(isMil || ac.interesting) && (
+                        <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+                            {isMil && <span style={{ fontSize: 9, background: "rgba(255,68,68,0.15)", color: "#ff4444", padding: "2px 5px", borderRadius: 4, fontWeight: 700 }}>MILITARY</span>}
+                            {ac.interesting && <span style={{ fontSize: 9, background: "rgba(255,204,0,0.12)", color: "#ffcc00", padding: "2px 5px", borderRadius: 4, fontWeight: 700 }}>INTERESTING</span>}
+                        </div>
+                    )}
+                    <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                        <button
+                            onClick={e => { e.stopPropagation(); setDetailAc(ac) }}
+                            style={{ flex: 1, padding: "5px 0", background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 5, color: "#38bdf8", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}
+                        >More →</button>
+                        <button
+                            onClick={e => {
+                                e.stopPropagation()
+                                followIcaoRef.current = ac.icao
+                                setFollowAc(ac)
+                                setSelectedAc(null)
+                                map.panTo([ac.lat, ac.lon], { animate: true, duration: 0.5 })
+                            }}
+                            style={{ flex: 1, padding: "5px 0", background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 5, color: "#22c55e", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}
+                        >Follow ▶</button>
+                    </div>
+                </div>
+            </Tooltip>
+        )
     }
 
-    // useMap() above keeps this component anchored to the Leaflet context.
-    // Checking live zoom avoids stale prop when the interval fires.
+    // ── Follow mode toast ─────────────────────────────────────────────────────
+    const renderFollowBar = () => {
+        if (!followAc) return null
+        const ac        = followAc
+        const callsign  = (ac.flight || "").trim() || ac.icao || ""
+        const prefix    = callsign.slice(0, 3).toUpperCase()
+        const airline   = AIRLINES[prefix] || null
+        const typeCode  = (ac.t || ac.type || "").toUpperCase()
+        const typeInfo  = AIRCRAFT_TYPES[typeCode] || null
+        const altNum    = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
+        const acColor   = _altColor(altNum)
+
+        const toast = (
+            <div style={{
+                position: "fixed",
+                top: 60,
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 1800,
+                width: "max-content",
+                maxWidth: "calc(100vw - 32px)",
+                background: "rgba(6,13,26,0.94)",
+                backdropFilter: "blur(18px)",
+                WebkitBackdropFilter: "blur(18px)",
+                border: `1px solid ${acColor}44`,
+                borderLeft: `3px solid ${acColor}`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                fontFamily: "Inter,-apple-system,sans-serif",
+                color: "#e8edf2",
+                boxShadow: `0 4px 24px rgba(0,0,0,0.55), 0 0 12px ${acColor}18`,
+                pointerEvents: "auto",
+            }}>
+                {/* Aircraft icon */}
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16"
+                    style={{ transform: `rotate(${ac.track || 0}deg)`, flexShrink: 0 }}>
+                    <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill={acColor}/>
+                </svg>
+
+                {/* Flight ID */}
+                <div style={{ flexShrink: 0 }}>
+                    {airline && <div style={{ fontSize: 9, color: acColor, fontWeight: 600, letterSpacing: "0.06em", lineHeight: 1, marginBottom: 1 }}>{airline}</div>}
+                    <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1 }}>{callsign}</div>
+                </div>
+
+                {/* Type — hidden on very small screens */}
+                {typeInfo && (
+                    <div style={{ fontSize: 10, color: "rgba(232,237,242,0.45)", flexShrink: 0, display: "var(--follow-type-display, block)", whiteSpace: "nowrap" }}>
+                        {typeInfo.name}
+                    </div>
+                )}
+
+                {/* Divider */}
+                <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.1)", flexShrink: 0 }} />
+
+                {/* Live stats */}
+                <div style={{ display: "flex", gap: 10, fontSize: 11 }}>
+                    {altNum != null && (
+                        <div style={{ textAlign: "center" }}>
+                            <div style={{ fontSize: 8, color: "rgba(232,237,242,0.35)", letterSpacing: "0.06em", lineHeight: 1 }}>ALT</div>
+                            <div style={{ color: acColor, fontWeight: 600, lineHeight: 1.3 }}>{altNum.toLocaleString()}</div>
+                        </div>
+                    )}
+                    {ac.gs != null && (
+                        <div style={{ textAlign: "center" }}>
+                            <div style={{ fontSize: 8, color: "rgba(232,237,242,0.35)", letterSpacing: "0.06em", lineHeight: 1 }}>SPD</div>
+                            <div style={{ fontWeight: 600, lineHeight: 1.3 }}>{Math.round(ac.gs)} kt</div>
+                        </div>
+                    )}
+                    {ac.track != null && (
+                        <div style={{ textAlign: "center" }}>
+                            <div style={{ fontSize: 8, color: "rgba(232,237,242,0.35)", letterSpacing: "0.06em", lineHeight: 1 }}>HDG</div>
+                            <div style={{ fontWeight: 600, lineHeight: 1.3 }}>{Math.round(ac.track)}°</div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Stop following */}
+                <button
+                    onClick={() => { followIcaoRef.current = null; setFollowAc(null) }}
+                    style={{
+                        background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
+                        borderRadius: 5, color: "#ef4444", fontSize: 10, cursor: "pointer",
+                        padding: "4px 9px", fontFamily: "inherit", fontWeight: 700, flexShrink: 0,
+                        lineHeight: 1, marginLeft: 2,
+                    }}
+                >✕</button>
+            </div>
+        )
+        return createPortal(toast, document.body)
+    }
+
+    // ── Full detail panel ─────────────────────────────────────────────────────
+    const renderDetailPanel = () => {
+        if (!detailAc) return null
+        const ac          = detailAc
+        const callsign    = (ac.flight || "").trim() || ac.icao || ""
+        const icaoPrefix  = callsign.slice(0, 3).toUpperCase()
+        const airline     = AIRLINES[icaoPrefix] || null
+        const typeCode    = (ac.t || ac.type || "").toUpperCase()
+        const typeInfo    = AIRCRAFT_TYPES[typeCode] || null
+        const imgUrl      = acImgUrl[typeCode] || null
+        const altNum      = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
+        const squawk      = ac.squawk
+        const isEmergency = squawk === "7500" || squawk === "7600" || squawk === "7700"
+        const squawkLabels = { "7500": "HIJACK", "7600": "RADIO FAIL", "7700": "EMERGENCY" }
+        const isMil       = ac.military
+
+        const panel = (
+            <div style={{
+                position: "fixed", top: 54, right: 0, width: 360,
+                height: "calc(100vh - 54px)", background: "rgba(6,13,26,0.97)",
+                backdropFilter: "blur(24px)", borderLeft: "1px solid rgba(56,189,248,0.2)",
+                zIndex: 1500, display: "flex", flexDirection: "column",
+                fontFamily: "Inter,-apple-system,sans-serif", color: "#e8edf2", overflowY: "auto",
+            }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
+                    <div>
+                        {airline && <div style={{ fontSize: 10, color: "#38bdf8", fontWeight: 600, marginBottom: 2 }}>{airline}</div>}
+                        <div style={{ fontWeight: 700, fontSize: 16 }}>{callsign}</div>
+                    </div>
+                    <button onClick={() => setDetailAc(null)}
+                        style={{ background: "none", border: "none", color: "rgba(232,237,242,0.4)", cursor: "pointer", fontSize: 20, lineHeight: 1 }}>✕</button>
+                </div>
+
+                {imgUrl && (
+                    <img src={imgUrl} alt={typeInfo?.name || typeCode}
+                        style={{ width: "100%", height: 160, objectFit: "cover", flexShrink: 0 }}
+                        onError={e => { e.target.style.display = "none" }}
+                    />
+                )}
+
+                <div style={{ padding: "12px 16px", flex: 1 }}>
+                    {(typeInfo || typeCode) && (
+                        <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>Aircraft</div>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{typeInfo?.name || typeCode}</div>
+                        </div>
+                    )}
+                    {ac.r && (
+                        <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>Registration</div>
+                            <div style={{ fontSize: 13 }}>{ac.r}</div>
+                        </div>
+                    )}
+                    {isEmergency && (
+                        <div style={{ padding: "8px 12px", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 6, marginBottom: 12 }}>
+                            <div style={{ fontSize: 11, color: "#ef4444", fontWeight: 700 }}>⚠ SQUAWK {squawk} — {squawkLabels[squawk]}</div>
+                        </div>
+                    )}
+                    <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Live Data</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                            {[
+                                ["Altitude",  altNum != null ? `${altNum.toLocaleString()} ft` : "—"],
+                                ["Speed",     ac.gs != null ? `${Math.round(ac.gs)} kts` : "—"],
+                                ["Heading",   ac.track != null ? `${Math.round(ac.track)}°` : "—"],
+                                ["Vert Rate", ac.baro_rate != null ? `${ac.baro_rate > 0 ? "+" : ""}${ac.baro_rate} fpm` : "—"],
+                            ].map(([k, v]) => (
+                                <div key={k} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 5, padding: "6px 8px" }}>
+                                    <div style={{ fontSize: 9, color: "rgba(232,237,242,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>{k}</div>
+                                    <div style={{ fontSize: 13, fontWeight: 600 }}>{v}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Flight Track</div>
+                        {trackState.icao === ac.icao && trackState.status === "ok" && (
+                            <div>
+                                <div style={{ fontSize: 11, color: "#22c55e", marginBottom: 6 }}>● {trackState.pointCount} position points</div>
+                                <div style={{ display: "flex", gap: 8 }}>
+                                    {[["#22c55e","<10k ft"],["#38bdf8","10–25k"],["#3b82f6","25–35k"],["#a855f7","35k+"]].map(([c,l]) => (
+                                        <div key={l} style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9, color: "rgba(232,237,242,0.5)" }}>
+                                            <div style={{ width: 10, height: 2, background: c, borderRadius: 1 }} />{l}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {trackState.icao === ac.icao && trackState.status === "loading" && <div style={{ fontSize: 11, color: "#38bdf8" }}>Loading track…</div>}
+                        {(trackState.icao !== ac.icao || trackState.status === "unavailable") && <div style={{ fontSize: 11, color: "rgba(232,237,242,0.3)" }}>No track data</div>}
+                    </div>
+                    {(isMil || ac.interesting) && (
+                        <div style={{ display: "flex", gap: 6 }}>
+                            {isMil && <span style={{ fontSize: 10, background: "rgba(255,68,68,0.15)", color: "#ff4444", padding: "3px 8px", borderRadius: 5, fontWeight: 700 }}>MILITARY</span>}
+                            {ac.interesting && <span style={{ fontSize: 10, background: "rgba(255,204,0,0.12)", color: "#ffcc00", padding: "3px 8px", borderRadius: 5, fontWeight: 700 }}>INTERESTING</span>}
+                        </div>
+                    )}
+                </div>
+            </div>
+        )
+        return createPortal(panel, document.body)
+    }
+
+    // ── Render ────────────────────────────────────────────────────────────────
     if (!visible || map.getZoom() < 4) return null
 
-    // Client-side viewport filter with 20% buffer to avoid pop-in near edges
-    const vpBounds = map.getBounds().pad(0.2)
+    const vpBounds       = map.getBounds().pad(0.2)
     const visibleAircraft = aircraft.filter(ac =>
         ac.lat != null && ac.lon != null && vpBounds.contains([ac.lat, ac.lon])
     )
+    // In follow mode, hide all other aircraft
+    const displayAircraft = followAc
+        ? visibleAircraft.filter(a => a.icao === followAc.icao)
+        : visibleAircraft
 
     return (
         <Fragment>
-            {/* Track polyline — dashed, coloured to match the aircraft */}
-            {trackState.status === "ok" && trackState.coords.length > 0 && (
-                <Polyline
-                    positions={trackState.coords}
-                    pathOptions={{ color: trackState.color, weight: 1.5, opacity: 0.75, dashArray: "5 5" }}
+            {/* Altitude-colored track segments */}
+            {trackState.status === "ok" && trackState.segments.map((seg, i) => (
+                <Polyline key={i} positions={seg.coords}
+                    pathOptions={{ color: seg.color, weight: 2, opacity: 0.85, dashArray: "4 3" }}
                 />
-            )}
-            {visibleAircraft.map(ac => (
+            ))}
+            {/* Aircraft markers */}
+            {displayAircraft.map(ac => (
                 <Marker
                     key={ac.icao || `${ac.lat}-${ac.lon}`}
                     position={[ac.lat, ac.lon]}
                     icon={makeAircraftIcon(ac, showLabels)}
-                    eventHandlers={{ click: () => fetchTrack(ac) }}
+                    eventHandlers={{ click: () => handleAcClick(ac) }}
+                    zIndexOffset={selectedAc?.icao === ac.icao ? 1000 : 0}
                 >
-                    <Popup>
-                        <div style={{ fontSize: 11, lineHeight: 1.7, minWidth: 180 }}>
-                            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
-                                {(ac.flight || "").trim() || ac.icao}
-                            </div>
-                            <div style={{ color: "#555" }}>
-                                {ac.icao && <div>ICAO: <strong style={{ color: "#333" }}>{ac.icao}</strong></div>}
-                                {ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) && (
-                                    <div>Altitude: <strong style={{ color: "#333" }}>{Number(ac.alt_baro).toLocaleString()} ft</strong></div>
-                                )}
-                                {typeof ac.alt_baro === "string" && isNaN(Number(ac.alt_baro)) && (
-                                    <div>Altitude: <strong style={{ color: "#333" }}>{ac.alt_baro}</strong></div>
-                                )}
-                                {ac.gs != null && <div>Ground Speed: <strong style={{ color: "#333" }}>{Math.round(ac.gs)} kts</strong></div>}
-                                {ac.track != null && <div>Heading: <strong style={{ color: "#333" }}>{Math.round(ac.track)}°</strong></div>}
-                                {ac.category && <div>Category: <strong style={{ color: "#333" }}>{ac.category}</strong></div>}
-                                {ac.type && <div>Type: <strong style={{ color: "#333" }}>{ac.type}</strong></div>}
-                            </div>
-                            {(ac.military || ac.interesting) && (
-                                <div style={{ marginTop: 8, display: "flex", gap: 5 }}>
-                                    {ac.military && (
-                                        <span style={{ fontSize: 9, background: "rgba(255,68,68,0.12)", color: "#ff4444", padding: "2px 7px", borderRadius: 4, fontWeight: 700, letterSpacing: "0.08em" }}>
-                                            MILITARY
-                                        </span>
-                                    )}
-                                    {ac.interesting && (
-                                        <span style={{ fontSize: 9, background: "rgba(255,204,0,0.12)", color: "#ffcc00", padding: "2px 7px", borderRadius: 4, fontWeight: 700, letterSpacing: "0.08em" }}>
-                                            INTERESTING
-                                        </span>
-                                    )}
-                                </div>
-                            )}
-                            {/* Track status feedback */}
-                            {trackState.icao === ac.icao && trackState.status === "loading" && (
-                                <div style={{ fontSize: 10, color: "#888", marginTop: 8, fontStyle: "italic" }}>Loading track…</div>
-                            )}
-                            {trackState.icao === ac.icao && trackState.status === "unavailable" && (
-                                <div style={{ fontSize: 10, color: "#aaa", marginTop: 8 }}>Track unavailable</div>
-                            )}
-                            {trackState.icao === ac.icao && trackState.status === "ok" && (
-                                <div
-                                    onClick={() => setTrackState({ icao: null, coords: [], status: "idle", color: "#94a3b8" })}
-                                    style={{ fontSize: 10, color: "#ef4444", cursor: "pointer", marginTop: 8 }}
-                                >
-                                    Clear track ×
-                                </div>
-                            )}
-                        </div>
-                    </Popup>
+                    {selectedAc?.icao === ac.icao && renderTooltip(ac)}
                 </Marker>
             ))}
+            {/* Portals */}
+            {renderFollowBar()}
+            {renderDetailPanel()}
         </Fragment>
     )
 })
@@ -4690,7 +5157,6 @@ export default function MapPage({
             unifiedEvents: true,
             liveTicker: false,
             infra: false,
-            airspace: false,
             news: false,
             adsb: false,
             adsbLabels: false,
@@ -4792,8 +5258,8 @@ export default function MapPage({
     }, [notificationsEnabled])
 
     const [adsbCount, setAdsbCount]             = useState(0)
-    const [adsbRefreshRate, setAdsbRefreshRate] = useState(10)   // applied rate
-    const [adsbSliderVal, setAdsbSliderVal]     = useState(10)   // displayed slider value
+    const [adsbRefreshRate, setAdsbRefreshRate] = useState(1)   // applied rate
+    const [adsbSliderVal, setAdsbSliderVal]     = useState(1)   // displayed slider value
     const [adsbLive, setAdsbLive]               = useState(false)
     const [adsbActivateKey, setAdsbActivateKey] = useState(0)
     const [sourceStatus, setSourceStatus]       = useState({})
@@ -5117,7 +5583,6 @@ export default function MapPage({
     const pipelinesLayerRef      = useRef(null)
     const cablesLayerRef         = useRef(null)
     const shippingLanesLayerRef  = useRef(null)   // OpenSeaMap tile layer
-    const airspaceLayerRef       = useRef(null)   // OpenFlightMaps airspace tile overlay
     const chokepointsLayerRef    = useRef(null)
     const heatmapLayerRef        = useRef(null)
     const eezLayerRef            = useRef(null)
@@ -5678,34 +6143,6 @@ export default function MapPage({
             }
         ).addTo(mapRef.current)
     }, [active.shippingLanes])
-
-    // ── Airspace tile overlay (Open Flightmaps / Newaya) ─────────────────────────
-    // Free, CORS-open XYZ tiles showing airspace classes, restricted zones, CTRs.
-    // URL pattern: https://nwy-tiles-api.prod.newaydata.com/tiles/{z}/{x}/{y}.png?path=latest/aero/lo
-    useEffect(() => {
-        if (!mapRef.current) return
-        if (airspaceLayerRef.current) {
-            airspaceLayerRef.current.remove()
-            airspaceLayerRef.current = null
-        }
-        if (!active.airspace) return
-        const layer = L.tileLayer(
-            "https://nwy-tiles-api.prod.newaydata.com/tiles/{z}/{x}/{y}.png?path=latest/aero/lo",
-            {
-                attribution: "© OpenFlightMaps contributors",
-                opacity: 1.0,
-                minZoom: 4,
-                maxZoom: 18,
-                maxNativeZoom: 14,
-                zIndex: 9999,
-            }
-        )
-        layer.on("tileload", () => console.log("[airspace] tile loaded OK"))
-        layer.on("tileerror", (e) => console.error("[airspace] tile error:", e.tile?.src))
-        airspaceLayerRef.current = layer
-        console.log("[airspace] adding layer to map, active.airspace=", active.airspace, "mapRef=", !!mapRef.current)
-        layer.addTo(mapRef.current)
-    }, [active.airspace])
 
     // ── Conflict zones layer ──────────────────────────────────────────────────────
     // Backend endpoint is currently stubbed (GDELT source removed). The toggle still

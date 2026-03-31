@@ -360,3 +360,15 @@ textarea::placeholder {
 .chokepoint-label::before {
     display: none !important;
 }
+
+
+/* ADS-B compact tooltip — override Leaflet defaults */
+.ac-tooltip-custom {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+.ac-tooltip-custom::before {
+    display: none !important;
+}
