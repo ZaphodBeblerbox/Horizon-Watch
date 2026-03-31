@@ -7987,7 +7987,8 @@ export default function MapPage({
                 />
 
                 {/* ── Country click — map-level PIP detection ───────────────── */}
-                <CountryClickHandler
+                {/* Suppressed during Overwatch draw mode so pointer events go to draw tool */}
+                {!overwatchActive && <CountryClickHandler
                     countriesGeo={allCountriesGeo}
                     onCountryClick={(feature, name) => {
                         setSelectedEvent(null)
@@ -8004,7 +8005,7 @@ export default function MapPage({
                             setSelectedCountryFeature(null)
                         }
                     }}
-                />
+                />}
                 {/* ── Selected country golden glow highlight ─────────────────── */}
                 {selectedCountryFeature && (
                     <GeoJSON
