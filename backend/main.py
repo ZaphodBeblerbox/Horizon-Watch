@@ -5691,7 +5691,7 @@ def _get_ort_session(model_key="dota"):
 
 def _ow_nms(boxes, scores, iou_threshold):
     """Axis-aligned NMS. boxes: (N,4) xyxy. Returns list of kept indices."""
-    import numpy as _np
+    import numpy as np
     x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
     areas = np.maximum(0, x2 - x1) * np.maximum(0, y2 - y1)
     order = scores.argsort()[::-1]
