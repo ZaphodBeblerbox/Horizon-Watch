@@ -85,7 +85,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
     const [detections,  setDetections]  = useState([])
     const [stats,       setStats]       = useState(null)
     const [error,       setError]       = useState(null)
-    const [minConf,     setMinConf]     = useState(0.25)
+    const [minConf,     setMinConf]     = useState(0.15)
     const [enhance,     setEnhance]     = useState(false)
     const [enhanced,    setEnhanced]    = useState(false)   // did the last run use AI enhance?
     const [isMobile,    setIsMobile]    = useState(() => window.innerWidth < 768)
@@ -348,7 +348,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
             }} />
             <div style={{ fontSize: 12, fontWeight: 600 }}>Overwatch analyzing…</div>
             <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)" }}>
-                {enhance ? "Fetching tiles · YOLOv8 · AI Classification" : "Fetching tiles · Running YOLOv8"}
+                {enhance ? "Fetching tiles · DOTA OBB · AI Classification" : "Fetching tiles · YOLOv8 DOTA OBB"}
             </div>
         </div>,
         document.body

@@ -5650,6 +5650,12 @@ async def api_ais_status():
 
 # ── Overwatch: satellite imagery object detection (ONNX — no torch/CUDA) ──────
 
+_OW_DOTA_CLASSES = [
+    "plane","ship","storage-tank","baseball-diamond","tennis-court",
+    "basketball-court","ground-track-field","harbor","bridge",
+    "large-vehicle","small-vehicle","helicopter","roundabout",
+    "soccer-ball-field","swimming-pool",
+]
 _OW_COCO_CLASSES = [
     "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
     "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
@@ -5663,37 +5669,48 @@ _OW_COCO_CLASSES = [
     "refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush",
 ]
 
-_ort_session      = None
+# Two sessions — DOTA OBB (satellite, default) and COCO (fallback)
+_ort_sessions     = {}
 _ort_session_lock = threading.Lock()
 
-def _get_ort_session():
-    global _ort_session
+def _get_ort_session(model_key="dota"):
     with _ort_session_lock:
-        if _ort_session is not None:
-            return _ort_session
+        if model_key in _ort_sessions:
+            return _ort_sessions[model_key]
         try:
             import onnxruntime as ort
-            model_path = str(BASE_DIR / "yolov8n.onnx")
-            _ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-            print(f"[overwatch] ONNX session loaded from {model_path}")
+            fname = "yolov8n-obb.onnx" if model_key == "dota" else "yolov8n.onnx"
+            path  = str(BASE_DIR / fname)
+            sess  = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+            _ort_sessions[model_key] = sess
+            print(f"[overwatch] loaded {fname}")
         except Exception as e:
-            print(f"[overwatch] ONNX load failed: {e}")
-        return _ort_session
+            print(f"[overwatch] session load failed ({model_key}): {e}")
+            _ort_sessions[model_key] = None
+        return _ort_sessions[model_key]
 
 def _ow_nms(boxes, scores, iou_threshold):
-    import numpy as np
+    """Axis-aligned NMS. boxes: (N,4) xyxy. Returns list of kept indices."""
+    import numpy as _np
     x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-    areas = (x2 - x1) * (y2 - y1)
+    areas = np.maximum(0, x2 - x1) * np.maximum(0, y2 - y1)
     order = scores.argsort()[::-1]
-    keep = []
+    keep  = []
     while order.size > 0:
         i = order[0]; keep.append(i)
         xx1 = np.maximum(x1[i], x1[order[1:]]); yy1 = np.maximum(y1[i], y1[order[1:]])
         xx2 = np.minimum(x2[i], x2[order[1:]]); yy2 = np.minimum(y2[i], y2[order[1:]])
-        w = np.maximum(0, xx2 - xx1); h = np.maximum(0, yy2 - yy1)
-        iou = (w * h) / (areas[i] + areas[order[1:]] - w * h + 1e-6)
+        inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
+        iou   = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
         order = order[np.where(iou <= iou_threshold)[0] + 1]
     return keep
+
+def _ow_obb_corners(cx, cy, w, h, angle):
+    """Compute 4 corner points of a rotated box. All values in pixel space."""
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    hw, hh = w / 2, h / 2
+    offsets = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+    return [(cx + dx * cos_a - dy * sin_a, cy + dx * sin_a + dy * cos_a) for dx, dy in offsets]
 
 def _ow_lat_to_tile_y_frac(lat, zoom):
     lat_rad = math.radians(lat)
@@ -5702,13 +5719,6 @@ def _ow_lat_to_tile_y_frac(lat, zoom):
 def _ow_lon_to_tile_x_frac(lon, zoom):
     return (lon + 180.0) / 360.0 * (2 ** zoom)
 
-def _ow_tile_frac_to_lat(tile_y_frac, zoom):
-    n = 2 ** zoom
-    return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * tile_y_frac / n))))
-
-def _ow_tile_frac_to_lon(tile_x_frac, zoom):
-    return tile_x_frac / (2 ** zoom) * 360.0 - 180.0
-
 def _fetch_esri_tile(z, x, y):
     from PIL import Image
     url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -5716,15 +5726,19 @@ def _fetch_esri_tile(z, x, y):
     with urllib.request.urlopen(req, timeout=12) as r:
         return Image.open(_io.BytesIO(r.read())).convert("RGB")
 
-def _run_overwatch_inference(bounds, zoom, confidence, enhance=False):
-    """Blocking: fetch Esri tiles, stitch, crop, run ONNX YOLOv8n, return geo detections."""
-    import concurrent.futures, numpy as np
+def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key="dota"):
+    """Blocking: fetch Esri tiles, stitch, crop, run ONNX, return geo detections."""
+    import concurrent.futures
+    import numpy as np
     from PIL import Image
 
     north, south, east, west = bounds["north"], bounds["south"], bounds["east"], bounds["west"]
     TILE_SZ  = 256
-    INPUT_SZ = 640
+    is_dota  = (model_key == "dota")
+    INPUT_SZ = 1024 if is_dota else 640
+    classes  = _OW_DOTA_CLASSES if is_dota else _OW_COCO_CLASSES
 
+    # ── Tile fetch ────────────────────────────────────────────────────────────
     x_min = int(_ow_lon_to_tile_x_frac(west,  zoom))
     x_max = int(_ow_lon_to_tile_x_frac(east,  zoom))
     y_min = int(_ow_lat_to_tile_y_frac(north, zoom))
@@ -5734,15 +5748,15 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False):
 
     tile_count = (x_max - x_min + 1) * (y_max - y_min + 1)
     if tile_count > 64:
-        return {"error": f"Area too large ({tile_count} tiles). Zoom in further before running Overwatch.", "count": 0, "detections": []}
+        return {"error": f"Area too large ({tile_count} tiles). Zoom in further.", "count": 0, "detections": []}
 
     stitch_w = (x_max - x_min + 1) * TILE_SZ
     stitch_h = (y_max - y_min + 1) * TILE_SZ
     stitched  = Image.new("RGB", (stitch_w, stitch_h))
 
-    tile_coords = [(x, y) for x in range(x_min, x_max + 1) for y in range(y_min, y_max + 1)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        futs = {pool.submit(_fetch_esri_tile, zoom, x, y): (x, y) for x, y in tile_coords}
+        futs = {pool.submit(_fetch_esri_tile, zoom, x, y): (x, y)
+                for x in range(x_min, x_max + 1) for y in range(y_min, y_max + 1)}
         for fut, (x, y) in futs.items():
             try:
                 stitched.paste(fut.result(timeout=15), ((x - x_min) * TILE_SZ, (y - y_min) * TILE_SZ))
@@ -5759,65 +5773,107 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False):
 
     cropped = stitched.crop((cx1, cy1, cx2, cy2))
     img_w, img_h = cropped.size
-    print(f"[overwatch] crop → {img_w}×{img_h}px zoom={zoom}")
+    print(f"[overwatch] crop → {img_w}×{img_h}px zoom={zoom} model={model_key}")
 
-    session = _get_ort_session()
+    # ── ONNX inference ────────────────────────────────────────────────────────
+    session = _get_ort_session(model_key)
     if session is None:
-        return {"error": "ONNX model unavailable — yolov8n.onnx not found or onnxruntime not installed", "count": 0, "detections": []}
+        return {"error": f"ONNX session unavailable (model={model_key})", "count": 0, "detections": []}
 
-    # Letterbox resize to INPUT_SZ × INPUT_SZ
-    scale   = min(INPUT_SZ / img_w, INPUT_SZ / img_h)
-    new_w   = int(img_w * scale); new_h = int(img_h * scale)
-    pad_x   = (INPUT_SZ - new_w) // 2; pad_y = (INPUT_SZ - new_h) // 2
-    padded  = Image.new("RGB", (INPUT_SZ, INPUT_SZ), (114, 114, 114))
+    scale  = min(INPUT_SZ / img_w, INPUT_SZ / img_h)
+    new_w  = int(img_w * scale); new_h = int(img_h * scale)
+    pad_x  = (INPUT_SZ - new_w) // 2; pad_y = (INPUT_SZ - new_h) // 2
+    padded = Image.new("RGB", (INPUT_SZ, INPUT_SZ), (114, 114, 114))
     padded.paste(cropped.resize((new_w, new_h), Image.BILINEAR), (pad_x, pad_y))
 
-    img_arr = np.array(padded).astype(np.float32) / 255.0
+    img_arr = np.array(padded, dtype=np.float32) / 255.0
     img_arr = np.transpose(img_arr, (2, 0, 1))[np.newaxis]   # NCHW
 
     try:
-        raw = session.run(None, {session.get_inputs()[0].name: img_arr})[0]  # (1, 84, 8400)
+        raw = session.run(None, {session.get_inputs()[0].name: img_arr})[0]
     except Exception as e:
         return {"error": f"Inference failed: {e}", "count": 0, "detections": []}
 
-    preds        = raw[0].T                           # (8400, 84)
-    boxes_xywh   = preds[:, :4]
-    class_scores = preds[:, 4:]
-    max_scores   = class_scores.max(axis=1)
-    class_ids    = class_scores.argmax(axis=1)
+    # ── Postprocess ───────────────────────────────────────────────────────────
+    # DOTA OBB: raw shape (1, 20, 21504) → rows: cx cy w h angle cls×15
+    # COCO:     raw shape (1, 84, 8400)  → rows: cx cy w h cls×80
+    preds = raw[0].T                          # (N_anchors, channels)
+    n_cls = len(classes)
 
-    mask = max_scores > confidence
-    boxes_xywh = boxes_xywh[mask]; max_scores = max_scores[mask]; class_ids = class_ids[mask]
+    if is_dota:
+        # channels: 4 box + 1 angle + 15 classes = 20
+        boxes_xywh   = preds[:, :4]
+        angles        = preds[:, 4]
+        class_scores  = preds[:, 5:]          # (N, 15)
+    else:
+        boxes_xywh   = preds[:, :4]
+        angles        = np.zeros(len(preds))
+        class_scores  = preds[:, 4:]          # (N, 80)
+
+    max_scores = class_scores.max(axis=1)
+    class_ids  = class_scores.argmax(axis=1)
+
+    mask       = max_scores > confidence
+    boxes_xywh = boxes_xywh[mask]
+    max_scores = max_scores[mask]
+    class_ids  = class_ids[mask]
+    angles     = angles[mask]
+
+    # pixel → geo helpers (in cropped image coordinate space)
+    def px_lat(py): return float(north - (py / img_h) * (north - south))
+    def px_lon(px): return float(west  + (px / img_w) * (east  - west))
+
+    def unpad(v_padded, pad, sc, limit):
+        return float(min(max((v_padded - pad) / sc, 0.0), limit))
 
     detections = []
     if len(boxes_xywh):
-        bx = np.zeros_like(boxes_xywh)
-        bx[:, 0] = boxes_xywh[:, 0] - boxes_xywh[:, 2] / 2   # x1
-        bx[:, 1] = boxes_xywh[:, 1] - boxes_xywh[:, 3] / 2   # y1
-        bx[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2] / 2   # x2
-        bx[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3] / 2   # y2
-        # Un-letterbox → original cropped image pixels
-        bx[:, 0] = np.clip((bx[:, 0] - pad_x) / scale, 0, img_w)
-        bx[:, 1] = np.clip((bx[:, 1] - pad_y) / scale, 0, img_h)
-        bx[:, 2] = np.clip((bx[:, 2] - pad_x) / scale, 0, img_w)
-        bx[:, 3] = np.clip((bx[:, 3] - pad_y) / scale, 0, img_h)
+        # Build axis-aligned boxes for NMS (use bbox of rotated corners)
+        aa_boxes = np.zeros((len(boxes_xywh), 4))
+        for i in range(len(boxes_xywh)):
+            cx, cy, w, h = boxes_xywh[i]
+            if is_dota:
+                pts = _ow_obb_corners(cx, cy, w, h, float(angles[i]))
+                xs  = [(unpad(p[0], pad_x, scale, img_w)) for p in pts]
+                ys  = [(unpad(p[1], pad_y, scale, img_h)) for p in pts]
+                aa_boxes[i] = [min(xs), min(ys), max(xs), max(ys)]
+            else:
+                aa_boxes[i] = [
+                    unpad(cx - w/2, pad_x, scale, img_w),
+                    unpad(cy - h/2, pad_y, scale, img_h),
+                    unpad(cx + w/2, pad_x, scale, img_w),
+                    unpad(cy + h/2, pad_y, scale, img_h),
+                ]
 
-        for idx in _ow_nms(bx, max_scores, 0.45):
-            x1, y1, x2, y2 = bx[idx]
+        for idx in _ow_nms(aa_boxes, max_scores, 0.45):
             cls_id = int(class_ids[idx])
-            # Pixel → geo (linear interpolation within the cropped bounds)
-            def px_lat(py): return north - (py / img_h) * (north - south)
-            def px_lon(px): return west  + (px / img_w) * (east  - west)
+            conf   = round(float(max_scores[idx]), 3)
+            cx, cy, w, h = boxes_xywh[idx]
+
+            if is_dota:
+                pts    = _ow_obb_corners(cx, cy, w, h, float(angles[idx]))
+                xs     = [unpad(p[0], pad_x, scale, img_w) for p in pts]
+                ys     = [unpad(p[1], pad_y, scale, img_h) for p in pts]
+                corners_geo = [[px_lat(y), px_lon(x)] for x, y in zip(xs, ys)]
+                center_geo  = [px_lat(sum(ys)/4), px_lon(sum(xs)/4)]
+                px_box      = [min(xs), min(ys), max(xs), max(ys)]
+            else:
+                x1, y1 = aa_boxes[idx, 0], aa_boxes[idx, 1]
+                x2, y2 = aa_boxes[idx, 2], aa_boxes[idx, 3]
+                corners_geo = [[px_lat(y1), px_lon(x1)], [px_lat(y1), px_lon(x2)],
+                               [px_lat(y2), px_lon(x2)], [px_lat(y2), px_lon(x1)]]
+                center_geo  = [px_lat((y1+y2)/2), px_lon((x1+x2)/2)]
+                px_box      = [float(x1), float(y1), float(x2), float(y2)]
+
             detections.append({
-                "class":      _OW_COCO_CLASSES[cls_id] if cls_id < len(_OW_COCO_CLASSES) else "unknown",
-                "confidence": round(float(max_scores[idx]), 3),
-                "center":     [px_lat((y1 + y2) / 2), px_lon((x1 + x2) / 2)],
-                "corners":    [[px_lat(y1), px_lon(x1)], [px_lat(y1), px_lon(x2)],
-                               [px_lat(y2), px_lon(x2)], [px_lat(y2), px_lon(x1)]],
-                "_px":        [float(x1), float(y1), float(x2), float(y2)],
+                "class":      classes[cls_id] if cls_id < n_cls else "unknown",
+                "confidence": conf,
+                "center":     center_geo,
+                "corners":    corners_geo,
+                "_px":        px_box,
             })
 
-    # ── Optional Claude vision enhance pass ──────────────────────────────────
+    # ── Optional Claude enhance pass ──────────────────────────────────────────
     if enhance and detections:
         import base64 as _b64
         _ant_key = os.getenv("ANTHROPIC_API_KEY")
@@ -5848,34 +5904,41 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False):
                 print(f"[overwatch] enhance error: {e_enh}")
                 for det in detections: det.pop("_px", None)
         else:
-            print("[overwatch] ANTHROPIC_API_KEY not set — skipping enhance")
             for det in detections: det.pop("_px", None)
     else:
         for det in detections: det.pop("_px", None)
 
-    print(f"[overwatch] {len(detections)} detections (ONNX, conf≥{confidence}, enhance={enhance})")
-    return {"detections": detections, "count": len(detections), "zoom_used": zoom,
-            "model": "onnx-coco", "enhanced": enhance}
+    print(f"[overwatch] {len(detections)} detections (model={model_key}, conf≥{confidence})")
+    return {
+        "detections": detections,
+        "count":      len(detections),
+        "zoom_used":  int(zoom),
+        "model":      f"onnx-{model_key}",
+        "enhanced":   bool(enhance),
+    }
 
 @app.post("/api/overwatch/detect")
 async def overwatch_detect(request: Request):
-    """Fetch Esri satellite tiles for bounds, run ONNX YOLOv8n, return geo detections."""
+    """Fetch Esri satellite tiles, run ONNX YOLOv8 (DOTA OBB default), return geo detections."""
     try:
         body       = await request.json()
         bounds     = body.get("bounds")
         zoom       = int(body.get("zoom", 15))
-        confidence = float(body.get("confidence", 0.25))
+        confidence = float(body.get("confidence", 0.15))   # lower default for aerial
         enhance    = bool(body.get("enhance", False))
+        model_key  = "coco" if body.get("model") == "coco" else "dota"
         if not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
-            return JSONResponse({"error": "bounds {north, south, east, west} required", "count": 0, "detections": []}, status_code=200)
+            return JSONResponse({"error": "bounds {north,south,east,west} required", "count": 0, "detections": []})
         zoom = max(10, min(zoom, 18))
         import functools
         loop   = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, functools.partial(_run_overwatch_inference, bounds, zoom, confidence, enhance))
-        return JSONResponse(result, status_code=200)
+        result = await loop.run_in_executor(
+            None, functools.partial(_run_overwatch_inference, bounds, zoom, confidence, enhance, model_key)
+        )
+        return JSONResponse(result)
     except Exception as e:
         print(f"[overwatch] endpoint error: {e}")
-        return JSONResponse({"error": str(e), "count": 0, "detections": []}, status_code=200)
+        return JSONResponse({"error": str(e), "count": 0, "detections": []})
 
 
 @app.on_event("startup")
