@@ -1108,6 +1108,8 @@ export default function App() {
                     notifUnread={unreadCount}
                     onToggleNotif={() => setNotifOpen(v => !v)}
                     onOpenMenu={() => setMobileDrawerOpen(true)}
+                    overwatchActive={overwatchActive}
+                    onToggleOverwatch={() => setOverwatchActive(v => !v)}
                 />
             )}
 

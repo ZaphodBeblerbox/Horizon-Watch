@@ -8,6 +8,8 @@ export default function BottomNav({
     notifUnread,
     onToggleNotif,
     onOpenMenu,
+    overwatchActive,
+    onToggleOverwatch,
 }) {
     const items = [
         {
@@ -85,6 +87,23 @@ export default function BottomNav({
             ),
             onClick: onToggleNotif,
             active: false,
+        },
+        {
+            id:    "overwatch",
+            label: "Overwatch",
+            icon:  (
+                <svg width="20" height="20" viewBox="0 0 18 18" fill="none" stroke="currentColor"
+                    strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 9C1 9 4 3 9 3C14 3 17 9 17 9C17 9 14 15 9 15C4 15 1 9 1 9Z"/>
+                    <circle cx="9" cy="9" r="2.5"/>
+                    <line x1="9"  y1="1"  x2="9"  y2="3"/>
+                    <line x1="9"  y1="15" x2="9"  y2="17"/>
+                    <line x1="1"  y1="9"  x2="3"  y2="9"/>
+                    <line x1="15" y1="9"  x2="17" y2="9"/>
+                </svg>
+            ),
+            onClick: onToggleOverwatch,
+            active: !!overwatchActive,
         },
         {
             id:    "menu",
