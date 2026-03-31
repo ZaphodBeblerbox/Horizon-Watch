@@ -136,6 +136,7 @@ export default function App() {
     const [currentUser,  setCurrentUser]  = useState(null)
     const [showAdmin,         setShowAdmin]         = useState(false)
     const [showChat,          setShowChat]          = useState(false)
+    const [overwatchActive,   setOverwatchActive]   = useState(false)
     const [showStartupModal,  setShowStartupModal]  = useState(false)
     const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
     const [showStartupChoice, setShowStartupChoice] = useState(false)
@@ -853,6 +854,8 @@ export default function App() {
                         onToggleAdmin={() => setShowAdmin(v => !v)}
                         chatOpen={showChat}
                         onToggleChat={() => setShowChat(v => !v)}
+                        overwatchActive={overwatchActive}
+                        onToggleOverwatch={() => setOverwatchActive(v => !v)}
                     />
                 )}
 
@@ -911,6 +914,8 @@ export default function App() {
                         focusRegions={focusRegions}
                         onPanelOpen={() => setRightPanel(null)}
                         externalPanelOpen={rightPanel !== null}
+                        overwatchActive={overwatchActive}
+                        onOverwatchExit={() => setOverwatchActive(false)}
                     />
                 </div>
 

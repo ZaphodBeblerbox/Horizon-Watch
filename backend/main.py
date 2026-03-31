@@ -5482,6 +5482,8 @@ _AISSTREAM_KEY   = os.getenv("AISSTREAM_API_KEY", "")
 _AIS_VESSELS:    dict = {}   # keyed by MMSI string
 _AIS_LOCK        = threading.Lock()
 _AIS_STATUS      = {"connected": False, "error": None, "vessel_count": 0, "last_msg": None, "last_poll": None}
+_AIS_MSG_COUNTER = 0         # total messages received this connection
+_AIS_LAST_LOG_T  = 0.0      # time of last periodic log
 
 _AIS_BBOXES = [
     [[15, 45], [32, 65]],    # Persian Gulf / Arabian Sea
@@ -5511,7 +5513,7 @@ def _ais_ship_type(type_code: int) -> str:
 
 async def _ais_websocket_loop():
     """Persistent WebSocket connection to aisstream.io. Reconnects on disconnect."""
-    global _AIS_STATUS
+    global _AIS_STATUS, _AIS_MSG_COUNTER, _AIS_LAST_LOG_T
     if not _AISSTREAM_KEY:
         _AIS_STATUS = {"connected": False, "error": "AISSTREAM_API_KEY not set", "vessel_count": 0, "last_msg": None}
         print("[ais] AISSTREAM_API_KEY not configured — live AIS disabled")
@@ -5530,24 +5532,34 @@ async def _ais_websocket_loop():
     })
     AIS_URL = "wss://stream.aisstream.io/v0/stream"
     AIS_TTL = 300  # 5 minutes
+    reconnect_delay = 5  # start short, back off on repeat failures
 
     while True:
         try:
-            print("[ais] connecting to aisstream.io …")
-            async with _ws.connect(AIS_URL, ping_interval=30, ping_timeout=20) as ws:
+            print(f"[ais] connecting to aisstream.io (bboxes: {len(_AIS_BBOXES)} regions) …")
+            async with _ws.connect(AIS_URL, ping_interval=20, ping_timeout=15, open_timeout=15) as ws:
                 await ws.send(subscribe_msg)
                 _AIS_STATUS["connected"] = True
                 _AIS_STATUS["error"]     = None
-                print("[ais] connected and subscribed")
+                _AIS_MSG_COUNTER = 0
+                _AIS_LAST_LOG_T  = time.time()
+                reconnect_delay  = 5  # reset backoff on successful connect
+                print("[ais] connected and subscribed to aisstream.io")
                 async for raw in ws:
                     try:
-                        msg  = _json.loads(raw)
+                        msg   = _json.loads(raw)
                         mtype = msg.get("MessageType", "")
                         meta  = msg.get("MetaData", {})
                         mmsi  = str(meta.get("MMSI", ""))
                         if not mmsi:
                             continue
                         now = time.time()
+                        _AIS_MSG_COUNTER += 1
+                        # Log throughput every 60 s
+                        if now - _AIS_LAST_LOG_T >= 60:
+                            print(f"[ais] {_AIS_MSG_COUNTER} msgs in last 60s — {len(_AIS_VESSELS)} vessels tracked")
+                            _AIS_MSG_COUNTER = 0
+                            _AIS_LAST_LOG_T  = now
                         with _AIS_LOCK:
                             vessel = _AIS_VESSELS.get(mmsi, {"mmsi": mmsi})
                             if mtype == "PositionReport":
@@ -5584,8 +5596,9 @@ async def _ais_websocket_loop():
         except Exception as ex:
             _AIS_STATUS["connected"] = False
             _AIS_STATUS["error"]     = str(ex)
-            print(f"[ais] disconnected: {ex} — reconnecting in 15s")
-            await asyncio.sleep(15)
+            print(f"[ais] disconnected: {ex!r} — reconnecting in {reconnect_delay}s")
+            await asyncio.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, 60)  # exponential backoff, cap 60s
 
         # Evict stale entries every reconnect cycle
         now = time.time()
@@ -5633,6 +5646,182 @@ async def api_ais_status():
     with _AIS_LOCK:
         count = len(_AIS_VESSELS)
     return {**_AIS_STATUS, "vessel_count": count, "key_configured": bool(_AISSTREAM_KEY)}
+
+
+# ── Overwatch: satellite imagery object detection (YOLOv8) ───────────────────
+_overwatch_model      = None
+_overwatch_model_lock = threading.Lock()
+_overwatch_model_name = None   # which model was actually loaded
+
+def _get_overwatch_model():
+    global _overwatch_model, _overwatch_model_name
+    with _overwatch_model_lock:
+        if _overwatch_model is not None:
+            return _overwatch_model, _overwatch_model_name
+        try:
+            from ultralytics import YOLO as _YOLO
+            # Try DOTA OBB model first (aerial imagery, 15 classes)
+            try:
+                m = _YOLO("yolov8n-obb.pt")
+                _overwatch_model = m
+                _overwatch_model_name = "dota-obb"
+                print("[overwatch] YOLOv8n-OBB (DOTA) model loaded")
+            except Exception as e1:
+                print(f"[overwatch] OBB model failed ({e1}), trying COCO fallback")
+                m = _YOLO("yolov8n.pt")
+                _overwatch_model = m
+                _overwatch_model_name = "coco"
+                print("[overwatch] YOLOv8n COCO model loaded (fallback)")
+        except ImportError:
+            print("[overwatch] ultralytics not installed — pip install ultralytics")
+        return _overwatch_model, _overwatch_model_name
+
+def _ow_lat_to_tile_y_frac(lat, zoom):
+    import math
+    lat_rad = math.radians(lat)
+    return (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * (2 ** zoom)
+
+def _ow_lon_to_tile_x_frac(lon, zoom):
+    return (lon + 180.0) / 360.0 * (2 ** zoom)
+
+def _ow_tile_frac_to_lat(tile_y_frac, zoom):
+    import math
+    n = 2 ** zoom
+    merc_y = tile_y_frac / n
+    return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * merc_y))))
+
+def _ow_tile_frac_to_lon(tile_x_frac, zoom):
+    return tile_x_frac / (2 ** zoom) * 360.0 - 180.0
+
+def _fetch_esri_tile(z, x, y):
+    from PIL import Image
+    import io as _io
+    url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 HorizonWatch/1.0"})
+    with urllib.request.urlopen(req, timeout=12) as r:
+        return Image.open(_io.BytesIO(r.read())).convert("RGB")
+
+def _run_overwatch_inference(bounds, zoom, confidence):
+    """Blocking: fetch Esri tiles, stitch, crop, run YOLO, return detections."""
+    import math, concurrent.futures
+    from PIL import Image
+    import io as _io
+
+    north, south, east, west = bounds["north"], bounds["south"], bounds["east"], bounds["west"]
+    TILE_SZ = 256
+
+    # Tile grid covering the requested bounds
+    x_min = int(_ow_lon_to_tile_x_frac(west,  zoom))
+    x_max = int(_ow_lon_to_tile_x_frac(east,  zoom))
+    y_min = int(_ow_lat_to_tile_y_frac(north, zoom))   # north → smaller y
+    y_max = int(_ow_lat_to_tile_y_frac(south, zoom))   # south → larger y
+    x_min, x_max = min(x_min, x_max), max(x_min, x_max)
+    y_min, y_max = min(y_min, y_max), max(y_min, y_max)
+
+    tile_count = (x_max - x_min + 1) * (y_max - y_min + 1)
+    if tile_count > 64:
+        return {"error": f"Area too large ({tile_count} tiles). Zoom in further before running Overwatch."}
+
+    stitch_w = (x_max - x_min + 1) * TILE_SZ
+    stitch_h = (y_max - y_min + 1) * TILE_SZ
+    stitched  = Image.new("RGB", (stitch_w, stitch_h))
+
+    tile_coords = [(x, y) for x in range(x_min, x_max + 1) for y in range(y_min, y_max + 1)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        futs = {pool.submit(_fetch_esri_tile, zoom, x, y): (x, y) for x, y in tile_coords}
+        for fut, (x, y) in futs.items():
+            try:
+                tile = fut.result(timeout=15)
+                stitched.paste(tile, ((x - x_min) * TILE_SZ, (y - y_min) * TILE_SZ))
+            except Exception as e:
+                print(f"[overwatch] tile {zoom}/{x}/{y} failed: {e}")
+
+    # Pixel positions of the requested bounds within the stitched image
+    def lon_to_px(lon): return (_ow_lon_to_tile_x_frac(lon, zoom) - x_min) * TILE_SZ
+    def lat_to_py(lat): return (_ow_lat_to_tile_y_frac(lat, zoom) - y_min) * TILE_SZ
+
+    cx1, cx2 = int(max(0, lon_to_px(west))),  int(min(stitch_w, lon_to_px(east)))
+    cy1, cy2 = int(max(0, lat_to_py(north))), int(min(stitch_h, lat_to_py(south)))
+    if cx2 <= cx1 or cy2 <= cy1:
+        return {"error": "Crop region is empty — check bounds."}
+
+    cropped = stitched.crop((cx1, cy1, cx2, cy2))
+    img_w, img_h = cropped.size
+    print(f"[overwatch] stitched={stitch_w}×{stitch_h} crop=({cx1},{cy1},{cx2},{cy2}) → {img_w}×{img_h}px, zoom={zoom}")
+
+    model, model_name = _get_overwatch_model()
+    if model is None:
+        return {"error": "ML model unavailable — pip install ultralytics"}
+
+    # Pixel → geo helpers (in cropped space, accounting for crop offset)
+    def px_to_lon(px): return _ow_tile_frac_to_lon(x_min + (cx1 + px) / TILE_SZ, zoom)
+    def py_to_lat(py): return _ow_tile_frac_to_lat(y_min + (cy1 + py) / TILE_SZ, zoom)
+
+    try:
+        results = model(cropped, conf=confidence, verbose=False)
+    except Exception as e:
+        return {"error": f"Inference failed: {e}"}
+
+    detections = []
+    for result in results:
+        # OBB model (DOTA)
+        if hasattr(result, "obb") and result.obb is not None and len(result.obb):
+            for i in range(len(result.obb)):
+                pts = result.obb[i].xyxyxyxy[0].tolist()   # [[x,y], [x,y], [x,y], [x,y]]
+                cls_id = int(result.obb[i].cls[0])
+                conf   = float(result.obb[i].conf[0])
+                corners = [[py_to_lat(pt[1]), px_to_lon(pt[0])] for pt in pts]
+                cx_px = sum(pt[0] for pt in pts) / 4
+                cy_px = sum(pt[1] for pt in pts) / 4
+                detections.append({
+                    "class":      model.names[cls_id],
+                    "confidence": round(conf, 3),
+                    "center":     [py_to_lat(cy_px), px_to_lon(cx_px)],
+                    "corners":    corners,
+                })
+        # COCO fallback (regular bounding boxes)
+        elif result.boxes is not None and len(result.boxes):
+            for box in result.boxes:
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                cls_id = int(box.cls[0])
+                conf   = float(box.conf[0])
+                corners = [
+                    [py_to_lat(y1), px_to_lon(x1)],
+                    [py_to_lat(y1), px_to_lon(x2)],
+                    [py_to_lat(y2), px_to_lon(x2)],
+                    [py_to_lat(y2), px_to_lon(x1)],
+                ]
+                detections.append({
+                    "class":      model.names[cls_id],
+                    "confidence": round(conf, 3),
+                    "center":     [py_to_lat((y1+y2)/2), px_to_lon((x1+x2)/2)],
+                    "corners":    corners,
+                })
+
+    print(f"[overwatch] {len(detections)} detections (model={model_name}, conf≥{confidence})")
+    return {
+        "detections":  detections,
+        "count":       len(detections),
+        "image_size":  [img_w, img_h],
+        "zoom_used":   zoom,
+        "model":       model_name,
+    }
+
+@app.post("/api/overwatch/detect")
+async def overwatch_detect(request: Request):
+    """Fetch Esri satellite tiles for bounds, run YOLOv8 object detection, return geo detections."""
+    body       = await request.json()
+    bounds     = body.get("bounds")
+    zoom       = int(body.get("zoom", 15))
+    confidence = float(body.get("confidence", 0.25))
+    if not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
+        raise HTTPException(400, "bounds {north, south, east, west} required")
+    zoom = max(10, min(zoom, 18))
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _run_overwatch_inference, bounds, zoom, confidence)
+    if "error" in result and result.get("count", 0) == 0:
+        return JSONResponse(result, status_code=200)   # return error as 200 so frontend can read it
+    return result
 
 
 @app.on_event("startup")

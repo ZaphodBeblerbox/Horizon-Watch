@@ -286,6 +286,10 @@ textarea::placeholder {
     50% { opacity: 0.5; }
 }
 
+@keyframes ow-spin {
+    to { transform: rotate(360deg); }
+}
+
 /* ── Shipping lane tooltip ───────────────────────────────────────────────── */
 .shipping-tooltip {
     background: transparent !important;
@@ -368,7 +372,14 @@ textarea::placeholder {
     border: none !important;
     box-shadow: none !important;
     padding: 0 !important;
+    z-index: 10000 !important;
+    pointer-events: auto !important;
 }
 .ac-tooltip-custom::before {
     display: none !important;
+}
+
+/* Ensure ADS-B tooltip pane is always on top */
+.leaflet-tooltip-pane .ac-tooltip-custom {
+    z-index: 10000 !important;
 }

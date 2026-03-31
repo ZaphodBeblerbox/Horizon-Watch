@@ -19,6 +19,7 @@ import DraggablePanel from "./DraggablePanel.jsx"
 import LayersPanel from "./LayersPanel.jsx"
 import API_BASE from "../apiBase.js"
 import EventDetailPanel from "./EventDetailPanel.jsx"
+import OverwatchLayer from "./OverwatchLayer.jsx"
 
 const API = API_BASE
 
@@ -1494,21 +1495,67 @@ const AIRLINES = {
   'RSF': 'Royal Saudi AF',     'QAF': 'Qatar Emiri AF',         'EGF': 'Egyptian Air Force',
   'RCH': 'USAF / AMC',         'AIO': 'USAF Special Ops',       'CNV': 'US Navy',
   'PAT': 'USAF',               'NAVY': 'US Navy',               'USAF': 'US Air Force',
+  // North America
+  'JBU': 'JetBlue',            'NKS': 'Spirit Airlines',        'FFT': 'Frontier Airlines',
+  'ASA': 'Alaska Airlines',    'HAL': 'Hawaiian Airlines',      'WJA': 'WestJet',
+  'TSC': 'Air Transat',        'SKW': 'SkyWest Airlines',       'ENY': 'Envoy Air',
+  'RPA': 'Republic Airways',
+  // China
+  'DKH': 'Juneyao Airlines',   'CDG': 'Shandong Airlines',      'CHH': 'Hainan Airlines',
+  'SHJ': 'Shenzhen Airlines',  'CSC': 'Sichuan Airlines',       'CXA': 'Xiamen Airlines',
+  // Japan
+  'APJ': 'Peach Aviation',     'SJO': 'Star Flyer',
+  // Africa
+  'RWD': 'RwandAir',           'KQA': 'Kenya Airways',          'NMB': 'Air Namibia',
+  // South Asia
+  'ALK': 'SriLankan Airlines',
+  // Caucasus / CIS
+  'AZG': 'Silk Way Airlines',
+  // Caribbean
+  'BWA': 'BWIA',
+  // Cape Verde
+  'TCV': 'TACV',
+  // Turkey (THY already above)
+  'OHY': 'Onur Air',           'AJT': 'AJet',
+  // Greece
+  'AEE': 'Aegean Airlines',    'BMS': 'Air Mediterranean',
+  // Germany (cargo)
+  'GEC': 'Lufthansa Cargo',    'BCS': 'European Air Transport',
 }
 
-const _AC_IMG_CACHE = {}  // typeCode → Wikipedia thumbnail URL or null
+const _AC_IMG_CACHE = {}  // cacheKey → Wikipedia thumbnail URL or null
 
-function _fetchAcTypeImage(typeCode) {
-    if (!typeCode) return Promise.resolve(null)
+// Build a cache key from (optional) airline name + typeCode
+function _acImgCacheKey(typeCode, airlineName) {
+    return airlineName ? `${airlineName}__${typeCode}` : typeCode
+}
+
+// Try airline-specific image first ("Emirates Airbus A380"), then generic type, then info.image slug
+async function _fetchAcImage(typeCode, airlineName) {
+    if (!typeCode) return null
     const code = typeCode.toUpperCase()
     const info = AIRCRAFT_TYPES[code]
-    if (!info) return Promise.resolve(null)
-    if (_AC_IMG_CACHE[code] !== undefined) return Promise.resolve(_AC_IMG_CACHE[code])
-    _AC_IMG_CACHE[code] = null  // mark fetching to prevent duplicate requests
-    return fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(info.image)}`)
-        .then(r => r.json())
-        .then(d => { _AC_IMG_CACHE[code] = d.thumbnail?.source || null; return _AC_IMG_CACHE[code] })
-        .catch(() => { _AC_IMG_CACHE[code] = null; return null })
+    if (!info) return null
+    const cacheKey = _acImgCacheKey(code, airlineName)
+    if (_AC_IMG_CACHE[cacheKey] !== undefined) return _AC_IMG_CACHE[cacheKey]
+    _AC_IMG_CACHE[cacheKey] = null  // mark as in-flight to prevent duplicate requests
+
+    const typeName = info.name
+    const terms = airlineName
+        ? [`${airlineName} ${typeName}`, typeName, info.image]
+        : [typeName, info.image]
+
+    for (const term of terms) {
+        try {
+            const r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(term.replace(/ /g, '_'))}`)
+            const d = await r.json()
+            if (d.thumbnail?.source) {
+                _AC_IMG_CACHE[cacheKey] = d.thumbnail.source
+                return d.thumbnail.source
+            }
+        } catch { continue }
+    }
+    return null
 }
 
 // ── Conflict glow icon ────────────────────────────────────────────────────────
@@ -2226,9 +2273,11 @@ const AircraftLayer = memo(function AircraftLayer({
     const [selectedAc, setSelectedAc] = useState(null)   // compact tooltip
     const [detailAc,   setDetailAc]   = useState(null)   // full detail panel
     const [followAc,   setFollowAc]   = useState(null)   // followed aircraft (latest snapshot)
-    const [acImgUrl,   setAcImgUrl]   = useState({})     // typeCode → Wikipedia thumbnail url
-    const intervalRef   = useRef(null)
-    const followIcaoRef = useRef(null)                   // ref so panTo effect never goes stale
+    const [acImgUrl,   setAcImgUrl]   = useState({})     // cacheKey → Wikipedia thumbnail url
+    const [acTypeDesc, setAcTypeDesc] = useState({})     // typeCode → Wikipedia extract text
+    const intervalRef    = useRef(null)
+    const followIcaoRef  = useRef(null)                  // ref so panTo effect never goes stale
+    const trackHistoryRef = useRef({})                   // icao → [{lat, lon, alt, ts}]
 
     // ── 500ms polling ────────────────────────────────────────────────────────
     useEffect(() => {
@@ -2251,6 +2300,15 @@ const AircraftLayer = memo(function AircraftLayer({
                     const list = data.aircraft || []
                     setAircraft(list)
                     onCount(list.length)
+                    // Accumulate track history per aircraft (capped at 300 pts, ~2.5 min at 500ms)
+                    const now = Date.now()
+                    list.forEach(ac => {
+                        if (ac.lat == null || ac.lon == null) return
+                        const hist = trackHistoryRef.current[ac.icao] || []
+                        hist.push({ lat: ac.lat, lon: ac.lon, alt: ac.alt_baro, ts: now })
+                        if (hist.length > 300) hist.splice(0, hist.length - 300)
+                        trackHistoryRef.current[ac.icao] = hist
+                    })
                 })
                 .catch(err => console.error("[adsb] fetch error:", err))
         }
@@ -2272,14 +2330,18 @@ const AircraftLayer = memo(function AircraftLayer({
 
     // ── Click handler ─────────────────────────────────────────────────────────
     const handleAcClick = useCallback((ac) => {
-        // Prefetch aircraft type image
-        const typeCode = (ac.t || ac.type || "").toUpperCase()
+        // Fetch aircraft image (airline-specific first, then generic)
+        const typeCode     = (ac.t || ac.type || "").toUpperCase()
+        const callsign0    = (ac.flight || "").trim()
+        const airlinePrefix = callsign0.slice(0, 3).toUpperCase()
+        const airlineName  = AIRLINES[airlinePrefix] || null
         if (typeCode) {
-            if (_AC_IMG_CACHE[typeCode] !== undefined) {
-                if (_AC_IMG_CACHE[typeCode]) setAcImgUrl(prev => ({ ...prev, [typeCode]: _AC_IMG_CACHE[typeCode] }))
+            const cacheKey = _acImgCacheKey(typeCode, airlineName)
+            if (_AC_IMG_CACHE[cacheKey] !== undefined) {
+                if (_AC_IMG_CACHE[cacheKey]) setAcImgUrl(prev => ({ ...prev, [cacheKey]: _AC_IMG_CACHE[cacheKey] }))
             } else {
-                _fetchAcTypeImage(typeCode).then(url => {
-                    if (url) setAcImgUrl(prev => ({ ...prev, [typeCode]: url }))
+                _fetchAcImage(typeCode, airlineName).then(url => {
+                    if (url) setAcImgUrl(prev => ({ ...prev, [cacheKey]: url }))
                 })
             }
         }
@@ -2290,38 +2352,17 @@ const AircraftLayer = memo(function AircraftLayer({
             return
         }
 
-        // First click → show tooltip + load track
+        // First click → show tooltip + build track from accumulated history
         setSelectedAc(ac)
         setDetailAc(null)
 
-        setTrackState({ icao: ac.icao, segments: [], status: "loading", pointCount: 0 })
-        console.log("[adsb track] fetching for", ac.icao)
-        fetch(`https://api.adsb.lol/v2/icao/${ac.icao}/track`)
-            .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-            .then(data => {
-                console.log("[adsb track] response keys:", Object.keys(data))
-                const rawPos = data.positions || data.path || data.track || []
-                console.log("[adsb track] raw position count:", rawPos.length)
-                const points = rawPos
-                    .map(p => {
-                        if (Array.isArray(p)) {
-                            // format: [timestamp, lat, lon, alt_baro, ...]
-                            return (p[1] != null && p[2] != null) ? { lat: p[1], lon: p[2], alt: p[3] ?? null } : null
-                        }
-                        return (p.lat != null && p.lon != null) ? { lat: p.lat, lon: p.lon, alt: p.alt_baro ?? p.alt ?? null } : null
-                    })
-                    .filter(Boolean)
-                console.log("[adsb track] parsed points:", points.length)
-                if (points.length > 0) {
-                    setTrackState({ icao: ac.icao, segments: _segmentTrack(points), status: "ok", pointCount: points.length })
-                } else {
-                    setTrackState({ icao: ac.icao, segments: [], status: "unavailable", pointCount: 0 })
-                }
-            })
-            .catch(err => {
-                console.error("[adsb track] error:", err)
-                setTrackState(s => ({ ...s, status: "unavailable" }))
-            })
+        const hist = trackHistoryRef.current[ac.icao] || []
+        console.log("[adsb track] history for", ac.icao, ":", hist.length, "pts")
+        if (hist.length >= 2) {
+            setTrackState({ icao: ac.icao, segments: _segmentTrack(hist), status: "ok", pointCount: hist.length })
+        } else {
+            setTrackState({ icao: ac.icao, segments: [], status: "unavailable", pointCount: 0 })
+        }
     }, [selectedAc])
 
     // ── Tooltip renderer ──────────────────────────────────────────────────────
@@ -2331,7 +2372,7 @@ const AircraftLayer = memo(function AircraftLayer({
         const airline     = AIRLINES[icaoPrefix] || null
         const typeCode    = (ac.t || ac.type || "").toUpperCase()
         const typeInfo    = AIRCRAFT_TYPES[typeCode] || null
-        const imgUrl      = acImgUrl[typeCode] || null
+        const imgUrl      = acImgUrl[_acImgCacheKey(typeCode, airline)] || acImgUrl[typeCode] || null
         const altNum      = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
         const altText     = altNum != null ? `${altNum.toLocaleString()} ft` : null
         const spdText     = ac.gs != null ? `${Math.round(ac.gs)} kts` : null
@@ -2340,12 +2381,12 @@ const AircraftLayer = memo(function AircraftLayer({
         const isMil       = ac.military || Object.prototype.hasOwnProperty.call(AIRLINES, icaoPrefix + "_MIL")
 
         return (
-            <Tooltip permanent interactive direction="top" offset={[0, -12]} className="ac-tooltip-custom">
+            <Tooltip permanent interactive direction="top" offset={[0, -12]} className="ac-tooltip-custom" pane="tooltipPane">
                 <div style={{
                     background: "rgba(6,13,26,0.96)", border: "1px solid rgba(56,189,248,0.35)",
                     borderRadius: 8, padding: "10px 12px", minWidth: 210, maxWidth: 270,
                     fontFamily: "Inter,-apple-system,sans-serif", boxShadow: "0 4px 24px rgba(0,0,0,0.65)",
-                    fontSize: 12, color: "#e8edf2",
+                    fontSize: 12, color: "#e8edf2", position: "relative", zIndex: 10000,
                 }}>
                     {imgUrl && (
                         <img src={imgUrl} alt={typeInfo?.name || typeCode}
@@ -2497,6 +2538,24 @@ const AircraftLayer = memo(function AircraftLayer({
         return createPortal(toast, document.body)
     }
 
+    // ── Fetch Wikipedia text when detail panel opens ───────────────────────────
+    useEffect(() => {
+        if (!detailAc) return
+        const typeCode = (detailAc.t || detailAc.type || "").toUpperCase()
+        const info = AIRCRAFT_TYPES[typeCode]
+        if (!info || acTypeDesc[typeCode] !== undefined) return
+        setAcTypeDesc(prev => ({ ...prev, [typeCode]: null }))  // mark as fetching
+        fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(info.name.replace(/ /g, '_'))}`)
+            .then(r => r.json())
+            .then(d => {
+                if (d.extract) {
+                    const sentences = d.extract.split(/(?<=[.!?])\s+/)
+                    setAcTypeDesc(prev => ({ ...prev, [typeCode]: sentences.slice(0, 3).join(' ') }))
+                }
+            })
+            .catch(() => {})
+    }, [detailAc]) // eslint-disable-line react-hooks/exhaustive-deps
+
     // ── Full detail panel ─────────────────────────────────────────────────────
     const renderDetailPanel = () => {
         if (!detailAc) return null
@@ -2506,7 +2565,8 @@ const AircraftLayer = memo(function AircraftLayer({
         const airline     = AIRLINES[icaoPrefix] || null
         const typeCode    = (ac.t || ac.type || "").toUpperCase()
         const typeInfo    = AIRCRAFT_TYPES[typeCode] || null
-        const imgUrl      = acImgUrl[typeCode] || null
+        const imgUrl      = acImgUrl[_acImgCacheKey(typeCode, airline)] || acImgUrl[typeCode] || null
+        const typeDesc    = acTypeDesc[typeCode] || null
         const altNum      = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
         const squawk      = ac.squawk
         const isEmergency = squawk === "7500" || squawk === "7600" || squawk === "7700"
@@ -2539,9 +2599,14 @@ const AircraftLayer = memo(function AircraftLayer({
 
                 <div style={{ padding: "12px 16px", flex: 1 }}>
                     {(typeInfo || typeCode) && (
-                        <div style={{ marginBottom: 12 }}>
+                        <div style={{ marginBottom: typeDesc ? 6 : 12 }}>
                             <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>Aircraft</div>
                             <div style={{ fontSize: 13, fontWeight: 600 }}>{typeInfo?.name || typeCode}</div>
+                        </div>
+                    )}
+                    {typeDesc && (
+                        <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.55, marginBottom: 12 }}>
+                            {typeDesc}
                         </div>
                     )}
                     {ac.r && (
@@ -2627,7 +2692,7 @@ const AircraftLayer = memo(function AircraftLayer({
                     position={[ac.lat, ac.lon]}
                     icon={makeAircraftIcon(ac, showLabels)}
                     eventHandlers={{ click: () => handleAcClick(ac) }}
-                    zIndexOffset={selectedAc?.icao === ac.icao ? 1000 : 0}
+                    zIndexOffset={selectedAc?.icao === ac.icao ? 5000 : 0}
                 >
                     {selectedAc?.icao === ac.icao && renderTooltip(ac)}
                 </Marker>
@@ -5123,6 +5188,8 @@ export default function MapPage({
     externalPanelOpen = false, // bool — when true, close map's fixed panels
     currentUser      = null,  // authenticated user object — for superadmin-only features
     initialMapStyle  = "satellite", // "satellite" | "street" | "terrain" — from preferences
+    overwatchActive  = false, // bool — Overwatch ML detection mode
+    onOverwatchExit  = null,  // () => void — called when user exits Overwatch
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -8577,6 +8644,12 @@ export default function MapPage({
                         )
                     })
                 }
+
+                {/* ── Overwatch — satellite ML object detection ────────────── */}
+                <OverwatchLayer
+                    active={overwatchActive}
+                    onExit={onOverwatchExit}
+                />
 
             </MapContainer>
 

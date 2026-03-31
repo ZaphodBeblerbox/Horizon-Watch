@@ -85,6 +85,19 @@ function IconHealth() {
     )
 }
 
+function IconOverwatch() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 9C1 9 4 3 9 3C14 3 17 9 17 9C17 9 14 15 9 15C4 15 1 9 1 9Z"/>
+            <circle cx="9" cy="9" r="2.5"/>
+            <line x1="9" y1="1"  x2="9" y2="3"/>
+            <line x1="9" y1="15" x2="9" y2="17"/>
+            <line x1="1"  y1="9" x2="3"  y2="9"/>
+            <line x1="15" y1="9" x2="17" y2="9"/>
+        </svg>
+    )
+}
+
 function IconTV() {
     return (
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -171,23 +184,25 @@ function IconSoundOff() {
 export default function Sidebar({
     rightPanel,
     onRightPanel,
-    activeTabType  = "map",
+    activeTabType    = "map",
     onOpenTab,
     profile,
-    currentUser    = null,
-    alertCount     = 0,
-    budgetPct      = null,
-    notifOpen      = false,
-    notifUnread    = 0,
+    currentUser      = null,
+    alertCount       = 0,
+    budgetPct        = null,
+    notifOpen        = false,
+    notifUnread      = 0,
     onToggleNotif,
-    briefingUnread = false,
-    soundMuted     = false,
+    briefingUnread   = false,
+    soundMuted       = false,
     onToggleSound,
-    tvOpen         = false,
+    tvOpen           = false,
     onToggleTV,
     onToggleAdmin,
-    chatOpen       = false,
+    chatOpen         = false,
     onToggleChat,
+    overwatchActive  = false,
+    onToggleOverwatch,
 }) {
     const isAdmin    = currentUser?.role === "admin" || currentUser?.role === "super_admin"
     const isAnalyst  = currentUser?.role === "analyst" || isAdmin
@@ -207,7 +222,8 @@ export default function Sidebar({
                        (id === "news"       && activeTabType === "news")       ||
                        (id === "briefing"   && activeTabType === "briefing")   ||
                        (id === "notif"      && notifOpen)                      ||
-                       (id === "chat"       && chatOpen)
+                       (id === "chat"       && chatOpen)                       ||
+                       (id === "overwatch"  && overwatchActive)
         if (active)         return "var(--akili-accent)"
         if (hovered === id) return "var(--akili-text-secondary)"
         return "var(--akili-text-muted)"
@@ -369,6 +385,32 @@ export default function Sidebar({
 
                 {isAnalyst && btn("layers",     <IconLayers />)}
                 {btn("alerts",     <IconAlerts />, alertCount)}
+                {/* Overwatch — satellite ML detection */}
+                {onToggleOverwatch && (
+                    <button
+                        onMouseEnter={() => setHovered("overwatch")}
+                        onMouseLeave={() => setHovered(null)}
+                        onClick={onToggleOverwatch}
+                        title="Overwatch — Satellite Object Detection"
+                        style={{
+                            position:       "relative",
+                            width:          48,
+                            height:         40,
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            background:     overwatchActive ? "rgba(56,189,248,0.08)" : "none",
+                            border:         "none",
+                            borderLeft:     overwatchActive ? "2px solid #38bdf8" : "2px solid transparent",
+                            cursor:         "pointer",
+                            color:          overwatchActive ? "#38bdf8" : iconColor("overwatch"),
+                            transition:     "color 0.12s, background 0.12s",
+                            flexShrink:     0,
+                        }}
+                    >
+                        <IconOverwatch />
+                    </button>
+                )}
                 {isAdmin   && btn("situations", <IconSituations />)}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}
                 {isAdmin   && btn("health", <IconHealth />, null, null)}
