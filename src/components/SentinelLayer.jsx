@@ -12,7 +12,7 @@ const GLASS = {
 }
 
 // ── SentinelLayer (inside MapContainer) ──────────────────────────────────────
-const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff }) {
+const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOverlay = false }) {
     const map = useMap()
 
     // mode: "idle" | "drawing" | "ready" | "loading" | "loaded"
@@ -334,7 +334,7 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff }) {
     )
 
     // ── Leaflet image overlay (rendered inside MapContainer) ──────────────────
-    const imageOverlayEl = imageData && (
+    const imageOverlayEl = imageData && !hideOverlay && (
         <ImageOverlay
             url={imageData.src}
             bounds={[[imageData.bounds.south, imageData.bounds.west], [imageData.bounds.north, imageData.bounds.east]]}

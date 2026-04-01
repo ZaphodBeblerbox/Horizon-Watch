@@ -8649,13 +8649,12 @@ export default function MapPage({
                     })
                 }
 
-                {/* ── Sentinel-2 imagery overlay — hidden while Overwatch active ─ */}
-                {!overwatchActive && (
-                    <SentinelLayer
-                        active={active.sentinel2}
-                        onToggleOff={() => toggle("sentinel2")}
-                    />
-                )}
+                {/* ── Sentinel-2 imagery overlay ───────────────────────────── */}
+                <SentinelLayer
+                    active={active.sentinel2}
+                    onToggleOff={() => toggle("sentinel2")}
+                    hideOverlay={overwatchActive}
+                />
 
                 {/* ── Overwatch — satellite ML object detection ────────────── */}
                 <OverwatchLayer
