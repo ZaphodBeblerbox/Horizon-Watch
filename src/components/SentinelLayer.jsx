@@ -185,17 +185,27 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff }) {
 
     if (!active) return null
 
-    // ── Draw overlay (crosshair + rubber-band rect) ───────────────────────────
+    // ── Apply crosshair cursor directly to map container during draw ─────────
+    useEffect(() => {
+        const container = map.getContainer()
+        if (mode === "drawing") {
+            container.style.cursor = "crosshair"
+        } else {
+            container.style.cursor = ""
+        }
+        return () => { container.style.cursor = "" }
+    }, [mode, map])
+
+    // ── Draw overlay — pointer-events: none so events reach the map ──────────
     const drawOverlayEl = (mode === "drawing") && createPortal(
         <div
             style={{
                 position: "fixed", inset: 0,
                 zIndex: 2000,
-                cursor: "crosshair",
+                pointerEvents: "none",
                 userSelect: "none",
                 WebkitUserSelect: "none",
             }}
-            // passthrough: pointer events are already handled via container listeners
         >
             {drawRect && drawRect.w > 4 && drawRect.h > 4 && (
                 <div style={{
