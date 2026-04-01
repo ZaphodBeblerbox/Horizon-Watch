@@ -8000,8 +8000,8 @@ export default function MapPage({
                 />
 
                 {/* ── Country click — map-level PIP detection ───────────────── */}
-                {/* Suppressed during Overwatch draw mode so pointer events go to draw tool */}
-                {!overwatchActive && <CountryClickHandler
+                {/* Suppressed during Overwatch/Sentinel draw mode so pointer events go to draw tool */}
+                {!overwatchActive && !active.sentinel2 && <CountryClickHandler
                     countriesGeo={allCountriesGeo}
                     onCountryClick={(feature, name) => {
                         setSelectedEvent(null)
@@ -8649,11 +8649,13 @@ export default function MapPage({
                     })
                 }
 
-                {/* ── Sentinel-2 imagery overlay ───────────────────────────── */}
-                <SentinelLayer
-                    active={active.sentinel2}
-                    onToggleOff={() => toggle("sentinel2")}
-                />
+                {/* ── Sentinel-2 imagery overlay — hidden while Overwatch active ─ */}
+                {!overwatchActive && (
+                    <SentinelLayer
+                        active={active.sentinel2}
+                        onToggleOff={() => toggle("sentinel2")}
+                    />
+                )}
 
                 {/* ── Overwatch — satellite ML object detection ────────────── */}
                 <OverwatchLayer
