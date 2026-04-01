@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, memo } from "react"
 import { createPortal } from "react-dom"
-import { useMap, ImageOverlay, Rectangle } from "react-leaflet"
+import { useMap, ImageOverlay, Rectangle, Pane } from "react-leaflet"
 import API_BASE from "../apiBase.js"
 
 const GLASS = {
@@ -338,14 +338,16 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOve
         document.body
     )
 
-    // ── Leaflet image overlay (rendered inside MapContainer) ──────────────────
+    // ── Leaflet image overlay — in a pane below overlayPane (400) so detection
+    //    polygons from Overwatch always render on top
     const imageOverlayEl = imageData && !hideOverlay && (
-        <ImageOverlay
-            url={imageData.src}
-            bounds={[[imageData.bounds.south, imageData.bounds.west], [imageData.bounds.north, imageData.bounds.east]]}
-            opacity={0.95}
-            zIndex={500}
-        />
+        <Pane name="sentinelImagePane" style={{ zIndex: 350 }}>
+            <ImageOverlay
+                url={imageData.src}
+                bounds={[[imageData.bounds.south, imageData.bounds.west], [imageData.bounds.north, imageData.bounds.east]]}
+                opacity={0.95}
+            />
+        </Pane>
     )
 
     // ── Drawn-region rectangle on map ─────────────────────────────────────────
