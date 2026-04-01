@@ -218,27 +218,6 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff }) {
                     boxSizing: "border-box",
                 }} />
             )}
-            {/* Instruction banner */}
-            {!drawRect && (
-                <div style={{
-                    position: "absolute", top: "50%", left: "50%",
-                    transform: "translate(-50%, -50%)",
-                    pointerEvents: "none",
-                    ...GLASS,
-                    border: "1px solid rgba(34,211,238,0.3)",
-                    borderRadius: 10,
-                    padding: "12px 18px",
-                    fontSize: 12, fontWeight: 600,
-                    color: "#22d3ee",
-                    textAlign: "center",
-                    boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
-                }}>
-                    Draw a region for Sentinel-2 imagery
-                    <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", marginTop: 4, fontWeight: 400 }}>
-                        Click and drag
-                    </div>
-                </div>
-            )}
         </div>,
         document.body
     )
