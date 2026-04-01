@@ -91,8 +91,11 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
     const [analysis,    setAnalysis]    = useState(null)    // Claude intelligence assessment
     const [analyzing,   setAnalyzing]   = useState(false)   // analysis loading
     const [isMobile,    setIsMobile]    = useState(() => window.innerWidth < 768)
+    const [longWait,    setLongWait]    = useState(false)
     // Slide-in animation state for mobile sheet
     const [sheetVisible, setSheetVisible] = useState(false)
+
+    const longWaitTimerRef = useRef(null)
 
     const drawStartRef   = useRef(null)
     const isDrawingRef   = useRef(false)
@@ -211,6 +214,9 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
         setStats(null)
         setEnhanced(false)
         setAnalysis(null)
+        setLongWait(false)
+        clearTimeout(longWaitTimerRef.current)
+        longWaitTimerRef.current = setTimeout(() => setLongWait(true), 8000)
         // Always fetch at zoom 18 for maximum resolution regardless of current view
         const zoom = 18
         try {
@@ -220,6 +226,8 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
                 body: JSON.stringify({ bounds, zoom, confidence: minConf, enhance }),
             })
             const data = await res.json()
+            clearTimeout(longWaitTimerRef.current)
+            setLongWait(false)
             if (data.error) {
                 setError(data.error)
                 setMode("drawing")
@@ -235,6 +243,8 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
             setStats({ total: data.count, displayed: dets.length, counts, zoom: data.zoom_used, model: data.model })
             setMode("results")
         } catch (err) {
+            clearTimeout(longWaitTimerRef.current)
+            setLongWait(false)
             setError(`Request failed: ${err.message}`)
             setMode("drawing")
             setDrawRect(null)
@@ -374,9 +384,14 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
                 borderRadius: "50%",
                 animation: "ow-spin 0.8s linear infinite",
             }} />
-            <div style={{ fontSize: 12, fontWeight: 600 }}>Overwatch analyzing…</div>
-            <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)" }}>
-                {enhance ? "Fetching tiles · DOTA OBB · AI Classification" : "Fetching tiles · YOLOv8 DOTA OBB"}
+            <div style={{ fontSize: 12, fontWeight: 600 }}>
+                {longWait ? "Analyzing large area…" : "Overwatch analyzing…"}
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textAlign: "center" }}>
+                {longWait
+                    ? "Tiled inference running · this may take 30–60 s"
+                    : enhance ? "Fetching tiles · DOTA OBB · AI Classification" : "Fetching tiles · YOLOv8 DOTA OBB"
+                }
             </div>
         </div>,
         document.body

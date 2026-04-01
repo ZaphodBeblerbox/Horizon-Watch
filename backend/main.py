@@ -5747,14 +5747,14 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     y_min, y_max = min(y_min, y_max), max(y_min, y_max)
 
     tile_count = (x_max - x_min + 1) * (y_max - y_min + 1)
-    if tile_count > 64:
-        return {"error": f"Area too large ({tile_count} tiles). Zoom in further.", "count": 0, "detections": []}
+    if tile_count > 400:
+        return {"error": f"Area too large ({tile_count} tiles). Zoom in or draw a smaller region.", "count": 0, "detections": []}
 
     stitch_w = (x_max - x_min + 1) * TILE_SZ
     stitch_h = (y_max - y_min + 1) * TILE_SZ
     stitched  = Image.new("RGB", (stitch_w, stitch_h))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
         futs = {pool.submit(_fetch_esri_tile, zoom, x, y): (x, y)
                 for x in range(x_min, x_max + 1) for y in range(y_min, y_max + 1)}
         for fut, (x, y) in futs.items():
@@ -5775,98 +5775,119 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     img_w, img_h = cropped.size
     print(f"[overwatch] crop → {img_w}×{img_h}px zoom={zoom} model={model_key}")
 
-    # ── ONNX inference ────────────────────────────────────────────────────────
+    # ── Tiled ONNX inference ──────────────────────────────────────────────────
     session = _get_ort_session(model_key)
     if session is None:
         return {"error": f"ONNX session unavailable (model={model_key})", "count": 0, "detections": []}
 
-    scale  = min(INPUT_SZ / img_w, INPUT_SZ / img_h)
-    new_w  = int(img_w * scale); new_h = int(img_h * scale)
-    pad_x  = (INPUT_SZ - new_w) // 2; pad_y = (INPUT_SZ - new_h) // 2
-    padded = Image.new("RGB", (INPUT_SZ, INPUT_SZ), (114, 114, 114))
-    padded.paste(cropped.resize((new_w, new_h), Image.BILINEAR), (pad_x, pad_y))
+    n_cls   = len(classes)
+    OVERLAP = 100
+    STRIDE  = INPUT_SZ - OVERLAP
 
-    img_arr = np.array(padded, dtype=np.float32) / 255.0
-    img_arr = np.transpose(img_arr, (2, 0, 1))[np.newaxis]   # NCHW
+    def _tile_starts(dim):
+        if dim <= INPUT_SZ:
+            return [0]
+        starts = list(range(0, dim - INPUT_SZ, STRIDE))
+        if starts[-1] + INPUT_SZ < dim:
+            starts.append(dim - INPUT_SZ)
+        return starts
 
-    try:
-        raw = session.run(None, {session.get_inputs()[0].name: img_arr})[0]
-    except Exception as e:
-        return {"error": f"Inference failed: {e}", "count": 0, "detections": []}
+    xs_starts = _tile_starts(img_w)
+    ys_starts = _tile_starts(img_h)
+    print(f"[overwatch] tiled: {len(xs_starts)}×{len(ys_starts)}={len(xs_starts)*len(ys_starts)} inference tiles on {img_w}×{img_h}px")
 
-    # ── Postprocess ───────────────────────────────────────────────────────────
-    # DOTA OBB: raw shape (1, 20, 21504) → rows: cx cy w h angle cls×15
-    # COCO:     raw shape (1, 84, 8400)  → rows: cx cy w h cls×80
-    preds = raw[0].T                          # (N_anchors, channels)
-    n_cls = len(classes)
-
-    if is_dota:
-        # Confirmed output layout for yolov8n-obb.onnx (opset12, simplify=True):
-        # ch0-ch3: cx,cy,w,h (decoded pixel coords)
-        # ch4-ch18: 15 DOTA class scores (sigmoid already applied, range 0-1)
-        # ch19: angle in radians
-        boxes_xywh   = preds[:, :4]
-        class_scores  = preds[:, 4:19]        # (N, 15) — NOT 5:
-        angles        = preds[:, 19]           # radians — NOT ch4
-    else:
-        boxes_xywh   = preds[:, :4]
-        angles        = np.zeros(len(preds))
-        class_scores  = preds[:, 4:]          # (N, 80)
-
-    max_scores = class_scores.max(axis=1)
-    class_ids  = class_scores.argmax(axis=1)
-
-    mask       = max_scores > confidence
-    boxes_xywh = boxes_xywh[mask]
-    max_scores = max_scores[mask]
-    class_ids  = class_ids[mask]
-    angles     = angles[mask]
-
-    # pixel → geo helpers (in cropped image coordinate space)
+    # pixel → geo helpers (full cropped image coordinate space)
     def px_lat(py): return float(north - (py / img_h) * (north - south))
     def px_lon(px): return float(west  + (px / img_w) * (east  - west))
 
-    def unpad(v_padded, pad, sc, limit):
-        return float(min(max((v_padded - pad) / sc, 0.0), limit))
+    def _unpad(v, pad, sc, lim):
+        return float(min(max((v - pad) / sc, 0.0), lim))
 
+    all_aa_boxes   = []   # [x1,y1,x2,y2] in full-image pixels — for NMS
+    all_scores     = []
+    all_class_ids  = []
+    all_corners_px = []   # list of [(x,y)×4] in full-image pixels — for geo conversion
+
+    for ty in ys_starts:
+        for tx in xs_starts:
+            tw = min(INPUT_SZ, img_w - tx)
+            th = min(INPUT_SZ, img_h - ty)
+            tile = cropped.crop((tx, ty, tx + tw, ty + th))
+
+            sc_t = min(INPUT_SZ / tw, INPUT_SZ / th)
+            nw_t = int(tw * sc_t); nh_t = int(th * sc_t)
+            px_t = (INPUT_SZ - nw_t) // 2; py_t = (INPUT_SZ - nh_t) // 2
+            pad_tile = Image.new("RGB", (INPUT_SZ, INPUT_SZ), (114, 114, 114))
+            pad_tile.paste(tile.resize((nw_t, nh_t), Image.BILINEAR), (px_t, py_t))
+
+            arr_t = np.array(pad_tile, dtype=np.float32) / 255.0
+            arr_t = np.transpose(arr_t, (2, 0, 1))[np.newaxis]
+            del pad_tile, tile
+
+            try:
+                raw_t = session.run(None, {session.get_inputs()[0].name: arr_t})[0]
+            except Exception as e:
+                print(f"[overwatch] tile ({tx},{ty}) failed: {e}")
+                del arr_t
+                continue
+            del arr_t
+
+            pr_t = raw_t[0].T
+            del raw_t
+            if is_dota:
+                bxy_t = pr_t[:, :4]; sc_cls = pr_t[:, 4:19]; ang_t = pr_t[:, 19]
+            else:
+                bxy_t = pr_t[:, :4]; sc_cls = pr_t[:, 4:]; ang_t = np.zeros(len(pr_t))
+
+            ms_t = sc_cls.max(axis=1); ci_t = sc_cls.argmax(axis=1)
+            ok   = ms_t > confidence
+            if not ok.any():
+                del pr_t
+                continue
+
+            bxy_ok = bxy_t[ok]; ms_ok = ms_t[ok]; ci_ok = ci_t[ok]; ang_ok = ang_t[ok]
+            del pr_t
+
+            for i in range(len(bxy_ok)):
+                cx_p, cy_p, w_p, h_p = bxy_ok[i]
+                angle = float(ang_ok[i])
+                if is_dota:
+                    pts_lb = _ow_obb_corners(cx_p, cy_p, w_p, h_p, angle)
+                    corners_full = [
+                        (_unpad(p[0], px_t, sc_t, tw) + tx,
+                         _unpad(p[1], py_t, sc_t, th) + ty)
+                        for p in pts_lb
+                    ]
+                    xs_f = [p[0] for p in corners_full]
+                    ys_f = [p[1] for p in corners_full]
+                    aa   = [min(xs_f), min(ys_f), max(xs_f), max(ys_f)]
+                else:
+                    x1_f = _unpad(cx_p - w_p/2, px_t, sc_t, tw) + tx
+                    y1_f = _unpad(cy_p - h_p/2, py_t, sc_t, th) + ty
+                    x2_f = _unpad(cx_p + w_p/2, px_t, sc_t, tw) + tx
+                    y2_f = _unpad(cy_p + h_p/2, py_t, sc_t, th) + ty
+                    aa   = [x1_f, y1_f, x2_f, y2_f]
+                    corners_full = [(x1_f, y1_f), (x2_f, y1_f), (x2_f, y2_f), (x1_f, y2_f)]
+                all_aa_boxes.append(aa)
+                all_scores.append(float(ms_ok[i]))
+                all_class_ids.append(int(ci_ok[i]))
+                all_corners_px.append(corners_full)
+
+    # ── Global NMS across all tiles ───────────────────────────────────────────
     detections = []
-    if len(boxes_xywh):
-        # Build axis-aligned boxes for NMS (use bbox of rotated corners)
-        aa_boxes = np.zeros((len(boxes_xywh), 4))
-        for i in range(len(boxes_xywh)):
-            cx, cy, w, h = boxes_xywh[i]
-            if is_dota:
-                pts = _ow_obb_corners(cx, cy, w, h, float(angles[i]))
-                xs  = [(unpad(p[0], pad_x, scale, img_w)) for p in pts]
-                ys  = [(unpad(p[1], pad_y, scale, img_h)) for p in pts]
-                aa_boxes[i] = [min(xs), min(ys), max(xs), max(ys)]
-            else:
-                aa_boxes[i] = [
-                    unpad(cx - w/2, pad_x, scale, img_w),
-                    unpad(cy - h/2, pad_y, scale, img_h),
-                    unpad(cx + w/2, pad_x, scale, img_w),
-                    unpad(cy + h/2, pad_y, scale, img_h),
-                ]
+    if all_aa_boxes:
+        aa_arr = np.array(all_aa_boxes, dtype=np.float32)
+        sc_arr = np.array(all_scores,   dtype=np.float32)
 
-        for idx in _ow_nms(aa_boxes, max_scores, 0.45):
-            cls_id = int(class_ids[idx])
-            conf   = round(float(max_scores[idx]), 3)
-            cx, cy, w, h = boxes_xywh[idx]
-
-            if is_dota:
-                pts    = _ow_obb_corners(cx, cy, w, h, float(angles[idx]))
-                xs     = [unpad(p[0], pad_x, scale, img_w) for p in pts]
-                ys     = [unpad(p[1], pad_y, scale, img_h) for p in pts]
-                corners_geo = [[px_lat(y), px_lon(x)] for x, y in zip(xs, ys)]
-                center_geo  = [px_lat(sum(ys)/4), px_lon(sum(xs)/4)]
-                px_box      = [min(xs), min(ys), max(xs), max(ys)]
-            else:
-                x1, y1 = aa_boxes[idx, 0], aa_boxes[idx, 1]
-                x2, y2 = aa_boxes[idx, 2], aa_boxes[idx, 3]
-                corners_geo = [[px_lat(y1), px_lon(x1)], [px_lat(y1), px_lon(x2)],
-                               [px_lat(y2), px_lon(x2)], [px_lat(y2), px_lon(x1)]]
-                center_geo  = [px_lat((y1+y2)/2), px_lon((x1+x2)/2)]
-                px_box      = [float(x1), float(y1), float(x2), float(y2)]
+        for idx in _ow_nms(aa_arr, sc_arr, 0.45):
+            cls_id  = all_class_ids[idx]
+            conf    = round(all_scores[idx], 3)
+            corners = all_corners_px[idx]
+            xs_f    = [p[0] for p in corners]
+            ys_f    = [p[1] for p in corners]
+            corners_geo = [[px_lat(y), px_lon(x)] for x, y in corners]
+            center_geo  = [px_lat(sum(ys_f) / 4), px_lon(sum(xs_f) / 4)]
+            px_box      = [min(xs_f), min(ys_f), max(xs_f), max(ys_f)]
 
             detections.append({
                 "class":      classes[cls_id] if cls_id < n_cls else "unknown",
@@ -5919,7 +5940,7 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
 
     # Free memory explicitly
     import gc
-    del stitched, cropped, padded, img_arr, raw, preds
+    del stitched, cropped, all_aa_boxes, all_corners_px, all_scores, all_class_ids
     gc.collect()
 
     return {
