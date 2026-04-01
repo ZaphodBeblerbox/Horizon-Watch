@@ -5789,6 +5789,13 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
     import numpy as np
     from PIL import Image
 
+    is_dota  = (model_key == "dota")
+    INPUT_SZ = 1024 if is_dota else 640
+    classes  = _OW_DOTA_CLASSES if is_dota else _OW_COCO_CLASSES
+
+    north, south, east, west = bounds["north"], bounds["south"], bounds["east"], bounds["west"]
+    img_w, img_h = cropped.size
+
     session = _get_ort_session(model_key)
     if session is None:
         return {"error": f"ONNX session unavailable (model={model_key})", "count": 0, "detections": []}
