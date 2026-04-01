@@ -5189,8 +5189,10 @@ export default function MapPage({
     externalPanelOpen = false, // bool — when true, close map's fixed panels
     currentUser      = null,  // authenticated user object — for superadmin-only features
     initialMapStyle  = "satellite", // "satellite" | "street" | "terrain" — from preferences
-    overwatchActive  = false, // bool — Overwatch ML detection mode
-    onOverwatchExit  = null,  // () => void — called when user exits Overwatch
+    overwatchActive   = false, // bool — Overwatch ML detection mode
+    onOverwatchExit   = null,  // () => void — called when user exits Overwatch
+    sentinel2Active   = false, // bool — Sentinel-2 draw mode (lifted for mobile nav)
+    onSentinel2Exit   = null,  // () => void — called when Sentinel-2 is toggled off externally
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -7348,6 +7350,9 @@ export default function MapPage({
                 setSelectedSat(null)
                 setSatTLEs([])
             }
+            if (id === "sentinel2" && !next) {
+                onSentinel2Exit?.()
+            }
             // User interaction always wins over contextual auto-activation.
             manualLayerOverridesRef.current[id] = next
             delete autoActivatedRef.current[id]
@@ -7355,7 +7360,13 @@ export default function MapPage({
             const nextActive = { ...a, [id]: next }
             return nextActive
         })
-    }, [])  // eslint-disable-line
+    }, [onSentinel2Exit])  // eslint-disable-line
+
+    // Sync sentinel2Active prop (from mobile nav) into internal layer state
+    useEffect(() => {
+        setActive(a => ({ ...a, sentinel2: sentinel2Active }))
+    }, [sentinel2Active])
+
     const isAvailable = (w)  => zoom >= w.minZoom
 
     const toggleInfra = useCallback((cat) => {

@@ -4,12 +4,13 @@ export default function BottomNav({
     activeTabType,
     onSwitchToMap,
     onSwitchToNews,
-    onSwitchToBriefing,
     notifUnread,
     onToggleNotif,
     onOpenMenu,
     overwatchActive,
     onToggleOverwatch,
+    sentinel2Active,
+    onToggleSentinel2,
 }) {
     const items = [
         {
@@ -40,18 +41,19 @@ export default function BottomNav({
             active: activeTabType === "news",
         },
         {
-            id:    "briefing",
-            label: "Briefs",
+            id:    "sentinel2",
+            label: "SAT",
             icon:  (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="2" width="14" height="16" rx="1.5" fill="none"/>
-                    <line x1="7" y1="7" x2="13" y2="7"/>
-                    <line x1="7" y1="10" x2="13" y2="10"/>
-                    <line x1="7" y1="13" x2="11" y2="13"/>
+                    <circle cx="10" cy="10" r="3"/>
+                    <path d="M10 2v2M10 16v2M2 10h2M16 10h2"/>
+                    <path d="M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M4.9 15.1l1.4-1.4M13.7 6.3l1.4-1.4"/>
+                    <circle cx="10" cy="10" r="7" strokeDasharray="3 2" opacity="0.4"/>
                 </svg>
             ),
-            onClick: onSwitchToBriefing,
-            active: activeTabType === "briefing",
+            onClick: onToggleSentinel2,
+            active: !!sentinel2Active,
+            activeColor: "#22d3ee",
         },
         {
             id:    "alerts",
@@ -151,7 +153,7 @@ export default function BottomNav({
                         background:     "none",
                         border:         "none",
                         cursor:         "pointer",
-                        color:          item.active ? "var(--accent-bright, #2d8fe8)" : "rgba(255,255,255,0.35)",
+                        color:          item.active ? (item.activeColor || "var(--accent-bright, #2d8fe8)") : "rgba(255,255,255,0.35)",
                         fontSize:       9,
                         fontWeight:     item.active ? 700 : 400,
                         letterSpacing:  "0.06em",
