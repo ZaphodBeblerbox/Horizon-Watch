@@ -384,19 +384,22 @@ textarea::placeholder {
     z-index: 10000 !important;
 }
 
-/* Overwatch detection permanent labels */
+/* Overwatch detection hover labels */
 .ow-det-label {
-    background: rgba(0, 0, 0, 0.82) !important;
+    background: rgba(0, 0, 0, 0.75) !important;
     border: none !important;
-    border-radius: 3px !important;
-    padding: 2px 6px !important;
+    border-radius: 2px !important;
+    padding: 2px 4px !important;
     font-family: Inter, system-ui, sans-serif !important;
-    font-size: 10px !important;
-    font-weight: 600 !important;
+    font-size: 9px !important;
+    font-weight: 700 !important;
     color: #f0f4f8 !important;
     white-space: nowrap !important;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5) !important;
+    box-shadow: none !important;
     pointer-events: none !important;
+    max-width: 140px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
 }
 .ow-det-label::before {
     display: none !important;

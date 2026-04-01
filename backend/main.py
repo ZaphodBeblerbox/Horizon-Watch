@@ -5954,6 +5954,51 @@ async def overwatch_detect(request: Request):
         return JSONResponse({"error": str(e), "count": 0, "detections": []})
 
 
+@app.post("/api/overwatch/analyze")
+async def overwatch_analyze(request: Request):
+    """Claude intelligence assessment of Overwatch detection results."""
+    try:
+        body       = await request.json()
+        detections = body.get("detections", [])
+        bounds     = body.get("bounds", {})
+        if not detections:
+            return JSONResponse({"error": "No detections to analyze"})
+        # Summarise by specific_type > class
+        summary: dict = {}
+        for d in detections:
+            cls = d.get("specific_type") or d.get("class", "unknown")
+            summary[cls] = summary.get(cls, 0) + 1
+        center_lat = (bounds.get("north", 0) + bounds.get("south", 0)) / 2
+        center_lon = (bounds.get("east", 0)  + bounds.get("west", 0))  / 2
+        prompt = f"""You are a senior geospatial intelligence analyst. Analyze the following satellite imagery detection results.
+
+Location: approximately {center_lat:.4f}°N, {center_lon:.4f}°E
+
+Objects detected:
+{_json.dumps(summary, indent=2)}
+
+Total: {len(detections)} objects
+
+Provide a concise intelligence assessment:
+1. What facility/area is this likely to be? (airport, port, military base, industrial zone, etc.)
+2. What is the operational significance of what we see?
+3. Any notable observations (unusual concentrations, military assets, strategic implications)?
+4. If near known conflict zones or chokepoints, what is the relevance?
+
+Write in intelligence briefing style — 3–4 paragraphs maximum."""
+
+        client = anthropic.Anthropic()
+        resp   = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return JSONResponse({"analysis": resp.content[0].text, "summary": summary})
+    except Exception as e:
+        print(f"[overwatch/analyze] error: {e}")
+        return JSONResponse({"error": str(e)})
+
+
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE

@@ -8065,17 +8065,7 @@ export default function MapPage({
                     )
                 })}
 
-                {/* ── Profile focus-region persistent borders ───────────────── */}
-                {!active.borders && profileBorderFeatures.map((f, i) => {
-                    const name = f.properties?.ADMIN || f.properties?.name || i
-                    return (
-                        <Fragment key={`profile-border-${name}`}>
-                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 5, opacity: 0.11,  fill: true,  fillColor: "#0d9488", fillOpacity: 0.03 }} />
-                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 2.5, opacity: 0.55,  fill: false }} />
-                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#5eead4", weight: 1.15, opacity: 0.92, fill: false, dashArray: "4 3" }} />
-                        </Fragment>
-                    )
-                })}
+                {/* Profile focus-region borders removed — labels only (see below) */}
                 {/* Profile border country name labels */}
                 {!active.borders && visibleProfileBorderFeatures.map((f, i) => {
                     const centroid = featureApproxCentroid(f)

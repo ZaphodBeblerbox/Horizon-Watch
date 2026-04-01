@@ -88,6 +88,8 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
     const [minConf,     setMinConf]     = useState(0.15)
     const [enhance,     setEnhance]     = useState(false)
     const [enhanced,    setEnhanced]    = useState(false)   // did the last run use AI enhance?
+    const [analysis,    setAnalysis]    = useState(null)    // Claude intelligence assessment
+    const [analyzing,   setAnalyzing]   = useState(false)   // analysis loading
     const [isMobile,    setIsMobile]    = useState(() => window.innerWidth < 768)
     // Slide-in animation state for mobile sheet
     const [sheetVisible, setSheetVisible] = useState(false)
@@ -113,6 +115,8 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
             setStats(null)
             setError(null)
             setEnhanced(false)
+            setAnalysis(null)
+            setAnalyzing(false)
             setSheetVisible(false)
             drawStartRef.current = null
             isDrawingRef.current = false
@@ -206,7 +210,9 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
         setDetections([])
         setStats(null)
         setEnhanced(false)
-        const zoom = Math.min(18, Math.max(10, Math.round(map.getZoom())))
+        setAnalysis(null)
+        // Always fetch at zoom 18 for maximum resolution regardless of current view
+        const zoom = 18
         try {
             const res = await fetch(`${API_BASE}/api/overwatch/detect`, {
                 method: "POST",
@@ -239,10 +245,31 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
         setDetections([])
         setStats(null)
         setError(null)
+        setAnalysis(null)
+        setAnalyzing(false)
         setDrawRect(null)
         setDrawnBounds(null)
         setMode("drawing")
     }, [])
+
+    const runIntelligenceAnalysis = useCallback(async () => {
+        if (!detections.length || !drawnBounds) return
+        setAnalyzing(true)
+        try {
+            const res  = await fetch(`${API_BASE}/api/overwatch/analyze`, {
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({ detections, bounds: drawnBounds }),
+            })
+            const data = await res.json()
+            if (data.error) setError(data.error)
+            else setAnalysis(data)
+        } catch (err) {
+            setError(`Analysis failed: ${err.message}`)
+        } finally {
+            setAnalyzing(false)
+        }
+    }, [detections, drawnBounds])
 
     const reanalyze = useCallback(() => {
         if (!drawnBounds) return
@@ -469,14 +496,51 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
                     fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
                     background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.3)",
                     borderRadius: 6, color: "#38bdf8",
-                }}>Re-analyze</button>
-                <button disabled title="Coming soon" style={{
+                }}>Re-scan</button>
+                <button onClick={runIntelligenceAnalysis} disabled={analyzing || !detections.length} style={{
                     flex: 1, padding: isMobile ? "10px 0" : "6px 0",
-                    fontSize: 11, fontWeight: 600, fontFamily: "inherit",
-                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                    borderRadius: 6, color: "rgba(232,237,242,0.2)", cursor: "not-allowed",
-                }}>Save</button>
+                    fontSize: 11, fontWeight: 600, cursor: analyzing ? "wait" : "pointer", fontFamily: "inherit",
+                    background: analyzing ? "rgba(139,92,246,0.05)" : "rgba(139,92,246,0.12)",
+                    border: "1px solid rgba(139,92,246,0.35)",
+                    borderRadius: 6, color: analyzing ? "rgba(167,139,250,0.5)" : "#a78bfa",
+                }}>{analyzing ? "…" : "Assess"}</button>
             </div>
+
+            {/* Intelligence assessment panel */}
+            {analysis && (
+                <div style={{
+                    marginTop: 10,
+                    borderTop: "1px solid rgba(139,92,246,0.2)",
+                    paddingTop: 10,
+                }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#a78bfa", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
+                        Intelligence Assessment
+                    </div>
+                    {analysis.summary && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 5px", marginBottom: 8 }}>
+                            {Object.entries(analysis.summary).sort(([,a],[,b]) => b-a).map(([cls, n]) => (
+                                <span key={cls} style={{
+                                    fontSize: 9, padding: "2px 6px", borderRadius: 10,
+                                    background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.25)",
+                                    color: "#a78bfa",
+                                }}>{n} {cls}</span>
+                            ))}
+                        </div>
+                    )}
+                    <div style={{
+                        fontSize: 11, lineHeight: 1.55, color: "#cbd5e1",
+                        maxHeight: isMobile ? 180 : 220, overflowY: "auto",
+                        whiteSpace: "pre-wrap",
+                    }}>
+                        {analysis.analysis}
+                    </div>
+                    <button onClick={() => setAnalysis(null)} style={{
+                        marginTop: 8, background: "none", border: "none",
+                        fontSize: 9, color: "rgba(232,237,242,0.3)", cursor: "pointer",
+                        fontFamily: "inherit", padding: 0,
+                    }}>Dismiss</button>
+                </div>
+            )}
         </>
     )
 
@@ -565,7 +629,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
                     <Polygon key={i} positions={det.corners}
                         pathOptions={{ color, weight: 1.5, fillColor: color, fillOpacity: 0.13, opacity: 0.9 }}
                     >
-                        <Tooltip permanent direction="center" className="ow-det-label">
+                        <Tooltip sticky direction="top" className="ow-det-label" offset={[0, -4]}>
                             {detectionLabel(det)}
                         </Tooltip>
                     </Polygon>
