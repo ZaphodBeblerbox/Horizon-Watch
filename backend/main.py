@@ -7040,6 +7040,96 @@ async def satellite_tile_png(z: int, x: int, y: int, dt: str = ""):
         return FastAPIResponse(content=resp.content, media_type="image/png")
 
 
+# ── /api/sentinel/imagery — full-area Sentinel-2 Process API ─────────────────
+# Returns a single base64-PNG for an arbitrary bounding box (drawn by the user).
+# Uses the same credentials/token cache as the tile proxy above.
+
+@app.post("/api/sentinel/imagery")
+async def sentinel_imagery(request: Request):
+    """Fetch a full Sentinel-2 true-colour image for a drawn bounding box."""
+    import base64 as _b64
+    try:
+        body      = await request.json()
+        bounds    = body.get("bounds", {})
+        max_cloud = int(body.get("max_cloud", 20))
+        days_back = int(body.get("days_back", 90))
+
+        west  = bounds.get("west");  east  = bounds.get("east")
+        south = bounds.get("south"); north = bounds.get("north")
+        if None in (west, east, south, north):
+            return JSONResponse({"error": "bounds {north,south,east,west} required"}, status_code=400)
+
+        if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
+            return JSONResponse({"error": "Copernicus credentials not configured"}, status_code=503)
+
+        # ── Cap image size at 2500×2500 (~10m/px native resolution) ──────────
+        lat_span = abs(north - south)
+        lng_span = abs(east  - west)
+        width    = min(2500, max(256, int(lng_span * 11100)))
+        height   = min(2500, max(256, int(lat_span * 11100)))
+
+        now        = datetime.now(timezone.utc)
+        time_range = {
+            "from": (now - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z"),
+            "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+        }
+
+        payload = {
+            "input": {
+                "bounds": {
+                    "bbox": [west, south, east, north],
+                    "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+                },
+                "data": [{
+                    "type": "sentinel-2-l2a",
+                    "dataFilter": {
+                        "maxCloudCoverage": max_cloud,
+                        "timeRange": time_range,
+                        "mosaickingOrder": "leastCC",
+                    },
+                }],
+            },
+            "output": {
+                "width":  width,
+                "height": height,
+                "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+            },
+            "evalscript": _EVALSCRIPT_TRUE_COLOUR,
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client_h:
+            token, err = await _get_copernicus_access_token(client_h)
+            if not token:
+                return JSONResponse({"error": f"Sentinel Hub auth failed: {err}"}, status_code=502)
+
+            resp = await client_h.post(
+                _SH_PROCESS_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        if resp.status_code == 200:
+            img_b64 = _b64.b64encode(resp.content).decode()
+            return JSONResponse({
+                "image":  img_b64,
+                "width":  width,
+                "height": height,
+                "bounds": bounds,
+                "cloud_max": max_cloud,
+                "days_back": days_back,
+            })
+        else:
+            detail = resp.text[:500]
+            print(f"[sentinel/imagery] Process API {resp.status_code}: {detail}")
+            return JSONResponse(
+                {"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail},
+                status_code=resp.status_code,
+            )
+    except Exception as e:
+        print(f"[sentinel/imagery] error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ── /annotations/save & /annotations/load ────────────────────────────────────
 
 ANNOTATIONS_FILE = BASE_DIR / "annotations.json"

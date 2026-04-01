@@ -20,6 +20,7 @@ import LayersPanel from "./LayersPanel.jsx"
 import API_BASE from "../apiBase.js"
 import EventDetailPanel from "./EventDetailPanel.jsx"
 import OverwatchLayer from "./OverwatchLayer.jsx"
+import SentinelLayer from "./SentinelLayer.jsx"
 
 const API = API_BASE
 
@@ -5231,6 +5232,7 @@ export default function MapPage({
             tv: false,
             webcams: false,
             satellite: false,
+            sentinel2: false,
             annotate: false,
             sattrack: false,
             missileAlerts: false,
@@ -8635,6 +8637,12 @@ export default function MapPage({
                         )
                     })
                 }
+
+                {/* ── Sentinel-2 imagery overlay ───────────────────────────── */}
+                <SentinelLayer
+                    active={active.sentinel2}
+                    onToggleOff={() => toggle("sentinel2")}
+                />
 
                 {/* ── Overwatch — satellite ML object detection ────────────── */}
                 <OverwatchLayer
