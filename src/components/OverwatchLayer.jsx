@@ -220,12 +220,13 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
                 setDrawRect(null)
                 return
             }
-            const dets = data.detections || []
+            const MAX_DISPLAY = 200
+            const dets = (data.detections || []).slice(0, MAX_DISPLAY)
             setDetections(dets)
             setEnhanced(!!data.enhanced)
             const counts = {}
             for (const d of dets) counts[d.class] = (counts[d.class] || 0) + 1
-            setStats({ total: data.count, counts, zoom: data.zoom_used, model: data.model })
+            setStats({ total: data.count, displayed: dets.length, counts, zoom: data.zoom_used, model: data.model })
             setMode("results")
         } catch (err) {
             setError(`Request failed: ${err.message}`)
@@ -384,6 +385,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
                 {stats.total}
                 <span style={{ fontSize: 11, fontWeight: 400, color: "rgba(232,237,242,0.45)", marginLeft: 7 }}>
                     {stats.total === 1 ? "object detected" : "objects detected"}
+                    {stats.displayed < stats.total && ` · showing ${stats.displayed}`}
                 </span>
             </div>
 

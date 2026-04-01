@@ -5801,10 +5801,13 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     n_cls = len(classes)
 
     if is_dota:
-        # channels: 4 box + 1 angle + 15 classes = 20
+        # Confirmed output layout for yolov8n-obb.onnx (opset12, simplify=True):
+        # ch0-ch3: cx,cy,w,h (decoded pixel coords)
+        # ch4-ch18: 15 DOTA class scores (sigmoid already applied, range 0-1)
+        # ch19: angle in radians
         boxes_xywh   = preds[:, :4]
-        angles        = preds[:, 4]
-        class_scores  = preds[:, 5:]          # (N, 15)
+        class_scores  = preds[:, 4:19]        # (N, 15) — NOT 5:
+        angles        = preds[:, 19]           # radians — NOT ch4
     else:
         boxes_xywh   = preds[:, :4]
         angles        = np.zeros(len(preds))
@@ -5908,7 +5911,17 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     else:
         for det in detections: det.pop("_px", None)
 
+    # Hard cap — never send more than 500 detections to the client
+    if len(detections) > 500:
+        detections = sorted(detections, key=lambda d: d["confidence"], reverse=True)[:500]
+
     print(f"[overwatch] {len(detections)} detections (model={model_key}, conf≥{confidence})")
+
+    # Free memory explicitly
+    import gc
+    del stitched, cropped, padded, img_arr, raw, preds
+    gc.collect()
+
     return {
         "detections": detections,
         "count":      len(detections),
