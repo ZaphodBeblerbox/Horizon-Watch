@@ -5775,7 +5775,20 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     img_w, img_h = cropped.size
     print(f"[overwatch] crop → {img_w}×{img_h}px zoom={zoom} model={model_key}")
 
-    # ── Tiled ONNX inference ──────────────────────────────────────────────────
+    # ── Tiled ONNX inference (delegates to shared helper) ────────────────────
+    result = _run_inference_on_image(cropped, bounds, confidence, enhance, model_key)
+    import gc
+    del stitched, cropped
+    gc.collect()
+    result["zoom_used"] = int(zoom)
+    return result
+
+
+def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_key="dota"):
+    """Run tiled ONNX inference on a PIL Image cropped to `bounds`. Returns detection dict."""
+    import numpy as np
+    from PIL import Image
+
     session = _get_ort_session(model_key)
     if session is None:
         return {"error": f"ONNX session unavailable (model={model_key})", "count": 0, "detections": []}
@@ -5940,13 +5953,12 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
 
     # Free memory explicitly
     import gc
-    del stitched, cropped, all_aa_boxes, all_corners_px, all_scores, all_class_ids
+    del all_aa_boxes, all_corners_px, all_scores, all_class_ids
     gc.collect()
 
     return {
         "detections": detections,
         "count":      len(detections),
-        "zoom_used":  int(zoom),
         "model":      f"onnx-{model_key}",
         "enhanced":   bool(enhance),
     }
@@ -5972,6 +5984,42 @@ async def overwatch_detect(request: Request):
         return JSONResponse(result)
     except Exception as e:
         print(f"[overwatch] endpoint error: {e}")
+        return JSONResponse({"error": str(e), "count": 0, "detections": []})
+
+
+@app.post("/api/overwatch/detect-image")
+async def overwatch_detect_image(request: Request):
+    """Run ONNX inference on a caller-supplied base64 PNG (e.g. Sentinel-2 image)."""
+    import base64 as _b64
+    import functools
+    try:
+        body       = await request.json()
+        image_b64  = body.get("image", "")
+        bounds     = body.get("bounds")
+        confidence = float(body.get("confidence", 0.15))
+        enhance    = bool(body.get("enhance", False))
+        model_key  = "coco" if body.get("model") == "coco" else "dota"
+
+        if not image_b64 or not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
+            return JSONResponse({"error": "image (base64) and bounds {north,south,east,west} required", "count": 0, "detections": []})
+
+        # Strip optional data-URL prefix
+        if "," in image_b64:
+            image_b64 = image_b64.split(",", 1)[1]
+
+        from PIL import Image
+        img_bytes = _b64.b64decode(image_b64)
+        cropped   = Image.open(_io.BytesIO(img_bytes)).convert("RGB")
+        print(f"[overwatch/detect-image] {cropped.size[0]}×{cropped.size[1]}px model={model_key} conf={confidence}")
+
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, functools.partial(_run_inference_on_image, cropped, bounds, confidence, enhance, model_key)
+        )
+        result["zoom_used"] = None   # no tile zoom — image supplied directly
+        return JSONResponse(result)
+    except Exception as e:
+        print(f"[overwatch/detect-image] error: {e}")
         return JSONResponse({"error": str(e), "count": 0, "detections": []})
 
 

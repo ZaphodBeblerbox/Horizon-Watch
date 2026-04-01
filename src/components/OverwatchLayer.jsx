@@ -75,7 +75,7 @@ const GLASS = {
 }
 
 // ── OverwatchLayer (inside MapContainer) ──────────────────────────────────────
-const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
+const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelImageData = null }) {
     const map = useMap()
 
     // State machine: drawing | analyzing | results
@@ -124,8 +124,13 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
             drawStartRef.current = null
             isDrawingRef.current = false
             map.dragging.enable()
+        } else if (sentinelImageData) {
+            // Sentinel image already loaded — analyse it immediately, skip draw step
+            setMode("analyzing")
+            setDrawnBounds(sentinelImageData.bounds)
+            runSentinelAnalysis(sentinelImageData)
         }
-    }, [active, map])
+    }, [active, map]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Trigger slide-in when results arrive on mobile
     useEffect(() => {
@@ -251,6 +256,48 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
         }
     }, [map, minConf, enhance])
 
+    // Run inference directly on a supplied Sentinel-2 base64 image
+    const runSentinelAnalysis = useCallback(async (imgData) => {
+        setError(null)
+        setDetections([])
+        setStats(null)
+        setEnhanced(false)
+        setAnalysis(null)
+        setLongWait(false)
+        clearTimeout(longWaitTimerRef.current)
+        longWaitTimerRef.current = setTimeout(() => setLongWait(true), 8000)
+        // Strip the data-URL prefix — backend just needs the raw base64
+        const b64 = imgData.src.includes(",") ? imgData.src.split(",")[1] : imgData.src
+        try {
+            const res = await fetch(`${API_BASE}/api/overwatch/detect-image`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ image: b64, bounds: imgData.bounds, confidence: minConf, enhance }),
+            })
+            const data = await res.json()
+            clearTimeout(longWaitTimerRef.current)
+            setLongWait(false)
+            if (data.error) {
+                setError(data.error)
+                setMode("drawing")
+                return
+            }
+            const MAX_DISPLAY = 200
+            const dets = (data.detections || []).slice(0, MAX_DISPLAY)
+            setDetections(dets)
+            setEnhanced(!!data.enhanced)
+            const counts = {}
+            for (const d of dets) counts[d.class] = (counts[d.class] || 0) + 1
+            setStats({ total: data.count, displayed: dets.length, counts, zoom: "Sentinel-2", model: data.model })
+            setMode("results")
+        } catch (err) {
+            clearTimeout(longWaitTimerRef.current)
+            setLongWait(false)
+            setError(`Request failed: ${err.message}`)
+            setMode("drawing")
+        }
+    }, [minConf, enhance])
+
     const clearAnalysis = useCallback(() => {
         setDetections([])
         setStats(null)
@@ -284,8 +331,12 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
     const reanalyze = useCallback(() => {
         if (!drawnBounds) return
         setMode("analyzing")
-        runAnalysis(drawnBounds)
-    }, [drawnBounds, runAnalysis])
+        if (sentinelImageData) {
+            runSentinelAnalysis(sentinelImageData)
+        } else {
+            runAnalysis(drawnBounds)
+        }
+    }, [drawnBounds, sentinelImageData, runAnalysis, runSentinelAnalysis])
 
     // ── Capture overlay (crosshair + drag rect) ───────────────────────────────
     const overlayEl = (mode === "drawing" || mode === "analyzing") && createPortal(
@@ -409,7 +460,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit }) {
                     </span>
                     {stats.model && (
                         <span style={{ fontSize: 8, color: "rgba(232,237,242,0.3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                            {stats.model === "dota-obb" ? "DOTA" : "COCO"} · z{stats.zoom}
+                            {stats.model === "dota-obb" ? "DOTA" : "COCO"} · {stats.zoom === "Sentinel-2" ? "Sentinel-2" : `z${stats.zoom}`}
                             {enhanced && <span style={{ color: "#a78bfa", marginLeft: 4 }}>· AI</span>}
                         </span>
                     )}

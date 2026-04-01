@@ -5272,6 +5272,9 @@ export default function MapPage({
         onActiveChange?.(active)
     }, [active, onActiveChange])
 
+    // ── Sentinel-2 loaded image (shared with OverwatchLayer for direct inference) ─
+    const [sentinelImageData, setSentinelImageData] = useState(null)
+
     // ── Satellite layer state ─────────────────────────────────────────────────
     const [satelliteSearching, setSatelliteSearching] = useState(false)
     const [satelliteResults, setSatelliteResults]     = useState([])    // raw items from backend
@@ -8653,13 +8656,15 @@ export default function MapPage({
                 <SentinelLayer
                     active={active.sentinel2}
                     onToggleOff={() => toggle("sentinel2")}
-                    hideOverlay={overwatchActive}
+                    onImageLoaded={setSentinelImageData}
+                    onImageCleared={() => setSentinelImageData(null)}
                 />
 
                 {/* ── Overwatch — satellite ML object detection ────────────── */}
                 <OverwatchLayer
                     active={overwatchActive}
                     onExit={onOverwatchExit}
+                    sentinelImageData={sentinelImageData}
                 />
 
             </MapContainer>

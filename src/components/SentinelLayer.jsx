@@ -12,7 +12,7 @@ const GLASS = {
 }
 
 // ── SentinelLayer (inside MapContainer) ──────────────────────────────────────
-const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOverlay = false }) {
+const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOverlay = false, onImageLoaded, onImageCleared }) {
     const map = useMap()
 
     // mode: "idle" | "drawing" | "ready" | "loading" | "loaded"
@@ -41,13 +41,14 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOve
             setDrawnBounds(null)
             setError(null)
             setImageData(null)
+            onImageCleared?.()
             drawStartRef.current = null
             isDrawingRef.current = false
             map.dragging.enable()
         } else {
             setMode("drawing")
         }
-    }, [active, map])
+    }, [active, map]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Pointer helpers ───────────────────────────────────────────────────────
     const clientToContainerPt = useCallback((clientX, clientY) => {
@@ -154,12 +155,14 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOve
                 setMode("ready")
                 return
             }
-            setImageData({
+            const imgData = {
                 src:      `data:image/png;base64,${data.image}`,
                 bounds:   drawnBounds,
                 cloudMax: maxCloud,
                 daysBack: 90,
-            })
+            }
+            setImageData(imgData)
+            onImageLoaded?.(imgData)
             setMode("loaded")
         } catch (err) {
             setError(`Request failed: ${err.message}`)
@@ -173,7 +176,8 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOve
         setDrawRect(null)
         setError(null)
         setMode("drawing")
-    }, [])
+        onImageCleared?.()
+    }, [onImageCleared])
 
     const redraw = useCallback(() => {
         setImageData(null)
@@ -181,7 +185,8 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOve
         setDrawRect(null)
         setError(null)
         setMode("drawing")
-    }, [])
+        onImageCleared?.()
+    }, [onImageCleared])
 
     // ── Apply crosshair cursor directly to map container during draw ─────────
     useEffect(() => {
