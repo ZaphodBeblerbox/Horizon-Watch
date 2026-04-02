@@ -5954,10 +5954,6 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
     else:
         for det in detections: det.pop("_px", None)
 
-    # Hard cap — never send more than 500 detections to the client
-    if len(detections) > 500:
-        detections = sorted(detections, key=lambda d: d["confidence"], reverse=True)[:500]
-
     print(f"[overwatch] {len(detections)} detections (model={model_key}, conf≥{confidence})")
 
     # Free memory explicitly

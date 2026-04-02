@@ -486,7 +486,7 @@ function InvestResults({ results, status }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
             {status === "running" && <div style={{ fontSize: 11, color: "#0d9488", display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}><Spinner /> Investigation running…</div>}
             {results.holehe !== undefined && (
-                <ToolSection title="Holehe — Email Accounts">
+                <ToolSection title="Email Accounts">
                     {results.holehe?.find?.(r => r.error) && <div style={{ fontSize: 11, color: "#d97706" }}>Error: {results.holehe.find(r => r.error).error}</div>}
                     {(() => {
                         const found = results.holehe?.filter?.(r => r.found && !r.error) || []
@@ -503,7 +503,7 @@ function InvestResults({ results, status }) {
                 </ToolSection>
             )}
             {results.sherlock !== undefined && (
-                <ToolSection title="Sherlock — Username Search">
+                <ToolSection title="Username Search">
                     {(() => {
                         const found = results.sherlock?.filter?.(r => !r.error) || []
                         return found.length === 0
@@ -518,7 +518,7 @@ function InvestResults({ results, status }) {
                 </ToolSection>
             )}
             {results.exif !== undefined && (
-                <ToolSection title="EXIF — Image Metadata">
+                <ToolSection title="Image Metadata">
                     {results.exif?.error && <div style={{ fontSize: 11, color: "#d97706" }}>Error: {results.exif.error}</div>}
                     {results.exif && !results.exif.error && Object.keys(results.exif).length === 0 && <div style={{ fontSize: 11, color: "#4a5568" }}>No EXIF data found.</div>}
                     {results.exif && !results.exif.error && Object.entries(results.exif).map(([k, v]) => (

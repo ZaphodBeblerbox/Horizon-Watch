@@ -441,7 +441,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
             <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textAlign: "center" }}>
                 {longWait
                     ? "Tiled inference running · large areas may take several minutes"
-                    : enhance ? "Fetching tiles · DOTA OBB · AI Classification" : "Fetching tiles · YOLOv8 DOTA OBB"
+                    : enhance ? "Fetching tiles · AI Classification" : "Fetching tiles · Object Detection"
                 }
             </div>
         </div>,
@@ -460,7 +460,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
                     </span>
                     {stats.model && (
                         <span style={{ fontSize: 8, color: "rgba(232,237,242,0.3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                            {stats.model === "dota-obb" ? "DOTA" : "COCO"} · {stats.zoom === "Sentinel-2" ? "Sentinel-2" : `z${stats.zoom}`}
+                            {stats.zoom === "Sentinel-2" ? "Sentinel-2" : `z${stats.zoom}`}
                             {enhanced && <span style={{ color: "#a78bfa", marginLeft: 4 }}>· AI</span>}
                         </span>
                     )}
