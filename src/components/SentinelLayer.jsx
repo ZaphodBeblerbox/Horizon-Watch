@@ -156,10 +156,11 @@ const SentinelLayer = memo(function SentinelLayer({ active, onToggleOff, hideOve
                 return
             }
             const imgData = {
-                src:      `data:image/png;base64,${data.image}`,
-                bounds:   drawnBounds,
-                cloudMax: maxCloud,
-                daysBack: 90,
+                src:         `data:image/png;base64,${data.image}`,
+                bounds:      drawnBounds,
+                cloudMax:    maxCloud,
+                daysBack:    90,
+                capturedAt:  new Date().toISOString(),
             }
             setImageData(imgData)
             onImageLoaded?.(imgData)

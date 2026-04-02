@@ -5669,6 +5669,38 @@ _OW_COCO_CLASSES = [
     "refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush",
 ]
 
+# Category / subcategory taxonomy for detections (frontend mirrors this)
+_OW_CATEGORY_MAP = {
+    "plane":              ("Aircraft",       "Fixed-Wing"),
+    "airplane":           ("Aircraft",       "Fixed-Wing"),
+    "helicopter":         ("Aircraft",       "Rotary-Wing"),
+    "ship":               ("Vessel",         "Large Ship"),
+    "boat":               ("Vessel",         "Small Vessel"),
+    "harbor":             ("Infrastructure", "Port/Harbor"),
+    "bridge":             ("Infrastructure", "Bridge"),
+    "train":              ("Infrastructure", "Rail"),
+    "large-vehicle":      ("Vehicle",        "Heavy Vehicle"),
+    "large vehicle":      ("Vehicle",        "Heavy Vehicle"),
+    "truck":              ("Vehicle",        "Heavy Vehicle"),
+    "bus":                ("Vehicle",        "Heavy Vehicle"),
+    "small-vehicle":      ("Vehicle",        "Light Vehicle"),
+    "small vehicle":      ("Vehicle",        "Light Vehicle"),
+    "car":                ("Vehicle",        "Light Vehicle"),
+    "motorcycle":         ("Vehicle",        "Motorcycle"),
+    "storage-tank":       ("Structure",      "Storage Tank"),
+    "storage tank":       ("Structure",      "Storage Tank"),
+    "roundabout":         ("Structure",      "Road Feature"),
+    "baseball-diamond":   ("Facility",       "Sports"),
+    "tennis-court":       ("Facility",       "Sports"),
+    "basketball-court":   ("Facility",       "Sports"),
+    "ground-track-field": ("Facility",       "Sports"),
+    "soccer-ball-field":  ("Facility",       "Sports"),
+    "swimming-pool":      ("Facility",       "Recreational"),
+    # COCO extras
+    "person":             ("Person",         "Pedestrian"),
+    "bicycle":            ("Vehicle",        "Bicycle"),
+}
+
 # Two sessions — DOTA OBB (satellite, default) and COCO (fallback)
 _ort_sessions     = {}
 _ort_session_lock = threading.Lock()
@@ -5911,12 +5943,16 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
             center_geo  = [px_lat(sum(ys_f) / 4), px_lon(sum(xs_f) / 4)]
             px_box      = [min(xs_f), min(ys_f), max(xs_f), max(ys_f)]
 
+            cls_name = classes[cls_id] if cls_id < n_cls else "unknown"
+            cat, subcat = _OW_CATEGORY_MAP.get(cls_name, ("Object", "Unknown"))
             detections.append({
-                "class":      classes[cls_id] if cls_id < n_cls else "unknown",
-                "confidence": conf,
-                "center":     center_geo,
-                "corners":    corners_geo,
-                "_px":        px_box,
+                "class":       cls_name,
+                "category":    cat,
+                "subcategory": subcat,
+                "confidence":  conf,
+                "center":      center_geo,
+                "corners":     corners_geo,
+                "_px":         px_box,
             })
 
     # ── Optional Claude enhance pass ──────────────────────────────────────────

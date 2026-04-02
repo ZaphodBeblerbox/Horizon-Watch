@@ -522,13 +522,6 @@ export default function LayersPanel({
                     isManual={isManual("satellite")}
                 />
                 <LayerRow
-                    label="Sentinel-2 Imagery"
-                    hint="draw region · Copernicus true-colour"
-                    toggled={active.sentinel2}
-                    onToggle={() => onToggle("sentinel2")}
-                    isManual={isManual("sentinel2")}
-                />
-                <LayerRow
                     label="ADS-B Traffic"
                     toggled={active.adsb}
                     onToggle={() => onToggle("adsb")}
@@ -615,7 +608,6 @@ export default function LayersPanel({
                     <LayerRow label="Live Vessels (AIS)" statusKey="aisVessels" sourceStatus={ss} toggled={active.aisVessels} onToggle={() => onToggle("aisVessels")} badge={active.aisVessels && aisVesselCount > 0 ? aisVesselCount : undefined} isManual={isManual("aisVessels")} />
                     <SectionHeader label="Overlays" />
                     <LayerRow label="Country Borders"     toggled={active.borders}       onToggle={() => onToggle("borders")}       isManual={isManual("borders")} />
-                    <LayerRow label="Sentinel-2 Imagery" hint="draw region · Copernicus" toggled={active.sentinel2} onToggle={() => onToggle("sentinel2")} isManual={isManual("sentinel2")} />
                     <LayerRow label="News Conflicts"    statusKey="rss" sourceStatus={ss} toggled={active.newsConflicts} onToggle={() => onToggle("newsConflicts")} badge={newsConflictCount} isManual={isManual("newsConflicts")} />
                     <LayerRow label="ADS-B Traffic"     toggled={active.adsb}          onToggle={() => onToggle("adsb")}          isManual={isManual("adsb")} />
                     <LayerRow label="POI Profiles"      toggled={active.poi}           onToggle={() => onToggle("poi")}           badge={poiCount} isManual={isManual("poi")} />

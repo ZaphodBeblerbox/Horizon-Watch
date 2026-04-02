@@ -2,21 +2,14 @@ import { useState, useRef, useEffect, useCallback, Fragment, memo } from "react"
 import { createPortal } from "react-dom"
 import { useMap, Polygon, Rectangle, Tooltip } from "react-leaflet"
 import API_BASE from "../apiBase.js"
+import OverwatchSidebar, {
+    catForClass, colorForClass, colorForCat,
+    loadSavedScans, persistSavedScans,
+} from "./OverwatchSidebar.jsx"
 
-// ── Detection class helpers ───────────────────────────────────────────────────
-function categoryOf(cls) {
-    const c = (cls || "").toLowerCase().trim()
-    if (["plane", "airplane", "helicopter"].includes(c)) return "Aircraft"
-    if (["ship", "boat"].includes(c)) return "Vessel"
-    if (["large-vehicle", "small-vehicle", "large vehicle", "small vehicle",
-         "car", "truck", "bus", "motorcycle"].includes(c)) return "Vehicle"
-    if (["storage-tank", "storage tank"].includes(c)) return "Structure"
-    if (["bridge", "harbor", "train"].includes(c)) return "Infrastructure"
-    return "Object"
-}
-
+// ── Detection label helper ───────────────────────────────────────────────────
 function detectionLabel(det) {
-    const cat  = categoryOf(det.class)
+    const cat  = det.category || catForClass(det.class)
     const type = det.specific_type
         ? det.specific_type.charAt(0).toUpperCase() + det.specific_type.slice(1)
         : det.class
@@ -24,33 +17,7 @@ function detectionLabel(det) {
     return `${cat}: ${type} (${conf}%)`
 }
 
-const CLASS_COLORS = {
-    "plane":         "#38bdf8",
-    "helicopter":    "#38bdf8",
-    "airplane":      "#38bdf8",
-    "ship":          "#f59e0b",
-    "boat":          "#f59e0b",
-    "large-vehicle": "#22c55e",
-    "small-vehicle": "#22c55e",
-    "large vehicle": "#22c55e",
-    "small vehicle": "#22c55e",
-    "car":           "#22c55e",
-    "truck":         "#22c55e",
-    "bus":           "#22c55e",
-    "motorcycle":    "#22c55e",
-    "storage-tank":  "#ef4444",
-    "storage tank":  "#ef4444",
-    "bridge":        "#a855f7",
-    "harbor":        "#a855f7",
-    "train":         "#a855f7",
-}
-
-function detectionColor(cls) {
-    const key = (cls || "").toLowerCase().trim()
-    return CLASS_COLORS[key] || CLASS_COLORS[key.replace(/ /g, "-")] || "#e2e8f0"
-}
-
-// ── Overwatch eye+crosshair icon ──────────────────────────────────────────────
+// ── Overwatch icon ────────────────────────────────────────────────────────────
 export function IconOverwatch({ size = 18, color = "currentColor" }) {
     return (
         <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke={color}
@@ -65,7 +32,7 @@ export function IconOverwatch({ size = 18, color = "currentColor" }) {
     )
 }
 
-// ── Shared glass panel style ──────────────────────────────────────────────────
+// ── Shared glass style ────────────────────────────────────────────────────────
 const GLASS = {
     background:          "rgba(6,13,26,0.96)",
     backdropFilter:      "blur(18px)",
@@ -74,41 +41,62 @@ const GLASS = {
     color:               "#e2e8f0",
 }
 
-// ── OverwatchLayer (inside MapContainer) ──────────────────────────────────────
-const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelImageData = null }) {
+// ── OverwatchLayer (must live inside MapContainer) ────────────────────────────
+const OverwatchLayer = memo(function OverwatchLayer({
+    active,
+    onExit,
+    sentinelImageData   = null,
+    sentinel2Active     = false,
+    onToggleSentinel2   = null,
+}) {
     const map = useMap()
 
-    // State machine: drawing | analyzing | results
-    const [mode,        setMode]        = useState("drawing")
-    const [drawRect,    setDrawRect]    = useState(null)   // viewport px {x,y,w,h}
-    const [drawnBounds, setDrawnBounds] = useState(null)   // geo {north,south,east,west}
-    const [detections,  setDetections]  = useState([])
-    const [stats,       setStats]       = useState(null)
-    const [error,       setError]       = useState(null)
-    const [minConf,     setMinConf]     = useState(0.15)
-    const [enhance,     setEnhance]     = useState(false)
-    const [enhanced,    setEnhanced]    = useState(false)   // did the last run use AI enhance?
-    const [analysis,    setAnalysis]    = useState(null)    // Claude intelligence assessment
-    const [analyzing,   setAnalyzing]   = useState(false)   // analysis loading
-    const [isMobile,    setIsMobile]    = useState(() => window.innerWidth < 768)
-    const [longWait,    setLongWait]    = useState(false)
-    // Slide-in animation state for mobile sheet
-    const [sheetVisible, setSheetVisible] = useState(false)
+    // ── State ─────────────────────────────────────────────────────────────────
+    const [mode,          setMode]          = useState("drawing")
+    const [drawRect,      setDrawRect]      = useState(null)
+    const [drawnBounds,   setDrawnBounds]   = useState(null)
+    const [detections,    setDetections]    = useState([])
+    const [stats,         setStats]         = useState(null)
+    const [error,         setError]         = useState(null)
+    const [minConf,       setMinConf]       = useState(0.15)
+    const [enhance,       setEnhance]       = useState(false)
+    const [enhanced,      setEnhanced]      = useState(false)
+    const [analysis,      setAnalysis]      = useState(null)
+    const [analyzing,     setAnalyzing]     = useState(false)
+    const [isMobile,      setIsMobile]      = useState(() => window.innerWidth < 768)
+    const [longWait,      setLongWait]      = useState(false)
+
+    // Sidebar visibility (closing sidebar does NOT clear detections)
+    const [sidebarOpen,   setSidebarOpen]   = useState(false)
+
+    // Category filter — empty Set means "all selected"
+    const [selectedCats,  setSelectedCats]  = useState(new Set())
+
+    // Saved scans (localStorage)
+    const [savedScans,    setSavedScans]    = useState(() => loadSavedScans())
 
     const longWaitTimerRef = useRef(null)
+    const drawStartRef     = useRef(null)
+    const isDrawingRef     = useRef(false)
 
-    const drawStartRef   = useRef(null)
-    const isDrawingRef   = useRef(false)
+    // ── Derived: visible detections after conf + category filter ──────────────
+    const visible = detections.filter(d => {
+        if (d.confidence < minConf) return false
+        if (selectedCats.size > 0) {
+            const cat = d.category || catForClass(d.class)
+            if (!selectedCats.has(cat)) return false
+        }
+        return true
+    })
 
-    const visible = detections.filter(d => d.confidence >= minConf)
-
+    // ── Responsive ───────────────────────────────────────────────────────────
     useEffect(() => {
         const h = () => setIsMobile(window.innerWidth < 768)
         window.addEventListener("resize", h)
         return () => window.removeEventListener("resize", h)
     }, [])
 
-    // Reset / restore when active toggles
+    // ── Reset when active toggles ─────────────────────────────────────────────
     useEffect(() => {
         if (!active) {
             setMode("drawing")
@@ -120,27 +108,22 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
             setEnhanced(false)
             setAnalysis(null)
             setAnalyzing(false)
-            setSheetVisible(false)
-            drawStartRef.current = null
-            isDrawingRef.current = false
+            setSidebarOpen(false)
+            setSelectedCats(new Set())
+            drawStartRef.current  = null
+            isDrawingRef.current  = false
             map.dragging.enable()
         } else if (sentinelImageData) {
-            // Sentinel image already loaded — analyse it immediately, skip draw step
             setMode("analyzing")
             setDrawnBounds(sentinelImageData.bounds)
             runSentinelAnalysis(sentinelImageData)
         }
     }, [active, map]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Trigger slide-in when results arrive on mobile
+    // Open sidebar when results arrive
     useEffect(() => {
-        if (mode === "results" && isMobile) {
-            // small RAF so transition fires after element mounts
-            requestAnimationFrame(() => setSheetVisible(true))
-        } else {
-            setSheetVisible(false)
-        }
-    }, [mode, isMobile])
+        if (mode === "results") setSidebarOpen(true)
+    }, [mode])
 
     // ── Pointer helpers ───────────────────────────────────────────────────────
     const clientToContainerPt = useCallback((clientX, clientY) => {
@@ -196,11 +179,11 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
         }
 
         const endPt = clientToContainerPt(clientX, clientY)
-        const nw = map.containerPointToLatLng([
+        const nw    = map.containerPointToLatLng([
             Math.min(s.containerPt.x, endPt.x),
             Math.min(s.containerPt.y, endPt.y),
         ])
-        const se = map.containerPointToLatLng([
+        const se    = map.containerPointToLatLng([
             Math.max(s.containerPt.x, endPt.x),
             Math.max(s.containerPt.y, endPt.y),
         ])
@@ -214,31 +197,21 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
 
     // ── Inference ─────────────────────────────────────────────────────────────
     const runAnalysis = useCallback(async (bounds) => {
-        setError(null)
-        setDetections([])
-        setStats(null)
-        setEnhanced(false)
-        setAnalysis(null)
-        setLongWait(false)
+        setError(null); setDetections([]); setStats(null)
+        setEnhanced(false); setAnalysis(null); setLongWait(false)
+        setSelectedCats(new Set())
         clearTimeout(longWaitTimerRef.current)
         longWaitTimerRef.current = setTimeout(() => setLongWait(true), 5000)
-        // Always fetch at zoom 18 for maximum resolution regardless of current view
-        const zoom = 18
         try {
-            const res = await fetch(`${API_BASE}/api/overwatch/detect`, {
-                method: "POST",
+            const res  = await fetch(`${API_BASE}/api/overwatch/detect`, {
+                method:  "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ bounds, zoom, confidence: minConf, enhance }),
+                body:    JSON.stringify({ bounds, zoom: 18, confidence: minConf, enhance }),
             })
             const data = await res.json()
             clearTimeout(longWaitTimerRef.current)
             setLongWait(false)
-            if (data.error) {
-                setError(data.error)
-                setMode("drawing")
-                setDrawRect(null)
-                return
-            }
+            if (data.error) { setError(data.error); setMode("drawing"); setDrawRect(null); return }
             const dets = data.detections || []
             setDetections(dets)
             setEnhanced(!!data.enhanced)
@@ -250,37 +223,27 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
             clearTimeout(longWaitTimerRef.current)
             setLongWait(false)
             setError(`Request failed: ${err.message}`)
-            setMode("drawing")
-            setDrawRect(null)
+            setMode("drawing"); setDrawRect(null)
         }
-    }, [map, minConf, enhance])
+    }, [minConf, enhance])
 
-    // Run inference directly on a supplied Sentinel-2 base64 image
     const runSentinelAnalysis = useCallback(async (imgData) => {
-        setError(null)
-        setDetections([])
-        setStats(null)
-        setEnhanced(false)
-        setAnalysis(null)
-        setLongWait(false)
+        setError(null); setDetections([]); setStats(null)
+        setEnhanced(false); setAnalysis(null); setLongWait(false)
+        setSelectedCats(new Set())
         clearTimeout(longWaitTimerRef.current)
         longWaitTimerRef.current = setTimeout(() => setLongWait(true), 5000)
-        // Strip the data-URL prefix — backend just needs the raw base64
         const b64 = imgData.src.includes(",") ? imgData.src.split(",")[1] : imgData.src
         try {
-            const res = await fetch(`${API_BASE}/api/overwatch/detect-image`, {
-                method: "POST",
+            const res  = await fetch(`${API_BASE}/api/overwatch/detect-image`, {
+                method:  "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ image: b64, bounds: imgData.bounds, confidence: minConf, enhance }),
+                body:    JSON.stringify({ image: b64, bounds: imgData.bounds, confidence: minConf, enhance }),
             })
             const data = await res.json()
             clearTimeout(longWaitTimerRef.current)
             setLongWait(false)
-            if (data.error) {
-                setError(data.error)
-                setMode("drawing")
-                return
-            }
+            if (data.error) { setError(data.error); setMode("drawing"); return }
             const dets = data.detections || []
             setDetections(dets)
             setEnhanced(!!data.enhanced)
@@ -297,13 +260,10 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
     }, [minConf, enhance])
 
     const clearAnalysis = useCallback(() => {
-        setDetections([])
-        setStats(null)
-        setError(null)
-        setAnalysis(null)
-        setAnalyzing(false)
-        setDrawRect(null)
-        setDrawnBounds(null)
+        setDetections([]); setStats(null); setError(null)
+        setAnalysis(null); setAnalyzing(false)
+        setDrawRect(null); setDrawnBounds(null)
+        setSidebarOpen(false); setSelectedCats(new Set())
         setMode("drawing")
     }, [])
 
@@ -329,14 +289,62 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
     const reanalyze = useCallback(() => {
         if (!drawnBounds) return
         setMode("analyzing")
-        if (sentinelImageData) {
-            runSentinelAnalysis(sentinelImageData)
-        } else {
-            runAnalysis(drawnBounds)
-        }
+        if (sentinelImageData) runSentinelAnalysis(sentinelImageData)
+        else                   runAnalysis(drawnBounds)
     }, [drawnBounds, sentinelImageData, runAnalysis, runSentinelAnalysis])
 
-    // ── Capture overlay (crosshair + drag rect) ───────────────────────────────
+    // ── Category filter handlers ───────────────────────────────────────────────
+    const toggleCat = useCallback((cat) => {
+        setSelectedCats(prev => {
+            const next = new Set(prev)
+            if (next.has(cat)) next.delete(cat)
+            else               next.add(cat)
+            return next
+        })
+    }, [])
+
+    const clearCatFilter = useCallback(() => setSelectedCats(new Set()), [])
+
+    // ── Save / restore / delete ───────────────────────────────────────────────
+    const handleSave = useCallback(() => {
+        if (!detections.length) return
+        const scan = {
+            id:          crypto.randomUUID(),
+            timestamp:   new Date().toISOString(),
+            detections,
+            stats,
+            drawnBounds,
+            enhanced,
+        }
+        setSavedScans(prev => {
+            const updated = [scan, ...prev].slice(0, 20)
+            persistSavedScans(updated)
+            return updated
+        })
+    }, [detections, stats, drawnBounds, enhanced])
+
+    const handleDeleteSaved = useCallback((id) => {
+        setSavedScans(prev => {
+            const updated = prev.filter(s => s.id !== id)
+            persistSavedScans(updated)
+            return updated
+        })
+    }, [])
+
+    const handleRestoreSaved = useCallback((scan) => {
+        setDetections(scan.detections || [])
+        setStats(scan.stats || null)
+        setDrawnBounds(scan.drawnBounds || null)
+        setEnhanced(!!scan.enhanced)
+        setAnalysis(null)
+        setSelectedCats(new Set())
+        setMode("results")
+        setSidebarOpen(true)
+    }, [])
+
+    // ── Portals ───────────────────────────────────────────────────────────────
+
+    // Drawing capture overlay
     const overlayEl = (mode === "drawing" || mode === "analyzing") && createPortal(
         <div
             style={{
@@ -344,12 +352,12 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
                 cursor: mode === "analyzing" ? "wait" : "crosshair",
                 touchAction: "none", userSelect: "none",
             }}
-            onMouseDown={mode === "drawing" ? handlePointerDown : undefined}
-            onMouseMove={mode === "drawing" ? handlePointerMove : undefined}
-            onMouseUp={mode === "drawing" ? handlePointerUp : undefined}
+            onMouseDown={mode  === "drawing" ? handlePointerDown : undefined}
+            onMouseMove={mode  === "drawing" ? handlePointerMove : undefined}
+            onMouseUp={mode    === "drawing" ? handlePointerUp   : undefined}
             onTouchStart={mode === "drawing" ? handlePointerDown : undefined}
-            onTouchMove={mode === "drawing" ? handlePointerMove : undefined}
-            onTouchEnd={mode === "drawing" ? handlePointerUp : undefined}
+            onTouchMove={mode  === "drawing" ? handlePointerMove : undefined}
+            onTouchEnd={mode   === "drawing" ? handlePointerUp   : undefined}
         >
             {drawRect && drawRect.w > 4 && drawRect.h > 4 && (
                 <div style={{
@@ -358,31 +366,28 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
                     width: drawRect.w, height: drawRect.h,
                     border: "2px dashed #38bdf8",
                     background: "rgba(56,189,248,0.07)",
-                    pointerEvents: "none",
-                    boxSizing: "border-box",
+                    pointerEvents: "none", boxSizing: "border-box",
                 }} />
             )}
         </div>,
         map.getContainer()
     )
 
-    // ── Instructions hint (bottom-center, above bottom nav on mobile) ─────────
+    // "Draw a rectangle" instruction hint
     const instructionsEl = mode === "drawing" && createPortal(
         <div style={{
-            position:  "fixed",
-            bottom:    isMobile ? 72 : 24,
-            left:      "50%",
-            transform: "translateX(-50%)",
-            zIndex:    1900,
+            position: "fixed",
+            bottom:   isMobile ? 72 : 24,
+            left:     "50%",
+            transform:"translateX(-50%)",
+            zIndex:   1900,
             pointerEvents: "none",
             ...GLASS,
             border:       "1px solid rgba(56,189,248,0.3)",
             borderRadius: 24,
             padding:      "9px 18px",
             fontSize:     12,
-            display:      "flex",
-            alignItems:   "center",
-            gap:          8,
+            display:      "flex", alignItems: "center", gap: 8,
             whiteSpace:   "nowrap",
             boxShadow:    "0 4px 20px rgba(0,0,0,0.5)",
         }}>
@@ -413,7 +418,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
         document.body
     )
 
-    // ── Analyzing spinner ─────────────────────────────────────────────────────
+    // Analyzing spinner
     const spinnerEl = mode === "analyzing" && createPortal(
         <div style={{
             position: "fixed", top: "50%", left: "50%",
@@ -446,212 +451,32 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
         document.body
     )
 
-    // ── Results panel — desktop pill / mobile bottom-sheet ────────────────────
-    const resultsPanelContent = stats && (
-        <>
-            {/* Header */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <IconOverwatch size={14} color="#38bdf8" />
-                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#38bdf8" }}>
-                        Overwatch
-                    </span>
-                    {stats.model && (
-                        <span style={{ fontSize: 8, color: "rgba(232,237,242,0.3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                            {stats.zoom === "Sentinel-2" ? "Sentinel-2" : `z${stats.zoom}`}
-                            {enhanced && <span style={{ color: "#a78bfa", marginLeft: 4 }}>· AI</span>}
-                        </span>
-                    )}
-                </div>
-                <button onClick={onExit} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(232,237,242,0.35)", fontSize: 16, lineHeight: 1, padding: 0 }}>✕</button>
-            </div>
-
-            {/* Mobile drag handle */}
-            {isMobile && (
-                <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.15)", margin: "-6px auto 12px" }} />
-            )}
-
-            {/* Count */}
-            <div style={{ fontSize: 24, fontWeight: 700, color: stats.total > 0 ? "#e2e8f0" : "rgba(232,237,242,0.3)", marginBottom: 6, lineHeight: 1 }}>
-                {stats.total}
-                <span style={{ fontSize: 11, fontWeight: 400, color: "rgba(232,237,242,0.45)", marginLeft: 7 }}>
-                    {stats.total === 1 ? "object detected" : "objects detected"}
-                    {stats.displayed < stats.total && ` · showing ${stats.displayed}`}
-                </span>
-            </div>
-
-            {/* Class chips */}
-            {stats.total > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 6px", marginBottom: 10 }}>
-                    {Object.entries(stats.counts).sort(([,a],[,b]) => b - a).map(([cls, n]) => {
-                        const c = detectionColor(cls)
-                        return (
-                            <span key={cls} style={{
-                                fontSize: 10, padding: "3px 8px", borderRadius: 12,
-                                background: `${c}18`, border: `1px solid ${c}44`,
-                                color: c, fontWeight: 600,
-                            }}>
-                                {n} {cls}
-                            </span>
-                        )
-                    })}
-                </div>
-            )}
-
-            {stats.total === 0 && (
-                <div style={{ fontSize: 11, color: "rgba(232,237,242,0.4)", marginBottom: 10, lineHeight: 1.5 }}>
-                    No objects detected. Try zooming in further (zoom 14+).
-                </div>
-            )}
-
-            {/* Confidence slider */}
-            <div style={{ marginBottom: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                    <span style={{ fontSize: 9, color: "rgba(232,237,242,0.4)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Min confidence</span>
-                    <span style={{ fontSize: 9, color: "#38bdf8", fontWeight: 600 }}>{Math.round(minConf * 100)}%</span>
-                </div>
-                <input type="range" min={0} max={0.9} step={0.05} value={minConf}
-                    onChange={e => setMinConf(parseFloat(e.target.value))}
-                    style={{ width: "100%", accentColor: "#38bdf8", cursor: "pointer" }}
-                />
-                <div style={{ fontSize: 9, color: "rgba(232,237,242,0.25)", marginTop: 3 }}>
-                    Showing {visible.length} of {detections.length}
-                </div>
-            </div>
-
-            {/* AI classification toggle */}
-            <div style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                marginBottom: 10, padding: "7px 10px",
-                background: enhance ? "rgba(139,92,246,0.08)" : "rgba(255,255,255,0.03)",
-                border: `1px solid ${enhance ? "rgba(139,92,246,0.25)" : "rgba(255,255,255,0.07)"}`,
-                borderRadius: 6, cursor: "pointer",
-            }} onClick={() => setEnhance(v => !v)}>
-                <div>
-                    <div style={{ fontSize: 10, fontWeight: 600, color: enhance ? "#a78bfa" : "rgba(232,237,242,0.5)" }}>
-                        AI Classification
-                    </div>
-                    <div style={{ fontSize: 9, color: "rgba(232,237,242,0.3)", marginTop: 1 }}>
-                        {enhance ? "Claude vision · enabled (slower)" : "Uses Claude vision · slower"}
-                    </div>
-                </div>
-                <div style={{
-                    width: 32, height: 18, borderRadius: 9, flexShrink: 0,
-                    background: enhance ? "rgba(139,92,246,0.7)" : "rgba(255,255,255,0.1)",
-                    transition: "background 0.2s",
-                    display: "flex", alignItems: "center",
-                    padding: "0 2px",
-                    justifyContent: enhance ? "flex-end" : "flex-start",
-                }}>
-                    <div style={{ width: 14, height: 14, borderRadius: "50%", background: "#fff" }} />
-                </div>
-            </div>
-
-            {/* Actions */}
-            <div style={{ display: "flex", gap: 7 }}>
-                <button onClick={clearAnalysis} style={{
-                    flex: 1, padding: isMobile ? "10px 0" : "6px 0",
-                    fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                    background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-                    borderRadius: 6, color: "#ef4444",
-                }}>Clear</button>
-                <button onClick={reanalyze} style={{
-                    flex: 1, padding: isMobile ? "10px 0" : "6px 0",
-                    fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                    background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.3)",
-                    borderRadius: 6, color: "#38bdf8",
-                }}>Re-scan</button>
-                <button onClick={runIntelligenceAnalysis} disabled={analyzing || !detections.length} style={{
-                    flex: 1, padding: isMobile ? "10px 0" : "6px 0",
-                    fontSize: 11, fontWeight: 600, cursor: analyzing ? "wait" : "pointer", fontFamily: "inherit",
-                    background: analyzing ? "rgba(139,92,246,0.05)" : "rgba(139,92,246,0.12)",
-                    border: "1px solid rgba(139,92,246,0.35)",
-                    borderRadius: 6, color: analyzing ? "rgba(167,139,250,0.5)" : "#a78bfa",
-                }}>{analyzing ? "…" : "Assess"}</button>
-            </div>
-
-            {/* Intelligence assessment panel */}
-            {analysis && (
-                <div style={{
-                    marginTop: 10,
-                    borderTop: "1px solid rgba(139,92,246,0.2)",
-                    paddingTop: 10,
-                }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: "#a78bfa", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
-                        Intelligence Assessment
-                    </div>
-                    {analysis.summary && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 5px", marginBottom: 8 }}>
-                            {Object.entries(analysis.summary).sort(([,a],[,b]) => b-a).map(([cls, n]) => (
-                                <span key={cls} style={{
-                                    fontSize: 9, padding: "2px 6px", borderRadius: 10,
-                                    background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.25)",
-                                    color: "#a78bfa",
-                                }}>{n} {cls}</span>
-                            ))}
-                        </div>
-                    )}
-                    <div style={{
-                        fontSize: 11, lineHeight: 1.55, color: "#cbd5e1",
-                        maxHeight: isMobile ? 180 : 220, overflowY: "auto",
-                        whiteSpace: "pre-wrap",
-                    }}>
-                        {analysis.analysis}
-                    </div>
-                    <button onClick={() => setAnalysis(null)} style={{
-                        marginTop: 8, background: "none", border: "none",
-                        fontSize: 9, color: "rgba(232,237,242,0.3)", cursor: "pointer",
-                        fontFamily: "inherit", padding: 0,
-                    }}>Dismiss</button>
-                </div>
-            )}
-        </>
-    )
-
-    const resultsEl = mode === "results" && stats && createPortal(
-        isMobile ? (
-            // ── Mobile: slide up from bottom ──────────────────────────────────
-            <div style={{
-                position:  "fixed",
-                left:      0,
-                right:     0,
-                bottom:    0,
-                zIndex:    1900,
+    // "Reopen sidebar" floating pill when results exist but sidebar is closed
+    const reopenEl = mode === "results" && !sidebarOpen && stats && createPortal(
+        <button
+            onClick={() => setSidebarOpen(true)}
+            style={{
+                position: "fixed",
+                bottom: isMobile ? 72 : 24,
+                right:  24,
+                zIndex: 1900,
                 ...GLASS,
-                borderTop:         "1px solid rgba(56,189,248,0.2)",
-                borderTopLeftRadius:  16,
-                borderTopRightRadius: 16,
-                padding:   "12px 16px 16px",
-                paddingBottom: "max(16px, env(safe-area-inset-bottom))",
-                transform: sheetVisible ? "translateY(0)" : "translateY(100%)",
-                transition: "transform 0.32s cubic-bezier(0.32,0.72,0,1)",
-                boxShadow: "0 -4px 32px rgba(0,0,0,0.5)",
-                // ensure it sits above bottom nav (56px) but sheet itself has its own padding
-                marginBottom: 56,
-            }}>
-                {resultsPanelContent}
-            </div>
-        ) : (
-            // ── Desktop: compact card, bottom-right ───────────────────────────
-            <div style={{
-                position:  "fixed",
-                bottom:    24,
-                right:     24,
-                zIndex:    1900,
-                width:     300,
-                ...GLASS,
-                border:       "1px solid rgba(56,189,248,0.2)",
-                borderRadius: 10,
-                padding:      "14px 16px",
-                boxShadow:    "0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(56,189,248,0.05)",
-            }}>
-                {resultsPanelContent}
-            </div>
-        ),
+                border:       "1px solid rgba(56,189,248,0.35)",
+                borderRadius: 24,
+                padding:      "9px 16px",
+                cursor:       "pointer",
+                display:      "flex", alignItems: "center", gap: 8,
+                fontSize:     11, fontWeight: 600, color: "#38bdf8",
+                boxShadow:    "0 4px 20px rgba(0,0,0,0.5)",
+            }}
+        >
+            <IconOverwatch size={13} color="#38bdf8" />
+            {stats.total} detected
+        </button>,
         document.body
     )
 
-    // ── Error toast ───────────────────────────────────────────────────────────
+    // Error toast
     const errorEl = error && createPortal(
         <div style={{
             position: "fixed", top: 70, left: "50%", transform: "translateX(-50%)",
@@ -667,11 +492,47 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
         }}>
             <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#ef4444", flexShrink: 0, marginTop: 3, boxShadow: "0 0 6px #ef444488" }} />
             <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>Overwatch Error</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                    Overwatch Error
+                </div>
                 <div style={{ fontSize: 11, lineHeight: 1.4 }}>{error}</div>
             </div>
             <button onClick={() => setError(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(232,237,242,0.35)", fontSize: 15, lineHeight: 1, padding: 0, flexShrink: 0, marginLeft: 4 }}>✕</button>
         </div>,
+        document.body
+    )
+
+    // OverwatchSidebar portal
+    const sidebarEl = mode === "results" && createPortal(
+        <OverwatchSidebar
+            isMobile={isMobile}
+            open={sidebarOpen}
+            onClose={() => setSidebarOpen(false)}
+            stats={stats}
+            detections={detections}
+            visible={visible}
+            minConf={minConf}
+            onMinConfChange={setMinConf}
+            enhance={enhance}
+            onEnhanceToggle={() => setEnhance(v => !v)}
+            enhanced={enhanced}
+            analysis={analysis}
+            analyzing={analyzing}
+            onAnalyze={runIntelligenceAnalysis}
+            onDismissAnalysis={() => setAnalysis(null)}
+            onClear={clearAnalysis}
+            onRescan={reanalyze}
+            sentinel2Active={sentinel2Active}
+            onToggleSentinel2={onToggleSentinel2}
+            sentinelCapturedAt={sentinelImageData?.capturedAt ?? null}
+            selectedCats={selectedCats}
+            onToggleCat={toggleCat}
+            onClearCatFilter={clearCatFilter}
+            savedScans={savedScans}
+            onSave={handleSave}
+            onDeleteSaved={handleDeleteSaved}
+            onRestoreSaved={handleRestoreSaved}
+        />,
         document.body
     )
 
@@ -688,7 +549,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
             )}
 
             {visible.map((det, i) => {
-                const color = detectionColor(det.class)
+                const color = colorForClass(det.class)
                 return (
                     <Polygon key={i} positions={det.corners}
                         pathOptions={{ color, weight: 1.5, fillColor: color, fillOpacity: 0.13, opacity: 0.9 }}
@@ -703,7 +564,8 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
             {overlayEl}
             {instructionsEl}
             {spinnerEl}
-            {resultsEl}
+            {reopenEl}
+            {sidebarEl}
             {errorEl}
         </Fragment>
     )

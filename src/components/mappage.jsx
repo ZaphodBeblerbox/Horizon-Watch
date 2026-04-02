@@ -8665,6 +8665,8 @@ export default function MapPage({
                     active={overwatchActive}
                     onExit={onOverwatchExit}
                     sentinelImageData={sentinelImageData}
+                    sentinel2Active={active.sentinel2}
+                    onToggleSentinel2={() => toggle("sentinel2")}
                 />
 
             </MapContainer>
