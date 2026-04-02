@@ -137,6 +137,7 @@ export default function App() {
     const [showAdmin,         setShowAdmin]         = useState(false)
     const [showChat,          setShowChat]          = useState(false)
     const [overwatchActive,   setOverwatchActive]   = useState(false)
+    const [sentinel2Active,   setSentinel2Active]   = useState(false)
     const [showStartupModal,  setShowStartupModal]  = useState(false)
     const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
     const [showStartupChoice, setShowStartupChoice] = useState(false)
@@ -916,6 +917,8 @@ export default function App() {
                         externalPanelOpen={rightPanel !== null}
                         overwatchActive={overwatchActive}
                         onOverwatchExit={() => setOverwatchActive(false)}
+                        sentinel2Active={sentinel2Active}
+                        onSentinel2Exit={() => setSentinel2Active(false)}
                     />
                 </div>
 
@@ -1104,12 +1107,12 @@ export default function App() {
                     activeTabType={activeTabType}
                     onSwitchToMap={() => openTab("map")}
                     onSwitchToNews={() => openTab("news")}
-                    onSwitchToBriefing={() => openTab("briefing")}
                     notifUnread={unreadCount}
                     onToggleNotif={() => setNotifOpen(v => !v)}
                     onOpenMenu={() => setMobileDrawerOpen(true)}
                     overwatchActive={overwatchActive}
                     onToggleOverwatch={() => setOverwatchActive(v => !v)}
+                    onOpenPoi={() => openTab("poi")}
                 />
             )}
 

@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
+import API_BASE from "../apiBase.js"
 
 // ── Icon ──────────────────────────────────────────────────────────────────────
 export function IconOverwatch({ size = 18, color = "currentColor" }) {
@@ -166,6 +167,152 @@ function SlimToggle({ on, onToggle, label, hint, disabled }) {
     )
 }
 
+// ── Scene history with thumbnail previews ─────────────────────────────────────
+function HistorySection({
+    sentinelBounds, sentinelImageType, sentinelMaxCloud,
+    sentinelCurrentImg, sentinelDates, sentinelDatesLoading,
+    onFetchDates, onLoadDate,
+}) {
+    const [showHistory, setShowHistory] = useState(false)
+    const [thumbs, setThumbs] = useState({})   // date → { loading, src, error }
+    const fetchingRef = useRef({})             // prevent duplicate fetches
+
+    // Auto-fetch thumbnails when dates arrive and history is open
+    useEffect(() => {
+        if (!showHistory || !sentinelDates?.length || !sentinelBounds) return
+        sentinelDates.forEach(d => {
+            if (thumbs[d.date] || fetchingRef.current[d.date]) return
+            fetchingRef.current[d.date] = true
+            setThumbs(prev => ({ ...prev, [d.date]: { loading: true, src: null, error: null } }))
+            fetch(`${API_BASE}/api/sentinel/imagery`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    bounds: sentinelBounds,
+                    max_cloud: sentinelMaxCloud,
+                    days_back: 365,
+                    image_type: sentinelImageType,
+                    date: d.date,
+                    width: 96, height: 64,
+                }),
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.image) {
+                        setThumbs(prev => ({ ...prev, [d.date]: { loading: false, src: `data:image/png;base64,${data.image}`, error: null } }))
+                    } else {
+                        setThumbs(prev => ({ ...prev, [d.date]: { loading: false, src: null, error: "no image" } }))
+                    }
+                })
+                .catch(() => {
+                    setThumbs(prev => ({ ...prev, [d.date]: { loading: false, src: null, error: "failed" } }))
+                })
+        })
+    }, [showHistory, sentinelDates, sentinelBounds, sentinelImageType, sentinelMaxCloud])
+
+    // Reset thumbs when bounds/type change
+    useEffect(() => {
+        setThumbs({})
+        fetchingRef.current = {}
+    }, [sentinelBounds, sentinelImageType])
+
+    const toggleHistory = () => {
+        const next = !showHistory
+        setShowHistory(next)
+        if (next && !sentinelDates?.length) onFetchDates()
+    }
+
+    return (
+        <>
+            <button onClick={toggleHistory} style={{
+                cursor: "pointer", fontFamily: "inherit", lineHeight: 1,
+                border: "1px solid var(--akili-border)", background: "rgba(255,255,255,0.02)",
+                width: "100%", display: "flex", alignItems: "center",
+                justifyContent: "space-between",
+                padding: "6px 10px", borderRadius: 6,
+                color: "var(--akili-text-muted)", fontSize: 9,
+                textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2,
+            }}>
+                <span>Scene History</span>
+                <span>{showHistory ? "▲" : "▼"}</span>
+            </button>
+
+            {showHistory && (
+                <div style={{ marginTop: 4 }}>
+                    {sentinelDatesLoading && (
+                        <div style={{ fontSize: 9, color: "var(--akili-text-muted)", padding: "6px 0" }}>Searching scenes…</div>
+                    )}
+                    {!sentinelDatesLoading && sentinelDates?.length === 0 && (
+                        <div style={{ fontSize: 9, color: "var(--akili-text-muted)", padding: "6px 0" }}>No scenes found</div>
+                    )}
+                    {(sentinelDates || []).map(d => {
+                        const thumb = thumbs[d.date]
+                        const active = sentinelCurrentImg?.date === d.date
+                        return (
+                            <div key={d.date}
+                                onClick={() => onLoadDate(d.date)}
+                                style={{
+                                    display: "flex", alignItems: "center", gap: 8,
+                                    padding: "6px 8px", borderRadius: 6, marginBottom: 4,
+                                    background: active ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.02)",
+                                    border: `1px solid ${active ? "rgba(255,255,255,0.16)" : "var(--akili-border)"}`,
+                                    cursor: "pointer",
+                                }}>
+                                {/* Thumbnail */}
+                                <div style={{
+                                    width: 64, height: 42, flexShrink: 0,
+                                    borderRadius: 4, overflow: "hidden",
+                                    background: "rgba(255,255,255,0.04)",
+                                    border: "1px solid rgba(255,255,255,0.08)",
+                                    display: "flex", alignItems: "center", justifyContent: "center",
+                                }}>
+                                    {thumb?.loading && (
+                                        <div style={{
+                                            width: 12, height: 12,
+                                            border: "2px solid rgba(255,255,255,0.08)",
+                                            borderTop: "2px solid var(--akili-accent)",
+                                            borderRadius: "50%", animation: "ow-spin 0.8s linear infinite",
+                                        }} />
+                                    )}
+                                    {thumb?.src && (
+                                        <img src={thumb.src} alt={d.date}
+                                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                                    )}
+                                    {!thumb && (
+                                        <span style={{ fontSize: 7, color: "var(--akili-text-muted)" }}>IMG</span>
+                                    )}
+                                </div>
+                                {/* Meta */}
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{
+                                        fontSize: 10, fontWeight: active ? 600 : 400,
+                                        color: "var(--akili-text-primary)",
+                                    }}>
+                                        {fmtShortDate(d.date + "T12:00:00Z")}
+                                    </div>
+                                    {d.cloud_cover != null && (
+                                        <div style={{ fontSize: 8, color: "var(--akili-text-muted)", marginTop: 1 }}>
+                                            ☁ {d.cloud_cover.toFixed(0)}%
+                                        </div>
+                                    )}
+                                    {active && (
+                                        <div style={{ fontSize: 8, color: "var(--akili-accent)", marginTop: 1, fontWeight: 600 }}>
+                                            ✓ Loaded
+                                        </div>
+                                    )}
+                                </div>
+                                <span style={{ fontSize: 9, color: active ? "var(--akili-text-muted)" : "var(--akili-accent)", flexShrink: 0 }}>
+                                    {active ? "●" : "Load"}
+                                </span>
+                            </div>
+                        )
+                    })}
+                </div>
+            )}
+        </>
+    )
+}
+
 // ── Sentinel imagery section ──────────────────────────────────────────────────
 function SentinelSection({
     sentinelMode, onStartSentinelDraw, onCancelSentinelDraw,
@@ -180,7 +327,6 @@ function SentinelSection({
     sentinel2Active, onToggleSentinel2,
     isMobile,
 }) {
-    const [showHistory, setShowHistory] = useState(false)
     const [showTypeGrid, setShowTypeGrid] = useState(false)
 
     const currentTypeLabel = SENTINEL_TYPES.find(t => t.key === sentinelImageType)?.label || sentinelImageType
@@ -320,57 +466,16 @@ function SentinelSection({
 
             {/* History */}
             {sentinelBounds && (
-                <>
-                    <button onClick={() => {
-                        setShowHistory(v => !v)
-                        if (!showHistory && !sentinelDates?.length) onFetchDates()
-                    }} style={{
-                        ...S.btn, width: "100%", display: "flex", alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "6px 10px", borderRadius: 6,
-                        background: "rgba(255,255,255,0.02)",
-                        border: "1px solid var(--akili-border)",
-                        color: "var(--akili-text-muted)", fontSize: 9,
-                        textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2,
-                    }}>
-                        <span>Scene History</span>
-                        <span>{showHistory ? "▲" : "▼"}</span>
-                    </button>
-
-                    {showHistory && (
-                        <div style={{ marginTop: 4 }}>
-                            {sentinelDatesLoading && (
-                                <div style={{ fontSize: 9, color: "var(--akili-text-muted)", padding: "6px 0" }}>Searching scenes…</div>
-                            )}
-                            {!sentinelDatesLoading && sentinelDates?.length === 0 && (
-                                <div style={{ fontSize: 9, color: "var(--akili-text-muted)", padding: "6px 0" }}>No scenes found</div>
-                            )}
-                            {(sentinelDates || []).map(d => (
-                                <div key={d.date} style={{
-                                    display: "flex", alignItems: "center", gap: 8,
-                                    padding: "5px 8px", borderRadius: 5, marginBottom: 3,
-                                    background: sentinelCurrentImg?.date === d.date
-                                        ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.02)",
-                                    border: `1px solid ${sentinelCurrentImg?.date === d.date
-                                        ? "rgba(255,255,255,0.16)" : "var(--akili-border)"}`,
-                                    cursor: "pointer",
-                                }} onClick={() => onLoadDate(d.date)}>
-                                    <div style={{ flex: 1 }}>
-                                        <div style={{ fontSize: 10, color: "var(--akili-text-primary)", fontWeight: sentinelCurrentImg?.date === d.date ? 600 : 400 }}>
-                                            {fmtShortDate(d.date + "T12:00:00Z")}
-                                        </div>
-                                        {d.cloud_cover != null && (
-                                            <div style={{ fontSize: 8, color: "var(--akili-text-muted)" }}>
-                                                ☁ {d.cloud_cover.toFixed(0)}%
-                                            </div>
-                                        )}
-                                    </div>
-                                    <span style={{ fontSize: 9, color: "var(--akili-accent)" }}>Load</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </>
+                <HistorySection
+                    sentinelBounds={sentinelBounds}
+                    sentinelImageType={sentinelImageType}
+                    sentinelMaxCloud={sentinelMaxCloud}
+                    sentinelCurrentImg={sentinelCurrentImg}
+                    sentinelDates={sentinelDates}
+                    sentinelDatesLoading={sentinelDatesLoading}
+                    onFetchDates={onFetchDates}
+                    onLoadDate={onLoadDate}
+                />
             )}
         </div>
     )
@@ -727,8 +832,8 @@ function DesktopSidebar({ open, onClose, mode, stats, ...rest }) {
         <>
             <div style={{
                 position: "fixed", top: 40, right: 0, bottom: 0, width: 340, zIndex: 1150,
-                background: "var(--akili-panel-solid, #0e1420)",
-                backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+                background: "rgba(6,13,26,0.72)",
+                backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
                 borderLeft: "1px solid var(--akili-border)",
                 display: "flex", flexDirection: "column",
                 boxShadow: "-6px 0 30px rgba(0,0,0,0.4)",
@@ -753,8 +858,8 @@ function MobileSidebar({ open, onClose, mode, stats, ...rest }) {
             <div style={{
                 position: "fixed", left: 0, right: 0, bottom: 56, zIndex: 1451,
                 maxHeight: collapsed ? 48 : "72vh",
-                background: "var(--akili-panel-solid, #0e1420)",
-                backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+                background: "rgba(6,13,26,0.72)",
+                backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
                 borderRadius: "12px 12px 0 0",
                 borderTop: "1px solid var(--akili-border)",
                 display: "flex", flexDirection: "column",

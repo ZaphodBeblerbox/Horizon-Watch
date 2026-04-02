@@ -9,8 +9,7 @@ export default function BottomNav({
     onOpenMenu,
     overwatchActive,
     onToggleOverwatch,
-    sentinel2Active,
-    onToggleSentinel2,
+    onOpenPoi,
 }) {
     const items = [
         {
@@ -41,19 +40,17 @@ export default function BottomNav({
             active: activeTabType === "news",
         },
         {
-            id:    "sentinel2",
-            label: "SAT",
+            id:    "poi",
+            label: "POI",
             icon:  (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="10" cy="10" r="3"/>
-                    <path d="M10 2v2M10 16v2M2 10h2M16 10h2"/>
-                    <path d="M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M4.9 15.1l1.4-1.4M13.7 6.3l1.4-1.4"/>
-                    <circle cx="10" cy="10" r="7" strokeDasharray="3 2" opacity="0.4"/>
+                    <circle cx="10" cy="7.5" r="3"/>
+                    <path d="M10 10.5C7 10.5 4.5 12.5 4.5 15H15.5C15.5 12.5 13 10.5 10 10.5Z"/>
+                    <circle cx="10" cy="7.5" r="6.5" strokeDasharray="2.5 2" opacity="0.3"/>
                 </svg>
             ),
-            onClick: onToggleSentinel2,
-            active: !!sentinel2Active,
-            activeColor: "#22d3ee",
+            onClick: onOpenPoi,
+            active: activeTabType === "poi",
         },
         {
             id:    "alerts",

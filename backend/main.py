@@ -7220,8 +7220,13 @@ async def sentinel_imagery(request: Request):
         # ── Cap image size at 2500×2500 ───────────────────────────────────────
         lat_span = abs(north - south)
         lng_span = abs(east  - west)
-        width    = min(2500, max(256, int(lng_span * 11100)))
-        height   = min(2500, max(256, int(lat_span * 11100)))
+        req_w = body.get("width");  req_h = body.get("height")
+        if req_w and req_h:
+            width  = min(2500, max(32, int(req_w)))
+            height = min(2500, max(32, int(req_h)))
+        else:
+            width  = min(2500, max(256, int(lng_span * 11100)))
+            height = min(2500, max(256, int(lat_span * 11100)))
 
         now = datetime.now(timezone.utc)
         if date_str:
