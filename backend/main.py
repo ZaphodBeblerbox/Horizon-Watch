@@ -7047,6 +7047,66 @@ function evaluatePixel(s) {
   return [3.5 * s.B04, 3.5 * s.B03, 3.5 * s.B02, s.dataMask]
 }"""
 
+# ── Per-type evalscripts ──────────────────────────────────────────────────────
+_EVALSCRIPTS = {
+    "true-colour": _EVALSCRIPT_TRUE_COLOUR,
+
+    "false-colour": """//VERSION=3
+function setup(){return{input:["B08","B04","B03","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){return[3.5*s.B08,3.5*s.B04,3.5*s.B03,s.dataMask]}""",
+
+    "highlight-optimized": """//VERSION=3
+function setup(){return{input:["B04","B03","B02","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){
+  var a=[s.B04,s.B03,s.B02];var mx=Math.max(a[0],a[1],a[2]);
+  if(mx>1/3.5){var f=1/(3.5*mx);return[f*s.B04,f*s.B03,f*s.B02,s.dataMask]}
+  return[3.5*s.B04,3.5*s.B03,3.5*s.B02,s.dataMask]}""",
+
+    "ndvi": """//VERSION=3
+function setup(){return{input:["B08","B04","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){
+  var n=(s.B08-s.B04)/(s.B08+s.B04+1e-6);
+  var c=colorBlend(n,[-1,-0.5,0,0.2,0.4,0.6,1],
+    [[0.05,0.05,0.05],[0.75,0.4,0.1],[0.9,0.9,0.2],[0.5,0.8,0.2],
+     [0.2,0.6,0.1],[0.1,0.4,0.05],[0.05,0.25,0.05]]);
+  return[c[0],c[1],c[2],s.dataMask]}""",
+
+    "false-colour-urban": """//VERSION=3
+function setup(){return{input:["B12","B11","B04","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){return[3.5*s.B12,3.5*s.B11,3.5*s.B04,s.dataMask]}""",
+
+    "moisture-index": """//VERSION=3
+function setup(){return{input:["B8A","B11","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){
+  var mi=(s.B8A-s.B11)/(s.B8A+s.B11+1e-6);
+  var c=colorBlend(mi,[-1,-0.5,0,0.2,0.4,0.6,1],
+    [[0.7,0.3,0.05],[0.9,0.7,0.3],[0.9,0.9,0.7],[0.7,0.9,0.5],
+     [0.3,0.7,0.2],[0.1,0.4,0.1],[0.0,0.2,0.05]]);
+  return[c[0],c[1],c[2],s.dataMask]}""",
+
+    "swir": """//VERSION=3
+function setup(){return{input:["B12","B8A","B04","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){return[3.5*s.B12,3.5*s.B8A,3.5*s.B04,s.dataMask]}""",
+
+    "ndwi": """//VERSION=3
+function setup(){return{input:["B03","B08","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){
+  var n=(s.B03-s.B08)/(s.B03+s.B08+1e-6);
+  var c=colorBlend(n,[-1,-0.3,0,0.2,0.5,1],
+    [[0.5,0.3,0.1],[0.8,0.8,0.6],[0.9,0.9,0.9],[0.5,0.7,0.9],
+     [0.1,0.5,0.8],[0.0,0.2,0.6]]);
+  return[c[0],c[1],c[2],s.dataMask]}""",
+
+    "ndsi": """//VERSION=3
+function setup(){return{input:["B03","B11","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){
+  var n=(s.B03-s.B11)/(s.B03+s.B11+1e-6);
+  var c=colorBlend(n,[-1,0,0.2,0.4,0.6,1],
+    [[0.5,0.3,0.1],[0.8,0.7,0.5],[0.9,0.9,0.9],[0.96,0.97,1],
+     [0.7,0.85,1],[0.4,0.7,1]]);
+  return[c[0],c[1],c[2],s.dataMask]}""",
+}
+
 
 def _tile_to_bbox_wgs84(z: int, x: int, y: int) -> list[float]:
     """Convert XYZ slippy-map tile to [west, south, east, north] in WGS84."""
@@ -7135,13 +7195,17 @@ async def satellite_tile_png(z: int, x: int, y: int, dt: str = ""):
 
 @app.post("/api/sentinel/imagery")
 async def sentinel_imagery(request: Request):
-    """Fetch a full Sentinel-2 true-colour image for a drawn bounding box."""
+    """Fetch a full Sentinel-2 image for a drawn bounding box.
+    Supports image_type (true-colour|false-colour|highlight-optimized|ndvi|
+    false-colour-urban|moisture-index|swir|ndwi|ndsi) and optional date (YYYY-MM-DD)."""
     import base64 as _b64
     try:
-        body      = await request.json()
-        bounds    = body.get("bounds", {})
-        max_cloud = int(body.get("max_cloud", 20))
-        days_back = int(body.get("days_back", 90))
+        body       = await request.json()
+        bounds     = body.get("bounds", {})
+        max_cloud  = int(body.get("max_cloud", 20))
+        days_back  = int(body.get("days_back", 90))
+        image_type = body.get("image_type", "true-colour")
+        date_str   = body.get("date")   # optional YYYY-MM-DD for exact scene
 
         west  = bounds.get("west");  east  = bounds.get("east")
         south = bounds.get("south"); north = bounds.get("north")
@@ -7151,17 +7215,27 @@ async def sentinel_imagery(request: Request):
         if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
             return JSONResponse({"error": "Copernicus credentials not configured"}, status_code=503)
 
-        # ── Cap image size at 2500×2500 (~10m/px native resolution) ──────────
+        evalscript = _EVALSCRIPTS.get(image_type, _EVALSCRIPT_TRUE_COLOUR)
+
+        # ── Cap image size at 2500×2500 ───────────────────────────────────────
         lat_span = abs(north - south)
         lng_span = abs(east  - west)
         width    = min(2500, max(256, int(lng_span * 11100)))
         height   = min(2500, max(256, int(lat_span * 11100)))
 
-        now        = datetime.now(timezone.utc)
-        time_range = {
-            "from": (now - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z"),
-            "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
-        }
+        now = datetime.now(timezone.utc)
+        if date_str:
+            time_range = {
+                "from": f"{date_str}T00:00:00Z",
+                "to":   f"{date_str}T23:59:59Z",
+            }
+            mosaic_order = "mostRecent"
+        else:
+            time_range = {
+                "from": (now - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z"),
+                "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+            }
+            mosaic_order = "leastCC"
 
         payload = {
             "input": {
@@ -7172,9 +7246,9 @@ async def sentinel_imagery(request: Request):
                 "data": [{
                     "type": "sentinel-2-l2a",
                     "dataFilter": {
-                        "maxCloudCoverage": max_cloud,
+                        "maxCloudCoverage": max_cloud if not date_str else 100,
                         "timeRange": time_range,
-                        "mosaickingOrder": "leastCC",
+                        "mosaickingOrder": mosaic_order,
                     },
                 }],
             },
@@ -7183,7 +7257,7 @@ async def sentinel_imagery(request: Request):
                 "height": height,
                 "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
             },
-            "evalscript": _EVALSCRIPT_TRUE_COLOUR,
+            "evalscript": evalscript,
         }
 
         async with httpx.AsyncClient(timeout=60.0) as client_h:
@@ -7200,12 +7274,14 @@ async def sentinel_imagery(request: Request):
         if resp.status_code == 200:
             img_b64 = _b64.b64encode(resp.content).decode()
             return JSONResponse({
-                "image":  img_b64,
-                "width":  width,
-                "height": height,
-                "bounds": bounds,
-                "cloud_max": max_cloud,
-                "days_back": days_back,
+                "image":      img_b64,
+                "width":      width,
+                "height":     height,
+                "bounds":     bounds,
+                "cloud_max":  max_cloud,
+                "days_back":  days_back,
+                "image_type": image_type,
+                "date":       date_str,
             })
         else:
             detail = resp.text[:500]
@@ -7216,6 +7292,42 @@ async def sentinel_imagery(request: Request):
             )
     except Exception as e:
         print(f"[sentinel/imagery] error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/sentinel/dates")
+async def sentinel_dates(request: Request):
+    """Return available Sentinel-2 scene dates for a bounding box (STAC search)."""
+    try:
+        body      = await request.json()
+        bounds    = body.get("bounds", {})
+        max_cloud = int(body.get("max_cloud", 40))
+        days_back = int(body.get("days_back", 180))
+
+        west  = bounds.get("west");  east  = bounds.get("east")
+        south = bounds.get("south"); north = bounds.get("north")
+        if None in (west, east, south, north):
+            return JSONResponse({"error": "bounds required"}, status_code=400)
+
+        items, err = await _satellite_search_impl(
+            bbox=[west, south, east, north],
+            max_cloud=max_cloud,
+            days_back=days_back,
+        )
+        if err:
+            return JSONResponse({"error": err}, status_code=500)
+
+        seen = set(); dates = []
+        for it in (items or []):
+            dt = (it.get("datetime") or "")[:10]
+            cc = it.get("cloud_cover")
+            if dt and dt not in seen:
+                seen.add(dt)
+                dates.append({"date": dt, "cloud_cover": round(cc, 1) if cc is not None else None})
+        dates = sorted(dates, key=lambda d: d["date"], reverse=True)[:10]
+        return JSONResponse({"dates": dates})
+    except Exception as e:
+        print(f"[sentinel/dates] error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
