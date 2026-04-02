@@ -723,9 +723,10 @@ function PanelHeader({ onClose, stats, mode }) {
 // ── Desktop sidebar ───────────────────────────────────────────────────────────
 function DesktopSidebar({ open, onClose, mode, stats, ...rest }) {
     if (!open) return null
+    const drawing = mode === "drawing"
     return (
         <>
-            <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1140 }} />
+            <div onClick={drawing ? undefined : onClose} style={{ position: "fixed", inset: 0, zIndex: 1140 }} />
             <div style={{
                 position: "fixed", top: 40, right: 0, bottom: 0, width: 340, zIndex: 1150,
                 background: "var(--akili-panel-solid, #0e1420)",
@@ -749,10 +750,11 @@ function DesktopSidebar({ open, onClose, mode, stats, ...rest }) {
 function MobileSidebar({ open, onClose, mode, stats, ...rest }) {
     const [collapsed, setCollapsed] = useState(false)
     if (!open) return null
+    const drawing = mode === "drawing"
     return (
         <>
             {!collapsed && (
-                <div onClick={onClose} style={{
+                <div onClick={drawing ? undefined : onClose} style={{
                     position: "fixed", inset: 0, zIndex: 1450,
                     background: "rgba(0,0,0,0.35)",
                 }} />
