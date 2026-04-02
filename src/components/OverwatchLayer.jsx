@@ -1,47 +1,105 @@
 import { useState, useRef, useEffect, useCallback, Fragment, memo } from "react"
 import { createPortal } from "react-dom"
-import { useMap, Polygon, Rectangle, Tooltip } from "react-leaflet"
+import { useMap, useMapEvents, Polygon, Polyline, CircleMarker, Tooltip, ImageOverlay } from "react-leaflet"
 import API_BASE from "../apiBase.js"
 import OverwatchSidebar, {
-    catForClass, colorForClass, colorForCat,
+    IconOverwatch,
+    catForClass, colorForClass,
     loadSavedScans, persistSavedScans,
+    loadSavedImages, persistSavedImages,
 } from "./OverwatchSidebar.jsx"
 
-// ── Detection label helper ───────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function detectionLabel(det) {
     const cat  = det.category || catForClass(det.class)
     const type = det.specific_type
         ? det.specific_type.charAt(0).toUpperCase() + det.specific_type.slice(1)
         : det.class
-    const conf = Math.round(det.confidence * 100)
-    return `${cat}: ${type} (${conf}%)`
+    return `${cat}: ${type} (${Math.round(det.confidence * 100)}%)`
 }
 
-// ── Overwatch icon ────────────────────────────────────────────────────────────
-export function IconOverwatch({ size = 18, color = "currentColor" }) {
+function polyBounds(verts) {
+    const lats = verts.map(v => v[0])
+    const lons = verts.map(v => v[1])
+    return { north: Math.max(...lats), south: Math.min(...lats), east: Math.max(...lons), west: Math.min(...lons) }
+}
+
+const GLASS = {
+    background:           "rgba(7,14,28,0.9)",
+    backdropFilter:       "blur(24px)",
+    WebkitBackdropFilter: "blur(24px)",
+    fontFamily:           "Inter,-apple-system,sans-serif",
+    color:                "rgba(220,228,238,0.82)",
+}
+
+// ── Polygon draw tool (must be inside MapContainer) ───────────────────────────
+function PolygonDrawTool({ onComplete, onCancel, onVertCountChange }) {
+    const [verts,     setVerts]     = useState([])
+    const [cursor,    setCursor]    = useState(null)
+    const [nearStart, setNearStart] = useState(false)
+    const SNAP = 20
+
+    const map = useMapEvents({
+        click(e) {
+            const pt = [e.latlng.lat, e.latlng.lng]
+            if (verts.length >= 3) {
+                const fp   = map.latLngToContainerPoint(verts[0])
+                const dist = Math.hypot(e.containerPoint.x - fp.x, e.containerPoint.y - fp.y)
+                if (dist < SNAP) { onComplete(verts); return }
+            }
+            const next = [...verts, pt]
+            setVerts(next)
+            onVertCountChange?.(next.length)
+        },
+        mousemove(e) {
+            const pt = [e.latlng.lat, e.latlng.lng]
+            setCursor(pt)
+            if (verts.length >= 3) {
+                const fp   = map.latLngToContainerPoint(verts[0])
+                const dist = Math.hypot(e.containerPoint.x - fp.x, e.containerPoint.y - fp.y)
+                setNearStart(dist < SNAP)
+            } else setNearStart(false)
+        },
+    })
+
+    useEffect(() => {
+        map.getContainer().style.cursor = "crosshair"
+        return () => { map.getContainer().style.cursor = "" }
+    }, [map])
+
+    const preview = cursor ? [...verts, cursor] : verts
+
     return (
-        <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke={color}
-            strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M1 9C1 9 4 3 9 3C14 3 17 9 17 9C17 9 14 15 9 15C4 15 1 9 1 9Z"/>
-            <circle cx="9" cy="9" r="2.5"/>
-            <line x1="9"  y1="1"  x2="9"  y2="3"/>
-            <line x1="9"  y1="15" x2="9"  y2="17"/>
-            <line x1="1"  y1="9"  x2="3"  y2="9"/>
-            <line x1="15" y1="9"  x2="17" y2="9"/>
-        </svg>
+        <>
+            {preview.length >= 2 && (
+                <Polyline
+                    positions={preview}
+                    pathOptions={{ color: "rgba(200,220,240,0.75)", weight: 1.5, dashArray: "5 4", opacity: 0.85 }}
+                />
+            )}
+            {/* Closing segment when near start */}
+            {nearStart && cursor && verts.length >= 3 && (
+                <Polyline
+                    positions={[cursor, verts[0]]}
+                    pathOptions={{ color: "rgba(220,235,250,0.95)", weight: 2, opacity: 0.95 }}
+                />
+            )}
+            {verts.map((v, i) => (
+                <CircleMarker key={i} center={v}
+                    radius={i === 0 ? (nearStart ? 9 : 5) : 3}
+                    pathOptions={{
+                        color:       "rgba(210,225,240,0.9)",
+                        fillColor:   i === 0 && nearStart ? "rgba(255,255,255,0.95)" : "rgba(180,205,225,0.7)",
+                        fillOpacity: 1,
+                        weight:      i === 0 ? 2 : 1,
+                    }}
+                />
+            ))}
+        </>
     )
 }
 
-// ── Shared glass style ────────────────────────────────────────────────────────
-const GLASS = {
-    background:          "rgba(6,13,26,0.96)",
-    backdropFilter:      "blur(18px)",
-    WebkitBackdropFilter:"blur(18px)",
-    fontFamily:          "Inter,-apple-system,sans-serif",
-    color:               "#e2e8f0",
-}
-
-// ── OverwatchLayer (must live inside MapContainer) ────────────────────────────
+// ── Main layer (must be inside MapContainer) ──────────────────────────────────
 const OverwatchLayer = memo(function OverwatchLayer({
     active,
     onExit,
@@ -52,34 +110,29 @@ const OverwatchLayer = memo(function OverwatchLayer({
     const map = useMap()
 
     // ── State ─────────────────────────────────────────────────────────────────
-    const [mode,          setMode]          = useState("drawing")
-    const [drawRect,      setDrawRect]      = useState(null)
-    const [drawnBounds,   setDrawnBounds]   = useState(null)
-    const [detections,    setDetections]    = useState([])
-    const [stats,         setStats]         = useState(null)
-    const [error,         setError]         = useState(null)
-    const [minConf,       setMinConf]       = useState(0.15)
-    const [enhance,       setEnhance]       = useState(false)
-    const [enhanced,      setEnhanced]      = useState(false)
-    const [analysis,      setAnalysis]      = useState(null)
-    const [analyzing,     setAnalyzing]     = useState(false)
-    const [isMobile,      setIsMobile]      = useState(() => window.innerWidth < 768)
-    const [longWait,      setLongWait]      = useState(false)
-
-    // Sidebar visibility (closing sidebar does NOT clear detections)
-    const [sidebarOpen,   setSidebarOpen]   = useState(false)
-
-    // Category filter — empty Set means "all selected"
-    const [selectedCats,  setSelectedCats]  = useState(new Set())
-
-    // Saved scans (localStorage)
-    const [savedScans,    setSavedScans]    = useState(() => loadSavedScans())
+    // modes: idle | drawing | analyzing | results
+    const [mode,        setMode]        = useState("idle")
+    const [vertCount,   setVertCount]   = useState(0)
+    const [drawnPoly,   setDrawnPoly]   = useState(null)   // [[lat,lng], ...]
+    const [drawnBounds, setDrawnBounds] = useState(null)   // {north,south,east,west}
+    const [detections,  setDetections]  = useState([])
+    const [stats,       setStats]       = useState(null)
+    const [error,       setError]       = useState(null)
+    const [minConf,     setMinConf]     = useState(0.15)
+    const [enhance,     setEnhance]     = useState(false)
+    const [enhanced,    setEnhanced]    = useState(false)
+    const [analysis,    setAnalysis]    = useState(null)
+    const [analyzing,   setAnalyzing]   = useState(false)
+    const [isMobile,    setIsMobile]    = useState(() => window.innerWidth < 768)
+    const [longWait,    setLongWait]    = useState(false)
+    const [sidebarOpen, setSidebarOpen] = useState(false)
+    const [selectedCats,setSelectedCats]= useState(new Set())
+    const [savedScans,  setSavedScans]  = useState(() => loadSavedScans())
+    const [savedImages, setSavedImages] = useState(() => loadSavedImages())
 
     const longWaitTimerRef = useRef(null)
-    const drawStartRef     = useRef(null)
-    const isDrawingRef     = useRef(false)
 
-    // ── Derived: visible detections after conf + category filter ──────────────
+    // ── Visible detections (conf + category filter) ───────────────────────────
     const visible = detections.filter(d => {
         if (d.confidence < minConf) return false
         if (selectedCats.size > 0) {
@@ -96,11 +149,17 @@ const OverwatchLayer = memo(function OverwatchLayer({
         return () => window.removeEventListener("resize", h)
     }, [])
 
-    // ── Reset when active toggles ─────────────────────────────────────────────
+    // ── Active toggle — open sidebar immediately, reset on exit ───────────────
     useEffect(() => {
-        if (!active) {
-            setMode("drawing")
-            setDrawRect(null)
+        if (active) {
+            setMode("idle")
+            setSidebarOpen(true)
+            // If sentinel imagery already loaded, stay in idle — user picks what to do
+        } else {
+            // On deactivate: reset transient state but keep saved items
+            setMode("idle")
+            setVertCount(0)
+            setDrawnPoly(null)
             setDrawnBounds(null)
             setDetections([])
             setStats(null)
@@ -110,90 +169,27 @@ const OverwatchLayer = memo(function OverwatchLayer({
             setAnalyzing(false)
             setSidebarOpen(false)
             setSelectedCats(new Set())
-            drawStartRef.current  = null
-            isDrawingRef.current  = false
+            clearTimeout(longWaitTimerRef.current)
+            setLongWait(false)
             map.dragging.enable()
-        } else if (sentinelImageData) {
-            setMode("analyzing")
-            setDrawnBounds(sentinelImageData.bounds)
-            runSentinelAnalysis(sentinelImageData)
+            map.getContainer().style.cursor = ""
         }
     }, [active, map]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Open sidebar when results arrive
-    useEffect(() => {
-        if (mode === "results") setSidebarOpen(true)
-    }, [mode])
-
-    // ── Pointer helpers ───────────────────────────────────────────────────────
-    const clientToContainerPt = useCallback((clientX, clientY) => {
-        const r = map.getContainer().getBoundingClientRect()
-        return { x: clientX - r.left, y: clientY - r.top }
-    }, [map])
-
-    const handlePointerDown = useCallback((e) => {
-        if (mode !== "drawing") return
-        e.preventDefault()
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY
-        drawStartRef.current = { clientX, clientY, containerPt: clientToContainerPt(clientX, clientY) }
-        isDrawingRef.current = true
-        setDrawRect({ x: clientX, y: clientY, w: 0, h: 0 })
-        map.dragging.disable()
-        map.touchZoom?.disable()
-        map.scrollWheelZoom?.disable()
-    }, [mode, clientToContainerPt, map])
-
-    const handlePointerMove = useCallback((e) => {
-        if (!isDrawingRef.current) return
-        e.preventDefault()
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY
-        const s = drawStartRef.current
-        if (!s) return
-        setDrawRect({
-            x: Math.min(s.clientX, clientX),
-            y: Math.min(s.clientY, clientY),
-            w: Math.abs(clientX - s.clientX),
-            h: Math.abs(clientY - s.clientY),
-        })
-    }, [])
-
-    const handlePointerUp = useCallback((e) => {
-        if (!isDrawingRef.current) return
-        e.preventDefault()
-        isDrawingRef.current = false
-        map.dragging.enable()
-        map.touchZoom?.enable()
-        map.scrollWheelZoom?.enable()
-
-        const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX
-        const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY
-        const s = drawStartRef.current
-        if (!s) return
-
-        if (Math.abs(clientX - s.clientX) < 30 || Math.abs(clientY - s.clientY) < 30) {
-            drawStartRef.current = null
-            setDrawRect(null)
-            return
-        }
-
-        const endPt = clientToContainerPt(clientX, clientY)
-        const nw    = map.containerPointToLatLng([
-            Math.min(s.containerPt.x, endPt.x),
-            Math.min(s.containerPt.y, endPt.y),
-        ])
-        const se    = map.containerPointToLatLng([
-            Math.max(s.containerPt.x, endPt.x),
-            Math.max(s.containerPt.y, endPt.y),
-        ])
-
-        drawStartRef.current = null
-        const bounds = { north: nw.lat, south: se.lat, east: se.lng, west: nw.lng }
+    // ── Polygon completed ─────────────────────────────────────────────────────
+    const handlePolygonComplete = useCallback((verts) => {
+        const bounds = polyBounds(verts)
+        setDrawnPoly(verts)
         setDrawnBounds(bounds)
         setMode("analyzing")
         runAnalysis(bounds)
-    }, [clientToContainerPt, map]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handleCancelDraw = useCallback(() => {
+        setMode(detections.length > 0 ? "results" : "idle")
+        setVertCount(0)
+        map.getContainer().style.cursor = ""
+    }, [detections.length, map])
 
     // ── Inference ─────────────────────────────────────────────────────────────
     const runAnalysis = useCallback(async (bounds) => {
@@ -211,7 +207,7 @@ const OverwatchLayer = memo(function OverwatchLayer({
             const data = await res.json()
             clearTimeout(longWaitTimerRef.current)
             setLongWait(false)
-            if (data.error) { setError(data.error); setMode("drawing"); setDrawRect(null); return }
+            if (data.error) { setError(data.error); setMode("idle"); return }
             const dets = data.detections || []
             setDetections(dets)
             setEnhanced(!!data.enhanced)
@@ -223,7 +219,7 @@ const OverwatchLayer = memo(function OverwatchLayer({
             clearTimeout(longWaitTimerRef.current)
             setLongWait(false)
             setError(`Request failed: ${err.message}`)
-            setMode("drawing"); setDrawRect(null)
+            setMode("idle")
         }
     }, [minConf, enhance])
 
@@ -231,6 +227,7 @@ const OverwatchLayer = memo(function OverwatchLayer({
         setError(null); setDetections([]); setStats(null)
         setEnhanced(false); setAnalysis(null); setLongWait(false)
         setSelectedCats(new Set())
+        setDrawnBounds(imgData.bounds)
         clearTimeout(longWaitTimerRef.current)
         longWaitTimerRef.current = setTimeout(() => setLongWait(true), 5000)
         const b64 = imgData.src.includes(",") ? imgData.src.split(",")[1] : imgData.src
@@ -243,7 +240,7 @@ const OverwatchLayer = memo(function OverwatchLayer({
             const data = await res.json()
             clearTimeout(longWaitTimerRef.current)
             setLongWait(false)
-            if (data.error) { setError(data.error); setMode("drawing"); return }
+            if (data.error) { setError(data.error); setMode("idle"); return }
             const dets = data.detections || []
             setDetections(dets)
             setEnhanced(!!data.enhanced)
@@ -255,17 +252,24 @@ const OverwatchLayer = memo(function OverwatchLayer({
             clearTimeout(longWaitTimerRef.current)
             setLongWait(false)
             setError(`Request failed: ${err.message}`)
-            setMode("drawing")
+            setMode("idle")
         }
     }, [minConf, enhance])
 
     const clearAnalysis = useCallback(() => {
         setDetections([]); setStats(null); setError(null)
         setAnalysis(null); setAnalyzing(false)
-        setDrawRect(null); setDrawnBounds(null)
-        setSidebarOpen(false); setSelectedCats(new Set())
-        setMode("drawing")
+        setDrawnPoly(null); setDrawnBounds(null)
+        setSelectedCats(new Set()); setVertCount(0)
+        setMode("idle")
     }, [])
+
+    const reanalyze = useCallback(() => {
+        if (!drawnBounds) return
+        setMode("analyzing")
+        if (sentinelImageData) runSentinelAnalysis(sentinelImageData)
+        else                   runAnalysis(drawnBounds)
+    }, [drawnBounds, sentinelImageData, runAnalysis, runSentinelAnalysis])
 
     const runIntelligenceAnalysis = useCallback(async () => {
         if (!detections.length || !drawnBounds) return
@@ -278,7 +282,7 @@ const OverwatchLayer = memo(function OverwatchLayer({
             })
             const data = await res.json()
             if (data.error) setError(data.error)
-            else setAnalysis(data)
+            else            setAnalysis(data)
         } catch (err) {
             setError(`Analysis failed: ${err.message}`)
         } finally {
@@ -286,48 +290,32 @@ const OverwatchLayer = memo(function OverwatchLayer({
         }
     }, [detections, drawnBounds])
 
-    const reanalyze = useCallback(() => {
-        if (!drawnBounds) return
-        setMode("analyzing")
-        if (sentinelImageData) runSentinelAnalysis(sentinelImageData)
-        else                   runAnalysis(drawnBounds)
-    }, [drawnBounds, sentinelImageData, runAnalysis, runSentinelAnalysis])
-
-    // ── Category filter handlers ───────────────────────────────────────────────
-    const toggleCat = useCallback((cat) => {
+    // ── Category filter ───────────────────────────────────────────────────────
+    const toggleCat    = useCallback((cat) => {
         setSelectedCats(prev => {
-            const next = new Set(prev)
-            if (next.has(cat)) next.delete(cat)
-            else               next.add(cat)
-            return next
+            const n = new Set(prev)
+            n.has(cat) ? n.delete(cat) : n.add(cat)
+            return n
         })
     }, [])
-
     const clearCatFilter = useCallback(() => setSelectedCats(new Set()), [])
 
-    // ── Save / restore / delete ───────────────────────────────────────────────
+    // ── Save / restore / delete scans ─────────────────────────────────────────
     const handleSave = useCallback(() => {
         if (!detections.length) return
-        const scan = {
-            id:          crypto.randomUUID(),
-            timestamp:   new Date().toISOString(),
-            detections,
-            stats,
-            drawnBounds,
-            enhanced,
-        }
+        const scan = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), detections, stats, drawnBounds, enhanced }
         setSavedScans(prev => {
-            const updated = [scan, ...prev].slice(0, 20)
-            persistSavedScans(updated)
-            return updated
+            const u = [scan, ...prev].slice(0, 20)
+            persistSavedScans(u)
+            return u
         })
     }, [detections, stats, drawnBounds, enhanced])
 
     const handleDeleteSaved = useCallback((id) => {
         setSavedScans(prev => {
-            const updated = prev.filter(s => s.id !== id)
-            persistSavedScans(updated)
-            return updated
+            const u = prev.filter(s => s.id !== id)
+            persistSavedScans(u)
+            return u
         })
     }, [])
 
@@ -335,115 +323,63 @@ const OverwatchLayer = memo(function OverwatchLayer({
         setDetections(scan.detections || [])
         setStats(scan.stats || null)
         setDrawnBounds(scan.drawnBounds || null)
+        setDrawnPoly(null)
         setEnhanced(!!scan.enhanced)
-        setAnalysis(null)
-        setSelectedCats(new Set())
-        setMode("results")
-        setSidebarOpen(true)
+        setAnalysis(null); setSelectedCats(new Set())
+        setMode("results"); setSidebarOpen(true)
+    }, [])
+
+    // ── Save / delete pinned imagery ──────────────────────────────────────────
+    const handlePinImagery = useCallback(() => {
+        if (!sentinelImageData) return
+        const entry = {
+            id:          crypto.randomUUID(),
+            timestamp:   new Date().toISOString(),
+            src:         sentinelImageData.src,
+            bounds:      sentinelImageData.bounds,
+            capturedAt:  sentinelImageData.capturedAt,
+        }
+        setSavedImages(prev => {
+            const u = [entry, ...prev].slice(0, 3)
+            persistSavedImages(u)
+            return u
+        })
+    }, [sentinelImageData])
+
+    const handleDeleteSavedImage = useCallback((id) => {
+        setSavedImages(prev => {
+            const u = prev.filter(i => i.id !== id)
+            persistSavedImages(u)
+            return u
+        })
     }, [])
 
     // ── Portals ───────────────────────────────────────────────────────────────
-
-    // Drawing capture overlay
-    const overlayEl = (mode === "drawing" || mode === "analyzing") && createPortal(
-        <div
-            style={{
-                position: "absolute", inset: 0, zIndex: 1200,
-                cursor: mode === "analyzing" ? "wait" : "crosshair",
-                touchAction: "none", userSelect: "none",
-            }}
-            onMouseDown={mode  === "drawing" ? handlePointerDown : undefined}
-            onMouseMove={mode  === "drawing" ? handlePointerMove : undefined}
-            onMouseUp={mode    === "drawing" ? handlePointerUp   : undefined}
-            onTouchStart={mode === "drawing" ? handlePointerDown : undefined}
-            onTouchMove={mode  === "drawing" ? handlePointerMove : undefined}
-            onTouchEnd={mode   === "drawing" ? handlePointerUp   : undefined}
-        >
-            {drawRect && drawRect.w > 4 && drawRect.h > 4 && (
-                <div style={{
-                    position: "fixed",
-                    left: drawRect.x, top: drawRect.y,
-                    width: drawRect.w, height: drawRect.h,
-                    border: "2px dashed #38bdf8",
-                    background: "rgba(56,189,248,0.07)",
-                    pointerEvents: "none", boxSizing: "border-box",
-                }} />
-            )}
-        </div>,
-        map.getContainer()
-    )
-
-    // "Draw a rectangle" instruction hint
-    const instructionsEl = mode === "drawing" && createPortal(
-        <div style={{
-            position: "fixed",
-            bottom:   isMobile ? 72 : 24,
-            left:     "50%",
-            transform:"translateX(-50%)",
-            zIndex:   1900,
-            pointerEvents: "none",
-            ...GLASS,
-            border:       "1px solid rgba(56,189,248,0.3)",
-            borderRadius: 24,
-            padding:      "9px 18px",
-            fontSize:     12,
-            display:      "flex", alignItems: "center", gap: 8,
-            whiteSpace:   "nowrap",
-            boxShadow:    "0 4px 20px rgba(0,0,0,0.5)",
-        }}>
-            <IconOverwatch size={13} color="#38bdf8" />
-            <span>Draw a rectangle to analyze</span>
-            <button
-                onClick={() => setEnhance(v => !v)}
-                style={{
-                    pointerEvents: "auto", marginLeft: 4,
-                    background: enhance ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.06)",
-                    border: `1px solid ${enhance ? "rgba(139,92,246,0.5)" : "rgba(255,255,255,0.1)"}`,
-                    color: enhance ? "#a78bfa" : "rgba(232,237,242,0.4)",
-                    cursor: "pointer", borderRadius: 10, fontSize: 9,
-                    fontWeight: 600, padding: "2px 7px", lineHeight: 1.4,
-                    letterSpacing: "0.04em",
-                }}
-            >AI {enhance ? "ON" : "OFF"}</button>
-            <button
-                onClick={onExit}
-                style={{
-                    pointerEvents: "auto", marginLeft: 2,
-                    background: "none", border: "none",
-                    color: "rgba(232,237,242,0.4)", cursor: "pointer",
-                    fontSize: 15, lineHeight: 1, padding: 0,
-                }}
-            >✕</button>
-        </div>,
-        document.body
-    )
-
-    // Analyzing spinner
-    const spinnerEl = mode === "analyzing" && createPortal(
+    // Spinner (full-screen overlay for analyzing state)
+    const spinnerEl = active && mode === "analyzing" && createPortal(
         <div style={{
             position: "fixed", top: "50%", left: "50%",
-            transform: "translate(-50%, -50%)",
+            transform: "translate(-50%,-50%)",
             zIndex: 2200,
             ...GLASS,
-            border: "1px solid rgba(56,189,248,0.25)",
-            borderRadius: 12,
-            padding: "20px 28px",
+            border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 12, padding: "20px 28px",
             display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
-            boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
         }}>
             <div style={{
                 width: 34, height: 34,
-                border: "3px solid rgba(56,189,248,0.15)",
-                borderTop: "3px solid #38bdf8",
+                border: "3px solid rgba(255,255,255,0.08)",
+                borderTop: "3px solid rgba(180,215,235,0.6)",
                 borderRadius: "50%",
                 animation: "ow-spin 0.8s linear infinite",
             }} />
-            <div style={{ fontSize: 12, fontWeight: 600 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(220,228,238,0.8)" }}>
                 {longWait ? "Analyzing large area…" : "Overwatch analyzing…"}
             </div>
-            <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "rgba(220,228,238,0.35)", textAlign: "center" }}>
                 {longWait
-                    ? "Tiled inference running · large areas may take several minutes"
+                    ? "Large area — may take several minutes"
                     : enhance ? "Fetching tiles · AI Classification" : "Fetching tiles · Object Detection"
                 }
             </div>
@@ -451,8 +387,8 @@ const OverwatchLayer = memo(function OverwatchLayer({
         document.body
     )
 
-    // "Reopen sidebar" floating pill when results exist but sidebar is closed
-    const reopenEl = mode === "results" && !sidebarOpen && stats && createPortal(
+    // "Reopen" pill when results exist but sidebar closed
+    const reopenEl = active && mode === "results" && !sidebarOpen && stats && createPortal(
         <button
             onClick={() => setSidebarOpen(true)}
             style={{
@@ -461,16 +397,15 @@ const OverwatchLayer = memo(function OverwatchLayer({
                 right:  24,
                 zIndex: 1900,
                 ...GLASS,
-                border:       "1px solid rgba(56,189,248,0.35)",
-                borderRadius: 24,
-                padding:      "9px 16px",
-                cursor:       "pointer",
-                display:      "flex", alignItems: "center", gap: 8,
-                fontSize:     11, fontWeight: 600, color: "#38bdf8",
-                boxShadow:    "0 4px 20px rgba(0,0,0,0.5)",
+                border:       "1px solid rgba(255,255,255,0.1)",
+                borderRadius: 24, padding: "9px 16px",
+                cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 8,
+                fontSize: 11, fontWeight: 600, color: "rgba(220,228,238,0.65)",
+                boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
             }}
         >
-            <IconOverwatch size={13} color="#38bdf8" />
+            <IconOverwatch size={13} color="rgba(140,210,240,0.7)" />
             {stats.total} detected
         </button>,
         document.body
@@ -483,31 +418,37 @@ const OverwatchLayer = memo(function OverwatchLayer({
             zIndex: 2100,
             maxWidth: "min(400px, calc(100vw - 32px))",
             ...GLASS,
-            border:     "1px solid rgba(239,68,68,0.35)",
-            borderLeft: "3px solid #ef4444",
-            borderRadius: 7,
-            padding:    "10px 14px",
-            display:    "flex", alignItems: "flex-start", gap: 10,
-            boxShadow:  "0 4px 20px rgba(0,0,0,0.5)",
+            border:     "1px solid rgba(200,80,80,0.3)",
+            borderLeft: "3px solid rgba(200,80,80,0.7)",
+            borderRadius: 7, padding: "10px 14px",
+            display: "flex", alignItems: "flex-start", gap: 10,
+            boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
         }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#ef4444", flexShrink: 0, marginTop: 3, boxShadow: "0 0 6px #ef444488" }} />
+            <div style={{ width: 7, height: 7, borderRadius: "50%", background: "rgba(210,80,80,0.8)", flexShrink: 0, marginTop: 4 }} />
             <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(210,80,80,0.9)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
                     Overwatch Error
                 </div>
-                <div style={{ fontSize: 11, lineHeight: 1.4 }}>{error}</div>
+                <div style={{ fontSize: 11, lineHeight: 1.4, color: "rgba(220,228,238,0.75)" }}>{error}</div>
             </div>
-            <button onClick={() => setError(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(232,237,242,0.35)", fontSize: 15, lineHeight: 1, padding: 0, flexShrink: 0, marginLeft: 4 }}>✕</button>
+            <button onClick={() => setError(null)} style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "rgba(220,228,238,0.3)", fontSize: 15, lineHeight: 1, padding: 0, flexShrink: 0, marginLeft: 4,
+            }}>✕</button>
         </div>,
         document.body
     )
 
-    // OverwatchSidebar portal
-    const sidebarEl = mode === "results" && createPortal(
+    // Sidebar portal
+    const sidebarEl = active && createPortal(
         <OverwatchSidebar
             isMobile={isMobile}
             open={sidebarOpen}
             onClose={() => setSidebarOpen(false)}
+            mode={mode}
+            vertCount={vertCount}
+            onStartDraw={() => { setMode("drawing"); setVertCount(0) }}
+            onCancelDraw={handleCancelDraw}
             stats={stats}
             detections={detections}
             visible={visible}
@@ -522,9 +463,11 @@ const OverwatchLayer = memo(function OverwatchLayer({
             onDismissAnalysis={() => setAnalysis(null)}
             onClear={clearAnalysis}
             onRescan={reanalyze}
+            onRunSentinelML={() => sentinelImageData && runSentinelAnalysis(sentinelImageData)}
             sentinel2Active={sentinel2Active}
             onToggleSentinel2={onToggleSentinel2}
-            sentinelCapturedAt={sentinelImageData?.capturedAt ?? null}
+            sentinelImageData={sentinelImageData}
+            onPinImagery={handlePinImagery}
             selectedCats={selectedCats}
             onToggleCat={toggleCat}
             onClearCatFilter={clearCatFilter}
@@ -532,40 +475,82 @@ const OverwatchLayer = memo(function OverwatchLayer({
             onSave={handleSave}
             onDeleteSaved={handleDeleteSaved}
             onRestoreSaved={handleRestoreSaved}
+            savedImages={savedImages}
+            onDeleteSavedImage={handleDeleteSavedImage}
         />,
         document.body
     )
 
     // ── React-Leaflet render ──────────────────────────────────────────────────
-    if (!active) return null
-
     return (
         <Fragment>
-            {drawnBounds && (
-                <Rectangle
-                    bounds={[[drawnBounds.south, drawnBounds.west], [drawnBounds.north, drawnBounds.east]]}
-                    pathOptions={{ color: "#38bdf8", weight: 1.5, dashArray: "6 4", fill: true, fillColor: "#38bdf8", fillOpacity: 0.04, opacity: 0.6 }}
+            {/* ── Persistent saved imagery overlays (always visible) ─────── */}
+            {savedImages.map(img => img.src ? (
+                <ImageOverlay
+                    key={img.id}
+                    url={img.src}
+                    bounds={[[img.bounds.south, img.bounds.west], [img.bounds.north, img.bounds.east]]}
+                    opacity={0.82}
+                    zIndex={300}
                 />
+            ) : null)}
+
+            {/* ── Persistent saved scan polygons (always visible) ─────────── */}
+            {savedScans.map(scan =>
+                (scan.detections || []).filter(d => d.confidence >= 0.15).map((det, i) => {
+                    const color = colorForClass(det.class)
+                    return (
+                        <Polygon key={`${scan.id}-${i}`} positions={det.corners}
+                            pathOptions={{ color, weight: 1, fillColor: color, fillOpacity: 0.07, opacity: 0.45, dashArray: "4 3" }}
+                        >
+                            <Tooltip sticky direction="top" offset={[0,-4]}>
+                                {detectionLabel(det)}
+                            </Tooltip>
+                        </Polygon>
+                    )
+                })
             )}
 
-            {visible.map((det, i) => {
-                const color = colorForClass(det.class)
-                return (
-                    <Polygon key={i} positions={det.corners}
-                        pathOptions={{ color, weight: 1.5, fillColor: color, fillOpacity: 0.13, opacity: 0.9 }}
-                    >
-                        <Tooltip sticky direction="top" className="ow-det-label" offset={[0, -4]}>
-                            {detectionLabel(det)}
-                        </Tooltip>
-                    </Polygon>
-                )
-            })}
+            {/* ── Active session — only when overwatch is on ──────────────── */}
+            {active && (
+                <>
+                    {/* Polygon draw tool */}
+                    {mode === "drawing" && (
+                        <PolygonDrawTool
+                            onComplete={handlePolygonComplete}
+                            onCancel={handleCancelDraw}
+                            onVertCountChange={setVertCount}
+                        />
+                    )}
 
-            {overlayEl}
-            {instructionsEl}
-            {spinnerEl}
-            {reopenEl}
-            {sidebarEl}
+                    {/* Drawn polygon outline */}
+                    {drawnPoly && drawnPoly.length >= 3 && (
+                        <Polygon
+                            positions={drawnPoly}
+                            pathOptions={{ color: "rgba(180,215,235,0.6)", weight: 1.5, dashArray: "5 4", fill: true, fillColor: "rgba(180,215,235,0.15)", fillOpacity: 1, opacity: 0.65 }}
+                        />
+                    )}
+
+                    {/* Active detections */}
+                    {visible.map((det, i) => {
+                        const color = colorForClass(det.class)
+                        return (
+                            <Polygon key={i} positions={det.corners}
+                                pathOptions={{ color, weight: 1.5, fillColor: color, fillOpacity: 0.14, opacity: 0.9 }}
+                            >
+                                <Tooltip sticky direction="top" className="ow-det-label" offset={[0,-4]}>
+                                    {detectionLabel(det)}
+                                </Tooltip>
+                            </Polygon>
+                        )
+                    })}
+
+                    {spinnerEl}
+                    {reopenEl}
+                    {sidebarEl}
+                </>
+            )}
+
             {errorEl}
         </Fragment>
     )
