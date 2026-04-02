@@ -239,8 +239,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
                 setDrawRect(null)
                 return
             }
-            const MAX_DISPLAY = 200
-            const dets = (data.detections || []).slice(0, MAX_DISPLAY)
+            const dets = data.detections || []
             setDetections(dets)
             setEnhanced(!!data.enhanced)
             const counts = {}
@@ -282,8 +281,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
                 setMode("drawing")
                 return
             }
-            const MAX_DISPLAY = 200
-            const dets = (data.detections || []).slice(0, MAX_DISPLAY)
+            const dets = data.detections || []
             setDetections(dets)
             setEnhanced(!!data.enhanced)
             const counts = {}
