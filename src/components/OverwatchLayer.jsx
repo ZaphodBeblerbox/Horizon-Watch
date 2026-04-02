@@ -221,7 +221,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
         setAnalysis(null)
         setLongWait(false)
         clearTimeout(longWaitTimerRef.current)
-        longWaitTimerRef.current = setTimeout(() => setLongWait(true), 8000)
+        longWaitTimerRef.current = setTimeout(() => setLongWait(true), 5000)
         // Always fetch at zoom 18 for maximum resolution regardless of current view
         const zoom = 18
         try {
@@ -265,7 +265,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
         setAnalysis(null)
         setLongWait(false)
         clearTimeout(longWaitTimerRef.current)
-        longWaitTimerRef.current = setTimeout(() => setLongWait(true), 8000)
+        longWaitTimerRef.current = setTimeout(() => setLongWait(true), 5000)
         // Strip the data-URL prefix — backend just needs the raw base64
         const b64 = imgData.src.includes(",") ? imgData.src.split(",")[1] : imgData.src
         try {
@@ -440,7 +440,7 @@ const OverwatchLayer = memo(function OverwatchLayer({ active, onExit, sentinelIm
             </div>
             <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textAlign: "center" }}>
                 {longWait
-                    ? "Tiled inference running · this may take 30–60 s"
+                    ? "Tiled inference running · large areas may take several minutes"
                     : enhance ? "Fetching tiles · DOTA OBB · AI Classification" : "Fetching tiles · YOLOv8 DOTA OBB"
                 }
             </div>

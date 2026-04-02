@@ -5747,8 +5747,10 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     y_min, y_max = min(y_min, y_max), max(y_min, y_max)
 
     tile_count = (x_max - x_min + 1) * (y_max - y_min + 1)
-    if tile_count > 400:
-        return {"error": f"Area too large ({tile_count} tiles). Zoom in or draw a smaller region.", "count": 0, "detections": []}
+    if tile_count > 10000:
+        return {"error": f"Area too large ({tile_count} tiles). Draw a smaller region.", "count": 0, "detections": []}
+    if tile_count > 1000:
+        print(f"[overwatch] large area: {tile_count} tiles — this will take several minutes")
 
     stitch_w = (x_max - x_min + 1) * TILE_SZ
     stitch_h = (y_max - y_min + 1) * TILE_SZ
