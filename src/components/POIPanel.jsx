@@ -1451,7 +1451,7 @@ export default function POIPanel({ onClose }) {
     const visibleOpenIds = openPoiIds.filter(id => { const p = pois.find(x => x.id === id); return p && (isInLockedView ? !!p.locked : !p.locked) })
 
     return (
-        <div style={{ width: "100%", height: "100%", background: "var(--akili-panel-solid, #0e1420)", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif", position: "relative" }}>
+        <div style={{ width: "100%", height: "100%", background: "rgba(6,14,48,0.92)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif", position: "relative" }}>
             {/* Header */}
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 20px", height: 44, borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
                 <button onClick={onClose} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 4px 0 0" }}>←</button>

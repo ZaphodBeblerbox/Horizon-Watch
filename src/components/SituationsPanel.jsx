@@ -79,7 +79,7 @@ function UserDetailPopup({ user, onClose }) {
             <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 2999, background: "rgba(0,0,0,0.5)" }} />
             <div style={{
                 position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-                width: 320, background: "rgba(6,13,26,0.98)", backdropFilter: "blur(24px)",
+                width: 320, background: "rgba(6,14,48,0.97)", backdropFilter: "blur(24px)",
                 WebkitBackdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.1)",
                 borderRadius: 10, padding: "18px 20px", zIndex: 3000,
                 boxShadow: "0 8px 40px rgba(0,0,0,0.6)", fontFamily: "Inter, sans-serif", color: "#e0e0e0",

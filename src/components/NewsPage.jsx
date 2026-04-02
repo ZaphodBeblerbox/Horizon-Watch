@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import API_BASE from "../apiBase.js"
 import { TV_CHANNELS as RAW_CHANNELS } from "./tvchannels.js"
 
@@ -55,6 +55,23 @@ function formatAge(ts) {
     return new Date(ts).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
 }
 
+// ── Lazy OG image hook ─────────────────────────────────────────────────────────
+const _ogCache = {}
+function useOGImage(href, initialImg) {
+    const [img, setImg] = useState(initialImg || null)
+    const tried = useRef(false)
+    useEffect(() => {
+        if (img || tried.current || !href) return
+        tried.current = true
+        if (_ogCache[href] !== undefined) { setImg(_ogCache[href]); return }
+        fetch(`${API_BASE}/api/og?url=${encodeURIComponent(href)}`)
+            .then(r => r.json())
+            .then(d => { _ogCache[href] = d.thumbnail || null; setImg(d.thumbnail || null) })
+            .catch(() => { _ogCache[href] = null })
+    }, [href, img])
+    return img
+}
+
 // ── Desktop article card ───────────────────────────────────────────────────────
 function ArticleCard({ a, borderOverride }) {
     const title   = a.headline || a.clean_title || a.title || "Untitled"
@@ -63,7 +80,7 @@ function ArticleCard({ a, borderOverride }) {
     const tierCol = TIER_COLOR[tier]
     const href    = a.url || a.link
     const src     = a.source_name || a.source || ""
-    const img     = a.image_url || a.og_image || null
+    const img     = useOGImage(href, a.image_url || a.og_image || null)
     const border  = borderOverride || (tier ? tierCol + "33" : "rgba(56,189,248,0.08)")
     const hoverBorder = borderOverride
         ? borderOverride.replace("33", "66")
@@ -181,7 +198,7 @@ function MobileNewsCard({ a }) {
     const tierC  = TIER_COLOR[tier]
     const href   = a.url || a.link
     const src    = a.source_name || a.source || ""
-    const img    = a.image_url || a.og_image || null
+    const img    = useOGImage(href, a.image_url || a.og_image || null)
 
     const barWidth = tier === "critical" ? "100%" : tier === "significant" ? "75%" : tier === "elevated" ? "50%" : tier === "low" ? "25%" : null
 
