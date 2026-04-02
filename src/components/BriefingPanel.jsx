@@ -361,7 +361,8 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
     const S = {
         panel: {
             flex: 1, display: "flex", flexDirection: "column", height: "100%",
-            background: "var(--akili-surface)", fontFamily: "system-ui, -apple-system, sans-serif",
+            background: "rgba(6,14,45,0.95)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+            fontFamily: "system-ui, -apple-system, sans-serif",
             overflow: "hidden",
         },
         header: {

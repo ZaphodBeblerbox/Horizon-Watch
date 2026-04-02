@@ -832,7 +832,7 @@ function DesktopSidebar({ open, onClose, mode, stats, ...rest }) {
         <>
             <div style={{
                 position: "fixed", top: 40, right: 0, bottom: 0, width: 340, zIndex: 1150,
-                background: "rgba(6,13,26,0.72)",
+                background: "rgba(8,20,58,0.82)",
                 backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
                 borderLeft: "1px solid var(--akili-border)",
                 display: "flex", flexDirection: "column",
@@ -858,7 +858,7 @@ function MobileSidebar({ open, onClose, mode, stats, ...rest }) {
             <div style={{
                 position: "fixed", left: 0, right: 0, bottom: 56, zIndex: 1451,
                 maxHeight: collapsed ? 48 : "72vh",
-                background: "rgba(6,13,26,0.72)",
+                background: "rgba(8,20,58,0.82)",
                 backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
                 borderRadius: "12px 12px 0 0",
                 borderTop: "1px solid var(--akili-border)",

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { TV_CHANNELS as RAW_CHANNELS } from "./tvchannels.js"
 
@@ -306,27 +306,24 @@ export default function NewsPage({ onClose }) {
     const channel  = channels[channelIdx] || channels[0]
 
     // ── Fetch from /api/surface ───────────────────────────────────────────────
-    useEffect(() => {
-        let cancelled = false
+    const fetchNews = useCallback(async () => {
         setLoading(true)
-        const fetchNews = async () => {
-            try {
-                const token = localStorage.getItem("hw-auth-token")
-                const res  = await fetch(`${API_BASE}/api/surface`, {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
-                })
-                const data = await res.json()
-                if (!cancelled) setArticles(data.items || [])
-            } catch (e) {
-                console.error("[news] fetch error:", e)
-                if (!cancelled) setArticles([])
-            } finally {
-                if (!cancelled) setLoading(false)
-            }
+        try {
+            const token = localStorage.getItem("hw-auth-token")
+            const res  = await fetch(`${API_BASE}/api/surface`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            })
+            const data = await res.json()
+            setArticles(data.items || [])
+        } catch (e) {
+            console.error("[news] fetch error:", e)
+            setArticles([])
+        } finally {
+            setLoading(false)
         }
-        fetchNews()
-        return () => { cancelled = true }
     }, [])
+
+    useEffect(() => { fetchNews() }, [fetchNews])
 
     // ── Channel navigation ────────────────────────────────────────────────────
     const prevChannel   = () => setChannelIdx(i => (i === 0 ? channels.length - 1 : i - 1))
@@ -543,7 +540,8 @@ export default function NewsPage({ onClose }) {
                 display:       "flex",
                 flexDirection: "column",
                 height:        "100%",
-                background:    "#0f172a",
+                background:    "rgba(6,14,45,0.97)",
+                backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
                 color:         "#e2e8f0",
                 fontFamily:    "Inter, system-ui, -apple-system, sans-serif",
                 overflow:      "hidden",
@@ -551,7 +549,7 @@ export default function NewsPage({ onClose }) {
                 {/* Header */}
                 <div style={{
                     flexShrink:   0,
-                    background:   "rgba(15,23,42,0.98)",
+                    background:   "rgba(5,12,38,0.98)",
                     borderBottom: "1px solid rgba(56,189,248,0.1)",
                 }}>
                     {/* Title row */}
@@ -564,6 +562,17 @@ export default function NewsPage({ onClose }) {
                                 News Feed
                             </div>
                         </div>
+                        <button onClick={fetchNews} disabled={loading} style={{
+                            padding: "8px 16px", fontSize: 13, fontWeight: 600,
+                            border: "1px solid rgba(56,189,248,0.3)",
+                            borderRadius: 8,
+                            background: "rgba(56,189,248,0.08)",
+                            color: loading ? "rgba(56,189,248,0.3)" : "#38bdf8",
+                            cursor: loading ? "default" : "pointer",
+                            WebkitTapHighlightColor: "transparent",
+                        }}>
+                            {loading ? "…" : "↻"}
+                        </button>
                     </div>
 
                     {/* Section tabs */}
@@ -602,7 +611,7 @@ export default function NewsPage({ onClose }) {
                 {/* Collapsible TV player */}
                 <div style={{
                     flexShrink:   0,
-                    background:   "rgba(10,14,20,0.7)",
+                    background:   "rgba(5,12,38,0.7)",
                     borderBottom: "1px solid rgba(56,189,248,0.08)",
                 }}>
                     <div
@@ -655,7 +664,8 @@ export default function NewsPage({ onClose }) {
             display:       "flex",
             flexDirection: "column",
             height:        "100%",
-            background:    "#0f172a",
+            background:    "rgba(6,14,45,0.97)",
+            backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
             color:         "#e2e8f0",
             fontFamily:    "Inter, system-ui, -apple-system, sans-serif",
             overflow:      "hidden",
@@ -664,7 +674,7 @@ export default function NewsPage({ onClose }) {
             <div style={{
                 flexShrink:   0,
                 height:       52,
-                background:   "rgba(15,23,42,0.98)",
+                background:   "rgba(5,12,38,0.98)",
                 borderBottom: "1px solid rgba(56,189,248,0.2)",
                 display:      "flex",
                 alignItems:   "center",
@@ -695,6 +705,18 @@ export default function NewsPage({ onClose }) {
 
                 <div style={{ flex: 1 }} />
 
+                <button onClick={fetchNews} disabled={loading} style={{
+                    padding:      "6px 14px",
+                    fontSize:     12,
+                    border:       "1px solid rgba(56,189,248,0.25)",
+                    borderRadius: 6,
+                    background:   "rgba(56,189,248,0.06)",
+                    color:        loading ? "rgba(56,189,248,0.3)" : "rgba(56,189,248,0.7)",
+                    cursor:       loading ? "default" : "pointer",
+                    transition:   "color 0.12s",
+                }}>
+                    {loading ? "Loading…" : "↻ Reload"}
+                </button>
                 <button onClick={onClose} style={{
                     padding:      "6px 14px",
                     fontSize:     12,
@@ -718,7 +740,7 @@ export default function NewsPage({ onClose }) {
                     display:       "flex",
                     flexDirection: "column",
                     borderRight:   "1px solid rgba(56,189,248,0.08)",
-                    background:    "rgba(15,23,42,0.5)",
+                    background:    "rgba(5,12,38,0.55)",
                 }}>
                     {/* TV player */}
                     <div style={{ padding: 16, borderBottom: "1px solid rgba(56,189,248,0.08)", flexShrink: 0 }}>
