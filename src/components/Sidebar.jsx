@@ -1,5 +1,16 @@
 import { useState } from "react"
 
+const DIRECTOR_STYLES = `
+@keyframes director-icon-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.7; transform: scale(1.18); }
+}
+.director-sidebar-icon-active {
+  animation: director-icon-pulse 1.2s ease-in-out infinite;
+  color: #f59e0b !important;
+}
+`
+
 // ── Icon primitives ───────────────────────────────────────────────────────────
 
 function IconMap() {
@@ -203,6 +214,8 @@ export default function Sidebar({
     onToggleChat,
     overwatchActive  = false,
     onToggleOverwatch,
+    directorActive   = false,
+    onDirectorClick  = null,
 }) {
     const isAdmin    = currentUser?.role === "admin" || currentUser?.role === "super_admin"
     const isAnalyst  = currentUser?.role === "analyst" || isAdmin
@@ -294,6 +307,7 @@ export default function Sidebar({
             alignItems:    "center",
             zIndex:        100,
         }}>
+            <style>{DIRECTOR_STYLES}</style>
             {/* Top nav icons */}
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
                 {btn("map", <IconMap />)}
@@ -409,6 +423,35 @@ export default function Sidebar({
                         }}
                     >
                         <IconOverwatch />
+                    </button>
+                )}
+                {/* Director Mode — cinematic briefing */}
+                {currentUser && onDirectorClick && (
+                    <button
+                        onMouseEnter={() => setHovered("director")}
+                        onMouseLeave={() => setHovered(null)}
+                        onClick={onDirectorClick}
+                        title="Director Mode"
+                        className={directorActive ? "director-sidebar-icon-active" : ""}
+                        style={{
+                            position:       "relative",
+                            width:          48,
+                            height:         40,
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            background:     directorActive ? "rgba(245,158,11,0.1)" : "none",
+                            border:         "none",
+                            borderLeft:     directorActive ? "2px solid #f59e0b" : "2px solid transparent",
+                            cursor:         "pointer",
+                            color:          directorActive ? "#f59e0b" : (hovered === "director" ? "var(--akili-text-secondary)" : "var(--akili-text-muted)"),
+                            fontSize:       18,
+                            lineHeight:     1,
+                            transition:     "color 0.12s, background 0.12s",
+                            flexShrink:     0,
+                        }}
+                    >
+                        ◈
                     </button>
                 )}
                 {isAdmin   && btn("situations", <IconSituations />)}

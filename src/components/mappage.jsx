@@ -418,6 +418,17 @@ const MAP_STYLES = `
 .akili-annotate-active .leaflet-container { cursor: crosshair !important; }
 .akili-theater-active .leaflet-container { cursor: crosshair !important; }
 @keyframes poi-dash { to { stroke-dashoffset: -18; } }
+@keyframes director-pulse-anim {
+    0%, 100% { stroke-opacity: 0.9; stroke-width: 2; }
+    50%       { stroke-opacity: 0.25; stroke-width: 7; }
+}
+@keyframes director-glow-anim {
+    0%, 100% { stroke-opacity: 0.6; }
+    50%       { stroke-opacity: 1.0; }
+}
+.director-highlight-pulse path { animation: director-pulse-anim 1.2s ease-in-out infinite; }
+.director-highlight-glow path  { animation: director-glow-anim  1.6s ease-in-out infinite; }
+.director-highlight-ring path  { stroke-dasharray: 6 4; }
 `
 
 // Fast approximate planar distance in km (accurate enough for ≤50km checks)
@@ -485,13 +496,14 @@ function BoundsTracker({ onUpdate, onViewportChange }) {
 }
 
 
-function MapInstanceTracker({ mapRef, depLayerRef }) {
+function MapInstanceTracker({ mapRef, depLayerRef, onMapReady }) {
     const map = useMap()
     useEffect(() => {
         mapRef.current = map
         if (depLayerRef && !depLayerRef.current) {
             depLayerRef.current = L.layerGroup()
         }
+        if (onMapReady) onMapReady(map)
     }, [map, mapRef])  // eslint-disable-line react-hooks/exhaustive-deps
     return null
 }
@@ -2906,36 +2918,6 @@ const AircraftLayer = memo(function AircraftLayer({
         return createPortal(panel, document.body)
     }
 
-    // ── Filter button (portaled, bottom-left) ─────────────────────────────────
-    const renderFilterButton = () => {
-        const anyOff = Object.values(acFilter).some(v => !v)
-        const btn = (
-            <button
-                onClick={() => setFilterOpen(o => !o)}
-                title="Filter aircraft types"
-                style={{
-                    position: "fixed", left: 16, bottom: 88,
-                    zIndex: 2400,
-                    width: 36, height: 36, borderRadius: 10,
-                    border: anyOff ? "1px solid rgba(0,200,255,0.55)" : "1px solid rgba(255,255,255,0.1)",
-                    cursor: "pointer",
-                    background: "rgba(0,0,0,0.4)",
-                    backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    boxShadow: "0 2px 12px rgba(0,0,0,0.45)",
-                    outline: "none",
-                }}
-            >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                    stroke={anyOff ? "#00c8ff" : "rgba(255,255,255,0.55)"}
-                    strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-                </svg>
-            </button>
-        )
-        return createPortal(btn, document.body)
-    }
-
     // ── Render ────────────────────────────────────────────────────────────────
     if (!visible || map.getZoom() < 4) return null
 
@@ -2971,7 +2953,6 @@ const AircraftLayer = memo(function AircraftLayer({
             {/* Portals */}
             {renderFollowBar()}
             {renderDetailPanel()}
-            {renderFilterButton()}
             {renderFilterPanel()}
         </Fragment>
     )
@@ -5487,6 +5468,10 @@ export default function MapPage({
     onOverwatchExit   = null,  // () => void — called when user exits Overwatch
     sentinel2Active   = false, // bool — Sentinel-2 draw mode (lifted for mobile nav)
     onSentinel2Exit   = null,  // () => void — called when Sentinel-2 is toggled off externally
+    // Director Mode props
+    onMapReady          = null,  // (mapInstance) => void — called when Leaflet map is ready
+    directorLayerOverrides = {}, // {layerKey: bool} — merged over active for rendering
+    directorHighlights  = [],   // [{id, lat, lon, style}] — animated highlight markers
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -5552,6 +5537,11 @@ export default function MapPage({
             : (initialActive || {})
         return { ...defaults, ...stored, ...safeInitial }
     })
+    // Director Mode: merge overrides over user layer state for rendering only
+    const effectiveActive = useMemo(
+        () => Object.keys(directorLayerOverrides).length ? { ...active, ...directorLayerOverrides } : active,
+        [active, directorLayerOverrides]
+    )
     const [activeWebcam, setActiveWebcam] = useState(null)
     const [contextualAnalysis, setContextualAnalysis] = useState(false)
     const [manualOverrides, setManualOverrides] = useState({})
@@ -6034,27 +6024,27 @@ export default function MapPage({
     }, [cleanEventTitle])
 
     const dsActive = useMemo(() => ({
-        airport: !!active.airports,
-        port: !!active.ports,
-        power: !!active.powerPlants,
-        chokepoints: !!active.chokepoints,
-    }), [active.airports, active.ports, active.powerPlants, active.chokepoints])
+        airport: !!effectiveActive.airports,
+        port: !!effectiveActive.ports,
+        power: !!effectiveActive.powerPlants,
+        chokepoints: !!effectiveActive.chokepoints,
+    }), [effectiveActive.airports, effectiveActive.ports, effectiveActive.powerPlants, effectiveActive.chokepoints])
 
     const infraActive = useMemo(() => ({
-        medical: !!active.hospitals,
-        security: !!active.police,
+        medical: !!effectiveActive.hospitals,
+        security: !!effectiveActive.police,
         // Dedicated dataset layers already cover airports and power plants with
         // higher-quality metadata. Keep OSM fallback off by default to avoid
         // vague transport/power points masquerading as precise assets.
         transport: false,
         power: false,
-        military: !!active.military,
+        military: !!effectiveActive.military,
         pipelines: false,  // GEM pipeline lines rendered separately; suppress Overpass point markers
         comms: false,
         government: false,
-        chokepoints: !!active.chokepoints,
+        chokepoints: !!effectiveActive.chokepoints,
         utilities: false,
-    }), [active.hospitals, active.police, active.military, active.pipelines, active.chokepoints])
+    }), [effectiveActive.hospitals, effectiveActive.police, effectiveActive.military, effectiveActive.pipelines, effectiveActive.chokepoints])
 
     // Poll health endpoint for data source status dots in layers panel
     useEffect(() => {
@@ -6230,7 +6220,7 @@ export default function MapPage({
 
     // ── Route fetch: triggered when both origin + dest are set ────────────────
     useEffect(() => {
-        if (!active.route || !routeOrigin || !routeDest) return
+        if (!effectiveActive.route || !routeOrigin || !routeDest) return
         let cancelled = false
         setRouteLoading(true)
         setRouteAnalysis(null)
@@ -6266,7 +6256,7 @@ export default function MapPage({
             .finally(() => { if (!cancelled) setRouteLoading(false) })
 
         return () => { cancelled = true }
-    }, [active.route, routeOrigin, routeDest, waypoints])
+    }, [effectiveActive.route, routeOrigin, routeDest, waypoints])
 
     // ── On-demand route analysis ───────────────────────────────────────────────
     const analyseRoute = () => {
@@ -6329,14 +6319,14 @@ export default function MapPage({
 
     // Clear route state when route planner is toggled off
     useEffect(() => {
-        if (!active.route) {
+        if (!effectiveActive.route) {
             setRouteOrigin(null); setRouteDest(null)
             setRouteGeo(null); setRouteInfo(null); setRouteSteps([])
             setRouteAnalysis(null); setRouteLoading(false); setRouteAnalysing(false)
             setShowAlternatives(false); setAltRoutes(null); setCorridorData(null)
             setFromInput(""); setToInput(""); setWaypoints([])
         }
-    }, [active.route])
+    }, [effectiveActive.route])
 
     // ── Infrastructure fetch: per-category, with 30% viewport-change threshold ──
     // cancelled flags collected per-effect-run so cleanup cancels any in-flight fetches
@@ -6390,7 +6380,7 @@ export default function MapPage({
     }, [infraActive])
 
     // ── Dataset infrastructure: fetch when layer on + viewport changes ────────
-    const datasetInfraEnabled = active.airports || active.ports || active.powerPlants
+    const datasetInfraEnabled = effectiveActive.airports || effectiveActive.ports || effectiveActive.powerPlants
 
     useEffect(() => {
         if (!datasetInfraEnabled) return
@@ -6441,8 +6431,8 @@ export default function MapPage({
 
     // ── Ports: bbox-based fetch, refreshes when viewport changes 20%+ ─────────
     useEffect(() => {
-        if (!active.ports || !viewportBounds) {
-            if (!active.ports) setPortsData([])
+        if (!effectiveActive.ports || !viewportBounds) {
+            if (!effectiveActive.ports) setPortsData([])
             return
         }
         const { south, west, north, east } = viewportBounds
@@ -6460,13 +6450,13 @@ export default function MapPage({
             .then(r => r.json())
             .then(d => setPortsData(d.items || []))
             .catch(() => {})
-    }, [active.ports, viewportBounds])  // eslint-disable-line
+    }, [effectiveActive.ports, viewportBounds])  // eslint-disable-line
 
     // ── AIS vessel tracking: poll every 30s when layer on ────────────────────
     // Uses viewportBoundsRef (not viewportBounds state) so the interval does not
     // restart on every map move — only when the toggle itself changes.
     useEffect(() => {
-        if (!active.aisVessels) {
+        if (!effectiveActive.aisVessels) {
             setAisVessels([])
             setSelectedAisVessel(null)
             if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null }
@@ -6487,7 +6477,7 @@ export default function MapPage({
         if (aisIntervalRef.current) clearInterval(aisIntervalRef.current)
         aisIntervalRef.current = setInterval(fetchVessels, 30000)
         return () => { if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null } }
-    }, [active.aisVessels])  // eslint-disable-line
+    }, [effectiveActive.aisVessels])  // eslint-disable-line
 
     // ── OpenSeaMap seamark tiles — shown at zoom ≥ 6, anti-flicker options ─────
     useEffect(() => {
@@ -6496,7 +6486,7 @@ export default function MapPage({
             shippingLanesLayerRef.current.remove()
             shippingLanesLayerRef.current = null
         }
-        if (!active.shippingLanes) return
+        if (!effectiveActive.shippingLanes) return
         shippingLanesLayerRef.current = L.tileLayer(
             "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",
             {
@@ -6510,12 +6500,12 @@ export default function MapPage({
                 keepBuffer: 4,
             }
         ).addTo(mapRef.current)
-    }, [active.shippingLanes])
+    }, [effectiveActive.shippingLanes])
 
     // ── Conflict zones layer ──────────────────────────────────────────────────────
     // Backend endpoint is currently stubbed (GDELT source removed). The toggle still
     // exists in LayersPanel for future use. Wire up the state so toggling doesn't
-    // throw "active.conflictZones is undefined" errors and so the badge/loading props
+    // throw "effectiveActive.conflictZones is undefined" errors and so the badge/loading props
     // passed from LayersPanel don't cause warnings. No visual layer is rendered
     // until the backend provides data.
     // (No useEffect needed — conflictZones just controls the active flag; when the
@@ -6525,7 +6515,7 @@ export default function MapPage({
     useEffect(() => {
         if (!mapRef.current) return
         if (eezLayerRef.current) { eezLayerRef.current.remove(); eezLayerRef.current = null }
-        if (!active.eez || !eezGeo) return
+        if (!effectiveActive.eez || !eezGeo) return
 
         const defaultStyle = { color: "#0d9488", weight: 1.5, opacity: 0.45, fill: true, fillColor: "#0d9488", fillOpacity: 0.04 }
         const hoverStyle   = { weight: 2.5, opacity: 0.75, fillOpacity: 0.10 }
@@ -6571,7 +6561,7 @@ export default function MapPage({
                 })
             },
         }).addTo(mapRef.current)
-    }, [active.eez, eezGeo])
+    }, [effectiveActive.eez, eezGeo])
 
     // ── Sync selectedEezRef with state ────────────────────────────────────────────
     useEffect(() => { selectedEezRef.current = selectedEez }, [selectedEez])
@@ -6580,7 +6570,7 @@ export default function MapPage({
     useEffect(() => {
         if (!mapRef.current) return
         if (bordersLayerRef.current) { bordersLayerRef.current.remove(); bordersLayerRef.current = null }
-        if (!active.borders || !allCountriesGeo) return
+        if (!effectiveActive.borders || !allCountriesGeo) return
 
         const baseColor   = borderGlowColor
         const defaultStyle = { color: baseColor, weight: 1.25, opacity: 0.5, fill: true, fillColor: baseColor, fillOpacity: 0.02, pane: "context-polygons" }
@@ -6602,11 +6592,11 @@ export default function MapPage({
                 layer.on("mouseout",  () => layer.setStyle(defaultStyle))
             },
         }).addTo(mapRef.current)
-    }, [active.borders, allCountriesGeo, borderGlowColor])
+    }, [effectiveActive.borders, allCountriesGeo, borderGlowColor])
 
     // ── News conflicts: fetch all markers globally, refresh every 15 min ─────────
     useEffect(() => {
-        if (!active.newsConflicts || !viewportBounds) {
+        if (!effectiveActive.newsConflicts || !viewportBounds) {
             setNewsConflictsData([])
             setNewsConflictsCount(0)
             return
@@ -6704,11 +6694,11 @@ export default function MapPage({
         fetchAll()
         const iv = setInterval(fetchAll, 30 * 1000)
         return () => clearInterval(iv)
-    }, [active.newsConflicts, viewportBounds, zoom])
+    }, [effectiveActive.newsConflicts, viewportBounds, zoom])
 
     // ── Unified Intelligence Feed — two-phase: fast preload then full set ────────
     useEffect(() => {
-        if (!active.unifiedEvents) {
+        if (!effectiveActive.unifiedEvents) {
             setUnifiedEvents([])
             setUnifiedEventsCount(0)
             return
@@ -6763,13 +6753,13 @@ export default function MapPage({
         fetchFull(false)
         const iv = setInterval(() => fetchFull(true), 30 * 1000)
         return () => { cancelled = true; clearInterval(iv) }
-    }, [active.unifiedEvents])
+    }, [effectiveActive.unifiedEvents])
 
     // ── Pipeline lines — use hardcoded dataset (remote GOPIT sources are dead) ──
     useEffect(() => {
-        if (active.pipelines) setPipelineGeoData(_HARDCODED_PIPELINES)
+        if (effectiveActive.pipelines) setPipelineGeoData(_HARDCODED_PIPELINES)
         else setPipelineGeoData([])
-    }, [active.pipelines])
+    }, [effectiveActive.pipelines])
 
     // ── Unified events render — imperative Leaflet layerGroup ─────────────────
     useEffect(() => {
@@ -6778,7 +6768,7 @@ export default function MapPage({
             unifiedLayerRef.current = L.layerGroup()
         }
         unifiedLayerRef.current.clearLayers()
-        if (!active.unifiedEvents || filteredUnifiedEvents.length === 0) {
+        if (!effectiveActive.unifiedEvents || filteredUnifiedEvents.length === 0) {
             unifiedLayerRef.current.remove()
             return
         }
@@ -6822,7 +6812,7 @@ export default function MapPage({
             unifiedLayerRef.current.addLayer(marker)
         })
         unifiedLayerRef.current.addTo(mapRef.current)
-    }, [filteredUnifiedEvents, active.unifiedEvents])
+    }, [filteredUnifiedEvents, effectiveActive.unifiedEvents])
 
     // ── Global carrier layer — visibility follows AIS toggle ─────────────────
     // Re-renders on viewport change so distant carriers (and their range rings)
@@ -6830,7 +6820,7 @@ export default function MapPage({
     // that nearly all carriers pass the check anyway.
     useEffect(() => {
         const depLayer = depLayerRef.current
-        if (!active.aisVessels) {
+        if (!effectiveActive.aisVessels) {
             if (depLayer) { depLayer.remove(); depLayer.clearLayers() }
             setDeploymentsData(null)
             return
@@ -6937,15 +6927,15 @@ export default function MapPage({
         })
 
         layer.addTo(mapRef.current)
-    }, [active.aisVessels, viewportBounds])  // eslint-disable-line react-hooks/exhaustive-deps
+    }, [effectiveActive.aisVessels, viewportBounds])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // Shipping lanes use hardcoded _SHIPPING_ROUTES_HARDCODED constant — no fetch needed
 
     // ── User Locations layer (superadmin only) ────────────────────────────────
     useEffect(() => {
         const isSuperAdmin = currentUser?.is_super_admin || currentUser?.role === "superadmin"
-        console.log("[user-locations] toggle:", { active: active.userLocations, isSuperAdmin, currentUser: currentUser?.email })
-        if (!active.userLocations || !isSuperAdmin) {
+        console.log("[user-locations] toggle:", { active: effectiveActive.userLocations, isSuperAdmin, currentUser: currentUser?.email })
+        if (!effectiveActive.userLocations || !isSuperAdmin) {
             setUserLocationsData([])
             return
         }
@@ -6965,16 +6955,16 @@ export default function MapPage({
         load()
         const iv = setInterval(load, 30000)
         return () => { cancelled = true; clearInterval(iv) }
-    }, [active.userLocations, currentUser])
+    }, [effectiveActive.userLocations, currentUser])
 
     useEffect(() => {
-        console.log("[user-locations] render effect:", { mapReady: !!mapRef.current, count: userLocationsData.length, active: active.userLocations })
+        console.log("[user-locations] render effect:", { mapReady: !!mapRef.current, count: userLocationsData.length, active: effectiveActive.userLocations })
         if (!mapRef.current) return
         if (!userLocationsLayerRef.current) {
             userLocationsLayerRef.current = L.layerGroup()
         }
         userLocationsLayerRef.current.clearLayers()
-        if (!active.userLocations || userLocationsData.length === 0) {
+        if (!effectiveActive.userLocations || userLocationsData.length === 0) {
             userLocationsLayerRef.current.remove()
             return
         }
@@ -7014,7 +7004,7 @@ export default function MapPage({
             userLocationsLayerRef.current.addLayer(marker)
         })
         userLocationsLayerRef.current.addTo(mapRef.current)
-    }, [userLocationsData, active.userLocations, currentUser])
+    }, [userLocationsData, effectiveActive.userLocations, currentUser])
 
     // ── User track polyline ───────────────────────────────────────────────────
     // Expose globals for popup button onclick handlers
@@ -7079,7 +7069,7 @@ export default function MapPage({
 
     // ── POI layer: fetch all profiles when layer toggled on ───────────────────
     useEffect(() => {
-        if (!active.poi) {
+        if (!effectiveActive.poi) {
             setPoiData([])
             return
         }
@@ -7087,7 +7077,7 @@ export default function MapPage({
             .then(r => r.json())
             .then(d => setPoiData(Array.isArray(d) ? d.filter(p => p.lat && p.lon) : []))
             .catch(() => {})
-    }, [active.poi])
+    }, [effectiveActive.poi])
 
     // ── POI show-on-map event (from POIPanel "Show on Map") ─────────────────
     useEffect(() => {
@@ -7145,8 +7135,8 @@ export default function MapPage({
             if (e.detail.active) {
                 // Save current state and hide conflict layers
                 prePOILayersRef.current = {
-                    heatmap: active.heatmap,
-                    newsConflicts: active.newsConflicts,
+                    heatmap: effectiveActive.heatmap,
+                    newsConflicts: effectiveActive.newsConflicts,
                 }
                 setActive(a => ({ ...a, heatmap: false, newsConflicts: false }))
             } else {
@@ -7335,14 +7325,14 @@ export default function MapPage({
 
     // ── Auto-start / stop ADS-B polling with layer toggle ────────────────────
     useEffect(() => {
-        if (active.adsb) {
+        if (effectiveActive.adsb) {
             setAdsbRefreshRate(adsbSliderVal || 15)
             setAdsbActivateKey(k => k + 1)
             setAdsbLive(true)
         } else {
             setAdsbLive(false)
         }
-    }, [active.adsb])  // eslint-disable-line react-hooks/exhaustive-deps
+    }, [effectiveActive.adsb])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Alternative routes: fetch when requested ──────────────────────────────
     const requestAlternatives = () => {
@@ -7589,7 +7579,7 @@ export default function MapPage({
     }
 
     useEffect(() => {
-        if (!active.sattrack) {
+        if (!effectiveActive.sattrack) {
             if (satTrackInterval) { clearInterval(satTrackInterval); setSatTrackInterval(null) }
             return
         }
@@ -7608,7 +7598,7 @@ export default function MapPage({
             .catch(e => console.error("[sattrack]", e))
             .finally(() => setSatLoading(false))
         return () => {}
-    }, [active.sattrack])
+    }, [effectiveActive.sattrack])
 
     useEffect(() => () => { if (satTrackInterval) clearInterval(satTrackInterval) }, [satTrackInterval])
 
@@ -7829,36 +7819,36 @@ export default function MapPage({
     // The signal surface stays beneath icons at all zooms; marker density shifts with zoom.
 
     const missileAlertItems = useMemo(() => (
-        !active.missileAlerts
+        !effectiveActive.missileAlerts
             ? []
             : surveillanceAlerts.filter(item =>
                 ["missile_warning", "missile_alert", "rocket_alert"].includes(item?.type) ||
                 ["missile_warning", "missile_alert", "rocket_alert"].includes(item?.event_type)
             )
-    ), [active.missileAlerts, surveillanceAlerts])
+    ), [effectiveActive.missileAlerts, surveillanceAlerts])
 
     const earthquakeAlertItems = useMemo(() => (
-        !active.earthquakeEvents
+        !effectiveActive.earthquakeEvents
             ? []
             : surveillanceAlerts.filter(item =>
                 item?.type === "earthquake" || item?.event_type === "earthquake"
             )
-    ), [active.earthquakeEvents, surveillanceAlerts])
+    ), [effectiveActive.earthquakeEvents, surveillanceAlerts])
 
     const piracyAlertItems = useMemo(() => {
-        if (!active.imbPiracy) return []
+        if (!effectiveActive.imbPiracy) return []
         return [...newsConflictsData].filter(isPiracySignal)
-    }, [active.imbPiracy, newsConflictsData, isPiracySignal])
+    }, [effectiveActive.imbPiracy, newsConflictsData, isPiracySignal])
 
     const visibleSurfaceItems = useMemo(() => (
         (surfaceItems || []).filter(item => pointInBounds(item, viewportBounds))
     ), [surfaceItems, viewportBounds])
 
     const signalSurfaceItems = useMemo(() => {
-        if (!active.heatmap) return []
+        if (!effectiveActive.heatmap) return []
         const merged = [
             ...visibleSurfaceItems,
-            ...(active.newsConflicts ? newsConflictsData : []),
+            ...(effectiveActive.newsConflicts ? newsConflictsData : []),
             ...missileAlertItems,
             ...earthquakeAlertItems,
             ...piracyAlertItems,
@@ -7881,7 +7871,7 @@ export default function MapPage({
             }
             return true
         })
-    }, [active.heatmap, active.newsConflicts, visibleSurfaceItems, newsConflictsData, missileAlertItems, earthquakeAlertItems, piracyAlertItems, focusRegions])
+    }, [effectiveActive.heatmap, effectiveActive.newsConflicts, visibleSurfaceItems, newsConflictsData, missileAlertItems, earthquakeAlertItems, piracyAlertItems, focusRegions])
 
     const clusterMarkers = useMemo(() => {
         const clickableItems = visibleSurfaceItems.filter(item => item.source_type !== "conflict_zone")
@@ -8176,7 +8166,7 @@ export default function MapPage({
     ), [infraData, vpFilter])
 
     const airportMarkers = useMemo(() => (
-        !active.airports || !dsActive.airport ? null : dsData.airport.filter(item => vpFilter(item.lat, item.lon)).map((item, i) => (
+        !effectiveActive.airports || !dsActive.airport ? null : dsData.airport.filter(item => vpFilter(item.lat, item.lon)).map((item, i) => (
             <Marker
                 key={`ap-${item.icao || i}`}
                 position={[item.lat, item.lon]}
@@ -8189,10 +8179,10 @@ export default function MapPage({
                 </Tooltip>
             </Marker>
         ))
-    ), [active.airports, dsActive.airport, dsData.airport, vpFilter])
+    ), [effectiveActive.airports, dsActive.airport, dsData.airport, vpFilter])
 
     const portMarkers = useMemo(() => (
-        !active.ports ? null : portsData.filter(item => vpFilter(item.lat, item.lon)).slice(0, 300).map((item, i) => (
+        !effectiveActive.ports ? null : portsData.filter(item => vpFilter(item.lat, item.lon)).slice(0, 300).map((item, i) => (
             <Marker
                 key={`pt-${item.name || i}`}
                 position={[item.lat, item.lon]}
@@ -8205,10 +8195,10 @@ export default function MapPage({
                 </Tooltip>
             </Marker>
         ))
-    ), [active.ports, portsData, vpFilter])
+    ), [effectiveActive.ports, portsData, vpFilter])
 
     const powerPlantMarkers = useMemo(() => (
-        !active.powerPlants || !dsActive.power ? null : dsData.power.filter(item => vpFilter(item.lat, item.lon)).map((item, i) => (
+        !effectiveActive.powerPlants || !dsActive.power ? null : dsData.power.filter(item => vpFilter(item.lat, item.lon)).map((item, i) => (
             <Marker
                 key={`pw-${item.name || i}`}
                 position={[item.lat, item.lon]}
@@ -8221,12 +8211,12 @@ export default function MapPage({
                 </Tooltip>
             </Marker>
         ))
-    ), [active.powerPlants, dsActive.power, dsData.power, vpFilter])
+    ), [effectiveActive.powerPlants, dsActive.power, dsData.power, vpFilter])
 
     return (
         <div
             ref={mapContainerRef}
-            className={[active.route ? "akili-route-active" : "", active.annotate && annotationMode ? "akili-annotate-active" : "", theaterDrawing ? "akili-theater-active" : ""].filter(Boolean).join(" ")}
+            className={[effectiveActive.route ? "akili-route-active" : "", effectiveActive.annotate && annotationMode ? "akili-annotate-active" : "", theaterDrawing ? "akili-theater-active" : ""].filter(Boolean).join(" ")}
             style={{ height: "100%", display: "flex", width: "100%", animation: "mapFadeIn 300ms ease forwards" }}
         >
             <style>{MAP_STYLES}</style>
@@ -8250,7 +8240,7 @@ export default function MapPage({
                 maxZoom={19}
             >
                 <MapPaneSetup />
-                <MapInstanceTracker mapRef={mapRef} depLayerRef={depLayerRef} />
+                <MapInstanceTracker mapRef={mapRef} depLayerRef={depLayerRef} onMapReady={onMapReady} />
                 {mapType === "standard" && (
                     <TileLayer key="standard" url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
                 )}
@@ -8276,29 +8266,29 @@ export default function MapPage({
                 <FlyTo event={selected} />
                 <UserLocationMarker />
                 {/* Surface pool — operational signal surface beneath existing icons */}
-                {active.heatmap && <SignalSurfaceLayer items={signalSurfaceItems} zoom={zoom} />}
-                {!active.unifiedEvents && clusterMarkers}
-                {!active.unifiedEvents && individualMarkers}
+                {effectiveActive.heatmap && <SignalSurfaceLayer items={signalSurfaceItems} zoom={zoom} />}
+                {!effectiveActive.unifiedEvents && clusterMarkers}
+                {!effectiveActive.unifiedEvents && individualMarkers}
                 {surveillanceMarkers}
                 {/* Severity radius circle + contextual overlays */}
                 {severityCircle}
                 {surfaceContextElements}
                 {surfaceEnrichmentElements}
                 <MapClickHandler
-                    enabled={active.route}
+                    enabled={effectiveActive.route}
                     origin={routeOrigin}
                     onOrigin={setRouteOrigin}
                     onDest={setRouteDest}
                 />
                 {/* Area click — fires at zoom ≤ 7 when not in route/annotation/theater mode */}
                 <AreaClickHandler
-                    enabled={!active.route && !annotationMode && !theaterDrawing && zoom <= 7}
+                    enabled={!effectiveActive.route && !annotationMode && !theaterDrawing && zoom <= 7}
                     onAreaClick={handleAreaClick}
                 />
 
                 {/* ── Country click — map-level PIP detection ───────────────── */}
                 {/* Suppressed during Overwatch/Sentinel draw mode so pointer events go to draw tool */}
-                {!overwatchActive && !active.sentinel2 && <CountryClickHandler
+                {!overwatchActive && !effectiveActive.sentinel2 && <CountryClickHandler
                     countriesGeo={allCountriesGeo}
                     onCountryClick={(feature, name) => {
                         setSelectedEvent(null)
@@ -8377,7 +8367,7 @@ export default function MapPage({
 
                 {/* Profile focus-region borders removed — labels only (see below) */}
                 {/* Profile border country name labels */}
-                {!active.borders && visibleProfileBorderFeatures.map((f, i) => {
+                {!effectiveActive.borders && visibleProfileBorderFeatures.map((f, i) => {
                     const centroid = featureApproxCentroid(f)
                     if (!centroid) return null
                     const name = f.properties?.ADMIN || f.properties?.name || ""
@@ -8393,7 +8383,7 @@ export default function MapPage({
                 })}
 
                 {/* ── Profile focus EEZ baseline (situational only) ────────── */}
-                {!active.eez && profileEezFeatures.map((f, i) => (
+                {!effectiveActive.eez && profileEezFeatures.map((f, i) => (
                     <GeoJSON
                         key={`profile-eez-${i}`}
                         pane="context-polygons"
@@ -8413,7 +8403,7 @@ export default function MapPage({
                 {/* ── Country borders rendered imperatively via bordersLayerRef ─ */}
 
                 {/* ── City Labels (static major cities, zoom-aware) ─────────── */}
-                {active.cityLabels && zoom >= 4 && MAJOR_CITIES.map(c => (
+                {effectiveActive.cityLabels && zoom >= 4 && MAJOR_CITIES.map(c => (
                     <Marker key={c.name} position={[c.lat, c.lon]} interactive={false}
                         icon={L.divIcon({
                             className:  "",
@@ -8426,7 +8416,7 @@ export default function MapPage({
                 {/* ── Global EEZ view — rendered imperatively via eezLayerRef ── */}
 
                 {/* ── Submarine Cable Routes ────────────────────────────────── */}
-                {active.cables && cableGeo.cables.map(feature => {
+                {effectiveActive.cables && cableGeo.cables.map(feature => {
                     if (!feature.geometry) return null
                     const color = feature.properties.color || "#00cfff"
                     const name  = feature.properties.name
@@ -8444,7 +8434,7 @@ export default function MapPage({
                 })}
 
                 {/* ── Cable Landing Points ──────────────────────────────────── */}
-                {active.cables && cableGeo.points.map(feature => {
+                {effectiveActive.cables && cableGeo.points.map(feature => {
                     if (!feature.geometry) return null
                     const [lng, lat]           = feature.geometry.coordinates
                     const { id, name, is_tbd } = feature.properties
@@ -8474,7 +8464,7 @@ export default function MapPage({
                 })}
 
                 {/* ── Pipeline lines ───────────────────────────────────────── */}
-                {active.pipelines && pipelineGeoData.map((f, fi) => {
+                {effectiveActive.pipelines && pipelineGeoData.map((f, fi) => {
                     if (!f.geometry) return null
                     const p      = f.properties || {}
                     const t      = (p.type || "").toLowerCase()
@@ -8512,8 +8502,8 @@ export default function MapPage({
                 {/* Isolated child: aircraft state + polling live in AircraftLayer
                     so setAircraft() ticks don't re-render MapPage or conflict markers. */}
                 <AircraftLayer
-                    visible={active.adsb}
-                    showLabels={active.adsbLabels}
+                    visible={effectiveActive.adsb}
+                    showLabels={effectiveActive.adsbLabels}
                     refreshRate={adsbRefreshRate}
                     boundsRef={viewportBoundsRef}
                     onCount={setAdsbCount}
@@ -8522,14 +8512,14 @@ export default function MapPage({
                 />
 
                 {/* ── Route planner — origin, dest pins + polyline ──────────── */}
-                {active.route && routeOrigin && (
+                {effectiveActive.route && routeOrigin && (
                     <Marker position={[routeOrigin.lat, routeOrigin.lon]} icon={makePinIcon("#22c55e")}>
                         <Tooltip permanent direction="top" offset={[0, -28]}>
                             <span style={{ fontSize: 10 }}>Origin</span>
                         </Tooltip>
                     </Marker>
                 )}
-                {active.route && routeDest && (
+                {effectiveActive.route && routeDest && (
                     <Marker position={[routeDest.lat, routeDest.lon]} icon={makePinIcon("#ef4444")}>
                         <Tooltip permanent direction="top" offset={[0, -28]}>
                             <span style={{ fontSize: 10 }}>Destination</span>
@@ -8537,14 +8527,14 @@ export default function MapPage({
                     </Marker>
                 )}
                 {/* Waypoint pins */}
-                {active.route && waypoints.map((w, i) => (
+                {effectiveActive.route && waypoints.map((w, i) => (
                     <Marker key={i} position={[w.lat, w.lon]} icon={makePinIcon("#FFD600")}>
                         <Tooltip permanent direction="top" offset={[0, -28]}>
                             <span style={{ fontSize: 10 }}>WP {i + 1}</span>
                         </Tooltip>
                     </Marker>
                 ))}
-                {active.route && routeGeo && (
+                {effectiveActive.route && routeGeo && (
                     <Polyline
                         positions={routeGeo.map(([lon, lat]) => [lat, lon])}
                         pathOptions={{ color: routeColor, weight: 5, opacity: 0.88, lineCap: "round", lineJoin: "round" }}
@@ -8560,7 +8550,7 @@ export default function MapPage({
                 {powerPlantMarkers}
 
                 {/* ── AIS live vessel markers ──────────────────────────────── */}
-                {active.aisVessels && aisVessels.map((v, i) => (
+                {effectiveActive.aisVessels && aisVessels.map((v, i) => (
                     v.lat != null && v.lon != null && vpFilter(v.lat, v.lon) ? (
                         <VesselMarkerItem
                             key={`ais-${v.mmsi || i}`}
@@ -8574,7 +8564,7 @@ export default function MapPage({
                 ))}
 
                 {/* ── Chokepoints layer — polygon outlines, toggled via layers panel ── */}
-                {!active.chokepoints && profileChokepoints.map((cp, i) => {
+                {!effectiveActive.chokepoints && profileChokepoints.map((cp, i) => {
                     const poly = _cpPoly(cp.name)
                     return (
                         <Fragment key={`profile-cp-${i}`}>
@@ -8606,7 +8596,7 @@ export default function MapPage({
                     )
                 })}
                 {/* ── Active chokepoints layer — rich hatched polygons from CHOKEPOINTS data ── */}
-                {active.chokepoints && CHOKEPOINTS.map((cp) => (
+                {effectiveActive.chokepoints && CHOKEPOINTS.map((cp) => (
                     <ChokepointPolygon
                         key={`cp-${cp.name}`}
                         cp={cp}
@@ -8616,7 +8606,7 @@ export default function MapPage({
                 ))}
 
                 {/* ── News conflict markers — click opens EventDetailPanel ─────── */}
-                {active.newsConflicts && newsConflictsData.map((m, i) => {
+                {effectiveActive.newsConflicts && newsConflictsData.map((m, i) => {
                     if (!vpFilter(m.lat, m.lon)) return null
                     const showNewsLabel = zoom >= 7
                     const html = getNewsMarkerHTML(m, showNewsLabel)
@@ -8641,7 +8631,7 @@ export default function MapPage({
                 })}
 
                 {/* ── POI profile markers ───────────────────────────────────── */}
-                {active.poi && poiData.map((poi) => (
+                {effectiveActive.poi && poiData.map((poi) => (
                     <Marker
                         key={poi.id}
                         position={[poi.lat, poi.lon]}
@@ -8655,7 +8645,7 @@ export default function MapPage({
                 ))}
 
                 {/* ── POI floating card overlay */}
-                {active.poi && selectedPoiMarker?.lat && selectedPoiMarker?.lon && (
+                {effectiveActive.poi && selectedPoiMarker?.lat && selectedPoiMarker?.lon && (
                     <PoiOverlay
                         poi={selectedPoiMarker}
                         onClose={() => setSelectedPoiMarker(null)}
@@ -8708,7 +8698,7 @@ export default function MapPage({
                 })}
 
                 {/* ── POI relation lines — glow effect ─────────────────────── */}
-                {active.poi && selectedPoiMarker && (selectedPoiMarker.relations || []).map((rel, i) => {
+                {effectiveActive.poi && selectedPoiMarker && (selectedPoiMarker.relations || []).map((rel, i) => {
                     if (!rel?.poi_id || !rel?.relation_type) return null
                     const target = poiData.find(p => p.id === rel.poi_id)
                     if (!target?.lat || !target?.lon) return null
@@ -8722,7 +8712,7 @@ export default function MapPage({
                 })}
 
                 {/* ── POI home/work address markers ────────────────────────── */}
-                {active.poi && selectedPoiMarker?.home_lat && selectedPoiMarker?.home_lon && (
+                {effectiveActive.poi && selectedPoiMarker?.home_lat && selectedPoiMarker?.home_lon && (
                     <>
                         <Marker position={[selectedPoiMarker.home_lat, selectedPoiMarker.home_lon]} icon={getHomeIcon()}>
                             <Tooltip direction="top" offset={[0, -16]}><span style={{ fontSize: 10 }}>Home{selectedPoiMarker.home_address ? ` — ${selectedPoiMarker.home_address}` : ""}</span></Tooltip>
@@ -8730,7 +8720,7 @@ export default function MapPage({
                         {selectedPoiMarker.lat && <Polyline positions={[[selectedPoiMarker.lat, selectedPoiMarker.lon], [selectedPoiMarker.home_lat, selectedPoiMarker.home_lon]]} pathOptions={{ color: "#0d9488", weight: 1.5, dashArray: "5 5", opacity: 0.5 }} />}
                     </>
                 )}
-                {active.poi && selectedPoiMarker?.work_lat && selectedPoiMarker?.work_lon && (
+                {effectiveActive.poi && selectedPoiMarker?.work_lat && selectedPoiMarker?.work_lon && (
                     <>
                         <Marker position={[selectedPoiMarker.work_lat, selectedPoiMarker.work_lon]} icon={getWorkIcon()}>
                             <Tooltip direction="top" offset={[0, -16]}><span style={{ fontSize: 10 }}>Work{selectedPoiMarker.occupation_address ? ` — ${selectedPoiMarker.occupation_address}` : ""}</span></Tooltip>
@@ -8749,7 +8739,7 @@ export default function MapPage({
                 )}
 
                 {/* ── Webcam markers ────────────────────────────────────────── */}
-                {active.webcams && WEBCAM_LOCATIONS.map(cam => (
+                {effectiveActive.webcams && WEBCAM_LOCATIONS.map(cam => (
                     <Marker
                         key={cam.id}
                         position={[cam.lat, cam.lon]}
@@ -8803,7 +8793,7 @@ export default function MapPage({
                 ))}
 
                 {/* ── Satellite image overlays + amber border rectangles ─────── */}
-                {active.satellite && satelliteResults.map(tile => {
+                {effectiveActive.satellite && satelliteResults.map(tile => {
                     if (!satelliteSelected[tile.id]) return null
                     const [west, south, east, north] = tile.bbox
                     const bounds = [[south, west], [north, east]]
@@ -8834,7 +8824,7 @@ export default function MapPage({
                 })}
 
                 {/* ── Annotation map handler + in-progress zone preview ─────── */}
-                {active.annotate && (
+                {effectiveActive.annotate && (
                     <AnnotationMapHandler
                         mode={annotationMode}
                         zoneInProgress={zoneInProgress}
@@ -8844,7 +8834,7 @@ export default function MapPage({
                         onEscape={handleAnnotationEscape}
                     />
                 )}
-                {active.annotate && zoneInProgress.length > 0 && (
+                {effectiveActive.annotate && zoneInProgress.length > 0 && (
                     <>
                         <Polyline positions={zoneInProgress} pathOptions={{ color: "#FFB300", weight: 2, opacity: 0.7, dashArray: "6 4" }} />
                         {zoneInProgress.map((v, i) => (
@@ -8854,7 +8844,7 @@ export default function MapPage({
                 )}
 
                 {/* ── Annotation zones ──────────────────────────────────────── */}
-                {active.annotate && annotations.zones.map(z => (
+                {effectiveActive.annotate && annotations.zones.map(z => (
                     <Polygon
                         key={z.id}
                         positions={z.vertices}
@@ -8927,7 +8917,7 @@ export default function MapPage({
                 })()}
 
                 {/* ── Satellite tracking markers ────────────────────────────── */}
-                {active.sattrack && satPositions
+                {effectiveActive.sattrack && satPositions
                     .filter(sat => zoom >= 5 || sat.category === "Space Stations" || isSatImagery(sat))
                     .map(sat => {
                         const pulse = isSatImagery(sat)
@@ -8948,7 +8938,7 @@ export default function MapPage({
 
                 {/* ── Sentinel-2 imagery overlay ───────────────────────────── */}
                 <SentinelLayer
-                    active={active.sentinel2}
+                    active={effectiveActive.sentinel2}
                     onToggleOff={() => toggle("sentinel2")}
                     onImageLoaded={setSentinelImageData}
                     onImageCleared={() => setSentinelImageData(null)}
@@ -8959,9 +8949,25 @@ export default function MapPage({
                     active={overwatchActive}
                     onExit={onOverwatchExit}
                     sentinelImageData={sentinelImageData}
-                    sentinel2Active={active.sentinel2}
+                    sentinel2Active={effectiveActive.sentinel2}
                     onToggleSentinel2={() => toggle("sentinel2")}
                 />
+
+                {/* ── Director Mode highlight markers ───────────────────────── */}
+                {directorHighlights.map(h => (
+                    <CircleMarker
+                        key={h.id}
+                        center={[h.lat, h.lon]}
+                        radius={h.style === "pulse" ? 20 : 14}
+                        className={`director-highlight-${h.style || "ring"}`}
+                        pathOptions={{
+                            color: "#56cfff",
+                            weight: h.style === "ring" ? 3 : 2,
+                            fill: false,
+                            opacity: 0.85,
+                        }}
+                    />
+                ))}
 
             </MapContainer>
 
@@ -9135,7 +9141,7 @@ export default function MapPage({
             )}
 
             {/* ── Route Intelligence Panel ──────────────────────────────────── */}
-            {active.route && (routeLoading || routeInfo) && (
+            {effectiveActive.route && (routeLoading || routeInfo) && (
                 <RoutePanel
                     routeInfo={routeInfo}
                     routeAnalysis={routeAnalysis}
@@ -9156,7 +9162,7 @@ export default function MapPage({
             )}
 
             {/* ── Route Input Panel — geocoding fields ──────────────────────── */}
-            {active.route && (
+            {effectiveActive.route && (
                 <RouteInputPanel
                     fromInput={fromInput}     setFromInput={setFromInput}
                     toInput={toInput}         setToInput={setToInput}
@@ -9176,7 +9182,7 @@ export default function MapPage({
             )}
 
             {/* ── Live TV Widget ─────────────────────────────────────────────── */}
-            {active.tv && (
+            {effectiveActive.tv && (
                 <TVWidget
                     onClose={() => setActive(a => ({ ...a, tv: false }))}
                     containerRef={mapContainerRef}
@@ -9184,7 +9190,7 @@ export default function MapPage({
             )}
 
             {/* ── Satellite tile info panel ───────────────────────────────────── */}
-            {active.satellite && satelliteInfoItem && (
+            {effectiveActive.satellite && satelliteInfoItem && (
                 <div style={{
                     position: "absolute", top: 16, right: 16,
                     ...GLASS,
@@ -9216,7 +9222,7 @@ export default function MapPage({
                     </div>
                     {satelliteAuthMode === "copernicus_oauth" ? (
                         <div style={{ padding: "7px 9px", background: "rgba(34,197,94,0.10)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 6, fontSize: 10, color: "rgba(34,197,94,0.95)", lineHeight: 1.5 }}>
-                            ✓ Copernicus authentication active. Overlay uses quicklook imagery in this viewer.
+                            ✓ Copernicus authentication effectiveActive. Overlay uses quicklook imagery in this viewer.
                         </div>
                     ) : (
                         <div style={{ padding: "7px 9px", background: "rgba(255,179,0,0.08)", border: "1px solid rgba(255,179,0,0.2)", borderRadius: 6, fontSize: 10, color: "rgba(255,179,0,0.8)", lineHeight: 1.5 }}>
@@ -9227,7 +9233,7 @@ export default function MapPage({
             )}
 
             {/* ── Annotation toolbar ───────────────────────────────────────── */}
-            {active.annotate && (
+            {effectiveActive.annotate && (
                 <div style={{
                     position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)",
                     ...GLASS, zIndex: 2200, display: "flex", alignItems: "center", gap: 4,
@@ -9360,7 +9366,7 @@ export default function MapPage({
             )}
 
             {/* ── Selected satellite info panel ─────────────────────────────── */}
-            {active.sattrack && selectedSat && (
+            {effectiveActive.sattrack && selectedSat && (
                 <div style={{ position: "absolute", top: 70, left: "50%", transform: "translateX(-50%)", ...GLASS, width: 260, zIndex: 2200, padding: "12px 14px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: SAT_COLOURS[selectedSat.category] || "#BB86FC" }}>
@@ -9409,7 +9415,7 @@ export default function MapPage({
                     onAdsbSliderChange={setAdsbSliderVal}
                     onAdsbActivate={activateAdsb}
                     onAdsbStop={stopAdsb}
-                    adsbLabels={active.adsbLabels}
+                    adsbLabels={effectiveActive.adsbLabels}
                     onAdsbLabelsToggle={() => toggle("adsbLabels")}
                     routeInfo={routeInfo ? {
                         calculating: routeLoading,
@@ -9446,7 +9452,7 @@ export default function MapPage({
             )}
 
         {/* ── Live Ticker ──────────────────────────────────────────────────────── */}
-        {active.liveTicker && (
+        {effectiveActive.liveTicker && (
             <LiveTicker
                 events={filteredUnifiedEvents}
                 onItemClick={(item) => {

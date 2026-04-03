@@ -31,6 +31,9 @@ import StartupChoiceModal from "./components/StartupChoiceModal.jsx"
 import BottomNav from "./components/BottomNav.jsx"
 import MobileDrawer from "./components/MobileDrawer.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
+import DirectorBar from "./components/DirectorBar.jsx"
+import DirectorModal from "./components/DirectorModal.jsx"
+import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDirectorSequence } from "./services/commandRunner.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -138,6 +141,22 @@ export default function App() {
     const [showChat,          setShowChat]          = useState(false)
     const [overwatchActive,   setOverwatchActive]   = useState(false)
     const [sentinel2Active,   setSentinel2Active]   = useState(false)
+
+    // ── Director Mode ──────────────────────────────────────────────────────────
+    const [directorVisible,        setDirectorVisible]        = useState(false)
+    const [directorSequence,       setDirectorSequence]       = useState(null)
+    const [directorLayerOverrides, setDirectorLayerOverrides] = useState({})
+    const [directorHighlights,     setDirectorHighlights]     = useState([])
+    const [directorRunnerState,    setDirectorRunnerState]    = useState({ isPlaying: false, currentIndex: -1, total: 0 })
+    const [directorCurrentAction,  setDirectorCurrentAction]  = useState(null)
+    const [directorIndicators,     setDirectorIndicators]     = useState([])
+    const [directorGenerating,     setDirectorGenerating]     = useState(false)
+    const [directorSavedStatus,    setDirectorSavedStatus]    = useState(null)
+    const [directorModalOpen,      setDirectorModalOpen]      = useState(false)
+    const [directorError,          setDirectorError]          = useState(null)
+    const mapInstanceRef = useRef(null)
+    const directorRunnerRef = useRef(null)
+    const directorLayerSnapshotRef = useRef(null)
     const [showStartupModal,  setShowStartupModal]  = useState(false)
     const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
     const [showStartupChoice, setShowStartupChoice] = useState(false)
@@ -772,6 +791,79 @@ export default function App() {
         return () => clearTimeout(t)
     }, [situations, activeSituationId])
 
+    // ── Director Mode handlers ────────────────────────────────────────────────
+
+    const handleDirectorOpen = useCallback(() => {
+        setDirectorVisible(true)
+        setDirectorCurrentAction(null)
+        setDirectorIndicators([])
+        setDirectorSavedStatus(null)
+    }, [])
+
+    const handleDirectorClose = useCallback(() => {
+        const runner = directorRunnerRef.current
+        if (runner) runner.stop()
+        setDirectorVisible(false)
+        setDirectorSequence(null)
+        setDirectorLayerOverrides({})
+        setDirectorHighlights([])
+        setDirectorCurrentAction(null)
+        setDirectorIndicators([])
+        setDirectorRunnerState({ isPlaying: false, currentIndex: -1, total: 0 })
+        setDirectorModalOpen(false)
+        setDirectorError(null)
+    }, [])
+
+    const handleDirectorGenerate = useCallback(async (intent) => {
+        setDirectorError(null)
+        setDirectorGenerating(true)
+        setDirectorCurrentAction(null)
+        setDirectorIndicators([])
+        setDirectorSavedStatus(null)
+        // snapshot current layer overrides before director takes over
+        directorLayerSnapshotRef.current = { ...directorLayerOverrides }
+        try {
+            const snapshot = await fetchDirectorSnapshot()
+            const sequence = await generateDirectorSequence({ intent, snapshot })
+            setDirectorSequence(sequence)
+            setDirectorVisible(true)
+
+            // Destroy old runner if any
+            if (directorRunnerRef.current) directorRunnerRef.current.destroy()
+
+            const runner = new CommandRunner({
+                mapRef:            mapInstanceRef,
+                setLayerOverrides: setDirectorLayerOverrides,
+                setHighlights:     setDirectorHighlights,
+                surfaceItems,
+                onNarrate:   (action) => setDirectorCurrentAction(action),
+                onIndicator: (action) => setDirectorIndicators(prev => [...prev, action]),
+                onStateChange: (state) => setDirectorRunnerState(state),
+                onComplete:  () => {},
+            })
+            runner.load(sequence)
+            directorRunnerRef.current = runner
+            runner.play()
+        } catch (err) {
+            console.error("[Director] generate failed:", err)
+            setDirectorError(err.message || "Director generation failed")
+        } finally {
+            setDirectorGenerating(false)
+        }
+    }, [surfaceItems, directorLayerOverrides])
+
+    const handleDirectorSave = useCallback(async () => {
+        if (!directorSequence) return
+        setDirectorSavedStatus("saving")
+        try {
+            await saveDirectorSequence(directorSequence)
+            setDirectorSavedStatus("saved")
+        } catch (err) {
+            console.error("[Director] save failed:", err)
+            setDirectorSavedStatus("error")
+        }
+    }, [directorSequence])
+
     // ── Render ────────────────────────────────────────────────────────────────
 
     const panelStyle = isMobile ? {
@@ -857,6 +949,14 @@ export default function App() {
                         onToggleChat={() => setShowChat(v => !v)}
                         overwatchActive={overwatchActive}
                         onToggleOverwatch={() => setOverwatchActive(v => !v)}
+                        directorActive={directorVisible}
+                        onDirectorClick={() => {
+                            if (directorVisible) {
+                                handleDirectorClose()
+                            } else {
+                                setDirectorModalOpen(true)
+                            }
+                        }}
                     />
                 )}
 
@@ -919,6 +1019,22 @@ export default function App() {
                         onOverwatchExit={() => setOverwatchActive(false)}
                         sentinel2Active={sentinel2Active}
                         onSentinel2Exit={() => setSentinel2Active(false)}
+                        onMapReady={(map) => { mapInstanceRef.current = map }}
+                        directorLayerOverrides={directorLayerOverrides}
+                        directorHighlights={directorHighlights}
+                    />
+                    <DirectorBar
+                        visible={directorVisible}
+                        sequence={directorSequence}
+                        runner={directorRunnerRef.current}
+                        runnerState={directorRunnerState}
+                        currentAction={directorCurrentAction}
+                        indicators={directorIndicators}
+                        generating={directorGenerating}
+                        onGenerate={handleDirectorGenerate}
+                        onSave={handleDirectorSave}
+                        onClose={handleDirectorClose}
+                        savedStatus={directorSavedStatus}
                     />
                 </div>
 
@@ -1092,6 +1208,15 @@ export default function App() {
             {showStartupChoice && (
                 <StartupChoiceModal onChoice={handleStartupChoice} />
             )}
+
+            {/* Director Mode modal — portal-level, covers full screen */}
+            <DirectorModal
+                open={directorModalOpen}
+                onClose={() => setDirectorModalOpen(false)}
+                onGenerate={handleDirectorGenerate}
+                generating={directorGenerating}
+                error={directorError}
+            />
 
             {/* Real-time toast notifications */}
             <ToastSystem

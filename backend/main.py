@@ -2764,6 +2764,7 @@ def get_adsb(
 from services.flight_route_service   import get_route  as _get_route
 from services.aircraft_photo_service import get_photo  as _get_photo
 from services.vessel_photo_service   import get_photo  as _get_vessel_photo
+import services.director_service as _director_svc
 
 @app.get("/api/aviation/test")
 async def aviation_test():
@@ -2813,6 +2814,131 @@ async def vessel_photo(mmsi: str):
     loop = asyncio.get_event_loop()
     data = await loop.run_in_executor(_executor, _get_vessel_photo, mmsi)
     return data
+
+
+# ── Director Mode ─────────────────────────────────────────────────────────────
+
+@app.get("/api/director/snapshot")
+async def director_snapshot():
+    """Return a compact intelligence snapshot for the Director prompt (<4 000 tokens)."""
+    with _SURFACE_POOL_LOCK:
+        surface_pool = list(_SURFACE_POOL)
+
+    # Aggregate any recently cached ADS-B aircraft across all per-region cache entries
+    now_ts = time.time()
+    adsb_latest: list[dict] = []
+    seen_icao: set[str] = set()
+    for entry in _adsb_cache.values():
+        if now_ts - entry.get("ts", 0) < 120:   # only entries fresher than 2 min
+            for ac in (entry.get("data") or []):
+                icao = ac.get("icao") or ac.get("hex") or ""
+                if icao and icao not in seen_icao:
+                    seen_icao.add(icao)
+                    adsb_latest.append(ac)
+
+    snapshot = _director_svc.build_snapshot(
+        surface_pool=surface_pool,
+        ais_vessels=_AIS_VESSELS,
+        adsb_cache_latest=adsb_latest,
+        event_store_fn=es.get_active_events,
+        active_profile=_ACTIVE_PROFILE,
+    )
+    return snapshot
+
+
+@app.post("/api/director/generate")
+async def director_generate(
+    request: Request,
+    current_user=Depends(require_approved_user),
+):
+    """Generate a director action sequence from intent + live snapshot."""
+    if not client:
+        raise HTTPException(503, "Claude client not configured")
+
+    body = await request.json()
+    intent   = (body.get("intent") or "").strip()
+    snapshot = body.get("snapshot") or {}
+    if not intent:
+        raise HTTPException(400, "intent is required")
+
+    if not isinstance(snapshot, dict) or not snapshot:
+        # Build a fresh snapshot if the caller didn't pass one
+        with _SURFACE_POOL_LOCK:
+            surface_pool = list(_SURFACE_POOL)
+        now_ts = time.time()
+        adsb_latest: list[dict] = []
+        seen_icao: set[str] = set()
+        for entry in _adsb_cache.values():
+            if now_ts - entry.get("ts", 0) < 120:
+                for ac in (entry.get("data") or []):
+                    icao = ac.get("icao") or ac.get("hex") or ""
+                    if icao and icao not in seen_icao:
+                        seen_icao.add(icao)
+                        adsb_latest.append(ac)
+        snapshot = _director_svc.build_snapshot(
+            surface_pool=surface_pool,
+            ais_vessels=_AIS_VESSELS,
+            adsb_cache_latest=adsb_latest,
+            event_store_fn=es.get_active_events,
+            active_profile=_ACTIVE_PROFILE,
+        )
+
+    loop = asyncio.get_event_loop()
+    try:
+        sequence = await loop.run_in_executor(
+            _executor,
+            lambda: _director_svc.generate_sequence(
+                intent=intent,
+                snapshot=snapshot,
+                client=client,
+                usage_tracker=usage_tracker,
+                profile=_ACTIVE_PROFILE,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(502, str(exc))
+
+    return sequence
+
+
+@app.post("/api/director/save")
+async def director_save(
+    request: Request,
+    current_user=Depends(require_approved_user),
+):
+    """Persist a director sequence to disk."""
+    body = await request.json()
+    sequence = body.get("sequence") or body
+    if not isinstance(sequence, dict) or "actions" not in sequence:
+        raise HTTPException(400, "sequence with actions is required")
+    path = _director_svc.save_sequence(sequence)
+    return {"saved": True, "path": path, "id": sequence.get("id")}
+
+
+@app.get("/api/director/list")
+async def director_list():
+    """List saved director sequences (newest first)."""
+    return {"sequences": _director_svc.list_sequences()}
+
+
+@app.get("/api/director/load/{seq_id}")
+async def director_load(seq_id: str):
+    """Load a saved director sequence by ID."""
+    seq = _director_svc.load_sequence(seq_id)
+    if seq is None:
+        raise HTTPException(404, f"Sequence {seq_id!r} not found")
+    return seq
+
+
+@app.get("/api/director/transcript/{seq_id}")
+async def director_transcript(seq_id: str):
+    """Return a plain-text transcript for a saved sequence."""
+    seq = _director_svc.load_sequence(seq_id)
+    if seq is None:
+        raise HTTPException(404, f"Sequence {seq_id!r} not found")
+    text = _director_svc.sequence_to_transcript(seq)
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(text)
 
 
 # ── Real-time alert helpers ───────────────────────────────────────────────────
@@ -3833,6 +3959,87 @@ def _merge_conflict_markers(new_markers: list[dict]) -> None:
     _NEWS_CONFLICT_MARKERS = deduped
 
 
+_GATE1_SYSTEM = (
+    "You are an intelligence relevance analyst. Score each article 1-5 for operational "
+    "relevance to the active mission profile. 5=directly relevant, 3=tangentially relevant, "
+    "1=not relevant. Respond ONLY with a JSON array matching the input order: "
+    '[{"id":"...","score":N,"reason":"short reason"}, ...]'
+)
+
+
+def _gate1_filter_markers(markers: list[dict]) -> None:
+    """Batch-score up to 30 markers with Claude and remove those scoring 1-2.
+
+    Modifies the markers list IN PLACE.  One Claude call per feed cycle max.
+    Stores relevance_score + relevance_reason on each surviving marker.
+    """
+    if not markers or not _ACTIVE_PROFILE or not client:
+        return
+
+    batch = markers[:30]
+    profile_ctx = _format_profile_context(_ACTIVE_PROFILE)
+
+    items_json = _json.dumps([
+        {"id": m.get("id", str(i)), "title": m.get("title", "")[:150], "summary": (m.get("summary") or "")[:200]}
+        for i, m in enumerate(batch)
+    ], ensure_ascii=False)
+
+    user_prompt = (
+        f"Mission profile:\n{profile_ctx}\n\nArticles to score:\n{items_json}\n\n"
+        "Respond ONLY with the JSON array."
+    )
+
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=800,
+            system=_GATE1_SYSTEM,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        usage_tracker.record_call(
+            msg.usage.input_tokens,
+            msg.usage.output_tokens,
+            call_type="gate1_relevance",
+            headline=f"Gate1: {len(batch)} articles",
+        )
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+        scores = _json.loads(raw)
+    except Exception as exc:
+        print(f"[gate1] Claude call failed: {exc}")
+        return
+
+    # Build lookup: id → score entry
+    score_map: dict[str, dict] = {}
+    for entry in (scores if isinstance(scores, list) else []):
+        if isinstance(entry, dict) and "id" in entry:
+            score_map[str(entry["id"])] = entry
+
+    # Tag markers with score; collect indices to remove (score ≤ 2)
+    to_remove: set[int] = set()
+    for i, marker in enumerate(batch):
+        mid = marker.get("id", str(i))
+        entry = score_map.get(str(mid)) or score_map.get(mid)
+        if entry:
+            score = int(entry.get("score", 3))
+            marker["relevance_score"] = score
+            marker["relevance_reason"] = (entry.get("reason") or "")[:120]
+            if score <= 2:
+                to_remove.add(i)
+                print(f"[gate1] REJECT score={score} '{marker.get('title','')[:80]}'")
+            else:
+                print(f"[gate1] KEEP   score={score} '{marker.get('title','')[:80]}'")
+
+    # Remove low-relevance markers from the list (iterate in reverse to preserve indices)
+    for i in sorted(to_remove, reverse=True):
+        if i < len(markers):
+            markers.pop(i)
+
+    print(f"[gate1] scored {len(batch)} articles — removed {len(to_remove)}")
+
+
 def _run_news_conflict_extraction_sync():
     """
     Synchronous extraction pass — runs in ThreadPoolExecutor so blocking I/O
@@ -4048,6 +4255,13 @@ def _run_news_conflict_extraction_sync():
                 f_added += 1
 
         print(f"[feed] {source_name}: {f_articles} articles — {f_locations} locs — {f_geocoded} geocoded — {f_added} added")
+
+    # ── Gate 1: Claude relevance scoring (only when mission profile active) ──────
+    if new_markers and _ACTIVE_PROFILE and client:
+        try:
+            _gate1_filter_markers(new_markers)
+        except Exception as _g1_err:
+            print(f"[gate1] error — skipping filter: {_g1_err}")
 
     _merge_conflict_markers(new_markers)
     _prune_news_article_store()
