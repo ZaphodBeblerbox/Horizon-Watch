@@ -2759,6 +2759,62 @@ def get_adsb(
     return {"aircraft": aircraft}
 
 
+# ── Aviation enrichment: route + photo ────────────────────────────────────────
+
+from services.flight_route_service   import get_route  as _get_route
+from services.aircraft_photo_service import get_photo  as _get_photo
+from services.vessel_photo_service   import get_photo  as _get_vessel_photo
+
+@app.get("/api/aviation/test")
+async def aviation_test():
+    """Smoke-test endpoint — confirms aviation routes are registered."""
+    return {"status": "aviation routes working", "endpoints": [
+        "/api/aviation/test",
+        "/api/aviation/route/{icao24}",
+        "/api/aviation/photo/{icao24}",
+    ]}
+
+
+@app.get("/api/aviation/route/{icao24}")
+async def aviation_route(icao24: str, callsign: Optional[str] = Query(default=None)):
+    """Return departure/destination airports for an ICAO24 hex code.
+
+    Primary source: OpenSky Network (/flights/aircraft, last 24 h).
+    Fallback: AeroDataBox (RapidAPI) → AviationStack by callsign.
+    Results cached 30 min — safe to call on every aircraft click.
+    """
+    print(f"[route-endpoint] called: icao24={icao24!r} callsign={callsign!r}")
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(_executor, _get_route, icao24, callsign)
+    print(f"[route-endpoint] result for {icao24}: {data}")
+    return data
+
+
+@app.get("/api/aviation/photo/{icao24}")
+async def aviation_photo(icao24: str):
+    """Return a real aircraft photo from Planespotters.net for an ICAO24 hex.
+
+    Returns { photo_url, thumbnail_url, photographer } or nulls if not found.
+    Results are cached 6 h on the backend.
+    """
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(_executor, _get_photo, icao24)
+    return data
+
+
+@app.get("/api/vessel/photo/{mmsi}")
+async def vessel_photo(mmsi: str):
+    """Return vessel photo availability and URLs from MarineTraffic CDN.
+
+    Probes the CDN with a HEAD request and checks content-type.
+    Results cached 6 h on the backend.
+    Returns { available, thumbnail_url, full_url }.
+    """
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(_executor, _get_vessel_photo, mmsi)
+    return data
+
+
 # ── Real-time alert helpers ───────────────────────────────────────────────────
 
 def _parse_iso_ts(s: str) -> float:

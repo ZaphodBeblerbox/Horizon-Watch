@@ -300,6 +300,26 @@ const MAP_STYLES = `
 .leaflet-tile {
     animation: tileFadeIn 150ms ease forwards;
 }
+@keyframes acGlowMil {
+    0%, 100% { filter: drop-shadow(0 0 3px rgba(255, 80, 40, 0.65)); }
+    50%       { filter: drop-shadow(0 0 7px rgba(255, 80, 40, 1.0));  }
+}
+@keyframes acGlowCyan {
+    0%, 100% { filter: drop-shadow(0 0 3px rgba(0, 200, 255, 0.55)); }
+    50%       { filter: drop-shadow(0 0 7px rgba(0, 200, 255, 0.9));  }
+}
+@keyframes acGlowGreen {
+    0%, 100% { filter: drop-shadow(0 0 3px rgba(0, 255, 120, 0.55)); }
+    50%       { filter: drop-shadow(0 0 7px rgba(0, 255, 120, 0.9));  }
+}
+@keyframes acGlowWhite {
+    0%, 100% { filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.35)); }
+    50%       { filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.65)); }
+}
+.ac-glow-mil  { animation: acGlowMil   2.2s ease-in-out infinite; }
+.ac-glow-cyan { animation: acGlowCyan  2.5s ease-in-out infinite; }
+.ac-glow-grn  { animation: acGlowGreen 2.3s ease-in-out infinite; }
+.ac-glow-wht  { animation: acGlowWhite 3.0s ease-in-out infinite; }
 .adsb-slider {
     -webkit-appearance: none;
     appearance: none;
@@ -1307,46 +1327,111 @@ const GLASS = {
 
 // ── ADS-B helpers ─────────────────────────────────────────────────────────────
 
-function getAircraftColor(ac) {
-    if (ac.military) return "#FF3333"
+function _acClassify(ac) {
+    if (ac.military || ac.interesting) return 'military'
     const cat = ac.category || ""
-    if (cat === "A7") return "#FFD600"                                  // helicopter
-    if (["A3", "A4", "A5"].includes(cat)) return "#00E5FF"             // heavy/large commercial
-    if (cat.startsWith("A") || cat.startsWith("B")) return "#76FF03"   // general aviation / private
-    return "#FF6D00"                                                     // unknown / unclassified
+    if (cat === "A7") return 'helicopter'
+    if (["A1", "A2"].includes(cat)) return 'general'
+    if (["A3", "A4", "A5", "A6"].includes(cat)) return 'commercial'
+    // Fallback: 3-letter ICAO airline prefix → commercial
+    const cs = (ac.flight || "").trim().toUpperCase()
+    if (/^[A-Z]{3}\d/.test(cs)) return 'commercial'
+    return 'general'
 }
 
-// Equilateral triangle icon, nose pointing up, rotated by track heading.
-// The rotation div is kept separate from the label so the label is never rotated.
+// Type-specific SVG bodies and sizes — all created at call-time, never at module level.
+// Returns { svgInner, size, glowClass }
+function _acIconParts(ac) {
+    const type = _acClassify(ac)
+
+    if (type === 'helicopter') {
+        // Side-profile helicopter: long rotor line on top, rounded fuselage, tail boom + rotor, skids
+        const c = "rgba(0,255,120,0.95)"
+        const s = "rgba(0,255,120,0.95)"
+        const svg =
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="26" height="26" class="ac-glow-grn">` +
+            // Main rotor
+            `<line x1="2" y1="8" x2="28" y2="8" stroke="${s}" stroke-width="1.8" stroke-linecap="round"/>` +
+            // Rotor mast
+            `<line x1="14" y1="8" x2="14" y2="12" stroke="${s}" stroke-width="1.5"/>` +
+            // Fuselage body
+            `<ellipse cx="14" cy="17" rx="8" ry="4.5" fill="${c}"/>` +
+            // Cockpit bubble (darker)
+            `<ellipse cx="19" cy="16" rx="3.5" ry="3" fill="rgba(0,0,0,0.3)"/>` +
+            // Tail boom
+            `<polygon points="6,16 2,13 2,15" fill="${c}"/>` +
+            `<rect x="2" y="13.5" width="5" height="1.5" fill="${c}"/>` +
+            // Tail rotor
+            `<line x1="2" y1="10" x2="2" y2="17" stroke="${s}" stroke-width="1.8" stroke-linecap="round"/>` +
+            // Skid struts
+            `<line x1="10" y1="21" x2="10" y2="24" stroke="${s}" stroke-width="1.2"/>` +
+            `<line x1="18" y1="21" x2="18" y2="24" stroke="${s}" stroke-width="1.2"/>` +
+            // Skid rails
+            `<line x1="7" y1="24" x2="21" y2="24" stroke="${s}" stroke-width="1.8" stroke-linecap="round"/>` +
+            `</svg>`
+        return { svg, size: 26, anchor: 13 }
+    }
+
+    if (type === 'general') {
+        // Top-down light aircraft: stubby fuselage, broad wings forward, small tail
+        const color = "rgba(200,200,255,0.85)"
+        const svg =
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="ac-glow-wht">` +
+            // Fuselage
+            `<path d="M12 2 L13.2 8 L13.2 18 L14 20 L10 20 L10.8 18 L10.8 8 Z" fill="${color}"/>` +
+            // Left wing (high, forward)
+            `<path d="M10.8 9 L2 14 L2 15.2 L10.8 11.5 Z" fill="${color}"/>` +
+            // Right wing
+            `<path d="M13.2 9 L22 14 L22 15.2 L13.2 11.5 Z" fill="${color}"/>` +
+            // Left horizontal stabilizer
+            `<path d="M10.8 18.5 L6 20.5 L6 21.5 L10.8 19.8 Z" fill="${color}"/>` +
+            // Right horizontal stabilizer
+            `<path d="M13.2 18.5 L18 20.5 L18 21.5 L13.2 19.8 Z" fill="${color}"/>` +
+            // Prop disc at nose
+            `<ellipse cx="12" cy="2.5" rx="2.5" ry="0.8" fill="${color}" opacity="0.5"/>` +
+            `</svg>`
+        return { svg, size: 18, anchor: 9 }
+    }
+
+    if (type === 'military') {
+        // Same airliner silhouette, red/orange
+        const color = "rgba(255,80,40,0.95)"
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="ac-glow-mil">` +
+            `<path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="${color}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>` +
+            `</svg>`
+        return { svg, size: 18, anchor: 9 }
+    }
+
+    // Commercial (default)
+    const color = "rgba(0,200,255,0.95)"
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="ac-glow-cyan">` +
+        `<path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="${color}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>` +
+        `</svg>`
+    return { svg, size: 18, anchor: 9 }
+}
+
+// Aircraft icon factory — called during render, never at module level.
 function makeAircraftIcon(ac, showLabel) {
-    const color  = getAircraftColor(ac)
-    // Military gets red glow; interesting gets same-colour glow
-    const glowColor = ac.military ? "#FF3333" : color
-    const filter = (ac.military || ac.interesting)
-        ? `filter:drop-shadow(0 0 4px ${glowColor})`
-        : ""
+    const { svg, size, anchor } = _acIconParts(ac)
     const callsign = (ac.flight || "").trim() || ac.icao || ""
-    const altNum   = ac.alt_baro != null && !isNaN(Number(ac.alt_baro))
-        ? Number(ac.alt_baro)
-        : null
+    const altNum   = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
     const altText  = altNum != null ? ` · ${altNum.toLocaleString()}ft` : ""
+    const labelTop = size + 2
 
     const labelHtml = (showLabel && callsign)
-        ? `<div style="position:absolute;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.72);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;white-space:nowrap;font-family:system-ui,sans-serif;pointer-events:none;letter-spacing:0.02em">${callsign}${altText}</div>`
+        ? `<div style="position:absolute;top:${labelTop}px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.72);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;white-space:nowrap;font-family:system-ui,sans-serif;pointer-events:none;letter-spacing:0.02em">${callsign}${altText}</div>`
         : ""
 
-    // Airplane silhouette (Material Icons "flight", 24×24), nose pointing up, rotated by track
-    const html = `<div style="position:relative;width:18px;height:18px">` +
-        `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;transform:rotate(${ac.track || 0}deg)">` +
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="${filter}">` +
-        `<path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="${color}" stroke="rgba(0,0,0,0.35)" stroke-width="0.5"/>` +
-        `</svg></div>${labelHtml}</div>`
+    const html =
+        `<div style="position:relative;width:${size}px;height:${size}px">` +
+        `<div style="width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;transform:rotate(${ac.track || 0}deg)">` +
+        svg + `</div>${labelHtml}</div>`
 
     return L.divIcon({
         html,
         className:   "",
-        iconSize:    [18, 18],
-        iconAnchor:  [9, 9],
+        iconSize:    [size, size],
+        iconAnchor:  [anchor, anchor],
         popupAnchor: [0, -12],
     })
 }
@@ -2276,6 +2361,10 @@ const AircraftLayer = memo(function AircraftLayer({
     const [followAc,   setFollowAc]   = useState(null)   // followed aircraft (latest snapshot)
     const [acImgUrl,   setAcImgUrl]   = useState({})     // cacheKey → Wikipedia thumbnail url
     const [acTypeDesc, setAcTypeDesc] = useState({})     // typeCode → Wikipedia extract text
+    const [acRoute,    setAcRoute]    = useState({})     // icao → { departure, destination, departure_name, destination_name, loading }
+    const [acPhoto,    setAcPhoto]    = useState({})     // icao → { thumbnail_url, photo_url, photographer, loading }
+    const [acFilter,   setAcFilter]   = useState({ military: true, commercial: true, helicopter: true, general: true })
+    const [filterOpen, setFilterOpen] = useState(false)
     const intervalRef    = useRef(null)
     const followIcaoRef  = useRef(null)                  // ref so panTo effect never goes stale
     const trackHistoryRef = useRef({})                   // icao → [{lat, lon, alt, ts}]
@@ -2331,7 +2420,7 @@ const AircraftLayer = memo(function AircraftLayer({
 
     // ── Click handler ─────────────────────────────────────────────────────────
     const handleAcClick = useCallback((ac) => {
-        // Fetch aircraft image (airline-specific first, then generic)
+        // Fetch Wikipedia aircraft image (airline-specific first, then generic)
         const typeCode     = (ac.t || ac.type || "").toUpperCase()
         const callsign0    = (ac.flight || "").trim()
         const airlinePrefix = callsign0.slice(0, 3).toUpperCase()
@@ -2345,6 +2434,26 @@ const AircraftLayer = memo(function AircraftLayer({
                     if (url) setAcImgUrl(prev => ({ ...prev, [cacheKey]: url }))
                 })
             }
+        }
+
+        // ── Enrichment: fire route + photo fetches in parallel ────────────
+        // Only fetch once per ICAO (skip if already loading or loaded)
+        if (!acRoute[ac.icao]) {
+            setAcRoute(prev => ({ ...prev, [ac.icao]: { loading: true } }))
+            const callsign = (ac.flight || "").trim()
+            const routeUrl = `${API}/api/aviation/route/${ac.icao}${callsign ? `?callsign=${encodeURIComponent(callsign)}` : ""}`
+            console.log("[route] fetching:", routeUrl, "| ac.icao:", ac.icao, "| callsign:", callsign || "(none)", "| full ac:", JSON.stringify(ac))
+            fetch(routeUrl)
+                .then(r => { console.log("[route] HTTP", r.status, routeUrl); return r.ok ? r.json() : null })
+                .then(data => { console.log("[route] response:", data); setAcRoute(prev => ({ ...prev, [ac.icao]: { loading: false, ...(data || {}) } })) })
+                .catch(err => { console.error("[route] fetch error:", err); setAcRoute(prev => ({ ...prev, [ac.icao]: { loading: false } })) })
+        }
+        if (!acPhoto[ac.icao]) {
+            setAcPhoto(prev => ({ ...prev, [ac.icao]: { loading: true } }))
+            fetch(`${API}/api/aviation/photo/${ac.icao}`)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => setAcPhoto(prev => ({ ...prev, [ac.icao]: { loading: false, ...(data || {}) } })))
+                .catch(() => setAcPhoto(prev => ({ ...prev, [ac.icao]: { loading: false } })))
         }
 
         // Second click on same aircraft → open detail panel
@@ -2364,7 +2473,7 @@ const AircraftLayer = memo(function AircraftLayer({
         } else {
             setTrackState({ icao: ac.icao, segments: [], status: "unavailable", pointCount: 0 })
         }
-    }, [selectedAc])
+    }, [selectedAc, acRoute, acPhoto])
 
     // ── Tooltip renderer ──────────────────────────────────────────────────────
     const renderTooltip = (ac) => {
@@ -2373,27 +2482,41 @@ const AircraftLayer = memo(function AircraftLayer({
         const airline     = AIRLINES[icaoPrefix] || null
         const typeCode    = (ac.t || ac.type || "").toUpperCase()
         const typeInfo    = AIRCRAFT_TYPES[typeCode] || null
-        const imgUrl      = acImgUrl[_acImgCacheKey(typeCode, airline)] || acImgUrl[typeCode] || null
+        // Prefer Planespotters photo, fall back to Wikipedia
+        const photoData   = acPhoto[ac.icao] || {}
+        const wikiUrl     = acImgUrl[_acImgCacheKey(typeCode, airline)] || acImgUrl[typeCode] || null
+        const imgUrl      = photoData.thumbnail_url || wikiUrl
         const altNum      = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
         const altText     = altNum != null ? `${altNum.toLocaleString()} ft` : null
         const spdText     = ac.gs != null ? `${Math.round(ac.gs)} kts` : null
         const squawk      = ac.squawk
         const isEmergency = squawk === "7500" || squawk === "7600" || squawk === "7700"
         const isMil       = ac.military || Object.prototype.hasOwnProperty.call(AIRLINES, icaoPrefix + "_MIL")
+        const routeData   = acRoute[ac.icao] || {}
 
         return (
             <Tooltip permanent interactive direction="top" offset={[0, -12]} className="ac-tooltip-custom" pane="tooltipPane">
                 <div style={{
                     background: "rgba(6,13,26,0.96)", border: "1px solid rgba(56,189,248,0.35)",
-                    borderRadius: 8, padding: "10px 12px", minWidth: 210, maxWidth: 270,
+                    borderRadius: 8, padding: "10px 12px", minWidth: 210, maxWidth: 280,
                     fontFamily: "Inter,-apple-system,sans-serif", boxShadow: "0 4px 24px rgba(0,0,0,0.65)",
                     fontSize: 12, color: "#e8edf2", position: "relative", zIndex: 10000,
                 }}>
+                    {/* Aircraft photo */}
                     {imgUrl && (
-                        <img src={imgUrl} alt={typeInfo?.name || typeCode}
-                            style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 4, marginBottom: 8, display: "block" }}
-                            onError={e => { e.target.style.display = "none" }}
-                        />
+                        <div style={{ position: "relative", marginBottom: 8 }}>
+                            <img src={imgUrl} alt={typeInfo?.name || typeCode}
+                                style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 4, display: "block" }}
+                                onError={e => { e.target.style.display = "none" }}
+                            />
+                            {photoData.photographer && (
+                                <span style={{
+                                    position: "absolute", bottom: 3, right: 4,
+                                    fontSize: 8, color: "rgba(255,255,255,0.45)",
+                                    background: "rgba(0,0,0,0.55)", padding: "1px 4px", borderRadius: 2,
+                                }}>© {photoData.photographer}</span>
+                            )}
+                        </div>
                     )}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 5 }}>
                         <div>
@@ -2404,6 +2527,25 @@ const AircraftLayer = memo(function AircraftLayer({
                             style={{ background: "none", border: "none", color: "rgba(232,237,242,0.35)", cursor: "pointer", fontSize: 15, padding: "0 2px", lineHeight: 1 }}>✕</button>
                     </div>
                     {typeInfo && <div style={{ fontSize: 10, color: "rgba(232,237,242,0.45)", marginBottom: 4 }}>{typeInfo.name}</div>}
+                    {/* Route row */}
+                    {routeData.loading && (
+                        <div style={{ fontSize: 9, color: "rgba(56,189,248,0.5)", marginBottom: 5 }}>Resolving route…</div>
+                    )}
+                    {!routeData.loading && (routeData.departure || routeData.destination) && (
+                        <div style={{
+                            fontSize: 10, marginBottom: 6, padding: "4px 7px", borderRadius: 4,
+                            background: "rgba(56,189,248,0.07)", border: "1px solid rgba(56,189,248,0.18)",
+                        }}>
+                            <span style={{ color: "#38bdf8", fontWeight: 700 }}>
+                                {routeData.departure || "?"} → {routeData.destination || "?"}
+                            </span>
+                            {(routeData.departure_name || routeData.destination_name) && (
+                                <div style={{ fontSize: 9, color: "rgba(232,237,242,0.45)", marginTop: 1 }}>
+                                    {[routeData.departure_name, routeData.destination_name].filter(Boolean).join(" → ")}
+                                </div>
+                            )}
+                        </div>
+                    )}
                     {(altText || spdText) && (
                         <div style={{ fontSize: 10, color: "rgba(232,237,242,0.6)", marginBottom: 7 }}>
                             {[altText, spdText].filter(Boolean).join(" · ")}
@@ -2455,6 +2597,7 @@ const AircraftLayer = memo(function AircraftLayer({
         const typeInfo  = AIRCRAFT_TYPES[typeCode] || null
         const altNum    = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
         const acColor   = _altColor(altNum)
+        const routeData = acRoute[ac.icao] || {}
 
         const toast = (
             <div style={{
@@ -2486,10 +2629,17 @@ const AircraftLayer = memo(function AircraftLayer({
                     <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill={acColor}/>
                 </svg>
 
-                {/* Flight ID */}
-                <div style={{ flexShrink: 0 }}>
+                {/* Flight ID + route */}
+                <div style={{ flexShrink: 0, minWidth: 0 }}>
                     {airline && <div style={{ fontSize: 9, color: acColor, fontWeight: 600, letterSpacing: "0.06em", lineHeight: 1, marginBottom: 1 }}>{airline}</div>}
-                    <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1 }}>{callsign}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1 }}>
+                        {callsign}
+                        {!routeData.loading && (routeData.departure || routeData.destination) && (
+                            <span style={{ fontSize: 11, fontWeight: 400, color: "rgba(232,237,242,0.6)", marginLeft: 6 }}>
+                                · {routeData.departure || "?"} → {routeData.destination || "?"}
+                            </span>
+                        )}
+                    </div>
                 </div>
 
                 {/* Type — hidden on very small screens */}
@@ -2566,8 +2716,12 @@ const AircraftLayer = memo(function AircraftLayer({
         const airline     = AIRLINES[icaoPrefix] || null
         const typeCode    = (ac.t || ac.type || "").toUpperCase()
         const typeInfo    = AIRCRAFT_TYPES[typeCode] || null
-        const imgUrl      = acImgUrl[_acImgCacheKey(typeCode, airline)] || acImgUrl[typeCode] || null
+        // Prefer Planespotters, fall back to Wikipedia
+        const photoData   = acPhoto[ac.icao] || {}
+        const wikiUrl     = acImgUrl[_acImgCacheKey(typeCode, airline)] || acImgUrl[typeCode] || null
+        const imgUrl      = photoData.thumbnail_url || wikiUrl
         const typeDesc    = acTypeDesc[typeCode] || null
+        const routeData   = acRoute[ac.icao] || {}
         const altNum      = ac.alt_baro != null && !isNaN(Number(ac.alt_baro)) ? Number(ac.alt_baro) : null
         const squawk      = ac.squawk
         const isEmergency = squawk === "7500" || squawk === "7600" || squawk === "7700"
@@ -2592,13 +2746,46 @@ const AircraftLayer = memo(function AircraftLayer({
                 </div>
 
                 {imgUrl && (
-                    <img src={imgUrl} alt={typeInfo?.name || typeCode}
-                        style={{ width: "100%", height: 160, objectFit: "cover", flexShrink: 0 }}
-                        onError={e => { e.target.style.display = "none" }}
-                    />
+                    <div style={{ position: "relative", flexShrink: 0 }}>
+                        <img src={imgUrl} alt={typeInfo?.name || typeCode}
+                            style={{ width: "100%", height: 160, objectFit: "cover", display: "block" }}
+                            onError={e => { e.target.style.display = "none" }}
+                        />
+                        {photoData.photographer && (
+                            <span style={{
+                                position: "absolute", bottom: 5, right: 8,
+                                fontSize: 9, color: "rgba(255,255,255,0.5)",
+                                background: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: 3,
+                            }}>© {photoData.photographer}</span>
+                        )}
+                    </div>
                 )}
 
                 <div style={{ padding: "12px 16px", flex: 1 }}>
+                    {/* Route */}
+                    {routeData.loading && (
+                        <div style={{ fontSize: 10, color: "rgba(56,189,248,0.5)", marginBottom: 12 }}>Resolving flight route…</div>
+                    )}
+                    {!routeData.loading && (routeData.departure || routeData.destination) && (
+                        <div style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Route</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <div style={{ textAlign: "center" }}>
+                                    <div style={{ fontSize: 15, fontWeight: 700, color: "#38bdf8" }}>{routeData.departure || "?"}</div>
+                                    {routeData.departure_name && <div style={{ fontSize: 9, color: "rgba(232,237,242,0.4)", marginTop: 1, maxWidth: 90, textAlign: "center" }}>{routeData.departure_name}</div>}
+                                </div>
+                                <div style={{ flex: 1, height: 1, background: "rgba(56,189,248,0.3)", position: "relative" }}>
+                                    <svg style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)" }} width="12" height="12" viewBox="0 0 24 24" fill="#38bdf8">
+                                        <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+                                    </svg>
+                                </div>
+                                <div style={{ textAlign: "center" }}>
+                                    <div style={{ fontSize: 15, fontWeight: 700, color: "#38bdf8" }}>{routeData.destination || "?"}</div>
+                                    {routeData.destination_name && <div style={{ fontSize: 9, color: "rgba(232,237,242,0.4)", marginTop: 1, maxWidth: 90, textAlign: "center" }}>{routeData.destination_name}</div>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {(typeInfo || typeCode) && (
                         <div style={{ marginBottom: typeDesc ? 6 : 12 }}>
                             <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>Aircraft</div>
@@ -2666,6 +2853,89 @@ const AircraftLayer = memo(function AircraftLayer({
         return createPortal(panel, document.body)
     }
 
+    // ── Filter panel (portaled, grows upward from bottom-left button) ─────────
+    const renderFilterPanel = () => {
+        if (!filterOpen) return null
+        const allOn = Object.values(acFilter).every(Boolean)
+        const cats  = [
+            { key: "military",   label: "Military",        color: "#ff5533" },
+            { key: "commercial", label: "Commercial",      color: "#00c8ff" },
+            { key: "helicopter", label: "Helicopters",     color: "#00ff78" },
+            { key: "general",    label: "General Aviation",color: "#c8c8ff" },
+        ]
+        const panel = (
+            <>
+                {/* Click-outside overlay (mobile dismiss) */}
+                <div
+                    onClick={() => setFilterOpen(false)}
+                    style={{ position: "fixed", inset: 0, zIndex: 2490 }}
+                />
+                <div style={{
+                    position: "fixed", left: 16, bottom: 136,
+                    zIndex: 2500,
+                    background: "rgba(0,0,0,0.4)", backdropFilter: "blur(12px)",
+                    WebkitBackdropFilter: "blur(12px)",
+                    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12,
+                    padding: "12px 14px", minWidth: 185,
+                    fontFamily: "Inter,-apple-system,sans-serif", color: "#e8edf2",
+                    boxShadow: "0 4px 24px rgba(0,0,0,0.55)",
+                }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(232,237,242,0.7)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Aircraft Filter</span>
+                        <button onClick={() => setFilterOpen(false)} style={{ background: "none", border: "none", color: "rgba(232,237,242,0.35)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 }}>✕</button>
+                    </div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, cursor: "pointer", marginBottom: 8, paddingBottom: 8, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                        <input type="checkbox" checked={allOn} onChange={() => {
+                            const next = !allOn
+                            setAcFilter({ military: next, commercial: next, helicopter: next, general: next })
+                        }} style={{ accentColor: "#38bdf8", width: 13, height: 13 }} />
+                        <span style={{ color: "#e8edf2", fontWeight: 600 }}>All</span>
+                    </label>
+                    {cats.map(({ key, label, color }) => (
+                        <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, cursor: "pointer", marginBottom: 7 }}>
+                            <input type="checkbox" checked={acFilter[key]} onChange={e => {
+                                e.stopPropagation()
+                                setAcFilter(prev => ({ ...prev, [key]: !prev[key] }))
+                            }} style={{ accentColor: color, width: 13, height: 13 }} />
+                            <span style={{ color }}>{label}</span>
+                        </label>
+                    ))}
+                </div>
+            </>
+        )
+        return createPortal(panel, document.body)
+    }
+
+    // ── Filter button (portaled, bottom-left) ─────────────────────────────────
+    const renderFilterButton = () => {
+        const anyOff = Object.values(acFilter).some(v => !v)
+        const btn = (
+            <button
+                onClick={() => setFilterOpen(o => !o)}
+                title="Filter aircraft types"
+                style={{
+                    position: "fixed", left: 16, bottom: 88,
+                    zIndex: 2400,
+                    width: 36, height: 36, borderRadius: 10,
+                    border: anyOff ? "1px solid rgba(0,200,255,0.55)" : "1px solid rgba(255,255,255,0.1)",
+                    cursor: "pointer",
+                    background: "rgba(0,0,0,0.4)",
+                    backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    boxShadow: "0 2px 12px rgba(0,0,0,0.45)",
+                    outline: "none",
+                }}
+            >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                    stroke={anyOff ? "#00c8ff" : "rgba(255,255,255,0.55)"}
+                    strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                </svg>
+            </button>
+        )
+        return createPortal(btn, document.body)
+    }
+
     // ── Render ────────────────────────────────────────────────────────────────
     if (!visible || map.getZoom() < 4) return null
 
@@ -2673,10 +2943,10 @@ const AircraftLayer = memo(function AircraftLayer({
     const visibleAircraft = aircraft.filter(ac =>
         ac.lat != null && ac.lon != null && vpBounds.contains([ac.lat, ac.lon])
     )
-    // In follow mode, hide all other aircraft
+    // In follow mode, hide all other aircraft; otherwise apply category filter
     const displayAircraft = followAc
         ? visibleAircraft.filter(a => a.icao === followAc.icao)
-        : visibleAircraft
+        : visibleAircraft.filter(ac => acFilter[_acClassify(ac)])
 
     return (
         <Fragment>
@@ -2701,6 +2971,8 @@ const AircraftLayer = memo(function AircraftLayer({
             {/* Portals */}
             {renderFollowBar()}
             {renderDetailPanel()}
+            {renderFilterButton()}
+            {renderFilterPanel()}
         </Fragment>
     )
 })
@@ -4128,6 +4400,18 @@ function VesselPopupContent({ vessel, onClose }) {
     const shipType  = _vesselShipType(vessel)
     const typeColor = _AIS_TYPE_COLOR[shipType] || _AIS_TYPE_COLOR.other
     const hullPath  = _vesselHullPath(shipType)
+    const [vesselPhoto, setVesselPhoto] = useState(null)   // null = loading, false = unavailable
+    const photoFetched = useRef(false)
+
+    useEffect(() => {
+        if (!vessel.mmsi || photoFetched.current) return
+        photoFetched.current = true
+        fetch(`${API_BASE}/api/vessel/photo/${vessel.mmsi}`)
+            .then(r => r.json())
+            .then(d => setVesselPhoto(d.available ? d : false))
+            .catch(() => setVesselPhoto(false))
+    }, [vessel.mmsi])
+
     const fields = [
         ["Type",        vessel.ship_type],
         ["Speed",       vessel.speed != null ? `${vessel.speed} kn` : null],
@@ -4149,6 +4433,16 @@ function VesselPopupContent({ vessel, onClose }) {
                 </div>
                 <button onClick={onClose} style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 }}>✕</button>
             </div>
+            {vesselPhoto && vesselPhoto.thumbnail_url && (
+                <a href={vesselPhoto.full_url} target="_blank" rel="noopener noreferrer" style={{ display: "block" }}>
+                    <img
+                        src={vesselPhoto.thumbnail_url}
+                        alt={vessel.name || `MMSI ${vessel.mmsi}`}
+                        style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }}
+                        onError={e => { e.currentTarget.style.display = "none" }}
+                    />
+                </a>
+            )}
             <div style={{ padding: "10px 14px" }}>
                 {fields.map(([label, val]) => (
                     <div key={label} style={{ display: "flex", gap: 8, fontSize: 11, marginBottom: 5 }}>
