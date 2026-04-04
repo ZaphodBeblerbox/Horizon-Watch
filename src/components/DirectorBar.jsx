@@ -300,6 +300,12 @@ const BAR_STYLES = `
     vertical-align: middle;
     margin-right: 6px;
   }
+
+  @media (max-width: 768px) {
+    .director-bar {
+      display: none;
+    }
+  }
 `
 
 function StyleTag() {

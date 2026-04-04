@@ -75,6 +75,8 @@ export default function MobileDrawer({
     onToggleAdmin,
     chatOpen,
     onToggleChat,
+    directorActive = false,
+    onDirectorTap = null,
 }) {
     const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin"
 
@@ -173,6 +175,32 @@ export default function MobileDrawer({
                         active={false}
                         onClick={() => { onToggleNotif(); onClose() }}
                     />
+                    {currentUser && (
+                        <button
+                            onClick={() => { onDirectorTap?.(); onClose() }}
+                            style={{
+                                width:          "100%",
+                                display:        "flex",
+                                alignItems:     "center",
+                                gap:            8,
+                                background:     directorActive ? "rgba(245,158,11,0.10)" : "none",
+                                border:         "none",
+                                borderLeft:     directorActive ? "3px solid #f59e0b" : "3px solid transparent",
+                                color:          directorActive ? "#f59e0b" : "rgba(255,255,255,0.7)",
+                                fontSize:       13,
+                                fontWeight:     directorActive ? 600 : 400,
+                                cursor:         "pointer",
+                                padding:        "12px 16px 12px 13px",
+                                textAlign:      "left",
+                                transition:     "background 0.1s, color 0.1s",
+                                WebkitTapHighlightColor: "transparent",
+                                minHeight:      44,
+                            }}
+                        >
+                            <span style={{ fontSize: 16, lineHeight: 1 }}>◈</span>
+                            Director Mode
+                        </button>
+                    )}
                     {panelRow("workspaces", "Workspaces")}
                     {isAdmin && panelRow("situations", "Situations")}
 

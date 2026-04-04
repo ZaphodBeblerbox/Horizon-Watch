@@ -1,5 +1,16 @@
 // BottomNav — fixed mobile bottom tab bar (< 768px)
 
+const BOTTOM_NAV_STYLES = `
+@keyframes director-nav-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.7; transform: scale(1.15); }
+}
+.director-nav-icon-active {
+  animation: director-nav-pulse 1.6s ease-in-out infinite;
+  color: #f59e0b !important;
+}
+`
+
 export default function BottomNav({
     activeTabType,
     onSwitchToMap,
@@ -10,6 +21,8 @@ export default function BottomNav({
     overwatchActive,
     onToggleOverwatch,
     onOpenPoi,
+    directorActive = false,
+    onDirectorTap = null,
 }) {
     const items = [
         {
@@ -53,39 +66,17 @@ export default function BottomNav({
             active: activeTabType === "poi",
         },
         {
-            id:    "alerts",
-            label: "Alerts",
-            icon:  (
-                <div style={{ position: "relative", display: "inline-flex" }}>
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M10 2C10 2 6 3.5 6 10V14L3.5 15.5H16.5L14 14V10C14 3.5 10 2 10 2Z" fill="none"/>
-                        <line x1="8" y1="15.5" x2="12" y2="15.5"/>
-                        <line x1="10" y1="1" x2="10" y2="2.5"/>
-                    </svg>
-                    {notifUnread > 0 && (
-                        <span style={{
-                            position:   "absolute",
-                            top:        -3,
-                            right:      -5,
-                            background: "#ef4444",
-                            color:      "#fff",
-                            fontSize:   9,
-                            fontWeight: 700,
-                            minWidth:   14,
-                            height:     14,
-                            borderRadius: 7,
-                            display:    "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            padding:    "0 3px",
-                        }}>
-                            {notifUnread > 9 ? "9+" : notifUnread}
-                        </span>
-                    )}
-                </div>
+            id:          "director",
+            label:       "Director",
+            icon:        (
+                <span
+                    className={directorActive ? "director-nav-icon-active" : ""}
+                    style={{ fontSize: 18, lineHeight: 1, display: "inline-block" }}
+                >◈</span>
             ),
-            onClick: onToggleNotif,
-            active: false,
+            onClick:     onDirectorTap,
+            active:      directorActive,
+            activeColor: "#f59e0b",
         },
         {
             id:    "overwatch",
@@ -120,6 +111,8 @@ export default function BottomNav({
     ]
 
     return (
+        <>
+        <style>{BOTTOM_NAV_STYLES}</style>
         <nav style={{
             position:       "fixed",
             bottom:         0,
@@ -166,5 +159,6 @@ export default function BottomNav({
                 </button>
             ))}
         </nav>
+        </>
     )
 }

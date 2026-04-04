@@ -33,6 +33,7 @@ import MobileDrawer from "./components/MobileDrawer.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
 import DirectorBar from "./components/DirectorBar.jsx"
 import DirectorModal from "./components/DirectorModal.jsx"
+import DirectorSubtitle from "./components/DirectorSubtitle.jsx"
 import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDirectorSequence } from "./services/commandRunner.js"
 
 const API = API_BASE
@@ -1036,6 +1037,17 @@ export default function App() {
                         onClose={handleDirectorClose}
                         savedStatus={directorSavedStatus}
                     />
+                    <DirectorSubtitle
+                        visible={directorVisible}
+                        sequence={directorSequence}
+                        runner={directorRunnerRef.current}
+                        runnerState={directorRunnerState}
+                        currentAction={directorCurrentAction}
+                        indicators={directorIndicators}
+                        onSave={handleDirectorSave}
+                        onClose={handleDirectorClose}
+                        savedStatus={directorSavedStatus}
+                    />
                 </div>
 
                 {/* TV overlay */}
@@ -1238,6 +1250,8 @@ export default function App() {
                     overwatchActive={overwatchActive}
                     onToggleOverwatch={() => setOverwatchActive(v => !v)}
                     onOpenPoi={() => openTab("poi")}
+                    directorActive={directorVisible}
+                    onDirectorTap={() => directorVisible ? handleDirectorClose() : setDirectorModalOpen(true)}
                 />
             )}
 
@@ -1263,6 +1277,8 @@ export default function App() {
                     onToggleAdmin={() => setShowAdmin(v => !v)}
                     chatOpen={showChat}
                     onToggleChat={() => setShowChat(v => !v)}
+                    directorActive={directorVisible}
+                    onDirectorTap={() => directorVisible ? handleDirectorClose() : setDirectorModalOpen(true)}
                 />
             )}
         </div>

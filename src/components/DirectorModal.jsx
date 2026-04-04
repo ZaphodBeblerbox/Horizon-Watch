@@ -211,6 +211,50 @@ const MODAL_STYLES = `
   transition: background 0.12s;
 }
 .director-retry-btn:hover { background: rgba(245,158,11,0.2); }
+
+@media (max-width: 768px) {
+  .director-blur-overlay {
+    align-items: flex-start;
+  }
+  .director-modal-box {
+    width: 100%;
+    max-width: 100%;
+    min-height: 100dvh;
+    border-radius: 0;
+    border: none;
+    padding: 48px 20px 32px;
+    justify-content: center;
+    margin: 0;
+    background: rgba(6, 12, 28, 0.97);
+  }
+  .director-modal-textarea {
+    min-height: 80px;
+    font-size: 16px; /* prevent iOS zoom on focus */
+  }
+  .director-modal-chips {
+    gap: 8px;
+  }
+  .director-modal-chip {
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    padding: 8px 14px;
+    font-size: 12px;
+  }
+  .director-modal-actions {
+    flex-direction: column-reverse;
+    gap: 10px;
+  }
+  .director-modal-cancel,
+  .director-modal-begin {
+    width: 100%;
+    min-height: 48px;
+    font-size: 15px;
+    border-radius: 10px;
+    text-align: center;
+    justify-content: center;
+  }
+}
 `
 
 const SUGGESTIONS = [
