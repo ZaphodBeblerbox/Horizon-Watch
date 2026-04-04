@@ -1214,6 +1214,11 @@ function _cpPoly(name) {
     return CHOKEPOINTS.find(c => c.name === name)?.polygon || null
 }
 
+// Name → polygon lookup used by enrichment highlight rendering
+const CHOKEPOINT_POLYS = Object.fromEntries(
+    CHOKEPOINTS.filter(c => c.polygon).map(c => [c.name, c.polygon])
+)
+
 // Threat level colors (defined here so ChokepointPolygon & ChokepointPanel can both reference)
 const _THREAT_COLORS = { CRITICAL: "#ef4444", HIGH: "#f59e0b", MODERATE: "#14b8a6", LOW: "#3b82f6" }
 
