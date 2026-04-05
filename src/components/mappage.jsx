@@ -443,6 +443,53 @@ const MAP_STYLES = `
     border-radius: 4px;
 }
 
+/* ── Director placed location markers ── */
+.director-location-marker {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    pointer-events: all;
+    cursor: pointer;
+}
+
+/* ── Director location popup ── */
+.director-location-popup .leaflet-popup-content-wrapper {
+    background: rgba(10, 15, 25, 0.94) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 12px !important;
+    color: white !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6) !important;
+    padding: 0 !important;
+}
+.director-location-popup .leaflet-popup-content {
+    margin: 0 !important;
+    width: 270px !important;
+}
+.director-location-popup .leaflet-popup-tip {
+    background: rgba(10, 15, 25, 0.94) !important;
+}
+.director-location-popup .leaflet-popup-close-button {
+    color: rgba(255,255,255,0.45) !important;
+    font-size: 16px !important;
+    top: 8px !important;
+    right: 10px !important;
+}
+.director-location-popup .leaflet-popup-close-button:hover {
+    color: white !important;
+}
+.director-location-popup-content {
+    padding: 12px 14px;
+    font-family: Inter, -apple-system, sans-serif;
+}
+.director-popup-image img {
+    width: 100%;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    display: block;
+}
+
 /* ── Director highlight pulses ── */
 @keyframes director-pulse-ring {
     0%, 100% { opacity: 0.85; r: 14; }
@@ -5810,7 +5857,8 @@ export default function MapPage({
     const dirAC           = isDirectorMode ? (directorItems?.aircraft             ?? new Set()) : null
     const dirSat          = isDirectorMode ? (directorItems?.satellite            ?? false)    : null
     const dirCountries    = isDirectorMode ? (directorItems?.highlightedCountries  ?? new Map()) : null
-    const dirPlacedEvents = isDirectorMode ? (directorItems?.placedEvents          ?? new Map()) : null
+    const dirPlacedEvents     = isDirectorMode ? (directorItems?.placedEvents     ?? new Map()) : null
+    const dirPlacedLocations  = isDirectorMode ? (directorItems?.placedLocations  ?? new Map()) : null
 
     const [activeWebcam, setActiveWebcam] = useState(null)
     const [contextualAnalysis, setContextualAnalysis] = useState(false)
@@ -6218,6 +6266,7 @@ export default function MapPage({
     const dirCountryHighlightRef     = useRef(null)   // Director country highlight layer
     const dirCountryLabelsRef        = useRef([])     // Director country label markers
     const dirPlacedEventsRef         = useRef([])     // Director placed event markers
+    const dirPlacedLocationsRef      = useRef([])     // Director placed location markers
     const cityLabelsLayerRef     = useRef(null)
     const newsConflictsLayerRef  = useRef(null)
     const enrichmentLayerRef     = useRef(null)
@@ -6896,38 +6945,47 @@ export default function MapPage({
             focus:    { fill: "#2896ff", stroke: "#2896ff" },
         }
 
-        // Helper: try to match country name (case-insensitive, with common aliases)
-        const NAME_ALIASES = {
-            "united states":             "United States of America",
-            "usa":                       "United States of America",
-            "us":                        "United States of America",
-            "uk":                        "United Kingdom",
-            "great britain":             "United Kingdom",
-            "uae":                       "United Arab Emirates",
-            "drc":                       "Democratic Republic of the Congo",
-            "dr congo":                  "Democratic Republic of the Congo",
-            "congo, democratic republic": "Democratic Republic of the Congo",
-            "south korea":               "Republic of Korea",
-            "north korea":               "Dem. Rep. Korea",
-            "russia":                    "Russia",
-            "iran":                      "Iran",
-            "taiwan":                    "Taiwan",
-            "palestine":                 "Palestine",
-            "ivory coast":               "Côte d'Ivoire",
-            "cote d'ivoire":             "Côte d'Ivoire",
+        // Helper: match country name with normalization + aliases
+        const normalizeCountryName = (s) =>
+            (s || "").toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim()
+
+        const COUNTRY_ALIAS_GROUPS = {
+            "united states": ["united states of america", "usa", "us"],
+            "united kingdom": ["united kingdom of great britain and northern ireland", "uk", "great britain", "britain"],
+            "russia": ["russian federation"],
+            "iran": ["iran islamic republic of", "islamic republic of iran"],
+            "syria": ["syrian arab republic"],
+            "south korea": ["korea republic of", "republic of korea"],
+            "north korea": ["korea democratic peoples republic of", "democratic peoples republic of korea", "dem rep korea"],
+            "uae": ["united arab emirates"],
+            "saudi arabia": ["kingdom of saudi arabia"],
+            "turkey": ["turkiye", "republic of turkiye"],
+            "venezuela": ["venezuela bolivarian republic of"],
+            "bolivia": ["bolivia plurinational state of"],
+            "tanzania": ["united republic of tanzania"],
+            "vietnam": ["viet nam"],
+            "laos": ["lao peoples democratic republic"],
+            "ivory coast": ["cote divoire", "cote d ivoire"],
+            "congo": ["democratic republic of the congo", "republic of the congo"],
+            "palestine": ["state of palestine", "palestinian territories"],
+            "taiwan": ["taiwan province of china", "chinese taipei"],
+            "drc": ["democratic republic of the congo", "dr congo"],
+            "great britain": ["united kingdom"],
         }
 
         const matchFeature = (featureName, queryName) => {
             if (!featureName || !queryName) return false
-            const fn = featureName.toLowerCase().trim()
-            const qn = queryName.toLowerCase().trim()
+            const fn = normalizeCountryName(featureName)
+            const qn = normalizeCountryName(queryName)
             if (fn === qn) return true
-            // Alias lookup
-            const alias = NAME_ALIASES[qn]
-            if (alias && fn === alias.toLowerCase()) return true
-            if (alias && fn.includes(qn)) return true
-            // Partial match
             if (fn.includes(qn) || qn.includes(fn)) return true
+            // Check alias groups
+            for (const [key, alts] of Object.entries(COUNTRY_ALIAS_GROUPS)) {
+                const allNames = [key, ...alts]
+                const fnMatch = allNames.some(a => fn === a || fn.includes(a))
+                const qnMatch = allNames.some(a => qn === a || qn.includes(a))
+                if (fnMatch && qnMatch) return true
+            }
             return false
         }
 
@@ -6944,9 +7002,6 @@ export default function MapPage({
         }
 
         if (matchedFeatures.length === 0) return
-
-        let pulseHigh = true
-        let pulseInterval = null
 
         const highlightLayer = L.geoJSON(
             { type: "FeatureCollection", features: matchedFeatures.map(m => m.feature) },
@@ -6972,18 +7027,6 @@ export default function MapPage({
         ).addTo(map)
         dirCountryHighlightRef.current = highlightLayer
 
-        // Pulse animation via setInterval
-        pulseInterval = setInterval(() => {
-            pulseHigh = !pulseHigh
-            if (!dirCountryHighlightRef.current) return
-            dirCountryHighlightRef.current.eachLayer(layer => {
-                layer.setStyle({
-                    fillOpacity: pulseHigh ? 0.3 : 0.12,
-                    opacity:     pulseHigh ? 0.95 : 0.55,
-                })
-            })
-        }, 1500)
-
         // Country labels at centroids
         for (const { feature, hlName } of matchedFeatures) {
             const hi = dirCountries.get(hlName) || { context: "focus", label: "" }
@@ -7005,7 +7048,6 @@ export default function MapPage({
         }
 
         return () => {
-            clearInterval(pulseInterval)
             cleanupHighlights()
         }
     }, [isDirectorMode, dirCountries, allCountriesGeo])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -7023,15 +7065,16 @@ export default function MapPage({
 
         if (!isDirectorMode || !dirPlacedEvents || dirPlacedEvents.size === 0) return
 
+        // SVG inner paths for each event type (rendered inside a 24×24 viewBox circle marker)
         const TYPE_ICON = {
-            conflict:       { symbol: "⚔", fill: "#ef4444", stroke: "#fca5a5" },
-            maritime:       { symbol: "⚓", fill: "#3b82f6", stroke: "#93c5fd" },
-            political:      { symbol: "🏛", fill: "#8b5cf6", stroke: "#c4b5fd" },
-            humanitarian:   { symbol: "🏥", fill: "#f59e0b", stroke: "#fcd34d" },
-            infrastructure: { symbol: "⚡", fill: "#06b6d4", stroke: "#67e8f9" },
-            economic:       { symbol: "$",  fill: "#10b981", stroke: "#6ee7b7" },
-            military:       { symbol: "★",  fill: "#dc2626", stroke: "#fca5a5" },
-            general:        { symbol: "●",  fill: "#6b7280", stroke: "#d1d5db" },
+            conflict:       { fill: "#ef4444", stroke: "#fca5a5", inner: `<line x1="7" y1="7" x2="17" y2="17" stroke="white" stroke-width="2" stroke-linecap="round"/><line x1="17" y1="7" x2="7" y2="17" stroke="white" stroke-width="2" stroke-linecap="round"/>` },
+            maritime:       { fill: "#3b82f6", stroke: "#93c5fd", inner: `<path d="M12 5v9M8 10l4 4 4-4M6 17h12l-1.5 2h-9z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>` },
+            political:      { fill: "#8b5cf6", stroke: "#c4b5fd", inner: `<rect x="7" y="13" width="10" height="6" rx="1" fill="white" opacity="0.9"/><rect x="9" y="9" width="6" height="5" rx="1" fill="white" opacity="0.9"/><rect x="11" y="6" width="2" height="4" fill="white" opacity="0.9"/>` },
+            humanitarian:   { fill: "#f59e0b", stroke: "#fcd34d", inner: `<rect x="11" y="7" width="2" height="10" rx="1" fill="white"/><rect x="7" y="11" width="10" height="2" rx="1" fill="white"/>` },
+            infrastructure: { fill: "#06b6d4", stroke: "#67e8f9", inner: `<path d="M12 6l1.5 4.5H18l-3.75 2.7 1.43 4.3L12 15l-3.68 2.5 1.43-4.3L6 10.5h4.5z" fill="white" opacity="0.95"/>` },
+            economic:       { fill: "#10b981", stroke: "#6ee7b7", inner: `<text x="12" y="16.5" text-anchor="middle" font-size="11" font-weight="700" fill="white" font-family="system-ui,sans-serif">$</text>` },
+            military:       { fill: "#dc2626", stroke: "#fca5a5", inner: `<path d="M12 6l1.5 4.5H18l-3.75 2.7 1.43 4.3L12 15l-3.68 2.5 1.43-4.3L6 10.5h4.5z" fill="white" opacity="0.95"/>` },
+            general:        { fill: "#6b7280", stroke: "#d1d5db", inner: `<circle cx="12" cy="12" r="3" fill="white" opacity="0.9"/>` },
         }
         const SEVERITY_SIZE = { critical: 26, significant: 22, elevated: 18, low: 14 }
 
@@ -7041,7 +7084,7 @@ export default function MapPage({
             const size = SEVERITY_SIZE[ev.severity] || 18
             const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="10" fill="${cfg.fill}" stroke="${cfg.stroke}" stroke-width="1.5" opacity="0.92"/>
-              <text x="12" y="16" text-anchor="middle" font-size="11" fill="white" font-family="system-ui">${cfg.symbol}</text>
+              ${cfg.inner}
             </svg>`
             const icon = L.divIcon({
                 className: "director-placed-event",
@@ -7060,6 +7103,102 @@ export default function MapPage({
             dirPlacedEventsRef.current = []
         }
     }, [isDirectorMode, dirPlacedEvents])  // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Director placed locations: named cities/bases/ports/facilities ────────
+    useEffect(() => {
+        const map = mapRef.current
+        if (!map) return
+        const L = window.L
+        if (!L) return
+
+        // Cleanup previous markers
+        dirPlacedLocationsRef.current.forEach(m => { try { map.removeLayer(m) } catch (_) {} })
+        dirPlacedLocationsRef.current = []
+
+        if (!isDirectorMode || !dirPlacedLocations || dirPlacedLocations.size === 0) return
+
+        // SVG icon markup for each location type
+        const TYPE_CONFIG = {
+            city:     { color: "#ffffff", glow: "rgba(255,255,255,0.6)", size: 12,
+                svg: (c, g) => `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="${c}" opacity="0.9" filter="url(#g)"/><circle cx="6" cy="6" r="2.5" fill="rgba(0,0,0,0.4)"/></svg>` },
+            base:     { color: "#ff4444", glow: "rgba(255,68,68,0.8)",   size: 16,
+                svg: (c, g) => `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><polygon points="8,1 10,6 15,6 11,9.5 12.5,15 8,11.5 3.5,15 5,9.5 1,6 6,6" fill="${c}" opacity="0.95"/></svg>` },
+            port:     { color: "#40a0ff", glow: "rgba(64,160,255,0.8)",  size: 15,
+                svg: (c, g) => `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="13"/><path d="M5 13l7 7 7-7"/><line x1="3" y1="20" x2="21" y2="20"/></svg>` },
+            facility: { color: "#ffc040", glow: "rgba(255,192,64,0.8)",  size: 15,
+                svg: (c, g) => `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>` },
+            landmark: { color: "#e0e0ff", glow: "rgba(200,200,255,0.7)", size: 13,
+                svg: (c, g) => `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"><polygon points="12,2 22,22 2,22" fill="${c}" opacity="0.9"/></svg>` },
+            target:   { color: "#ff2020", glow: "rgba(255,32,32,0.9)",   size: 18,
+                svg: (c, g) => `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="7"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="2" y1="12" x2="7" y2="12"/><line x1="17" y1="12" x2="22" y2="12"/></svg>` },
+        }
+
+        // Pre-collect valid locations for proximity checks
+        const validLocs = []
+        for (const [, loc] of dirPlacedLocations.entries()) {
+            if (loc.lat != null && loc.lon != null) validLocs.push(loc)
+        }
+
+        // Label offset directions to spread nearby labels (cycles through 8 directions)
+        const OFFSET_DIRS = [
+            [0, -18], [18, -12], [18, 12], [0, 18],
+            [-18, 12], [-18, -12], [24, 0], [-24, 0],
+        ]
+
+        const PROXIMITY_PX = 52
+
+        for (let vi = 0; vi < validLocs.length; vi++) {
+            const loc = validLocs[vi]
+            const cfg = TYPE_CONFIG[loc.type] || TYPE_CONFIG.city
+            const svgHtml = cfg.svg(cfg.color, cfg.glow)
+
+            // Compute label offset based on proximity to previous markers
+            let labelOffsetX = 0, labelOffsetY = 0
+            const ptThis = map.latLngToContainerPoint(L.latLng(loc.lat, loc.lon))
+            let collisionCount = 0
+            for (let pi = 0; pi < vi; pi++) {
+                const other = validLocs[pi]
+                const ptOther = map.latLngToContainerPoint(L.latLng(other.lat, other.lon))
+                const dx = ptThis.x - ptOther.x
+                const dy = ptThis.y - ptOther.y
+                if (Math.hypot(dx, dy) < PROXIMITY_PX) collisionCount++
+            }
+            if (collisionCount > 0) {
+                const dir = OFFSET_DIRS[(collisionCount - 1) % OFFSET_DIRS.length]
+                labelOffsetX = dir[0]
+                labelOffsetY = dir[1]
+            }
+
+            const labelTransform = (labelOffsetX !== 0 || labelOffsetY !== 0)
+                ? `translateX(${labelOffsetX}px) translateY(${labelOffsetY}px)`
+                : ""
+
+            const iconHtml = `<div style="text-align:center;position:relative;filter:drop-shadow(0 0 5px ${cfg.glow}) drop-shadow(0 0 10px ${cfg.glow});animation:director-marker-in 400ms ease-out forwards;">
+              ${svgHtml}
+              <div style="font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 4px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,0.8);margin-top:3px;white-space:nowrap;pointer-events:none;${labelTransform ? `transform:${labelTransform};` : ""}">${loc.name}</div>
+            </div>`
+            const icon = L.divIcon({
+                className: "director-location-marker director-marker-enter",
+                html: iconHtml,
+                iconSize:   [0, 0],
+                iconAnchor: [0, -(cfg.size / 2 + 4)],
+            })
+            const marker = L.marker([loc.lat, loc.lon], { icon, zIndexOffset: 700, interactive: true })
+            if (loc.description) {
+                marker.bindPopup(
+                    `<div class="director-location-popup-content"><div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px;">${loc.name}</div><div style="font-size:12px;color:rgba(255,255,255,0.75);line-height:1.5;">${loc.description}</div></div>`,
+                    { className: "director-location-popup", maxWidth: 260 }
+                )
+            }
+            marker.addTo(map)
+            dirPlacedLocationsRef.current.push(marker)
+        }
+
+        return () => {
+            dirPlacedLocationsRef.current.forEach(m => { try { map.removeLayer(m) } catch (_) {} })
+            dirPlacedLocationsRef.current = []
+        }
+    }, [isDirectorMode, dirPlacedLocations])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── News conflicts: fetch all markers globally, refresh every 15 min ─────────
     // Also fetches when isDirectorMode is true so Director show_event works

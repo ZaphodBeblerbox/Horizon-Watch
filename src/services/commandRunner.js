@@ -103,6 +103,9 @@ export class CommandRunner {
 
     // Local mirror of placed events for click_event lookups (title → evData)
     this._placedEvents = new Map()
+
+    // Local mirror of placed locations for click_location lookups (name → locData)
+    this._placedLocations = new Map()
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -115,6 +118,7 @@ export class CommandRunner {
     this._pendingSatObservations = null
     this._pendingImage           = null
     this._placedEvents           = new Map()
+    this._placedLocations        = new Map()
     this._notifyState()
   }
 
@@ -303,7 +307,8 @@ export class CommandRunner {
           this._pendingImage = { loading: true, url: null, caption, attribution: null }
           const tok = localStorage.getItem("hw-auth-token")
           const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
-          fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(query)}`, { headers })
+          const imgUrl = `${API_BASE}/api/director/image-search?q=${encodeURIComponent(query)}${action.location ? `&location=${encodeURIComponent(action.location)}` : ""}`
+          fetch(imgUrl, { headers })
             .then(r => r.ok ? r.json() : null)
             .then(data => {
               if (data?.image_url) {
@@ -487,7 +492,11 @@ export class CommandRunner {
       case "clear_all": {
         console.log("[Director] clear_all executed")
         this._clearAllDrawings()
-        this._placedEvents = new Map()
+        this._placedEvents    = new Map()
+        this._placedLocations = new Map()
+        // Close any open Leaflet popups
+        const map = this.mapRef?.current
+        if (map && typeof map.closePopup === "function") map.closePopup()
         if (this.setDirectorItems) {
           this.setDirectorItems({
             chokepoints:          new Set(),
@@ -499,6 +508,7 @@ export class CommandRunner {
             detailPanel:          null,
             highlightedCountries: new Map(),
             placedEvents:         new Map(),
+            placedLocations:      new Map(),
           })
         }
         this.setHighlights([])
@@ -606,6 +616,94 @@ export class CommandRunner {
         return 600
       }
 
+      // ── Location placement ────────────────────────────────────────────────
+
+      case "place_location": {
+        const { name, lat, lon, type, description } = action
+        if (name && lat != null && lon != null && this.setDirectorItems) {
+          const locData = {
+            name,
+            lat,
+            lon,
+            type:        type        || "city",
+            description: description || "",
+          }
+          this._placedLocations.set(name, locData)
+          this.setDirectorItems(prev => {
+            const m = new Map(prev.placedLocations || new Map())
+            m.set(name, locData)
+            return { ...prev, placedLocations: m }
+          })
+          console.log("[Director] place_location:", name, lat, lon, type)
+        }
+        return defaultDelay
+      }
+
+      case "remove_location": {
+        const name = action.name
+        if (name && this.setDirectorItems) {
+          this._placedLocations.delete(name)
+          this.setDirectorItems(prev => {
+            const m = new Map(prev.placedLocations || new Map())
+            m.delete(name)
+            return { ...prev, placedLocations: m }
+          })
+        }
+        return defaultDelay
+      }
+
+      case "click_location": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L) return defaultDelay
+        const loc = this._placedLocations.get(action.name)
+        if (!loc) return defaultDelay
+
+        const TYPE_ICONS  = { city: "🏙", base: "⚔", port: "⚓", facility: "⚙", landmark: "◆", target: "🎯" }
+        const TYPE_LABELS = { city: "CITY", base: "MILITARY BASE", port: "PORT", facility: "FACILITY", landmark: "LANDMARK", target: "STRIKE TARGET" }
+        const icon  = TYPE_ICONS[loc.type]  || "📍"
+        const label = TYPE_LABELS[loc.type] || "LOCATION"
+        const imgId = `dir-loc-img-${Date.now()}`
+
+        const html = `<div class="director-location-popup-content">
+          <div id="${imgId}" class="director-popup-image"></div>
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,0.5);margin-bottom:4px;">${icon} ${label}</div>
+          <div style="font-size:15px;font-weight:700;color:white;margin-bottom:6px;">${loc.name}</div>
+          ${loc.description ? `<div style="font-size:13px;color:rgba(255,255,255,0.8);line-height:1.5;">${loc.description}</div>` : ""}
+        </div>`
+
+        const popup = L.popup({ className: "director-location-popup", maxWidth: 300, closeButton: true, autoPan: false })
+          .setLatLng([loc.lat, loc.lon])
+          .setContent(html)
+          .openOn(map)
+        this._drawings.push(popup)
+
+        // Async: fetch image and inject
+        const tok  = localStorage.getItem("hw-auth-token")
+        const hdrs = tok ? { Authorization: `Bearer ${tok}` } : {}
+        fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(loc.name)}`, { headers: hdrs })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (data?.image_url) {
+              const el = document.getElementById(imgId)
+              if (el) el.innerHTML = `<img src="${data.image_url}" alt="${loc.name}" style="width:100%;border-radius:6px;margin-bottom:8px;"/>${data.attribution ? `<div style="font-size:10px;opacity:0.4;margin-bottom:6px;">${data.attribution}</div>` : ""}`
+            }
+          })
+          .catch(() => {})
+        return 1200
+      }
+
+      // ── Country click (open country news panel) ───────────────────────────
+
+      case "click_country": {
+        const name = action.name
+        if (name) {
+          this.onOpenDetail("country", name)
+          console.log("[Director] click_country:", name)
+        }
+        return 500
+      }
+
       // ── Country highlights ────────────────────────────────────────────────
 
       case "highlight_country": {
@@ -666,9 +764,9 @@ export class CommandRunner {
         if (isRoute && pts.length >= 2) {
           const shipIcon = L.divIcon({
             className: "",
-            html: `<div style="font-size:16px;line-height:1;filter:drop-shadow(0 0 3px rgba(0,0,0,0.8))">🚢</div>`,
-            iconSize:   [20, 20],
-            iconAnchor: [10, 10],
+            html: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" style="filter:drop-shadow(0 0 4px rgba(86,207,255,0.9)) drop-shadow(0 0 8px rgba(56,139,255,0.6))"><polygon points="12,2 22,20 2,20" fill="#56cfff" opacity="0.95"/><line x1="12" y1="2" x2="12" y2="10" stroke="#93e8ff" stroke-width="1.5"/></svg>`,
+            iconSize:   [18, 18],
+            iconAnchor: [9, 9],
           })
           const shipMarker = L.marker(pts[0], { icon: shipIcon, interactive: false, zIndexOffset: 700 }).addTo(map)
 

@@ -133,10 +133,8 @@ def build_snapshot(
         {"name": "Mozambique Channel",        "lat": -18.0, "lon": 40.5},
         {"name": "Cape of Good Hope",         "lat": -34.4, "lon": 18.5},
         {"name": "Strait of Gibraltar",       "lat": 35.9,  "lon": -5.6},
-        {"name": "Corinth Canal",             "lat": 37.9,  "lon": 22.9},
         {"name": "Turkish Straits",           "lat": 41.1,  "lon": 29.0},
         {"name": "English Channel",           "lat": 50.5,  "lon": 0.8},
-        {"name": "North Channel",             "lat": 55.2,  "lon": -5.6},
         {"name": "Oresund",                   "lat": 55.8,  "lon": 12.7},
         {"name": "Strait of Malacca",         "lat": 3.0,   "lon": 103.5},
         {"name": "Taiwan Strait",             "lat": 23.5,  "lon": 120.2},
@@ -321,6 +319,10 @@ _VALID_ACTIONS = {
     "open_detail", "close_detail",
     # Country highlights
     "highlight_country", "unhighlight_country", "clear_country_highlights",
+    # Click country to open news panel
+    "click_country",
+    # Location placement
+    "place_location", "remove_location", "click_location",
     # Satellite
     "show_satellite", "hide_satellite", "analyse_satellite",
     # Summary
@@ -389,6 +391,14 @@ def _validate_action(action: dict) -> bool:
         return "icao24" in action
     if act == "click_infrastructure":
         return "name" in action
+    if act == "click_country":
+        return "name" in action
+    if act == "place_location":
+        return all(k in action for k in ("name", "lat", "lon"))
+    if act == "remove_location":
+        return "name" in action
+    if act == "click_location":
+        return "name" in action
     if act == "open_detail":
         return "type" in action and "id" in action
     if act in ("show_satellite", "analyse_satellite"):
@@ -424,8 +434,8 @@ NARRATION:
   Data indicator card alongside narration.
 - { "action": "show_context_card", "title": string, "summary": string, "source": string }
   Floating info card for events that cannot be precisely placed on the map.
-- { "action": "show_image", "query": string, "caption": string }
-  Fetch a contextual photo. Query must be specific and geographic: "Strait of Hormuz aerial view", "USS Eisenhower aircraft carrier", "Abadan oil refinery Iran". Max 4 per briefing. Place immediately before the narrate action it illustrates.
+- { "action": "show_image", "query": string, "caption": string, "location": string }
+  Fetch a contextual photo. query must be specific and geographic: "Strait of Hormuz aerial view", "USS Eisenhower aircraft carrier", "Abadan oil refinery Iran". location is the city or region for search refinement (e.g. "Hormuz", "Tehran", "Odesa"). Max 4 per briefing. Place immediately before the narrate action it illustrates.
 
 PLACED EVENTS — you geocode and place these yourself:
 - { "action": "place_event", "title": string, "lat": number, "lon": number, "type": "conflict"|"maritime"|"political"|"humanitarian"|"infrastructure"|"economic"|"military", "severity": "critical"|"significant"|"elevated"|"low", "source": string, "summary": string }
@@ -436,6 +446,17 @@ PLACED EVENTS — you geocode and place these yourself:
   Remove a previously placed event marker.
 - { "action": "click_event", "title": string }
   Open a popup on a placed event to show the user its details.
+
+LOCATION PLACEMENT — place named cities, bases, ports, and facilities:
+- { "action": "place_location", "name": string, "lat": number, "lon": number, "type": "city"|"base"|"port"|"facility"|"landmark"|"target", "description": string }
+  Place a named location marker on the map. Use for ANY specific place you mention in narration.
+  type: "city" = white dot, "base" = military star, "port" = anchor, "facility" = gear, "landmark" = pin, "target" = crosshair (strike target).
+  description: one sentence about the location's current significance.
+  RULE: Every city, base, port or facility you name in narration MUST be placed first.
+- { "action": "click_location", "name": string }
+  Open this location's detail popup with image. Use after fly_to near it.
+- { "action": "remove_location", "name": string }
+  Remove a placed location marker.
 
 INDIVIDUAL DATA POINTS — existing tracked assets:
 - { "action": "show_chokepoint", "name": string }
@@ -463,7 +484,7 @@ INDIVIDUAL DATA POINTS — existing tracked assets:
   Open the detail panel for this infrastructure item.
 
 - { "action": "clear_all" }
-  Remove all shown items and placed events. Use when transitioning between major topics.
+  Remove all shown items, placed events, and placed locations. Use when transitioning between major topics.
 
 DRAWING — annotate the map:
 - { "action": "draw_line", "points": [[lat,lon],...], "color": string, "label": string, "dashed": boolean }
@@ -477,12 +498,19 @@ DRAWING — annotate the map:
 - { "action": "clear_drawings" }
   Remove all drawings.
 
-COUNTRY HIGHLIGHTING:
+COUNTRY HIGHLIGHTING — MANDATORY, NOT OPTIONAL:
 - { "action": "highlight_country", "name": string, "context": "conflict"|"allied"|"neutral"|"focus", "label": string }
-  Pulsing overlay on an entire country. Use names from available_countries in the snapshot.
-  "conflict" = red (hostile/aggressor), "allied" = green (cooperative), "neutral" = amber (relevant neutral), "focus" = blue (primary subject).
+  Pulsing glow overlay on an entire country. Use names from available_countries in the snapshot.
+  "conflict" = red glow (hostile/aggressor state, sanctioned, at war)
+  "focus"    = blue glow (primary subject being analyzed)
+  "allied"   = green glow (cooperative partner, allied nation)
+  "neutral"  = amber glow (involved but not hostile, transit state, bystander)
 - { "action": "unhighlight_country", "name": string }
 - { "action": "clear_country_highlights" }
+  Remove all country highlights. Use only when transitioning to a completely different geopolitical topic.
+- { "action": "click_country", "name": string }
+  Open the news/intelligence panel for this country. Use after highlighting it to show its live news feed.
+  Use on the primary focus country when you first introduce it.
 
 SATELLITE:
 - { "action": "show_satellite", "lat": number, "lon": number, "zoom": number, "label": string }
@@ -495,21 +523,53 @@ SUMMARY — always the final action:
 - { "action": "summary", "title": string, "sections": [{ "heading": string, "text": string }], "predictions": [{ "prediction": string, "confidence": "high"|"medium"|"low", "basis": string }] }
   2-4 predictions, each citing specific evidence from the session.
 
-CINEMATOGRAPHY RULES:
-1. ALWAYS begin with { "action": "clear_all" }.
-2. Build scenes progressively: fly_to → highlight_country → place_event (or show_ for tracked assets) → click_ → narrate → draw annotations.
-3. Between major topics: clear_drawings → clear_country_highlights → clear_all.
-4. NEVER use toggle_layer. Always use individual show_ / place_event actions.
-5. Use place_event for ALL news events you decide to include — geocode them yourself with precision.
-6. Use show_context_card only for events that genuinely have no locatable geography (e.g., a diplomatic statement with no location).
-7. When mentioning a chokepoint, vessel, aircraft, or infrastructure item — always click_ it to open its detail panel. Sequence: fly_to → show_ → highlight_country → click_ → narrate.
-8. COUNTRY HIGHLIGHTS: highlight all parties when discussing a conflict. Use appropriate context values. Always clear_country_highlights before a new geopolitical topic.
-9. draw_* to illustrate analysis: shipping lanes (draw_line with route label for animation), threat radii (draw_circle), advance vectors (draw_arrow), contested zones (draw_polygon).
-10. analyse_satellite sparingly — max 2 per briefing, military bases and ports only.
-11. End ALWAYS with summary including predictions citing specific evidence.
-12. Narration: 3-5 sentences, senior analyst voice, precise consequences, named locations and figures.
-13. Total sequence: 35-55 actions for a thorough briefing.
-14. Respond ONLY with the JSON array — no preamble, no markdown fences."""
+═══════════════════════════════════════════════════════
+MANDATORY RULES — VIOLATIONS BREAK THE BRIEFING:
+═══════════════════════════════════════════════════════
+
+RULE 1 — COUNTRY HIGHLIGHTING IS NOT OPTIONAL:
+Every country you mention in narration MUST be highlighted BEFORE the narrate action.
+- You name Iran → highlight_country("Iran", "conflict") comes first.
+- You discuss Israel vs Hezbollah → BOTH countries highlighted before narrate.
+- You discuss Gulf security → UAE, Saudi Arabia, Oman, Qatar, Bahrain, Kuwait all highlighted.
+- You discuss a coalition → highlight all member states with "allied".
+- Countries stay highlighted for the duration of a topic. Do NOT clear until topic changes.
+- Skipping highlight_country when naming a country is a critical failure.
+- Context rules: aggressor/hostile/sanctioned/at-war = "conflict"; primary subject = "focus"; allies/partners = "allied"; relevant but not hostile = "neutral".
+
+RULE 2 — LOCATION PLACEMENT IS NOT OPTIONAL:
+Every city, base, port, or facility you name in narration MUST appear on the map.
+- "Abu Dhabi" mentioned → place_location("Abu Dhabi", 24.4539, 54.3773, "city", "...") FIRST.
+- "Camp Lemonnier" mentioned → place_location("Camp Lemonnier", 11.5566, 43.1578, "base", "...") FIRST.
+- "Port of Aden" mentioned → place_location("Port of Aden", 12.8, 44.98, "port", "...") FIRST.
+- The user must NEVER hear a place name without seeing it on the map.
+- Use click_location after fly_to to open its detail popup with image.
+
+RULE 3 — MANDATORY SCENE SEQUENCE:
+For every topic covered:
+  highlight_country (all relevant countries)
+  → place_location (all cities/bases/ports mentioned)
+  → fly_to (zoom to the area)
+  → click_location (open popup on key location)
+  → click_country (open country news panel for primary focus)
+  → place_event (geocoded intelligence events)
+  → draw_arrow / draw_circle (analytical annotations)
+  → narrate (spoken and displayed text)
+
+RULE 4 — BETWEEN TOPICS:
+  clear_drawings → clear_country_highlights → clear_all (removes all markers and locations)
+
+RULE 5 — STANDARD RULES:
+- ALWAYS begin with { "action": "clear_all" }.
+- NEVER use toggle_layer. Always use individual show_ / place_event / place_location actions.
+- Use show_context_card only for events that genuinely have no locatable geography.
+- When mentioning a chokepoint, vessel, aircraft → ALWAYS click_ it. Mandatory sequence: fly_to → show_chokepoint → click_chokepoint → narrate. Never narrate a chokepoint without clicking it first. Valid chokepoints: Strait of Hormuz, Bab el-Mandeb, Suez Canal, Mozambique Channel, Cape of Good Hope, Strait of Gibraltar, Turkish Straits, English Channel, Oresund, Strait of Malacca, Taiwan Strait, Korea Strait, Panama Canal.
+- draw_* to illustrate analysis: shipping lanes (draw_line with route/shipping/transit label for animation), threat radii (draw_circle), advance vectors (draw_arrow), contested zones (draw_polygon).
+- analyse_satellite sparingly — max 2 per briefing, military bases and ports only.
+- End ALWAYS with summary including 2-4 predictions citing specific evidence.
+- Narration: 3-5 sentences, senior analyst voice, precise consequences, named locations and figures.
+- Total sequence: 40-60 actions for a thorough briefing.
+- Respond ONLY with the JSON array — no preamble, no markdown fences."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 

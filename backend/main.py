@@ -3155,14 +3155,22 @@ def _wikimedia_image_search(query: str) -> dict | None:
 @app.get("/api/director/image-search")
 async def director_image_search(
     q: str = Query(..., min_length=2, max_length=200),
+    location: str = Query(None, max_length=100),
     current_user=Depends(require_approved_user),
 ):
     """Search Wikimedia Commons for a contextual image matching the query."""
     global _IMG_SEARCH_LAST
     now = time.time()
 
+    # Build effective query, appending location if provided and not already in q
+    effective_q = q
+    if location:
+        loc_norm = location.strip().lower()
+        if loc_norm not in q.lower():
+            effective_q = f"{q} {location.strip()}"
+
     # Check cache
-    cached = _IMG_SEARCH_CACHE.get(q)
+    cached = _IMG_SEARCH_CACHE.get(effective_q)
     if cached and (now - cached["ts"]) < _IMG_SEARCH_TTL:
         return cached["result"] or {"image_url": None}
 
@@ -3174,8 +3182,11 @@ async def director_image_search(
             await _aio.sleep(2.0 - elapsed)
         _IMG_SEARCH_LAST = time.time()
 
-    result = _wikimedia_image_search(q)
-    _IMG_SEARCH_CACHE[q] = {"result": result, "ts": now}
+    result = _wikimedia_image_search(effective_q)
+    # Fallback: try without location if result is empty
+    if not result and location and effective_q != q:
+        result = _wikimedia_image_search(q)
+    _IMG_SEARCH_CACHE[effective_q] = {"result": result, "ts": now}
     return result or {"image_url": None}
 
 

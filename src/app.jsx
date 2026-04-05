@@ -35,6 +35,7 @@ import DirectorBar from "./components/DirectorBar.jsx"
 import DirectorSidebar from "./components/DirectorSidebar.jsx"
 import DirectorModal from "./components/DirectorModal.jsx"
 import DirectorSubtitle from "./components/DirectorSubtitle.jsx"
+import DirectorCountryPanel from "./components/DirectorCountryPanel.jsx"
 import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDirectorSequence } from "./services/commandRunner.js"
 
 const API = API_BASE
@@ -157,17 +158,19 @@ export default function App() {
     const [directorSavedStatus,    setDirectorSavedStatus]    = useState(null)
     const [directorModalOpen,      setDirectorModalOpen]      = useState(false)
     const [directorError,          setDirectorError]          = useState(null)
+    const [directorCountryPanel,   setDirectorCountryPanel]   = useState(null)  // country name for news panel
     // Granular director items — what's individually visible on the map
     const _emptyDirectorItems = () => ({
-        chokepoints:         new Set(),
-        events:              new Set(),
-        infrastructure:      new Map(),
-        vessels:             new Set(),
-        aircraft:            new Set(),
-        satellite:           false,
-        detailPanel:         null,
+        chokepoints:          new Set(),
+        events:               new Set(),
+        infrastructure:       new Map(),
+        vessels:              new Set(),
+        aircraft:             new Set(),
+        satellite:            false,
+        detailPanel:          null,
         highlightedCountries: new Map(),  // name → { context, label }
-        placedEvents:        new Map(),   // title → { title, lat, lon, type, severity, source, summary }
+        placedEvents:         new Map(),  // title → { title, lat, lon, type, severity, source, summary }
+        placedLocations:      new Map(),  // name → { name, lat, lon, type, description }
     })
     const [directorItems, setDirectorItems] = useState(_emptyDirectorItems)
     // directorSegments: ordered history of all narrate/summary actions played so far
@@ -836,6 +839,7 @@ export default function App() {
         setDirectorRunnerState({ isPlaying: false, currentIndex: -1, total: 0 })
         setDirectorModalOpen(false)
         setDirectorError(null)
+        setDirectorCountryPanel(null)
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorGenerate = useCallback(async (intent) => {
@@ -879,6 +883,11 @@ export default function App() {
                 onDetailPanel:(panel)  => setDirectorItems(prev => ({ ...prev, detailPanel: panel })),
                 onImage:      (img)    => setDirectorImage(img),
                 onOpenDetail: (type, id) => {
+                    if (type === "country") {
+                        // Open country news/intelligence panel
+                        setDirectorCountryPanel(id)
+                        return
+                    }
                     // Find and open the correct item in the existing right-panel detail system
                     if (type === "event" || type === "chokepoint" || type === "vessel" || type === "aircraft" || type === "infrastructure") {
                         const item = surfaceItems.find(s =>
@@ -1107,6 +1116,12 @@ export default function App() {
                         runnerState={directorRunnerState}
                         onGenerate={handleDirectorGenerate}
                     />
+                    {directorVisible && directorCountryPanel && (
+                        <DirectorCountryPanel
+                            country={directorCountryPanel}
+                            onClose={() => setDirectorCountryPanel(null)}
+                        />
+                    )}
                     <DirectorBar
                         visible={directorVisible}
                         sequence={directorSequence}
