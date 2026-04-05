@@ -19,6 +19,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react"
+import ttsService from "../services/ttsService.js"
 
 const BAR_STYLES = `
   @keyframes director-bar-slide-up {
@@ -301,6 +302,104 @@ const BAR_STYLES = `
     margin-right: 6px;
   }
 
+  /* ── Predictions ── */
+  .db-predictions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+    overflow-y: auto;
+  }
+  .db-prediction-item {
+    background: rgba(30, 50, 90, 0.45);
+    border: 1px solid rgba(56,139,255,0.15);
+    border-radius: 6px;
+    padding: 5px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .db-prediction-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .db-confidence-badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .db-confidence-badge.high   { background: rgba(34,197,94,0.2);  color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+  .db-confidence-badge.medium { background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+  .db-confidence-badge.low    { background: rgba(239,68,68,0.2);  color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+  .db-prediction-text {
+    font-size: 11px;
+    color: rgba(200,220,255,0.85);
+    line-height: 1.4;
+  }
+  .db-prediction-basis {
+    font-size: 10px;
+    color: rgba(130,160,210,0.6);
+    font-style: italic;
+    padding-left: 2px;
+  }
+
+  /* ── Context cards ── */
+  .db-context-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    overflow-y: auto;
+    max-height: 80px;
+  }
+  .db-context-card {
+    background: rgba(56,139,255,0.06);
+    border: 1px solid rgba(56,139,255,0.15);
+    border-left: 3px solid rgba(86,207,255,0.5);
+    border-radius: 4px;
+    padding: 4px 8px;
+  }
+  .db-context-card-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: #56cfff;
+    letter-spacing: 0.04em;
+  }
+  .db-context-card-text {
+    font-size: 10px;
+    color: rgba(180,210,255,0.75);
+    line-height: 1.35;
+    margin-top: 1px;
+  }
+  .db-context-card-source {
+    font-size: 9px;
+    color: rgba(130,160,200,0.5);
+    margin-top: 1px;
+  }
+
+  .db-mute-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    color: white;
+    transition: color 200ms, background 150ms;
+    flex-shrink: 0;
+  }
+  .db-mute-btn:hover { background: rgba(255,255,255,0.1); }
+  .db-mute-btn.muted { color: rgba(255,255,255,0.35); }
+
   @media (max-width: 768px) {
     .director-bar {
       display: none;
@@ -312,6 +411,26 @@ function StyleTag() {
   return <style>{BAR_STYLES}</style>
 }
 
+function IconUnmuted() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path d="M3 9v6h4l5 5V4L7 9H3z" fill="currentColor"/>
+      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" fill="currentColor"/>
+      <path d="M19 12c0 2.45-1.4 4.57-3.43 5.6L17 19.02C19.59 17.71 21.5 15.07 21.5 12s-1.91-5.71-4.5-7.02L15.57 6.4C17.6 7.43 19 9.55 19 12z" fill="currentColor"/>
+    </svg>
+  )
+}
+
+function IconMuted() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path d="M3 9v6h4l5 5V4L7 9H3z" fill="currentColor"/>
+      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63z" fill="currentColor"/>
+      <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth="2"/>
+    </svg>
+  )
+}
+
 export default function DirectorBar({
   visible        = false,
   sequence       = null,
@@ -319,15 +438,23 @@ export default function DirectorBar({
   runnerState    = { isPlaying: false, currentIndex: -1, total: 0 },
   currentAction  = null,
   indicators     = [],
+  contextCards   = [],
   generating     = false,
   onGenerate     = () => {},
   onSave         = () => {},
   onClose        = () => {},
   savedStatus    = null,
+  controlsOnly   = false,   // when true: strip-only mode (sidebar handles narration)
 }) {
   const [collapsed, setCollapsed]   = useState(false)
   const [intent,    setIntent]      = useState("")
+  const [isMuted,   setIsMuted]     = useState(() => ttsService.muted)
   const intentRef                   = useRef(null)
+
+  const handleToggleMute = useCallback(() => {
+    const nowMuted = ttsService.toggleMute()
+    setIsMuted(nowMuted)
+  }, [])
 
   const { isPlaying, currentIndex, total } = runnerState
   const hasSequence = sequence && total > 0
@@ -373,7 +500,7 @@ export default function DirectorBar({
   return (
     <>
       <StyleTag />
-      <div className={`director-bar ${collapsed ? "collapsed" : "expanded"}`}>
+      <div className={`director-bar ${controlsOnly ? "collapsed" : collapsed ? "collapsed" : "expanded"}`}>
 
         {/* ── Strip: logo + progress + controls ── */}
         <div className="db-strip">
@@ -391,6 +518,15 @@ export default function DirectorBar({
               style={{ width: hasSequence ? `${pct}%` : "0%" }}
             />
           </div>
+
+          {/* Mute button — always visible */}
+          <button
+            className={`db-mute-btn${isMuted ? " muted" : ""}`}
+            title={isMuted ? "Unmute narration" : "Mute narration"}
+            onClick={handleToggleMute}
+          >
+            {isMuted ? <IconMuted /> : <IconUnmuted />}
+          </button>
 
           {/* Playback controls */}
           {hasSequence && (
@@ -434,12 +570,14 @@ export default function DirectorBar({
             >{saveLabel}</button>
           )}
 
-          {/* Collapse toggle */}
-          <button
-            className="db-collapse-btn"
-            title={collapsed ? "Expand" : "Collapse"}
-            onClick={() => setCollapsed(c => !c)}
-          >{collapsed ? "▲" : "▼"}</button>
+          {/* Collapse toggle (hidden in controlsOnly/sidebar mode) */}
+          {!controlsOnly && (
+            <button
+              className="db-collapse-btn"
+              title={collapsed ? "Expand" : "Collapse"}
+              onClick={() => setCollapsed(c => !c)}
+            >{collapsed ? "▲" : "▼"}</button>
+          )}
 
           {/* Close */}
           <button
@@ -449,8 +587,8 @@ export default function DirectorBar({
           >✕</button>
         </div>
 
-        {/* ── Expanded body ── */}
-        {!collapsed && (
+        {/* ── Expanded body (hidden in controlsOnly/sidebar mode) ── */}
+        {!controlsOnly && !collapsed && (
           <>
             {(currentAction || generating) && (
               <div className="db-body">
@@ -485,10 +623,43 @@ export default function DirectorBar({
                             <div className="db-summary-section-text">{sec.text}</div>
                           </div>
                         ))}
+                        {(currentAction.predictions || []).length > 0 && (
+                          <>
+                            <div className="db-summary-section-heading" style={{ marginTop: 6 }}>Predictions</div>
+                            <div className="db-predictions">
+                              {currentAction.predictions.map((p, i) => (
+                                <div key={i} className="db-prediction-item">
+                                  <div className="db-prediction-row">
+                                    <span className={`db-confidence-badge ${p.confidence || "medium"}`}>
+                                      {p.confidence || "medium"}
+                                    </span>
+                                    <span className="db-prediction-text">{p.prediction}</span>
+                                  </div>
+                                  {p.basis && (
+                                    <div className="db-prediction-basis">Basis: {p.basis}</div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </>
                   )}
                 </div>
+
+                {/* Context Cards */}
+                {contextCards.length > 0 && (
+                  <div className="db-context-cards" style={{ marginTop: 4 }}>
+                    {contextCards.slice(-3).map((card, i) => (
+                      <div key={i} className="db-context-card">
+                        <div className="db-context-card-title">{card.title}</div>
+                        <div className="db-context-card-text">{card.summary}</div>
+                        {card.source && <div className="db-context-card-source">{card.source}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Indicators */}
                 {indicators.length > 0 && (

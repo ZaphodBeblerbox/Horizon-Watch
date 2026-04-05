@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react"
+import ttsService from "../services/ttsService.js"
 
 const SUBTITLE_STYLES = `
 @keyframes subtitle-fade-in {
@@ -160,6 +161,24 @@ const SUBTITLE_STYLES = `
   padding-right: 4px;
 }
 
+.dsb-mute-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: rgba(56,139,255,0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  color: rgba(200,220,255,0.9);
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 200ms;
+}
+.dsb-mute-btn:active { background: rgba(56,139,255,0.3); }
+.dsb-mute-btn.muted { color: rgba(200,220,255,0.3); }
+
 .director-subtitle-save-btn {
   width: 100%;
   margin-top: 12px;
@@ -244,6 +263,26 @@ const SUBTITLE_STYLES = `
 }
 `
 
+function SubIconUnmuted() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path d="M3 9v6h4l5 5V4L7 9H3z" fill="currentColor"/>
+      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" fill="currentColor"/>
+      <path d="M19 12c0 2.45-1.4 4.57-3.43 5.6L17 19.02C19.59 17.71 21.5 15.07 21.5 12s-1.91-5.71-4.5-7.02L15.57 6.4C17.6 7.43 19 9.55 19 12z" fill="currentColor"/>
+    </svg>
+  )
+}
+
+function SubIconMuted() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path d="M3 9v6h4l5 5V4L7 9H3z" fill="currentColor"/>
+      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63z" fill="currentColor"/>
+      <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth="2"/>
+    </svg>
+  )
+}
+
 export default function DirectorSubtitle({
   visible       = false,
   sequence      = null,
@@ -259,8 +298,16 @@ export default function DirectorSubtitle({
   const [controlsVisible, setControlsVisible] = useState(true)
   const [fadeKey,         setFadeKey]         = useState(0)
   const [confirmExit,     setConfirmExit]     = useState(false)
+  const [isMuted,         setIsMuted]         = useState(() => ttsService.muted)
   const controlsTimer   = useRef(null)
   const prevActionRef   = useRef(null)
+
+  const handleToggleMute = useCallback((e) => {
+    e.stopPropagation()
+    const nowMuted = ttsService.toggleMute()
+    setIsMuted(nowMuted)
+    resetControlsTimer()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { isPlaying, currentIndex, total } = runnerState
   const isSummary = currentAction?.action === "summary"
@@ -385,6 +432,11 @@ export default function DirectorSubtitle({
 
             {/* Playback controls */}
             <div className={`director-subtitle-controls${controlsVisible ? "" : " faded"}`}>
+              <button
+                className={`dsb-mute-btn${isMuted ? " muted" : ""}`}
+                title={isMuted ? "Unmute narration" : "Mute narration"}
+                onClick={handleToggleMute}
+              >{isMuted ? <SubIconMuted /> : <SubIconUnmuted />}</button>
               <button
                 className="dsb-btn"
                 disabled={currentIndex <= 0}

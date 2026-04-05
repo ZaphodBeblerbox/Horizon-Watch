@@ -268,6 +268,190 @@ const MAP_STYLES = `
     from { opacity: 0; }
     to   { opacity: 1; }
 }
+
+/* ── Director Mode marker animations ── */
+@keyframes director-marker-in {
+    from { opacity: 0; transform: scale(0.5); }
+    to   { opacity: 1; transform: scale(1); }
+}
+@keyframes director-marker-out {
+    from { opacity: 1; transform: scale(1); }
+    to   { opacity: 0; transform: scale(0.5); }
+}
+.director-marker-enter {
+    animation: director-marker-in 400ms ease-out forwards;
+}
+.director-marker-exit {
+    animation: director-marker-out 300ms ease-in forwards;
+}
+
+/* ── Director Mode drawing animations ── */
+.director-drawing-line path {
+    stroke-dasharray: 2000;
+    stroke-dashoffset: 2000;
+    animation: director-draw-line 1500ms ease-out forwards;
+}
+@keyframes director-draw-line {
+    to { stroke-dashoffset: 0; }
+}
+.director-drawing-fill {
+    opacity: 0;
+    animation: director-fade-fill 600ms ease-out 200ms forwards;
+}
+@keyframes director-fade-fill {
+    to { opacity: 1; }
+}
+
+/* ── Director Mode — country highlight glow labels ── */
+.director-country-label {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    pointer-events: none;
+}
+.director-country-label-inner {
+    font-family: Inter, -apple-system, sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 1px 3px rgba(0,0,0,0.8);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    animation: dir-country-label-in 500ms ease-out 200ms forwards;
+}
+.director-country-label-context {
+    font-size: 9px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.65);
+    text-shadow: 0 0 4px rgba(0,0,0,0.9);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+@keyframes dir-country-label-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+/* ── Smoother tile loading ── */
+.leaflet-tile {
+    transition: opacity 0.3s ease-in-out !important;
+}
+.leaflet-tile-loaded {
+    opacity: 1 !important;
+}
+
+/* ── Director placed event markers ── */
+.director-placed-event {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    pointer-events: all;
+    cursor: pointer;
+}
+.director-placed-event svg {
+    filter: drop-shadow(0 0 4px rgba(0,0,0,0.6));
+    animation: director-marker-in 400ms ease-out forwards;
+}
+.director-placed-event-label {
+    position: absolute;
+    top: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: Inter, -apple-system, sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(0,0,0,0.75);
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    pointer-events: none;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ── Director event popup ── */
+.director-event-leaflet-popup .leaflet-popup-content-wrapper {
+    background: rgba(10, 20, 40, 0.94) !important;
+    border: 1px solid rgba(86, 207, 255, 0.25) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.7) !important;
+    color: #e2e8f0 !important;
+    padding: 0 !important;
+    backdrop-filter: blur(12px);
+}
+.director-event-leaflet-popup .leaflet-popup-content {
+    margin: 0 !important;
+    width: 280px !important;
+}
+.director-event-leaflet-popup .leaflet-popup-tip {
+    background: rgba(10, 20, 40, 0.94) !important;
+}
+.director-event-leaflet-popup .leaflet-popup-close-button {
+    color: rgba(226,232,240,0.6) !important;
+    font-size: 18px !important;
+    top: 6px !important;
+    right: 8px !important;
+}
+.director-event-popup {
+    padding: 12px 14px;
+    font-family: Inter, -apple-system, sans-serif;
+}
+.director-event-popup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(86,207,255,0.15);
+}
+.director-event-popup-type {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: rgba(226,232,240,0.5);
+}
+.director-event-popup-severity {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+.director-event-popup-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e2e8f0;
+    line-height: 1.4;
+    margin-bottom: 6px;
+}
+.director-event-popup-summary {
+    font-size: 11px;
+    color: rgba(226,232,240,0.7);
+    line-height: 1.5;
+    margin-bottom: 6px;
+}
+.director-event-popup-source {
+    font-size: 10px;
+    color: rgba(86,207,255,0.7);
+    font-style: italic;
+}
+.director-event-popup-img img {
+    width: 100%;
+    border-radius: 4px;
+}
+
+/* ── Director highlight pulses ── */
+@keyframes director-pulse-ring {
+    0%, 100% { opacity: 0.85; r: 14; }
+    50%       { opacity: 0.4;  r: 20; }
+}
+@keyframes director-glow-ring {
+    0%, 100% { filter: drop-shadow(0 0 6px rgba(86, 207, 255, 0.8)); }
+    50%       { filter: drop-shadow(0 0 14px rgba(86, 207, 255, 1.0)); }
+}
 @keyframes eventMarkerFadeIn {
     from { opacity: 0; }
     to   { opacity: 1; }
@@ -2429,6 +2613,7 @@ function _segmentTrack(points) {
 // ── AircraftLayer ─────────────────────────────────────────────────────────────
 const AircraftLayer = memo(function AircraftLayer({
     visible, showLabels, boundsRef, onCount, polling, activateKey,
+    directorAC = null,  // Set<string> of icao24 (lowercase) — Director Mode filter
 }) {
     const map = useMap()
     const [aircraft,   setAircraft]   = useState([])
@@ -2984,16 +3169,21 @@ const AircraftLayer = memo(function AircraftLayer({
     }
 
     // ── Render ────────────────────────────────────────────────────────────────
-    if (!visible || map.getZoom() < 4) return null
+    // Director Mode: show even when !visible if directorAC has aircraft
+    if ((!visible && !directorAC?.size) || map.getZoom() < 4) return null
 
     const vpBounds       = map.getBounds().pad(0.2)
     const visibleAircraft = aircraft.filter(ac =>
         ac.lat != null && ac.lon != null && vpBounds.contains([ac.lat, ac.lon])
     )
     // In follow mode, hide all other aircraft; otherwise apply category filter
-    const displayAircraft = followAc
+    // In Director Mode, only show aircraft whose icao24 is in directorAC
+    const categoryFiltered = followAc
         ? visibleAircraft.filter(a => a.icao === followAc.icao)
         : visibleAircraft.filter(ac => acFilter[_acClassify(ac)])
+    const displayAircraft = directorAC?.size
+        ? categoryFiltered.filter(ac => directorAC.has((ac.icao || "").toLowerCase()))
+        : categoryFiltered
 
     return (
         <Fragment>
@@ -5537,6 +5727,8 @@ export default function MapPage({
     onMapReady          = null,  // (mapInstance) => void — called when Leaflet map is ready
     directorLayerOverrides = {}, // {layerKey: bool} — merged over active for rendering
     directorHighlights  = [],   // [{id, lat, lon, style}] — animated highlight markers
+    directorItems       = null, // granular director visibility state from CommandRunner
+    isDirectorMode      = false, // when true, layer toggles are ignored; directorItems controls what's visible
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -5607,6 +5799,19 @@ export default function MapPage({
         () => Object.keys(directorLayerOverrides).length ? { ...active, ...directorLayerOverrides } : active,
         [active, directorLayerOverrides]
     )
+
+    // ── Director visibility helpers ───────────────────────────────────────────
+    // When Director Mode is active, individual item sets control visibility.
+    // When inactive, normal layer toggles apply.
+    const dirCp           = isDirectorMode ? (directorItems?.chokepoints          ?? new Set()) : null
+    const dirEvt          = isDirectorMode ? (directorItems?.events               ?? new Set()) : null
+    const dirInfra        = isDirectorMode ? (directorItems?.infrastructure       ?? new Map()) : null
+    const dirVessel       = isDirectorMode ? (directorItems?.vessels              ?? new Set()) : null
+    const dirAC           = isDirectorMode ? (directorItems?.aircraft             ?? new Set()) : null
+    const dirSat          = isDirectorMode ? (directorItems?.satellite            ?? false)    : null
+    const dirCountries    = isDirectorMode ? (directorItems?.highlightedCountries  ?? new Map()) : null
+    const dirPlacedEvents = isDirectorMode ? (directorItems?.placedEvents          ?? new Map()) : null
+
     const [activeWebcam, setActiveWebcam] = useState(null)
     const [contextualAnalysis, setContextualAnalysis] = useState(false)
     const [manualOverrides, setManualOverrides] = useState({})
@@ -6006,10 +6211,13 @@ export default function MapPage({
     const pipelinesLayerRef      = useRef(null)
     const cablesLayerRef         = useRef(null)
     const shippingLanesLayerRef  = useRef(null)   // OpenSeaMap tile layer
-    const chokepointsLayerRef    = useRef(null)
-    const heatmapLayerRef        = useRef(null)
-    const eezLayerRef            = useRef(null)
-    const bordersLayerRef        = useRef(null)
+    const chokepointsLayerRef        = useRef(null)
+    const heatmapLayerRef            = useRef(null)
+    const eezLayerRef                = useRef(null)
+    const bordersLayerRef            = useRef(null)
+    const dirCountryHighlightRef     = useRef(null)   // Director country highlight layer
+    const dirCountryLabelsRef        = useRef([])     // Director country label markers
+    const dirPlacedEventsRef         = useRef([])     // Director placed event markers
     const cityLabelsLayerRef     = useRef(null)
     const newsConflictsLayerRef  = useRef(null)
     const enrichmentLayerRef     = useRef(null)
@@ -6517,11 +6725,11 @@ export default function MapPage({
             .catch(() => {})
     }, [effectiveActive.ports, viewportBounds])  // eslint-disable-line
 
-    // ── AIS vessel tracking: poll every 30s when layer on ────────────────────
+    // ── AIS vessel tracking: poll every 30s when layer on OR Director Mode active ─
     // Uses viewportBoundsRef (not viewportBounds state) so the interval does not
     // restart on every map move — only when the toggle itself changes.
     useEffect(() => {
-        if (!effectiveActive.aisVessels) {
+        if (!effectiveActive.aisVessels && !isDirectorMode) {
             setAisVessels([])
             setSelectedAisVessel(null)
             if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null }
@@ -6538,11 +6746,11 @@ export default function MapPage({
                 })
                 .catch(() => {})
         }
-        fetchVessels()  // immediate fetch on toggle-on
+        fetchVessels()  // immediate fetch on toggle-on or director start
         if (aisIntervalRef.current) clearInterval(aisIntervalRef.current)
         aisIntervalRef.current = setInterval(fetchVessels, 30000)
         return () => { if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null } }
-    }, [effectiveActive.aisVessels])  // eslint-disable-line
+    }, [effectiveActive.aisVessels, isDirectorMode])  // eslint-disable-line
 
     // ── OpenSeaMap seamark tiles — shown at zoom ≥ 6, anti-flicker options ─────
     useEffect(() => {
@@ -6659,9 +6867,204 @@ export default function MapPage({
         }).addTo(mapRef.current)
     }, [effectiveActive.borders, allCountriesGeo, borderGlowColor])
 
-    // ── News conflicts: fetch all markers globally, refresh every 15 min ─────────
+    // ── Director Mode: country highlight layer ────────────────────────────────
     useEffect(() => {
-        if (!effectiveActive.newsConflicts || !viewportBounds) {
+        const map = mapRef.current
+        if (!map) return
+
+        // Clean up any existing highlight layer and labels
+        const cleanupHighlights = () => {
+            if (dirCountryHighlightRef.current) {
+                dirCountryHighlightRef.current.remove()
+                dirCountryHighlightRef.current = null
+            }
+            dirCountryLabelsRef.current.forEach(m => m.remove())
+            dirCountryLabelsRef.current = []
+        }
+
+        if (!isDirectorMode || !dirCountries || dirCountries.size === 0 || !allCountriesGeo) {
+            cleanupHighlights()
+            return
+        }
+
+        cleanupHighlights()
+
+        const CONTEXT_COLORS = {
+            conflict: { fill: "#ff2828", stroke: "#ff2828" },
+            allied:   { fill: "#28ff64", stroke: "#28ff64" },
+            neutral:  { fill: "#ffc828", stroke: "#ffc828" },
+            focus:    { fill: "#2896ff", stroke: "#2896ff" },
+        }
+
+        // Helper: try to match country name (case-insensitive, with common aliases)
+        const NAME_ALIASES = {
+            "united states":             "United States of America",
+            "usa":                       "United States of America",
+            "us":                        "United States of America",
+            "uk":                        "United Kingdom",
+            "great britain":             "United Kingdom",
+            "uae":                       "United Arab Emirates",
+            "drc":                       "Democratic Republic of the Congo",
+            "dr congo":                  "Democratic Republic of the Congo",
+            "congo, democratic republic": "Democratic Republic of the Congo",
+            "south korea":               "Republic of Korea",
+            "north korea":               "Dem. Rep. Korea",
+            "russia":                    "Russia",
+            "iran":                      "Iran",
+            "taiwan":                    "Taiwan",
+            "palestine":                 "Palestine",
+            "ivory coast":               "Côte d'Ivoire",
+            "cote d'ivoire":             "Côte d'Ivoire",
+        }
+
+        const matchFeature = (featureName, queryName) => {
+            if (!featureName || !queryName) return false
+            const fn = featureName.toLowerCase().trim()
+            const qn = queryName.toLowerCase().trim()
+            if (fn === qn) return true
+            // Alias lookup
+            const alias = NAME_ALIASES[qn]
+            if (alias && fn === alias.toLowerCase()) return true
+            if (alias && fn.includes(qn)) return true
+            // Partial match
+            if (fn.includes(qn) || qn.includes(fn)) return true
+            return false
+        }
+
+        // Filter features that match highlighted countries
+        const matchedFeatures = []
+        for (const feature of (allCountriesGeo.features || [])) {
+            const fName = feature.properties?.ADMIN || feature.properties?.name || feature.properties?.NAME || ""
+            for (const [hlName] of dirCountries.entries()) {
+                if (matchFeature(fName, hlName)) {
+                    matchedFeatures.push({ feature, hlName })
+                    break
+                }
+            }
+        }
+
+        if (matchedFeatures.length === 0) return
+
+        let pulseHigh = true
+        let pulseInterval = null
+
+        const highlightLayer = L.geoJSON(
+            { type: "FeatureCollection", features: matchedFeatures.map(m => m.feature) },
+            {
+                pane: "overlayPane",
+                style: (feature) => {
+                    const fName = feature.properties?.ADMIN || feature.properties?.name || feature.properties?.NAME || ""
+                    let hlName = ""
+                    for (const [name] of dirCountries.entries()) {
+                        if (matchFeature(fName, name)) { hlName = name; break }
+                    }
+                    const hi = dirCountries.get(hlName) || { context: "focus" }
+                    const c = CONTEXT_COLORS[hi.context] || CONTEXT_COLORS.focus
+                    return {
+                        color:       c.stroke,
+                        weight:      2,
+                        opacity:     0.75,
+                        fillColor:   c.fill,
+                        fillOpacity: 0.22,
+                    }
+                },
+            }
+        ).addTo(map)
+        dirCountryHighlightRef.current = highlightLayer
+
+        // Pulse animation via setInterval
+        pulseInterval = setInterval(() => {
+            pulseHigh = !pulseHigh
+            if (!dirCountryHighlightRef.current) return
+            dirCountryHighlightRef.current.eachLayer(layer => {
+                layer.setStyle({
+                    fillOpacity: pulseHigh ? 0.3 : 0.12,
+                    opacity:     pulseHigh ? 0.95 : 0.55,
+                })
+            })
+        }, 1500)
+
+        // Country labels at centroids
+        for (const { feature, hlName } of matchedFeatures) {
+            const hi = dirCountries.get(hlName) || { context: "focus", label: "" }
+            const c = CONTEXT_COLORS[hi.context] || CONTEXT_COLORS.focus
+            const centroid = featureApproxCentroid(feature)
+            if (!centroid) continue
+            const [lat, lon] = centroid
+            const labelHtml = `<div class="director-country-label-inner" style="color:${c.stroke};">
+                ${hlName}
+                ${hi.label ? `<div class="director-country-label-context">${hi.label}</div>` : ""}
+            </div>`
+            const icon = L.divIcon({
+                html: labelHtml,
+                className: "director-country-label",
+                iconAnchor: [0, 0],
+            })
+            const marker = L.marker([lat, lon], { icon, interactive: false, keyboard: false }).addTo(map)
+            dirCountryLabelsRef.current.push(marker)
+        }
+
+        return () => {
+            clearInterval(pulseInterval)
+            cleanupHighlights()
+        }
+    }, [isDirectorMode, dirCountries, allCountriesGeo])  // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Director placed events: render self-geocoded event markers ────────────
+    useEffect(() => {
+        const map = mapRef.current
+        if (!map) return
+        const L = window.L
+        if (!L) return
+
+        // Cleanup previous markers
+        dirPlacedEventsRef.current.forEach(m => { try { map.removeLayer(m) } catch (_) {} })
+        dirPlacedEventsRef.current = []
+
+        if (!isDirectorMode || !dirPlacedEvents || dirPlacedEvents.size === 0) return
+
+        const TYPE_ICON = {
+            conflict:       { symbol: "⚔", fill: "#ef4444", stroke: "#fca5a5" },
+            maritime:       { symbol: "⚓", fill: "#3b82f6", stroke: "#93c5fd" },
+            political:      { symbol: "🏛", fill: "#8b5cf6", stroke: "#c4b5fd" },
+            humanitarian:   { symbol: "🏥", fill: "#f59e0b", stroke: "#fcd34d" },
+            infrastructure: { symbol: "⚡", fill: "#06b6d4", stroke: "#67e8f9" },
+            economic:       { symbol: "$",  fill: "#10b981", stroke: "#6ee7b7" },
+            military:       { symbol: "★",  fill: "#dc2626", stroke: "#fca5a5" },
+            general:        { symbol: "●",  fill: "#6b7280", stroke: "#d1d5db" },
+        }
+        const SEVERITY_SIZE = { critical: 26, significant: 22, elevated: 18, low: 14 }
+
+        for (const [, ev] of dirPlacedEvents.entries()) {
+            if (ev.lat == null || ev.lon == null) continue
+            const cfg  = TYPE_ICON[ev.type] || TYPE_ICON.general
+            const size = SEVERITY_SIZE[ev.severity] || 18
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" fill="${cfg.fill}" stroke="${cfg.stroke}" stroke-width="1.5" opacity="0.92"/>
+              <text x="12" y="16" text-anchor="middle" font-size="11" fill="white" font-family="system-ui">${cfg.symbol}</text>
+            </svg>`
+            const icon = L.divIcon({
+                className: "director-placed-event",
+                html: `<div style="position:relative;width:${size}px;height:${size}px">${svg}<div class="director-placed-event-label">${ev.title.slice(0, 40)}</div></div>`,
+                iconSize:   [size, size],
+                iconAnchor: [size / 2, size / 2],
+            })
+            const marker = L.marker([ev.lat, ev.lon], { icon, zIndexOffset: 600 })
+                .bindPopup(`<div class="director-event-popup"><div class="director-event-popup-title">${ev.title}</div>${ev.summary ? `<div class="director-event-popup-summary">${ev.summary}</div>` : ""}${ev.source ? `<div class="director-event-popup-source">${ev.source}</div>` : ""}</div>`, { className: "director-event-leaflet-popup", maxWidth: 280 })
+                .addTo(map)
+            dirPlacedEventsRef.current.push(marker)
+        }
+
+        return () => {
+            dirPlacedEventsRef.current.forEach(m => { try { map.removeLayer(m) } catch (_) {} })
+            dirPlacedEventsRef.current = []
+        }
+    }, [isDirectorMode, dirPlacedEvents])  // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── News conflicts: fetch all markers globally, refresh every 15 min ─────────
+    // Also fetches when isDirectorMode is true so Director show_event works
+    useEffect(() => {
+        if ((!effectiveActive.newsConflicts && !isDirectorMode) || !viewportBounds) {
             setNewsConflictsData([])
             setNewsConflictsCount(0)
             return
@@ -6759,7 +7162,7 @@ export default function MapPage({
         fetchAll()
         const iv = setInterval(fetchAll, 30 * 1000)
         return () => clearInterval(iv)
-    }, [effectiveActive.newsConflicts, viewportBounds, zoom])
+    }, [effectiveActive.newsConflicts, isDirectorMode, viewportBounds, zoom])
 
     // ── Unified Intelligence Feed — two-phase: fast preload then full set ────────
     useEffect(() => {
@@ -8303,6 +8706,10 @@ export default function MapPage({
                 maxBoundsViscosity={1.0}
                 minZoom={2}
                 maxZoom={19}
+                zoomAnimation={true}
+                zoomAnimationThreshold={20}
+                fadeAnimation={true}
+                markerZoomAnimation={true}
             >
                 <MapPaneSetup />
                 <MapInstanceTracker mapRef={mapRef} depLayerRef={depLayerRef} onMapReady={onMapReady} />
@@ -8572,8 +8979,9 @@ export default function MapPage({
                     refreshRate={adsbRefreshRate}
                     boundsRef={viewportBoundsRef}
                     onCount={setAdsbCount}
-                    polling={adsbLive}
+                    polling={adsbLive || (isDirectorMode && !!dirAC?.size)}
                     activateKey={adsbActivateKey}
+                    directorAC={isDirectorMode ? dirAC : null}
                 />
 
                 {/* ── Route planner — origin, dest pins + polyline ──────────── */}
@@ -8615,7 +9023,7 @@ export default function MapPage({
                 {powerPlantMarkers}
 
                 {/* ── AIS live vessel markers ──────────────────────────────── */}
-                {effectiveActive.aisVessels && aisVessels.map((v, i) => (
+                {(isDirectorMode ? false : effectiveActive.aisVessels) && aisVessels.map((v, i) => (
                     v.lat != null && v.lon != null && vpFilter(v.lat, v.lon) ? (
                         <VesselMarkerItem
                             key={`ais-${v.mmsi || i}`}
@@ -8628,8 +9036,25 @@ export default function MapPage({
                     ) : null
                 ))}
 
+                {/* ── Director Mode: individual vessel markers ──────────────── */}
+                {isDirectorMode && dirVessel && dirVessel.size > 0 && aisVessels.map((v, i) => {
+                    const mmsi = String(v.mmsi || "")
+                    if (!dirVessel.has(mmsi)) return null
+                    if (v.lat == null || v.lon == null) return null
+                    return (
+                        <VesselMarkerItem
+                            key={`dir-ais-${mmsi || i}`}
+                            v={v}
+                            zoom={zoom}
+                            isSelected={selectedAisVessel?.mmsi === v.mmsi}
+                            onSelect={setSelectedAisVessel}
+                            onClose={() => setSelectedAisVessel(null)}
+                        />
+                    )
+                })}
+
                 {/* ── Chokepoints layer — polygon outlines, toggled via layers panel ── */}
-                {!effectiveActive.chokepoints && profileChokepoints.map((cp, i) => {
+                {!isDirectorMode && !effectiveActive.chokepoints && profileChokepoints.map((cp, i) => {
                     const poly = _cpPoly(cp.name)
                     return (
                         <Fragment key={`profile-cp-${i}`}>
@@ -8661,7 +9086,8 @@ export default function MapPage({
                     )
                 })}
                 {/* ── Active chokepoints layer — rich hatched polygons from CHOKEPOINTS data ── */}
-                {effectiveActive.chokepoints && CHOKEPOINTS.map((cp) => (
+                {/* Normal mode: all chokepoints when layer is on */}
+                {!isDirectorMode && effectiveActive.chokepoints && CHOKEPOINTS.map((cp) => (
                     <ChokepointPolygon
                         key={`cp-${cp.name}`}
                         cp={cp}
@@ -8669,9 +9095,46 @@ export default function MapPage({
                         onSelect={setChokepointSelected}
                     />
                 ))}
+                {/* Director mode: only individually shown chokepoints */}
+                {isDirectorMode && dirCp && CHOKEPOINTS.filter(cp => dirCp.has(cp.name)).map((cp) => (
+                    <ChokepointPolygon
+                        key={`dir-cp-${cp.name}`}
+                        cp={cp}
+                        zoom={zoom}
+                        onSelect={setChokepointSelected}
+                    />
+                ))}
+
+                {/* ── Director Mode: individual infrastructure markers ───────── */}
+                {isDirectorMode && dirInfra && dirInfra.size > 0 && Array.from(dirInfra.entries()).map(([id, item]) => {
+                    if (item.lat == null || item.lon == null) return null
+                    const infColors = { airport: "#00bcd4", port: "#00e5ff", military: "#ef4444", power_plant: "#ffd600", other: "#ffffff" }
+                    const infSymbols = { airport: "✈", port: "⚓", military: "★", power_plant: "⚡", other: "●" }
+                    const color  = infColors[item.type] || "#ffffff"
+                    const symbol = infSymbols[item.type] || "●"
+                    const icon   = L.divIcon({
+                        className: "",
+                        html: `<div class="director-marker-enter" style="
+                            width:24px;height:24px;border-radius:50%;
+                            background:${color}22;border:2px solid ${color};
+                            display:flex;align-items:center;justify-content:center;
+                            font-size:11px;color:${color};
+                            box-shadow:0 0 8px ${color}55;
+                        ">${symbol}</div>`,
+                        iconSize: [24, 24], iconAnchor: [12, 12],
+                    })
+                    return (
+                        <Marker key={`dir-infra-${id}`} position={[item.lat, item.lon]} icon={icon}>
+                            <Tooltip direction="top" offset={[0, -14]}>
+                                <span style={{ fontSize: 10 }}>{item.name} · {item.type}</span>
+                            </Tooltip>
+                        </Marker>
+                    )
+                })}
 
                 {/* ── News conflict markers — click opens EventDetailPanel ─────── */}
-                {effectiveActive.newsConflicts && newsConflictsData.map((m, i) => {
+                {/* Normal mode: all news conflicts when layer is on */}
+                {!isDirectorMode && effectiveActive.newsConflicts && newsConflictsData.map((m, i) => {
                     if (!vpFilter(m.lat, m.lon)) return null
                     const showNewsLabel = zoom >= 7
                     const html = getNewsMarkerHTML(m, showNewsLabel)
@@ -8691,6 +9154,31 @@ export default function MapPage({
                                     <span style={{ fontSize: 10 }}>{m.headline?.length > 80 ? m.headline.slice(0, 80) + "…" : m.headline}</span>
                                 </Tooltip>
                             )}
+                        </Marker>
+                    )
+                })}
+
+                {/* ── Director Mode: individual event markers ──────────────── */}
+                {isDirectorMode && dirEvt && dirEvt.size > 0 && newsConflictsData.map((m, i) => {
+                    const eventId = m.id || m.url || ""
+                    if (!dirEvt.has(eventId)) return null
+                    if (!m.lat || !m.lon) return null
+                    const showNewsLabel = zoom >= 7
+                    const html = getNewsMarkerHTML(m, showNewsLabel)
+                    const sz = m.severity_tier === "critical" ? 32 : (m.severity_tier === "high" || m.severity_tier === "significant") ? 26 : 20
+                    const hitSz = sz + 8
+                    const icon = L.divIcon({ html: `<div class="director-marker-enter">${html}</div>`, className: "", iconSize: [hitSz, hitSz], iconAnchor: [hitSz / 2, hitSz / 2] })
+                    return (
+                        <Marker
+                            key={`dir-evt-${eventId || i}`}
+                            position={[m.lat, m.lon]}
+                            pane="event-icons"
+                            icon={icon}
+                            eventHandlers={{ click: () => { setSelectedEvent(m); setImpactEvent(null); setInfraSelected(null) } }}
+                        >
+                            <Tooltip direction="top" offset={[0, -10]}>
+                                <span style={{ fontSize: 10 }}>{m.headline?.length > 80 ? m.headline.slice(0, 80) + "…" : m.headline}</span>
+                            </Tooltip>
                         </Marker>
                     )
                 })}
@@ -9003,7 +9491,7 @@ export default function MapPage({
 
                 {/* ── Sentinel-2 imagery overlay ───────────────────────────── */}
                 <SentinelLayer
-                    active={effectiveActive.sentinel2}
+                    active={effectiveActive.sentinel2 || (isDirectorMode && !!dirSat)}
                     onToggleOff={() => toggle("sentinel2")}
                     onImageLoaded={setSentinelImageData}
                     onImageCleared={() => setSentinelImageData(null)}

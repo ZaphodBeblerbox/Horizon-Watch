@@ -1,8 +1,9 @@
 """director_service.py — Cinematic intelligence briefing director.
 
 Generates an ordered action sequence for Director Mode: a choreographed
-map briefing that pans, zooms, toggles layers, highlights events, and
-delivers analyst narration driven by live intelligence data.
+map briefing that pans, zooms, shows individual data points, highlights
+events, draws annotations, and delivers analyst narration driven by live
+intelligence data.
 """
 from __future__ import annotations
 
@@ -11,10 +12,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 BASE_DIR = Path(__file__).parent.parent
 DIRECTOR_DIR = BASE_DIR / "documents" / "director-briefings"
+
 
 # ── Snapshot helpers ───────────────────────────────────────────────────────────
 
@@ -24,115 +25,310 @@ def build_snapshot(
     adsb_cache_latest: list,
     event_store_fn,      # callable: get_active_events(min_severity="elevated", limit=10)
     active_profile: dict | None,
+    static_airports: list | None = None,
+    static_ports: list | None = None,
 ) -> dict:
-    """Build a compact intelligence snapshot for the Director prompt."""
+    """Build a raw intelligence snapshot for the Director prompt.
 
-    # Surface items — top 20
-    surface_items = []
-    for item in (surface_pool or [])[:20]:
-        surface_items.append({
-            "id":        item.get("id", ""),
-            "title":     (item.get("headline") or item.get("title") or "")[:120],
-            "lat":       item.get("lat"),
-            "lon":       item.get("lon"),
+    Claude receives raw headlines and decides what is relevant,
+    geocodes events himself, and builds the entire scene.
+    """
+
+    # ── Raw intelligence: ALL surface items — Claude decides relevance ───────
+    # Include everything so Claude can filter, not us.
+    raw_intel = []
+    seen_titles: set[str] = set()
+    for item in (surface_pool or [])[:100]:
+        title = (item.get("headline") or item.get("title") or "").strip()
+        if not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
+        raw_intel.append({
+            "title":     title[:150],
+            "source":    (item.get("source") or item.get("source_name") or "")[:60],
+            "location":  (item.get("location") or item.get("location_name") or "")[:80],
+            "timestamp": (item.get("published_at") or item.get("published") or "")[:16],
             "type":      item.get("type") or item.get("event_type") or "general",
             "severity":  item.get("severity_tier") or "elevated",
-            "source":    item.get("source") or item.get("source_name") or "",
-            "timestamp": (item.get("published_at") or item.get("published") or "")[:19],
-            "location":  item.get("location") or "",
+            "summary":   (item.get("summary") or item.get("description") or "")[:200],
         })
 
-    # AIS vessels — count by type, surface notable (military)
-    vessel_count = len(ais_vessels)
-    type_counts: dict[str, int] = {}
-    notable_vessels = []
-    for mmsi, v in list(ais_vessels.items())[:2000]:
-        vtype = v.get("ship_type_label") or "other"
-        type_counts[vtype] = type_counts.get(vtype, 0) + 1
-        if v.get("ship_type_code", 0) in range(35, 36):  # military
-            notable_vessels.append({
-                "mmsi":  mmsi,
-                "name":  v.get("name", "unknown"),
-                "lat":   v.get("lat"),
-                "lon":   v.get("lon"),
-                "speed": v.get("speed"),
-            })
-
-    # ADS-B aircraft — count by type, flag any military
-    aircraft_military = []
-    aircraft_count = len(adsb_cache_latest)
-    ac_type_counts: dict[str, int] = {}
-    for ac in adsb_cache_latest:
-        db_flags = int(ac.get("dbFlags") or 0)
-        cat = ac.get("category") or "?"
-        ac_type_counts[cat] = ac_type_counts.get(cat, 0) + 1
-        if db_flags & 1:  # military bit
-            aircraft_military.append({
-                "icao":     ac.get("hex") or ac.get("icao"),
-                "callsign": (ac.get("flight") or "").strip(),
-                "lat":      ac.get("lat"),
-                "lon":      ac.get("lon"),
-                "alt_baro": ac.get("alt_baro"),
-            })
-
-    # Recent elevated+ events
-    recent_events = []
+    # Also pull from event_store_fn
     try:
-        events = event_store_fn(min_severity="elevated", max_age_hours=24, limit=10)
-        for ev in events:
-            recent_events.append({
-                "id":       ev.get("id", ""),
-                "title":    ev.get("clean_title") or ev.get("title") or "",
-                "lat":      ev.get("lat"),
-                "lon":      ev.get("lon"),
-                "type":     ev.get("event_type") or "general",
-                "severity": ev.get("severity_tier") or "elevated",
-                "location": ev.get("location") or "",
-                "published": (ev.get("published") or "")[:19],
+        store_events = event_store_fn(min_severity="elevated", max_age_hours=48, limit=40)
+        for ev in store_events:
+            title = (ev.get("clean_title") or ev.get("title") or "").strip()
+            if not title or title in seen_titles:
+                continue
+            seen_titles.add(title)
+            raw_intel.append({
+                "title":     title[:150],
+                "source":    (ev.get("source") or "")[:60],
+                "location":  (ev.get("location") or "")[:80],
+                "timestamp": (ev.get("published") or "")[:16],
+                "type":      ev.get("event_type") or "general",
+                "severity":  ev.get("severity_tier") or "elevated",
+                "summary":   (ev.get("summary") or "")[:200],
             })
     except Exception:
         pass
 
-    # Mission profile
-    profile_summary = {}
+    # Sort newest first, cap at 100
+    raw_intel = raw_intel[:100]
+
+    # ── AIS vessels — up to 40 notable (military/tanker priority) ───────────
+    vessel_list = []
+    _raw_vessels = list(ais_vessels.items())[:2000]
+    for mmsi, v in _raw_vessels:
+        if len(vessel_list) >= 40:
+            break
+        vessel_list.append({
+            "mmsi":      mmsi,
+            "name":      v.get("name", "unknown"),
+            "ship_type": v.get("ship_type_label") or "other",
+            "lat":       v.get("lat"),
+            "lon":       v.get("lon"),
+            "speed":     v.get("speed"),
+            "heading":   v.get("heading"),
+            "flag":      v.get("flag") or v.get("country") or "",
+            "dest":      v.get("destination") or "",
+        })
+    # Sort: military first (type code 35-36), then tankers (80-89), cargo (70-79)
+    _code_map = {mmsi: v.get("ship_type_code", 0) for mmsi, v in _raw_vessels[:2000]}
+    def _vpri(v):
+        c = _code_map.get(v["mmsi"], 0)
+        if 35 <= c <= 36: return 0
+        if 80 <= c <= 89: return 1
+        if 70 <= c <= 79: return 2
+        return 3
+    vessel_list.sort(key=_vpri)
+
+    # ── ADS-B aircraft — up to 30 (military priority) ────────────────────────
+    aircraft_list = []
+    for ac in adsb_cache_latest[:200]:
+        if len(aircraft_list) >= 30:
+            break
+        db_flags = int(ac.get("dbFlags") or 0)
+        is_mil   = bool(db_flags & 1)
+        cat_raw  = ac.get("category") or ""
+        cat = "military" if is_mil else ("commercial" if cat_raw.startswith("A") else ("helicopter" if cat_raw.startswith("B") else "general"))
+        aircraft_list.append({
+            "icao24":    ac.get("hex") or ac.get("icao") or "",
+            "callsign":  (ac.get("flight") or "").strip(),
+            "type":      ac.get("t") or ac.get("desc") or "",
+            "airline":   ac.get("ownOp") or "",
+            "lat":       ac.get("lat"),
+            "lon":       ac.get("lon"),
+            "altitude":  ac.get("alt_baro"),
+            "speed":     ac.get("gs"),
+            "category":  cat,
+        })
+    aircraft_list.sort(key=lambda a: 0 if a["category"] == "military" else 1)
+
+    # ── Chokepoints — all with coordinates for reference ─────────────────────
+    CHOKEPOINT_LIST = [
+        {"name": "Strait of Hormuz",          "lat": 26.5,  "lon": 56.4},
+        {"name": "Bab el-Mandeb",             "lat": 12.6,  "lon": 43.4},
+        {"name": "Suez Canal",                "lat": 30.5,  "lon": 32.4},
+        {"name": "Mozambique Channel",        "lat": -18.0, "lon": 40.5},
+        {"name": "Cape of Good Hope",         "lat": -34.4, "lon": 18.5},
+        {"name": "Strait of Gibraltar",       "lat": 35.9,  "lon": -5.6},
+        {"name": "Corinth Canal",             "lat": 37.9,  "lon": 22.9},
+        {"name": "Turkish Straits",           "lat": 41.1,  "lon": 29.0},
+        {"name": "English Channel",           "lat": 50.5,  "lon": 0.8},
+        {"name": "North Channel",             "lat": 55.2,  "lon": -5.6},
+        {"name": "Oresund",                   "lat": 55.8,  "lon": 12.7},
+        {"name": "Strait of Malacca",         "lat": 3.0,   "lon": 103.5},
+        {"name": "Taiwan Strait",             "lat": 23.5,  "lon": 120.2},
+        {"name": "Korea Strait",              "lat": 34.5,  "lon": 129.5},
+        {"name": "Panama Canal",              "lat": 9.0,   "lon": -79.7},
+    ]
+
+    # ── Infrastructure — filter to focus regions, cap 40 ─────────────────────
+    infrastructure: list[dict] = []
+    focus_regions: list[str] = []
+    if active_profile:
+        focus_regions = active_profile.get("focusRegions") or []
+
+    REGION_BBOX: dict[str, tuple[float, float, float, float]] = {
+        "Middle East":       (12.0, 34.0, 42.0, 63.0),
+        "East Africa":       (-12.0, 28.0, 22.0, 52.0),
+        "South Asia":        (5.0, 60.0, 38.0, 97.0),
+        "Southeast Asia":    (-10.0, 95.0, 28.0, 140.0),
+        "Eastern Europe":    (35.0, 14.0, 72.0, 45.0),
+        "North Africa":      (15.0, -18.0, 38.0, 55.0),
+        "West Africa":       (-5.0, -20.0, 20.0, 20.0),
+        "East Asia":         (18.0, 95.0, 55.0, 145.0),
+        "Central Asia":      (35.0, 47.0, 58.0, 90.0),
+        "Europe":            (35.0, -25.0, 72.0, 45.0),
+        "Americas":          (-56.0, -130.0, 72.0, -30.0),
+        "Global":            (-90.0, -180.0, 90.0, 180.0),
+    }
+
+    def _in_bbox(lat, lon, bbox):
+        min_lat, min_lon, max_lat, max_lon = bbox
+        return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
+
+    def _in_focus(lat, lon):
+        if not focus_regions or "Global" in focus_regions:
+            return True
+        for reg in focus_regions:
+            bbox = REGION_BBOX.get(reg)
+            if bbox and _in_bbox(lat, lon, bbox):
+                return True
+        return False
+
+    added_ids: set[str] = set()
+
+    # Major international airports
+    if static_airports:
+        for apt in static_airports:
+            if len(infrastructure) >= 40:
+                break
+            atype = (apt.get("type") or "").lower()
+            if atype not in ("large_airport", "military"):
+                continue
+            lat = apt.get("lat") or apt.get("latitude_deg")
+            lon = apt.get("lon") or apt.get("longitude_deg")
+            if not lat or not lon:
+                continue
+            try:
+                lat, lon = float(lat), float(lon)
+            except (TypeError, ValueError):
+                continue
+            if not _in_focus(lat, lon):
+                continue
+            apt_id = apt.get("id") or f"apt_{apt.get('ident','')}"
+            if apt_id in added_ids:
+                continue
+            added_ids.add(apt_id)
+            infrastructure.append({
+                "id":   apt_id,
+                "name": apt.get("name") or apt.get("ident") or "",
+                "type": "airport",
+                "lat":  lat,
+                "lon":  lon,
+            })
+
+    # Major ports
+    if static_ports:
+        for port in static_ports:
+            if len(infrastructure) >= 50:
+                break
+            lat = port.get("lat")
+            lon = port.get("lon")
+            if not lat or not lon:
+                continue
+            try:
+                lat, lon = float(lat), float(lon)
+            except (TypeError, ValueError):
+                continue
+            if not _in_focus(lat, lon):
+                continue
+            port_id = port.get("id") or f"port_{port.get('name','').replace(' ','_')}"
+            if port_id in added_ids:
+                continue
+            added_ids.add(port_id)
+            infrastructure.append({
+                "id":   port_id,
+                "name": port.get("name") or "",
+                "type": "port",
+                "lat":  lat,
+                "lon":  lon,
+            })
+
+    infrastructure = infrastructure[:40]
+
+    # ── Mission profile ───────────────────────────────────────────────────────
+    profile_summary: dict = {}
     if active_profile:
         profile_summary = {
-            "focusRegions": active_profile.get("focusRegions") or [],
+            "focusRegions":  active_profile.get("focusRegions") or [],
             "missionContext": (active_profile.get("missionContext") or "")[:300],
-            "threatLevel": active_profile.get("threatLevel") or "medium",
+            "threatLevel":   active_profile.get("threatLevel") or "medium",
         }
 
-    return {
-        "surface_items":   surface_items,
-        "active_vessels":  {
-            "total":      vessel_count,
-            "by_type":    type_counts,
-            "notable":    notable_vessels[:5],
-        },
-        "active_aircraft": {
-            "total":    aircraft_count,
-            "military": aircraft_military[:5],
-            "by_cat":   ac_type_counts,
-        },
-        "recent_events":   recent_events,
-        "mission_profile": profile_summary,
-        "generated_at":    datetime.now(timezone.utc).isoformat(),
+    # ── Available country names (subset most relevant to intel analysis) ─────
+    _COUNTRY_NAMES = [
+        "Afghanistan","Albania","Algeria","Angola","Argentina","Armenia","Australia",
+        "Austria","Azerbaijan","Bahrain","Bangladesh","Belarus","Belgium","Benin",
+        "Bosnia and Herzegovina","Brazil","Bulgaria","Burkina Faso","Burundi",
+        "Cambodia","Cameroon","Canada","Central African Republic","Chad","Chile",
+        "China","Colombia","Republic of the Congo","Democratic Republic of the Congo",
+        "Croatia","Cuba","Cyprus","Czech Republic","Denmark","Djibouti","Ecuador",
+        "Egypt","El Salvador","Eritrea","Estonia","Ethiopia","Finland","France",
+        "Gabon","Georgia","Germany","Ghana","Greece","Guatemala","Guinea",
+        "Haiti","Honduras","Hungary","India","Indonesia","Iran","Iraq","Ireland",
+        "Israel","Italy","Ivory Coast","Japan","Jordan","Kazakhstan","Kenya",
+        "Kosovo","Kuwait","Kyrgyzstan","Laos","Latvia","Lebanon","Libya",
+        "Lithuania","Luxembourg","Malaysia","Mali","Malta","Mauritania","Mexico",
+        "Moldova","Mongolia","Montenegro","Morocco","Mozambique","Myanmar",
+        "Namibia","Nepal","Netherlands","New Zealand","Nicaragua","Niger","Nigeria",
+        "North Korea","Norway","Oman","Pakistan","Palestine","Panama","Peru",
+        "Philippines","Poland","Portugal","Qatar","Romania","Russia","Rwanda",
+        "Saudi Arabia","Senegal","Serbia","Sierra Leone","Slovakia","Slovenia",
+        "Somalia","South Africa","South Korea","South Sudan","Spain","Sri Lanka",
+        "Sudan","Sweden","Switzerland","Syria","Taiwan","Tajikistan","Tanzania",
+        "Thailand","Tunisia","Turkey","Turkmenistan","Uganda","Ukraine",
+        "United Arab Emirates","United Kingdom","United States","Uzbekistan",
+        "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe",
+    ]
+
+    snapshot = {
+        "mission_profile":     profile_summary,
+        "raw_intelligence":    raw_intel,
+        "vessels":             vessel_list,
+        "aircraft":            aircraft_list,
+        "chokepoints":         CHOKEPOINT_LIST,
+        "infrastructure":      infrastructure,
+        "available_countries": _COUNTRY_NAMES,
+        "generated_at":        datetime.now(timezone.utc).isoformat(),
     }
+
+    # ── Token budget guard: keep under ~6000 tokens serialised ───────────────
+    snapshot_str = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+    if len(snapshot_str) > 18000:   # rough 6000 token estimate
+        snapshot["raw_intelligence"] = snapshot["raw_intelligence"][:15]
+        snapshot["vessels"] = snapshot["vessels"][:25]
+        snapshot["aircraft"] = snapshot["aircraft"][:15]
+        snapshot["infrastructure"] = snapshot["infrastructure"][:25]
+        snapshot["available_countries"] = snapshot["available_countries"][:80]
+
+    return snapshot
 
 
 # ── Action validation ──────────────────────────────────────────────────────────
 
 _VALID_ACTIONS = {
-    "fly_to", "toggle_layer", "highlight_event", "clear_highlights",
-    "narrate", "pause", "show_indicator", "summary",
+    # Camera
+    "fly_to", "pause",
+    # Narration
+    "narrate", "show_indicator", "show_context_card", "show_image",
+    # Individual data points
+    "show_chokepoint", "hide_chokepoint",
+    "show_event", "hide_event",
+    "show_infrastructure", "hide_infrastructure",
+    "show_vessel", "hide_vessel",
+    "show_aircraft", "hide_aircraft",
+    "clear_all",
+    # Placed events (Claude self-geocodes)
+    "place_event", "remove_event", "click_event",
+    # Interactive clicks
+    "click_chokepoint", "click_vessel", "click_aircraft", "click_infrastructure",
+    # Drawing
+    "draw_line", "draw_circle", "draw_arrow", "draw_polygon", "clear_drawings",
+    # Panels
+    "open_detail", "close_detail",
+    # Country highlights
+    "highlight_country", "unhighlight_country", "clear_country_highlights",
+    # Satellite
+    "show_satellite", "hide_satellite", "analyse_satellite",
+    # Summary
+    "summary",
+    # Legacy (kept for backward-compat with saved sequences)
+    "toggle_layer", "highlight_event", "clear_highlights",
 }
 
-_VALID_LAYERS = {
-    "adsb", "ais", "news_conflicts", "eez", "chokepoints", "satellite",
-    "country_borders", "nautical_chart", "infrastructure", "piracy",
-    "unified_events", "borders", "aisVessels", "newsConflicts",
-    "unifiedEvents",
-}
 
 def _validate_action(action: dict) -> bool:
     """Return True if action has required fields."""
@@ -149,45 +345,171 @@ def _validate_action(action: dict) -> bool:
         return "text" in action
     if act == "show_indicator":
         return "label" in action and "value" in action
+    if act == "show_context_card":
+        return "title" in action and "summary" in action
+    if act == "show_image":
+        return "query" in action
+    if act == "highlight_country":
+        return "name" in action
+    if act == "unhighlight_country":
+        return "name" in action
     if act == "summary":
         return "title" in action and "sections" in action
-    return True  # pause, clear_highlights have no required fields beyond "action"
+    if act in ("show_chokepoint", "hide_chokepoint"):
+        return "name" in action
+    if act in ("show_event", "hide_event"):
+        return "event_id" in action
+    if act == "show_infrastructure":
+        return "id" in action and "lat" in action and "lon" in action
+    if act == "hide_infrastructure":
+        return "id" in action
+    if act in ("show_vessel", "hide_vessel"):
+        return "mmsi" in action
+    if act in ("show_aircraft", "hide_aircraft"):
+        return "icao24" in action
+    if act == "draw_line":
+        return "points" in action
+    if act == "draw_circle":
+        return "center" in action and "radius_km" in action
+    if act == "draw_arrow":
+        return "from" in action and "to" in action
+    if act == "draw_polygon":
+        return "points" in action
+    if act == "place_event":
+        return all(k in action for k in ("title", "lat", "lon", "type"))
+    if act == "remove_event":
+        return "title" in action
+    if act == "click_event":
+        return "title" in action
+    if act == "click_chokepoint":
+        return "name" in action
+    if act == "click_vessel":
+        return "mmsi" in action
+    if act == "click_aircraft":
+        return "icao24" in action
+    if act == "click_infrastructure":
+        return "name" in action
+    if act == "open_detail":
+        return "type" in action and "id" in action
+    if act in ("show_satellite", "analyse_satellite"):
+        return "lat" in action and "lon" in action
+    return True
 
 
 # ── Director generation ────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are the Director of Horizon Watch, a geopolitical intelligence platform. You control an interactive map to deliver cinematic intelligence briefings. You have access to the following actions to choreograph a briefing:
+SYSTEM_PROMPT = """You are the Director and Senior Intelligence Analyst of Horizon Watch, a classified geopolitical intelligence platform. You receive raw, unfiltered intelligence feeds and you — not a pre-processor — decide what is relevant, where events occurred, and how to build the scene.
 
-Available actions (use as a JSON array):
-- { "action": "fly_to", "lat": number, "lon": number, "zoom": number, "duration": 2000 }
-  Smoothly pan and zoom the map to a location. Duration in ms.
-- { "action": "toggle_layer", "layer": string, "enabled": boolean }
-  Toggle a map layer. Layers: "adsb", "aisVessels", "newsConflicts", "eez", "chokepoints", "satellite", "borders", "infrastructure", "imbPiracy", "unifiedEvents"
-- { "action": "highlight_event", "event_id": string, "style": "pulse" | "ring" | "glow" }
-  Visually highlight a specific event marker on the map
-- { "action": "clear_highlights" }
-  Remove all highlights
-- { "action": "narrate", "text": string, "heading": string }
-  Display narration text to the user. Heading is a short title for this segment. Text is 2-4 sentences of analyst-grade prose.
+You control an interactive map to deliver cinematic intelligence briefings. You choreograph each briefing as a sequence of precise, graduated actions. You are both analyst and cinematographer.
+
+YOUR ROLE AS ANALYST:
+- The raw_intelligence feed contains ALL headlines, unfiltered. You read them, assess relevance, and decide what to include.
+- You self-geocode events using your geographic knowledge. If a headline mentions "clashes near Kharkiv", you know Kharkiv is at 49.99°N, 36.23°E. Place the event there with place_event.
+- You are not limited to pre-geocoded data. You know where countries, cities, ports, and military bases are located.
+- Prioritise events with geopolitical significance: military activity, energy infrastructure, shipping disruptions, diplomatic crises, humanitarian emergencies.
+- Ignore tabloid/celebrity/sports news entirely.
+
+Available actions (JSON array):
+
+CAMERA CONTROLS:
+- { "action": "fly_to", "lat": number, "lon": number, "zoom": number, "duration": 3000, "label": string }
+  Smoothly pan and zoom the map. Default duration 3000ms.
 - { "action": "pause", "duration": number }
-  Wait for a duration in ms before next action. Use for dramatic pacing.
-- { "action": "show_indicator", "type": "trend" | "stat" | "alert", "label": string, "value": string }
-  Show a data indicator card alongside the narration.
-- { "action": "summary", "title": string, "sections": [{ "heading": string, "text": string }] }
-  Final summary slide. Always the last action.
+  Wait for pacing. Default 2000ms.
 
-Rules:
-- Begin with a wide establishing shot (fly_to at zoom 3-4) then progressively zoom into areas of interest
-- Toggle only the layers relevant to each segment of the briefing
-- Every fly_to should be followed by a narrate explaining what the user is seeing
-- Use highlight_event for specific incidents from the surface_items or recent_events lists
-- Clear highlights before moving to a new topic
-- End with a summary action containing key findings, trend assessment, and indicators to watch
-- The narration should read like a senior intelligence analyst — confident, precise, specific
-- Reference specific events, locations, and data points from the snapshot
-- Keep the total sequence between 15-30 actions
-- Pace cinematically: establish → zoom to specifics → pattern → next topic → summary
-- Respond ONLY with the JSON array, no preamble, no markdown fences"""
+NARRATION:
+- { "action": "narrate", "text": string, "heading": string }
+  Analyst narration. 3-5 sentences, evidence-based, consequence-focused. Heading is a short segment title.
+- { "action": "show_indicator", "type": "trend"|"stat"|"alert", "label": string, "value": string }
+  Data indicator card alongside narration.
+- { "action": "show_context_card", "title": string, "summary": string, "source": string }
+  Floating info card for events that cannot be precisely placed on the map.
+- { "action": "show_image", "query": string, "caption": string }
+  Fetch a contextual photo. Query must be specific and geographic: "Strait of Hormuz aerial view", "USS Eisenhower aircraft carrier", "Abadan oil refinery Iran". Max 4 per briefing. Place immediately before the narrate action it illustrates.
+
+PLACED EVENTS — you geocode and place these yourself:
+- { "action": "place_event", "title": string, "lat": number, "lon": number, "type": "conflict"|"maritime"|"political"|"humanitarian"|"infrastructure"|"economic"|"military", "severity": "critical"|"significant"|"elevated"|"low", "source": string, "summary": string }
+  Place an intelligence event marker at the exact coordinates you determine. Use your geographic knowledge to geocode accurately.
+  title: short headline (max 80 chars). summary: 1-2 sentence context.
+  CRITICAL: lat/lon must be accurate. "Attacks on Odesa port" → lat: 46.48, lon: 30.74. "Houthi drone strike Red Sea" → lat: 15.5, lon: 43.0.
+- { "action": "remove_event", "title": string }
+  Remove a previously placed event marker.
+- { "action": "click_event", "title": string }
+  Open a popup on a placed event to show the user its details.
+
+INDIVIDUAL DATA POINTS — existing tracked assets:
+- { "action": "show_chokepoint", "name": string }
+  Show a chokepoint polygon. Valid names from the chokepoints list in the snapshot.
+- { "action": "hide_chokepoint", "name": string }
+- { "action": "click_chokepoint", "name": string }
+  Open the detail panel for this chokepoint (simulates analyst clicking it).
+
+- { "action": "show_vessel", "mmsi": string, "name": string }
+  Show a tracked vessel by MMSI from the vessels list.
+- { "action": "hide_vessel", "mmsi": string }
+- { "action": "click_vessel", "mmsi": string }
+  Open the detail panel for this vessel.
+
+- { "action": "show_aircraft", "icao24": string, "callsign": string }
+  Show a tracked aircraft by ICAO24 from the aircraft list.
+- { "action": "hide_aircraft", "icao24": string }
+- { "action": "click_aircraft", "icao24": string }
+  Open the detail panel for this aircraft.
+
+- { "action": "show_infrastructure", "id": string, "type": string, "name": string, "lat": number, "lon": number }
+  Show an infrastructure point. Type: "airport"|"port"|"military"|"power_plant"|"other".
+- { "action": "hide_infrastructure", "id": string }
+- { "action": "click_infrastructure", "name": string }
+  Open the detail panel for this infrastructure item.
+
+- { "action": "clear_all" }
+  Remove all shown items and placed events. Use when transitioning between major topics.
+
+DRAWING — annotate the map:
+- { "action": "draw_line", "points": [[lat,lon],...], "color": string, "label": string, "dashed": boolean }
+  Route, shipping lane, patrol line, supply corridor. For shipping/transit routes the line will be animated.
+- { "action": "draw_circle", "center": [lat,lon], "radius_km": number, "color": string, "label": string, "fill": boolean }
+  Threat radius, exclusion zone, area of influence.
+- { "action": "draw_arrow", "from": [lat,lon], "to": [lat,lon], "color": string, "label": string }
+  Force movement, advance direction, supply vector.
+- { "action": "draw_polygon", "points": [[lat,lon],...], "color": string, "label": string, "fill": boolean }
+  Contested zone, operational area, territorial claim.
+- { "action": "clear_drawings" }
+  Remove all drawings.
+
+COUNTRY HIGHLIGHTING:
+- { "action": "highlight_country", "name": string, "context": "conflict"|"allied"|"neutral"|"focus", "label": string }
+  Pulsing overlay on an entire country. Use names from available_countries in the snapshot.
+  "conflict" = red (hostile/aggressor), "allied" = green (cooperative), "neutral" = amber (relevant neutral), "focus" = blue (primary subject).
+- { "action": "unhighlight_country", "name": string }
+- { "action": "clear_country_highlights" }
+
+SATELLITE:
+- { "action": "show_satellite", "lat": number, "lon": number, "zoom": number, "label": string }
+  Enable satellite imagery and fly to location.
+- { "action": "hide_satellite" }
+- { "action": "analyse_satellite", "lat": number, "lon": number, "radius_km": number, "label": string }
+  Visual analysis of satellite view. Max 2 per briefing — only for high-value locations.
+
+SUMMARY — always the final action:
+- { "action": "summary", "title": string, "sections": [{ "heading": string, "text": string }], "predictions": [{ "prediction": string, "confidence": "high"|"medium"|"low", "basis": string }] }
+  2-4 predictions, each citing specific evidence from the session.
+
+CINEMATOGRAPHY RULES:
+1. ALWAYS begin with { "action": "clear_all" }.
+2. Build scenes progressively: fly_to → highlight_country → place_event (or show_ for tracked assets) → click_ → narrate → draw annotations.
+3. Between major topics: clear_drawings → clear_country_highlights → clear_all.
+4. NEVER use toggle_layer. Always use individual show_ / place_event actions.
+5. Use place_event for ALL news events you decide to include — geocode them yourself with precision.
+6. Use show_context_card only for events that genuinely have no locatable geography (e.g., a diplomatic statement with no location).
+7. When mentioning a chokepoint, vessel, aircraft, or infrastructure item — always click_ it to open its detail panel. Sequence: fly_to → show_ → highlight_country → click_ → narrate.
+8. COUNTRY HIGHLIGHTS: highlight all parties when discussing a conflict. Use appropriate context values. Always clear_country_highlights before a new geopolitical topic.
+9. draw_* to illustrate analysis: shipping lanes (draw_line with route label for animation), threat radii (draw_circle), advance vectors (draw_arrow), contested zones (draw_polygon).
+10. analyse_satellite sparingly — max 2 per briefing, military bases and ports only.
+11. End ALWAYS with summary including predictions citing specific evidence.
+12. Narration: 3-5 sentences, senior analyst voice, precise consequences, named locations and figures.
+13. Total sequence: 35-55 actions for a thorough briefing.
+14. Respond ONLY with the JSON array — no preamble, no markdown fences."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 
@@ -196,11 +518,11 @@ Mission profile:
 - Context: {mission_context}
 - Threat level: {threat_level}
 
-Current intelligence snapshot:
+Intelligence snapshot (raw, unfiltered):
 {snapshot}
 
-Generate a director sequence as a JSON array of actions.
-Respond ONLY with the JSON array, no preamble, no markdown fences."""
+You are the analyst. Read raw_intelligence, decide what is geopolitically significant, and geocode events yourself using place_event. Use vessels/aircraft/chokepoints/infrastructure for tracked live assets. Build a cinematic briefing. Start with clear_all. End with summary.
+Respond ONLY with the JSON array — no preamble, no markdown fences."""
 
 
 def generate_sequence(
@@ -218,9 +540,11 @@ def generate_sequence(
 
     # Keep snapshot compact — truncate to prevent token blowout
     snapshot_str = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-    if len(snapshot_str) > 8000:
-        # Truncate surface_items if too long
-        snapshot["surface_items"] = snapshot.get("surface_items", [])[:10]
+    if len(snapshot_str) > 18000:
+        snapshot["raw_intelligence"] = snapshot.get("raw_intelligence", [])[:10]
+        snapshot["vessels"] = snapshot.get("vessels", [])[:20]
+        snapshot["aircraft"] = snapshot.get("aircraft", [])[:10]
+        snapshot["infrastructure"] = snapshot.get("infrastructure", [])[:15]
         snapshot_str = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
@@ -233,7 +557,7 @@ def generate_sequence(
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=4000,
+        max_tokens=6000,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )
@@ -338,5 +662,11 @@ def sequence_to_transcript(sequence: dict) -> str:
             for section in action.get("sections", []):
                 lines.append(f"\n### {section.get('heading', '')}")
                 lines.append(section.get("text", ""))
+            predictions = action.get("predictions") or []
+            if predictions:
+                lines.append("\n### Predictions")
+                for p in predictions:
+                    conf = p.get("confidence", "medium").upper()
+                    lines.append(f"- [{conf}] {p.get('prediction', '')} — {p.get('basis', '')}")
 
     return "\n".join(lines)

@@ -12,6 +12,9 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react"
+import ttsService from "../services/ttsService.js"
+
+const VOICE_STORAGE_KEY = "hw-director-voice"
 
 const MODAL_STYLES = `
 @keyframes director-diamond-pulse {
@@ -212,6 +215,58 @@ const MODAL_STYLES = `
 }
 .director-retry-btn:hover { background: rgba(245,158,11,0.2); }
 
+/* ── Voice selector ── */
+.director-voice-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.director-voice-label {
+  font-size: 12px;
+  color: rgba(160,180,220,0.6);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.director-voice-select {
+  flex: 1;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: #d0e4ff;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='rgba(160,180,220,0.5)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+  transition: border-color 0.15s;
+}
+.director-voice-select:focus { border-color: rgba(245,158,11,0.45); }
+.director-voice-select option { background: #0d1a35; color: #d0e4ff; }
+.director-voice-test-btn {
+  white-space: nowrap;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid rgba(56,139,255,0.2);
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(160,180,220,0.65);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.director-voice-test-btn:hover:not([disabled]) {
+  background: rgba(56,139,255,0.1);
+  color: #b0c8ff;
+  border-color: rgba(56,139,255,0.35);
+}
+.director-voice-test-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+
 @media (max-width: 768px) {
   .director-blur-overlay {
     align-items: flex-start;
@@ -284,11 +339,36 @@ export default function DirectorModal({
     error      = null,
 }) {
     // "prompt" | "loading" | "dissolving"
-    const [phase,   setPhase]   = useState("prompt")
-    const [intent,  setIntent]  = useState("")
-    const textareaRef           = useRef(null)
-    const dissolveTimerRef      = useRef(null)
-    const phaseRef              = useRef("prompt")
+    const [phase,     setPhase]     = useState("prompt")
+    const [intent,    setIntent]    = useState("")
+    const [isTesting, setIsTesting] = useState(false)
+    const [voice,     setVoice]     = useState(() => {
+        const saved = localStorage.getItem(VOICE_STORAGE_KEY)
+        return saved || ttsService.voicePreference || "british_male"
+    })
+    const textareaRef      = useRef(null)
+    const dissolveTimerRef = useRef(null)
+    const phaseRef         = useRef("prompt")
+
+    // Apply saved voice on mount
+    useEffect(() => {
+        const saved = localStorage.getItem(VOICE_STORAGE_KEY)
+        if (saved) ttsService.setVoice(saved)
+    }, [])
+
+    const handleVoiceChange = useCallback((e) => {
+        const val = e.target.value
+        setVoice(val)
+        ttsService.setVoice(val)
+        localStorage.setItem(VOICE_STORAGE_KEY, val)
+    }, [])
+
+    const handleTest = useCallback(async () => {
+        if (isTesting) return
+        setIsTesting(true)
+        await ttsService.speak("Horizon Watch Director Mode activated. Standing by for briefing.")
+        setIsTesting(false)
+    }, [isTesting])
 
     const updatePhase = (next) => {
         phaseRef.current = next
@@ -390,6 +470,26 @@ export default function DirectorModal({
                             ))}
                         </div>
 
+                        {/* Voice selector */}
+                        <div className="director-voice-row">
+                            <span className="director-voice-label">Voice:</span>
+                            <select
+                                className="director-voice-select"
+                                value={voice}
+                                onChange={handleVoiceChange}
+                            >
+                                {ttsService.getAvailableVoices().map(v => (
+                                    <option key={v.id} value={v.id}>{v.label} — {v.description}</option>
+                                ))}
+                            </select>
+                            <button
+                                className="director-voice-test-btn"
+                                type="button"
+                                disabled={isTesting}
+                                onClick={handleTest}
+                            >{isTesting ? "…" : "▶ Test"}</button>
+                        </div>
+
                         <div className="director-modal-actions">
                             <button className="director-modal-cancel" onClick={onClose} type="button">
                                 Cancel
@@ -400,7 +500,7 @@ export default function DirectorModal({
                                 onClick={handleBegin}
                                 type="button"
                             >
-                                Begin
+                                Begin ▶
                             </button>
                         </div>
                     </div>

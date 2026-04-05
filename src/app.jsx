@@ -32,6 +32,7 @@ import BottomNav from "./components/BottomNav.jsx"
 import MobileDrawer from "./components/MobileDrawer.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
 import DirectorBar from "./components/DirectorBar.jsx"
+import DirectorSidebar from "./components/DirectorSidebar.jsx"
 import DirectorModal from "./components/DirectorModal.jsx"
 import DirectorSubtitle from "./components/DirectorSubtitle.jsx"
 import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDirectorSequence } from "./services/commandRunner.js"
@@ -151,10 +152,28 @@ export default function App() {
     const [directorRunnerState,    setDirectorRunnerState]    = useState({ isPlaying: false, currentIndex: -1, total: 0 })
     const [directorCurrentAction,  setDirectorCurrentAction]  = useState(null)
     const [directorIndicators,     setDirectorIndicators]     = useState([])
+    const [directorContextCards,   setDirectorContextCards]   = useState([])
     const [directorGenerating,     setDirectorGenerating]     = useState(false)
     const [directorSavedStatus,    setDirectorSavedStatus]    = useState(null)
     const [directorModalOpen,      setDirectorModalOpen]      = useState(false)
     const [directorError,          setDirectorError]          = useState(null)
+    // Granular director items — what's individually visible on the map
+    const _emptyDirectorItems = () => ({
+        chokepoints:         new Set(),
+        events:              new Set(),
+        infrastructure:      new Map(),
+        vessels:             new Set(),
+        aircraft:            new Set(),
+        satellite:           false,
+        detailPanel:         null,
+        highlightedCountries: new Map(),  // name → { context, label }
+        placedEvents:        new Map(),   // title → { title, lat, lon, type, severity, source, summary }
+    })
+    const [directorItems, setDirectorItems] = useState(_emptyDirectorItems)
+    // directorSegments: ordered history of all narrate/summary actions played so far
+    const [directorSegments, setDirectorSegments] = useState([])
+    // directorImage: current image to show in sidebar {url, caption, attribution, loading}
+    const [directorImage, setDirectorImage] = useState(null)
     const mapInstanceRef = useRef(null)
     const directorRunnerRef = useRef(null)
     const directorLayerSnapshotRef = useRef(null)
@@ -810,16 +829,24 @@ export default function App() {
         setDirectorHighlights([])
         setDirectorCurrentAction(null)
         setDirectorIndicators([])
+        setDirectorContextCards([])
+        setDirectorItems(_emptyDirectorItems())
+        setDirectorSegments([])
+        setDirectorImage(null)
         setDirectorRunnerState({ isPlaying: false, currentIndex: -1, total: 0 })
         setDirectorModalOpen(false)
         setDirectorError(null)
-    }, [])
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorGenerate = useCallback(async (intent) => {
         setDirectorError(null)
         setDirectorGenerating(true)
         setDirectorCurrentAction(null)
         setDirectorIndicators([])
+        setDirectorContextCards([])
+        setDirectorItems(_emptyDirectorItems())
+        setDirectorSegments([])
+        setDirectorImage(null)
         setDirectorSavedStatus(null)
         // snapshot current layer overrides before director takes over
         directorLayerSnapshotRef.current = { ...directorLayerOverrides }
@@ -832,15 +859,49 @@ export default function App() {
             // Destroy old runner if any
             if (directorRunnerRef.current) directorRunnerRef.current.destroy()
 
+            // segIdx counter ref — incremented each narrate/summary
+            let segIdx = 0
             const runner = new CommandRunner({
                 mapRef:            mapInstanceRef,
+                setDirectorItems,
                 setLayerOverrides: setDirectorLayerOverrides,
                 setHighlights:     setDirectorHighlights,
                 surfaceItems,
-                onNarrate:   (action) => setDirectorCurrentAction(action),
-                onIndicator: (action) => setDirectorIndicators(prev => [...prev, action]),
-                onStateChange: (state) => setDirectorRunnerState(state),
-                onComplete:  () => {},
+                onNarrate: (action) => {
+                    setDirectorCurrentAction(action)
+                    const idx = segIdx++
+                    setDirectorSegments(prev => [...prev, { action, segIdx: idx }])
+                    setDirectorImage(null)  // clear image on new segment
+                },
+                onIndicator:  (action) => setDirectorIndicators(prev => [...prev, action]),
+                onContextCard:(action) => setDirectorContextCards(prev => [...prev, action]),
+                onStateChange:(state)  => setDirectorRunnerState(state),
+                onDetailPanel:(panel)  => setDirectorItems(prev => ({ ...prev, detailPanel: panel })),
+                onImage:      (img)    => setDirectorImage(img),
+                onOpenDetail: (type, id) => {
+                    // Find and open the correct item in the existing right-panel detail system
+                    if (type === "event" || type === "chokepoint" || type === "vessel" || type === "aircraft" || type === "infrastructure") {
+                        const item = surfaceItems.find(s =>
+                            s.id === id || s.url === id || s.mmsi === id || s.icao24 === id || s.name === id
+                        ) || surfaceItems.find(s =>
+                            String(s.id || "").includes(id) || String(s.mmsi || "") === String(id) ||
+                            (s.headline || s.title || "").toLowerCase().includes((id || "").toLowerCase())
+                        )
+                        if (item) {
+                            setSelectedSurface(item)
+                            setRightPanel("detail")
+                            setSurfaceContext(null)
+                            setSurfaceEnrichment(null)
+                        }
+                    }
+                },
+                onCloseDetail: () => {
+                    setRightPanel(null)
+                    setSelectedSurface(null)
+                    setSurfaceContext(null)
+                    setSurfaceEnrichment(null)
+                },
+                onComplete:   () => {},
             })
             runner.load(sequence)
             directorRunnerRef.current = runner
@@ -851,7 +912,7 @@ export default function App() {
         } finally {
             setDirectorGenerating(false)
         }
-    }, [surfaceItems, directorLayerOverrides])
+    }, [surfaceItems, directorLayerOverrides, setDirectorItems]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorSave = useCallback(async () => {
         if (!directorSequence) return
@@ -892,6 +953,15 @@ export default function App() {
             overflow:      "hidden",
             fontFamily:    "system-ui, -apple-system, sans-serif",
         }}>
+        <style>{`
+          @keyframes dir-panel-slide-in {
+            from { transform: translateX(100%); opacity: 0; }
+            to   { transform: translateX(0);    opacity: 1; }
+          }
+          .director-detail-panel-enter {
+            animation: dir-panel-slide-in 400ms ease-out forwards;
+          }
+        `}</style>
             {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
             {/* Auth gate — show login until token verified */}
             {authChecked && !currentUser && (
@@ -1023,6 +1093,19 @@ export default function App() {
                         onMapReady={(map) => { mapInstanceRef.current = map }}
                         directorLayerOverrides={directorLayerOverrides}
                         directorHighlights={directorHighlights}
+                        directorItems={directorItems}
+                        isDirectorMode={directorVisible}
+                    />
+                    <DirectorSidebar
+                        visible={directorVisible}
+                        currentAction={directorCurrentAction}
+                        segments={directorSegments}
+                        indicators={directorIndicators}
+                        contextCards={directorContextCards}
+                        currentImage={directorImage}
+                        generating={directorGenerating}
+                        runnerState={directorRunnerState}
+                        onGenerate={handleDirectorGenerate}
                     />
                     <DirectorBar
                         visible={directorVisible}
@@ -1031,11 +1114,13 @@ export default function App() {
                         runnerState={directorRunnerState}
                         currentAction={directorCurrentAction}
                         indicators={directorIndicators}
+                        contextCards={directorContextCards}
                         generating={directorGenerating}
                         onGenerate={handleDirectorGenerate}
                         onSave={handleDirectorSave}
                         onClose={handleDirectorClose}
                         savedStatus={directorSavedStatus}
+                        controlsOnly={true}
                     />
                     <DirectorSubtitle
                         visible={directorVisible}
@@ -1090,7 +1175,10 @@ export default function App() {
                             setSurfaceContext(null)
                             setSurfaceEnrichment(null)
                         }}
-                        panelStyle={panelStyle}
+                        panelStyle={directorVisible
+                            ? { ...panelStyle, animation: "dir-panel-slide-in 400ms ease-out forwards" }
+                            : panelStyle
+                        }
                         onContextUpdate={handleContextUpdate}
                         onEnrichmentUpdate={handleEnrichmentUpdate}
                     />

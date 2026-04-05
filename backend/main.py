@@ -2842,6 +2842,8 @@ async def director_snapshot():
         adsb_cache_latest=adsb_latest,
         event_store_fn=es.get_active_events,
         active_profile=_ACTIVE_PROFILE,
+        static_airports=_STATIC_AIRPORTS,
+        static_ports=_STATIC_PORTS,
     )
     return snapshot
 
@@ -2881,6 +2883,8 @@ async def director_generate(
             adsb_cache_latest=adsb_latest,
             event_store_fn=es.get_active_events,
             active_profile=_ACTIVE_PROFILE,
+            static_airports=_STATIC_AIRPORTS,
+            static_ports=_STATIC_PORTS,
         )
 
     loop = asyncio.get_event_loop()
@@ -2939,6 +2943,240 @@ async def director_transcript(seq_id: str):
     text = _director_svc.sequence_to_transcript(seq)
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse(text)
+
+
+# ── Director satellite analysis ───────────────────────────────────────────────
+
+# Cache: (lat_r3, lon_r3) → {observations, timestamp}
+_SAT_ANALYSIS_CACHE: dict[str, dict] = {}
+_SAT_ANALYSIS_CACHE_TTL = 6 * 3600  # 6 hours
+
+
+@app.post("/api/director/analyse-satellite")
+async def director_analyse_satellite(
+    request: Request,
+    current_user=Depends(require_approved_user),
+):
+    """Capture a Sentinel-2 tile at lat/lon and run Claude Vision analysis."""
+    if not client:
+        raise HTTPException(503, "Claude client not configured")
+
+    body = await request.json()
+    lat       = float(body.get("lat", 0))
+    lon       = float(body.get("lon", 0))
+    radius_km = float(body.get("radius_km", 5))
+    label     = str(body.get("label", "") or "")[:100]
+
+    # Cache key — round to 3 decimal places (~100m)
+    cache_key = f"{lat:.3f},{lon:.3f}"
+    now = time.time()
+    cached = _SAT_ANALYSIS_CACHE.get(cache_key)
+    if cached and (now - cached.get("ts", 0)) < _SAT_ANALYSIS_CACHE_TTL:
+        return {
+            "observations": cached["observations"],
+            "location": {"lat": lat, "lon": lon},
+            "label": label,
+            "timestamp": cached["timestamp"],
+            "cached": True,
+        }
+
+    # Build Sentinel-2 WMS tile URL (256×256 PNG, zoom ~14)
+    # Using the Copernicus WMS through the app's existing /sentinel proxy pattern
+    # We request a tile via the OGC WMS interface
+    import math as _math
+    zoom = 14
+    # Convert lat/lon to tile numbers
+    lat_r = _math.radians(lat)
+    n = 2 ** zoom
+    tile_x = int((lon + 180.0) / 360.0 * n)
+    tile_y = int((1.0 - _math.log(_math.tan(lat_r) + 1.0 / _math.cos(lat_r)) / _math.pi) / 2.0 * n)
+
+    # Sentinel-2 CloudFree WMS (public, no auth required for basic tiles)
+    # Use BBOX approach for better control
+    def _tile_to_latlon(x, y, z):
+        n2 = 2 ** z
+        lon_deg = x / n2 * 360.0 - 180.0
+        lat_rad = _math.atan(_math.sinh(_math.pi * (1 - 2 * y / n2)))
+        lat_deg = _math.degrees(lat_rad)
+        return lat_deg, lon_deg
+
+    lat_max, lon_min = _tile_to_latlon(tile_x, tile_y, zoom)
+    lat_min, lon_max = _tile_to_latlon(tile_x + 1, tile_y + 1, zoom)
+    bbox = f"{lon_min},{lat_min},{lon_max},{lat_max}"
+
+    wms_url = (
+        "https://services.sentinel-hub.com/ogc/wms/ed64bf38-0a00-43a2-a1e2-b89eba4c4d4e"
+        "?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap"
+        "&LAYERS=TRUE-COLOR&FORMAT=image/png&WIDTH=256&HEIGHT=256"
+        f"&CRS=EPSG:4326&BBOX={lat_min},{lon_min},{lat_max},{lon_max}"
+    )
+    # Fallback to a public Sentinel-2 WMS (EO Browser style)
+    wms_url_fallback = (
+        "https://sh.dataspace.copernicus.eu/ogc/wms/0d2a0c5e-4809-40be-9b47-c1e7e8a73778"
+        "?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0"
+        "&LAYERS=TRUE-COLOR&FORMAT=image/png&WIDTH=256&HEIGHT=256"
+        f"&CRS=EPSG:4326&BBOX={lat_min},{lon_min},{lat_max},{lon_max}"
+    )
+
+    image_b64 = None
+    import base64 as _base64
+
+    for url in (wms_url, wms_url_fallback):
+        try:
+            resp = httpx.get(
+                url,
+                timeout=15,
+                headers={"User-Agent": "HorizonWatch/2.0 satellite-analysis"},
+                follow_redirects=True,
+            )
+            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                image_b64 = _base64.b64encode(resp.content).decode("utf-8")
+                break
+        except Exception:
+            continue
+
+    observations = ""
+    if image_b64:
+        try:
+            loop = asyncio.get_event_loop()
+            vision_msg = await loop.run_in_executor(
+                _executor,
+                lambda: client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=400,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": image_b64,
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"You are a satellite imagery analyst. Analyze this Sentinel-2 satellite "
+                                    f"image centered at {lat:.4f}, {lon:.4f} ({label}). "
+                                    "Describe what you observe: terrain, structures, vessels, vehicles, "
+                                    "activity patterns, any notable features. "
+                                    "Keep your analysis to 3-5 concise observations. "
+                                    "If the image is cloudy or unclear, say so."
+                                ),
+                            },
+                        ],
+                    }],
+                ),
+            )
+            observations = vision_msg.content[0].text.strip()
+            usage_tracker.record_call(
+                vision_msg.usage.input_tokens,
+                vision_msg.usage.output_tokens,
+                call_type="satellite_analysis",
+                headline=f"Sat analysis: {label or f'{lat:.3f},{lon:.3f}'}",
+            )
+        except Exception as exc:
+            observations = f"Satellite imagery analysis unavailable: {exc}"
+    else:
+        observations = "Satellite imagery could not be retrieved for this location at this time."
+
+    ts = datetime.now(timezone.utc).isoformat()
+    _SAT_ANALYSIS_CACHE[cache_key] = {
+        "observations": observations,
+        "ts": now,
+        "timestamp": ts,
+    }
+    return {
+        "observations": observations,
+        "location": {"lat": lat, "lon": lon},
+        "label": label,
+        "timestamp": ts,
+        "cached": False,
+    }
+
+
+# ── Director image search (Wikimedia Commons) ────────────────────────────────
+
+_IMG_SEARCH_CACHE: dict = {}      # query → {result, ts}
+_IMG_SEARCH_TTL   = 24 * 3600    # 24-hour cache
+_IMG_SEARCH_LAST  = 0.0          # rate-limit: 1 req per 2s
+_IMG_SEARCH_LOCK  = threading.Lock()
+
+
+def _wikimedia_image_search(query: str) -> dict | None:
+    """Fetch first suitable image from Wikimedia Commons. Returns dict or None."""
+    url = (
+        "https://commons.wikimedia.org/w/api.php?"
+        "action=query&generator=search&gsrsearch=" + urllib.parse.quote(query) +
+        "&gsrnamespace=6&gsrlimit=5"
+        "&prop=imageinfo&iiprop=url%7Cextmetadata&iiurlwidth=700"
+        "&format=json"
+    )
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "NAGINI/2.0 (intelligence platform)"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = _json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+    pages = (data.get("query") or {}).get("pages") or {}
+    if not pages:
+        return None
+
+    for page in pages.values():
+        info_list = page.get("imageinfo") or []
+        if not info_list:
+            continue
+        info = info_list[0]
+        thumb = info.get("thumburl") or info.get("url")
+        if not thumb:
+            continue
+        # Skip SVGs and tiny images
+        if thumb.lower().endswith(".svg"):
+            continue
+        ext_meta = info.get("extmetadata") or {}
+        desc_short = (ext_meta.get("ImageDescription") or {}).get("value") or ""
+        # Strip HTML tags from description
+        caption = re.sub(r"<[^>]+>", "", desc_short).strip()[:180] or query
+        artist_raw = (ext_meta.get("Artist") or {}).get("value") or ""
+        artist = re.sub(r"<[^>]+>", "", artist_raw).strip()[:80]
+        attribution = f"© {artist} / Wikimedia Commons" if artist else "Wikimedia Commons"
+        return {
+            "image_url":   thumb,
+            "caption":     caption,
+            "source":      "wikimedia",
+            "attribution": attribution,
+        }
+    return None
+
+
+@app.get("/api/director/image-search")
+async def director_image_search(
+    q: str = Query(..., min_length=2, max_length=200),
+    current_user=Depends(require_approved_user),
+):
+    """Search Wikimedia Commons for a contextual image matching the query."""
+    global _IMG_SEARCH_LAST
+    now = time.time()
+
+    # Check cache
+    cached = _IMG_SEARCH_CACHE.get(q)
+    if cached and (now - cached["ts"]) < _IMG_SEARCH_TTL:
+        return cached["result"] or {"image_url": None}
+
+    # Rate limit: 1 request per 2 seconds
+    with _IMG_SEARCH_LOCK:
+        elapsed = time.time() - _IMG_SEARCH_LAST
+        if elapsed < 2.0:
+            import asyncio as _aio
+            await _aio.sleep(2.0 - elapsed)
+        _IMG_SEARCH_LAST = time.time()
+
+    result = _wikimedia_image_search(q)
+    _IMG_SEARCH_CACHE[q] = {"result": result, "ts": now}
+    return result or {"image_url": None}
 
 
 # ── Real-time alert helpers ───────────────────────────────────────────────────
