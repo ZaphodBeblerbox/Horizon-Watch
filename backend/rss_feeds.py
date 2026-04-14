@@ -108,6 +108,22 @@ ADDITIONAL_SCAN_FEEDS = [
     ("DW World English", "https://rss.dw.com/rdf/rss-en-world"),
 ]
 
+# City-specific feeds. Each entry: (source_name, url, country, city, default_lat, default_lon)
+# Gate 0 security keyword filter is bypassed for these — Claude scores relevance instead.
+LOCAL_CITY_FEEDS = [
+    # Paris
+    ("Le Parisien", "https://www.leparisien.fr/arc/outboundfeeds/rss/category/paris-75.xml", "France", "Paris", 48.8566, 2.3522),
+    ("20 Minutes Paris", "https://www.20minutes.fr/feeds/rss-paris.xml", "France", "Paris", 48.8566, 2.3522),
+    ("BFMTV Paris", "https://www.bfmtv.com/paris/rss/", "France", "Paris", 48.8566, 2.3522),
+    ("France24 France", "https://www.france24.com/fr/france/rss", "France", "Paris", 48.8566, 2.3522),
+
+    # Berlin
+    ("Tagesspiegel Berlin", "https://www.tagesspiegel.de/berlin/feed.rss", "Germany", "Berlin", 52.5200, 13.4050),
+    ("Berliner Zeitung", "https://www.berliner-zeitung.de/feed.xml", "Germany", "Berlin", 52.5200, 13.4050),
+    ("Berliner Morgenpost", "https://www.morgenpost.de/berlin/rss", "Germany", "Berlin", 52.5200, 13.4050),
+    ("RBB24 Berlin", "https://www.rbb24.de/politik/feed.xml", "Germany", "Berlin", 52.5200, 13.4050),
+]
+
 _BASE_FEEDS = list(ADDITIONAL_SCAN_FEEDS)
 
 # ----------------

@@ -565,11 +565,35 @@ RULE 5 — STANDARD RULES:
 - Use show_context_card only for events that genuinely have no locatable geography.
 - When mentioning a chokepoint, vessel, aircraft → ALWAYS click_ it. Mandatory sequence: fly_to → show_chokepoint → click_chokepoint → narrate. Never narrate a chokepoint without clicking it first. Valid chokepoints: Strait of Hormuz, Bab el-Mandeb, Suez Canal, Mozambique Channel, Cape of Good Hope, Strait of Gibraltar, Turkish Straits, English Channel, Oresund, Strait of Malacca, Taiwan Strait, Korea Strait, Panama Canal.
 - draw_* to illustrate analysis: shipping lanes (draw_line with route/shipping/transit label for animation), threat radii (draw_circle), advance vectors (draw_arrow), contested zones (draw_polygon).
-- analyse_satellite sparingly — max 2 per briefing, military bases and ports only.
+- analyse_satellite sparingly — max 3 per briefing, military bases, ports, and strike locations only.
 - End ALWAYS with summary including 2-4 predictions citing specific evidence.
 - Narration: 3-5 sentences, senior analyst voice, precise consequences, named locations and figures.
-- Total sequence: 40-60 actions for a thorough briefing.
-- Respond ONLY with the JSON array — no preamble, no markdown fences."""
+- Total sequence: 50-80 actions for a thorough briefing.
+- Respond ONLY with the JSON array — no preamble, no markdown fences.
+
+═══════════════════════════════════════════════════════
+ENRICHED BRIEFING RULES — MAKE EVERY BRIEFING CINEMATIC:
+═══════════════════════════════════════════════════════
+
+IMAGES — Be generous, aim for 8-12 per briefing:
+- Use show_image for EVERY major location, facility, vessel, or event you discuss.
+- Every narration segment should have an accompanying show_image placed immediately before it.
+- Query format: facility + location = "Kharg Island oil terminal Iran", "Haifa Bay refinery Israel", "Camp Lemonnier Djibouti aerial", "USS Eisenhower aircraft carrier". Port = "Port of Aden aerial view". Chokepoint = "Strait of Hormuz shipping lane aerial". Country capital = "Tehran skyline Iran". Use the location field for search refinement.
+- When discussing a strike or attack: query the specific target facility.
+- When discussing a military unit or vessel: query its name and class.
+
+SATELLITE ANALYSIS — Use for high-value intelligence:
+- Use show_satellite then analyse_satellite for military bases, ports, oil terminals, nuclear facilities, and strike locations.
+- Always narrate what the satellite imagery reveals — specific observations about activity, infrastructure, or damage.
+- Sequence: fly_to → show_satellite → analyse_satellite → draw annotations → narrate with satellite findings.
+
+COMPLEX ANIMATIONS — Build layered scenes:
+- Shipping routes: draw the FULL multi-point path through all relevant chokepoints as one connected polyline (e.g. Persian Gulf → Hormuz → Gulf of Oman → Arabian Sea → Bab el-Mandeb → Red Sea → Suez Canal).
+- Missile/weapon ranges: draw_circle with the actual estimated range in km, labelled with the weapon system name.
+- Contested zones: draw_polygon around the area with descriptive label.
+- Troop/naval movements: draw_arrow with directional label. Use multiple arrows for multi-pronged operations.
+- Layer drawings progressively: infrastructure first → threat radii → movement vectors → contested zones.
+- For the Strait of Hormuz: draw the shipping lane polyline, show vessels using it, draw Iranian naval patrol zones as circles from Bandar Abbas, show anti-ship missile ranges from Iranian islands."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 

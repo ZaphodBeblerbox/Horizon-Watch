@@ -54,7 +54,7 @@ import feedparser
 from email.utils import parsedate_to_datetime
 
 from tanzania_context import get_context_for_prompt, get_minimal_context, get_full_context
-from rss_feeds import ADDITIONAL_SCAN_FEEDS, RSS_FEED_META
+from rss_feeds import ADDITIONAL_SCAN_FEEDS, RSS_FEED_META, LOCAL_CITY_FEEDS
 
 # ── Web push (optional — gracefully disabled if pywebpush not installed) ──────
 try:
@@ -447,7 +447,8 @@ _BRIEFING_RATE_LIMIT_S  = 7200    # 2 hours between manual regenerates
 _NEWS_CONFLICT_MARKERS: list = []
 _NEWS_ARTICLE_STORE: dict[str, dict] = {}   # url -> enriched article snapshot (may have lat/lon None)
 _NEWS_STORE_LOCK = threading.Lock()
-_PROCESSED_URLS: set = set()
+_PROCESSED_URLS: dict = {}       # url → timestamp (float), evicted after 72h
+_PROCESSED_URLS_TTL = 72 * 3600  # 72 hours in seconds
 _FIRST_EXTRACTION_DONE = False   # cleared on first cycle so all current articles are processed fresh
 _executor = ThreadPoolExecutor(max_workers=4)   # for blocking I/O in sync extraction
 _NEWS_STORE_MAX_ARTICLES = 2000
@@ -1405,7 +1406,7 @@ Keep the entire response under 400 tokens. Be specific and analytical."""
 # ── /news ─────────────────────────────────────────────────────────────────────
 
 _news_cache: dict = {}
-NEWS_CACHE_TTL = 15 * 60  # seconds
+NEWS_CACHE_TTL = 5 * 60  # seconds (reduced from 15m to 5m for fresher data)
 
 # Translation cache: original title → (translated_title, detected_lang)
 _translation_cache: dict[str, tuple[str, str]] = {}
@@ -3999,10 +4000,21 @@ for source_name, feed_url in ADDITIONAL_SCAN_FEEDS:
     _seen_feed_urls.add(feed_url)
     _SCAN_FEED_REGION[feed_url] = _infer_feed_region(source_name, feed_url)
 
+# Local city feeds: bypass Gate 0 keyword filter, use city coordinates as default geocode
+# Lookup: url → (country, city, default_lat, default_lon)
+_LOCAL_FEED_CITY: dict[str, tuple[str, str, float, float]] = {}
+for source_name, feed_url, country, city, city_lat, city_lon in LOCAL_CITY_FEEDS:
+    if not feed_url or feed_url in _seen_feed_urls:
+        continue
+    _SCAN_FEEDS.append((source_name, feed_url))
+    _seen_feed_urls.add(feed_url)
+    _SCAN_FEED_REGION[feed_url] = "europe"
+    _LOCAL_FEED_CITY[feed_url] = (country, city, city_lat, city_lon)
+
 _feed_regions_counter = Counter(_SCAN_FEED_REGION.values())
 print(
     f"[feeds] scan registry loaded {len(_SCAN_FEEDS)} total feeds "
-    f"({len(ADDITIONAL_SCAN_FEEDS)} additional candidates) regions={dict(_feed_regions_counter)}"
+    f"({len(ADDITIONAL_SCAN_FEEDS)} additional candidates, {len(_LOCAL_FEED_CITY)} local-city) regions={dict(_feed_regions_counter)}"
 )
 
 
@@ -4180,7 +4192,11 @@ def _prune_news_article_store(max_items: int = _NEWS_STORE_MAX_ARTICLES) -> None
         keep = dict(sorted_items[:max_items])
         _NEWS_ARTICLE_STORE.clear()
         _NEWS_ARTICLE_STORE.update(keep)
-    _PROCESSED_URLS.intersection_update(set(_NEWS_ARTICLE_STORE.keys()))
+    # Evict processed URL entries older than 72h so the cache doesn't block new articles
+    _cutoff = time.time() - _PROCESSED_URLS_TTL
+    stale_urls = [u for u, ts in _PROCESSED_URLS.items() if ts < _cutoff]
+    for _su in stale_urls:
+        _PROCESSED_URLS.pop(_su, None)
 
 
 def _upsert_news_article(article: dict) -> None:
@@ -4314,7 +4330,9 @@ def _run_news_conflict_extraction_sync():
     # On the very first cycle, clear processed URLs so all current articles are evaluated fresh
     if not _FIRST_EXTRACTION_DONE:
         _PROCESSED_URLS.clear()
-        print("[news-conflicts] First cycle — processed URL cache cleared")
+        print(f"[news-conflicts] First cycle — processed URL cache cleared")
+    else:
+        print(f"[news-conflicts] Processed URL cache size: {len(_PROCESSED_URLS)}")
 
     # Purge stale markers at start of each cycle
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -4389,12 +4407,26 @@ def _run_news_conflict_extraction_sync():
                 published_iso = datetime.now(timezone.utc).isoformat()
             expires_iso = (datetime.now(timezone.utc) + timedelta(hours=_NEWS_MARKER_WINDOW_HOURS)).isoformat()
 
-            _PROCESSED_URLS.add(url)
+            _PROCESSED_URLS[url] = time.time()
 
-            # ── Gate 0: headline security relevance ───────────────────────────
-            if not _gate0_passes(title, summary):
-                print(f"[gate0] REJECT '{title[:80]}' (no security keywords) [{source_name}]")
-                continue
+            # ── Freshness filter: skip articles older than 48 hours ───────────
+            try:
+                pub_age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(published_iso)).total_seconds() / 3600
+                if pub_age_h > 48:
+                    continue
+            except Exception:
+                pass
+
+            # ── Local city feed: bypass Gate 0, use city coords as default geocode ──
+            _city_meta = _LOCAL_FEED_CITY.get(feed_url)
+            if _city_meta:
+                # Skip security keyword gate for local city feeds
+                _city_country, _city_name, _city_lat, _city_lon = _city_meta
+            else:
+                # ── Gate 0: headline security relevance ──────────────────────
+                if not _gate0_passes(title, summary):
+                    print(f"[gate0] REJECT '{title[:80]}' (no security keywords) [{source_name}]")
+                    continue
 
             # ── Event type pre-classification ─────────────────────────────────
             article_event_type = _classify_event_type(title, summary)
@@ -4404,16 +4436,25 @@ def _run_news_conflict_extraction_sync():
                 print(f"[feed] Nominatim cap ({MAX_NOM_CALLS}) reached — continuing feed scan with cached geocodes/fallback only")
                 nom_cap_logged = True
 
-            stats_before = get_geocode_stats()
-            geo, winning_candidate, candidates, meta = _geocode_from_text_blob(
-                title,
-                summary,
-                source_name=source_name,
-                feed_url=feed_url,
-                max_candidates=5,
-                allow_live_lookup=allow_live_lookup,
-            )
-            stats_after = get_geocode_stats()
+            # For local city feeds, use city coordinates directly (skip geocoding)
+            if _city_meta:
+                geo = {"lat": _city_lat, "lon": _city_lon, "display_name": _city_name, "type": "city_default"}
+                winning_candidate = _city_name
+                candidates = [_city_name]
+                meta = {"location_confidence": "city_feed", "resolved_country_code": None, "resolved_display_name": _city_name}
+                stats_before = get_geocode_stats()
+                stats_after = stats_before
+            else:
+                stats_before = get_geocode_stats()
+                geo, winning_candidate, candidates, meta = _geocode_from_text_blob(
+                    title,
+                    summary,
+                    source_name=source_name,
+                    feed_url=feed_url,
+                    max_candidates=5,
+                    allow_live_lookup=allow_live_lookup,
+                )
+                stats_after = get_geocode_stats()
             if stats_after["http_calls"] > stats_before["http_calls"]:
                 nom_calls += (stats_after["http_calls"] - stats_before["http_calls"])
             f_locations += len(candidates[:5])
@@ -5925,22 +5966,9 @@ def archive_document(doc_id: str):
     raise HTTPException(status_code=404, detail="Document not found")
 
 
-async def _daily_briefing_loop():
-    """Fire briefing generation once daily at 08:00 UTC."""
-    await asyncio.sleep(120)   # let pool + news settle on startup
-    while True:
-        now    = datetime.now(timezone.utc)
-        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
-        if now >= target:
-            target += timedelta(days=1)
-        wait_secs = (target - now).total_seconds()
-        print(f"[briefing] next daily generation in {wait_secs / 3600:.1f}h ({target.strftime('%Y-%m-%d %H:%M UTC')})")
-        await asyncio.sleep(wait_secs)
-        try:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(_executor, lambda: _generate_briefing_sync(manual=False))
-        except Exception as ex:
-            print(f"[briefing] daily generation error: {ex}")
+# Daily briefing loop removed — briefings are now Director Mode on-demand only.
+# Manual generation still available via POST /api/briefing/generate
+# async def _daily_briefing_loop(): ...
 
 
 async def _startup_warmup_tasks():
@@ -6663,7 +6691,7 @@ async def startup_event():
     asyncio.create_task(_extract_news_conflicts_loop())
     asyncio.create_task(_background_news_geocode_loop())
     asyncio.create_task(_surface_pool_loop())
-    asyncio.create_task(_daily_briefing_loop())
+    # _daily_briefing_loop removed — Director Mode generates briefings on demand
     asyncio.create_task(_oref_loop())
     asyncio.create_task(_usgs_loop())
     asyncio.create_task(_gdacs_loop())
@@ -10015,6 +10043,55 @@ def api_cables(
         }
 
     return {"cables": [summarise(f) for f in cables[:100]], "total": len(cables)}
+
+
+# ── Debug: feed freshness ─────────────────────────────────────────────────────
+
+@app.get("/api/debug/feed-freshness")
+async def debug_feed_freshness(current_user=Depends(require_approved_user)):
+    """Check each RSS feed's latest article age — shows which feeds are returning fresh content."""
+    import datetime as _dt
+    results = []
+    def _check_feed(args):
+        sn, fu = args
+        try:
+            parsed = feedparser.parse(fu, agent="Mozilla/5.0", request_headers={"Accept": "application/rss+xml, application/xml, text/xml"})
+            if not parsed.entries:
+                return {"feed": sn, "url": fu[:80], "entries": 0, "age_hours": None, "fresh": False}
+            entry = parsed.entries[0]
+            pp = entry.get("published_parsed") or entry.get("updated_parsed")
+            if pp:
+                pub_dt = _dt.datetime(*pp[:6], tzinfo=_dt.timezone.utc)
+                age_h = (_dt.datetime.now(_dt.timezone.utc) - pub_dt).total_seconds() / 3600
+            else:
+                age_h = None
+            return {
+                "feed":       sn,
+                "url":        fu[:80],
+                "entries":    len(parsed.entries),
+                "latest":     entry.get("title", "?")[:70],
+                "age_hours":  round(age_h, 1) if age_h is not None else None,
+                "fresh":      age_h is not None and age_h < 24,
+            }
+        except Exception as ex:
+            return {"feed": sn, "url": fu[:80], "error": str(ex)[:80], "fresh": False}
+
+    from concurrent.futures import ThreadPoolExecutor as _FreshTPE
+    import asyncio as _aio
+    loop = _aio.get_event_loop()
+    results = await loop.run_in_executor(
+        _executor,
+        lambda: list(_FreshTPE(max_workers=20).map(_check_feed, _SCAN_FEEDS)),
+    )
+    results.sort(key=lambda x: x.get("age_hours") or 9999)
+    fresh_count = sum(1 for r in results if r.get("fresh"))
+    return {
+        "total_feeds":  len(results),
+        "fresh_feeds":  fresh_count,
+        "stale_feeds":  len(results) - fresh_count,
+        "processed_url_cache_size": len(_PROCESSED_URLS),
+        "feeds": results,
+    }
 
 
 # ── Endpoints: Deployments ────────────────────────────────────────────────────

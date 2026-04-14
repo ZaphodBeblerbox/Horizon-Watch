@@ -6945,48 +6945,68 @@ export default function MapPage({
             focus:    { fill: "#2896ff", stroke: "#2896ff" },
         }
 
-        // Helper: match country name with normalization + aliases
-        const normalizeCountryName = (s) =>
-            (s || "").toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim()
+        // Helper: strict country name matching — no fuzzy includes(), only exact + alias + prefix
+        const normCN = (s) => (s || "").toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim()
 
-        const COUNTRY_ALIAS_GROUPS = {
-            "united states": ["united states of america", "usa", "us"],
-            "united kingdom": ["united kingdom of great britain and northern ireland", "uk", "great britain", "britain"],
-            "russia": ["russian federation"],
-            "iran": ["iran islamic republic of", "islamic republic of iran"],
-            "syria": ["syrian arab republic"],
-            "south korea": ["korea republic of", "republic of korea"],
-            "north korea": ["korea democratic peoples republic of", "democratic peoples republic of korea", "dem rep korea"],
-            "uae": ["united arab emirates"],
-            "saudi arabia": ["kingdom of saudi arabia"],
-            "turkey": ["turkiye", "republic of turkiye"],
-            "venezuela": ["venezuela bolivarian republic of"],
-            "bolivia": ["bolivia plurinational state of"],
-            "tanzania": ["united republic of tanzania"],
-            "vietnam": ["viet nam"],
-            "laos": ["lao peoples democratic republic"],
-            "ivory coast": ["cote divoire", "cote d ivoire"],
-            "congo": ["democratic republic of the congo", "republic of the congo"],
-            "palestine": ["state of palestine", "palestinian territories"],
-            "taiwan": ["taiwan province of china", "chinese taipei"],
-            "drc": ["democratic republic of the congo", "dr congo"],
-            "great britain": ["united kingdom"],
-        }
+        // Each group: ALL members are equivalent. Uses exact === only — prevents "us" matching "russia"
+        const ALIAS_GROUPS = [
+            ["iran", "iran islamic republic of", "islamic republic of iran"],
+            ["russia", "russian federation"],
+            ["united states", "united states of america", "usa"],
+            ["united kingdom", "united kingdom of great britain and northern ireland", "uk", "great britain", "britain"],
+            ["uae", "united arab emirates"],
+            ["turkey", "turkiye", "republic of turkiye"],
+            ["south korea", "korea republic of", "republic of korea"],
+            ["north korea", "korea democratic peoples republic of", "democratic peoples republic of korea", "dem rep korea"],
+            ["syria", "syrian arab republic"],
+            ["venezuela", "venezuela bolivarian republic of"],
+            ["bolivia", "bolivia plurinational state of"],
+            ["tanzania", "united republic of tanzania"],
+            ["vietnam", "viet nam"],
+            ["laos", "lao peoples democratic republic"],
+            ["ivory coast", "cote divoire", "cote d ivoire"],
+            ["drc", "democratic republic of the congo", "dr congo", "congo kinshasa"],
+            ["republic of the congo", "congo brazzaville"],
+            ["congo", "republic of the congo"],
+            ["palestine", "state of palestine", "palestinian territories"],
+            ["taiwan", "taiwan province of china", "chinese taipei"],
+            ["saudi arabia", "kingdom of saudi arabia"],
+            ["czech republic", "czechia"],
+            ["eswatini", "swaziland"],
+            ["myanmar", "burma"],
+            ["north macedonia", "macedonia", "republic of north macedonia"],
+            ["east timor", "timor leste"],
+        ]
 
         const matchFeature = (featureName, queryName) => {
             if (!featureName || !queryName) return false
-            const fn = normalizeCountryName(featureName)
-            const qn = normalizeCountryName(queryName)
+            const fn = normCN(featureName)
+            const qn = normCN(queryName)
             if (fn === qn) return true
-            if (fn.includes(qn) || qn.includes(fn)) return true
-            // Check alias groups
-            for (const [key, alts] of Object.entries(COUNTRY_ALIAS_GROUPS)) {
-                const allNames = [key, ...alts]
-                const fnMatch = allNames.some(a => fn === a || fn.includes(a))
-                const qnMatch = allNames.some(a => qn === a || qn.includes(a))
-                if (fnMatch && qnMatch) return true
+            // Strict alias lookup: both must appear (exact ===) in the SAME group
+            for (const group of ALIAS_GROUPS) {
+                if (group.some(a => fn === a) && group.some(a => qn === a)) return true
             }
+            // Prefix match: only if both >= 5 chars and one starts with the other
+            if (fn.length >= 5 && qn.length >= 5 && (fn.startsWith(qn) || qn.startsWith(fn))) return true
             return false
+        }
+
+        // Utility: compute approximate bounding box area for a GeoJSON feature
+        const getFeatureArea = (feature) => {
+            try {
+                const coords = []
+                const collect = (arr) => {
+                    if (!Array.isArray(arr)) return
+                    if (typeof arr[0] === "number") { coords.push(arr); return }
+                    arr.forEach(collect)
+                }
+                collect(feature.geometry?.coordinates)
+                if (!coords.length) return 0
+                const lons = coords.map(c => c[0])
+                const lats = coords.map(c => c[1])
+                return (Math.max(...lats) - Math.min(...lats)) * (Math.max(...lons) - Math.min(...lons))
+            } catch (_) { return 0 }
         }
 
         // Filter features that match highlighted countries
@@ -7027,17 +7047,23 @@ export default function MapPage({
         ).addTo(map)
         dirCountryHighlightRef.current = highlightLayer
 
-        // Country labels at centroids
+        // Country labels — ONE label per director country name, no context description
+        const labeledCountries = new Set()
         for (const { feature, hlName } of matchedFeatures) {
-            const hi = dirCountries.get(hlName) || { context: "focus", label: "" }
+            if (labeledCountries.has(hlName)) continue
+            labeledCountries.add(hlName)
+
+            const hi = dirCountries.get(hlName) || { context: "focus" }
             const c = CONTEXT_COLORS[hi.context] || CONTEXT_COLORS.focus
             const centroid = featureApproxCentroid(feature)
             if (!centroid) continue
             const [lat, lon] = centroid
-            const labelHtml = `<div class="director-country-label-inner" style="color:${c.stroke};">
-                ${hlName}
-                ${hi.label ? `<div class="director-country-label-context">${hi.label}</div>` : ""}
-            </div>`
+
+            // Font size proportional to geographic extent
+            const area = getFeatureArea(feature)
+            const fontSize = area > 200 ? "13px" : area > 25 ? "11px" : "9px"
+
+            const labelHtml = `<div style="color:${c.stroke};font-size:${fontSize};font-weight:700;text-transform:uppercase;letter-spacing:1.5px;text-shadow:0 0 8px ${c.fill},0 0 16px ${c.fill},0 1px 3px rgba(0,0,0,0.9);white-space:nowrap;pointer-events:none;">${hlName.toUpperCase()}</div>`
             const icon = L.divIcon({
                 html: labelHtml,
                 className: "director-country-label",
