@@ -338,6 +338,152 @@ SPACE_FEEDS = [
     ("Universe Today",     "https://www.universetoday.com/feed/"),
 ]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# EXPANDED SPACEFLIGHT FEEDS (40+ sources for /api/news/spaceflight endpoint)
+# ─────────────────────────────────────────────────────────────────────────────
+SPACEFLIGHT_FEEDS = [
+    # Major space news
+    {"url": "https://spacenews.com/feed/",                               "name": "SpaceNews"},
+    {"url": "https://www.space.com/feeds/all",                           "name": "Space.com"},
+    {"url": "https://www.nasaspaceflight.com/feed/",                     "name": "NASASpaceflight"},
+    {"url": "https://arstechnica.com/space/feed/",                       "name": "Ars Technica Space"},
+    {"url": "https://www.universetoday.com/feed/",                       "name": "Universe Today"},
+    {"url": "https://www.planetary.org/feed",                            "name": "Planetary Society"},
+    {"url": "https://spaceflightnow.com/feed/",                          "name": "Spaceflight Now"},
+    {"url": "https://www.teslarati.com/category/spacex/feed/",           "name": "Teslarati SpaceX"},
+    {"url": "https://everydayastronaut.com/feed/",                       "name": "Everyday Astronaut"},
+    {"url": "https://www.spacepolicyonline.com/feed",                    "name": "Space Policy Online"},
+    # Agency feeds
+    {"url": "https://www.nasa.gov/rss/dyn/breaking_news.rss",            "name": "NASA Breaking"},
+    {"url": "https://blogs.nasa.gov/spacestation/feed/",                 "name": "NASA ISS Blog"},
+    {"url": "https://www.esa.int/rssfeed/Our_Activities/Space_News",     "name": "ESA News"},
+    {"url": "https://www.esa.int/rssfeed/Our_Activities/Human_and_Robotic_Exploration", "name": "ESA Exploration"},
+    {"url": "https://www.isro.gov.in/rss-feed.xml",                      "name": "ISRO"},
+    # Commercial
+    {"url": "https://www.cnbc.com/id/10000108/device/rss/rss.html",      "name": "CNBC Space"},
+    {"url": "https://techcrunch.com/tag/space/feed/",                    "name": "TechCrunch Space"},
+    {"url": "https://www.theverge.com/space/rss/index.xml",              "name": "The Verge Space"},
+    # Science & astronomy
+    {"url": "https://www.sciencedaily.com/rss/space_time.xml",           "name": "ScienceDaily Space"},
+    {"url": "https://phys.org/rss-feed/space-news/",                     "name": "Phys.org Space"},
+    {"url": "https://skyandtelescope.org/feed/",                         "name": "Sky & Telescope"},
+    {"url": "https://www.astronomy.com/feed/",                           "name": "Astronomy Magazine"},
+    {"url": "https://www.newscientist.com/subject/space/feed/",          "name": "New Scientist Space"},
+    {"url": "https://www.scientificamerican.com/space/feed/",            "name": "Scientific American Space"},
+    {"url": "https://www.nature.com/natastron.rss",                      "name": "Nature Astronomy"},
+    # Satellite & industry
+    {"url": "https://www.satellitetoday.com/feed/",                      "name": "Satellite Today"},
+    {"url": "https://www.geekwire.com/space/feed/",                      "name": "GeekWire Space"},
+    {"url": "https://europeanspaceflight.com/feed/",                     "name": "European Spaceflight"},
+    {"url": "https://tlpnetwork.com/feed/",                              "name": "TLP Network"},
+    # Military space
+    {"url": "https://breakingdefense.com/tag/space/feed/",               "name": "Breaking Defense Space"},
+    {"url": "https://thespacereview.com/rss.xml",                        "name": "The Space Review"},
+    {"url": "https://spacenews.com/section/civil-space/feed/",           "name": "SpaceNews Civil"},
+    {"url": "https://spacenews.com/section/military-space/feed/",        "name": "SpaceNews Military"},
+    # Analysis
+    {"url": "https://spacenews.com/section/launch/feed/",                "name": "SpaceNews Launch"},
+    {"url": "https://spacenews.com/section/satellite-telecom/feed/",     "name": "SpaceNews Satellite"},
+    {"url": "https://www.nasaspaceflight.com/category/spacex/feed/",     "name": "NSF SpaceX"},
+    {"url": "https://www.nasaspaceflight.com/category/nasa/feed/",       "name": "NSF NASA"},
+    {"url": "https://www.nasaspaceflight.com/category/ula/feed/",        "name": "NSF ULA"},
+    {"url": "https://www.nasaspaceflight.com/category/blue-origin/feed/","name": "NSF Blue Origin"},
+    {"url": "https://www.nasaspaceflight.com/category/rocketlab/feed/",  "name": "NSF Rocket Lab"},
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CITY-SPECIFIC FEEDS (for /api/news/city/{city} endpoint)
+# Do NOT feed into the main security scan — these are served directly on demand.
+# ─────────────────────────────────────────────────────────────────────────────
+CITY_FEEDS = {
+    "Paris": {
+        "country": "France", "lat": 48.8566, "lon": 2.3522, "language": "fr",
+        "feeds": [
+            {"url": "https://www.france24.com/en/france/rss",                                        "tier": "international", "lang": "en"},
+            {"url": "https://www.rfi.fr/en/france/rss",                                              "tier": "international", "lang": "en"},
+            {"url": "https://www.thelocal.fr/feed",                                                  "tier": "regional",      "lang": "en"},
+            {"url": "https://www.leparisien.fr/arc/outboundfeeds/rss/category/paris-75.xml",         "tier": "local",         "lang": "fr"},
+            {"url": "https://www.20minutes.fr/feeds/rss-paris.xml",                                  "tier": "local",         "lang": "fr"},
+            {"url": "https://actu.fr/ile-de-france/paris_75056/feed",                                "tier": "local",         "lang": "fr"},
+            {"url": "https://www.bfmtv.com/paris/rss/",                                              "tier": "local",         "lang": "fr"},
+            {"url": "https://www.francebleu.fr/rss/paris.xml",                                       "tier": "local",         "lang": "fr"},
+            {"url": "https://www.lemonde.fr/paris/rss_full.xml",                                     "tier": "local",         "lang": "fr"},
+            {"url": "https://www.lefigaro.fr/rss/figaro_paris.xml",                                  "tier": "local",         "lang": "fr"},
+            {"url": "https://www.cnews.fr/rss/une",                                                  "tier": "local",         "lang": "fr"},
+            {"url": "https://www.lexpress.fr/rss/alaune.xml",                                        "tier": "regional",      "lang": "fr"},
+        ],
+    },
+    "Berlin": {
+        "country": "Germany", "lat": 52.5200, "lon": 13.4050, "language": "de",
+        "feeds": [
+            {"url": "https://www.dw.com/en/germany/s-1432/rss",                                      "tier": "international", "lang": "en"},
+            {"url": "https://www.thelocal.de/feed",                                                  "tier": "regional",      "lang": "en"},
+            {"url": "https://www.exberliner.com/feed/",                                              "tier": "local",         "lang": "en"},
+            {"url": "https://www.tagesspiegel.de/berlin/feed.rss",                                   "tier": "local",         "lang": "de"},
+            {"url": "https://www.berliner-zeitung.de/feed.xml",                                      "tier": "local",         "lang": "de"},
+            {"url": "https://www.morgenpost.de/berlin/rss",                                          "tier": "local",         "lang": "de"},
+            {"url": "https://www.rbb24.de/politik/feed.xml",                                         "tier": "local",         "lang": "de"},
+            {"url": "https://www.bz-berlin.de/feed",                                                 "tier": "local",         "lang": "de"},
+            {"url": "https://www.rbb24.de/panorama/feed.xml",                                        "tier": "local",         "lang": "de"},
+            {"url": "https://taz.de/Berlin/!p5065/;rss/",                                            "tier": "local",         "lang": "de"},
+        ],
+    },
+    "Dubai": {
+        "country": "UAE", "lat": 25.2048, "lon": 55.2708, "language": "en",
+        "feeds": [
+            {"url": "https://www.thenationalnews.com/rss",                                           "tier": "regional",      "lang": "en"},
+            {"url": "https://gulfnews.com/rss",                                                      "tier": "regional",      "lang": "en"},
+            {"url": "https://www.khaleejtimes.com/rss",                                              "tier": "regional",      "lang": "en"},
+            {"url": "https://www.arabianbusiness.com/rss",                                           "tier": "regional",      "lang": "en"},
+            {"url": "https://gulfbusiness.com/feed/",                                                "tier": "regional",      "lang": "en"},
+            {"url": "https://www.emirates247.com/rss",                                               "tier": "local",         "lang": "en"},
+            {"url": "https://www.zawya.com/en/rss",                                                  "tier": "regional",      "lang": "en"},
+            {"url": "https://www.albawaba.com/rss.xml",                                              "tier": "regional",      "lang": "en"},
+            {"url": "https://www.middleeasteye.net/rss",                                             "tier": "regional",      "lang": "en"},
+            {"url": "https://english.alarabiya.net/tools/rss",                                       "tier": "regional",      "lang": "en"},
+        ],
+    },
+    "Dakar": {
+        "country": "Senegal", "lat": 14.7167, "lon": -17.4677, "language": "fr",
+        "feeds": [
+            {"url": "https://www.seneweb.com/news/rss",                                              "tier": "local",         "lang": "fr"},
+            {"url": "https://www.dakaractu.com/feed/",                                               "tier": "local",         "lang": "fr"},
+            {"url": "https://www.lequotidien.sn/feed/",                                              "tier": "local",         "lang": "fr"},
+            {"url": "https://www.senenews.com/feed/",                                                "tier": "local",         "lang": "fr"},
+            {"url": "https://www.pressafrik.com/feed/",                                              "tier": "local",         "lang": "fr"},
+            {"url": "https://www.emedia.sn/feed/",                                                   "tier": "local",         "lang": "fr"},
+            {"url": "https://www.lesoleil.sn/feed/",                                                 "tier": "local",         "lang": "fr"},
+            {"url": "https://www.sudonline.sn/feed/",                                                "tier": "local",         "lang": "fr"},
+            {"url": "https://www.jeuneafrique.com/pays/senegal/feed/",                               "tier": "regional",      "lang": "fr"},
+            {"url": "https://www.rfi.fr/fr/afrique/rss",                                             "tier": "international", "lang": "fr"},
+        ],
+    },
+    "Hannover": {
+        "country": "Germany", "lat": 52.3759, "lon": 9.7320, "language": "de",
+        "feeds": [
+            {"url": "https://www.haz.de/rss",                                                        "tier": "local",         "lang": "de"},
+            {"url": "https://www.neuepresse.de/rss",                                                 "tier": "local",         "lang": "de"},
+            {"url": "https://www.ndr.de/nachrichten/niedersachsen/hannover_weser-leinegebiet/index-rss.xml", "tier": "local", "lang": "de"},
+            {"url": "https://www.hannover.de/Aktuelles/feed.rss",                                    "tier": "local",         "lang": "de"},
+            {"url": "https://www.heise.de/rss/heise.rdf",                                            "tier": "local",         "lang": "de"},
+            {"url": "https://www.niedersachsen.de/presseinformationen/feed.rss",                     "tier": "regional",      "lang": "de"},
+            {"url": "https://www.dw.com/en/germany/s-1432/rss",                                      "tier": "international", "lang": "en"},
+        ],
+    },
+    "Magdeburg": {
+        "country": "Germany", "lat": 52.1205, "lon": 11.6276, "language": "de",
+        "feeds": [
+            {"url": "https://www.volksstimme.de/feed.rss",                                           "tier": "local",         "lang": "de"},
+            {"url": "https://www.mdr.de/nachrichten/sachsen-anhalt/magdeburg/index-rss.xml",         "tier": "local",         "lang": "de"},
+            {"url": "https://www.ndr.de/nachrichten/sachsen-anhalt/index-rss.xml",                   "tier": "regional",      "lang": "de"},
+            {"url": "https://www.generalanzeiger-magdeburg.de/feed/",                                "tier": "local",         "lang": "de"},
+            {"url": "https://www.sachsen-anhalt.de/rss/",                                            "tier": "regional",      "lang": "de"},
+            {"url": "https://www.tag24.de/magdeburg/feed",                                           "tier": "local",         "lang": "de"},
+            {"url": "https://www.dw.com/en/germany/s-1432/rss",                                      "tier": "international", "lang": "en"},
+        ],
+    },
+}
+
 # Append without removing existing items.
 ADDITIONAL_SCAN_FEEDS.extend(
     MIDDLE_EAST_EXPANDED_FEEDS

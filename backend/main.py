@@ -3098,6 +3098,161 @@ async def director_analyse_satellite(
     }
 
 
+# ── City & spaceflight news caches ───────────────────────────────────────────
+_CITY_NEWS_CACHE: dict = {}       # cache_key → {articles, fetched_at}
+_SPACEFLIGHT_CACHE: dict = {}     # "spaceflight_all" → {articles, source_count, fetched_at}
+_CITY_NEWS_TTL = 300              # 5 minutes
+
+
+def _fetch_single_feed(url: str):
+    """Fetch and parse a single RSS feed URL. Returns feedparser result or None."""
+    try:
+        return feedparser.parse(url, agent="Mozilla/5.0", request_headers={"Accept": "application/rss+xml,application/xml,text/xml"})
+    except Exception:
+        return None
+
+
+def _entry_timestamp(entry) -> str | None:
+    """Extract ISO timestamp from a feedparser entry."""
+    pp = entry.get("published_parsed") or entry.get("updated_parsed")
+    if pp:
+        try:
+            return datetime(*pp[:6], tzinfo=timezone.utc).isoformat()
+        except Exception:
+            pass
+    return None
+
+
+@app.get("/api/news/cities")
+async def list_city_feeds():
+    """Return available city feeds with metadata."""
+    from rss_feeds import CITY_FEEDS
+    return {
+        "cities": [
+            {
+                "name":       name,
+                "country":    data["country"],
+                "lat":        data["lat"],
+                "lon":        data["lon"],
+                "language":   data["language"],
+                "feed_count": len(data["feeds"]),
+            }
+            for name, data in CITY_FEEDS.items()
+        ]
+    }
+
+
+@app.get("/api/news/city/{city_name}")
+async def get_city_news(city_name: str, current_user=Depends(require_approved_user)):
+    """Fetch fresh articles from city-specific feeds (5-minute cache)."""
+    from rss_feeds import CITY_FEEDS
+    city = CITY_FEEDS.get(city_name)
+    if not city:
+        return JSONResponse(
+            {"error": f"Unknown city: {city_name}", "available": list(CITY_FEEDS.keys())},
+            status_code=404,
+        )
+
+    cache_key = f"city_news:{city_name.lower()}"
+    cached = _CITY_NEWS_CACHE.get(cache_key)
+    if cached and (time.time() - cached["fetched_at"]) < _CITY_NEWS_TTL:
+        return cached["data"]
+
+    def _fetch_city():
+        results = []
+        from concurrent.futures import as_completed, ThreadPoolExecutor as _CityTPE
+        with _CityTPE(max_workers=10, thread_name_prefix="city-feed") as pool:
+            futures = {pool.submit(_fetch_single_feed, f["url"]): f for f in city["feeds"]}
+            for future in as_completed(futures, timeout=15):
+                feed_meta = futures[future]
+                try:
+                    parsed = future.result()
+                    if not parsed or not parsed.entries:
+                        continue
+                    for entry in parsed.entries[:10]:
+                        ts = _entry_timestamp(entry)
+                        domain = feed_meta["url"].split("/")[2] if "/" in feed_meta["url"] else feed_meta["url"]
+                        results.append({
+                            "title":    (entry.get("title") or "").strip(),
+                            "link":     entry.get("link", ""),
+                            "source":   domain,
+                            "timestamp": ts,
+                            "language": feed_meta.get("lang", city.get("language", "en")),
+                            "tier":     feed_meta.get("tier", "local"),
+                            "summary":  (entry.get("summary") or entry.get("description") or "")[:300],
+                            "city":     city_name,
+                            "country":  city["country"],
+                        })
+                except Exception as ex:
+                    print(f"[city-news] feed error {feed_meta.get('url','?')[:60]}: {ex}")
+        results.sort(key=lambda a: a.get("timestamp") or "", reverse=True)
+        return results[:60]
+
+    loop = asyncio.get_event_loop()
+    articles = await loop.run_in_executor(_executor, _fetch_city)
+
+    data = {
+        "city":          city_name,
+        "country":       city["country"],
+        "language":      city["language"],
+        "lat":           city["lat"],
+        "lon":           city["lon"],
+        "article_count": len(articles),
+        "articles":      articles,
+        "fetched_at":    datetime.now(timezone.utc).isoformat(),
+    }
+    _CITY_NEWS_CACHE[cache_key] = {"data": data, "fetched_at": time.time()}
+    return data
+
+
+@app.get("/api/news/spaceflight")
+async def get_spaceflight_news(current_user=Depends(require_approved_user)):
+    """Aggregated spaceflight news from 40+ sources (5-minute cache)."""
+    cache_key = "spaceflight_all"
+    cached = _SPACEFLIGHT_CACHE.get(cache_key)
+    if cached and (time.time() - cached["fetched_at"]) < _CITY_NEWS_TTL:
+        return {"articles": cached["articles"], "source_count": cached["source_count"]}
+
+    from rss_feeds import SPACEFLIGHT_FEEDS
+
+    def _fetch_spaceflight():
+        results = []
+        successful = 0
+        from concurrent.futures import as_completed, ThreadPoolExecutor as _SFT
+        with _SFT(max_workers=15, thread_name_prefix="sf-feed") as pool:
+            futures = {pool.submit(_fetch_single_feed, f["url"]): f for f in SPACEFLIGHT_FEEDS}
+            for future in as_completed(futures, timeout=20):
+                feed_meta = futures[future]
+                try:
+                    parsed = future.result()
+                    if not parsed or not parsed.entries:
+                        continue
+                    successful += 1
+                    for entry in parsed.entries[:5]:
+                        ts = _entry_timestamp(entry)
+                        results.append({
+                            "title":     (entry.get("title") or "").strip(),
+                            "link":      entry.get("link", ""),
+                            "source":    feed_meta.get("name", "Unknown"),
+                            "timestamp": ts,
+                            "summary":   (entry.get("summary") or entry.get("description") or "")[:300],
+                        })
+                except Exception:
+                    pass
+        results.sort(key=lambda a: a.get("timestamp") or "", reverse=True)
+        return results[:100], successful
+
+    loop = asyncio.get_event_loop()
+    articles, successful = await loop.run_in_executor(_executor, _fetch_spaceflight)
+
+    _SPACEFLIGHT_CACHE[cache_key] = {
+        "articles":     articles,
+        "source_count": successful,
+        "fetched_at":   time.time(),
+    }
+    return {"articles": articles, "source_count": successful}
+
+
 # ── Director image search (Wikimedia Commons) ────────────────────────────────
 
 _IMG_SEARCH_CACHE: dict = {}      # query → {result, ts}

@@ -302,6 +302,125 @@ function MobileNewsCard({ a }) {
     )
 }
 
+// ── City news panel ───────────────────────────────────────────────────────────
+function CityNewsPanel({ city }) {
+    const [articles,   setArticles]   = useState([])
+    const [loading,    setLoading]    = useState(true)
+    const [cityMeta,   setCityMeta]   = useState(null)
+    const [updatedAt,  setUpdatedAt]  = useState(null)
+
+    useEffect(() => {
+        let cancelled = false
+        const doFetch = () => {
+            const token = localStorage.getItem("hw-auth-token")
+            const headers = token ? { Authorization: `Bearer ${token}` } : {}
+            fetch(`${API_BASE}/api/news/city/${encodeURIComponent(city)}`, { headers })
+                .then(r => r.json())
+                .then(data => {
+                    if (cancelled) return
+                    setArticles(data.articles || [])
+                    setCityMeta({ country: data.country, language: data.language, lat: data.lat, lon: data.lon })
+                    setUpdatedAt(new Date().toLocaleTimeString())
+                    setLoading(false)
+                })
+                .catch(e => {
+                    console.error("[city-news] fetch error:", e)
+                    if (!cancelled) setLoading(false)
+                })
+        }
+        setLoading(true)
+        doFetch()
+        const interval = setInterval(doFetch, 300000)  // refresh every 5 min
+        return () => { cancelled = true; clearInterval(interval) }
+    }, [city])
+
+    const TIER_STYLES = {
+        local:         { bg: "rgba(0,200,255,0.12)",   color: "rgba(0,200,255,0.95)" },
+        regional:      { bg: "rgba(255,180,0,0.12)",   color: "rgba(255,180,0,0.95)" },
+        international: { bg: "rgba(100,255,100,0.12)", color: "rgba(100,255,100,0.95)" },
+    }
+
+    if (loading) return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 20 }}>
+            {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} style={{ height: 88, borderRadius: 10, background: "rgba(30,41,59,0.5)", animation: "pulse 1.5s infinite" }} />
+            ))}
+        </div>
+    )
+
+    return (
+        <div style={{ padding: "16px 20px", maxWidth: 860, margin: "0 auto" }}>
+            {/* Header */}
+            <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: "#e2e8f0" }}>{city}</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>
+                    {cityMeta?.country}
+                    {cityMeta?.language && ` · ${cityMeta.language.toUpperCase()}`}
+                    {` · ${articles.length} articles`}
+                    {updatedAt && ` · updated ${updatedAt}`}
+                </div>
+            </div>
+
+            {articles.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "50px 0", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
+                    No recent articles for {city}
+                </div>
+            ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {articles.map((a, i) => {
+                        const tierStyle = TIER_STYLES[a.tier] || TIER_STYLES.local
+                        return (
+                            <a key={i} href={a.link || "#"} target="_blank" rel="noopener noreferrer" style={{
+                                display:        "block",
+                                padding:        "14px 16px",
+                                background:     "rgba(255,255,255,0.03)",
+                                border:         "1px solid rgba(255,255,255,0.06)",
+                                borderRadius:   10,
+                                textDecoration: "none",
+                                color:          "white",
+                                transition:     "background 180ms, border-color 180ms",
+                            }}
+                                onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.07)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)" }}
+                                onMouseOut={e => { e.currentTarget.style.background = "rgba(255,255,255,0.03)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)" }}
+                            >
+                                {/* Source row */}
+                                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
+                                    <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, fontWeight: 700, letterSpacing: "0.4px", textTransform: "uppercase", background: tierStyle.bg, color: tierStyle.color }}>
+                                        {a.tier}
+                                    </span>
+                                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.38)" }}>{a.source}</span>
+                                    {a.language && a.language !== "en" && (
+                                        <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 3, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.45)", fontWeight: 700 }}>
+                                            {a.language.toUpperCase()}
+                                        </span>
+                                    )}
+                                </div>
+                                {/* Title */}
+                                <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.45, marginBottom: a.summary ? 6 : 0 }}>
+                                    {a.title}
+                                </div>
+                                {/* Summary */}
+                                {a.summary && (
+                                    <div style={{
+                                        fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.5, marginBottom: 6,
+                                        display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                                    }}>
+                                        {a.summary}
+                                    </div>
+                                )}
+                                {/* Time */}
+                                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>
+                                    {a.timestamp ? formatAge(a.timestamp) : ""}
+                                </div>
+                            </a>
+                        )
+                    })}
+                </div>
+            )}
+        </div>
+    )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function NewsPage({ onClose }) {
     const [articles,       setArticles]       = useState([])
@@ -310,6 +429,10 @@ export default function NewsPage({ onClose }) {
     const [retryCount,     setRetryCount]     = useState(0)
     const [lastUpdated,    setLastUpdated]    = useState(null)
     const [section,        setSection]        = useState("news")
+    const [activeTab,      setActiveTab]      = useState("world")    // "world" | "spaceflight" | city name
+    const [cities,         setCities]         = useState([])
+    const [spaceArticles,  setSpaceArticles]  = useState([])
+    const [spaceLoading,   setSpaceLoading]   = useState(false)
     const [channelIdx,     setChannelIdx]     = useState(0)
     const [regionFilter,   setRegionFilter]   = useState("All")
     const [categoryFilter, setCategoryFilter] = useState("All")
@@ -373,6 +496,27 @@ export default function NewsPage({ onClose }) {
         fetchNews()
         return () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current) }
     }, [fetchNews])
+
+    // ── Load available cities ─────────────────────────────────────────────────
+    useEffect(() => {
+        fetch(`${API_BASE}/api/news/cities`)
+            .then(r => r.json())
+            .then(data => setCities(data.cities || []))
+            .catch(e => console.error("[city-list] fetch error:", e))
+    }, [])
+
+    // ── Fetch spaceflight articles when that tab is active ────────────────────
+    useEffect(() => {
+        if (activeTab !== "spaceflight") return
+        setSpaceLoading(true)
+        const token = localStorage.getItem("hw-auth-token")
+        fetch(`${API_BASE}/api/news/spaceflight`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+            .then(r => r.json())
+            .then(data => { setSpaceArticles(data.articles || []); setSpaceLoading(false) })
+            .catch(e => { console.error("[spaceflight] fetch error:", e); setSpaceLoading(false) })
+    }, [activeTab])
 
     // ── Channel navigation ────────────────────────────────────────────────────
     const prevChannel   = () => setChannelIdx(i => (i === 0 ? channels.length - 1 : i - 1))
@@ -635,10 +779,15 @@ export default function NewsPage({ onClose }) {
                         </button>
                     </div>
 
-                    {/* Section tabs */}
-                    <div style={{ display: "flex", gap: 0, padding: "4px 12px 0", borderBottom: "1px solid rgba(56,189,248,0.08)" }}>
+                    {/* Section tabs — scrollable with city tabs */}
+                    <div style={{
+                        display: "flex", gap: 0, padding: "4px 12px 0",
+                        borderBottom: "1px solid rgba(56,189,248,0.08)",
+                        overflowX: "auto", scrollbarWidth: "none", WebkitOverflowScrolling: "touch",
+                    }}>
                         {sectionTab("news", "World News")}
                         {sectionTab("space", "Spaceflight")}
+                        {cities.map(c => sectionTab(`city:${c.name}`, c.name))}
                     </div>
 
                     {/* Region filter — horizontal scroll */}
@@ -705,10 +854,12 @@ export default function NewsPage({ onClose }) {
                 <div style={{
                     flex:      1,
                     overflowY: "auto",
-                    padding:   "0 16px",
+                    padding:   section.startsWith("city:") ? 0 : "0 16px",
                     WebkitOverflowScrolling: "touch",
                 }}>
-                    {(loading || filtered.length === 0) ? renderEmpty() : (
+                    {section.startsWith("city:") ? (
+                        <CityNewsPanel city={section.replace("city:", "")} />
+                    ) : (loading || filtered.length === 0) ? renderEmpty() : (
                         filtered.map((a, i) => <MobileNewsCard key={a.id || i} a={a} />)
                     )}
                 </div>
@@ -745,20 +896,28 @@ export default function NewsPage({ onClose }) {
                     Live Intelligence Feed
                 </span>
 
-                <div style={{ display: "flex", gap: 4, marginLeft: 12 }}>
-                    {[{ id: "news", label: "World News" }, { id: "space", label: "Spaceflight" }].map(s => (
-                        <button key={s.id} onClick={() => switchSection(s.id)} style={{
-                            padding:      "6px 14px",
+                {/* Scrollable tab bar */}
+                <div style={{
+                    display: "flex", gap: 4, marginLeft: 8, overflowX: "auto", scrollbarWidth: "none",
+                    WebkitOverflowScrolling: "touch", flexShrink: 1, minWidth: 0,
+                }}>
+                    {[{ id: "world", label: "World News" }, { id: "spaceflight", label: "Spaceflight" }].concat(
+                        cities.map(c => ({ id: c.name, label: c.name }))
+                    ).map(tab => (
+                        <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === "world" || tab.id === "spaceflight") switchSection(tab.id === "world" ? "news" : "space") }} style={{
+                            padding:      "5px 13px",
                             fontSize:     12,
-                            fontWeight:   section === s.id ? 600 : 400,
-                            border:       `1px solid ${section === s.id ? "rgba(56,189,248,0.4)" : "transparent"}`,
+                            fontWeight:   activeTab === tab.id ? 600 : 400,
+                            border:       `1px solid ${activeTab === tab.id ? "rgba(56,189,248,0.4)" : "transparent"}`,
                             borderRadius: 6,
-                            background:   section === s.id ? "rgba(56,189,248,0.12)" : "transparent",
-                            color:        section === s.id ? "#38bdf8" : "rgba(255,255,255,0.4)",
+                            background:   activeTab === tab.id ? "rgba(56,189,248,0.12)" : "transparent",
+                            color:        activeTab === tab.id ? "#38bdf8" : "rgba(255,255,255,0.4)",
                             cursor:       "pointer",
+                            whiteSpace:   "nowrap",
+                            flexShrink:   0,
                             transition:   "all 0.12s",
                         }}>
-                            {s.label}
+                            {tab.label}
                         </button>
                     ))}
                 </div>
@@ -868,19 +1027,48 @@ export default function NewsPage({ onClose }) {
                     )}
                 </div>
 
-                {/* Article feed */}
-                <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-                    {(loading || filtered.length === 0) ? renderEmpty() : (
-                        <>
-                            {renderFeatured(filtered[0])}
-                            {filtered.length > 1 && (
-                                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
-                                    {filtered.slice(1).map((a, i) => (
-                                        <ArticleCard key={a.id || i} a={a} />
+                {/* Article feed / city panel / spaceflight panel */}
+                <div style={{ flex: 1, overflowY: "auto" }}>
+                    {/* City tab */}
+                    {activeTab !== "world" && activeTab !== "spaceflight" ? (
+                        <CityNewsPanel city={activeTab} />
+                    ) : activeTab === "spaceflight" ? (
+                        <div style={{ padding: 20 }}>
+                            {spaceLoading ? (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                                    {Array.from({ length: 8 }).map((_, i) => (
+                                        <div key={i} style={{ height: 80, borderRadius: 8, background: "rgba(30,41,59,0.5)", animation: "pulse 1.5s infinite" }} />
                                     ))}
                                 </div>
+                            ) : spaceArticles.length === 0 ? (
+                                <div style={{ textAlign: "center", paddingTop: 60, color: "rgba(255,255,255,0.28)", fontSize: 13 }}>No spaceflight articles loaded.</div>
+                            ) : (
+                                <>
+                                    {renderFeatured(spaceArticles[0])}
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                                        {spaceArticles.slice(1).map((a, i) => (
+                                            <ArticleCard key={i} a={a} />
+                                        ))}
+                                    </div>
+                                </>
                             )}
-                        </>
+                        </div>
+                    ) : (
+                        /* World News */
+                        <div style={{ padding: 20 }}>
+                            {(loading || filtered.length === 0) ? renderEmpty() : (
+                                <>
+                                    {renderFeatured(filtered[0])}
+                                    {filtered.length > 1 && (
+                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                                            {filtered.slice(1).map((a, i) => (
+                                                <ArticleCard key={a.id || i} a={a} />
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>
