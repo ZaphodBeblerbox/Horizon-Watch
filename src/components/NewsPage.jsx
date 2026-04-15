@@ -306,12 +306,16 @@ function MobileNewsCard({ a }) {
 export default function NewsPage({ onClose }) {
     const [articles,       setArticles]       = useState([])
     const [loading,        setLoading]        = useState(true)
+    const [fetchError,     setFetchError]     = useState(null)
+    const [retryCount,     setRetryCount]     = useState(0)
+    const [lastUpdated,    setLastUpdated]    = useState(null)
     const [section,        setSection]        = useState("news")
     const [channelIdx,     setChannelIdx]     = useState(0)
     const [regionFilter,   setRegionFilter]   = useState("All")
     const [categoryFilter, setCategoryFilter] = useState("All")
     const [tvCollapsed,    setTvCollapsed]    = useState(true)
     const [isMobile,       setIsMobile]       = useState(() => window.innerWidth < 768)
+    const retryTimerRef = useRef(null)
 
     useEffect(() => {
         const h = () => setIsMobile(window.innerWidth < 768)
@@ -322,25 +326,53 @@ export default function NewsPage({ onClose }) {
     const channels = section === "space" ? SPACE_CHANNELS : TV_CHANNELS
     const channel  = channels[channelIdx] || channels[0]
 
-    // ── Fetch from /api/surface ───────────────────────────────────────────────
-    const fetchNews = useCallback(async () => {
-        setLoading(true)
+    // ── Fetch from /api/surface with auto-retry ──────────────────────────────
+    const fetchNews = useCallback(async (isRetry = false) => {
+        if (!isRetry) setLoading(true)
         try {
             const token = localStorage.getItem("hw-auth-token")
             const res  = await fetch(`${API_BASE}/api/surface`, {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             })
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
             const data = await res.json()
-            setArticles(data.items || [])
+            const items = data.items || []
+            setArticles(items)
+            setFetchError(null)
+            if (items.length > 0) {
+                setLastUpdated(new Date().toLocaleTimeString())
+                setRetryCount(0)
+                if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null }
+            } else {
+                // Empty response — schedule retry if under limit
+                setRetryCount(c => {
+                    const next = c + 1
+                    if (next <= 3) {
+                        retryTimerRef.current = setTimeout(() => fetchNews(true), 10000)
+                    }
+                    return next
+                })
+            }
         } catch (e) {
             console.error("[news] fetch error:", e)
+            setFetchError(e.message)
             setArticles([])
+            setRetryCount(c => {
+                const next = c + 1
+                if (next <= 3) {
+                    retryTimerRef.current = setTimeout(() => fetchNews(true), 10000)
+                }
+                return next
+            })
         } finally {
             setLoading(false)
         }
-    }, [])
+    }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
-    useEffect(() => { fetchNews() }, [fetchNews])
+    useEffect(() => {
+        fetchNews()
+        return () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current) }
+    }, [fetchNews])
 
     // ── Channel navigation ────────────────────────────────────────────────────
     const prevChannel   = () => setChannelIdx(i => (i === 0 ? channels.length - 1 : i - 1))
@@ -521,10 +553,21 @@ export default function NewsPage({ onClose }) {
             </div>
         ) : (
             <div style={{ color: "rgba(255,255,255,0.28)", textAlign: "center", paddingTop: 60, fontSize: 13 }}>
-                {articles.length === 0 ? "No articles loaded — check console for fetch errors." : "No articles match this filter."}
+                {articles.length === 0 ? (
+                    <>
+                        {fetchError
+                            ? <span style={{ color: "#f87171" }}>Feed error: {fetchError}</span>
+                            : retryCount > 0 && retryCount <= 3
+                                ? <span>News feeds loading… retrying ({retryCount}/3)</span>
+                                : retryCount > 3
+                                    ? <span>News feeds unavailable{lastUpdated ? ` — last update: ${lastUpdated}` : ""}. <button onClick={() => { setRetryCount(0); fetchNews() }} style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: 13, textDecoration: "underline" }}>Retry now</button></span>
+                                    : <span>No articles loaded.</span>
+                        }
+                    </>
+                ) : "No articles match this filter."}
                 {articles.length > 0 && (
                     <div style={{ fontSize: 11, marginTop: 8, color: "rgba(255,255,255,0.18)" }}>
-                        {articles.length} total articles loaded
+                        {articles.length} articles{lastUpdated ? ` · updated ${lastUpdated}` : ""}
                     </div>
                 )}
             </div>

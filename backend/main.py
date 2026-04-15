@@ -4323,6 +4323,9 @@ def _run_news_conflict_extraction_sync():
     total_articles_parsed = 0
     articles_with_coords = 0
     articles_without_coords = 0
+    rejected_stale = 0
+    rejected_gate0 = 0
+    rejected_no_geo = 0
     successful_candidates = Counter()
     failed_feeds: dict = {}
     geo_stats_before = get_geocode_stats()
@@ -4407,15 +4410,18 @@ def _run_news_conflict_extraction_sync():
                 published_iso = datetime.now(timezone.utc).isoformat()
             expires_iso = (datetime.now(timezone.utc) + timedelta(hours=_NEWS_MARKER_WINDOW_HOURS)).isoformat()
 
-            _PROCESSED_URLS[url] = time.time()
-
-            # ── Freshness filter: skip articles older than 48 hours ───────────
+            # ── Freshness filter: skip articles older than NEWS_WINDOW_HOURS (7 days) ──
             try:
                 pub_age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(published_iso)).total_seconds() / 3600
-                if pub_age_h > 48:
+                if pub_age_h > _NEWS_WINDOW_HOURS:
+                    rejected_stale += 1
                     continue
             except Exception:
                 pass
+
+            # Mark as processed only AFTER freshness check (so stale articles don't
+            # permanently clog the dedup cache if the filter threshold changes)
+            _PROCESSED_URLS[url] = time.time()
 
             # ── Local city feed: bypass Gate 0, use city coords as default geocode ──
             _city_meta = _LOCAL_FEED_CITY.get(feed_url)
@@ -4425,7 +4431,7 @@ def _run_news_conflict_extraction_sync():
             else:
                 # ── Gate 0: headline security relevance ──────────────────────
                 if not _gate0_passes(title, summary):
-                    print(f"[gate0] REJECT '{title[:80]}' (no security keywords) [{source_name}]")
+                    rejected_gate0 += 1
                     continue
 
             # ── Event type pre-classification ─────────────────────────────────
@@ -4461,6 +4467,7 @@ def _run_news_conflict_extraction_sync():
 
             if not geo:
                 articles_without_coords += 1
+                rejected_no_geo += 1
                 _upsert_news_article({
                     "url": url,
                     "title": title,
@@ -4561,12 +4568,14 @@ def _run_news_conflict_extraction_sync():
     nom_calls_delta = geo_stats_after["http_calls"] - geo_stats_before["http_calls"]
     top_candidates = [c for c, _ in successful_candidates.most_common(5)]
     geo_validation_stats = _snapshot_geo_validation_stats()
-    print(f"[news-conflicts] feeds loaded={feeds_loaded} articles fetched={articles_fetched} articles after dedup={len(cycle_unique_urls)}")
     print(
-        f"[news-conflicts] total_articles_parsed={total_articles_parsed} "
-        f"with_coords={articles_with_coords} without_coords={articles_without_coords} "
-        f"nominatim_calls={nom_calls_delta} top_candidates={top_candidates}"
+        f"[news-conflicts] CYCLE SUMMARY: feeds={feeds_loaded}/{len(_SCAN_FEEDS)} "
+        f"fetched={articles_fetched} dedup_unique={len(cycle_unique_urls)} parsed={total_articles_parsed} "
+        f"rejected_stale={rejected_stale} rejected_gate0={rejected_gate0} rejected_no_geo={rejected_no_geo} "
+        f"geocoded={articles_with_coords} new_markers={len(new_markers)} total_active={len(_NEWS_CONFLICT_MARKERS)} "
+        f"dedup_cache={len(_PROCESSED_URLS)} nominatim_calls={nom_calls_delta}"
     )
+    print(f"[news-conflicts] top_candidates={top_candidates}")
     print(f"[news-conflicts] geo_validation={geo_validation_stats}")
     print(f"[news-conflicts] {len(new_markers)} new, {len(_NEWS_CONFLICT_MARKERS)} total active, {nom_calls} HTTP geocode calls, {nom_cache_size} places cached")
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -10043,6 +10052,92 @@ def api_cables(
         }
 
     return {"cables": [summarise(f) for f in cables[:100]], "total": len(cables)}
+
+
+# ── Debug: news pipeline status ───────────────────────────────────────────────
+
+@app.get("/api/debug/news-status")
+async def debug_news_status():
+    """Comprehensive news pipeline diagnostic — no auth required for emergency triage."""
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+
+    # Article store
+    with _NEWS_STORE_LOCK:
+        store_count = len(_NEWS_ARTICLE_STORE)
+        store_articles = list(_NEWS_ARTICLE_STORE.values())
+
+    newest_article = None
+    oldest_article = None
+    with_coords = 0
+    if store_articles:
+        store_articles_sorted = sorted(store_articles, key=lambda a: a.get("published", ""), reverse=True)
+        newest_article = store_articles_sorted[0]
+        oldest_article = store_articles_sorted[-1]
+        with_coords = sum(1 for a in store_articles if a.get("lat") is not None)
+
+    # Compute freshness of newest
+    newest_age_h = None
+    if newest_article:
+        try:
+            pub = newest_article.get("published") or ""
+            newest_age_h = (now - _dt.datetime.fromisoformat(pub)).total_seconds() / 3600
+        except Exception:
+            pass
+
+    # Conflict markers
+    markers_count = len(_NEWS_CONFLICT_MARKERS)
+    marker_sample = []
+    if _NEWS_CONFLICT_MARKERS:
+        for m in _NEWS_CONFLICT_MARKERS[:5]:
+            marker_sample.append({"title": (m.get("title") or "?")[:70], "published": m.get("published", "?")[:16]})
+
+    # Dedup cache
+    dedup_count = len(_PROCESSED_URLS)
+    dedup_oldest_ts = None
+    if _PROCESSED_URLS and isinstance(_PROCESSED_URLS, dict):
+        try:
+            dedup_oldest_ts = _dt.datetime.fromtimestamp(min(_PROCESSED_URLS.values()), tz=_dt.timezone.utc).isoformat()
+        except Exception:
+            pass
+
+    # Surface pool
+    with _SURFACE_POOL_LOCK:
+        surface_count = len(_SURFACE_POOL)
+
+    # Feed run stats
+    with _FEED_RUN_STATS_LOCK:
+        feed_stats = dict(_FEED_RUN_STATS)
+
+    return {
+        "timestamp": now.isoformat(),
+        "news_window_hours": _NEWS_WINDOW_HOURS,
+        "article_store": {
+            "count": store_count,
+            "with_coords": with_coords,
+            "without_coords": store_count - with_coords,
+            "newest_title": (newest_article.get("title") or "?")[:80] if newest_article else None,
+            "newest_published": (newest_article.get("published") or "?")[:16] if newest_article else None,
+            "newest_age_hours": round(newest_age_h, 1) if newest_age_h is not None else None,
+            "oldest_published": (oldest_article.get("published") or "?")[:16] if oldest_article else None,
+        },
+        "conflict_markers": {
+            "count": markers_count,
+            "sample": marker_sample,
+        },
+        "dedup_cache": {
+            "count": dedup_count,
+            "type": "dict_ttl_72h",
+            "oldest_entry_at": dedup_oldest_ts,
+        },
+        "surface_pool": {"count": surface_count},
+        "feed_stats": {
+            "feeds_total": feed_stats.get("feeds_total", 0),
+            "feeds_ok": feed_stats.get("feeds_ok", 0),
+            "last_run_at": feed_stats.get("last_run_at"),
+        },
+        "first_extraction_done": _FIRST_EXTRACTION_DONE,
+    }
 
 
 # ── Debug: feed freshness ─────────────────────────────────────────────────────
