@@ -484,6 +484,49 @@ CITY_FEEDS = {
     },
 }
 
+# ── Stock / Markets feeds ─────────────────────────────────────────────────────
+STOCK_FEEDS = [
+    # Major wire / broadcast
+    {"url": "https://feeds.bloomberg.com/markets/news.rss",                                   "name": "Bloomberg Markets"},
+    {"url": "https://www.cnbc.com/id/10000664/device/rss/rss.html",                           "name": "CNBC Finance"},
+    {"url": "https://www.cnbc.com/id/10001147/device/rss/rss.html",                           "name": "CNBC Economy"},
+    {"url": "https://www.cnbc.com/id/15839069/device/rss/rss.html",                           "name": "CNBC Markets"},
+    {"url": "https://feeds.reuters.com/reuters/businessNews",                                  "name": "Reuters Business"},
+    {"url": "https://feeds.reuters.com/news/wealth",                                           "name": "Reuters Wealth"},
+    {"url": "https://www.ft.com/rss/home/uk",                                                  "name": "Financial Times"},
+    {"url": "https://feeds.marketwatch.com/marketwatch/topstories/",                           "name": "MarketWatch Top Stories"},
+    {"url": "https://feeds.marketwatch.com/marketwatch/marketpulse/",                          "name": "MarketWatch Pulse"},
+    # Equity / analysis
+    {"url": "https://www.wsj.com/xml/rss/3_7031.xml",                                          "name": "WSJ Markets"},
+    {"url": "https://www.wsj.com/xml/rss/3_7014.xml",                                          "name": "WSJ Business"},
+    {"url": "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_headline",     "name": "Investopedia"},
+    {"url": "https://seekingalpha.com/feed.xml",                                               "name": "Seeking Alpha"},
+    {"url": "https://finance.yahoo.com/news/rssindex",                                         "name": "Yahoo Finance News"},
+    {"url": "https://www.barrons.com/xml/rss/3_7566.xml",                                      "name": "Barron's"},
+    # Commodities / energy
+    {"url": "https://oilprice.com/rss/main",                                                   "name": "OilPrice"},
+    {"url": "https://www.mining.com/feed/",                                                    "name": "Mining.com"},
+    {"url": "https://www.spglobal.com/commodityinsights/en/rss-feed/natural-gas",              "name": "S&P Commodity Insights"},
+    # Crypto
+    {"url": "https://www.coindesk.com/arc/outboundfeeds/rss/",                                 "name": "CoinDesk"},
+    {"url": "https://cointelegraph.com/rss",                                                   "name": "CoinTelegraph"},
+    {"url": "https://decrypt.co/feed",                                                         "name": "Decrypt"},
+    # Regional / international
+    {"url": "https://www.arabianbusiness.com/rss/finance-economics.xml",                       "name": "Arabian Business Finance"},
+    {"url": "https://www.scmp.com/rss/5/feed",                                                 "name": "SCMP Business"},
+    {"url": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",            "name": "Economic Times Markets"},
+    {"url": "https://www.businesslive.co.za/rss",                                              "name": "BusinessLive SA"},
+    # Central banks / institutions
+    {"url": "https://www.ecb.europa.eu/rss/press.html",                                       "name": "ECB Press"},
+    {"url": "https://www.federalreserve.gov/feeds/press_all.xml",                              "name": "Federal Reserve"},
+    {"url": "https://www.imf.org/external/rss/feeds.aspx?category=pressreleases",             "name": "IMF Press"},
+    {"url": "https://www.worldbank.org/en/news/rss.xml",                                      "name": "World Bank"},
+    # Alternative / macro
+    {"url": "https://feeds.feedburner.com/zerohedge/feed",                                    "name": "ZeroHedge"},
+    {"url": "https://www.tradingview.com/news/rss/",                                           "name": "TradingView"},
+]
+
+
 # Append without removing existing items.
 ADDITIONAL_SCAN_FEEDS.extend(
     MIDDLE_EAST_EXPANDED_FEEDS

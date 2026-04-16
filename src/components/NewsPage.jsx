@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import API_BASE from "../apiBase.js"
 import { TV_CHANNELS as RAW_CHANNELS } from "./tvchannels.js"
 
@@ -303,11 +303,114 @@ function MobileNewsCard({ a }) {
 }
 
 // ── City news panel ───────────────────────────────────────────────────────────
+const SORT_BTNS = [["latest","Latest"],["source","Source"],["tier","Tier"]]
+
+function SortControls({ sortBy, setSortBy }) {
+    return (
+        <div style={{ display: "flex", gap: 6 }}>
+            {SORT_BTNS.map(([v, l]) => (
+                <button key={v} onClick={() => setSortBy(v)} style={{
+                    padding:      "5px 11px",
+                    fontSize:     11,
+                    border:       `1px solid ${sortBy === v ? "rgba(56,189,248,0.4)" : "rgba(255,255,255,0.08)"}`,
+                    borderRadius: 4,
+                    background:   sortBy === v ? "rgba(56,189,248,0.12)" : "rgba(255,255,255,0.03)",
+                    color:        sortBy === v ? "#38bdf8" : "rgba(255,255,255,0.4)",
+                    cursor:       "pointer",
+                    transition:   "all 0.1s",
+                }}>{l}</button>
+            ))}
+        </div>
+    )
+}
+
+function PanelFeaturedCard({ a, accentColor = "rgba(239,68,68,0.3)" }) {
+    const title   = a.headline || a.clean_title || a.title || "Untitled"
+    const ts      = a.latest_event || a.published_at || a.timestamp || a.published
+    const tier    = a.severity_tier
+    const tierCol = TIER_COLOR[tier] || null
+    const href    = a.url || a.link
+    const src     = a.source_name || a.source || ""
+    const img     = a.image_url || a.og_image || null
+    const summary = a.summary || a.auto_brief || a.description || ""
+    const badge   = a.tier || tier || null
+    const tierBadgeColor = {
+        local: "#22d3ee", regional: "#f59e0b", international: "#4ade80",
+        critical: "#ef4444", significant: "#f97316", elevated: "#eab308", low: "#0d9488",
+    }[badge] || "#38bdf8"
+    const border  = tierCol ? tierCol + "44" : accentColor
+
+    return (
+        <div
+            onClick={() => href && window.open(href, "_blank")}
+            style={{
+                display:      "flex",
+                minHeight:    220,
+                marginBottom: 16,
+                borderRadius: 10,
+                overflow:     "hidden",
+                border:       `1px solid ${border}`,
+                background:   "rgba(30,41,59,0.8)",
+                cursor:       href ? "pointer" : "default",
+                transition:   "border-color 0.15s",
+            }}
+            onMouseOver={e => { e.currentTarget.style.borderColor = border.replace("44","88") }}
+            onMouseOut={e => { e.currentTarget.style.borderColor = border }}
+        >
+            <div style={{
+                width: "45%", flexShrink: 0,
+                background: img
+                    ? `url(${img}) center/cover`
+                    : "linear-gradient(135deg, #1e293b 0%, #334155 100%)",
+                position: "relative", display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+                {!img && (
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <line x1="7" y1="8" x2="17" y2="8"/>
+                        <line x1="7" y1="12" x2="17" y2="12"/>
+                        <line x1="7" y1="16" x2="12" y2="16"/>
+                    </svg>
+                )}
+                {badge && (
+                    <span style={{
+                        position: "absolute", top: 12, left: 12,
+                        background: tierBadgeColor + "dd",
+                        padding: "5px 10px", borderRadius: 4, color: "#fff",
+                        fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase",
+                    }}>{badge}</span>
+                )}
+                {src && (
+                    <span style={{
+                        position: "absolute", bottom: 12, left: 12,
+                        background: "rgba(15,23,42,0.88)", padding: "3px 7px",
+                        borderRadius: 3, fontSize: 9, color: "rgba(255,255,255,0.5)", fontWeight: 600,
+                    }}>{src}</span>
+                )}
+            </div>
+            <div style={{ flex: 1, padding: "20px 22px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.45, color: "#e2e8f0", marginBottom: 10 }}>
+                    {title}
+                </div>
+                {summary && (
+                    <div style={{
+                        fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.55,
+                        display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
+                        marginBottom: 12,
+                    }}>{summary}</div>
+                )}
+                <span style={{ color: "#64748b", fontSize: 11 }}>{formatAge(ts)}</span>
+            </div>
+        </div>
+    )
+}
+
 function CityNewsPanel({ city }) {
-    const [articles,   setArticles]   = useState([])
-    const [loading,    setLoading]    = useState(true)
-    const [cityMeta,   setCityMeta]   = useState(null)
-    const [updatedAt,  setUpdatedAt]  = useState(null)
+    const [articles,  setArticles]  = useState([])
+    const [loading,   setLoading]   = useState(true)
+    const [cityMeta,  setCityMeta]  = useState(null)
+    const [updatedAt, setUpdatedAt] = useState(null)
+    const [sortBy,    setSortBy]    = useState("latest")
 
     useEffect(() => {
         let cancelled = false
@@ -319,103 +422,198 @@ function CityNewsPanel({ city }) {
                 .then(data => {
                     if (cancelled) return
                     setArticles(data.articles || [])
-                    setCityMeta({ country: data.country, language: data.language, lat: data.lat, lon: data.lon })
+                    setCityMeta({ country: data.country, language: data.language })
                     setUpdatedAt(new Date().toLocaleTimeString())
                     setLoading(false)
                 })
-                .catch(e => {
-                    console.error("[city-news] fetch error:", e)
-                    if (!cancelled) setLoading(false)
-                })
+                .catch(e => { console.error("[city-news]", e); if (!cancelled) setLoading(false) })
         }
         setLoading(true)
         doFetch()
-        const interval = setInterval(doFetch, 300000)  // refresh every 5 min
+        const interval = setInterval(doFetch, 300000)
         return () => { cancelled = true; clearInterval(interval) }
     }, [city])
 
-    const TIER_STYLES = {
-        local:         { bg: "rgba(0,200,255,0.12)",   color: "rgba(0,200,255,0.95)" },
-        regional:      { bg: "rgba(255,180,0,0.12)",   color: "rgba(255,180,0,0.95)" },
-        international: { bg: "rgba(100,255,100,0.12)", color: "rgba(100,255,100,0.95)" },
-    }
+    const sorted = useMemo(() => {
+        const arr = [...articles]
+        if (sortBy === "source") arr.sort((a, b) => (a.source || "").localeCompare(b.source || ""))
+        else if (sortBy === "tier") {
+            const order = { local: 0, regional: 1, international: 2 }
+            arr.sort((a, b) => (order[a.tier] ?? 3) - (order[b.tier] ?? 3))
+        }
+        return arr
+    }, [articles, sortBy])
 
     if (loading) return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 20 }}>
-            {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} style={{ height: 88, borderRadius: 10, background: "rgba(30,41,59,0.5)", animation: "pulse 1.5s infinite" }} />
-            ))}
+        <div style={{ padding: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} style={{ height: 200, borderRadius: 8, background: "rgba(30,41,59,0.5)", animation: "pulse 1.5s infinite" }} />
+                ))}
+            </div>
         </div>
     )
 
     return (
-        <div style={{ padding: "16px 20px", maxWidth: 860, margin: "0 auto" }}>
-            {/* Header */}
-            <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                <div style={{ fontSize: 22, fontWeight: 700, color: "#e2e8f0" }}>{city}</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>
-                    {cityMeta?.country}
-                    {cityMeta?.language && ` · ${cityMeta.language.toUpperCase()}`}
-                    {` · ${articles.length} articles`}
-                    {updatedAt && ` · updated ${updatedAt}`}
+        <div style={{ padding: 20 }}>
+            {/* Header row */}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+                <div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0" }}>{city}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.32)", marginTop: 2 }}>
+                        {cityMeta?.country}{cityMeta?.language && ` · ${cityMeta.language.toUpperCase()}`}
+                        {` · ${articles.length} articles`}{updatedAt && ` · updated ${updatedAt}`}
+                    </div>
                 </div>
+                <SortControls sortBy={sortBy} setSortBy={setSortBy} />
             </div>
 
-            {articles.length === 0 ? (
+            {sorted.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "50px 0", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
                     No recent articles for {city}
                 </div>
             ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {articles.map((a, i) => {
-                        const tierStyle = TIER_STYLES[a.tier] || TIER_STYLES.local
-                        return (
-                            <a key={i} href={a.link || "#"} target="_blank" rel="noopener noreferrer" style={{
-                                display:        "block",
-                                padding:        "14px 16px",
-                                background:     "rgba(255,255,255,0.03)",
-                                border:         "1px solid rgba(255,255,255,0.06)",
-                                borderRadius:   10,
-                                textDecoration: "none",
-                                color:          "white",
-                                transition:     "background 180ms, border-color 180ms",
-                            }}
-                                onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.07)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)" }}
-                                onMouseOut={e => { e.currentTarget.style.background = "rgba(255,255,255,0.03)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)" }}
-                            >
-                                {/* Source row */}
-                                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
-                                    <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, fontWeight: 700, letterSpacing: "0.4px", textTransform: "uppercase", background: tierStyle.bg, color: tierStyle.color }}>
-                                        {a.tier}
-                                    </span>
-                                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.38)" }}>{a.source}</span>
-                                    {a.language && a.language !== "en" && (
-                                        <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 3, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.45)", fontWeight: 700 }}>
-                                            {a.language.toUpperCase()}
-                                        </span>
-                                    )}
-                                </div>
-                                {/* Title */}
-                                <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.45, marginBottom: a.summary ? 6 : 0 }}>
-                                    {a.title}
-                                </div>
-                                {/* Summary */}
-                                {a.summary && (
-                                    <div style={{
-                                        fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.5, marginBottom: 6,
-                                        display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-                                    }}>
-                                        {a.summary}
+                <>
+                    <PanelFeaturedCard a={sorted[0]} accentColor="rgba(0,200,255,0.2)" />
+                    {sorted.length > 1 && (
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                            {sorted.slice(1).map((a, i) => (
+                                <ArticleCard key={i} a={a} borderOverride="rgba(0,200,255,0.1)" />
+                            ))}
+                        </div>
+                    )}
+                </>
+            )}
+        </div>
+    )
+}
+
+// ── Markets / Stocks panel ─────────────────────────────────────────────────────
+function Sparkline({ values, positive }) {
+    if (!values || values.length < 2) return null
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    const range = max - min || 1
+    const W = 80, H = 32
+    const pts = values.map((v, i) => {
+        const x = (i / (values.length - 1)) * W
+        const y = H - ((v - min) / range) * H
+        return `${x},${y}`
+    }).join(" ")
+    return (
+        <svg width={W} height={H} style={{ display: "block" }}>
+            <polyline points={pts} fill="none" stroke={positive ? "#4ade80" : "#f87171"} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        </svg>
+    )
+}
+
+function MarketsPanel() {
+    const [indices,       setIndices]       = useState([])
+    const [indicesLoading,setIndicesLoading]= useState(true)
+    const [stockArticles, setStockArticles] = useState([])
+    const [stockLoading,  setStockLoading]  = useState(true)
+    const [sortBy,        setSortBy]        = useState("latest")
+
+    useEffect(() => {
+        let cancelled = false
+        const fetchAll = () => {
+            const token = localStorage.getItem("hw-auth-token")
+            const h = token ? { Authorization: `Bearer ${token}` } : {}
+            // Indices
+            fetch(`${API_BASE}/api/stocks/indices`, { headers: h })
+                .then(r => r.json())
+                .then(d => { if (!cancelled) { setIndices(d.indices || []); setIndicesLoading(false) } })
+                .catch(() => { if (!cancelled) setIndicesLoading(false) })
+            // News
+            fetch(`${API_BASE}/api/news/stocks`, { headers: h })
+                .then(r => r.json())
+                .then(d => { if (!cancelled) { setStockArticles(d.articles || []); setStockLoading(false) } })
+                .catch(() => { if (!cancelled) setStockLoading(false) })
+        }
+        fetchAll()
+        const interval = setInterval(fetchAll, 300000)
+        return () => { cancelled = true; clearInterval(interval) }
+    }, [])
+
+    const sortedArticles = useMemo(() => {
+        const arr = [...stockArticles]
+        if (sortBy === "source") arr.sort((a, b) => (a.source || "").localeCompare(b.source || ""))
+        return arr
+    }, [stockArticles, sortBy])
+
+    return (
+        <div style={{ padding: 20 }}>
+            {/* ── Ticker strip ── */}
+            <div style={{
+                display:       "flex",
+                gap:           10,
+                overflowX:     "auto",
+                scrollbarWidth:"none",
+                paddingBottom: 16,
+                marginBottom:  16,
+                borderBottom:  "1px solid rgba(255,255,255,0.06)",
+                WebkitOverflowScrolling: "touch",
+            }}>
+                {indicesLoading ? (
+                    Array.from({ length: 6 }).map((_, i) => (
+                        <div key={i} style={{ width: 140, height: 80, flexShrink: 0, borderRadius: 8, background: "rgba(30,41,59,0.5)", animation: "pulse 1.5s infinite" }} />
+                    ))
+                ) : indices.map(idx => {
+                    const pos = idx.change_pct >= 0
+                    const chgColor = pos ? "#4ade80" : "#f87171"
+                    return (
+                        <div key={idx.symbol} style={{
+                            flexShrink:   0,
+                            width:        148,
+                            padding:      "12px 14px",
+                            background:   "rgba(30,41,59,0.7)",
+                            border:       `1px solid ${pos ? "rgba(74,222,128,0.2)" : "rgba(248,113,113,0.2)"}`,
+                            borderRadius: 8,
+                        }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                                <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{idx.name}</div>
+                                    <div style={{ fontSize: 15, fontWeight: 700, color: "#e2e8f0", marginTop: 2 }}>
+                                        {idx.price >= 1000 ? idx.price.toLocaleString(undefined, { maximumFractionDigits: 0 }) : idx.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                                     </div>
-                                )}
-                                {/* Time */}
-                                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>
-                                    {a.timestamp ? formatAge(a.timestamp) : ""}
                                 </div>
-                            </a>
-                        )
-                    })}
+                                <span style={{ fontSize: 11, fontWeight: 700, color: chgColor, marginTop: 2 }}>
+                                    {pos ? "+" : ""}{idx.change_pct.toFixed(2)}%
+                                </span>
+                            </div>
+                            <Sparkline values={idx.sparkline} positive={pos} />
+                        </div>
+                    )
+                })}
+            </div>
+
+            {/* ── News grid ── */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.6)" }}>
+                    Markets News{!stockLoading && ` · ${stockArticles.length} articles`}
                 </div>
+                <SortControls sortBy={sortBy} setSortBy={setSortBy} />
+            </div>
+
+            {stockLoading ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                    {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={i} style={{ height: 200, borderRadius: 8, background: "rgba(30,41,59,0.5)", animation: "pulse 1.5s infinite" }} />
+                    ))}
+                </div>
+            ) : sortedArticles.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "50px 0", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>No markets articles loaded.</div>
+            ) : (
+                <>
+                    <PanelFeaturedCard a={sortedArticles[0]} accentColor="rgba(74,222,128,0.2)" />
+                    {sortedArticles.length > 1 && (
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                            {sortedArticles.slice(1).map((a, i) => (
+                                <ArticleCard key={i} a={a} borderOverride="rgba(74,222,128,0.1)" />
+                            ))}
+                        </div>
+                    )}
+                </>
             )}
         </div>
     )
@@ -787,6 +985,7 @@ export default function NewsPage({ onClose }) {
                     }}>
                         {sectionTab("news", "World News")}
                         {sectionTab("space", "Spaceflight")}
+                        {sectionTab("markets", "Markets")}
                         {cities.map(c => sectionTab(`city:${c.name}`, c.name))}
                     </div>
 
@@ -854,10 +1053,12 @@ export default function NewsPage({ onClose }) {
                 <div style={{
                     flex:      1,
                     overflowY: "auto",
-                    padding:   section.startsWith("city:") ? 0 : "0 16px",
+                    padding:   (section.startsWith("city:") || section === "markets") ? 0 : "0 16px",
                     WebkitOverflowScrolling: "touch",
                 }}>
-                    {section.startsWith("city:") ? (
+                    {section === "markets" ? (
+                        <MarketsPanel />
+                    ) : section.startsWith("city:") ? (
                         <CityNewsPanel city={section.replace("city:", "")} />
                     ) : (loading || filtered.length === 0) ? renderEmpty() : (
                         filtered.map((a, i) => <MobileNewsCard key={a.id || i} a={a} />)
@@ -901,7 +1102,7 @@ export default function NewsPage({ onClose }) {
                     display: "flex", gap: 4, marginLeft: 8, overflowX: "auto", scrollbarWidth: "none",
                     WebkitOverflowScrolling: "touch", flexShrink: 1, minWidth: 0,
                 }}>
-                    {[{ id: "world", label: "World News" }, { id: "spaceflight", label: "Spaceflight" }].concat(
+                    {[{ id: "world", label: "World News" }, { id: "spaceflight", label: "Spaceflight" }, { id: "markets", label: "Markets" }].concat(
                         cities.map(c => ({ id: c.name, label: c.name }))
                     ).map(tab => (
                         <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === "world" || tab.id === "spaceflight") switchSection(tab.id === "world" ? "news" : "space") }} style={{
@@ -1027,10 +1228,11 @@ export default function NewsPage({ onClose }) {
                     )}
                 </div>
 
-                {/* Article feed / city panel / spaceflight panel */}
+                {/* Article feed / city panel / spaceflight panel / markets panel */}
                 <div style={{ flex: 1, overflowY: "auto" }}>
-                    {/* City tab */}
-                    {activeTab !== "world" && activeTab !== "spaceflight" ? (
+                    {activeTab === "markets" ? (
+                        <MarketsPanel />
+                    ) : activeTab !== "world" && activeTab !== "spaceflight" ? (
                         <CityNewsPanel city={activeTab} />
                     ) : activeTab === "spaceflight" ? (
                         <div style={{ padding: 20 }}>

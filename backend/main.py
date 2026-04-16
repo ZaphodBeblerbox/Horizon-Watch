@@ -3172,16 +3172,35 @@ async def get_city_news(city_name: str, current_user=Depends(require_approved_us
                     for entry in parsed.entries[:10]:
                         ts = _entry_timestamp(entry)
                         domain = feed_meta["url"].split("/")[2] if "/" in feed_meta["url"] else feed_meta["url"]
+                        # Extract image URL
+                        image_url = None
+                        mc = entry.get("media_content") or []
+                        if mc: image_url = mc[0].get("url")
+                        if not image_url:
+                            mt = entry.get("media_thumbnail") or []
+                            if mt: image_url = mt[0].get("url")
+                        if not image_url:
+                            for enc in (entry.get("enclosures") or []):
+                                if (enc.get("type") or "").startswith("image/"):
+                                    image_url = enc.get("href") or enc.get("url"); break
+                        if not image_url:
+                            desc = entry.get("summary") or entry.get("description") or ""
+                            m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc)
+                            if m: image_url = m.group(1)
+                        # Strip HTML from summary
+                        raw_summary = entry.get("summary") or entry.get("description") or ""
+                        summary = re.sub(r'<[^>]+>', '', raw_summary).strip()[:300]
                         results.append({
-                            "title":    (entry.get("title") or "").strip(),
-                            "link":     entry.get("link", ""),
-                            "source":   domain,
+                            "title":     (entry.get("title") or "").strip(),
+                            "link":      entry.get("link", ""),
+                            "source":    domain,
                             "timestamp": ts,
-                            "language": feed_meta.get("lang", city.get("language", "en")),
-                            "tier":     feed_meta.get("tier", "local"),
-                            "summary":  (entry.get("summary") or entry.get("description") or "")[:300],
-                            "city":     city_name,
-                            "country":  city["country"],
+                            "language":  feed_meta.get("lang", city.get("language", "en")),
+                            "tier":      feed_meta.get("tier", "local"),
+                            "summary":   summary,
+                            "image_url": image_url,
+                            "city":      city_name,
+                            "country":   city["country"],
                         })
                 except Exception as ex:
                     print(f"[city-news] feed error {feed_meta.get('url','?')[:60]}: {ex}")
@@ -3230,12 +3249,30 @@ async def get_spaceflight_news(current_user=Depends(require_approved_user)):
                     successful += 1
                     for entry in parsed.entries[:5]:
                         ts = _entry_timestamp(entry)
+                        # Extract image URL
+                        image_url = None
+                        mc = entry.get("media_content") or []
+                        if mc: image_url = mc[0].get("url")
+                        if not image_url:
+                            mt = entry.get("media_thumbnail") or []
+                            if mt: image_url = mt[0].get("url")
+                        if not image_url:
+                            for enc in (entry.get("enclosures") or []):
+                                if (enc.get("type") or "").startswith("image/"):
+                                    image_url = enc.get("href") or enc.get("url"); break
+                        if not image_url:
+                            desc = entry.get("summary") or entry.get("description") or ""
+                            m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc)
+                            if m: image_url = m.group(1)
+                        raw_summary = entry.get("summary") or entry.get("description") or ""
+                        summary = re.sub(r'<[^>]+>', '', raw_summary).strip()[:300]
                         results.append({
                             "title":     (entry.get("title") or "").strip(),
                             "link":      entry.get("link", ""),
                             "source":    feed_meta.get("name", "Unknown"),
                             "timestamp": ts,
-                            "summary":   (entry.get("summary") or entry.get("description") or "")[:300],
+                            "summary":   summary,
+                            "image_url": image_url,
                         })
                 except Exception:
                     pass
@@ -3251,6 +3288,152 @@ async def get_spaceflight_news(current_user=Depends(require_approved_user)):
         "fetched_at":   time.time(),
     }
     return {"articles": articles, "source_count": successful}
+
+
+# ── Stock news & market indices ───────────────────────────────────────────────
+
+_STOCK_NEWS_CACHE:  dict = {}   # "stocks_all" → {articles, fetched_at}
+_MARKET_DATA_CACHE: dict = {}   # "indices" → {data, fetched_at}
+_STOCK_CACHE_TTL = 300          # 5 minutes
+
+
+def _extract_image(entry) -> str | None:
+    """Extract best image URL from a feedparser entry."""
+    mc = entry.get("media_content") or []
+    if mc:
+        return mc[0].get("url")
+    mt = entry.get("media_thumbnail") or []
+    if mt:
+        return mt[0].get("url")
+    for enc in (entry.get("enclosures") or []):
+        if (enc.get("type") or "").startswith("image/"):
+            return enc.get("href") or enc.get("url")
+    desc = entry.get("summary") or entry.get("description") or ""
+    m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc)
+    return m.group(1) if m else None
+
+
+@app.get("/api/news/stocks")
+async def get_stock_news(current_user=Depends(require_approved_user)):
+    """Aggregated financial/markets news from 30+ sources (5-minute cache)."""
+    cache_key = "stocks_all"
+    cached = _STOCK_NEWS_CACHE.get(cache_key)
+    if cached and (time.time() - cached["fetched_at"]) < _STOCK_CACHE_TTL:
+        return {"articles": cached["articles"], "source_count": cached["source_count"]}
+
+    from rss_feeds import STOCK_FEEDS
+
+    def _fetch_stocks():
+        results = []
+        successful = 0
+        from concurrent.futures import as_completed, ThreadPoolExecutor as _StockTPE
+        with _StockTPE(max_workers=12, thread_name_prefix="stock-feed") as pool:
+            futures = {pool.submit(_fetch_single_feed, f["url"]): f for f in STOCK_FEEDS}
+            for future in as_completed(futures, timeout=20):
+                feed_meta = futures[future]
+                try:
+                    parsed = future.result()
+                    if not parsed or not parsed.entries:
+                        continue
+                    successful += 1
+                    for entry in parsed.entries[:5]:
+                        ts = _entry_timestamp(entry)
+                        raw_summary = entry.get("summary") or entry.get("description") or ""
+                        summary = re.sub(r'<[^>]+>', '', raw_summary).strip()[:300]
+                        results.append({
+                            "title":     (entry.get("title") or "").strip(),
+                            "link":      entry.get("link", ""),
+                            "source":    feed_meta.get("name", "Unknown"),
+                            "timestamp": ts,
+                            "summary":   summary,
+                            "image_url": _extract_image(entry),
+                        })
+                except Exception:
+                    pass
+        results.sort(key=lambda a: a.get("timestamp") or "", reverse=True)
+        return results[:100], successful
+
+    loop = asyncio.get_event_loop()
+    articles, successful = await loop.run_in_executor(_executor, _fetch_stocks)
+
+    _STOCK_NEWS_CACHE[cache_key] = {
+        "articles":     articles,
+        "source_count": successful,
+        "fetched_at":   time.time(),
+    }
+    return {"articles": articles, "source_count": successful}
+
+
+_INDICES_CONFIG = [
+    {"symbol": "^GSPC",  "name": "S&P 500",   "category": "equity"},
+    {"symbol": "^DJI",   "name": "Dow Jones",  "category": "equity"},
+    {"symbol": "^IXIC",  "name": "NASDAQ",     "category": "equity"},
+    {"symbol": "^FTSE",  "name": "FTSE 100",   "category": "equity"},
+    {"symbol": "^GDAXI", "name": "DAX",        "category": "equity"},
+    {"symbol": "^N225",  "name": "Nikkei 225", "category": "equity"},
+    {"symbol": "CL=F",   "name": "Crude Oil",  "category": "commodity"},
+    {"symbol": "GC=F",   "name": "Gold",       "category": "commodity"},
+    {"symbol": "BTC-USD","name": "Bitcoin",    "category": "crypto"},
+]
+
+
+def _fetch_index(symbol: str) -> dict | None:
+    """Fetch 1-day chart data from Yahoo Finance v8 API."""
+    url = (
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        "?range=1d&interval=15m&includePrePost=false"
+    )
+    try:
+        import urllib.request as _ur
+        req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with _ur.urlopen(req, timeout=6) as resp:
+            data = _json.loads(resp.read().decode())
+        result = data.get("chart", {}).get("result", [None])[0]
+        if not result:
+            return None
+        meta   = result.get("meta", {})
+        closes = (result.get("indicators", {}).get("quote", [{}]) or [{}])[0].get("close") or []
+        closes = [c for c in closes if c is not None]
+        price      = meta.get("regularMarketPrice") or (closes[-1] if closes else None)
+        prev_close = meta.get("previousClose") or meta.get("chartPreviousClose") or (closes[0] if closes else None)
+        if not price or not prev_close:
+            return None
+        change_pct = ((price - prev_close) / prev_close) * 100
+        sparkline  = closes[-20:] if len(closes) >= 20 else closes
+        return {
+            "symbol":     symbol,
+            "name":       next((c["name"] for c in _INDICES_CONFIG if c["symbol"] == symbol), symbol),
+            "category":   next((c["category"] for c in _INDICES_CONFIG if c["symbol"] == symbol), "equity"),
+            "price":      round(price, 2),
+            "prev_close": round(prev_close, 2),
+            "change_pct": round(change_pct, 2),
+            "sparkline":  [round(v, 2) for v in sparkline],
+        }
+    except Exception as ex:
+        print(f"[indices] {symbol} error: {ex}")
+        return None
+
+
+@app.get("/api/stocks/indices")
+async def get_market_indices(current_user=Depends(require_approved_user)):
+    """Live index/commodity/crypto prices with sparkline (5-minute cache)."""
+    cache_key = "indices"
+    cached = _MARKET_DATA_CACHE.get(cache_key)
+    if cached and (time.time() - cached["fetched_at"]) < _STOCK_CACHE_TTL:
+        return {"indices": cached["data"]}
+
+    from concurrent.futures import as_completed, ThreadPoolExecutor as _IdxTPE
+    with _IdxTPE(max_workers=9, thread_name_prefix="idx") as pool:
+        futures = {pool.submit(_fetch_index, cfg["symbol"]): cfg for cfg in _INDICES_CONFIG}
+        results = []
+        for future in as_completed(futures, timeout=12):
+            r = future.result()
+            if r:
+                results.append(r)
+
+    results.sort(key=lambda x: ["equity", "commodity", "crypto"].index(x["category"]))
+    _MARKET_DATA_CACHE[cache_key] = {"data": results, "fetched_at": time.time()}
+    return {"indices": results}
 
 
 # ── Director image search (Wikimedia Commons) ────────────────────────────────
