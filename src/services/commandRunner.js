@@ -327,6 +327,36 @@ export class CommandRunner {
         return defaultDelay
       }
 
+      case "show_video": {
+        const vQuery   = action.query || ""
+        const vCaption = action.caption || vQuery
+        if (vQuery) {
+          this._pendingImage = { loading: true, url: null, caption: vCaption, isVideo: false }
+          const tok = localStorage.getItem("hw-auth-token")
+          const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+          fetch(`${API_BASE}/api/director/video-search?q=${encodeURIComponent(vQuery)}`, { headers })
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+              if (data?.video_url) {
+                this._pendingImage = { url: data.video_url, caption: vCaption, isVideo: true, mime: data.mime, loading: false }
+              } else {
+                // Fall back to image search
+                return fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(vQuery)}`, { headers })
+                  .then(r => r.ok ? r.json() : null)
+                  .then(imgData => {
+                    if (imgData?.image_url) {
+                      this._pendingImage = { url: imgData.image_url, caption: vCaption, isVideo: false, loading: false }
+                    } else {
+                      this._pendingImage = null
+                    }
+                  })
+              }
+            })
+            .catch(() => { this._pendingImage = null })
+        }
+        return defaultDelay
+      }
+
       // ── Individual data points ─────────────────────────────────────────────
 
       case "show_chokepoint": {
@@ -519,16 +549,17 @@ export class CommandRunner {
       // ── Placed events (self-geocoded by Claude) ───────────────────────────
 
       case "place_event": {
-        const { title, lat, lon, type, severity, source, summary: evSummary } = action
+        const { title, lat, lon, type, severity, source, summary: evSummary, timestamp } = action
         if (title && lat != null && lon != null && this.setDirectorItems) {
           const evData = {
             title,
             lat,
             lon,
-            type:     type     || "general",
-            severity: severity || "elevated",
-            source:   source   || "",
-            summary:  evSummary || "",
+            type:      type      || "general",
+            severity:  severity  || "elevated",
+            source:    source    || "",
+            summary:   evSummary || "",
+            timestamp: timestamp || null,
           }
           this._placedEvents.set(title, evData)
           this.setDirectorItems(prev => {
@@ -561,16 +592,21 @@ export class CommandRunner {
         const ev = this._placedEvents.get(action.title)
         if (!ev) return defaultDelay
         const SEVERITY_COLOR = { critical: "#ef4444", significant: "#f59e0b", elevated: "#3b82f6", low: "#6b7280" }
-        const color = SEVERITY_COLOR[ev.severity] || "#3b82f6"
-        const imgId = `dir-ev-img-${Date.now()}`
+        const color    = SEVERITY_COLOR[ev.severity] || "#3b82f6"
+        const imgId    = `dir-ev-img-${Date.now()}`
+        const timeAgo  = ev.timestamp ? this._formatTimeAgo(ev.timestamp) : ""
+        const absTime  = ev.timestamp ? (() => { try { return new Date(ev.timestamp).toLocaleString() } catch { return "" } })() : ""
         const html = `<div class="director-event-popup">
-          <div class="director-event-popup-header" style="border-left:3px solid ${color};padding-left:8px">
-            <span class="director-event-popup-type">${(ev.type || "event").toUpperCase()}</span>
-            <span class="director-event-popup-severity" style="color:${color}">${(ev.severity || "").toUpperCase()}</span>
+          <div class="director-event-popup-header" style="border-left:3px solid ${color};padding-left:8px;display:flex;justify-content:space-between;align-items:center">
+            <span>
+              <span class="director-event-popup-type">${(ev.type || "event").toUpperCase()}</span>
+              <span class="director-event-popup-severity" style="color:${color};margin-left:6px">${(ev.severity || "").toUpperCase()}</span>
+            </span>
+            ${timeAgo ? `<span style="font-size:10px;color:rgba(255,180,0,0.9);flex-shrink:0" title="${absTime}">${timeAgo}</span>` : ""}
           </div>
           <div class="director-event-popup-title">${ev.title}</div>
           ${ev.summary ? `<div class="director-event-popup-summary">${ev.summary}</div>` : ""}
-          ${ev.source  ? `<div class="director-event-popup-source">${ev.source}</div>` : ""}
+          ${ev.source || absTime ? `<div class="director-event-popup-source">${ev.source || ""}${ev.source && absTime ? " · " : ""}${absTime}</div>` : ""}
           <div id="${imgId}" class="director-event-popup-img"></div>
         </div>`
         const popup = L.popup({ className: "director-event-leaflet-popup", maxWidth: 300, closeButton: true })
@@ -844,10 +880,19 @@ export class CommandRunner {
         const from  = action.from
         const to    = action.to
         const color = action.color || "#ef4444"
-        // Line
-        const line  = L.polyline([from, to], { color, weight: 2, opacity: 0.9, className: "director-drawing-line" }).addTo(map)
+        const isStrike = /strike|missile|attack|launch|trajectory|vector|rocket|bomb/i.test(action.label || "")
+
+        // Line — thicker, glowing
+        const line  = L.polyline([from, to], {
+          color,
+          weight:    isStrike ? 2 : 3,
+          opacity:   0.9,
+          dashArray: isStrike ? "8 6" : null,
+          className: "director-drawing-line",
+        }).addTo(map)
         if (action.label) line.bindTooltip(action.label, { permanent: false, sticky: true })
-        // Arrowhead: small divIcon triangle rotated to bearing
+
+        // Arrowhead
         const bearing = _bearing(from, to)
         const arrowIcon = L.divIcon({
           className: "",
@@ -865,6 +910,75 @@ export class CommandRunner {
         })
         const arrowHead = L.marker(to, { icon: arrowIcon, interactive: false }).addTo(map)
         this._drawings.push(line, arrowHead)
+
+        // Missile / projectile animation for strike trajectories
+        if (isStrike) {
+          const fromLL = L.latLng(from[0], from[1])
+          const toLL   = L.latLng(to[0],   to[1])
+          const projectileIcon = L.divIcon({
+            className: "",
+            html: `<div style="
+              width:14px; height:14px;
+              background: radial-gradient(circle, ${color} 20%, transparent 70%);
+              border-radius:50%;
+              box-shadow: 0 0 16px ${color}, 0 0 32px ${color}88;
+              filter: brightness(1.5);
+            "></div>`,
+            iconSize:   [14, 14],
+            iconAnchor: [7, 7],
+          })
+          const projectile = L.marker([from[0], from[1]], { icon: projectileIcon, interactive: false, zIndexOffset: 900 }).addTo(map)
+          this._drawings.push({ layer: projectile, animFrame: null })
+          const projEntry = this._drawings[this._drawings.length - 1]
+
+          const trail = []
+          const DURATION = 2200
+          const startTime = Date.now()
+          let stopped = false
+          let rafId = null
+
+          const animateProjectile = () => {
+            if (stopped) return
+            const elapsed  = Date.now() - startTime
+            const progress = Math.min(elapsed / DURATION, 1)
+            const eased    = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2
+            const lat = fromLL.lat + (toLL.lat - fromLL.lat) * eased
+            const lng = fromLL.lng + (toLL.lng - fromLL.lng) * eased
+            try { projectile.setLatLng([lat, lng]) } catch (_) {}
+
+            // Fade trail
+            trail.forEach(t => {
+              t.opacity *= 0.88
+              try { t.marker.setStyle({ fillOpacity: t.opacity }) } catch (_) {}
+            })
+            // Add new trail dot occasionally
+            if (Math.random() < 0.25) {
+              try {
+                const tm = L.circleMarker([lat, lng], {
+                  radius: 3, color, fillColor: color, fillOpacity: 0.55, weight: 0,
+                }).addTo(map)
+                trail.push({ marker: tm, opacity: 0.55 })
+                this._drawings.push({ layer: tm, animFrame: null })
+              } catch (_) {}
+            }
+
+            if (progress < 1) {
+              rafId = requestAnimationFrame(animateProjectile)
+              projEntry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+            } else {
+              stopped = true
+              try { map.removeLayer(projectile) } catch (_) {}
+              this._createImpactAnimation(toLL.lat, toLL.lng, color)
+              setTimeout(() => {
+                trail.forEach(t => { try { map.removeLayer(t.marker) } catch (_) {} })
+              }, 1500)
+            }
+          }
+          rafId = requestAnimationFrame(animateProjectile)
+          projEntry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+          return 3000
+        }
+
         return 800
       }
 
@@ -951,6 +1065,84 @@ export class CommandRunner {
         }
         this.onNarrate(action)
         return 300
+      }
+
+      // ── Formation (multi-unit tactical animation) ────────────────────────
+
+      case "formation": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L) return defaultDelay
+        const factionColors = { hostile: "#ff3030", allied: "#30ff80", neutral: "#ffffff", subject: "#3080ff" }
+        const unitMarkers = []
+
+        const getUnitSvg = (type, color) => {
+          if (type === "aircraft") return `<svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 2 L13 9 L22 12 L22 14 L13 13 L13 18 L16 20 L16 21 L12 20 L8 21 L8 20 L11 18 L11 13 L2 14 L2 12 L11 9 Z" fill="${color}"/></svg>`
+          if (type === "ground") return `<svg width="24" height="24" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="8" rx="1" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="8" y="6" width="8" height="6" fill="${color}"/></svg>`
+          return `<svg width="24" height="24" viewBox="0 0 24 24"><polygon points="12,4 18,16 15,15 12,18 9,15 6,16" fill="${color}" stroke="white" stroke-width="0.5"/></svg>`
+        }
+
+        action.units.forEach((unit) => {
+          const color = factionColors[unit.faction] || "#ffffff"
+          const icon = L.divIcon({
+            className: "director-formation-unit",
+            html: `<div style="position:relative;filter:drop-shadow(0 0 8px ${color})">
+              ${getUnitSvg(unit.type, color)}
+              <div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:3px;
+                padding:2px 6px;background:rgba(0,0,0,0.85);color:${color};font-size:9px;font-weight:700;
+                white-space:nowrap;border-radius:3px;border:1px solid ${color}44;letter-spacing:0.05em;">
+                ${unit.label || ""}
+              </div>
+            </div>`,
+            iconSize:   [24, 24],
+            iconAnchor: [12, 12],
+          })
+          const marker = L.marker([unit.lat, unit.lon], { icon, interactive: false, zIndexOffset: 800 }).addTo(map)
+          unitMarkers.push({ marker, unit, startPos: [unit.lat, unit.lon] })
+          this._drawings.push({ layer: marker, animFrame: null })
+        })
+
+        // Animate formation after brief entrance delay
+        setTimeout(() => {
+          const targetLL  = action.target
+          const hostileCount = unitMarkers.filter(u => u.unit.faction !== "subject").length
+          const finalPositions = unitMarkers.map((u, idx) => {
+            if (u.unit.faction === "subject") return targetLL
+            if (action.pattern === "surround") {
+              const angle  = (idx / Math.max(hostileCount, 1)) * Math.PI * 2
+              const radius = 0.045
+              return [targetLL[0] + Math.cos(angle) * radius, targetLL[1] + Math.sin(angle) * radius]
+            }
+            if (action.pattern === "converge") return targetLL
+            return [u.startPos[0] + (targetLL[0] - u.startPos[0]) * 0.7, u.startPos[1] + (targetLL[1] - u.startPos[1]) * 0.7]
+          })
+
+          const DURATION  = 4000
+          const startTime = Date.now()
+          let stopped     = false
+          let rafId       = null
+          const animate = () => {
+            if (stopped) return
+            const elapsed  = Date.now() - startTime
+            const progress = Math.min(elapsed / DURATION, 1)
+            const eased    = 1 - Math.pow(1 - progress, 3)
+            unitMarkers.forEach((u, idx) => {
+              const s = u.startPos, e = finalPositions[idx]
+              try { u.marker.setLatLng([s[0] + (e[0] - s[0]) * eased, s[1] + (e[1] - s[1]) * eased]) } catch (_) {}
+            })
+            if (progress < 1) {
+              rafId = requestAnimationFrame(animate)
+            } else {
+              stopped = true
+            }
+          }
+          rafId = requestAnimationFrame(animate)
+          // Store cancel fn on first unit's drawing entry
+          const firstEntry = this._drawings.find(d => d.layer === unitMarkers[0]?.marker)
+          if (firstEntry) firstEntry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+        }, 700)
+
+        return 5000
       }
 
       // ── Legacy (backward-compat with saved sequences) ──────────────────
@@ -1085,6 +1277,57 @@ export class CommandRunner {
     this._drawings = []
   }
 
+  // ── Impact explosion animation ────────────────────────────────────────────
+
+  _createImpactAnimation(lat, lon, color) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+    // 3 expanding rings
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => {
+        try {
+          const ring = L.circle([lat, lon], {
+            radius: 500, color, fillColor: color, fillOpacity: 0.35, weight: 2, opacity: 1,
+          }).addTo(map)
+          let radius = 500, opacity = 1
+          const expand = setInterval(() => {
+            radius  += 6000
+            opacity -= 0.05
+            try { ring.setRadius(radius); ring.setStyle({ opacity: Math.max(opacity, 0), fillOpacity: Math.max(opacity * 0.25, 0) }) } catch (_) {}
+            if (opacity <= 0) { clearInterval(expand); try { map.removeLayer(ring) } catch (_) {} }
+          }, 30)
+        } catch (_) {}
+      }, i * 200)
+    }
+    // Center flash
+    try {
+      const flash = L.circle([lat, lon], { radius: 4000, color: "white", fillColor: color, fillOpacity: 0.9, weight: 0 }).addTo(map)
+      let flashOp = 0.9
+      const flashFade = setInterval(() => {
+        flashOp -= 0.07
+        try { flash.setStyle({ fillOpacity: Math.max(flashOp, 0) }) } catch (_) {}
+        if (flashOp <= 0) { clearInterval(flashFade); try { map.removeLayer(flash) } catch (_) {} }
+      }, 40)
+    } catch (_) {}
+  }
+
+  // ── Time formatting ───────────────────────────────────────────────────────
+
+  _formatTimeAgo(timestamp) {
+    try {
+      const then    = new Date(timestamp)
+      const diffMin = Math.floor((Date.now() - then.getTime()) / 60000)
+      if (diffMin < 1)   return "Just now"
+      if (diffMin < 60)  return `${diffMin}m ago`
+      const diffHr = Math.floor(diffMin / 60)
+      if (diffHr < 24)   return `${diffHr}h ago`
+      const diffDay = Math.floor(diffHr / 24)
+      if (diffDay < 7)   return `${diffDay}d ago`
+      return then.toLocaleDateString()
+    } catch { return "" }
+  }
+
   // ── State notification ────────────────────────────────────────────────────
 
   _notifyState() {
@@ -1118,11 +1361,11 @@ export async function generateDirectorSequence({ intent, snapshot }) {
   return res.json()
 }
 
-export async function saveDirectorSequence(sequence) {
+export async function saveDirectorSequence(sequence, { transcript = "", intent = "" } = {}) {
   const res = await fetch(`${API_BASE}/api/director/save`, {
     method:  "POST",
     headers: { "Content-Type": "application/json", ..._authHeaders() },
-    body:    JSON.stringify({ sequence }),
+    body:    JSON.stringify({ sequence, transcript, intent }),
   })
   if (!res.ok) throw new Error(`save: ${res.status}`)
   return res.json()

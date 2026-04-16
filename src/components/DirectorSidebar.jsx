@@ -446,7 +446,15 @@ export default function DirectorSidebar({
                   {currentImage.loading && !imgLoaded && (
                     <div className="dir-img-skeleton" />
                   )}
-                  {currentImage.url && (
+                  {currentImage.url && currentImage.isVideo ? (
+                    <video
+                      src={currentImage.url}
+                      autoPlay loop muted playsInline
+                      style={{ width: "100%", display: "block", maxHeight: 190, objectFit: "cover" }}
+                      onCanPlay={() => setImgLoaded(true)}
+                      onError={() => setImgLoaded(true)}
+                    />
+                  ) : currentImage.url ? (
                     <img
                       src={currentImage.url}
                       alt={currentImage.caption || ""}
@@ -454,7 +462,7 @@ export default function DirectorSidebar({
                       onLoad={() => setImgLoaded(true)}
                       onError={() => setImgLoaded(true)}
                     />
-                  )}
+                  ) : null}
                   {currentImage.caption && imgLoaded && (
                     <div className="dir-img-caption">{currentImage.caption}</div>
                   )}

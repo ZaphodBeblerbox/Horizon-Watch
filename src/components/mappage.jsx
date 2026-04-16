@@ -271,18 +271,44 @@ const MAP_STYLES = `
 
 /* ── Director Mode marker animations ── */
 @keyframes director-marker-in {
-    from { opacity: 0; transform: scale(0.5); }
-    to   { opacity: 1; transform: scale(1); }
+    0%   { opacity: 0; transform: scale(0) rotate(-180deg); filter: blur(6px); }
+    60%  { opacity: 1; transform: scale(1.3) rotate(10deg); filter: blur(0); }
+    100% { opacity: 1; transform: scale(1) rotate(0deg); filter: blur(0); }
 }
 @keyframes director-marker-out {
     from { opacity: 1; transform: scale(1); }
     to   { opacity: 0; transform: scale(0.5); }
 }
-.director-marker-enter {
-    animation: director-marker-in 400ms ease-out forwards;
+@keyframes director-target-lock {
+    0%   { transform: rotate(0deg) scale(2); opacity: 0; }
+    50%  { transform: rotate(90deg) scale(1); opacity: 1; }
+    100% { transform: rotate(180deg) scale(1); opacity: 1; }
 }
-.director-marker-exit {
+@keyframes director-critical-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(255,40,40,0.7); transform: scale(1); }
+    50%  { box-shadow: 0 0 0 18px rgba(255,40,40,0); transform: scale(1.05); }
+    100% { box-shadow: 0 0 0 0 rgba(255,40,40,0); transform: scale(1); }
+}
+@keyframes director-base-pulse {
+    0%, 100% { filter: drop-shadow(0 0 3px rgba(255,220,50,0.5)); }
+    50%       { filter: drop-shadow(0 0 10px rgba(255,220,50,0.9)); }
+}
+.director-marker-enter {
+    animation: director-marker-in 600ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.director-target-marker {
+    animation: director-target-lock 800ms ease-out forwards, director-critical-pulse 2s ease-out infinite 800ms;
+}
+.director-base-marker {
+    animation: director-marker-in 600ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards, director-base-pulse 3s ease-in-out infinite 600ms;
+}
+.director-exit {
     animation: director-marker-out 300ms ease-in forwards;
+}
+.director-formation-unit {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
 /* ── Director Mode drawing animations ── */
@@ -293,6 +319,9 @@ const MAP_STYLES = `
 }
 @keyframes director-draw-line {
     to { stroke-dashoffset: 0; }
+}
+.director-drawing-line {
+    filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 8px currentColor);
 }
 .director-drawing-fill {
     opacity: 0;
@@ -2270,6 +2299,23 @@ function AnnotationMapHandler({ mode, zoneInProgress, onPoint, onZoneVertex, onZ
         },
         keydown(e) {
             if (e.originalEvent?.key === "Escape") onEscape()
+        },
+    })
+    return null
+}
+
+// ── PolygonScanHandler — click to collect scan polygon, dblclick to submit ────
+function PolygonScanHandler({ enabled, pts, onVertex, onSubmit }) {
+    useMapEvents({
+        click(e) {
+            if (!enabled) return
+            L.DomEvent.stopPropagation(e)
+            onVertex(e.latlng.lat, e.latlng.lng)
+        },
+        dblclick(e) {
+            if (!enabled) return
+            L.DomEvent.stopPropagation(e)
+            if (pts.length >= 3) onSubmit()
         },
     })
     return null
@@ -5901,6 +5947,12 @@ export default function MapPage({
     // ── Theater draw state ────────────────────────────────────────────────────
     const [theaterPts, setTheaterPts] = useState([])  // [[lat,lon],...] in progress
 
+    // ── Polygon news scan state ───────────────────────────────────────────────
+    const [polygonScanMode,    setPolygonScanMode]    = useState(false)
+    const [polygonPts,         setPolygonPts]         = useState([])
+    const [polygonScanResults, setPolygonScanResults] = useState(null)
+    const [polygonScanLoading, setPolygonScanLoading] = useState(false)
+
     // ── Sat Track state ───────────────────────────────────────────────────────
     const [satTLEs, setSatTLEs]               = useState([])
     const [satPositions, setSatPositions]     = useState([])
@@ -6939,10 +6991,10 @@ export default function MapPage({
         cleanupHighlights()
 
         const CONTEXT_COLORS = {
-            conflict: { fill: "#ff2828", stroke: "#ff2828" },
-            allied:   { fill: "#28ff64", stroke: "#28ff64" },
-            neutral:  { fill: "#ffc828", stroke: "#ffc828" },
-            focus:    { fill: "#2896ff", stroke: "#2896ff" },
+            conflict: { fill: "#ff2020", stroke: "#ff4040", fillOpacity: 0.35, weight: 3 },
+            allied:   { fill: "#20ff60", stroke: "#40ff80", fillOpacity: 0.30, weight: 3 },
+            neutral:  { fill: "#ffc020", stroke: "#ffd040", fillOpacity: 0.30, weight: 3 },
+            focus:    { fill: "#2090ff", stroke: "#40a0ff", fillOpacity: 0.35, weight: 3 },
         }
 
         // Helper: strict country name matching — no fuzzy includes(), only exact + alias + prefix
@@ -7037,10 +7089,10 @@ export default function MapPage({
                     const c = CONTEXT_COLORS[hi.context] || CONTEXT_COLORS.focus
                     return {
                         color:       c.stroke,
-                        weight:      2,
-                        opacity:     0.75,
+                        weight:      c.weight || 3,
+                        opacity:     1.0,
                         fillColor:   c.fill,
-                        fillOpacity: 0.22,
+                        fillOpacity: c.fillOpacity || 0.30,
                     }
                 },
             }
@@ -7199,12 +7251,15 @@ export default function MapPage({
                 ? `translateX(${labelOffsetX}px) translateY(${labelOffsetY}px)`
                 : ""
 
-            const iconHtml = `<div style="text-align:center;position:relative;filter:drop-shadow(0 0 5px ${cfg.glow}) drop-shadow(0 0 10px ${cfg.glow});animation:director-marker-in 400ms ease-out forwards;">
+            const markerClass = loc.type === "target" ? "director-target-marker"
+                : loc.type === "base" ? "director-base-marker"
+                : "director-marker-enter"
+            const iconHtml = `<div style="text-align:center;position:relative;filter:drop-shadow(0 0 5px ${cfg.glow}) drop-shadow(0 0 10px ${cfg.glow});">
               ${svgHtml}
               <div style="font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 4px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,0.8);margin-top:3px;white-space:nowrap;pointer-events:none;${labelTransform ? `transform:${labelTransform};` : ""}">${loc.name}</div>
             </div>`
             const icon = L.divIcon({
-                className: "director-location-marker director-marker-enter",
+                className: `director-location-marker ${markerClass}`,
                 html: iconHtml,
                 iconSize:   [0, 0],
                 iconAnchor: [0, -(cfg.size / 2 + 4)],
@@ -8849,7 +8904,7 @@ export default function MapPage({
     return (
         <div
             ref={mapContainerRef}
-            className={[effectiveActive.route ? "akili-route-active" : "", effectiveActive.annotate && annotationMode ? "akili-annotate-active" : "", theaterDrawing ? "akili-theater-active" : ""].filter(Boolean).join(" ")}
+            className={[effectiveActive.route ? "akili-route-active" : "", effectiveActive.annotate && annotationMode ? "akili-annotate-active" : "", theaterDrawing ? "akili-theater-active" : "", polygonScanMode ? "akili-theater-active" : ""].filter(Boolean).join(" ")}
             style={{ height: "100%", display: "flex", width: "100%", animation: "mapFadeIn 300ms ease forwards" }}
         >
             <style>{MAP_STYLES}</style>
@@ -9603,6 +9658,44 @@ export default function MapPage({
                     </Marker>
                 ))}
 
+                {/* ── Polygon news scan draw mode ───────────────────────────── */}
+                <PolygonScanHandler
+                    enabled={polygonScanMode}
+                    pts={polygonPts}
+                    onVertex={(lat, lon) => setPolygonPts(prev => [...prev, [lat, lon]])}
+                    onSubmit={() => {
+                        if (polygonPts.length < 3) return
+                        setPolygonScanMode(false)
+                        setPolygonScanLoading(true)
+                        fetch(`${API_BASE}/api/news/scan-polygon`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ polygon: polygonPts, hours: 72 }),
+                        })
+                            .then(r => r.ok ? r.json() : null)
+                            .then(d => { if (d) setPolygonScanResults(d) })
+                            .catch(() => {})
+                            .finally(() => setPolygonScanLoading(false))
+                    }}
+                />
+                {polygonScanMode && polygonPts.length > 0 && (
+                    <>
+                        <Polyline
+                            positions={polygonPts}
+                            pathOptions={{ color: "#22d3ee", weight: 2, opacity: 0.9, dashArray: "6 4", className: "director-drawing-line" }}
+                        />
+                        {polygonPts.map((v, i) => (
+                            <CircleMarker key={i} center={v} radius={4} pathOptions={{ fillColor: "#22d3ee", fillOpacity: 0.9, color: "#fff", weight: 1 }} />
+                        ))}
+                    </>
+                )}
+                {!polygonScanMode && polygonPts.length >= 3 && (
+                    <Polygon
+                        positions={polygonPts}
+                        pathOptions={{ color: "#22d3ee", weight: 1.5, fill: true, fillColor: "#22d3ee", fillOpacity: 0.08, opacity: 0.7 }}
+                    />
+                )}
+
                 {/* ── Theater draw mode + situation theater polygon ─────────── */}
                 <TheaterMapHandler
                     enabled={theaterDrawing}
@@ -9688,6 +9781,88 @@ export default function MapPage({
                 ))}
 
             </MapContainer>
+
+            {/* ── Polygon news scan button + results panel ─────────────────── */}
+            <div style={{ position: "absolute", bottom: isMobile ? 72 : 16, left: isMobile ? 10 : 56, zIndex: 1200, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
+                {/* Scan button */}
+                <button
+                    onClick={() => {
+                        if (polygonScanMode) {
+                            setPolygonScanMode(false)
+                            setPolygonPts([])
+                        } else {
+                            setPolygonScanResults(null)
+                            setPolygonPts([])
+                            setPolygonScanMode(true)
+                        }
+                    }}
+                    title={polygonScanMode ? "Cancel scan (double-click map to submit)" : "Scan area for news"}
+                    style={{
+                        height: 30, padding: "0 12px", fontSize: 10, fontWeight: 700,
+                        letterSpacing: "0.06em", textTransform: "uppercase",
+                        background: polygonScanMode ? "rgba(34,211,238,0.25)" : "rgba(0,0,0,0.55)",
+                        color: polygonScanMode ? "#22d3ee" : "rgba(200,230,255,0.7)",
+                        border: `1px solid ${polygonScanMode ? "rgba(34,211,238,0.5)" : "rgba(255,255,255,0.12)"}`,
+                        borderRadius: 5, cursor: "pointer", backdropFilter: "blur(8px)",
+                        transition: "all 0.15s",
+                    }}
+                >
+                    {polygonScanMode
+                        ? `✕ Cancel  (${polygonPts.length} pts)`
+                        : polygonScanLoading ? "Scanning…" : "◈ Scan Area"}
+                </button>
+                {polygonScanMode && (
+                    <div style={{ fontSize: 9, color: "rgba(34,211,238,0.65)", background: "rgba(0,0,0,0.5)", borderRadius: 4, padding: "3px 8px", backdropFilter: "blur(6px)" }}>
+                        Click to add points · double-click to submit
+                    </div>
+                )}
+            </div>
+
+            {/* Polygon scan results panel */}
+            {polygonScanResults && !polygonScanMode && (
+                <div style={{
+                    position: "absolute", top: 60, right: 0, width: isMobile ? "100%" : 340, zIndex: 1250,
+                    background: "rgba(6,13,26,0.94)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+                    borderLeft: "1px solid rgba(34,211,238,0.2)", display: "flex", flexDirection: "column",
+                    maxHeight: "calc(100% - 60px)", overflow: "hidden", fontFamily: "system-ui,-apple-system,sans-serif",
+                }}>
+                    {/* Header */}
+                    <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#22d3ee", flex: 1 }}>
+                            Area News Scan
+                        </span>
+                        <span style={{ fontSize: 9, color: "rgba(150,190,230,0.5)" }}>
+                            {polygonScanResults.article_count} articles · {polygonScanResults.hours}h · {polygonScanResults.polygon_area_km2?.toFixed(0)} km²
+                        </span>
+                        <button
+                            onClick={() => { setPolygonScanResults(null); setPolygonPts([]) }}
+                            style={{ background: "none", border: "none", color: "rgba(200,220,255,0.4)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0 }}
+                        >×</button>
+                    </div>
+                    {/* Article list */}
+                    <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+                        {polygonScanResults.articles?.length === 0 && (
+                            <div style={{ padding: "20px 14px", fontSize: 11, color: "rgba(160,190,230,0.4)", textAlign: "center" }}>
+                                No conflict news found in this area for the past {polygonScanResults.hours}h
+                            </div>
+                        )}
+                        {(polygonScanResults.articles || []).map((art, i) => (
+                            <div key={i} style={{ padding: "8px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: art.url ? "pointer" : "default" }}
+                                onClick={() => art.url && window.open(art.url, "_blank", "noopener")}
+                            >
+                                <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(220,240,255,0.88)", lineHeight: 1.35, marginBottom: 3 }}>
+                                    {art.title}
+                                </div>
+                                <div style={{ fontSize: 9, color: "rgba(120,160,210,0.5)", display: "flex", gap: 6 }}>
+                                    {art.source && <span>{art.source}</span>}
+                                    {art.published && <span>{new Date(art.published).toLocaleDateString()}</span>}
+                                    {art.severity && <span style={{ color: art.severity === "high" ? "#f87171" : art.severity === "medium" ? "#fbbf24" : "rgba(120,160,210,0.5)" }}>{art.severity}</span>}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* ── Toast notification ────────────────────────────────────────── */}
             {toastInfo && (

@@ -297,6 +297,72 @@ def build_snapshot(
 
 # ── Action validation ──────────────────────────────────────────────────────────
 
+_ENTITY_COUNTRY_LIST = [
+    "Russia", "Ukraine", "Iran", "Israel", "United States", "China", "Turkey",
+    "Syria", "Lebanon", "Yemen", "Saudi Arabia", "UAE", "United Arab Emirates",
+    "India", "Pakistan", "North Korea", "South Korea", "Japan", "Germany",
+    "France", "United Kingdom", "Poland", "Belarus", "Iraq", "Egypt",
+    "Libya", "Sudan", "Ethiopia", "Somalia", "Nigeria", "South Africa",
+    "Venezuela", "Cuba", "Taiwan", "Philippines", "Indonesia", "Myanmar",
+    "Afghanistan", "Kazakhstan", "Azerbaijan", "Armenia", "Georgia",
+]
+
+
+def _validate_entities_shown(actions: list[dict]) -> list[str]:
+    """Heuristic check: narrate actions shouldn't mention countries not yet highlighted."""
+    shown_countries: set[str] = set()
+    warnings: list[str] = []
+    for idx, action in enumerate(actions):
+        act = action.get("action")
+        if act == "highlight_country":
+            shown_countries.add(action.get("name", "").lower())
+        elif act in ("unhighlight_country", "clear_country_highlights"):
+            if act == "clear_country_highlights":
+                shown_countries.clear()
+            else:
+                shown_countries.discard(action.get("name", "").lower())
+        elif act == "narrate":
+            text = action.get("text", "").lower()
+            for country in _ENTITY_COUNTRY_LIST:
+                if country.lower() in text and country.lower() not in shown_countries:
+                    warnings.append(
+                        f"narrate[{idx}] mentions '{country}' but country not highlighted"
+                    )
+    return warnings
+
+
+def _auto_inject_missing_highlights(actions: list[dict]) -> list[dict]:
+    """Safety net — if a narrate mentions a country not yet highlighted, inject highlight before it."""
+    highlighted: set[str] = set()
+    result: list[dict] = []
+    for action in actions:
+        act = action.get("action")
+        if act == "highlight_country":
+            highlighted.add(action.get("name", ""))
+            result.append(action)
+        elif act == "unhighlight_country":
+            highlighted.discard(action.get("name", ""))
+            result.append(action)
+        elif act == "clear_country_highlights":
+            highlighted.clear()
+            result.append(action)
+        elif act == "narrate":
+            text = action.get("text", "")
+            missing = [c for c in _ENTITY_COUNTRY_LIST if c in text and c not in highlighted]
+            for country in missing:
+                result.append({
+                    "action": "highlight_country",
+                    "name": country,
+                    "context": "neutral",
+                    "label": country,
+                })
+                highlighted.add(country)
+            result.append(action)
+        else:
+            result.append(action)
+    return result
+
+
 _VALID_ACTIONS = {
     # Camera
     "fly_to", "pause",
@@ -327,6 +393,10 @@ _VALID_ACTIONS = {
     "show_satellite", "hide_satellite", "analyse_satellite",
     # Summary
     "summary",
+    # Formation (multi-unit tactical animation)
+    "formation",
+    # Video
+    "show_video",
     # Legacy (kept for backward-compat with saved sequences)
     "toggle_layer", "highlight_event", "clear_highlights",
 }
@@ -403,12 +473,65 @@ def _validate_action(action: dict) -> bool:
         return "type" in action and "id" in action
     if act in ("show_satellite", "analyse_satellite"):
         return "lat" in action and "lon" in action
+    if act == "formation":
+        return "units" in action and "target" in action and "pattern" in action
+    if act == "show_video":
+        return "query" in action
     return True
 
 
 # ── Director generation ────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are the Director and Senior Intelligence Analyst of Horizon Watch, a classified geopolitical intelligence platform. You receive raw, unfiltered intelligence feeds and you — not a pre-processor — decide what is relevant, where events occurred, and how to build the scene.
+SYSTEM_PROMPT = """
+╔══════════════════════════════════════════════════════════════════╗
+║  ABSOLUTE RULE — ZERO EXCEPTIONS — READ THIS FIRST              ║
+╚══════════════════════════════════════════════════════════════════╝
+
+ABSOLUTE RULE — ZERO EXCEPTIONS:
+ABSOLUTE RULE — ZERO EXCEPTIONS:
+ABSOLUTE RULE — ZERO EXCEPTIONS:
+
+Every named entity in your narration MUST appear on the map BEFORE or DURING the narrate action that mentions it. This applies to:
+- Countries (must be highlighted)
+- Cities, towns, bases, ports, facilities (must be placed)
+- Chokepoints (must be shown and clicked)
+- Events (must be placed at correct coordinates)
+- Vessels and aircraft when mentioned by name (must be shown)
+
+If you narrate "Russian forces advanced near Kupiansk", you MUST first:
+1. highlight_country("Russia", "conflict")
+2. highlight_country("Ukraine", "focus")
+3. place_location("Kupiansk", 49.7081, 37.6156, "target", "Key logistics hub on the eastern front")
+4. fly_to(49.7081, 37.6156, 10, 3000)
+5. click_location("Kupiansk")
+6. show_image("Kupiansk Ukraine eastern front")
+THEN narrate.
+
+If you mention a statistic, timeframe, or incident:
+- Specific event → place_event with coordinates and timestamp
+- Movement → draw_arrow showing direction
+- Range/threat area → draw_circle
+- Territory/zone → draw_polygon
+
+NEVER narrate about something invisible. If you can't place it, don't mention it.
+
+FORBIDDEN PATTERNS:
+❌ narrate("Tensions have escalated across the Sahel region") — Sahel not shown
+❌ narrate("The Black Sea Fleet remains active") — fleet not shown
+❌ narrate("Recent reports indicate cyber activity") — no visible target
+❌ narrate("Intelligence suggests movements in the area") — no specific location
+
+REQUIRED PATTERNS:
+✓ draw_polygon around Sahel → narrate about Sahel
+✓ place_location Sevastopol + show_vessel for fleet ships → narrate
+✓ place_location specific cyber target city → narrate
+✓ place_location AND draw_arrow for specific movement → narrate
+
+╔══════════════════════════════════════════════════════════════════╗
+║  END ABSOLUTE RULE                                               ║
+╚══════════════════════════════════════════════════════════════════╝
+
+You are the Director and Senior Intelligence Analyst of Horizon Watch, a classified geopolitical intelligence platform. You receive raw, unfiltered intelligence feeds and you — not a pre-processor — decide what is relevant, where events occurred, and how to build the scene.
 
 You control an interactive map to deliver cinematic intelligence briefings. You choreograph each briefing as a sequence of precise, graduated actions. You are both analyst and cinematographer.
 
@@ -435,7 +558,9 @@ NARRATION:
 - { "action": "show_context_card", "title": string, "summary": string, "source": string }
   Floating info card for events that cannot be precisely placed on the map.
 - { "action": "show_image", "query": string, "caption": string, "location": string }
-  Fetch a contextual photo. query must be specific and geographic: "Strait of Hormuz aerial view", "USS Eisenhower aircraft carrier", "Abadan oil refinery Iran". location is the city or region for search refinement (e.g. "Hormuz", "Tehran", "Odesa"). Max 4 per briefing. Place immediately before the narrate action it illustrates.
+  Fetch a contextual photo. query must be specific and geographic: "Strait of Hormuz aerial view", "USS Eisenhower aircraft carrier", "Abadan oil refinery Iran". location is the city or region for search refinement (e.g. "Hormuz", "Tehran", "Odesa"). Aim for 10-15 per briefing. Place immediately before the narrate action it illustrates.
+- { "action": "show_video", "query": string, "caption": string, "duration": number }
+  Show a looping video clip in the narration sidebar. Use sparingly — max 2-3 videos per briefing. For motion imagery: naval exercises, military parades, missile launches, aircraft operations. Falls back to image if no video found.
 
 PLACED EVENTS — you geocode and place these yourself:
 - { "action": "place_event", "title": string, "lat": number, "lon": number, "type": "conflict"|"maritime"|"political"|"humanitarian"|"infrastructure"|"economic"|"military", "severity": "critical"|"significant"|"elevated"|"low", "source": string, "summary": string }
@@ -519,6 +644,15 @@ SATELLITE:
 - { "action": "analyse_satellite", "lat": number, "lon": number, "radius_km": number, "label": string }
   Visual analysis of satellite view. Max 2 per briefing — only for high-value locations.
 
+MULTI-UNIT FORMATIONS — for tactical scenarios:
+- { "action": "formation", "units": [{ "lat": number, "lon": number, "type": "ship"|"aircraft"|"ground", "faction": "hostile"|"allied"|"neutral"|"subject", "label": string }], "target": [lat, lon], "pattern": "surround"|"converge"|"intercept"|"shadow" }
+  Creates an animated tactical formation. Units spawn at their positions then move according to the pattern.
+  "surround": units form a ring around the target; "converge": units move toward target; "intercept"/"shadow": units move to intercept.
+  Faction colors: hostile=red, allied=green, neutral=white, subject=blue (primary tracked entity).
+  Use for: ship surrounding scenarios, air intercepts, naval blockades, encirclement operations.
+  Example (Chinese ships surrounding Philippine vessel at Scarborough Shoal):
+  { "action": "formation", "units": [{"lat":15.25,"lon":117.80,"type":"ship","faction":"hostile","label":"CCG-5204"},{"lat":15.18,"lon":117.78,"type":"ship","faction":"subject","label":"BRP Sierra Madre"}], "target": [15.17, 117.77], "pattern": "surround" }
+
 SUMMARY — always the final action:
 - { "action": "summary", "title": string, "sections": [{ "heading": string, "text": string }], "predictions": [{ "prediction": string, "confidence": "high"|"medium"|"low", "basis": string }] }
   2-4 predictions, each citing specific evidence from the session.
@@ -575,12 +709,26 @@ RULE 5 — STANDARD RULES:
 ENRICHED BRIEFING RULES — MAKE EVERY BRIEFING CINEMATIC:
 ═══════════════════════════════════════════════════════
 
-IMAGES — Be generous, aim for 8-12 per briefing:
-- Use show_image for EVERY major location, facility, vessel, or event you discuss.
-- Every narration segment should have an accompanying show_image placed immediately before it.
-- Query format: facility + location = "Kharg Island oil terminal Iran", "Haifa Bay refinery Israel", "Camp Lemonnier Djibouti aerial", "USS Eisenhower aircraft carrier". Port = "Port of Aden aerial view". Chokepoint = "Strait of Hormuz shipping lane aerial". Country capital = "Tehran skyline Iran". Use the location field for search refinement.
-- When discussing a strike or attack: query the specific target facility.
-- When discussing a military unit or vessel: query its name and class.
+IMAGES — MANDATORY, aim for 10-15 per briefing:
+- EVERY narration segment MUST have at least one show_image placed immediately before the narrate.
+- For event narrations: show_image BEFORE the narrate action describes the event.
+- For location narrations: show_image of the location BEFORE narrating.
+- For equipment/weapons mentions: show_image of the equipment.
+- IMAGE QUERY PATTERNS (be SPECIFIC, never generic):
+  Named facility: "{facility name} {country}" e.g. "Kharg Island oil terminal Iran"
+  Named city event: "{city name} {event type}" e.g. "Haifa refinery fire drone strike"
+  Equipment: "{system name} {type}" e.g. "HIMARS launcher Ukraine"
+  Chokepoint: "{chokepoint name} aerial view" e.g. "Strait of Hormuz shipping"
+  Vessel: "{vessel name} {class}" e.g. "USS Eisenhower aircraft carrier"
+  Capital: "{capital name} skyline {country}" e.g. "Tehran skyline Iran"
+- Do NOT use show_image for individual people (copyright).
+- Use show_video (max 2-3) for motion imagery: naval exercises, missile launches, air operations.
+
+TIMESTAMPS — Include timing in ALL event narrations:
+- place_event actions MUST include "timestamp" field (ISO 8601 or relative, from snapshot data).
+- When narrating: mention timing explicitly: "On April 12th at 0330 UTC…", "Within the past 72 hours…", "As of [date]…"
+- Briefing opening narrate MUST state the analysis window: "This briefing covers developments from [start] to [now]."
+- Use timestamps from snapshot data — do not invent times.
 
 SATELLITE ANALYSIS — Use for high-value intelligence:
 - Use show_satellite then analyse_satellite for military bases, ports, oil terminals, nuclear facilities, and strike locations.
@@ -669,6 +817,16 @@ def generate_sequence(
     valid_actions = [a for a in actions if isinstance(a, dict) and _validate_action(a)]
     if not valid_actions:
         raise ValueError("Director: no valid actions in Claude response")
+
+    # Auto-inject missing country highlights (safety net)
+    valid_actions = _auto_inject_missing_highlights(valid_actions)
+
+    # Log entity warnings (non-blocking heuristic)
+    warnings = _validate_entities_shown(valid_actions)
+    if warnings:
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        _log.warning("[DIRECTOR] Entity validation: %s", warnings[:5])
 
     seq_id = str(uuid.uuid4())
     return {

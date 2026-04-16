@@ -2911,13 +2911,138 @@ async def director_save(
     request: Request,
     current_user=Depends(require_approved_user),
 ):
-    """Persist a director sequence to disk."""
+    """Persist a director sequence to disk and add to _BRIEFING_STORE."""
     body = await request.json()
     sequence = body.get("sequence") or body
     if not isinstance(sequence, dict) or "actions" not in sequence:
         raise HTTPException(400, "sequence with actions is required")
-    path = _director_svc.save_sequence(sequence)
-    return {"saved": True, "path": path, "id": sequence.get("id")}
+    # Accept optional transcript and intent from the request body
+    transcript = body.get("transcript") or _director_svc.sequence_to_transcript(sequence)
+    intent     = body.get("intent") or sequence.get("intent", "Director Briefing")
+    path       = _director_svc.save_sequence(sequence)
+    seq_id     = sequence.get("id") or path
+
+    # Push to main briefing store so it appears in the Briefings tab
+    username = current_user.get("username", "analyst") if isinstance(current_user, dict) else str(current_user)
+    briefing_entry = {
+        "id":          seq_id,
+        "type":        "director",
+        "title":       intent[:120],
+        "content":     transcript,
+        "actions":     sequence.get("actions", []),
+        "created_at":  sequence.get("created_at") or datetime.now(timezone.utc).isoformat(),
+        "created_by":  username,
+        "action_count": len(sequence.get("actions", [])),
+    }
+    with _BRIEFING_LOCK:
+        _BRIEFING_STORE.append(briefing_entry)
+        if len(_BRIEFING_STORE) > 50:
+            _BRIEFING_STORE[:] = _BRIEFING_STORE[-50:]
+        _save_briefing_store(_BRIEFING_STORE)
+
+    return {"saved": True, "path": path, "id": seq_id}
+
+
+@app.get("/api/director/video-search")
+async def director_video_search(
+    q: str,
+    current_user=Depends(require_approved_user),
+):
+    """Search Wikimedia Commons for a short video clip. Falls back to None if not found."""
+    import urllib.parse as _urlparse
+
+    def _search():
+        url    = "https://commons.wikimedia.org/w/api.php"
+        params = {
+            "action":     "query",
+            "generator":  "search",
+            "gsrsearch":  f"{q} filetype:video",
+            "gsrnamespace": 6,
+            "gsrlimit":   5,
+            "prop":       "imageinfo|info",
+            "iiprop":     "url|mime|size|duration",
+            "format":     "json",
+        }
+        try:
+            r = requests.get(url, params=params, headers={"User-Agent": "HorizonWatch/2.0"}, timeout=10)
+            return r.json() if r.status_code == 200 else None
+        except Exception:
+            return None
+
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(_executor, _search)
+
+    if data and "query" in data and "pages" in data.get("query", {}):
+        for page_id, page in data["query"]["pages"].items():
+            imageinfo = (page.get("imageinfo") or [{}])[0]
+            mime      = imageinfo.get("mime", "")
+            if mime.startswith("video/") or mime == "image/gif":
+                return {
+                    "video_url": imageinfo.get("url"),
+                    "mime":      mime,
+                    "duration":  imageinfo.get("duration"),
+                    "caption":   page.get("title", "").replace("File:", ""),
+                }
+    return {"video_url": None, "fallback": True}
+
+
+@app.post("/api/news/scan-polygon")
+async def scan_polygon_news(
+    request: Request,
+    current_user=Depends(require_approved_user),
+):
+    """Return all news conflict markers whose geocoded location falls within the drawn polygon."""
+    body    = await request.json()
+    polygon = body.get("polygon", [])   # [[lat, lon], ...]
+    hours   = int(body.get("hours", 72))
+
+    if len(polygon) < 3:
+        return JSONResponse({"error": "Polygon needs at least 3 points"}, status_code=400)
+
+    try:
+        from shapely.geometry import Point as _SPoint, Polygon as _SPoly
+        # Shapely uses (lon, lat) order
+        shapely_poly = _SPoly([(p[1], p[0]) for p in polygon])
+    except Exception as exc:
+        return JSONResponse({"error": f"Polygon error: {exc}"}, status_code=400)
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
+
+    matching: list[dict] = []
+    for marker in _NEWS_CONFLICT_MARKERS.values():
+        try:
+            lat = marker.get("lat")
+            lon = marker.get("lon")
+            if lat is None or lon is None:
+                continue
+            ts = marker.get("timestamp") or marker.get("published_at") or ""
+            if ts:
+                try:
+                    mt = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                    if mt < cutoff:
+                        continue
+                except Exception:
+                    pass
+            if shapely_poly.contains(_SPoint(float(lon), float(lat))):
+                matching.append(marker)
+        except Exception:
+            continue
+
+    matching.sort(key=lambda a: a.get("timestamp") or a.get("published_at") or "", reverse=True)
+
+    # Rough area estimate (degrees² × 111² km²)
+    try:
+        from shapely.geometry import Polygon as _SPoly2
+        area_km2 = round(_SPoly2([(p[1], p[0]) for p in polygon]).area * 111 * 111, 1)
+    except Exception:
+        area_km2 = 0
+
+    return {
+        "article_count":    len(matching),
+        "polygon_area_km2": area_km2,
+        "hours":            hours,
+        "articles":         matching[:100],
+    }
 
 
 @app.get("/api/director/list")

@@ -161,7 +161,7 @@ function useIsMobile() {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function BriefingPanel({ onClose, onMarkRead }) {
+export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) {
     const isMobile = useIsMobile()
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true)
 
@@ -559,8 +559,18 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                                         style={S.docRow(doc.id === activeDocId)}
                                         onClick={() => loadDoc(doc.id, doc.folder, doc.title)}
                                     >
-                                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                            {doc.title}
+                                        <div style={{ display: "flex", alignItems: "center", gap: 5, overflow: "hidden" }}>
+                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                                                {doc.title}
+                                            </span>
+                                            {doc.type === "director" && (
+                                                <span style={{
+                                                    fontSize: 8, fontWeight: 700, letterSpacing: "0.06em",
+                                                    background: "rgba(200,144,64,0.18)", color: "#c89040",
+                                                    border: "1px solid rgba(200,144,64,0.35)", borderRadius: 3,
+                                                    padding: "0 4px", flexShrink: 0,
+                                                }}>DIRECTOR</span>
+                                            )}
                                         </div>
                                         <div style={{ fontSize: 9, color: "var(--akili-text-muted)", marginTop: 1 }}>
                                             {fmtDate(doc.modified_at)}
@@ -692,7 +702,7 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                                 )}
 
                                 {/* Briefing toolbar (claude-briefings) */}
-                                {isReadOnly && activeDoc.folder === "claude-briefings" && (
+                                {isReadOnly && activeDoc.folder === "claude-briefings" && activeDoc.type !== "director" && (
                                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
                                         <span style={{ fontSize: 9, color: "var(--akili-text-muted)" }}>
                                             {fmtDate(activeDoc.created_at)}
@@ -711,6 +721,34 @@ export default function BriefingPanel({ onClose, onMarkRead }) {
                                         >
                                             {generating ? "Generating…" : countdown > 0 ? `Regen in ${fmtCountdown(countdown)}` : "Regenerate"}
                                         </button>
+                                    </div>
+                                )}
+
+                                {/* Director briefing toolbar */}
+                                {isReadOnly && activeDoc.type === "director" && (
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                                        <span style={{
+                                            fontSize: 9, fontWeight: 700, letterSpacing: "0.07em",
+                                            color: "#c89040", background: "rgba(200,144,64,0.12)",
+                                            border: "1px solid rgba(200,144,64,0.3)", borderRadius: 3,
+                                            padding: "1px 6px",
+                                        }}>DIRECTOR</span>
+                                        <span style={{ fontSize: 9, color: "var(--akili-text-muted)" }}>
+                                            {fmtDate(activeDoc.created_at)}
+                                        </span>
+                                        {onReplay && (
+                                            <button
+                                                onClick={() => onReplay(activeDoc)}
+                                                style={{
+                                                    height: 24, padding: "0 10px", fontSize: 10, fontWeight: 700,
+                                                    background: "rgba(200,144,64,0.15)", color: "#c89040",
+                                                    border: "1px solid rgba(200,144,64,0.4)", borderRadius: 4,
+                                                    cursor: "pointer", letterSpacing: "0.04em",
+                                                }}
+                                            >
+                                                ▶ Replay
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                             </div>

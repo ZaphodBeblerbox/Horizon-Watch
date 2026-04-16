@@ -180,6 +180,7 @@ export default function App() {
     const mapInstanceRef = useRef(null)
     const directorRunnerRef = useRef(null)
     const directorLayerSnapshotRef = useRef(null)
+    const directorIntentRef = useRef("")
     const [showStartupModal,  setShowStartupModal]  = useState(false)
     const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
     const [showStartupChoice, setShowStartupChoice] = useState(false)
@@ -842,7 +843,49 @@ export default function App() {
         setDirectorCountryPanel(null)
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+    const handleReplayBriefing = useCallback(async (briefing) => {
+        if (!briefing?.actions?.length) return
+        handleDirectorClose()
+        setDirectorSavedStatus(null)
+        setDirectorSegments([])
+        setDirectorImage(null)
+        directorIntentRef.current = briefing.intent || ""
+        const sequence = briefing.actions
+        setDirectorSequence(sequence)
+        setDirectorVisible(true)
+        if (directorRunnerRef.current) directorRunnerRef.current.destroy()
+        let segIdx = 0
+        const runner = new CommandRunner({
+            mapRef:            mapInstanceRef,
+            setDirectorItems,
+            setLayerOverrides: setDirectorLayerOverrides,
+            setHighlights:     setDirectorHighlights,
+            surfaceItems,
+            onNarrate: (action) => {
+                setDirectorCurrentAction(action)
+                const idx = segIdx++
+                setDirectorSegments(prev => [...prev, { action, segIdx: idx }])
+                setDirectorImage(null)
+            },
+            onIndicator:  (action) => setDirectorIndicators(prev => [...prev, action]),
+            onContextCard:(action) => setDirectorContextCards(prev => [...prev, action]),
+            onStateChange:(state)  => setDirectorRunnerState(state),
+            onDetailPanel:(panel)  => setDirectorItems(prev => ({ ...prev, detailPanel: panel })),
+            onImage:      (img)    => setDirectorImage(img),
+            onOpenDetail: () => {},
+            onCloseDetail:() => {},
+            onComplete:   () => {},
+        })
+        runner.load(sequence)
+        directorRunnerRef.current = runner
+        // Switch to map tab first, then play
+        const mapTab = tabs.find(t => t.type === "map")
+        if (mapTab) setActiveTabId(mapTab.id)
+        setTimeout(() => runner.play(), 300)
+    }, [surfaceItems, tabs]) // eslint-disable-line react-hooks/exhaustive-deps
+
     const handleDirectorGenerate = useCallback(async (intent) => {
+        directorIntentRef.current = intent || ""
         setDirectorError(null)
         setDirectorGenerating(true)
         setDirectorCurrentAction(null)
@@ -927,13 +970,26 @@ export default function App() {
         if (!directorSequence) return
         setDirectorSavedStatus("saving")
         try {
-            await saveDirectorSequence(directorSequence)
+            // Build plain-text transcript from narrate/summary segments played so far
+            const transcript = directorSegments
+                .map(seg => {
+                    const a = seg.action
+                    if (a.action === "summary") {
+                        return (a.sections || []).map(s => [s.heading, s.text].filter(Boolean).join("\n")).join("\n\n")
+                    }
+                    return [a.heading || a.title, a.text].filter(Boolean).join("\n")
+                })
+                .join("\n\n---\n\n")
+            await saveDirectorSequence(directorSequence, {
+                transcript,
+                intent: directorIntentRef.current,
+            })
             setDirectorSavedStatus("saved")
         } catch (err) {
             console.error("[Director] save failed:", err)
             setDirectorSavedStatus("error")
         }
-    }, [directorSequence])
+    }, [directorSequence, directorSegments])
 
     // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1161,6 +1217,7 @@ export default function App() {
                         <BriefingPanel
                             onClose={() => closeTab(tabs.find(t => t.type === "briefing")?.id)}
                             onMarkRead={handleBriefingMarkRead}
+                            onReplay={handleReplayBriefing}
                         />
                     </div>
                 )}
