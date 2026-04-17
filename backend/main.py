@@ -6412,7 +6412,7 @@ def get_latest_briefing():
 
 
 @app.post("/api/briefing/generate")
-async def generate_briefing_manual(current_user=Depends(get_current_user)):
+async def generate_briefing_manual(current_user=Depends(require_approved_user)):
     """Manually trigger a briefing regeneration (rate-limited to once per 2 hours)."""
     with _BRIEFING_LOCK:
         store = list(_BRIEFING_STORE)
