@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import API_BASE from "../apiBase.js"
 import { TV_CHANNELS as RAW_CHANNELS } from "./tvchannels.js"
+import MobileNewsFeed from "./MobileNewsFeed.jsx"
 
 // Build embed URLs from verified youtubeId list in tvchannels.js
 const YT = (id) => `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`
@@ -636,10 +637,15 @@ export default function NewsPage({ onClose }) {
     const [categoryFilter, setCategoryFilter] = useState("All")
     const [tvCollapsed,    setTvCollapsed]    = useState(true)
     const [isMobile,       setIsMobile]       = useState(() => window.innerWidth < 768)
+    const [viewMode,       setViewMode]       = useState(() => window.innerWidth < 768 ? "feed" : "grid")
     const retryTimerRef = useRef(null)
 
     useEffect(() => {
-        const h = () => setIsMobile(window.innerWidth < 768)
+        const h = () => {
+            const mobile = window.innerWidth < 768
+            setIsMobile(mobile)
+            if (!mobile) setViewMode("grid")
+        }
         window.addEventListener("resize", h)
         return () => window.removeEventListener("resize", h)
     }, [])
@@ -751,6 +757,9 @@ export default function NewsPage({ onClose }) {
 
         return true
     })
+
+    // ── Articles for TikTok feed (world + spaceflight; cities handled separately) ─
+    const feedArticles = section === "space" ? spaceArticles : filtered
 
     // ── Featured card — desktop only (first item as wide card) ───────────────
     const renderFeatured = (a) => {
@@ -933,10 +942,114 @@ export default function NewsPage({ onClose }) {
         }}>{label}</button>
     )
 
+    // ── Compact tab list used by feed mode overlay tab bar ───────────────────
+    const ALL_TABS_MOBILE = [
+        { id: "news",       label: "World",      section: "news"    },
+        { id: "spaceflight",label: "Space",      section: "space"   },
+        { id: "markets",    label: "Markets",    section: "markets" },
+        ...cities.map(c => ({ id: `city:${c.name}`, label: c.name, section: `city:${c.name}` })),
+    ]
+
     // ─────────────────────────────────────────────────────────────────────────
     // MOBILE LAYOUT
     // ─────────────────────────────────────────────────────────────────────────
     if (isMobile) {
+        // ── FEED MODE ───────────────────────────────────────────────────────
+        if (viewMode === "feed" && section !== "markets" && !section.startsWith("city:")) {
+            const feedLoading = section === "space" ? spaceLoading : loading
+            return (
+                <>
+                    <style>{`
+                        .mobile-view-toggle {
+                            position: fixed;
+                            top: max(14px, env(safe-area-inset-top));
+                            left: 14px;
+                            width: 34px; height: 34px;
+                            border-radius: 50%;
+                            background: rgba(0,0,0,0.55);
+                            backdrop-filter: blur(12px);
+                            -webkit-backdrop-filter: blur(12px);
+                            border: 1px solid rgba(255,255,255,0.14);
+                            color: white;
+                            font-size: 16px;
+                            cursor: pointer;
+                            z-index: 200;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        }
+                        .mobile-feed-tabs {
+                            position: fixed;
+                            top: max(56px, calc(env(safe-area-inset-top) + 42px));
+                            left: 0; right: 0;
+                            z-index: 200;
+                            padding: 0 52px 0 14px;
+                            pointer-events: none;
+                        }
+                        .mobile-feed-tabs-scroll {
+                            display: flex;
+                            gap: 5px;
+                            overflow-x: auto;
+                            -webkit-overflow-scrolling: touch;
+                            scrollbar-width: none;
+                            pointer-events: auto;
+                            padding-bottom: 2px;
+                        }
+                        .mobile-feed-tabs-scroll::-webkit-scrollbar { display: none; }
+                        .mobile-feed-tabs-scroll button {
+                            flex-shrink: 0;
+                            padding: 5px 11px;
+                            border-radius: 100px;
+                            background: rgba(0,0,0,0.42);
+                            backdrop-filter: blur(8px);
+                            -webkit-backdrop-filter: blur(8px);
+                            border: 1px solid rgba(255,255,255,0.1);
+                            color: rgba(255,255,255,0.65);
+                            font-size: 11px;
+                            font-weight: 500;
+                            cursor: pointer;
+                            white-space: nowrap;
+                            font-family: system-ui,-apple-system,sans-serif;
+                        }
+                        .mobile-feed-tabs-scroll button.active {
+                            background: rgba(0,170,255,0.28);
+                            border-color: rgba(0,170,255,0.48);
+                            color: white;
+                            font-weight: 600;
+                        }
+                    `}</style>
+
+                    {/* View-mode toggle: feed → grid */}
+                    <button
+                        className="mobile-view-toggle"
+                        onClick={() => setViewMode("grid")}
+                        title="Switch to list view"
+                    >⊞</button>
+
+                    {/* Compact tab bar */}
+                    <div className="mobile-feed-tabs">
+                        <div className="mobile-feed-tabs-scroll">
+                            {ALL_TABS_MOBILE.map(t => (
+                                <button
+                                    key={t.id}
+                                    className={section === t.section ? "active" : ""}
+                                    onClick={() => switchSection(t.section)}
+                                >{t.label}</button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Full-screen feed */}
+                    <MobileNewsFeed
+                        articles={feedArticles}
+                        loading={feedLoading}
+                        onRefresh={fetchNews}
+                    />
+                </>
+            )
+        }
+
+        // ── GRID MODE (or markets/city which have their own layout) ─────────
         return (
             <div style={{
                 display:       "flex",
@@ -987,6 +1100,18 @@ export default function NewsPage({ onClose }) {
                         {sectionTab("space", "Spaceflight")}
                         {sectionTab("markets", "Markets")}
                         {cities.map(c => sectionTab(`city:${c.name}`, c.name))}
+                        {/* Feed mode toggle */}
+                        <button
+                            onClick={() => setViewMode("feed")}
+                            style={{
+                                padding: "8px 14px", fontSize: 12, fontWeight: 400,
+                                background: "transparent", border: "none",
+                                borderBottom: "2px solid transparent",
+                                color: "#64748b", cursor: "pointer", whiteSpace: "nowrap",
+                                transition: "color 0.12s", WebkitTapHighlightColor: "transparent",
+                                marginLeft: 4,
+                            }}
+                        >▤ Feed</button>
                     </div>
 
                     {/* Region filter — horizontal scroll */}

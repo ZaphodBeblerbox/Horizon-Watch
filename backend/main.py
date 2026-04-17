@@ -2986,65 +2986,6 @@ async def director_video_search(
     return {"video_url": None, "fallback": True}
 
 
-@app.post("/api/news/scan-polygon")
-async def scan_polygon_news(
-    request: Request,
-    current_user=Depends(require_approved_user),
-):
-    """Return all news conflict markers whose geocoded location falls within the drawn polygon."""
-    body    = await request.json()
-    polygon = body.get("polygon", [])   # [[lat, lon], ...]
-    hours   = int(body.get("hours", 72))
-
-    if len(polygon) < 3:
-        return JSONResponse({"error": "Polygon needs at least 3 points"}, status_code=400)
-
-    try:
-        from shapely.geometry import Point as _SPoint, Polygon as _SPoly
-        # Shapely uses (lon, lat) order
-        shapely_poly = _SPoly([(p[1], p[0]) for p in polygon])
-    except Exception as exc:
-        return JSONResponse({"error": f"Polygon error: {exc}"}, status_code=400)
-
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
-
-    matching: list[dict] = []
-    for marker in _NEWS_CONFLICT_MARKERS.values():
-        try:
-            lat = marker.get("lat")
-            lon = marker.get("lon")
-            if lat is None or lon is None:
-                continue
-            ts = marker.get("timestamp") or marker.get("published_at") or ""
-            if ts:
-                try:
-                    mt = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-                    if mt < cutoff:
-                        continue
-                except Exception:
-                    pass
-            if shapely_poly.contains(_SPoint(float(lon), float(lat))):
-                matching.append(marker)
-        except Exception:
-            continue
-
-    matching.sort(key=lambda a: a.get("timestamp") or a.get("published_at") or "", reverse=True)
-
-    # Rough area estimate (degrees² × 111² km²)
-    try:
-        from shapely.geometry import Polygon as _SPoly2
-        area_km2 = round(_SPoly2([(p[1], p[0]) for p in polygon]).area * 111 * 111, 1)
-    except Exception:
-        area_km2 = 0
-
-    return {
-        "article_count":    len(matching),
-        "polygon_area_km2": area_km2,
-        "hours":            hours,
-        "articles":         matching[:100],
-    }
-
-
 @app.get("/api/director/list")
 async def director_list():
     """List saved director sequences (newest first)."""

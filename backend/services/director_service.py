@@ -8,13 +8,90 @@ intelligence data.
 from __future__ import annotations
 
 import json
+import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 BASE_DIR = Path(__file__).parent.parent
 DIRECTOR_DIR = BASE_DIR / "documents" / "director-briefings"
+
+
+# ── Tolerant JSON parser ───────────────────────────────────────────────────────
+
+def _parse_claude_json_tolerant(text: str) -> list:
+    """Parse Claude's JSON response, handling trailing commas and markdown fences."""
+
+    # Strip markdown fences
+    code_block = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', text, re.DOTALL)
+    if code_block:
+        text = code_block.group(1)
+
+    text = text.strip()
+
+    # Ensure we start at the array
+    if not text.startswith('['):
+        start = text.find('[')
+        if start == -1:
+            raise ValueError("No JSON array found in response")
+        text = text[start:]
+
+    # Trim to last ]
+    if not text.endswith(']'):
+        end = text.rfind(']')
+        if end != -1:
+            text = text[:end + 1]
+
+    # Try strict parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        logger.warning("[DIRECTOR] Strict JSON parse failed: %s. Trying tolerant parse.", e)
+
+    # Remove trailing commas before } or ]
+    cleaned = re.sub(r',(\s*[}\]])', r'\1', text)
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        logger.warning("[DIRECTOR] Comma-fix parse failed: %s", e)
+
+    # Try json5 if available
+    try:
+        import json5  # type: ignore
+        return json5.loads(cleaned)
+    except (ImportError, Exception) as e:
+        logger.warning("[DIRECTOR] json5 not available or failed: %s", e)
+
+    # Last resort: parse action objects one by one
+    logger.warning("[DIRECTOR] Attempting per-action recovery parse")
+    actions = []
+    depth = 0
+    current_start = None
+    for i, ch in enumerate(cleaned):
+        if ch == '{':
+            if depth == 0:
+                current_start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and current_start is not None:
+                obj_text = re.sub(r',(\s*[}\]])', r'\1', cleaned[current_start:i + 1])
+                try:
+                    actions.append(json.loads(obj_text))
+                except json.JSONDecodeError:
+                    logger.warning("[DIRECTOR] Skipping malformed action: %s", obj_text[:100])
+                current_start = None
+
+    if actions:
+        logger.info("[DIRECTOR] Recovered %d actions via per-action parse", len(actions))
+        return actions
+
+    raise ValueError(f"Could not parse JSON from Claude response: {text[:200]}")
 
 
 # ── Snapshot helpers ───────────────────────────────────────────────────────────
@@ -754,7 +831,28 @@ Intelligence snapshot (raw, unfiltered):
 {snapshot}
 
 You are the analyst. Read raw_intelligence, decide what is geopolitically significant, and geocode events yourself using place_event. Use vessels/aircraft/chokepoints/infrastructure for tracked live assets. Build a cinematic briefing. Start with clear_all. End with summary.
-Respond ONLY with the JSON array — no preamble, no markdown fences."""
+Respond ONLY with the JSON array — no preamble, no markdown fences.
+
+═══════════════════════════════════════════════════════
+JSON OUTPUT FORMAT — STRICTLY REQUIRED:
+═══════════════════════════════════════════════════════
+- Respond with ONLY a JSON array of action objects. No preamble, no markdown, no explanation.
+- Do NOT wrap in ```json``` blocks.
+- NO trailing commas. The last element in any array or object must NOT be followed by a comma.
+- All strings must use double quotes, not single quotes.
+- Your entire response must be parseable as JSON by a strict parser.
+
+CORRECT:
+[
+  { "action": "clear_all" },
+  { "action": "narrate", "text": "...", "heading": "..." }
+]
+
+INCORRECT (trailing comma after last element):
+[
+  { "action": "clear_all" },
+  { "action": "narrate", "text": "...", "heading": "..." },
+]"""
 
 
 def generate_sequence(
@@ -801,16 +899,13 @@ def generate_sequence(
     )
     raw = message.content[0].text.strip()
 
-    # Parse JSON — strip any accidental markdown fences
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        raw = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
-
+    # Parse JSON with tolerant fallbacks
     try:
-        actions = json.loads(raw)
+        actions = _parse_claude_json_tolerant(raw)
         if not isinstance(actions, list):
             raise ValueError("Expected a JSON array")
-    except Exception as exc:
+    except ValueError as exc:
+        logger.error("[DIRECTOR] All JSON parsing strategies failed: %s", exc)
         raise ValueError(f"Director: failed to parse Claude response as JSON array: {exc}\nRaw: {raw[:500]}")
 
     # Validate and filter
@@ -824,9 +919,7 @@ def generate_sequence(
     # Log entity warnings (non-blocking heuristic)
     warnings = _validate_entities_shown(valid_actions)
     if warnings:
-        import logging as _logging
-        _log = _logging.getLogger(__name__)
-        _log.warning("[DIRECTOR] Entity validation: %s", warnings[:5])
+        logger.warning("[DIRECTOR] Entity validation: %s", warnings[:5])
 
     seq_id = str(uuid.uuid4())
     return {

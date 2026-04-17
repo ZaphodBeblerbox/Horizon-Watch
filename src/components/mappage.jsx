@@ -2304,23 +2304,6 @@ function AnnotationMapHandler({ mode, zoneInProgress, onPoint, onZoneVertex, onZ
     return null
 }
 
-// ── PolygonScanHandler — click to collect scan polygon, dblclick to submit ────
-function PolygonScanHandler({ enabled, pts, onVertex, onSubmit }) {
-    useMapEvents({
-        click(e) {
-            if (!enabled) return
-            L.DomEvent.stopPropagation(e)
-            onVertex(e.latlng.lat, e.latlng.lng)
-        },
-        dblclick(e) {
-            if (!enabled) return
-            L.DomEvent.stopPropagation(e)
-            if (pts.length >= 3) onSubmit()
-        },
-    })
-    return null
-}
-
 // ── TheaterMapHandler — click to collect polygon vertices, dblclick to close ──
 function TheaterMapHandler({ enabled, pts, onVertex, onClose }) {
     useMapEvents({
@@ -5947,12 +5930,6 @@ export default function MapPage({
     // ── Theater draw state ────────────────────────────────────────────────────
     const [theaterPts, setTheaterPts] = useState([])  // [[lat,lon],...] in progress
 
-    // ── Polygon news scan state ───────────────────────────────────────────────
-    const [polygonScanMode,    setPolygonScanMode]    = useState(false)
-    const [polygonPts,         setPolygonPts]         = useState([])
-    const [polygonScanResults, setPolygonScanResults] = useState(null)
-    const [polygonScanLoading, setPolygonScanLoading] = useState(false)
-
     // ── Sat Track state ───────────────────────────────────────────────────────
     const [satTLEs, setSatTLEs]               = useState([])
     const [satPositions, setSatPositions]     = useState([])
@@ -8904,7 +8881,7 @@ export default function MapPage({
     return (
         <div
             ref={mapContainerRef}
-            className={[effectiveActive.route ? "akili-route-active" : "", effectiveActive.annotate && annotationMode ? "akili-annotate-active" : "", theaterDrawing ? "akili-theater-active" : "", polygonScanMode ? "akili-theater-active" : ""].filter(Boolean).join(" ")}
+            className={[effectiveActive.route ? "akili-route-active" : "", effectiveActive.annotate && annotationMode ? "akili-annotate-active" : "", theaterDrawing ? "akili-theater-active" : ""].filter(Boolean).join(" ")}
             style={{ height: "100%", display: "flex", width: "100%", animation: "mapFadeIn 300ms ease forwards" }}
         >
             <style>{MAP_STYLES}</style>
@@ -9658,44 +9635,6 @@ export default function MapPage({
                     </Marker>
                 ))}
 
-                {/* ── Polygon news scan draw mode ───────────────────────────── */}
-                <PolygonScanHandler
-                    enabled={polygonScanMode}
-                    pts={polygonPts}
-                    onVertex={(lat, lon) => setPolygonPts(prev => [...prev, [lat, lon]])}
-                    onSubmit={() => {
-                        if (polygonPts.length < 3) return
-                        setPolygonScanMode(false)
-                        setPolygonScanLoading(true)
-                        fetch(`${API_BASE}/api/news/scan-polygon`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ polygon: polygonPts, hours: 72 }),
-                        })
-                            .then(r => r.ok ? r.json() : null)
-                            .then(d => { if (d) setPolygonScanResults(d) })
-                            .catch(() => {})
-                            .finally(() => setPolygonScanLoading(false))
-                    }}
-                />
-                {polygonScanMode && polygonPts.length > 0 && (
-                    <>
-                        <Polyline
-                            positions={polygonPts}
-                            pathOptions={{ color: "#22d3ee", weight: 2, opacity: 0.9, dashArray: "6 4", className: "director-drawing-line" }}
-                        />
-                        {polygonPts.map((v, i) => (
-                            <CircleMarker key={i} center={v} radius={4} pathOptions={{ fillColor: "#22d3ee", fillOpacity: 0.9, color: "#fff", weight: 1 }} />
-                        ))}
-                    </>
-                )}
-                {!polygonScanMode && polygonPts.length >= 3 && (
-                    <Polygon
-                        positions={polygonPts}
-                        pathOptions={{ color: "#22d3ee", weight: 1.5, fill: true, fillColor: "#22d3ee", fillOpacity: 0.08, opacity: 0.7 }}
-                    />
-                )}
-
                 {/* ── Theater draw mode + situation theater polygon ─────────── */}
                 <TheaterMapHandler
                     enabled={theaterDrawing}
@@ -9781,88 +9720,6 @@ export default function MapPage({
                 ))}
 
             </MapContainer>
-
-            {/* ── Polygon news scan button + results panel ─────────────────── */}
-            <div style={{ position: "absolute", bottom: isMobile ? 72 : 16, left: isMobile ? 10 : 56, zIndex: 1200, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
-                {/* Scan button */}
-                <button
-                    onClick={() => {
-                        if (polygonScanMode) {
-                            setPolygonScanMode(false)
-                            setPolygonPts([])
-                        } else {
-                            setPolygonScanResults(null)
-                            setPolygonPts([])
-                            setPolygonScanMode(true)
-                        }
-                    }}
-                    title={polygonScanMode ? "Cancel scan (double-click map to submit)" : "Scan area for news"}
-                    style={{
-                        height: 30, padding: "0 12px", fontSize: 10, fontWeight: 700,
-                        letterSpacing: "0.06em", textTransform: "uppercase",
-                        background: polygonScanMode ? "rgba(34,211,238,0.25)" : "rgba(0,0,0,0.55)",
-                        color: polygonScanMode ? "#22d3ee" : "rgba(200,230,255,0.7)",
-                        border: `1px solid ${polygonScanMode ? "rgba(34,211,238,0.5)" : "rgba(255,255,255,0.12)"}`,
-                        borderRadius: 5, cursor: "pointer", backdropFilter: "blur(8px)",
-                        transition: "all 0.15s",
-                    }}
-                >
-                    {polygonScanMode
-                        ? `✕ Cancel  (${polygonPts.length} pts)`
-                        : polygonScanLoading ? "Scanning…" : "◈ Scan Area"}
-                </button>
-                {polygonScanMode && (
-                    <div style={{ fontSize: 9, color: "rgba(34,211,238,0.65)", background: "rgba(0,0,0,0.5)", borderRadius: 4, padding: "3px 8px", backdropFilter: "blur(6px)" }}>
-                        Click to add points · double-click to submit
-                    </div>
-                )}
-            </div>
-
-            {/* Polygon scan results panel */}
-            {polygonScanResults && !polygonScanMode && (
-                <div style={{
-                    position: "absolute", top: 60, right: 0, width: isMobile ? "100%" : 340, zIndex: 1250,
-                    background: "rgba(6,13,26,0.94)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
-                    borderLeft: "1px solid rgba(34,211,238,0.2)", display: "flex", flexDirection: "column",
-                    maxHeight: "calc(100% - 60px)", overflow: "hidden", fontFamily: "system-ui,-apple-system,sans-serif",
-                }}>
-                    {/* Header */}
-                    <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#22d3ee", flex: 1 }}>
-                            Area News Scan
-                        </span>
-                        <span style={{ fontSize: 9, color: "rgba(150,190,230,0.5)" }}>
-                            {polygonScanResults.article_count} articles · {polygonScanResults.hours}h · {polygonScanResults.polygon_area_km2?.toFixed(0)} km²
-                        </span>
-                        <button
-                            onClick={() => { setPolygonScanResults(null); setPolygonPts([]) }}
-                            style={{ background: "none", border: "none", color: "rgba(200,220,255,0.4)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0 }}
-                        >×</button>
-                    </div>
-                    {/* Article list */}
-                    <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-                        {polygonScanResults.articles?.length === 0 && (
-                            <div style={{ padding: "20px 14px", fontSize: 11, color: "rgba(160,190,230,0.4)", textAlign: "center" }}>
-                                No conflict news found in this area for the past {polygonScanResults.hours}h
-                            </div>
-                        )}
-                        {(polygonScanResults.articles || []).map((art, i) => (
-                            <div key={i} style={{ padding: "8px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: art.url ? "pointer" : "default" }}
-                                onClick={() => art.url && window.open(art.url, "_blank", "noopener")}
-                            >
-                                <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(220,240,255,0.88)", lineHeight: 1.35, marginBottom: 3 }}>
-                                    {art.title}
-                                </div>
-                                <div style={{ fontSize: 9, color: "rgba(120,160,210,0.5)", display: "flex", gap: 6 }}>
-                                    {art.source && <span>{art.source}</span>}
-                                    {art.published && <span>{new Date(art.published).toLocaleDateString()}</span>}
-                                    {art.severity && <span style={{ color: art.severity === "high" ? "#f87171" : art.severity === "medium" ? "#fbbf24" : "rgba(120,160,210,0.5)" }}>{art.severity}</span>}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* ── Toast notification ────────────────────────────────────────── */}
             {toastInfo && (
