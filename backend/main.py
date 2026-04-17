@@ -3166,6 +3166,69 @@ async def director_analyse_satellite(
 
 # ── City & spaceflight news caches ───────────────────────────────────────────
 _CITY_NEWS_CACHE: dict = {}       # cache_key → {articles, fetched_at}
+
+# ── City news locality helpers ─────────────────────────────────────────────────
+
+_CITY_LOCAL_KEYWORDS: dict[str, list[str]] = {
+    "Paris": ["paris", "parisien", "île-de-france", "ile-de-france", "arrondissement",
+              "métro", "metro", "rer ", "ratp", "banlieue", "val-de-marne",
+              "seine-saint-denis", "hauts-de-seine", "yvelines", "essonne",
+              "montmartre", "marais", "bastille", "châtelet", "chatelet", "belleville",
+              "ménilmontant", "pigalle", "republique", "république", "nation",
+              "défense", "defense", "la villette"],
+    "Berlin": ["berlin", "berliner", "kreuzberg", "neukölln", "neukolln", "mitte",
+               "charlottenburg", "spandau", "tempelhof", "schöneberg", "friedrichshain",
+               "prenzlauer", "pankow", "reinickendorf", "bvg", "s-bahn", "u-bahn",
+               "alexanderplatz", "kurfürstendamm", "kudamm", "potsdamer", "brandenburger"],
+    "Dubai": ["dubai", "dxb", "jumeirah", "deira", "bur dubai", "marina", "downtown",
+              "palm", "jebel ali", "sheikh zayed", "rta", "emaar", "difc",
+              "expo city", "business bay", "creek", "al quoz"],
+    "Dakar": ["dakar", "dakarois", "plateau", "medina", "yoff", "almadies", "ouakam",
+              "ngor", "pikine", "guédiawaye", "rufisque", "thiaroye", "parcelles"],
+    "Hannover": ["hannover", "hannoverschen", "linden", "nordstadt", "südstadt",
+                 "herrenhausen", "bothfeld", "döhren", "ricklingen", "maschsee",
+                 "üstra", "messe hannover"],
+    "Magdeburg": ["magdeburg", "magdeburger", "buckau", "sudenburg", "stadtfeld",
+                  "altstadt", "reform", "neue neustadt", "rothensee", "cracau", "elbe"],
+}
+
+_INTL_SIGNALS = [
+    "états-unis", "etats-unis", "washington", "trump", "biden", "russie", "russia",
+    "ukraine", "chine", "china", "israel", "gaza", "iran", "irak", "iraq",
+    "syrie", "syria", "united states", "usa ", "kremlin", "poutine", "putin",
+    "zelensky", "nato", "otan",
+]
+
+
+def _is_local_article(article: dict, city_name: str) -> bool:
+    title   = (article.get("title")   or "").lower()
+    summary = (article.get("summary") or "").lower()
+    text    = title + " " + summary
+
+    keywords = _CITY_LOCAL_KEYWORDS.get(city_name, [city_name.lower()])
+    for kw in keywords:
+        if kw in text:
+            return True
+
+    # Local-tier feeds are kept unless clearly international
+    if article.get("tier") == "local":
+        return not any(sig in text for sig in _INTL_SIGNALS)
+
+    return False
+
+
+def _is_fresh_article(article: dict, max_age_hours: int = 72) -> bool:
+    ts = article.get("timestamp")
+    if not ts:
+        return True
+    try:
+        import datetime as _dt
+        dt = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        age_h = (_dt.datetime.now(_dt.timezone.utc) - dt).total_seconds() / 3600
+        return age_h <= max_age_hours
+    except Exception:
+        return True
+
 _SPACEFLIGHT_CACHE: dict = {}     # "spaceflight_all" → {articles, source_count, fetched_at}
 _CITY_NEWS_TTL = 300              # 5 minutes
 
@@ -3271,6 +3334,11 @@ async def get_city_news(city_name: str, current_user=Depends(require_approved_us
                 except Exception as ex:
                     print(f"[city-news] feed error {feed_meta.get('url','?')[:60]}: {ex}")
         results.sort(key=lambda a: a.get("timestamp") or "", reverse=True)
+        # Apply locality + freshness filters
+        results = [
+            a for a in results
+            if _is_local_article(a, city_name) and _is_fresh_article(a)
+        ]
         return results[:60]
 
     loop = asyncio.get_event_loop()
