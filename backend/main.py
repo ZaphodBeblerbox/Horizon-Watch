@@ -6384,6 +6384,63 @@ def archive_document(doc_id: str):
 # async def _daily_briefing_loop(): ...
 
 
+@app.get("/api/briefing/latest")
+def get_latest_briefing():
+    """Return the most recent briefing with rate-limit metadata."""
+    with _BRIEFING_LOCK:
+        store = list(_BRIEFING_STORE)
+    if not store:
+        return {"briefing": None, "can_regenerate": True, "next_regen_secs": 0}
+    latest = store[-1]
+    now = datetime.now(timezone.utc)
+    gen_at_str = latest.get("generated_at", "")
+    try:
+        gen_at = datetime.fromisoformat(gen_at_str)
+        if gen_at.tzinfo is None:
+            gen_at = gen_at.replace(tzinfo=timezone.utc)
+        elapsed = (now - gen_at).total_seconds()
+        remaining = max(0, _BRIEFING_RATE_LIMIT_S - elapsed)
+        can_regen = remaining == 0
+    except Exception:
+        remaining = 0
+        can_regen = True
+    return {
+        "briefing": latest,
+        "can_regenerate": can_regen,
+        "next_regen_secs": int(remaining),
+    }
+
+
+@app.post("/api/briefing/generate")
+async def generate_briefing_manual(current_user=Depends(get_current_user)):
+    """Manually trigger a briefing regeneration (rate-limited to once per 2 hours)."""
+    with _BRIEFING_LOCK:
+        store = list(_BRIEFING_STORE)
+    if store:
+        latest = store[-1]
+        gen_at_str = latest.get("generated_at", "")
+        try:
+            gen_at = datetime.fromisoformat(gen_at_str)
+            if gen_at.tzinfo is None:
+                gen_at = gen_at.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - gen_at).total_seconds()
+            remaining = max(0, _BRIEFING_RATE_LIMIT_S - elapsed)
+            if remaining > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limited. Try again in {int(remaining)} seconds.",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+    loop = asyncio.get_event_loop()
+    briefing = await loop.run_in_executor(_executor, lambda: _generate_briefing_sync(manual=True))
+    if briefing is None:
+        raise HTTPException(status_code=500, detail="Briefing generation failed")
+    return {"briefing": briefing, "can_regenerate": False, "next_regen_secs": _BRIEFING_RATE_LIMIT_S}
+
+
 async def _startup_warmup_tasks():
     try:
         from database import migrate_db, init_db

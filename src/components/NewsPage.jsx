@@ -956,7 +956,9 @@ export default function NewsPage({ onClose }) {
     if (isMobile) {
         // ── FEED MODE ───────────────────────────────────────────────────────
         if (viewMode === "feed" && section !== "markets" && !section.startsWith("city:")) {
-            const feedLoading = section === "space" ? spaceLoading : loading
+            const feedLoading = section === "space"
+                ? spaceLoading
+                : (loading || (retryCount > 0 && retryCount <= 3 && articles.length === 0))
             return (
                 <>
                     <style>{`
