@@ -844,14 +844,14 @@ JSON OUTPUT FORMAT — STRICTLY REQUIRED:
 
 CORRECT:
 [
-  { "action": "clear_all" },
-  { "action": "narrate", "text": "...", "heading": "..." }
+  {{ "action": "clear_all" }},
+  {{ "action": "narrate", "text": "...", "heading": "..." }}
 ]
 
 INCORRECT (trailing comma after last element):
 [
-  { "action": "clear_all" },
-  { "action": "narrate", "text": "...", "heading": "..." },
+  {{ "action": "clear_all" }},
+  {{ "action": "narrate", "text": "...", "heading": "..." }},
 ]"""
 
 

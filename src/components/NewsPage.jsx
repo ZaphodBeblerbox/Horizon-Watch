@@ -943,10 +943,18 @@ export default function NewsPage({ onClose }) {
     )
 
     // ── Compact tab list used by feed mode overlay tab bar ───────────────────
+    // Map section name → MobileNewsFeed tab key
+    const sectionToFeedTab = (s) => {
+        if (s === "news")   return "world"
+        if (s === "space")  return "spaceflight"
+        if (s.startsWith("city:")) return s.replace("city:", "")
+        return "world"
+    }
+
     const ALL_TABS_MOBILE = [
         { id: "news",       label: "World",      section: "news"    },
         { id: "spaceflight",label: "Space",      section: "space"   },
-        { id: "markets",    label: "Markets",    section: "markets" },
+        { id: "stocks",     label: "Markets",    section: "markets" },
         ...cities.map(c => ({ id: `city:${c.name}`, label: c.name, section: `city:${c.name}` })),
     ]
 
@@ -955,10 +963,8 @@ export default function NewsPage({ onClose }) {
     // ─────────────────────────────────────────────────────────────────────────
     if (isMobile) {
         // ── FEED MODE ───────────────────────────────────────────────────────
-        if (viewMode === "feed" && section !== "markets" && !section.startsWith("city:")) {
-            const feedLoading = section === "space"
-                ? spaceLoading
-                : (loading || (retryCount > 0 && retryCount <= 3 && articles.length === 0))
+        if (viewMode === "feed" && section !== "markets") {
+            const feedTab = sectionToFeedTab(section)
             return (
                 <>
                     <style>{`
@@ -1041,12 +1047,8 @@ export default function NewsPage({ onClose }) {
                         </div>
                     </div>
 
-                    {/* Full-screen feed */}
-                    <MobileNewsFeed
-                        articles={feedArticles}
-                        loading={feedLoading}
-                        onRefresh={fetchNews}
-                    />
+                    {/* Full-screen self-fetching feed */}
+                    <MobileNewsFeed tab={feedTab} />
                 </>
             )
         }
