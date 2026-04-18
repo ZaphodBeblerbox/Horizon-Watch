@@ -443,6 +443,9 @@ _BRIEFING_LOCK          = threading.Lock()
 _BRIEFING_STORE: list   = []      # list of briefing dicts, newest last
 _BRIEFING_RATE_LIMIT_S  = 7200    # 2 hours between manual regenerates
 
+# ── Director background job queue ────────────────────────────────────────────
+_DIRECTOR_JOBS: dict = {}   # job_id → { status, progress, intent, created_at, result, error }
+
 # ── News conflict extraction state ────────────────────────────────────────────
 _NEWS_CONFLICT_MARKERS: list = []
 _NEWS_ARTICLE_STORE: dict[str, dict] = {}   # url -> enriched article snapshot (may have lat/lon None)
@@ -2943,6 +2946,103 @@ async def director_save(
     return {"saved": True, "path": path, "id": seq_id}
 
 
+@app.post("/api/director/submit")
+async def director_submit(
+    request: Request,
+    current_user=Depends(require_approved_user),
+):
+    """Submit a director briefing request for background generation. Returns job_id immediately."""
+    if not client:
+        raise HTTPException(503, "Claude client not configured")
+
+    body = await request.json()
+    intent = (body.get("intent") or "").strip()
+    if not intent:
+        raise HTTPException(400, "intent is required")
+
+    job_id = str(uuid.uuid4())
+    _DIRECTOR_JOBS[job_id] = {
+        "status":     "generating",
+        "progress":   "Building intelligence snapshot...",
+        "intent":     intent,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "result":     None,
+        "error":      None,
+    }
+
+    async def _run():
+        try:
+            _DIRECTOR_JOBS[job_id]["progress"] = "Analyzing intelligence data..."
+            # Build snapshot (same logic as generate endpoint)
+            with _SURFACE_POOL_LOCK:
+                surface_pool = list(_SURFACE_POOL)
+            now_ts2 = time.time()
+            adsb_latest2: list[dict] = []
+            seen2: set[str] = set()
+            for entry in _adsb_cache.values():
+                if now_ts2 - entry.get("ts", 0) < 120:
+                    for ac in (entry.get("data") or []):
+                        icao = ac.get("icao") or ac.get("hex") or ""
+                        if icao and icao not in seen2:
+                            seen2.add(icao)
+                            adsb_latest2.append(ac)
+            snapshot = _director_svc.build_snapshot(
+                surface_pool=surface_pool,
+                ais_vessels=_AIS_VESSELS,
+                adsb_cache_latest=adsb_latest2,
+                event_store_fn=es.get_active_events,
+                active_profile=_ACTIVE_PROFILE,
+                static_airports=_STATIC_AIRPORTS,
+                static_ports=_STATIC_PORTS,
+            )
+            _DIRECTOR_JOBS[job_id]["progress"] = "Claude is composing your briefing..."
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                _executor,
+                lambda: _director_svc.generate_sequence(
+                    intent=intent,
+                    snapshot=snapshot,
+                    client=client,
+                    usage_tracker=usage_tracker,
+                    profile=_ACTIVE_PROFILE,
+                ),
+            )
+            _DIRECTOR_JOBS[job_id]["progress"] = "Briefing ready!"
+            _DIRECTOR_JOBS[job_id]["status"]   = "complete"
+            _DIRECTOR_JOBS[job_id]["result"]   = result
+        except Exception as exc:
+            logger.error("[DIRECTOR] Background generation failed: %s", exc, exc_info=True)
+            _DIRECTOR_JOBS[job_id]["status"] = "error"
+            _DIRECTOR_JOBS[job_id]["error"]  = str(exc)
+
+    asyncio.create_task(_run())
+    return {"job_id": job_id, "status": "generating"}
+
+
+@app.get("/api/director/status/{job_id}")
+async def director_status(
+    job_id: str,
+    current_user=Depends(require_approved_user),
+):
+    """Poll the status of a background director generation job."""
+    job = _DIRECTOR_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    response = {
+        "job_id":     job_id,
+        "status":     job["status"],
+        "progress":   job["progress"],
+        "intent":     job["intent"],
+        "created_at": job["created_at"],
+    }
+    if job["status"] == "complete":
+        response["result"] = job["result"]
+    elif job["status"] == "error":
+        response["error"] = job["error"]
+    return response
+
+
 @app.get("/api/director/video-search")
 async def director_video_search(
     q: str,
@@ -4710,6 +4810,15 @@ def _prune_news_article_store(max_items: int = _NEWS_STORE_MAX_ARTICLES) -> None
     stale_urls = [u for u, ts in _PROCESSED_URLS.items() if ts < _cutoff]
     for _su in stale_urls:
         _PROCESSED_URLS.pop(_su, None)
+    # Evict director background jobs older than 1 hour
+    _now_utc = datetime.now(timezone.utc)
+    for _jid in list(_DIRECTOR_JOBS.keys()):
+        try:
+            _created = datetime.fromisoformat(_DIRECTOR_JOBS[_jid]["created_at"])
+            if (_now_utc - _created).total_seconds() > 3600:
+                del _DIRECTOR_JOBS[_jid]
+        except Exception:
+            pass
 
 
 def _upsert_news_article(article: dict) -> None:

@@ -492,6 +492,8 @@ _VALID_ACTIONS = {
     # Animated movements, effects, overlays (Prompt 3)
     "animate_movement", "impact", "draw_animated_line",
     "data_callout", "pulse_hotspot", "recap_overview",
+    # Cinematic overlays (Prompt 4)
+    "spotlight", "country_info_overlay", "show_chart",
     # Video
     "show_video",
     # Legacy (kept for backward-compat with saved sequences)
@@ -905,7 +907,46 @@ RECAP OVERVIEW — cinematic summary with fly-to-bounds and staggered key locati
 SCENE GROUPS — group related actions into a named scene (optional):
 - {{ "scene_id": "scene_1_hormuz", "fly_to": {{"lat": 26.5667, "lon": 56.25, "zoom": 7, "duration": 3000}}, "actions": [ ...array of actions for this scene... ] }}
   Groups actions into a named scene with an optional opening fly_to. The player flattens scenes automatically. Use scenes to organize multi-act briefings (e.g., "scene_1_hormuz", "scene_2_ukraine", "scene_3_south_china_sea").
-  Each scene should have 4-12 actions. Put narrate, place_event, draw_line, animate_movement, impact etc. inside the scene's actions array."""
+  Each scene should have 4-12 actions. Put narrate, place_event, draw_line, animate_movement, impact etc. inside the scene's actions array.
+
+SPOTLIGHT — radial vignette zoom effect for small facilities:
+- {{ "action": "spotlight", "lat": number, "lon": number, "radius_px": 200, "duration": 5000, "label": string }}
+  Creates a radial vignette darkening everything except a circle around the target coordinates.
+  Use when zooming into a small facility, island, or installation where context on the surrounding map should be visually suppressed.
+  Example: {{ "action": "spotlight", "lat": 27.1832, "lon": 56.2765, "radius_px": 180, "duration": 6000, "label": "Bandar Abbas Naval Base" }}
+
+COUNTRY INFO OVERLAY — cinematic country stat on the map:
+- {{ "action": "country_info_overlay", "name": string, "headline": string, "stat_value": string, "stat_label": string, "position": [lat, lon] }}
+  Displays a large typographic overlay at a position on the map. Only show stats relevant to the current topic.
+  Energy context: {{ "action": "country_info_overlay", "name": "Iran", "headline": "CRUDE OIL PRODUCTION", "stat_value": "3,200,000", "stat_label": "BARRELS / DAY", "position": [32.4, 53.7] }}
+  Military context: {{ "action": "country_info_overlay", "name": "Iran", "headline": "ACTIVE MILITARY PERSONNEL", "stat_value": "580,000", "stat_label": "TROOPS", "position": [32.4, 53.7] }}
+  Humanitarian context: {{ "action": "country_info_overlay", "name": "Sudan", "headline": "INTERNALLY DISPLACED", "stat_value": "10.7M", "stat_label": "PEOPLE", "position": [15.5, 32.5] }}
+
+CHARTS — animated data visualization:
+- {{ "action": "show_chart", "type": "line"|"bar", "title": string, "data": [{{"label": string, "value": number}}], "event_marker": {{"label": string, "index": number}}, "position": "sidebar", "duration": 8000 }}
+  Animated chart with optional event marker. Keep data to 8-15 points. Use for oil prices, shipping volumes, casualty counts, displacement figures over time.
+  Example: {{ "action": "show_chart", "type": "line", "title": "BRENT CRUDE ($/BBL)", "data": [{{"label":"Feb 24","value":62}},{{"label":"Feb 25","value":63}},{{"label":"Feb 26","value":64}},{{"label":"Mar 1","value":72}},{{"label":"Mar 2","value":75}},{{"label":"Mar 3","value":74}}], "event_marker": {{"label": "Strike begins", "index": 3}}, "position": "sidebar", "duration": 8000 }}
+
+IMAGES — BE EXTREMELY GENEROUS:
+- Target 15-20 images per briefing minimum.
+- EVERY narration segment should have at least one associated show_image placed just before the narrate.
+- EVERY named facility should have a pin_images with 2-3 photos.
+- EVERY person mentioned should have show_person.
+- Use specific image queries: "{facility name} {country} aerial", "{military unit} {equipment}", "{event location} {event type}", "{city name} skyline".
+- EVERY time you narrate about a location, show at least one image of it.
+- EVERY time you narrate about military equipment, show an image of it.
+
+OUTPUT LENGTH AND DETAIL:
+- Generate 60-100 actions for a thorough briefing. More actions = better briefing.
+- Each narrate action should be 4-6 sentences of detailed, analyst-grade prose.
+- Include 15-20 images across the briefing (show_image and pin_images combined).
+- Include 3-5 person dossiers for key figures.
+- Include 5-8 data_callout cards with relevant statistics.
+- Include detailed animate_movement sequences for every military/naval/troop movement discussed.
+- Include 8-12 draw_animated_line or draw_line actions for routes, pipelines, borders, shipping lanes.
+- Draw impact effects for every attack or strike discussed.
+- Take your time composing. Quality and completeness matter more than brevity.
+- Every scene should be rich with visual elements — never just narration over a blank map."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 
@@ -973,8 +1014,8 @@ def generate_sequence(
     )
 
     message = client.messages.create(
-        model="claude-opus-4-20250514",
-        max_tokens=8000,
+        model="claude-sonnet-4-20250514",
+        max_tokens=16000,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )

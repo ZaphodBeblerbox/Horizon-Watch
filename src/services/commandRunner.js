@@ -67,6 +67,7 @@ export class CommandRunner {
     onImage        = () => {},  // ({url, caption, attribution, loading}) => void
     onOpenDetail   = () => {},  // (type, id) => void — opens the real UI detail panel
     onCloseDetail  = () => {},  // () => void — closes the real UI detail panel
+    onChart        = null,      // ({svg, title, duration}) => void — optional chart receiver
   } = {}) {
     this.mapRef            = mapRef
     this.setDirectorItems  = setDirectorItems
@@ -84,6 +85,7 @@ export class CommandRunner {
     this.onImage           = onImage
     this.onOpenDetail      = onOpenDetail
     this.onCloseDetail     = onCloseDetail
+    this.onChart           = onChart
 
     this.actions      = []
     this.currentIndex = -1
@@ -120,13 +122,16 @@ export class CommandRunner {
     this.actions = []
     for (const item of rawActions) {
       if (item && Array.isArray(item.actions) && (item.scene_id != null)) {
-        // Optionally prepend a fly_to for scene setup
         if (item.fly_to) this.actions.push({ action: "fly_to", ...item.fly_to })
         this.actions.push(...item.actions)
       } else {
         this.actions.push(item)
       }
     }
+    // Pre-build scene groups for synchronized playback
+    this._scenes = this._groupActionsIntoScenes(this.actions)
+    this._sceneIndex = -1
+
     this.currentIndex = -1
     this._aborted     = false
     this._pendingSatObservations = null
@@ -136,17 +141,129 @@ export class CommandRunner {
     this._notifyState()
   }
 
+  /**
+   * Group flat actions into { visuals: Action[], narration: Action|null } scenes.
+   * Each scene ends at a narrate/summary action.
+   */
+  _groupActionsIntoScenes(actions) {
+    const scenes = []
+    let visuals  = []
+    for (const action of actions) {
+      const act = action?.action
+      if (act === "narrate" || act === "summary") {
+        scenes.push({ visuals, narration: action })
+        visuals = []
+      } else {
+        visuals.push(action)
+      }
+    }
+    if (visuals.length > 0) {
+      scenes.push({ visuals, narration: null })
+    }
+    return scenes
+  }
+
   play() {
     if (this.isPlaying) return
     if (this.currentIndex >= this.actions.length - 1) {
       this.currentIndex = -1
+      this._sceneIndex  = -1
       this.setHighlights([])
       if (this.setLayerOverrides) this.setLayerOverrides({})
     }
     this.isPlaying = true
     this._aborted  = false
     this._notifyState()
-    this._advance()
+    // Use scene-based synchronized play loop
+    this._playSceneLoop()
+  }
+
+  // ── Synchronized scene-based play loop ────────────────────────────────────
+
+  async _playSceneLoop() {
+    const scenes = this._scenes || []
+    // Resume from current scene if mid-way
+    const startScene = Math.max(this._sceneIndex + 1, 0)
+
+    for (let si = startScene; si < scenes.length; si++) {
+      if (!this.isPlaying || this._aborted) break
+      this._sceneIndex = si
+      const scene = scenes[si]
+
+      // Map scene index back to the last action index for progress tracking
+      // (the narration action's position in the flat actions array)
+      const narIdx = scene.narration
+        ? this.actions.lastIndexOf(scene.narration)
+        : (scene.visuals.length > 0 ? this.actions.lastIndexOf(scene.visuals[scene.visuals.length - 1]) : si)
+      this.currentIndex = Math.max(narIdx, si)
+      this.onProgress(this.currentIndex, this.actions.length)
+
+      // ── Fire visual actions with staggered 300ms delays ──
+      const STAGGER = 300
+      const visualPromises = scene.visuals.map((action, idx) =>
+        new Promise(resolve => {
+          setTimeout(async () => {
+            if (!this.isPlaying || this._aborted) { resolve(); return }
+            this.onAction(action, this.actions.indexOf(action))
+            await this._dispatchAction(action)
+            resolve()
+          }, idx * STAGGER)
+        })
+      )
+
+      // ── Start narration 500ms after visuals begin (let first visuals land) ──
+      let ttsPromise = Promise.resolve()
+      if (scene.narration) {
+        const narAction = scene.narration
+        // Deliver pending image + fire onNarrate callback
+        setTimeout(() => {
+          if (!this.isPlaying || this._aborted) return
+          this.onAction(narAction, this.actions.indexOf(narAction))
+          // deliver pending image
+          if (this._pendingImage) { this.onImage(this._pendingImage); this._pendingImage = null }
+          else { this.onImage(null) }
+          // prepend satellite observations if pending
+          const narAct2 = { ...narAction }
+          if (this._pendingSatObservations) {
+            narAct2.text = `[Satellite Analysis] ${this._pendingSatObservations}\n\n${narAction.text || ""}`
+            this._pendingSatObservations = null
+          }
+          this.onNarrate(narAct2)
+        }, 500)
+
+        // TTS starts 800ms after scene begins
+        ttsPromise = new Promise(resolve => {
+          setTimeout(async () => {
+            if (!this.isPlaying || this._aborted) { resolve(); return }
+            const narAct2 = { ...narAction }
+            if (narAction.action === "summary") {
+              await ttsService.speak(narAction.title || "")
+              for (const sec of narAction.sections || []) {
+                if (this._aborted || !this.isPlaying) break
+                await ttsService.speak(sec.text || "")
+              }
+            } else {
+              await ttsService.speak(narAct2.text || "")
+            }
+            resolve()
+          }, 800)
+        })
+      }
+
+      // Wait for both visuals and TTS
+      await Promise.all([...visualPromises, ttsPromise])
+
+      // Brief inter-scene pause
+      if (this.isPlaying && !this._aborted) {
+        await new Promise(r => { this._timer = setTimeout(r, 900) })
+      }
+    }
+
+    if (this.isPlaying && !this._aborted) {
+      this.isPlaying = false
+      this._notifyState()
+      this.onComplete()
+    }
   }
 
   pause() {
@@ -198,6 +315,7 @@ export class CommandRunner {
     clearTimeout(this._timer)
     this._timer       = null
     this.currentIndex = -1
+    this._sceneIndex  = -1
     this._clearAllDrawings()
     ttsService.stop()
     this._notifyState()
@@ -210,6 +328,9 @@ export class CommandRunner {
   get total()   { return this.actions.length }
   get index()   { return this.currentIndex }
   get playing() { return this.isPlaying }
+
+  /** Return a copy of the full action list (for save). */
+  getActions() { return [...this.actions] }
 
   // ── Internal playback ───────────────────────────────────────────────────────
 
@@ -896,6 +1017,16 @@ export class CommandRunner {
       case "draw_arrow": {
         const map = this.mapRef?.current
         if (!map) return defaultDelay
+        const L = window.L
+        if (!L) return defaultDelay
+        this._drawCurvedArrow(action)
+        return 2800
+      }
+
+      case "_draw_arrow_straight": {
+        // kept as internal fallback — not exposed to Claude
+        const map = this.mapRef?.current
+        if (!map) return defaultDelay
         const L     = window.L
         if (!L) return defaultDelay
         const from  = action.from
@@ -1376,6 +1507,27 @@ export class CommandRunner {
         return (action.duration ?? 7000) + 2000
       }
 
+      // ── Spotlight / vignette ──────────────────────────────────────────────
+
+      case "spotlight": {
+        this._createSpotlight(action)
+        return action.duration ?? 5000
+      }
+
+      // ── Country info overlay ───────────────────────────────────────────────
+
+      case "country_info_overlay": {
+        this._showCountryInfoOverlay(action)
+        return 800
+      }
+
+      // ── Animated chart ─────────────────────────────────────────────────────
+
+      case "show_chart": {
+        this._renderChart(action)
+        return 800
+      }
+
       // ── Legacy (backward-compat with saved sequences) ──────────────────
 
       case "toggle_layer": {
@@ -1560,6 +1712,243 @@ export class CommandRunner {
     } catch (_) {}
   }
 
+  // ── Curved bezier arrow ────────────────────────────────────────────────────
+
+  _drawCurvedArrow(action) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+    const from  = action.from
+    const to    = action.to
+    const color = action.color || "#ef4444"
+    const isStrike = /strike|missile|attack|launch|trajectory|vector|rocket|bomb/i.test(action.label || "")
+
+    // Quadratic bezier control point — offset perpendicular to mid
+    const midLat   = (from[0] + to[0]) / 2
+    const midLon   = (from[1] + to[1]) / 2
+    const dx       = to[1] - from[1]
+    const dy       = to[0] - from[0]
+    const dist     = Math.sqrt(dx * dx + dy * dy) || 1
+    const offset   = dist * 0.25
+    const ctrlLat  = midLat + (-dx / dist) * offset
+    const ctrlLon  = midLon + (dy  / dist) * offset
+
+    // Sample bezier
+    const steps      = 40
+    const curvePoints = []
+    for (let i = 0; i <= steps; i++) {
+      const t   = i / steps
+      const lat = (1 - t) * (1 - t) * from[0] + 2 * (1 - t) * t * ctrlLat + t * t * to[0]
+      const lon = (1 - t) * (1 - t) * from[1] + 2 * (1 - t) * t * ctrlLon + t * t * to[1]
+      curvePoints.push([lat, lon])
+    }
+
+    const drawDur  = isStrike ? 1600 : 2000
+    const startTs  = Date.now()
+    let stopped    = false
+    let rafId      = null
+
+    const mainLine = L.polyline([], { color, weight: isStrike ? 2 : 3, opacity: 0.9,
+      dashArray: isStrike ? "8 6" : null, className: "director-drawing-line" }).addTo(map)
+    const glowLine = L.polyline([], { color, weight: 9, opacity: 0.12 }).addTo(map)
+
+    const dotIcon = L.divIcon({
+      className: "",
+      html: `<div style="width:10px;height:10px;border-radius:50%;background:${color};box-shadow:0 0 10px ${color};"></div>`,
+      iconSize: [10, 10], iconAnchor: [5, 5],
+    })
+    const leadDot = L.marker(curvePoints[0], { icon: dotIcon, interactive: false, zIndexOffset: 900 }).addTo(map)
+
+    const mainEntry = { layer: mainLine, animFrame: null }
+    this._drawings.push(mainEntry, { layer: glowLine, animFrame: null }, { layer: leadDot, animFrame: null })
+
+    const grow = () => {
+      if (stopped) return
+      const p       = Math.min((Date.now() - startTs) / drawDur, 1)
+      const eased   = 1 - Math.pow(1 - p, 3)
+      const idx     = Math.floor(eased * (curvePoints.length - 1))
+      const visible = curvePoints.slice(0, idx + 1)
+      try { mainLine.setLatLngs(visible); glowLine.setLatLngs(visible) } catch (_) {}
+      if (idx < curvePoints.length - 1) {
+        try { leadDot.setLatLng(curvePoints[idx]) } catch (_) {}
+      }
+      if (p < 1) {
+        rafId = requestAnimationFrame(grow)
+        mainEntry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+      } else {
+        stopped = true
+        // Arrowhead
+        try {
+          const last    = curvePoints.length - 1
+          const bearing = this._calculateBearing(
+            curvePoints[last - 1][0], curvePoints[last - 1][1],
+            curvePoints[last][0],     curvePoints[last][1]
+          )
+          const arrowHead = L.marker(to, {
+            icon: L.divIcon({
+              className: "",
+              html: `<svg width="20" height="20" viewBox="0 0 20 20" style="transform:rotate(${bearing}deg)"><polygon points="10,0 20,16 10,12 0,16" fill="${color}" stroke="white" stroke-width="0.5"/></svg>`,
+              iconSize: [20, 20], iconAnchor: [10, 10],
+            }),
+            interactive: false,
+          }).addTo(map)
+          this._drawings.push({ layer: arrowHead, animFrame: null })
+        } catch (_) {}
+        // Remove lead dot
+        setTimeout(() => { try { map.removeLayer(leadDot) } catch (_) {} }, 300)
+        // Label at midpoint
+        if (action.label) {
+          try {
+            const mid = curvePoints[Math.floor(curvePoints.length / 2)]
+            const lbl = L.marker(mid, {
+              icon: L.divIcon({
+                className: "",
+                html: `<div style="color:${color};font-size:11px;font-weight:600;background:rgba(0,0,0,0.7);padding:3px 8px;border-radius:4px;border:1px solid ${color}40;white-space:nowrap;">${action.label}</div>`,
+                iconSize: [0, 0], iconAnchor: [0, 0],
+              }), interactive: false,
+            }).addTo(map)
+            this._drawings.push({ layer: lbl, animFrame: null })
+          } catch (_) {}
+        }
+        // Strike projectile after curve
+        if (isStrike) {
+          this._createImpact(to[0], to[1], color, null)
+        }
+      }
+    }
+    rafId = requestAnimationFrame(grow)
+    mainEntry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+  }
+
+  // ── Spotlight / vignette ──────────────────────────────────────────────────
+
+  _createSpotlight(action) {
+    const map = this.mapRef?.current
+    if (!map) return
+    const radius   = action.radius_px || 200
+    const duration = action.duration  || 5000
+
+    const overlay = document.createElement("div")
+    overlay.style.cssText = "position:fixed;inset:0;z-index:500;pointer-events:none;opacity:0;transition:opacity 600ms ease-in;"
+
+    const update = () => {
+      if (!map) return
+      try {
+        const pt = map.latLngToContainerPoint([action.lat, action.lon])
+        overlay.style.background = `radial-gradient(circle ${radius}px at ${pt.x}px ${pt.y}px,transparent 0%,transparent 70%,rgba(0,0,0,0.72) 100%)`
+      } catch (_) {}
+    }
+    update()
+    document.body.appendChild(overlay)
+    requestAnimationFrame(() => { overlay.style.opacity = "1" })
+    map.on("move", update)
+
+    this._drawings.push({ domEl: overlay, animFrame: () => { map.off("move", update) } })
+
+    setTimeout(() => {
+      overlay.style.opacity = "0"
+      map.off("move", update)
+      setTimeout(() => { try { document.body.removeChild(overlay) } catch (_) {} }, 620)
+    }, duration)
+  }
+
+  // ── Country info overlay ──────────────────────────────────────────────────
+
+  _showCountryInfoOverlay(action) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+    const position = action.position || [0, 0]
+
+    const html = `<div style="text-align:center;pointer-events:none;animation:director-marker-arrive 800ms ease-out forwards;">
+      <div style="font-size:11px;letter-spacing:3px;color:rgba(255,255,255,0.55);text-transform:uppercase;margin-bottom:6px;text-shadow:0 2px 8px rgba(0,0,0,0.9);">${action.headline || ""}</div>
+      <div style="font-size:28px;font-weight:900;color:white;letter-spacing:2px;text-shadow:0 0 20px rgba(255,170,0,0.4),0 2px 8px rgba(0,0,0,0.9);margin-bottom:4px;">${(action.name || "").toUpperCase()}</div>
+      <div style="font-size:32px;font-weight:900;color:white;text-shadow:0 0 30px rgba(0,170,255,0.3),0 2px 8px rgba(0,0,0,0.9);margin-bottom:2px;">${action.stat_value || ""}</div>
+      <div style="font-size:12px;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;text-shadow:0 2px 8px rgba(0,0,0,0.9);">${action.stat_label || ""}</div>
+    </div>`
+
+    const marker = L.marker(position, {
+      icon: L.divIcon({ className: "director-country-info-overlay", html, iconSize: [300, 120], iconAnchor: [150, 60] }),
+      interactive: false, pane: "tooltipPane",
+    }).addTo(map)
+    this._drawings.push({ layer: marker, animFrame: null })
+  }
+
+  // ── Chart overlay ─────────────────────────────────────────────────────────
+
+  _renderChart(action) {
+    const data = action.data || []
+    if (data.length === 0) return
+
+    const W = 320, H = 180
+    const pad = { top: 30, right: 20, bottom: 35, left: 45 }
+    const cW  = W - pad.left - pad.right
+    const cH  = H - pad.top - pad.bottom
+
+    const vals   = data.map(d => d.value)
+    const minVal = Math.min(...vals) * 0.95
+    const maxVal = Math.max(...vals) * 1.05
+    const range  = maxVal - minVal || 1
+
+    const points = data.map((d, i) => ({
+      x: pad.left + (i / Math.max(data.length - 1, 1)) * cW,
+      y: pad.top + cH - ((d.value - minVal) / range) * cH,
+      label: d.label, value: d.value,
+    }))
+
+    const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ")
+
+    const gridLines = []
+    for (let i = 0; i <= 4; i++) {
+      gridLines.push({ y: pad.top + (i / 4) * cH, val: Math.round(maxVal - (i / 4) * range) })
+    }
+
+    let eventSvg = ""
+    const em = action.event_marker
+    if (em && em.index < points.length) {
+      const ep = points[em.index]
+      eventSvg = `<rect x="${ep.x - 1}" y="${pad.top}" width="2" height="${cH}" fill="rgba(255,170,0,0.6)"/>
+        <text x="${ep.x}" y="${pad.top - 4}" fill="white" font-size="8" text-anchor="middle" font-weight="700">${em.label}</text>
+        <circle cx="${ep.x}" cy="${ep.y}" r="4" fill="#ffaa00" stroke="white" stroke-width="1"/>`
+    }
+
+    const color    = action.color || "#ff4444"
+    const pathLen  = 1200
+    const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${W}" height="${H}" rx="8" fill="rgba(10,15,25,0.92)" stroke="rgba(86,207,255,0.2)" stroke-width="0.5"/>
+      <text x="${pad.left}" y="18" fill="rgba(255,255,255,0.7)" font-size="10" font-weight="700" letter-spacing="1">${action.title || ""}</text>
+      ${gridLines.map(g => `<line x1="${pad.left}" y1="${g.y.toFixed(1)}" x2="${W - pad.right}" y2="${g.y.toFixed(1)}" stroke="rgba(255,255,255,0.07)" stroke-width="0.5"/>
+        <text x="${pad.left - 4}" y="${(g.y + 3).toFixed(1)}" fill="rgba(255,255,255,0.35)" font-size="8" text-anchor="end">${g.val}</text>`).join("")}
+      ${eventSvg}
+      <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+        stroke-dasharray="${pathLen}" stroke-dashoffset="${pathLen}">
+        <animate attributeName="stroke-dashoffset" from="${pathLen}" to="0" dur="2s" fill="freeze"/>
+      </path>
+      ${data.filter((_, i) => i === 0 || i === data.length - 1 || i % Math.max(Math.ceil(data.length / 6), 1) === 0)
+        .map(d => { const idx = data.indexOf(d); return `<text x="${points[idx].x.toFixed(1)}" y="${H - 8}" fill="rgba(255,255,255,0.35)" font-size="7" text-anchor="middle">${d.label}</text>` })
+        .join("")}
+    </svg>`
+
+    // Fire onChart callback if available (for sidebar display)
+    if (typeof this.onChart === "function") {
+      this.onChart({ svg, title: action.title, duration: action.duration || 8000 })
+      return
+    }
+
+    // Fallback: DOM overlay bottom-right
+    const el = document.createElement("div")
+    el.style.cssText = "position:fixed;bottom:100px;right:24px;z-index:800;border:1px solid rgba(255,255,255,0.12);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);animation:director-marker-arrive 500ms ease-out forwards;"
+    el.innerHTML = svg
+    document.body.appendChild(el)
+    this._drawings.push({ domEl: el, animFrame: null })
+    const dur = action.duration || 8000
+    setTimeout(() => {
+      el.style.transition = "opacity 500ms"
+      el.style.opacity = "0"
+      setTimeout(() => { try { document.body.removeChild(el) } catch (_) {} }, 520)
+    }, dur)
+  }
+
   // ── Animated unit movement ────────────────────────────────────────────────
 
   _getUnitIcon(type, color) {
@@ -1581,23 +1970,31 @@ export class CommandRunner {
     return svgs[type] || svgs.troops
   }
 
+  // ── Bearing calculation ───────────────────────────────────────────────────
+
+  _calculateBearing(lat1, lon1, lat2, lon2) {
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180)
+    const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180)
+            - Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon)
+    return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360
+  }
+
   _animateAlongPath(marker, path, duration, map, onComplete) {
     const L = window.L
     if (!L || path.length < 2) return
-    // Compute cumulative pixel distances
-    const dists = [0]
-    for (let i = 1; i < path.length; i++) {
-      try {
-        const a = map.latLngToLayerPoint(L.latLng(path[i - 1]))
-        const b = map.latLngToLayerPoint(L.latLng(path[i]))
-        dists.push(dists[i - 1] + Math.hypot(b.x - a.x, b.y - a.y))
-      } catch (_) { dists.push(dists[i - 1] + 1) }
+    // Compute great-circle cumulative distances
+    const latLngs = path.map(p => L.latLng(p[0], p[1]))
+    const dists   = [0]
+    for (let i = 1; i < latLngs.length; i++) {
+      dists.push(dists[i - 1] + latLngs[i - 1].distanceTo(latLngs[i]))
     }
     const totalDist = dists[dists.length - 1] || 1
     const startTime = Date.now()
-    let stopped = false
-    let rafId   = null
-    const trail = []
+    let stopped   = false
+    let rafId     = null
+    const trail   = []
+    let lastSeg   = 0
 
     const animate = () => {
       if (stopped) return
@@ -1605,18 +2002,34 @@ export class CommandRunner {
       const p        = elapsed / duration
       const eased    = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2
       const target   = eased * totalDist
-      let seg = 0
-      for (let i = 1; i < dists.length; i++) {
-        if (dists[i] >= target) { seg = i - 1; break }
-        seg = i - 1
+      let seg = lastSeg
+      for (let i = seg; i < dists.length - 1; i++) {
+        if (dists[i + 1] >= target) { seg = i; break }
+        seg = i
       }
-      const segLen  = (dists[seg + 1] ?? dists[seg]) - dists[seg]
+      lastSeg = seg
+      const segLen  = dists[seg + 1] - dists[seg]
       const segProg = segLen > 0 ? (target - dists[seg]) / segLen : 0
-      const from    = path[seg]
-      const to      = path[Math.min(seg + 1, path.length - 1)]
-      const lat     = from[0] + (to[0] - from[0]) * segProg
-      const lon     = from[1] + (to[1] - from[1]) * segProg
+      const from    = latLngs[seg]
+      const to      = latLngs[Math.min(seg + 1, latLngs.length - 1)]
+      const lat     = from.lat + (to.lat - from.lat) * segProg
+      const lon     = from.lng + (to.lng - from.lng) * segProg
       try { marker.setLatLng([lat, lon]) } catch (_) {}
+
+      // Rotate icon to face direction of travel
+      if (seg < latLngs.length - 1) {
+        try {
+          const bearing = this._calculateBearing(from.lat, from.lng, to.lat, to.lng)
+          const el = marker.getElement?.()
+          if (el) {
+            const svgEl = el.querySelector("svg") || el.firstElementChild?.firstElementChild
+            if (svgEl) {
+              svgEl.style.transform = `rotate(${bearing}deg)`
+              svgEl.style.transition = "transform 300ms ease"
+            }
+          }
+        } catch (_) {}
+      }
 
       // Sparse trail dots
       if (Math.random() < 0.18) {
@@ -2036,6 +2449,27 @@ export class CommandRunner {
 
 
 // ── API helpers ───────────────────────────────────────────────────────────────
+
+export async function submitDirectorBriefing(intent) {
+  const res = await fetch(`${API_BASE}/api/director/submit`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json", ..._authHeaders() },
+    body:    JSON.stringify({ intent }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `submit: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function pollDirectorStatus(jobId) {
+  const res = await fetch(`${API_BASE}/api/director/status/${jobId}`, {
+    headers: _authHeaders(),
+  })
+  if (!res.ok) throw new Error(`status: ${res.status}`)
+  return res.json()
+}
 
 export async function fetchDirectorSnapshot() {
   const res = await fetch(`${API_BASE}/api/director/snapshot`)

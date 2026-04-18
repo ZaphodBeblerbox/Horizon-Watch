@@ -36,7 +36,7 @@ import DirectorSidebar from "./components/DirectorSidebar.jsx"
 import DirectorModal from "./components/DirectorModal.jsx"
 import DirectorSubtitle from "./components/DirectorSubtitle.jsx"
 import DirectorCountryPanel from "./components/DirectorCountryPanel.jsx"
-import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDirectorSequence } from "./services/commandRunner.js"
+import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDirectorSequence, submitDirectorBriefing, pollDirectorStatus } from "./services/commandRunner.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -159,6 +159,11 @@ export default function App() {
     const [directorModalOpen,      setDirectorModalOpen]      = useState(false)
     const [directorError,          setDirectorError]          = useState(null)
     const [directorCountryPanel,   setDirectorCountryPanel]   = useState(null)  // country name for news panel
+    // Background job polling
+    const [pendingJobId,       setPendingJobId]       = useState(null)
+    const [briefingProgress,   setBriefingProgress]   = useState("")
+    const [readyBriefing,      setReadyBriefing]       = useState(null)  // { result, intent }
+    const pollIntervalRef = useRef(null)
     // Granular director items — what's individually visible on the map
     const _emptyDirectorItems = () => ({
         chokepoints:          new Set(),
@@ -827,6 +832,10 @@ export default function App() {
     const handleDirectorClose = useCallback(() => {
         const runner = directorRunnerRef.current
         if (runner) runner.stop()
+        // Cancel any pending poll
+        if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null }
+        setPendingJobId(null)
+        setBriefingProgress("")
         setDirectorVisible(false)
         setDirectorSequence(null)
         setDirectorLayerOverrides({})
@@ -845,25 +854,32 @@ export default function App() {
 
     const handleReplayBriefing = useCallback(async (briefing) => {
         if (!briefing?.actions?.length) return
+        // Switch to map tab first
+        const mapTab = tabs.find(t => t.type === "map")
+        if (mapTab) setActiveTabId(mapTab.id)
+        // Small delay so map tab mounts before runner tries to access mapRef
+        setTimeout(() => {
+            _startDirectorPlayback({ actions: briefing.actions }, briefing.intent || "")
+        }, 300)
+    }, [tabs]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Start playback from a ready sequence ────────────────────────────────
+    const _startDirectorPlayback = useCallback((sequence, intent) => {
         handleDirectorClose()
+        directorIntentRef.current = intent || ""
         setDirectorSavedStatus(null)
         setDirectorSegments([])
         setDirectorImage(null)
-        directorIntentRef.current = briefing.intent || ""
-        const sequence = briefing.actions
         setDirectorSequence(sequence)
         setDirectorVisible(true)
         if (directorRunnerRef.current) directorRunnerRef.current.destroy()
-        let segIdx = 0
         const runner = new CommandRunner({
             mapRef:            mapInstanceRef,
             setDirectorItems,
             setLayerOverrides: setDirectorLayerOverrides,
             setHighlights:     setDirectorHighlights,
-            surfaceItems,
-            onNarrate: (action) => {
+            onAction:   (action, idx) => {
                 setDirectorCurrentAction(action)
-                const idx = segIdx++
                 setDirectorSegments(prev => [...prev, { action, segIdx: idx }])
                 setDirectorImage(null)
             },
@@ -872,22 +888,27 @@ export default function App() {
             onStateChange:(state)  => setDirectorRunnerState(state),
             onDetailPanel:(panel)  => setDirectorItems(prev => ({ ...prev, detailPanel: panel })),
             onImage:      (img)    => setDirectorImage(img),
-            onOpenDetail: () => {},
-            onCloseDetail:() => {},
-            onComplete:   () => {},
+            onOpenDetail: (type, id) => {
+                if (type === "country") { setDirectorCountryPanel(id); return }
+                const item = surfaceItems.find(s =>
+                    s.id === id || s.url === id || s.mmsi === id || s.icao24 === id || s.name === id
+                ) || surfaceItems.find(s =>
+                    String(s.id || "").includes(id) || String(s.mmsi || "") === String(id) ||
+                    (s.headline || s.title || "").toLowerCase().includes((id || "").toLowerCase())
+                )
+                if (item) { setSelectedSurface(item); setRightPanel("detail"); setSurfaceContext(null); setSurfaceEnrichment(null) }
+            },
+            onCloseDetail: () => { setRightPanel(null); setSelectedSurface(null); setSurfaceContext(null); setSurfaceEnrichment(null) },
+            onComplete: () => {},
         })
         runner.load(sequence)
         directorRunnerRef.current = runner
-        // Switch to map tab first, then play
-        const mapTab = tabs.find(t => t.type === "map")
-        if (mapTab) setActiveTabId(mapTab.id)
-        setTimeout(() => runner.play(), 300)
-    }, [surfaceItems, tabs]) // eslint-disable-line react-hooks/exhaustive-deps
+        runner.play()
+    }, [surfaceItems]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorGenerate = useCallback(async (intent) => {
         directorIntentRef.current = intent || ""
         setDirectorError(null)
-        setDirectorGenerating(true)
         setDirectorCurrentAction(null)
         setDirectorIndicators([])
         setDirectorContextCards([])
@@ -895,75 +916,46 @@ export default function App() {
         setDirectorSegments([])
         setDirectorImage(null)
         setDirectorSavedStatus(null)
-        // snapshot current layer overrides before director takes over
         directorLayerSnapshotRef.current = { ...directorLayerOverrides }
+
+        // Close the modal immediately — user goes back to normal Horizon Watch
+        setDirectorModalOpen(false)
+
+        // Clear any existing poll
+        if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null }
+
         try {
-            const snapshot = await fetchDirectorSnapshot()
-            const sequence = await generateDirectorSequence({ intent, snapshot })
-            setDirectorSequence(sequence)
-            setDirectorVisible(true)
+            const { job_id } = await submitDirectorBriefing(intent)
+            setPendingJobId(job_id)
+            setBriefingProgress("Building intelligence snapshot...")
 
-            // Destroy old runner if any
-            if (directorRunnerRef.current) directorRunnerRef.current.destroy()
-
-            // segIdx counter ref — incremented each narrate/summary
-            let segIdx = 0
-            const runner = new CommandRunner({
-                mapRef:            mapInstanceRef,
-                setDirectorItems,
-                setLayerOverrides: setDirectorLayerOverrides,
-                setHighlights:     setDirectorHighlights,
-                surfaceItems,
-                onNarrate: (action) => {
-                    setDirectorCurrentAction(action)
-                    const idx = segIdx++
-                    setDirectorSegments(prev => [...prev, { action, segIdx: idx }])
-                    setDirectorImage(null)  // clear image on new segment
-                },
-                onIndicator:  (action) => setDirectorIndicators(prev => [...prev, action]),
-                onContextCard:(action) => setDirectorContextCards(prev => [...prev, action]),
-                onStateChange:(state)  => setDirectorRunnerState(state),
-                onDetailPanel:(panel)  => setDirectorItems(prev => ({ ...prev, detailPanel: panel })),
-                onImage:      (img)    => setDirectorImage(img),
-                onOpenDetail: (type, id) => {
-                    if (type === "country") {
-                        // Open country news/intelligence panel
-                        setDirectorCountryPanel(id)
-                        return
+            pollIntervalRef.current = setInterval(async () => {
+                try {
+                    const data = await pollDirectorStatus(job_id)
+                    if (data.status === "complete") {
+                        clearInterval(pollIntervalRef.current)
+                        pollIntervalRef.current = null
+                        setPendingJobId(null)
+                        setBriefingProgress("")
+                        setReadyBriefing({ result: data.result, intent: data.intent || intent })
+                    } else if (data.status === "error") {
+                        clearInterval(pollIntervalRef.current)
+                        pollIntervalRef.current = null
+                        setPendingJobId(null)
+                        setBriefingProgress("")
+                        setDirectorError(data.error || "Briefing generation failed")
+                        setDirectorModalOpen(true)  // re-open modal to show error
+                    } else {
+                        setBriefingProgress(data.progress || "Generating briefing...")
                     }
-                    // Find and open the correct item in the existing right-panel detail system
-                    if (type === "event" || type === "chokepoint" || type === "vessel" || type === "aircraft" || type === "infrastructure") {
-                        const item = surfaceItems.find(s =>
-                            s.id === id || s.url === id || s.mmsi === id || s.icao24 === id || s.name === id
-                        ) || surfaceItems.find(s =>
-                            String(s.id || "").includes(id) || String(s.mmsi || "") === String(id) ||
-                            (s.headline || s.title || "").toLowerCase().includes((id || "").toLowerCase())
-                        )
-                        if (item) {
-                            setSelectedSurface(item)
-                            setRightPanel("detail")
-                            setSurfaceContext(null)
-                            setSurfaceEnrichment(null)
-                        }
-                    }
-                },
-                onCloseDetail: () => {
-                    setRightPanel(null)
-                    setSelectedSurface(null)
-                    setSurfaceContext(null)
-                    setSurfaceEnrichment(null)
-                },
-                onComplete:   () => {},
-            })
-            runner.load(sequence)
-            directorRunnerRef.current = runner
-            runner.play()
+                } catch (_) { /* keep polling on network error */ }
+            }, 3000)
         } catch (err) {
-            console.error("[Director] generate failed:", err)
-            setDirectorError(err.message || "Director generation failed")
-        } finally {
-            setDirectorGenerating(false)
+            console.error("[Director] submit failed:", err)
+            setDirectorError(err.message || "Director submission failed")
+            setDirectorModalOpen(true)
         }
+
     }, [surfaceItems, directorLayerOverrides, setDirectorItems]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorSave = useCallback(async () => {
@@ -1386,9 +1378,69 @@ export default function App() {
                 open={directorModalOpen}
                 onClose={() => setDirectorModalOpen(false)}
                 onGenerate={handleDirectorGenerate}
-                generating={directorGenerating}
+                generating={false}
                 error={directorError}
             />
+
+            {/* Director generating indicator — subtle badge while background job runs */}
+            {pendingJobId && (
+                <div style={{
+                    position: "fixed", top: 60, right: 16, display: "flex", alignItems: "center",
+                    gap: 8, padding: "8px 14px", background: "rgba(10,15,25,0.88)",
+                    backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+                    border: "1px solid rgba(255,170,0,0.3)", borderRadius: 20,
+                    color: "rgba(255,255,255,0.7)", fontSize: 12, zIndex: 8000,
+                    boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+                }}>
+                    <div style={{
+                        width: 14, height: 14,
+                        border: "2px solid rgba(255,170,0,0.2)",
+                        borderTopColor: "rgba(255,170,0,0.85)",
+                        borderRadius: "50%",
+                        animation: "db-spin 0.9s linear infinite",
+                    }} />
+                    <span>{briefingProgress || "Generating briefing…"}</span>
+                </div>
+            )}
+
+            {/* Director briefing ready notification */}
+            {readyBriefing && (
+                <div
+                    onClick={() => { _startDirectorPlayback(readyBriefing.result, readyBriefing.intent); setReadyBriefing(null) }}
+                    style={{
+                        position: "fixed", bottom: 24, right: 24,
+                        display: "flex", alignItems: "center", gap: 12, padding: "16px 20px",
+                        background: "rgba(10,15,25,0.93)", backdropFilter: "blur(16px)",
+                        WebkitBackdropFilter: "blur(16px)",
+                        border: "1px solid rgba(0,170,255,0.4)", borderRadius: 14,
+                        cursor: "pointer", zIndex: 9000,
+                        boxShadow: "0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(0,170,255,0.15)",
+                        animation: "director-ready-slide-in 500ms cubic-bezier(0.34,1.56,0.64,1)",
+                        maxWidth: 400,
+                    }}
+                >
+                    <style>{`
+                        @keyframes director-ready-slide-in { from { transform: translateY(100px) scale(0.9); opacity:0; } to { transform: translateY(0) scale(1); opacity:1; } }
+                        @keyframes director-diamond-ready-pulse { 0%,100% { transform:scale(1); opacity:0.8; } 50% { transform:scale(1.15); opacity:1; } }
+                    `}</style>
+                    <div style={{ fontSize: 24, color: "#00aaff", animation: "director-diamond-ready-pulse 2s ease-in-out infinite" }}>◈</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>Briefing Ready</div>
+                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+                            {readyBriefing.intent}
+                        </div>
+                    </div>
+                    <div style={{
+                        padding: "8px 16px", background: "rgba(0,170,255,0.2)",
+                        border: "1px solid rgba(0,170,255,0.4)", borderRadius: 20,
+                        color: "#00aaff", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
+                    }}>Watch ▶</div>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setReadyBriefing(null) }}
+                        style={{ position: "absolute", top: 6, right: 8, background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 16, cursor: "pointer", padding: 4 }}
+                    >×</button>
+                </div>
+            )}
 
             {/* Real-time toast notifications */}
             <ToastSystem
