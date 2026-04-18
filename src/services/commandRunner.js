@@ -115,7 +115,18 @@ export class CommandRunner {
 
   load(sequence) {
     this.stop()
-    this.actions      = Array.isArray(sequence?.actions) ? sequence.actions : []
+    const rawActions = Array.isArray(sequence?.actions) ? sequence.actions : []
+    // Flatten scene objects: { scene_id, actions: [...], fly_to? } → sub-actions
+    this.actions = []
+    for (const item of rawActions) {
+      if (item && Array.isArray(item.actions) && (item.scene_id != null)) {
+        // Optionally prepend a fly_to for scene setup
+        if (item.fly_to) this.actions.push({ action: "fly_to", ...item.fly_to })
+        this.actions.push(...item.actions)
+      } else {
+        this.actions.push(item)
+      }
+    }
     this.currentIndex = -1
     this._aborted     = false
     this._pendingSatObservations = null
@@ -214,7 +225,7 @@ export class CommandRunner {
     this._executeIndex(next)
   }
 
-  _executeIndex(index) {
+  async _executeIndex(index) {
     this.currentIndex = index
     const action = this.actions[index]
     if (!action) return
@@ -232,16 +243,16 @@ export class CommandRunner {
       return
     }
 
-    const delay = this._dispatchAction(action)
+    const delay = await this._dispatchAction(action)
     if (this.isPlaying) {
       this._timer = setTimeout(() => this._advance(), delay)
     }
   }
 
   /**
-   * Dispatch a single synchronous action. Returns ms to wait before next action.
+   * Dispatch a single action. Returns ms to wait before next action.
    */
-  _dispatchAction(action) {
+  async _dispatchAction(action) {
     const act = action.action
     const defaultDelay = 800
 
@@ -1282,6 +1293,89 @@ export class CommandRunner {
         return 5000
       }
 
+      // ── Animated unit movements ───────────────────────────────────────────
+
+      case "animate_movement": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L) return defaultDelay
+        this._animateUnits(action)
+        return (action.duration ?? 8000) + 1200
+      }
+
+      // ── Impact / explosion effect ──────────────────────────────────────────
+
+      case "impact": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L) return defaultDelay
+        this._createImpact(action.lat, action.lon, action.color || "#ff5500", action.label)
+        return 3500
+      }
+
+      // ── Animated line drawing ──────────────────────────────────────────────
+
+      case "draw_animated_line": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L) return defaultDelay
+        this._drawAnimatedLine(action)
+        return (action.duration ?? 3000) + 800
+      }
+
+      // ── Data callout card (DOM overlay) ───────────────────────────────────
+
+      case "data_callout": {
+        this._showDataCallout(action)
+        return 800 + (action.duration ?? 5000)
+      }
+
+      // ── Pulse hotspot ──────────────────────────────────────────────────────
+
+      case "pulse_hotspot": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L || action.lat == null || action.lon == null) return defaultDelay
+        const baseRadius = (action.radius_km || 20) * 1000
+        const color      = action.color || "#56cfff"
+        const ring = L.circle([action.lat, action.lon], {
+          radius: baseRadius, color, fillColor: color,
+          fillOpacity: 0.08, weight: 2, opacity: 0.6,
+          className: "director-drawing-fill",
+        }).addTo(map)
+        let t = 0
+        const interval = setInterval(() => {
+          t += 0.06
+          try {
+            ring.setRadius(baseRadius * (1 + 0.22 * Math.sin(t)))
+            ring.setStyle({
+              opacity:     0.4 + 0.3 * Math.sin(t),
+              fillOpacity: 0.04 + 0.07 * Math.sin(t),
+            })
+          } catch (_) {}
+        }, 60)
+        this._drawings.push({ layer: ring, animFrame: () => clearInterval(interval) })
+        if (action.label) {
+          const lm = L.marker([action.lat, action.lon], {
+            icon: L.divIcon({
+              className: "",
+              html: `<div style="color:${color};font-size:11px;font-weight:700;text-shadow:0 0 8px ${color};white-space:nowrap;pointer-events:none;">${action.label}</div>`,
+              iconSize: [0, 0], iconAnchor: [0, -20],
+            }),
+            interactive: false, pane: "tooltipPane",
+          }).addTo(map)
+          this._drawings.push({ layer: lm, animFrame: null })
+        }
+        return action.duration ?? 5000
+      }
+
+      // ── Recap overview ─────────────────────────────────────────────────────
+
+      case "recap_overview": {
+        this._executeRecapOverview(action)
+        return (action.duration ?? 7000) + 2000
+      }
+
       // ── Legacy (backward-compat with saved sequences) ──────────────────
 
       case "toggle_layer": {
@@ -1402,10 +1496,20 @@ export class CommandRunner {
     const map = this.mapRef?.current
     for (const entry of this._drawings) {
       try {
-        // entry is either a Leaflet layer or { layer, animFrame } for animated markers
-        if (entry && typeof entry === "object" && "animFrame" in entry) {
-          if (typeof entry.animFrame === "function") entry.animFrame()
-          if (map && entry.layer) map.removeLayer(entry.layer)
+        if (entry && typeof entry === "object") {
+          // DOM overlay (data_callout)
+          if ("domEl" in entry) {
+            if (typeof entry.animFrame === "function") entry.animFrame()
+            try { document.body.removeChild(entry.domEl) } catch (_) {}
+            continue
+          }
+          // Animated marker { layer, animFrame }
+          if ("animFrame" in entry) {
+            if (typeof entry.animFrame === "function") entry.animFrame()
+            if (map && entry.layer) map.removeLayer(entry.layer)
+          } else {
+            if (map && entry) map.removeLayer(entry)
+          }
         } else {
           if (map && entry) map.removeLayer(entry)
         }
@@ -1454,6 +1558,453 @@ export class CommandRunner {
         if (flashOp <= 0) { clearInterval(flashFade); try { map.removeLayer(flash) } catch (_) {} }
       }, 40)
     } catch (_) {}
+  }
+
+  // ── Animated unit movement ────────────────────────────────────────────────
+
+  _getUnitIcon(type, color) {
+    const svgs = {
+      warship:    `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 3L14 8H22L20 14H4L2 8H10Z" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="10" y="14" width="4" height="4" fill="${color}"/></svg>`,
+      carrier:    `<svg width="26" height="22" viewBox="0 0 28 22"><rect x="2" y="10" width="24" height="8" rx="1" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="8" y="5" width="12" height="6" fill="${color}"/><rect x="12" y="2" width="2" height="4" fill="white"/></svg>`,
+      submarine:  `<svg width="26" height="16" viewBox="0 0 28 16"><ellipse cx="14" cy="10" rx="12" ry="5" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="10" y="3" width="4" height="7" rx="1" fill="${color}"/></svg>`,
+      patrol:     `<svg width="20" height="18" viewBox="0 0 20 18"><path d="M10 2L13 7H20L18 13H2L0 7H7Z" fill="${color}" stroke="white" stroke-width="0.5"/></svg>`,
+      tanker_ship:`<svg width="28" height="18" viewBox="0 0 28 18"><rect x="1" y="8" width="26" height="8" rx="2" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="4" y="4" width="16" height="5" fill="${color}"/><circle cx="6" cy="6" r="2" fill="${color}88" stroke="white" stroke-width="0.5"/><circle cx="12" cy="6" r="2" fill="${color}88" stroke="white" stroke-width="0.5"/><circle cx="18" cy="6" r="2" fill="${color}88" stroke="white" stroke-width="0.5"/></svg>`,
+      cargo_ship: `<svg width="28" height="18" viewBox="0 0 28 18"><rect x="1" y="9" width="26" height="7" rx="2" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="4" y="5" width="8" height="5" fill="${color}"/><rect x="14" y="5" width="8" height="5" fill="${color}"/></svg>`,
+      fighter:    `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2L14 9L22 12L22 14L14 12L14 18L17 20L17 21L12 19L7 21L7 20L10 18L10 12L2 14L2 12L10 9Z" fill="${color}" stroke="white" stroke-width="0.4"/></svg>`,
+      bomber:     `<svg width="26" height="22" viewBox="0 0 28 22"><path d="M14 2L16 10L28 14L28 16L16 13L16 18L20 21L20 22L14 20L8 22L8 21L12 18L12 13L0 16L0 14L12 10Z" fill="${color}" stroke="white" stroke-width="0.4"/></svg>`,
+      helicopter: `<svg width="24" height="22" viewBox="0 0 24 22"><rect x="4" y="10" width="16" height="5" rx="2" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="0" y="9" width="24" height="2" rx="1" fill="${color}"/><line x1="12" y1="15" x2="18" y2="20" stroke="${color}" stroke-width="1.5"/><line x1="12" y1="15" x2="6" y2="20" stroke="${color}" stroke-width="1.5"/></svg>`,
+      drone:      `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 8L14 12L20 14L14 16L12 20L10 16L4 14L10 12Z" fill="${color}" stroke="white" stroke-width="0.5"/><circle cx="4" cy="4" r="3" fill="${color}88"/><circle cx="20" cy="4" r="3" fill="${color}88"/><line x1="4" y1="4" x2="10" y2="12" stroke="${color}" stroke-width="1"/><line x1="20" y1="4" x2="14" y2="12" stroke="${color}" stroke-width="1"/></svg>`,
+      tank:       `<svg width="24" height="20" viewBox="0 0 24 20"><rect x="2" y="10" width="20" height="7" rx="1" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="5" y="6" width="14" height="6" rx="1" fill="${color}"/><rect x="11" y="2" width="2" height="8" fill="${color}" stroke="white" stroke-width="0.4"/></svg>`,
+      apc:        `<svg width="24" height="18" viewBox="0 0 24 18"><rect x="2" y="7" width="20" height="9" rx="2" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="5" y="4" width="10" height="5" rx="1" fill="${color}"/></svg>`,
+      troops:     `<svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="5" r="3" fill="${color}" stroke="white" stroke-width="0.5"/><path d="M6 9 Q10 8 14 9 L15 18 H5 Z" fill="${color}" stroke="white" stroke-width="0.5"/></svg>`,
+    }
+    return svgs[type] || svgs.troops
+  }
+
+  _animateAlongPath(marker, path, duration, map, onComplete) {
+    const L = window.L
+    if (!L || path.length < 2) return
+    // Compute cumulative pixel distances
+    const dists = [0]
+    for (let i = 1; i < path.length; i++) {
+      try {
+        const a = map.latLngToLayerPoint(L.latLng(path[i - 1]))
+        const b = map.latLngToLayerPoint(L.latLng(path[i]))
+        dists.push(dists[i - 1] + Math.hypot(b.x - a.x, b.y - a.y))
+      } catch (_) { dists.push(dists[i - 1] + 1) }
+    }
+    const totalDist = dists[dists.length - 1] || 1
+    const startTime = Date.now()
+    let stopped = false
+    let rafId   = null
+    const trail = []
+
+    const animate = () => {
+      if (stopped) return
+      const elapsed  = Math.min(Date.now() - startTime, duration)
+      const p        = elapsed / duration
+      const eased    = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2
+      const target   = eased * totalDist
+      let seg = 0
+      for (let i = 1; i < dists.length; i++) {
+        if (dists[i] >= target) { seg = i - 1; break }
+        seg = i - 1
+      }
+      const segLen  = (dists[seg + 1] ?? dists[seg]) - dists[seg]
+      const segProg = segLen > 0 ? (target - dists[seg]) / segLen : 0
+      const from    = path[seg]
+      const to      = path[Math.min(seg + 1, path.length - 1)]
+      const lat     = from[0] + (to[0] - from[0]) * segProg
+      const lon     = from[1] + (to[1] - from[1]) * segProg
+      try { marker.setLatLng([lat, lon]) } catch (_) {}
+
+      // Sparse trail dots
+      if (Math.random() < 0.18) {
+        try {
+          const td = L.circleMarker([lat, lon], {
+            radius: 2.5, color: "#fff", fillColor: "#fff", fillOpacity: 0.45, weight: 0,
+          }).addTo(map)
+          trail.push(td)
+          this._drawings.push({ layer: td, animFrame: null })
+          if (trail.length > 12) {
+            const old = trail.shift()
+            try { map.removeLayer(old) } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
+      if (elapsed < duration) {
+        rafId = requestAnimationFrame(animate)
+      } else {
+        stopped = true
+        try { map.removeLayer(marker) } catch (_) {}
+        trail.forEach(t => { try { map.removeLayer(t) } catch (_) {} })
+        if (onComplete) onComplete()
+      }
+    }
+    rafId = requestAnimationFrame(animate)
+    return () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+  }
+
+  _animateUnits(action) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+    const duration = (action.duration ?? 8000)
+    const factionColors = { hostile: "#ff3030", allied: "#56cfff", friendly: "#30ff80", neutral: "#ffffff" }
+    const units = Array.isArray(action.units) ? action.units : []
+
+    units.forEach((unit, idx) => {
+      if (!unit.from || !unit.to) return
+      const color     = factionColors[unit.faction] || "#ffffff"
+      const unitType  = unit.type || "troops"
+      const svg       = this._getUnitIcon(unitType, color)
+      const iconW     = 24, iconH = 24
+
+      const icon = L.divIcon({
+        className: "",
+        html: `<div style="filter:drop-shadow(0 0 6px ${color});position:relative;">
+          ${svg}
+          ${unit.label ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);white-space:nowrap;color:${color};font-size:9px;font-weight:700;text-shadow:0 1px 4px #000;margin-top:2px;">${unit.label}</div>` : ""}
+        </div>`,
+        iconSize:   [iconW, iconH],
+        iconAnchor: [iconW / 2, iconH / 2],
+      })
+      const marker = L.marker(unit.from, { icon, interactive: false, zIndexOffset: 850 }).addTo(map)
+      const entry  = { layer: marker, animFrame: null }
+      this._drawings.push(entry)
+
+      const path     = Array.isArray(unit.waypoints) ? [unit.from, ...unit.waypoints, unit.to] : [unit.from, unit.to]
+      const delay    = idx * 250
+
+      setTimeout(() => {
+        const cancel = this._animateAlongPath(marker, path, duration - delay, map, null)
+        entry.animFrame = cancel
+      }, delay)
+    })
+  }
+
+  // ── Impact / explosion ────────────────────────────────────────────────────
+
+  _createImpact(lat, lon, color, label) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+
+    // Flash
+    try {
+      const flash = L.circle([lat, lon], { radius: 3000, color: "white", fillColor: color, fillOpacity: 0.95, weight: 0 }).addTo(map)
+      let fo = 0.95
+      const fi = setInterval(() => {
+        fo -= 0.09
+        try { flash.setStyle({ fillOpacity: Math.max(fo, 0) }) } catch (_) {}
+        if (fo <= 0) { clearInterval(fi); try { map.removeLayer(flash) } catch (_) {} }
+      }, 35)
+    } catch (_) {}
+
+    // 3 expanding rings
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => {
+        try {
+          const ring = L.circle([lat, lon], {
+            radius: 500 + i * 400, color, fillColor: color, fillOpacity: 0.25, weight: 2, opacity: 1,
+          }).addTo(map)
+          let r = 500 + i * 400, op = 1
+          const ri = setInterval(() => {
+            r  += 7000
+            op -= 0.045
+            try {
+              ring.setRadius(r)
+              ring.setStyle({ opacity: Math.max(op, 0), fillOpacity: Math.max(op * 0.2, 0) })
+            } catch (_) {}
+            if (op <= 0) { clearInterval(ri); try { map.removeLayer(ring) } catch (_) {} }
+          }, 35)
+        } catch (_) {}
+      }, i * 220)
+    }
+
+    // 8 debris particles
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2
+      const speed = 0.018 + Math.random() * 0.012
+      try {
+        const pLat = lat + Math.cos(angle) * 0.004
+        const pLon = lon + Math.sin(angle) * 0.006
+        const p = L.circleMarker([pLat, pLon], {
+          radius: 3, color, fillColor: color, fillOpacity: 0.9, weight: 0,
+        }).addTo(map)
+        let po = 0.9, dist = 0
+        const pi2 = setInterval(() => {
+          dist += speed
+          po   -= 0.04
+          try {
+            p.setLatLng([lat + Math.cos(angle) * dist, lon + Math.sin(angle) * dist * 1.5])
+            p.setStyle({ fillOpacity: Math.max(po, 0) })
+          } catch (_) {}
+          if (po <= 0) { clearInterval(pi2); try { map.removeLayer(p) } catch (_) {} }
+        }, 50)
+      } catch (_) {}
+    }
+
+    // Label
+    if (label) {
+      try {
+        const lm = L.marker([lat, lon], {
+          icon: L.divIcon({
+            className: "",
+            html: `<div style="color:${color};font-size:11px;font-weight:700;text-shadow:0 0 8px ${color},0 2px 4px #000;white-space:nowrap;pointer-events:none;margin-top:8px;">${label}</div>`,
+            iconSize: [0, 0], iconAnchor: [0, -16],
+          }),
+          interactive: false, pane: "tooltipPane",
+        }).addTo(map)
+        this._drawings.push({ layer: lm, animFrame: null })
+        setTimeout(() => { try { map.removeLayer(lm) } catch (_) {} }, 5000)
+      } catch (_) {}
+    }
+  }
+
+  // ── Animated line drawing ─────────────────────────────────────────────────
+
+  _drawAnimatedLine(action) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+    const pts    = (action.points || []).map(p => [p[0], p[1]])
+    if (pts.length < 2) return
+    const color    = action.color || "#56cfff"
+    const duration = action.duration ?? 3000
+    const dashed   = action.dashed !== false
+
+    // Build cumulative segment lengths for interpolation
+    const segLens  = []
+    let totalLen   = 0
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i][1] - pts[i-1][1]
+      const dy = pts[i][0] - pts[i-1][0]
+      const d  = Math.sqrt(dx*dx + dy*dy)
+      segLens.push(d)
+      totalLen += d
+    }
+    const cumLens = [0]
+    segLens.forEach((l) => cumLens.push(cumLens[cumLens.length-1] + l))
+
+    const line = L.polyline([], {
+      color, weight: 2.5, opacity: 0.9,
+      dashArray: dashed ? "8 4" : null,
+      className: "director-drawing-line",
+    }).addTo(map)
+
+    const dotIcon = L.divIcon({
+      className: "",
+      html: `<div style="width:10px;height:10px;border-radius:50%;background:${color};box-shadow:0 0 10px ${color},0 0 20px ${color}88;"></div>`,
+      iconSize: [10, 10], iconAnchor: [5, 5],
+    })
+    const dot = L.marker(pts[0], { icon: dotIcon, interactive: false, zIndexOffset: 900 }).addTo(map)
+
+    const entry = { layer: line, animFrame: null }
+    const dotEntry = { layer: dot, animFrame: null }
+    this._drawings.push(entry, dotEntry)
+
+    const startTime = Date.now()
+    let stopped = false
+    let rafId   = null
+
+    const animate = () => {
+      if (stopped) return
+      const elapsed  = Math.min(Date.now() - startTime, duration)
+      const progress = elapsed / duration
+      const target   = progress * totalLen
+      // Build polyline points up to target distance
+      const visPoints = [pts[0]]
+      let accumulated = 0
+      for (let i = 0; i < segLens.length; i++) {
+        const rem = target - accumulated
+        if (rem <= 0) break
+        if (rem >= segLens[i]) {
+          visPoints.push(pts[i + 1])
+          accumulated += segLens[i]
+        } else {
+          const frac = rem / segLens[i]
+          const interpLat = pts[i][0] + (pts[i+1][0] - pts[i][0]) * frac
+          const interpLon = pts[i][1] + (pts[i+1][1] - pts[i][1]) * frac
+          visPoints.push([interpLat, interpLon])
+          try { dot.setLatLng([interpLat, interpLon]) } catch (_) {}
+          break
+        }
+      }
+      if (visPoints.length >= 2) {
+        try { line.setLatLngs(visPoints) } catch (_) {}
+      }
+      if (elapsed < duration) {
+        rafId = requestAnimationFrame(animate)
+        entry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+      } else {
+        stopped = true
+        try { dot.setLatLng(pts[pts.length - 1]) } catch (_) {}
+        if (action.label) {
+          try { line.bindTooltip(action.label, { permanent: false, sticky: true }) } catch (_) {}
+        }
+      }
+    }
+    rafId = requestAnimationFrame(animate)
+    entry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+  }
+
+  // ── Data callout card (DOM overlay) ───────────────────────────────────────
+
+  _showDataCallout(action) {
+    // Inject CSS once
+    if (!document.getElementById("director-callout-css")) {
+      const style = document.createElement("style")
+      style.id = "director-callout-css"
+      style.textContent = `
+        .director-data-callout {
+          position: fixed;
+          z-index: 9000;
+          pointer-events: none;
+          font-family: 'Inter', 'SF Pro Display', sans-serif;
+          animation: dirCalloutIn 400ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+        @keyframes dirCalloutIn {
+          from { opacity: 0; transform: translateY(-12px) scale(0.94); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .director-data-callout-inner {
+          background: rgba(6, 12, 26, 0.95);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid rgba(86, 207, 255, 0.3);
+          border-radius: 10px;
+          padding: 14px 18px;
+          min-width: 180px;
+          max-width: 280px;
+          box-shadow: 0 8px 40px rgba(0,0,0,0.7), 0 0 20px rgba(86,207,255,0.1);
+        }
+        .director-data-callout-label {
+          font-size: 9px;
+          text-transform: uppercase;
+          letter-spacing: 2px;
+          color: rgba(86,207,255,0.7);
+          margin-bottom: 4px;
+        }
+        .director-data-callout-value {
+          font-size: 28px;
+          font-weight: 800;
+          color: white;
+          line-height: 1.1;
+        }
+        .director-data-callout-unit {
+          font-size: 13px;
+          color: rgba(255,255,255,0.5);
+          margin-left: 3px;
+        }
+        .director-data-callout-sub {
+          font-size: 11px;
+          color: rgba(255,255,255,0.55);
+          margin-top: 5px;
+          line-height: 1.4;
+        }
+      `
+      document.head.appendChild(style)
+    }
+
+    const el = document.createElement("div")
+    el.className = "director-data-callout"
+    const pos = action.screen_position || "top-right"
+    const posStyles = {
+      "top-right":    "top:80px;right:24px;",
+      "top-left":     "top:80px;left:24px;",
+      "bottom-right": "bottom:80px;right:24px;",
+      "bottom-left":  "bottom:80px;left:24px;",
+      "center":       "top:50%;left:50%;transform:translate(-50%,-50%);",
+    }
+    el.style.cssText = posStyles[pos] || posStyles["top-right"]
+
+    const accentColor = action.color || "#56cfff"
+    el.innerHTML = `<div class="director-data-callout-inner" style="border-color:${accentColor}44">
+      ${action.label ? `<div class="director-data-callout-label">${action.label}</div>` : ""}
+      <div style="display:flex;align-items:baseline;gap:4px;">
+        <span class="director-data-callout-value" style="color:${accentColor}">${action.value ?? ""}</span>
+        ${action.unit ? `<span class="director-data-callout-unit">${action.unit}</span>` : ""}
+      </div>
+      ${action.subtitle ? `<div class="director-data-callout-sub">${action.subtitle}</div>` : ""}
+    </div>`
+
+    document.body.appendChild(el)
+    this._drawings.push({ domEl: el, animFrame: null })
+
+    // Auto-remove after duration
+    const dur = action.duration ?? 5000
+    setTimeout(() => {
+      el.style.transition = "opacity 400ms ease, transform 400ms ease"
+      el.style.opacity = "0"
+      el.style.transform += " translateY(-8px)"
+      setTimeout(() => {
+        try { document.body.removeChild(el) } catch (_) {}
+      }, 420)
+    }, dur)
+  }
+
+  // ── Recap overview ────────────────────────────────────────────────────────
+
+  _executeRecapOverview(action) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+    const keyPoints = Array.isArray(action.key_points) ? action.key_points : []
+    const color     = action.color || "#56cfff"
+
+    // Fly to bounds encompassing all key points
+    if (keyPoints.length >= 2) {
+      try {
+        const lats = keyPoints.map(p => p.lat)
+        const lons = keyPoints.map(p => p.lon)
+        const bounds = L.latLngBounds(
+          [Math.min(...lats) - 2, Math.min(...lons) - 2],
+          [Math.max(...lats) + 2, Math.max(...lons) + 2]
+        )
+        map.flyToBounds(bounds, { animate: true, duration: 3, padding: [60, 60] })
+      } catch (_) {}
+    }
+
+    // Staggered dot + label markers for each key point
+    keyPoints.forEach((pt, i) => {
+      setTimeout(() => {
+        if (!pt.lat || !pt.lon) return
+        try {
+          const dot = L.circleMarker([pt.lat, pt.lon], {
+            radius: 7, color, fillColor: color, fillOpacity: 0.85, weight: 2,
+          }).addTo(map)
+          this._drawings.push({ layer: dot, animFrame: null })
+
+          if (pt.label) {
+            const lm = L.marker([pt.lat, pt.lon], {
+              icon: L.divIcon({
+                className: "",
+                html: `<div style="color:white;font-size:10px;font-weight:700;text-shadow:0 0 8px ${color},0 2px 4px #000;white-space:nowrap;pointer-events:none;margin-top:6px;">${pt.label}</div>`,
+                iconSize: [0, 0], iconAnchor: [0, -14],
+              }),
+              interactive: false, pane: "tooltipPane",
+            }).addTo(map)
+            this._drawings.push({ layer: lm, animFrame: null })
+          }
+        } catch (_) {}
+      }, i * 400 + 1000)
+    })
+
+    // Narrative flow line connecting all key points after markers appear
+    if (keyPoints.length >= 2) {
+      setTimeout(() => {
+        try {
+          const pts  = keyPoints.map(p => [p.lat, p.lon])
+          const line = L.polyline(pts, {
+            color, weight: 1.5, opacity: 0.5,
+            dashArray: "6 6", className: "director-drawing-line",
+          }).addTo(map)
+          this._drawings.push(line)
+        } catch (_) {}
+      }, keyPoints.length * 400 + 1400)
+    }
   }
 
   // ── Time formatting ───────────────────────────────────────────────────────

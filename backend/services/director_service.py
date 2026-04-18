@@ -489,6 +489,9 @@ _VALID_ACTIONS = {
     "summary",
     # Formation (multi-unit tactical animation)
     "formation",
+    # Animated movements, effects, overlays (Prompt 3)
+    "animate_movement", "impact", "draw_animated_line",
+    "data_callout", "pulse_hotspot", "recap_overview",
     # Video
     "show_video",
     # Legacy (kept for backward-compat with saved sequences)
@@ -867,7 +870,42 @@ PINNED IMAGES — multiple images anchored to map locations:
   Pins 2-4 images to a specific map location. Each image is fetched from Wikimedia Commons and displayed as a floating card near the location. Use for illustrating events at specific locations, showing multiple angles of a situation.
   Example:
   {{ "action": "pin_images", "location": [13.63, 25.35], "label": "El-Fasher", "timestamp": "April 2026", "images": [{{"query": "El Fasher Sudan aerial bombardment", "caption": "Aerial bombardment damage"}}, {{"query": "RSF militia fighters Sudan", "caption": "RSF forces advancing"}}, {{"query": "Sudan displaced civilians camp", "caption": "IDP camp near El-Fasher"}}] }}
-Use 2-4 pin_images per briefing for locations with significant events."""
+Use 2-4 pin_images per briefing for locations with significant events.
+
+ANIMATED UNIT MOVEMENTS — move military/naval/air units across the map:
+- {{ "action": "animate_movement", "duration": 8000, "units": [{{ "type": "warship|carrier|submarine|patrol|tanker_ship|cargo_ship|fighter|bomber|helicopter|drone|tank|apc|troops", "faction": "hostile|allied|friendly|neutral", "label": string, "from": [lat, lon], "to": [lat, lon], "waypoints": [[lat, lon]] }}] }}
+  Animates one or more units moving from their starting position to destination over `duration` ms. Each unit has an SVG icon, faction color (hostile=red, allied=cyan, friendly=green, neutral=white), and optional label. Use for showing naval transits, aircraft patrols, troop movements. Waypoints are optional intermediate positions.
+  Example: {{ "action": "animate_movement", "duration": 10000, "units": [{{"type": "carrier", "faction": "allied", "label": "USS Eisenhower", "from": [20.0, 63.0], "to": [26.5, 56.25]}}, {{"type": "submarine", "faction": "allied", "label": "SSN", "from": [18.0, 65.0], "to": [24.0, 57.0]}}] }}
+
+IMPACT / EXPLOSION — dramatic explosion effect at a map location:
+- {{ "action": "impact", "lat": number, "lon": number, "color": "#ff5500", "label": string }}
+  Renders a flash, 3 expanding rings, and 8 debris particles at the specified location. Use after draw_arrow for strike trajectories, or to mark a significant event location. Color defaults to orange-red.
+  Example: {{ "action": "impact", "lat": 29.2333, "lon": 50.3167, "color": "#ff3030", "label": "Strike: Kharg Island" }}
+
+ANIMATED LINE DRAWING — grow a line progressively across the map:
+- {{ "action": "draw_animated_line", "points": [[lat, lon]], "color": "#56cfff", "duration": 3000, "dashed": true, "label": string }}
+  Draws a polyline that grows from start to end over `duration` ms with a glowing leading dot. Use for showing supply routes, border movements, or cable/pipeline paths. More cinematic than draw_line.
+  Example: {{ "action": "draw_animated_line", "points": [[43.2, 76.9], [37.0, 69.2], [29.6, 60.8], [23.6, 54.3]], "color": "#f59e0b", "duration": 4000, "label": "Arms supply route" }}
+
+DATA CALLOUT CARD — floating data overlay on screen:
+- {{ "action": "data_callout", "label": string, "value": string, "unit": string, "subtitle": string, "color": "#56cfff", "screen_position": "top-right|top-left|bottom-right|bottom-left|center", "duration": 5000 }}
+  Shows a floating data card with a large metric value and optional subtitle. Use for key statistics: "17.5M barrels/day", "38% of global LNG", "DEFCON 3", casualty figures. Stays visible for `duration` ms.
+  Example: {{ "action": "data_callout", "label": "Daily Oil Transit", "value": "17.5M", "unit": "bbl/day", "subtitle": "21% of global petroleum supply", "color": "#f59e0b", "screen_position": "top-right", "duration": 6000 }}
+
+PULSE HOTSPOT — pulsing circular hotspot to draw attention to an area:
+- {{ "action": "pulse_hotspot", "lat": number, "lon": number, "radius_km": number, "color": "#56cfff", "label": string, "duration": 5000 }}
+  Creates a pulsing circle that breathes (expands/contracts) using a sine wave. Use to highlight tension zones, contested areas, or monitoring regions. Radius defaults to 20km.
+  Example: {{ "action": "pulse_hotspot", "lat": 26.5667, "lon": 56.25, "radius_km": 80, "color": "#ef4444", "label": "TENSION ZONE", "duration": 8000 }}
+
+RECAP OVERVIEW — cinematic summary with fly-to-bounds and staggered key location markers:
+- {{ "action": "recap_overview", "key_points": [{{"lat": number, "lon": number, "label": string}}], "color": "#56cfff", "duration": 7000 }}
+  Flies the map to encompass all key_points, then stagger-drops a dot+label marker for each location, and draws a dashed flow line connecting them. Use as a final recap action before the summary. Include 3-8 key locations covered in the briefing.
+  Example: {{ "action": "recap_overview", "key_points": [{{"lat": 26.5667, "lon": 56.25, "label": "Strait of Hormuz"}}, {{"lat": 12.5833, "lon": 43.3333, "label": "Bab el-Mandeb"}}, {{"lat": 29.9333, "lon": 32.5667, "label": "Suez Canal"}}], "color": "#56cfff", "duration": 8000 }}
+
+SCENE GROUPS — group related actions into a named scene (optional):
+- {{ "scene_id": "scene_1_hormuz", "fly_to": {{"lat": 26.5667, "lon": 56.25, "zoom": 7, "duration": 3000}}, "actions": [ ...array of actions for this scene... ] }}
+  Groups actions into a named scene with an optional opening fly_to. The player flattens scenes automatically. Use scenes to organize multi-act briefings (e.g., "scene_1_hormuz", "scene_2_ukraine", "scene_3_south_china_sea").
+  Each scene should have 4-12 actions. Put narrate, place_event, draw_line, animate_movement, impact etc. inside the scene's actions array."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 
