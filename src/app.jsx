@@ -909,6 +909,7 @@ export default function App() {
     const handleDirectorGenerate = useCallback(async (intent) => {
         directorIntentRef.current = intent || ""
         setDirectorError(null)
+        setDirectorGenerating(true)
         setDirectorCurrentAction(null)
         setDirectorIndicators([])
         setDirectorContextCards([])
@@ -917,46 +918,17 @@ export default function App() {
         setDirectorImage(null)
         setDirectorSavedStatus(null)
         directorLayerSnapshotRef.current = { ...directorLayerOverrides }
-
-        // Close the modal immediately — user goes back to normal Horizon Watch
-        setDirectorModalOpen(false)
-
-        // Clear any existing poll
-        if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null }
-
         try {
-            const { job_id } = await submitDirectorBriefing(intent)
-            setPendingJobId(job_id)
-            setBriefingProgress("Building intelligence snapshot...")
-
-            pollIntervalRef.current = setInterval(async () => {
-                try {
-                    const data = await pollDirectorStatus(job_id)
-                    if (data.status === "complete") {
-                        clearInterval(pollIntervalRef.current)
-                        pollIntervalRef.current = null
-                        setPendingJobId(null)
-                        setBriefingProgress("")
-                        setReadyBriefing({ result: data.result, intent: data.intent || intent })
-                    } else if (data.status === "error") {
-                        clearInterval(pollIntervalRef.current)
-                        pollIntervalRef.current = null
-                        setPendingJobId(null)
-                        setBriefingProgress("")
-                        setDirectorError(data.error || "Briefing generation failed")
-                        setDirectorModalOpen(true)  // re-open modal to show error
-                    } else {
-                        setBriefingProgress(data.progress || "Generating briefing...")
-                    }
-                } catch (_) { /* keep polling on network error */ }
-            }, 3000)
+            const snapshot = await fetchDirectorSnapshot()
+            const sequence = await generateDirectorSequence({ intent, snapshot })
+            _startDirectorPlayback(sequence, intent)
         } catch (err) {
-            console.error("[Director] submit failed:", err)
-            setDirectorError(err.message || "Director submission failed")
-            setDirectorModalOpen(true)
+            console.error("[Director] generate failed:", err)
+            setDirectorError(err.message || "Director generation failed")
+        } finally {
+            setDirectorGenerating(false)
         }
-
-    }, [surfaceItems, directorLayerOverrides, setDirectorItems]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [surfaceItems, directorLayerOverrides, _startDirectorPlayback]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorSave = useCallback(async () => {
         if (!directorSequence) return
@@ -1378,7 +1350,7 @@ export default function App() {
                 open={directorModalOpen}
                 onClose={() => setDirectorModalOpen(false)}
                 onGenerate={handleDirectorGenerate}
-                generating={false}
+                generating={directorGenerating}
                 error={directorError}
             />
 
