@@ -106,6 +106,9 @@ export class CommandRunner {
 
     // Local mirror of placed locations for click_location lookups (name → locData)
     this._placedLocations = new Map()
+
+    // Person dossier markers (name → Leaflet marker)
+    this._personMarkers = {}
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -524,9 +527,16 @@ export class CommandRunner {
         this._clearAllDrawings()
         this._placedEvents    = new Map()
         this._placedLocations = new Map()
+        // Remove person dossier markers
+        const mapCA = this.mapRef?.current
+        if (this._personMarkers) {
+          Object.values(this._personMarkers).forEach(m => {
+            try { if (mapCA) mapCA.removeLayer(m) } catch (_) {}
+          })
+          this._personMarkers = {}
+        }
         // Close any open Leaflet popups
-        const map = this.mapRef?.current
-        if (map && typeof map.closePopup === "function") map.closePopup()
+        if (mapCA && typeof mapCA.closePopup === "function") mapCA.closePopup()
         if (this.setDirectorItems) {
           this.setDirectorItems({
             chokepoints:          new Set(),
@@ -1007,6 +1017,133 @@ export class CommandRunner {
         return defaultDelay
       }
 
+      // ── Person dossier ────────────────────────────────────────────────────
+
+      case "show_person": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L || !action.name) break
+        const position = action.position || [0, 0]
+        const tok = localStorage.getItem("hw-auth-token")
+        const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+        try {
+          const resp = await fetch(
+            `${API_BASE}/api/director/person/${encodeURIComponent(action.name)}`,
+            { headers }
+          )
+          if (resp.ok) {
+            const person = await resp.json()
+            if (person.found) {
+              const cardHtml = `<div style="
+                display:flex;gap:10px;padding:10px 12px;
+                background:rgba(8,14,28,0.93);
+                backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+                border:1px solid rgba(255,255,255,0.14);border-radius:10px;
+                max-width:270px;box-shadow:0 8px 32px rgba(0,0,0,0.55);
+                animation:director-marker-arrive 600ms cubic-bezier(0.34,1.56,0.64,1) forwards;
+              ">${person.image ? `<img src="${person.image}" alt="${person.name}" style="
+                width:64px;height:64px;object-fit:cover;border-radius:6px;
+                border:2px solid rgba(255,255,255,0.18);flex-shrink:0;" />` : ""}
+              <div style="min-width:0;">
+                <div style="font-size:13px;font-weight:700;color:white;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${person.name}</div>
+                <div style="font-size:10px;color:rgba(0,170,255,0.9);margin-bottom:4px;">${action.role || person.description || ""}</div>
+                <div style="font-size:10px;color:rgba(255,255,255,0.6);line-height:1.4;">${action.context || ""}</div>
+              </div></div>`
+              const marker = L.marker(position, {
+                icon: L.divIcon({ className: "director-person-marker", html: cardHtml, iconSize: [270, 90], iconAnchor: [135, 100] }),
+                interactive: false,
+                pane: "tooltipPane",
+              }).addTo(map)
+              if (!this._personMarkers) this._personMarkers = {}
+              this._personMarkers[action.name] = marker
+              this._drawings.push({ layer: marker, animFrame: null })
+            }
+          }
+        } catch (e) {
+          console.warn("[Director] show_person failed:", e)
+        }
+        return 800
+      }
+
+      case "hide_person": {
+        if (this._personMarkers && action.name) {
+          const map = this.mapRef?.current
+          const m = this._personMarkers[action.name]
+          if (m && map) { try { map.removeLayer(m) } catch (_) {} }
+          delete this._personMarkers[action.name]
+        }
+        return defaultDelay
+      }
+
+      // ── Pinned multi-images at a map location ─────────────────────────────
+
+      case "pin_images": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L || !action.location || !action.images?.length) break
+        const [lat, lon] = action.location
+        const tok = localStorage.getItem("hw-auth-token")
+        const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+
+        // Red dot at exact location
+        const dot = L.circleMarker([lat, lon], {
+          radius: 6, color: "#ff3030", fillColor: "#ff3030", fillOpacity: 1, weight: 2,
+        }).addTo(map)
+        this._drawings.push({ layer: dot, animFrame: null })
+
+        // Label
+        if (action.label) {
+          const lm = L.marker([lat, lon], {
+            icon: L.divIcon({
+              className: "",
+              html: `<div style="color:white;font-size:13px;font-weight:700;text-shadow:0 0 8px rgba(255,48,48,0.8),0 2px 4px rgba(0,0,0,0.9);white-space:nowrap;pointer-events:none;margin-top:10px;">${action.label}</div>`,
+              iconSize: [0, 0], iconAnchor: [0, -14],
+            }),
+            interactive: false, pane: "tooltipPane",
+          }).addTo(map)
+          this._drawings.push({ layer: lm, animFrame: null })
+        }
+
+        // Fetch images in parallel
+        const fetched = await Promise.all(
+          (action.images || []).slice(0, 4).map(async (img) => {
+            try {
+              const r = await fetch(
+                `${API_BASE}/api/director/image-search?q=${encodeURIComponent(img.query)}`,
+                { headers }
+              )
+              if (r.ok) {
+                const d = await r.json()
+                return d.image_url ? { url: d.image_url, caption: img.caption, attribution: d.attribution } : null
+              }
+            } catch (_) {}
+            return null
+          })
+        )
+        const imgs = fetched.filter(Boolean)
+
+        imgs.forEach((img, i) => {
+          const angle     = (i / Math.max(imgs.length, 1)) * Math.PI * 2 - Math.PI / 2
+          const offsetLat = lat + Math.cos(angle) * 0.07
+          const offsetLon = lon + Math.sin(angle) * 0.11
+          const cardHtml  = `<div style="position:relative;animation:director-marker-arrive 600ms cubic-bezier(0.34,1.56,0.64,1) forwards;animation-delay:${i * 180}ms;opacity:0;">
+            <div style="width:170px;background:rgba(8,14,28,0.93);border:1px solid rgba(255,255,255,0.14);border-radius:8px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.6);">
+              <img src="${img.url}" alt="" style="width:100%;height:96px;object-fit:cover;display:block;" onerror="this.style.display='none'" />
+              ${action.timestamp ? `<div style="position:absolute;top:6px;right:6px;padding:2px 7px;background:rgba(220,30,30,0.9);color:white;font-size:9px;font-weight:700;border-radius:3px;letter-spacing:0.5px;">${action.timestamp}</div>` : ""}
+              <div style="padding:5px 8px;">
+                <div style="font-size:10px;color:rgba(255,255,255,0.8);line-height:1.3;">${img.caption}</div>
+                ${img.attribution ? `<div style="font-size:8px;color:rgba(255,255,255,0.3);margin-top:1px;">© ${img.attribution}</div>` : ""}
+              </div>
+            </div></div>`
+          const im = L.marker([offsetLat, offsetLon], {
+            icon: L.divIcon({ className: "director-pinned-image", html: cardHtml, iconSize: [170, 130], iconAnchor: [85, 135] }),
+            interactive: false, pane: "tooltipPane",
+          }).addTo(map)
+          this._drawings.push({ layer: im, animFrame: null })
+        })
+        return 800
+      }
+
       // ── Detail panels ─────────────────────────────────────────────────────
 
       case "open_detail": {
@@ -1275,6 +1412,13 @@ export class CommandRunner {
       } catch (_) {}
     }
     this._drawings = []
+    // Also clear person markers on full clear
+    if (this._personMarkers) {
+      Object.values(this._personMarkers).forEach(m => {
+        try { if (map) map.removeLayer(m) } catch (_) {}
+      })
+      this._personMarkers = {}
+    }
   }
 
   // ── Impact explosion animation ────────────────────────────────────────────

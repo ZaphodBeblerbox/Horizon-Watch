@@ -7076,6 +7076,38 @@ export default function MapPage({
         ).addTo(map)
         dirCountryHighlightRef.current = highlightLayer
 
+        // Zoom-aware opacity — fade overlays when zoomed far in so map detail shows
+        const updateOpacityForZoom = () => {
+            const zoom = map.getZoom()
+            highlightLayer.eachLayer(l => {
+                const s = l.options
+                const origFill   = s._origFillOpacity   ?? s.fillOpacity ?? 0.30
+                const origStroke = s._origOpacity        ?? s.opacity     ?? 1.0
+                const origWeight = s._origWeight         ?? s.weight      ?? 3
+                if (zoom >= 10) {
+                    l.setStyle({ fillOpacity: 0.03, opacity: 0.25, weight: 1 })
+                } else if (zoom >= 8) {
+                    l.setStyle({ fillOpacity: 0.10, opacity: 0.45, weight: 1.5 })
+                } else if (zoom >= 6) {
+                    l.setStyle({ fillOpacity: 0.18, opacity: 0.65, weight: 2 })
+                } else {
+                    l.setStyle({ fillOpacity: origFill, opacity: origStroke, weight: origWeight })
+                }
+            })
+        }
+
+        // Store original styles once
+        highlightLayer.eachLayer(l => {
+            if (!l.options._origFillOpacity) {
+                l.options._origFillOpacity = l.options.fillOpacity
+                l.options._origOpacity     = l.options.opacity
+                l.options._origWeight      = l.options.weight
+            }
+        })
+
+        map.on("zoomend", updateOpacityForZoom)
+        updateOpacityForZoom()
+
         // Country labels — ONE label per director country name, no context description
         const labeledCountries = new Set()
         for (const { feature, hlName } of matchedFeatures) {
@@ -7103,6 +7135,7 @@ export default function MapPage({
         }
 
         return () => {
+            map.off("zoomend", updateOpacityForZoom)
             cleanupHighlights()
         }
     }, [isDirectorMode, dirCountries, allCountriesGeo])  // eslint-disable-line react-hooks/exhaustive-deps

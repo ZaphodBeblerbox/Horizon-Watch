@@ -349,6 +349,18 @@ def build_snapshot(
         "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe",
     ]
 
+    # ── Key facilities database ───────────────────────────────────────────────
+    facilities: dict = {}
+    facilities_path = BASE_DIR / "data" / "key_facilities.json"
+    try:
+        if facilities_path.exists():
+            with open(facilities_path) as _f:
+                facilities = json.load(_f)
+            total = sum(len(v) for v in facilities.values() if isinstance(v, list))
+            logger.info("[DIRECTOR] Loaded key facilities: %d entries", total)
+    except Exception as _fe:
+        logger.warning("[DIRECTOR] Failed to load facilities: %s", _fe)
+
     snapshot = {
         "mission_profile":     profile_summary,
         "raw_intelligence":    raw_intel,
@@ -357,6 +369,7 @@ def build_snapshot(
         "chokepoints":         CHOKEPOINT_LIST,
         "infrastructure":      infrastructure,
         "available_countries": _COUNTRY_NAMES,
+        "key_facilities":      facilities,
         "generated_at":        datetime.now(timezone.utc).isoformat(),
     }
 
@@ -466,6 +479,10 @@ _VALID_ACTIONS = {
     "click_country",
     # Location placement
     "place_location", "remove_location", "click_location",
+    # People
+    "show_person", "hide_person",
+    # Pinned images
+    "pin_images",
     # Satellite
     "show_satellite", "hide_satellite", "analyse_satellite",
     # Summary
@@ -818,7 +835,39 @@ COMPLEX ANIMATIONS — Build layered scenes:
 - Contested zones: draw_polygon around the area with descriptive label.
 - Troop/naval movements: draw_arrow with directional label. Use multiple arrows for multi-pronged operations.
 - Layer drawings progressively: infrastructure first → threat radii → movement vectors → contested zones.
-- For the Strait of Hormuz: draw the shipping lane polyline, show vessels using it, draw Iranian naval patrol zones as circles from Bandar Abbas, show anti-ship missile ranges from Iranian islands."""
+- For the Strait of Hormuz: draw the shipping lane polyline, show vessels using it, draw Iranian naval patrol zones as circles from Bandar Abbas, show anti-ship missile ranges from Iranian islands.
+
+PRECISE COORDINATES — MANDATORY:
+You are provided with a key_facilities database in the snapshot containing exact coordinates for military bases, oil facilities, ports, nuclear sites, key cities, and chokepoint details including shipping lanes and nearby islands.
+
+ALWAYS use coordinates from this database when referencing a known facility. DO NOT estimate or invent coordinates for facilities that are listed here.
+
+For the Strait of Hormuz:
+- Use inbound_lane and outbound_lane arrays for shipping route draw_line animations.
+- Use iranian_islands for Iranian military position markers.
+- Use narrowest_point for the chokepoint center fly_to.
+- Bandar Abbas Naval Base is at [27.1832, 56.2765] — use this exactly.
+
+For all other facilities: look up key_facilities.military_bases, key_facilities.oil_facilities, key_facilities.ports, key_facilities.nuclear_facilities, key_facilities.key_cities before estimating. Use the database coordinates verbatim.
+
+PEOPLE — show dossier cards with Wikipedia photo:
+- {{ "action": "show_person", "name": string, "role": string, "context": string, "position": [lat, lon] }}
+  Displays a dossier card on the map at the specified position with the person's Wikipedia photo, name, role, and context.
+  Position should be at the capital or relevant city for the person's country.
+  Use when mentioning key political or military leaders (presidents, generals, supreme leaders).
+  Examples:
+    {{ "action": "show_person", "name": "Ali Khamenei", "role": "Supreme Leader of Iran", "context": "Authorized naval operations in Strait of Hormuz", "position": [35.6892, 51.3890] }}
+    {{ "action": "show_person", "name": "Volodymyr Zelenskyy", "role": "President of Ukraine", "context": "Leading war effort against Russian invasion", "position": [50.4501, 30.5234] }}
+- {{ "action": "hide_person", "name": string }}
+  Remove a person dossier card.
+Use 2-4 person dossiers per briefing when discussing decisions or actions by specific leaders.
+
+PINNED IMAGES — multiple images anchored to map locations:
+- {{ "action": "pin_images", "location": [lat, lon], "label": string, "timestamp": string, "images": [{{"query": string, "caption": string}}] }}
+  Pins 2-4 images to a specific map location. Each image is fetched from Wikimedia Commons and displayed as a floating card near the location. Use for illustrating events at specific locations, showing multiple angles of a situation.
+  Example:
+  {{ "action": "pin_images", "location": [13.63, 25.35], "label": "El-Fasher", "timestamp": "April 2026", "images": [{{"query": "El Fasher Sudan aerial bombardment", "caption": "Aerial bombardment damage"}}, {{"query": "RSF militia fighters Sudan", "caption": "RSF forces advancing"}}, {{"query": "Sudan displaced civilians camp", "caption": "IDP camp near El-Fasher"}}] }}
+Use 2-4 pin_images per briefing for locations with significant events."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 

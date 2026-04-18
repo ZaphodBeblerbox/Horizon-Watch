@@ -3012,6 +3012,47 @@ async def director_transcript(seq_id: str):
     return PlainTextResponse(text)
 
 
+# ── Director person dossier ───────────────────────────────────────────────────
+
+_PERSON_CACHE: dict[str, dict] = {}
+_PERSON_CACHE_TTL = 86400  # 24 hours
+
+
+@app.get("/api/director/person/{name}")
+async def director_person(name: str, current_user=Depends(require_approved_user)):
+    """Fetch person info and photo from Wikipedia (24h cache)."""
+    cache_key = f"person:{name.lower().strip()}"
+    cached = _PERSON_CACHE.get(cache_key)
+    if cached and (time.time() - cached["fetched_at"]) < _PERSON_CACHE_TTL:
+        return cached["data"]
+
+    def _fetch_person():
+        wiki_name = name.strip().replace(" ", "_")
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{wiki_name}"
+        try:
+            resp = requests.get(url, headers={"User-Agent": "HorizonWatch/1.0"}, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "name":         data.get("title", name),
+                    "description":  data.get("description", ""),
+                    "extract":      (data.get("extract") or "")[:400],
+                    "image":        data.get("thumbnail", {}).get("source"),
+                    "image_width":  data.get("thumbnail", {}).get("width"),
+                    "image_height": data.get("thumbnail", {}).get("height"),
+                    "page_url":     data.get("content_urls", {}).get("desktop", {}).get("page", ""),
+                    "found":        True,
+                }
+        except Exception as ex:
+            print(f"[person] Wikipedia lookup failed for {name}: {ex}")
+        return {"name": name, "found": False}
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(_executor, _fetch_person)
+    _PERSON_CACHE[cache_key] = {"data": result, "fetched_at": time.time()}
+    return result
+
+
 # ── Director satellite analysis ───────────────────────────────────────────────
 
 # Cache: (lat_r3, lon_r3) → {observations, timestamp}

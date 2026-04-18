@@ -1,0 +1,129 @@
+{
+  "military_bases": [
+    {"name": "Camp Lemonnier", "country": "Djibouti", "lat": 11.5469, "lon": 43.1564, "operator": "US"},
+    {"name": "Al Udeid Air Base", "country": "Qatar", "lat": 25.1173, "lon": 51.3150, "operator": "US"},
+    {"name": "NSA Bahrain", "country": "Bahrain", "lat": 26.2361, "lon": 50.6017, "operator": "US"},
+    {"name": "Diego Garcia", "country": "BIOT", "lat": -7.3195, "lon": 72.4229, "operator": "US/UK"},
+    {"name": "Incirlik Air Base", "country": "Turkey", "lat": 37.0021, "lon": 35.4259, "operator": "US/Turkey"},
+    {"name": "Ramstein Air Base", "country": "Germany", "lat": 49.4369, "lon": 7.6003, "operator": "US"},
+    {"name": "Yokosuka Naval Base", "country": "Japan", "lat": 35.2872, "lon": 139.6539, "operator": "US"},
+    {"name": "Bandar Abbas Naval Base", "country": "Iran", "lat": 27.1832, "lon": 56.2765, "operator": "Iran"},
+    {"name": "Tartus Naval Facility", "country": "Syria", "lat": 34.8900, "lon": 35.8867, "operator": "Russia"},
+    {"name": "Sevastopol Naval Base", "country": "Crimea", "lat": 44.6167, "lon": 33.5254, "operator": "Russia"},
+    {"name": "Kaliningrad", "country": "Russia", "lat": 54.7104, "lon": 20.4522, "operator": "Russia"},
+    {"name": "Hmeimim Air Base", "country": "Syria", "lat": 35.4009, "lon": 35.9487, "operator": "Russia"},
+    {"name": "Changi Naval Base", "country": "Singapore", "lat": 1.3260, "lon": 103.9750, "operator": "Singapore"},
+    {"name": "Yulin Naval Base", "country": "China", "lat": 18.2270, "lon": 109.5520, "operator": "China"},
+    {"name": "Ream Naval Base", "country": "Cambodia", "lat": 10.5000, "lon": 103.6167, "operator": "China"},
+    {"name": "Djibouti Support Base", "country": "Djibouti", "lat": 11.5897, "lon": 43.1456, "operator": "China"},
+    {"name": "Assab Base", "country": "Eritrea", "lat": 13.0667, "lon": 42.7333, "operator": "UAE"}
+  ],
+  "oil_facilities": [
+    {"name": "Kharg Island Oil Terminal", "country": "Iran", "lat": 29.2333, "lon": 50.3167, "type": "export_terminal", "capacity_mbpd": 5.0},
+    {"name": "Ras Tanura", "country": "Saudi Arabia", "lat": 26.6400, "lon": 50.1500, "type": "export_terminal", "capacity_mbpd": 6.5},
+    {"name": "Al Basrah Oil Terminal", "country": "Iraq", "lat": 29.6833, "lon": 48.8167, "type": "export_terminal", "capacity_mbpd": 1.8},
+    {"name": "Khor al-Amaya Oil Terminal", "country": "Iraq", "lat": 29.7833, "lon": 48.8333, "type": "export_terminal"},
+    {"name": "Fujairah Oil Terminal", "country": "UAE", "lat": 25.1200, "lon": 56.3600, "type": "storage_hub"},
+    {"name": "Jebel Ali Port", "country": "UAE", "lat": 25.0053, "lon": 55.0628, "type": "port"},
+    {"name": "Yanbu Terminal", "country": "Saudi Arabia", "lat": 24.0833, "lon": 38.0667, "type": "export_terminal"},
+    {"name": "Abqaiq Processing Facility", "country": "Saudi Arabia", "lat": 25.9392, "lon": 49.6811, "type": "processing"},
+    {"name": "Mina al-Ahmadi Refinery", "country": "Kuwait", "lat": 29.0667, "lon": 48.1500, "type": "refinery"},
+    {"name": "Haifa Refinery", "country": "Israel", "lat": 32.8184, "lon": 34.9727, "type": "refinery"},
+    {"name": "Baku-Tbilisi-Ceyhan Pipeline Terminal", "country": "Turkey", "lat": 36.8333, "lon": 35.8833, "type": "pipeline_terminal"},
+    {"name": "Druzhba Pipeline Hub Mozyr", "country": "Belarus", "lat": 52.0500, "lon": 29.2667, "type": "pipeline_hub"}
+  ],
+  "ports": [
+    {"name": "Port of Djibouti", "country": "Djibouti", "lat": 11.5950, "lon": 43.1481},
+    {"name": "Port of Aden", "country": "Yemen", "lat": 12.7855, "lon": 45.0187},
+    {"name": "Port of Hodeidah", "country": "Yemen", "lat": 14.7979, "lon": 42.9540},
+    {"name": "Port of Mogadishu", "country": "Somalia", "lat": 2.0350, "lon": 45.3425},
+    {"name": "Port of Mombasa", "country": "Kenya", "lat": -4.0435, "lon": 39.6682},
+    {"name": "Port of Dar es Salaam", "country": "Tanzania", "lat": -6.8235, "lon": 39.2695},
+    {"name": "Port of Jeddah", "country": "Saudi Arabia", "lat": 21.4858, "lon": 39.1925},
+    {"name": "Port of Karachi", "country": "Pakistan", "lat": 24.8465, "lon": 66.9781},
+    {"name": "Port of Gwadar", "country": "Pakistan", "lat": 25.1264, "lon": 62.3225},
+    {"name": "Port of Hambantota", "country": "Sri Lanka", "lat": 6.1168, "lon": 81.1192},
+    {"name": "Port of Piraeus", "country": "Greece", "lat": 37.9475, "lon": 23.6350},
+    {"name": "Mariupol Port", "country": "Ukraine", "lat": 47.0958, "lon": 37.5483},
+    {"name": "Port of Odesa", "country": "Ukraine", "lat": 46.4846, "lon": 30.7326},
+    {"name": "Sevastopol Port", "country": "Crimea", "lat": 44.6167, "lon": 33.5254}
+  ],
+  "nuclear_facilities": [
+    {"name": "Natanz Enrichment Facility", "country": "Iran", "lat": 33.7213, "lon": 51.7267},
+    {"name": "Fordow Enrichment Facility", "country": "Iran", "lat": 34.8833, "lon": 51.5833},
+    {"name": "Isfahan Nuclear Complex", "country": "Iran", "lat": 32.6333, "lon": 51.6833},
+    {"name": "Bushehr Nuclear Power Plant", "country": "Iran", "lat": 28.8333, "lon": 50.8833},
+    {"name": "Dimona Nuclear Facility", "country": "Israel", "lat": 31.0017, "lon": 35.1467},
+    {"name": "Zaporizhzhia Nuclear Power Plant", "country": "Ukraine", "lat": 47.5069, "lon": 34.5853}
+  ],
+  "key_cities": [
+    {"name": "Mogadishu", "country": "Somalia", "lat": 2.0469, "lon": 45.3182},
+    {"name": "Khartoum", "country": "Sudan", "lat": 15.5007, "lon": 32.5599},
+    {"name": "El-Fasher", "country": "Sudan", "lat": 13.6300, "lon": 25.3500},
+    {"name": "Port Sudan", "country": "Sudan", "lat": 19.6158, "lon": 37.2164},
+    {"name": "Aden", "country": "Yemen", "lat": 12.7855, "lon": 45.0187},
+    {"name": "Hodeidah", "country": "Yemen", "lat": 14.7979, "lon": 42.9540},
+    {"name": "Sanaa", "country": "Yemen", "lat": 15.3694, "lon": 44.1910},
+    {"name": "Marib", "country": "Yemen", "lat": 15.4626, "lon": 45.3225},
+    {"name": "Haifa", "country": "Israel", "lat": 32.7940, "lon": 34.9896},
+    {"name": "Tel Aviv", "country": "Israel", "lat": 32.0853, "lon": 34.7818},
+    {"name": "Tehran", "country": "Iran", "lat": 35.6892, "lon": 51.3890},
+    {"name": "Isfahan", "country": "Iran", "lat": 32.6546, "lon": 51.6680},
+    {"name": "Kyiv", "country": "Ukraine", "lat": 50.4501, "lon": 30.5234},
+    {"name": "Kharkiv", "country": "Ukraine", "lat": 49.9935, "lon": 36.2304},
+    {"name": "Kupiansk", "country": "Ukraine", "lat": 49.7081, "lon": 37.6156},
+    {"name": "Bakhmut", "country": "Ukraine", "lat": 48.5950, "lon": 38.0006},
+    {"name": "Kherson", "country": "Ukraine", "lat": 46.6354, "lon": 32.6169},
+    {"name": "Zaporizhzhia", "country": "Ukraine", "lat": 47.8388, "lon": 35.1396},
+    {"name": "Mariupol", "country": "Ukraine", "lat": 47.0958, "lon": 37.5483},
+    {"name": "Kramatorsk", "country": "Ukraine", "lat": 48.7364, "lon": 37.5566},
+    {"name": "Sumy", "country": "Ukraine", "lat": 50.9077, "lon": 34.7981},
+    {"name": "Mykolaiv", "country": "Ukraine", "lat": 46.9750, "lon": 31.9946},
+    {"name": "Taipei", "country": "Taiwan", "lat": 25.0330, "lon": 121.5654},
+    {"name": "Manila", "country": "Philippines", "lat": 14.5995, "lon": 120.9842},
+    {"name": "Scarborough Shoal", "country": "Disputed", "lat": 15.1500, "lon": 117.7500},
+    {"name": "Thitu Island", "country": "Philippines/Disputed", "lat": 11.0500, "lon": 114.2833},
+    {"name": "Fiery Cross Reef", "country": "China/Disputed", "lat": 9.5500, "lon": 112.9000},
+    {"name": "Mischief Reef", "country": "China/Disputed", "lat": 9.9000, "lon": 115.5333}
+  ],
+  "chokepoint_details": {
+    "Strait of Hormuz": {
+      "narrowest_point": [26.5667, 56.2500],
+      "iran_coast": [27.10, 56.80],
+      "oman_coast": [26.20, 56.40],
+      "inbound_lane": [[26.20, 56.08], [26.35, 56.25], [26.50, 56.42], [26.70, 56.60]],
+      "outbound_lane": [[26.60, 56.55], [26.45, 56.38], [26.30, 56.20], [26.15, 56.05]],
+      "iranian_islands": [
+        {"name": "Abu Musa Island", "lat": 25.8772, "lon": 55.0331},
+        {"name": "Greater Tunb", "lat": 26.2667, "lon": 55.3167},
+        {"name": "Lesser Tunb", "lat": 26.2333, "lon": 55.1333}
+      ]
+    },
+    "Bab el-Mandeb": {
+      "narrowest_point": [12.5833, 43.3333],
+      "yemen_coast": [12.65, 43.25],
+      "djibouti_coast": [12.55, 43.40],
+      "shipping_lane": [[12.30, 43.10], [12.50, 43.30], [12.65, 43.45], [12.80, 43.55]],
+      "perim_island": [12.6500, 43.4167]
+    },
+    "Suez Canal": {
+      "north_entrance": [31.2650, 32.3113],
+      "south_entrance": [29.9333, 32.5667],
+      "great_bitter_lake": [30.3500, 32.3667],
+      "new_suez_canal": [30.5833, 32.3333]
+    },
+    "Strait of Malacca": {
+      "north_entrance": [5.80, 100.00],
+      "narrowest_point": [1.30, 103.60],
+      "south_exit": [1.10, 103.85],
+      "one_fathom_bank": [2.9500, 101.0333],
+      "shipping_lane": [[5.80, 100.00], [4.00, 100.50], [2.50, 101.80], [1.30, 103.60], [1.10, 103.85]]
+    },
+    "Taiwan Strait": {
+      "north": [25.30, 120.00],
+      "south": [23.00, 119.50],
+      "center": [24.50, 119.50],
+      "median_line": [[25.00, 120.50], [24.00, 119.80], [23.00, 119.50]]
+    }
+  }
+}
