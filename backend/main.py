@@ -3086,6 +3086,142 @@ async def director_video_search(
     return {"video_url": None, "fallback": True}
 
 
+@app.get("/api/director/test-briefing")
+async def director_test_briefing():
+    """Return a handcrafted test briefing that exercises every major action handler."""
+    return {
+        "title": "Director Mode Diagnostic — Full Handler Test",
+        "intent": "test",
+        "actions": [
+            # ── Scene 1: Intro fly-to + country highlight + narrate ────────────
+            {"action": "fly_to", "lat": 26.0, "lon": 54.0, "zoom": 5, "duration": 3000},
+            {"action": "highlight_country", "name": "Iran", "context": "focus", "label": "FOCUS"},
+            {"action": "highlight_country", "name": "United States", "context": "allied"},
+            {"action": "narrate", "text": "Welcome to the Director Mode diagnostic briefing. We are testing every visual handler. Beginning with country highlights and camera movement over the Persian Gulf."},
+            # ── Scene 2: Chokepoints + place_event + place_location ────────────
+            {"action": "show_chokepoint", "name": "Strait of Hormuz"},
+            {"action": "place_event", "title": "Tanker Interdiction", "lat": 26.55, "lon": 56.25, "type": "maritime", "severity": "critical", "summary": "Three tankers stopped by IRGCN patrol boats in the Strait of Hormuz.", "source": "Reuters"},
+            {"action": "place_location", "name": "Bandar Abbas", "lat": 27.18, "lon": 56.27, "type": "base", "description": "Primary Iranian naval hub on the Strait of Hormuz."},
+            {"action": "narrate", "text": "The Strait of Hormuz remains the world's most critical energy chokepoint. We have placed a tanker interdiction event and the Bandar Abbas naval base marker on the map."},
+            # ── Scene 3: draw_arrow (curved bezier, through water) ─────────────
+            # Arrow follows the Hormuz channel — from Bandar Abbas south into the Gulf of Oman
+            {"action": "draw_arrow", "from": [27.18, 56.27], "to": [25.12, 56.90], "color": "#ef4444", "label": "IRGCN patrol vector"},
+            {"action": "narrate", "text": "The curved arrow shows the IRGCN patrol vector moving south from Bandar Abbas through the Strait toward the Gulf of Oman. Arrow follows the water channel."},
+            # ── Scene 4: draw_animated_line — inbound + outbound tanker TSS lanes ─
+            {"action": "clear_scene"},
+            {"action": "fly_to", "lat": 26.2, "lon": 56.5, "zoom": 7, "duration": 2500},
+            {"action": "show_chokepoint", "name": "Strait of Hormuz"},
+            # Inbound tanker lane — follows actual TSS, staying south of Musandam Peninsula
+            {"action": "draw_animated_line",
+             "points": [
+                 [24.50, 54.00],
+                 [25.20, 55.50],
+                 [26.00, 56.00],
+                 [26.20, 56.15],
+                 [26.35, 56.35],
+                 [26.45, 56.55],
+                 [26.55, 56.75],
+                 [27.00, 57.30],
+                 [27.50, 58.00]
+             ],
+             "color": "#00ccff", "duration": 3500, "label": "Inbound tanker lane", "dashed": False},
+            # Outbound loaded tankers — slightly different lane, still fully in water
+            {"action": "draw_animated_line",
+             "points": [
+                 [27.50, 57.80],
+                 [27.00, 57.00],
+                 [26.60, 56.60],
+                 [26.45, 56.40],
+                 [26.30, 56.20],
+                 [26.10, 55.95],
+                 [25.50, 55.30],
+                 [25.00, 54.50],
+                 [24.50, 53.80]
+             ],
+             "color": "#ffaa00", "duration": 3500, "label": "Outbound loaded tanker lane", "dashed": True},
+            {"action": "narrate", "text": "Testing animated line with glow. Two tanker lanes through the Strait of Hormuz — both following the actual Traffic Separation Scheme in open water, staying clear of the Musandam Peninsula."},
+            # ── Scene 5: impact effect ────────────────────────────────────────
+            {"action": "fly_to", "lat": 15.37, "lon": 44.19, "zoom": 7, "duration": 2500},
+            {"action": "impact", "lat": 15.37, "lon": 44.19, "color": "#ff5500", "label": "Sanaa air strike"},
+            {"action": "narrate", "text": "Testing the impact explosion effect. Strike animation detonates at Sanaa coordinates."},
+            # ── Scene 6: draw_circle with animated_expand ─────────────────────
+            {"action": "draw_circle", "lat": 15.37, "lon": 44.19, "radius_km": 50, "color": "#ef4444", "label": "Strike radius", "animated_expand": True, "expand_duration": 2000},
+            {"action": "narrate", "text": "Testing animated circle expand. A 50-kilometre threat radius grows from the impact site."},
+            # ── Scene 7: pulse_hotspot ────────────────────────────────────────
+            {"action": "pulse_hotspot", "lat": 14.79, "lon": 42.95, "radius_km": 30, "color": "#f59e0b", "label": "HODEIDAH THREAT ZONE", "duration": 4000},
+            {"action": "narrate", "text": "Testing pulse hotspot. The pulsing amber ring marks the threat perimeter around Hodeidah port."},
+            # ── Scene 8: spotlight ────────────────────────────────────────────
+            {"action": "fly_to", "lat": 14.79, "lon": 42.95, "zoom": 9, "duration": 2500},
+            {"action": "spotlight", "lat": 14.79, "lon": 42.95, "radius_px": 180, "duration": 4000},
+            {"action": "narrate", "text": "Testing spotlight vignette. The radial gradient focuses attention on Hodeidah port while darkening the surrounding map."},
+            # ── Scene 9: data_callout ─────────────────────────────────────────
+            {"action": "data_callout", "label": "VESSELS DIVERTED", "value": "47", "unit": "ships", "subtitle": "Last 30 days — Red Sea rerouting via Cape of Good Hope", "color": "#f59e0b", "screen_position": "top-right", "duration": 5000},
+            {"action": "narrate", "text": "Testing data callout card. Forty-seven vessels have been diverted away from the Red Sea in the past thirty days."},
+            # ── Scene 10: show_chart ──────────────────────────────────────────
+            {"action": "clear_scene"},
+            {"action": "show_chart", "title": "Red Sea Transit Volume (ships/day)", "color": "#56cfff", "duration": 7000,
+             "data": [
+               {"label": "Oct", "value": 52}, {"label": "Nov", "value": 48}, {"label": "Dec", "value": 31},
+               {"label": "Jan", "value": 18}, {"label": "Feb", "value": 14}, {"label": "Mar", "value": 11},
+               {"label": "Apr", "value": 9}
+             ],
+             "event_marker": {"index": 2, "label": "Houthi attacks begin"}},
+            {"action": "narrate", "text": "Testing animated SVG chart. Daily transits through the Red Sea have collapsed from fifty-two ships per day in October to just nine in April."},
+            # ── Scene 11: animate_movement (Schema B + Schema A, water routes) ─
+            {"action": "clear_scene"},
+            {"action": "fly_to", "lat": 26.4, "lon": 56.5, "zoom": 7, "duration": 2500},
+            # IRGCN patrol boats move along water routes through the Strait of Hormuz
+            {"action": "animate_movement", "speed": 0.15, "units": [
+                {"origin": [27.18, 56.28], "destination": [26.45, 56.55],
+                 "path": [[27.18, 56.28], [27.00, 56.35], [26.80, 56.42], [26.65, 56.48], [26.45, 56.55]],
+                 "icon": "patrol", "faction": "hostile", "label": "IRGC-201"},
+                {"origin": [27.18, 56.28], "destination": [26.35, 56.35],
+                 "path": [[27.18, 56.28], [26.95, 56.30], [26.70, 56.33], [26.35, 56.35]],
+                 "icon": "patrol", "faction": "hostile", "label": "IRGC-203"},
+                # Schema A — US carrier using from/to/waypoints
+                {"from": [24.00, 57.00], "to": [26.00, 56.20],
+                 "waypoints": [[24.80, 56.80], [25.50, 56.50]],
+                 "type": "carrier", "faction": "allied", "label": "USS TRUMAN"}
+            ]},
+            {"action": "narrate", "text": "Testing animate_movement with speed-based duration. Two IRGCN patrol boats use Schema B origin-destination syntax with water-route paths. The USS carrier uses Schema A from-to format. All three move slowly through the Strait."},
+            # ── Scene 12: formation ───────────────────────────────────────────
+            {"action": "clear_scene"},
+            {"action": "fly_to", "lat": 26.5, "lon": 56.2, "zoom": 7, "duration": 2500},
+            {"action": "formation", "pattern": "surround", "target": [26.55, 56.25], "units": [
+                {"lat": 27.1, "lon": 56.8, "type": "naval", "faction": "hostile", "label": "Unit A"},
+                {"lat": 26.1, "lon": 55.7, "type": "naval", "faction": "hostile", "label": "Unit B"},
+                {"lat": 27.0, "lon": 55.6, "type": "naval", "faction": "hostile", "label": "Unit C"},
+                {"lat": 26.55, "lon": 56.25, "type": "naval", "faction": "subject", "label": "Target"}
+            ]},
+            {"action": "narrate", "text": "Testing formation handler. Three hostile naval units converge in a surround pattern around the target vessel."},
+            # ── Scene 13: country_info_overlay ────────────────────────────────
+            {"action": "clear_scene"},
+            {"action": "fly_to", "lat": 35.69, "lon": 51.39, "zoom": 5, "duration": 2500},
+            {"action": "highlight_country", "name": "Iran", "context": "focus"},
+            {"action": "country_info_overlay", "name": "Iran", "headline": "STRATEGIC ASSESSMENT", "stat_value": "3,200+", "stat_label": "NUCLEAR CENTRIFUGES", "position": [35.69, 51.39]},
+            {"action": "narrate", "text": "Testing country info overlay. The typographic callout displays Iran's centrifuge count as a large-format data card positioned on the map."},
+            # ── Scene 14: recap_overview with locations ────────────────────────
+            {"action": "clear_scene"},
+            {"action": "recap_overview", "color": "#56cfff", "duration": 6000, "locations": [
+                {"lat": 26.55, "lon": 56.25, "label": "Hormuz Interdiction"},
+                {"lat": 14.79, "lon": 42.95, "label": "Hodeidah"},
+                {"lat": 15.37, "lon": 44.19, "label": "Sanaa Strike"},
+                {"lat": 12.58, "lon": 43.33, "label": "Bab el-Mandeb"}
+            ]},
+            {"action": "narrate", "text": "Testing recap overview with locations field. Four key event sites should appear as staggered dots connected by a dashed narrative line."},
+            # ── Scene 15: click_event + click_location ─────────────────────────
+            {"action": "fly_to", "lat": 26.55, "lon": 56.25, "zoom": 8, "duration": 2500},
+            {"action": "place_event", "title": "Hormuz Test Event", "lat": 26.55, "lon": 56.25, "type": "maritime", "severity": "critical", "summary": "Test popup event in the Strait of Hormuz."},
+            {"action": "click_event", "title": "Hormuz Test Event"},
+            {"action": "narrate", "text": "Testing click_event handler. A popup card should open at the tanker interdiction position with title, severity, and summary."},
+            # ── Scene 16: clear_all + final ───────────────────────────────────
+            {"action": "clear_all"},
+            {"action": "fly_to", "lat": 20.0, "lon": 55.0, "zoom": 4, "duration": 3000},
+            {"action": "narrate", "text": "All handlers tested. Director Mode diagnostic complete. If you see this narration, the test briefing played through to completion successfully."}
+        ]
+    }
+
+
 @app.get("/api/director/list")
 async def director_list():
     """List saved director sequences (newest first)."""
@@ -3720,12 +3856,14 @@ _IMG_SEARCH_LOCK  = threading.Lock()
 
 
 def _wikimedia_image_search(query: str) -> dict | None:
-    """Fetch first suitable image from Wikimedia Commons. Returns dict or None."""
+    """Fetch first suitable photograph from Wikimedia Commons. Returns dict or None."""
+    # Add filetype hint to get bitmap photos, not diagrams/documents
+    search_q = urllib.parse.quote(f"{query} filetype:bitmap")
     url = (
         "https://commons.wikimedia.org/w/api.php?"
-        "action=query&generator=search&gsrsearch=" + urllib.parse.quote(query) +
-        "&gsrnamespace=6&gsrlimit=5"
-        "&prop=imageinfo&iiprop=url%7Cextmetadata&iiurlwidth=700"
+        "action=query&generator=search&gsrsearch=" + search_q +
+        "&gsrnamespace=6&gsrlimit=12"
+        "&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=700"
         "&format=json"
     )
     try:
@@ -3739,20 +3877,34 @@ def _wikimedia_image_search(query: str) -> dict | None:
     if not pages:
         return None
 
-    for page in pages.values():
+    # Sort pages by page_id (higher = often more relevant for recent searches)
+    sorted_pages = sorted(pages.values(), key=lambda p: p.get("index", 0))
+
+    for page in sorted_pages:
         info_list = page.get("imageinfo") or []
         if not info_list:
             continue
         info = info_list[0]
-        thumb = info.get("thumburl") or info.get("url")
+        thumb = info.get("thumburl") or info.get("url") or ""
         if not thumb:
             continue
-        # Skip SVGs and tiny images
-        if thumb.lower().endswith(".svg"):
+
+        # Skip non-photo content
+        lower_url = thumb.lower()
+        if any(lower_url.endswith(ext) for ext in (".svg", ".pdf", ".gif", ".tif", ".tiff", ".webp")):
             continue
+        mime = info.get("mime", "")
+        if mime and mime not in ("image/jpeg", "image/png", "image/jpg"):
+            continue
+
+        # Skip tiny images (icons, thumbnails)
+        width  = info.get("width", 0) or 0
+        height = info.get("height", 0) or 0
+        if width < 400 or height < 250:
+            continue
+
         ext_meta = info.get("extmetadata") or {}
         desc_short = (ext_meta.get("ImageDescription") or {}).get("value") or ""
-        # Strip HTML tags from description
         caption = re.sub(r"<[^>]+>", "", desc_short).strip()[:180] or query
         artist_raw = (ext_meta.get("Artist") or {}).get("value") or ""
         artist = re.sub(r"<[^>]+>", "", artist_raw).strip()[:80]

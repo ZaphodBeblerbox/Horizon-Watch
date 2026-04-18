@@ -360,7 +360,13 @@ export default function DirectorSidebar({
   const isSummary = currentAction?.action === "summary"
 
   // History = all segments except the most recent, shown newest-first
-  const previousSegments = segments.slice(0, -1).reverse()
+  // Filter out segments with no displayable content
+  const previousSegments = segments.slice(0, -1).reverse().filter(seg => {
+    const text = seg.action.action === "summary"
+      ? (seg.action.sections?.[0]?.text || "")
+      : (seg.action.text || "")
+    return !!(seg.action.heading || seg.action.title || text)
+  })
 
   if (!visible) return null
 
@@ -508,7 +514,7 @@ export default function DirectorSidebar({
               <div className="dir-history-label">Previous segments</div>
               {previousSegments.map((seg, i) => {
                 const isExpanded = expandedHist === i
-                const heading = seg.action.heading || seg.action.title || `Segment ${seg.segIdx + 1}`
+                const heading = seg.action.heading || seg.action.title || "Intelligence Update"
                 const text =
                   seg.action.action === "summary"
                     ? (seg.action.sections?.[0]?.text || "")

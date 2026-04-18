@@ -332,11 +332,12 @@ const SUGGESTIONS = [
 ]
 
 export default function DirectorModal({
-    open       = false,
-    onClose    = () => {},
-    onGenerate = async () => {},
-    generating = false,
-    error      = null,
+    open        = false,
+    onClose     = () => {},
+    onGenerate  = async () => {},
+    onLoadTest  = async () => {},
+    generating  = false,
+    error       = null,
 }) {
     // "prompt" | "loading" | "dissolving"
     const [phase,     setPhase]     = useState("prompt")
@@ -491,6 +492,25 @@ export default function DirectorModal({
                         </div>
 
                         <div className="director-modal-actions">
+                            <button
+                                style={{
+                                    padding: "8px 14px",
+                                    fontSize: 11,
+                                    fontWeight: 500,
+                                    border: "1px solid rgba(86,207,255,0.2)",
+                                    borderRadius: 7,
+                                    background: "transparent",
+                                    color: "rgba(86,207,255,0.55)",
+                                    cursor: "pointer",
+                                    marginRight: "auto",
+                                    letterSpacing: "0.04em",
+                                }}
+                                onClick={onLoadTest}
+                                type="button"
+                                title="Ctrl+Shift+T"
+                            >
+                                ⚙ Test
+                            </button>
                             <button className="director-modal-cancel" onClick={onClose} type="button">
                                 Cancel
                             </button>

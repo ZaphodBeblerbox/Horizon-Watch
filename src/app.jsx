@@ -930,6 +930,42 @@ export default function App() {
         }
     }, [surfaceItems, directorLayerOverrides, _startDirectorPlayback]) // eslint-disable-line react-hooks/exhaustive-deps
 
+    const handleDirectorLoadTest = useCallback(async () => {
+        setDirectorError(null)
+        setDirectorGenerating(true)
+        setDirectorCurrentAction(null)
+        setDirectorIndicators([])
+        setDirectorContextCards([])
+        setDirectorItems(_emptyDirectorItems())
+        setDirectorSegments([])
+        setDirectorImage(null)
+        setDirectorSavedStatus(null)
+        setDirectorModalOpen(false)
+        try {
+            const res = await fetch(`${API}/api/director/test-briefing`)
+            if (!res.ok) throw new Error(`test-briefing: ${res.status}`)
+            const sequence = await res.json()
+            _startDirectorPlayback(sequence, "test")
+        } catch (err) {
+            console.error("[Director] test briefing load failed:", err)
+            setDirectorError(err.message || "Failed to load test briefing")
+        } finally {
+            setDirectorGenerating(false)
+        }
+    }, [_startDirectorPlayback]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Ctrl+Shift+T → load director test briefing
+    useEffect(() => {
+        const handler = (e) => {
+            if (e.ctrlKey && e.shiftKey && e.key === "T") {
+                e.preventDefault()
+                handleDirectorLoadTest()
+            }
+        }
+        window.addEventListener("keydown", handler)
+        return () => window.removeEventListener("keydown", handler)
+    }, [handleDirectorLoadTest])
+
     const handleDirectorSave = useCallback(async () => {
         if (!directorSequence) return
         setDirectorSavedStatus("saving")
@@ -1350,6 +1386,7 @@ export default function App() {
                 open={directorModalOpen}
                 onClose={() => setDirectorModalOpen(false)}
                 onGenerate={handleDirectorGenerate}
+                onLoadTest={handleDirectorLoadTest}
                 generating={directorGenerating}
                 error={directorError}
             />

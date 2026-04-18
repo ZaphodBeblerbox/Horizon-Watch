@@ -927,14 +927,20 @@ export class CommandRunner {
         if (!L) return defaultDelay
         const pts   = (action.points || []).map(p => [p[0], p[1]])
         const color = action.color || "#56cfff"
-        const opts  = {
+        // Glow layer underneath
+        const glowLayer = L.polyline(pts, {
+          color, weight: 16, opacity: 0.15,
+          lineCap: "round", lineJoin: "round",
+        }).addTo(map)
+        this._drawings.push({ layer: glowLayer, animFrame: null })
+        const layer = L.polyline(pts, {
           color,
-          weight:    2,
-          opacity:   0.85,
-          dashArray: action.dashed ? "10 5" : null,
+          weight:    5,
+          opacity:   0.9,
+          dashArray: action.dashed ? "12 8" : null,
+          lineCap:   "round", lineJoin: "round",
           className: "director-drawing-line",
-        }
-        const layer = L.polyline(pts, opts).addTo(map)
+        }).addTo(map)
         if (action.label) layer.bindTooltip(action.label, { permanent: false, sticky: true })
 
         // Ship animation for routing/shipping/transit lines
@@ -998,10 +1004,11 @@ export class CommandRunner {
         if (!map) return defaultDelay
         const L = window.L
         if (!L) return defaultDelay
-        const center = action.center || [action.lat, action.lon]
-        const color  = action.color || "#f59e0b"
-        const layer  = L.circle([center[0], center[1]], {
-          radius:      (action.radius_km || 10) * 1000,
+        const center       = action.center || [action.lat, action.lon]
+        const color        = action.color || "#f59e0b"
+        const targetRadius = (action.radius_km || 10) * 1000
+        const layer = L.circle([center[0], center[1]], {
+          radius:      action.animated_expand ? 0 : targetRadius,
           color,
           weight:      2,
           fillColor:   color,
@@ -1010,7 +1017,24 @@ export class CommandRunner {
           className:   "director-drawing-fill",
         }).addTo(map)
         if (action.label) layer.bindTooltip(action.label, { permanent: false, sticky: true })
-        this._drawings.push(layer)
+        if (action.animated_expand) {
+          const duration  = (action.expand_duration ?? 2000)
+          const startTime = Date.now()
+          let stopped     = false
+          let rafId       = null
+          const grow = () => {
+            if (stopped) return
+            const p      = Math.min((Date.now() - startTime) / duration, 1)
+            const eased  = 1 - Math.pow(1 - p, 3)
+            try { layer.setRadius(eased * targetRadius) } catch (_) {}
+            if (p < 1) { rafId = requestAnimationFrame(grow) } else { stopped = true }
+          }
+          rafId = requestAnimationFrame(grow)
+          const entry = { layer, animFrame: () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) } }
+          this._drawings.push(entry)
+        } else {
+          this._drawings.push(layer)
+        }
         return 600
       }
 
@@ -1154,7 +1178,9 @@ export class CommandRunner {
         return 600
       }
 
-      case "clear_drawings": {
+      case "clear_drawings":
+      case "clear_scene": {
+        console.log("[Director] clear_scene: removing", this._drawings?.length ?? 0, "drawing entries")
         this._clearAllDrawings()
         return defaultDelay
       }
@@ -1467,37 +1493,60 @@ export class CommandRunner {
         const map = this.mapRef?.current
         const L   = window.L
         if (!map || !L || action.lat == null || action.lon == null) return defaultDelay
-        const baseRadius = (action.radius_km || 20) * 1000
-        const color      = action.color || "#56cfff"
-        const ring = L.circle([action.lat, action.lon], {
-          radius: baseRadius, color, fillColor: color,
-          fillOpacity: 0.08, weight: 2, opacity: 0.6,
-          className: "director-drawing-fill",
+        const lat      = action.lat
+        const lon      = action.lon
+        const color    = action.color || "#ffaa00"
+        const duration = action.duration ?? 6000
+
+        // Bright center dot
+        const centerDot = L.circleMarker([lat, lon], {
+          radius: 7, color, fillColor: color, fillOpacity: 1, weight: 2,
         }).addTo(map)
-        let t = 0
-        const interval = setInterval(() => {
-          t += 0.06
-          try {
-            ring.setRadius(baseRadius * (1 + 0.22 * Math.sin(t)))
-            ring.setStyle({
-              opacity:     0.4 + 0.3 * Math.sin(t),
-              fillOpacity: 0.04 + 0.07 * Math.sin(t),
-            })
-          } catch (_) {}
-        }, 60)
-        this._drawings.push({ layer: ring, animFrame: () => clearInterval(interval) })
+        this._drawings.push({ layer: centerDot, animFrame: null })
+        setTimeout(() => { try { map.removeLayer(centerDot) } catch (_) {} }, duration)
+
+        // THREE rings that expand and fade, staggered 800ms apart
+        const intervals = []
+        for (let i = 0; i < 3; i++) {
+          const startRing = () => {
+            let radius  = 2000
+            let opacity = 0.85
+            let weight  = 3
+            const ring = L.circle([lat, lon], {
+              radius, color, fillColor: "transparent", fillOpacity: 0, weight, opacity,
+            }).addTo(map)
+            this._drawings.push({ layer: ring, animFrame: null })
+            const iv = setInterval(() => {
+              radius  += 4000
+              opacity -= 0.025
+              weight   = Math.max(1, 3 - radius / 80000)
+              if (opacity <= 0) {
+                clearInterval(iv)
+                try { map.removeLayer(ring) } catch (_) {}
+              } else {
+                try { ring.setRadius(radius); ring.setStyle({ opacity, weight }) } catch (_) {}
+              }
+            }, 30)
+            intervals.push(iv)
+          }
+          setTimeout(startRing, i * 900)
+        }
+        // Cancel all intervals on clear
+        const cancelFn = () => intervals.forEach(iv => clearInterval(iv))
+        this._drawings.push({ layer: null, animFrame: cancelFn })
+
         if (action.label) {
-          const lm = L.marker([action.lat, action.lon], {
+          const lm = L.marker([lat, lon], {
             icon: L.divIcon({
               className: "",
-              html: `<div style="color:${color};font-size:11px;font-weight:700;text-shadow:0 0 8px ${color};white-space:nowrap;pointer-events:none;">${action.label}</div>`,
-              iconSize: [0, 0], iconAnchor: [0, -20],
+              html: `<div style="color:${color};font-size:12px;font-weight:700;text-shadow:0 0 10px ${color},0 2px 4px #000;white-space:nowrap;pointer-events:none;">${action.label}</div>`,
+              iconSize: [0, 0], iconAnchor: [0, -22],
             }),
             interactive: false, pane: "tooltipPane",
           }).addTo(map)
           this._drawings.push({ layer: lm, animFrame: null })
         }
-        return action.duration ?? 5000
+        return duration
       }
 
       // ── Recap overview ─────────────────────────────────────────────────────
@@ -1668,6 +1717,8 @@ export class CommandRunner {
       } catch (_) {}
     }
     this._drawings = []
+    // Sweep any orphaned spotlight overlays (e.g. if auto-remove timer hasn't fired yet)
+    document.querySelectorAll(".director-spotlight-overlay").forEach(el => { try { el.remove() } catch (_) {} })
     // Also clear person markers on full clear
     if (this._personMarkers) {
       Object.values(this._personMarkers).forEach(m => {
@@ -1748,9 +1799,9 @@ export class CommandRunner {
     let stopped    = false
     let rafId      = null
 
-    const mainLine = L.polyline([], { color, weight: isStrike ? 2 : 3, opacity: 0.9,
-      dashArray: isStrike ? "8 6" : null, className: "director-drawing-line" }).addTo(map)
-    const glowLine = L.polyline([], { color, weight: 9, opacity: 0.12 }).addTo(map)
+    const glowLine = L.polyline([], { color, weight: 20, opacity: 0.18, lineCap: "round", lineJoin: "round" }).addTo(map)
+    const mainLine = L.polyline([], { color, weight: isStrike ? 3 : 5, opacity: 0.9,
+      dashArray: isStrike ? "8 6" : null, lineCap: "round", lineJoin: "round", className: "director-drawing-line" }).addTo(map)
 
     const dotIcon = L.divIcon({
       className: "",
@@ -1829,6 +1880,7 @@ export class CommandRunner {
     const duration = action.duration  || 5000
 
     const overlay = document.createElement("div")
+    overlay.className = "director-spotlight-overlay"
     overlay.style.cssText = "position:fixed;inset:0;z-index:500;pointer-events:none;opacity:0;transition:opacity 600ms ease-in;"
 
     const update = () => {
@@ -1880,8 +1932,9 @@ export class CommandRunner {
     const data = action.data || []
     if (data.length === 0) return
 
-    const W = 320, H = 180
-    const pad = { top: 30, right: 20, bottom: 35, left: 45 }
+    // Build at large size for full-screen display
+    const W = 500, H = 280
+    const pad = { top: 40, right: 28, bottom: 44, left: 56 }
     const cW  = W - pad.left - pad.right
     const cH  = H - pad.top - pad.bottom
 
@@ -1908,66 +1961,75 @@ export class CommandRunner {
     if (em && em.index < points.length) {
       const ep = points[em.index]
       eventSvg = `<rect x="${ep.x - 1}" y="${pad.top}" width="2" height="${cH}" fill="rgba(255,170,0,0.6)"/>
-        <text x="${ep.x}" y="${pad.top - 4}" fill="white" font-size="8" text-anchor="middle" font-weight="700">${em.label}</text>
-        <circle cx="${ep.x}" cy="${ep.y}" r="4" fill="#ffaa00" stroke="white" stroke-width="1"/>`
+        <text x="${ep.x}" y="${pad.top - 6}" fill="white" font-size="10" text-anchor="middle" font-weight="700">${em.label}</text>
+        <circle cx="${ep.x}" cy="${ep.y}" r="5" fill="#ffaa00" stroke="white" stroke-width="1.5"/>`
     }
 
-    const color    = action.color || "#ff4444"
-    const pathLen  = 1200
+    const color   = action.color || "#56cfff"
+    const pathLen = 1600
     const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-      <rect width="${W}" height="${H}" rx="8" fill="rgba(10,15,25,0.92)" stroke="rgba(86,207,255,0.2)" stroke-width="0.5"/>
-      <text x="${pad.left}" y="18" fill="rgba(255,255,255,0.7)" font-size="10" font-weight="700" letter-spacing="1">${action.title || ""}</text>
+      <rect width="${W}" height="${H}" rx="10" fill="rgba(6,12,26,0.96)" stroke="rgba(86,207,255,0.25)" stroke-width="1"/>
+      <text x="${pad.left}" y="24" fill="rgba(255,255,255,0.8)" font-size="13" font-weight="700" letter-spacing="1">${action.title || ""}</text>
       ${gridLines.map(g => `<line x1="${pad.left}" y1="${g.y.toFixed(1)}" x2="${W - pad.right}" y2="${g.y.toFixed(1)}" stroke="rgba(255,255,255,0.07)" stroke-width="0.5"/>
-        <text x="${pad.left - 4}" y="${(g.y + 3).toFixed(1)}" fill="rgba(255,255,255,0.35)" font-size="8" text-anchor="end">${g.val}</text>`).join("")}
+        <text x="${pad.left - 6}" y="${(g.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.4)" font-size="10" text-anchor="end">${g.val}</text>`).join("")}
       ${eventSvg}
-      <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+      <path d="${pathD}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
         stroke-dasharray="${pathLen}" stroke-dashoffset="${pathLen}">
-        <animate attributeName="stroke-dashoffset" from="${pathLen}" to="0" dur="2s" fill="freeze"/>
+        <animate attributeName="stroke-dashoffset" from="${pathLen}" to="0" dur="2.5s" fill="freeze"/>
       </path>
       ${data.filter((_, i) => i === 0 || i === data.length - 1 || i % Math.max(Math.ceil(data.length / 6), 1) === 0)
-        .map(d => { const idx = data.indexOf(d); return `<text x="${points[idx].x.toFixed(1)}" y="${H - 8}" fill="rgba(255,255,255,0.35)" font-size="7" text-anchor="middle">${d.label}</text>` })
+        .map(d => { const idx = data.indexOf(d); return `<text x="${points[idx].x.toFixed(1)}" y="${H - 10}" fill="rgba(255,255,255,0.4)" font-size="9" text-anchor="middle">${d.label}</text>` })
         .join("")}
     </svg>`
 
-    // Fire onChart callback if available (for sidebar display)
-    if (typeof this.onChart === "function") {
-      this.onChart({ svg, title: action.title, duration: action.duration || 8000 })
-      return
-    }
+    const totalDur = action.duration || 8000
 
-    // Fallback: DOM overlay bottom-right
-    const el = document.createElement("div")
-    el.style.cssText = "position:fixed;bottom:100px;right:24px;z-index:800;border:1px solid rgba(255,255,255,0.12);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);animation:director-marker-arrive 500ms ease-out forwards;"
-    el.innerHTML = svg
-    document.body.appendChild(el)
-    this._drawings.push({ domEl: el, animFrame: null })
-    const dur = action.duration || 8000
+    // Phase 1: full-screen centered with blur backdrop
+    const overlay = document.createElement("div")
+    overlay.style.cssText = "position:fixed;inset:0;z-index:9900;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);opacity:0;transition:opacity 400ms ease;"
+    const box = document.createElement("div")
+    box.style.cssText = "border:1px solid rgba(86,207,255,0.25);border-radius:12px;box-shadow:0 12px 60px rgba(0,0,0,0.7),0 0 30px rgba(86,207,255,0.08);transform:scale(0.92);transition:transform 400ms cubic-bezier(0.34,1.56,0.64,1);"
+    box.innerHTML = svg
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+    this._drawings.push({ domEl: overlay, animFrame: null })
+
+    requestAnimationFrame(() => {
+      overlay.style.opacity = "1"
+      box.style.transform   = "scale(1)"
+    })
+
+    // Phase 2: after 4 s, fade out full-screen and hand to sidebar
+    const fullScreenDur = Math.min(4000, totalDur * 0.5)
     setTimeout(() => {
-      el.style.transition = "opacity 500ms"
-      el.style.opacity = "0"
-      setTimeout(() => { try { document.body.removeChild(el) } catch (_) {} }, 520)
-    }, dur)
+      overlay.style.opacity = "0"
+      setTimeout(() => { try { document.body.removeChild(overlay) } catch (_) {} }, 420)
+      // Send to sidebar for remaining duration
+      if (typeof this.onChart === "function") {
+        this.onChart({ svg, title: action.title, duration: totalDur - fullScreenDur })
+      }
+    }, fullScreenDur)
   }
 
   // ── Animated unit movement ────────────────────────────────────────────────
 
   _getUnitIcon(type, color) {
     const svgs = {
-      warship:    `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 3L14 8H22L20 14H4L2 8H10Z" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="10" y="14" width="4" height="4" fill="${color}"/></svg>`,
-      carrier:    `<svg width="26" height="22" viewBox="0 0 28 22"><rect x="2" y="10" width="24" height="8" rx="1" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="8" y="5" width="12" height="6" fill="${color}"/><rect x="12" y="2" width="2" height="4" fill="white"/></svg>`,
-      submarine:  `<svg width="26" height="16" viewBox="0 0 28 16"><ellipse cx="14" cy="10" rx="12" ry="5" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="10" y="3" width="4" height="7" rx="1" fill="${color}"/></svg>`,
-      patrol:     `<svg width="20" height="18" viewBox="0 0 20 18"><path d="M10 2L13 7H20L18 13H2L0 7H7Z" fill="${color}" stroke="white" stroke-width="0.5"/></svg>`,
-      tanker_ship:`<svg width="28" height="18" viewBox="0 0 28 18"><rect x="1" y="8" width="26" height="8" rx="2" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="4" y="4" width="16" height="5" fill="${color}"/><circle cx="6" cy="6" r="2" fill="${color}88" stroke="white" stroke-width="0.5"/><circle cx="12" cy="6" r="2" fill="${color}88" stroke="white" stroke-width="0.5"/><circle cx="18" cy="6" r="2" fill="${color}88" stroke="white" stroke-width="0.5"/></svg>`,
-      cargo_ship: `<svg width="28" height="18" viewBox="0 0 28 18"><rect x="1" y="9" width="26" height="7" rx="2" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="4" y="5" width="8" height="5" fill="${color}"/><rect x="14" y="5" width="8" height="5" fill="${color}"/></svg>`,
-      fighter:    `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2L14 9L22 12L22 14L14 12L14 18L17 20L17 21L12 19L7 21L7 20L10 18L10 12L2 14L2 12L10 9Z" fill="${color}" stroke="white" stroke-width="0.4"/></svg>`,
-      bomber:     `<svg width="26" height="22" viewBox="0 0 28 22"><path d="M14 2L16 10L28 14L28 16L16 13L16 18L20 21L20 22L14 20L8 22L8 21L12 18L12 13L0 16L0 14L12 10Z" fill="${color}" stroke="white" stroke-width="0.4"/></svg>`,
-      helicopter: `<svg width="24" height="22" viewBox="0 0 24 22"><rect x="4" y="10" width="16" height="5" rx="2" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="0" y="9" width="24" height="2" rx="1" fill="${color}"/><line x1="12" y1="15" x2="18" y2="20" stroke="${color}" stroke-width="1.5"/><line x1="12" y1="15" x2="6" y2="20" stroke="${color}" stroke-width="1.5"/></svg>`,
-      drone:      `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 8L14 12L20 14L14 16L12 20L10 16L4 14L10 12Z" fill="${color}" stroke="white" stroke-width="0.5"/><circle cx="4" cy="4" r="3" fill="${color}88"/><circle cx="20" cy="4" r="3" fill="${color}88"/><line x1="4" y1="4" x2="10" y2="12" stroke="${color}" stroke-width="1"/><line x1="20" y1="4" x2="14" y2="12" stroke="${color}" stroke-width="1"/></svg>`,
-      tank:       `<svg width="24" height="20" viewBox="0 0 24 20"><rect x="2" y="10" width="20" height="7" rx="1" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="5" y="6" width="14" height="6" rx="1" fill="${color}"/><rect x="11" y="2" width="2" height="8" fill="${color}" stroke="white" stroke-width="0.4"/></svg>`,
-      apc:        `<svg width="24" height="18" viewBox="0 0 24 18"><rect x="2" y="7" width="20" height="9" rx="2" fill="${color}" stroke="white" stroke-width="0.5"/><rect x="5" y="4" width="10" height="5" rx="1" fill="${color}"/></svg>`,
-      troops:     `<svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="5" r="3" fill="${color}" stroke="white" stroke-width="0.5"/><path d="M6 9 Q10 8 14 9 L15 18 H5 Z" fill="${color}" stroke="white" stroke-width="0.5"/></svg>`,
+      warship:    `<svg width="36" height="36" viewBox="0 0 36 36"><path d="M18 4 L22 10 L24 16 L24 26 L22 30 L14 30 L12 26 L12 16 L14 10 Z" fill="${color}" stroke="rgba(255,255,255,0.6)" stroke-width="1"/><rect x="15" y="8" width="6" height="4" rx="1" fill="rgba(255,255,255,0.3)"/><rect x="16" y="14" width="4" height="8" rx="0.5" fill="rgba(255,255,255,0.2)"/><line x1="18" y1="26" x2="18" y2="30" stroke="rgba(255,255,255,0.3)" stroke-width="1"/></svg>`,
+      carrier:    `<svg width="44" height="44" viewBox="0 0 44 44"><path d="M22 2 L28 12 L30 18 L30 32 L28 38 L16 38 L14 32 L14 18 L16 12 Z" fill="${color}" stroke="rgba(255,255,255,0.6)" stroke-width="1"/><rect x="14" y="16" width="16" height="1" fill="rgba(255,255,255,0.4)"/><rect x="14" y="22" width="16" height="1" fill="rgba(255,255,255,0.3)"/><rect x="18" y="6" width="8" height="3" rx="1" fill="rgba(255,255,255,0.3)"/><line x1="16" y1="10" x2="28" y2="10" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/></svg>`,
+      submarine:  `<svg width="36" height="36" viewBox="0 0 36 36"><ellipse cx="18" cy="22" rx="13" ry="6" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="16" y="12" width="4" height="10" rx="2" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><line x1="18" y1="8" x2="18" y2="12" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/></svg>`,
+      patrol:     `<svg width="28" height="28" viewBox="0 0 28 28"><path d="M14 5 L18 11 L19 19 L17 23 L11 23 L9 19 L10 11 Z" fill="${color}" stroke="rgba(255,255,255,0.6)" stroke-width="0.8"/><rect x="12" y="9" width="4" height="3" rx="0.5" fill="rgba(255,255,255,0.3)"/></svg>`,
+      tanker_ship:`<svg width="36" height="36" viewBox="0 0 36 36"><path d="M18 5 L22 12 L24 28 L20 32 L16 32 L12 28 L14 12 Z" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="14" y="16" width="8" height="6" rx="1" fill="rgba(255,255,255,0.15)"/><rect x="14" y="24" width="8" height="4" rx="1" fill="rgba(255,255,255,0.1)"/></svg>`,
+      cargo_ship: `<svg width="34" height="34" viewBox="0 0 34 34"><path d="M17 4 L21 11 L23 26 L19 30 L15 30 L11 26 L13 11 Z" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="13" y="12" width="8" height="4" fill="rgba(255,255,255,0.15)"/><rect x="13" y="18" width="8" height="4" fill="rgba(255,255,255,0.1)"/><rect x="13" y="24" width="8" height="3" fill="rgba(255,255,255,0.1)"/></svg>`,
+      fighter:    `<svg width="32" height="32" viewBox="0 0 32 32"><path d="M16 2 L17.5 10 L28 15 L28 17 L17.5 14 L17.5 24 L22 27 L22 29 L16 27 L10 29 L10 27 L14.5 24 L14.5 14 L4 17 L4 15 L14.5 10 Z" fill="${color}" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/></svg>`,
+      bomber:     `<svg width="38" height="38" viewBox="0 0 38 38"><path d="M19 2 L21 12 L34 17 L34 20 L21 17 L21 28 L27 32 L27 34 L19 31 L11 34 L11 32 L17 28 L17 17 L4 20 L4 17 L17 12 Z" fill="${color}" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/></svg>`,
+      helicopter: `<svg width="30" height="30" viewBox="0 0 30 30"><line x1="5" y1="10" x2="25" y2="10" stroke="${color}" stroke-width="2" stroke-linecap="round"/><line x1="15" y1="10" x2="15" y2="14" stroke="${color}" stroke-width="2"/><ellipse cx="15" cy="18" rx="7" ry="4" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><line x1="8" y1="16" x2="3" y2="13" stroke="${color}" stroke-width="2" stroke-linecap="round"/></svg>`,
+      drone:      `<svg width="26" height="26" viewBox="0 0 26 26"><path d="M13 3 L14.5 9 L22 12 L22 14 L14.5 12 L14.5 20 L18 22 L18 23 L13 21 L8 23 L8 22 L11.5 20 L11.5 12 L4 14 L4 12 L11.5 9 Z" fill="${color}" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/></svg>`,
+      tank:       `<svg width="30" height="30" viewBox="0 0 30 30"><rect x="5" y="14" width="20" height="10" rx="3" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="10" y="8" width="10" height="8" rx="2" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><line x1="20" y1="11" x2="28" y2="8" stroke="${color}" stroke-width="3" stroke-linecap="round"/></svg>`,
+      apc:        `<svg width="30" height="30" viewBox="0 0 30 30"><rect x="4" y="13" width="22" height="10" rx="3" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="8" y="8" width="14" height="7" rx="2" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/></svg>`,
+      troops:     `<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><path d="M6 22 L8 12 L16 12 L18 22" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/></svg>`,
     }
-    return svgs[type] || svgs.troops
+    return svgs[type] || svgs.warship
   }
 
   // ── Bearing calculation ───────────────────────────────────────────────────
@@ -2063,22 +2125,32 @@ export class CommandRunner {
     const map = this.mapRef?.current
     const L   = window.L
     if (!map || !L) return
-    const duration = (action.duration ?? 8000)
+    // Speed → duration: speed 0.15 → 53s, 0.3 → 26s, 1.0 → 8s
+    const duration = action.speed
+      ? Math.round((1 / Math.max(action.speed, 0.05)) * 8000)
+      : (action.duration ?? 25000)
     const factionColors = { hostile: "#ff3030", allied: "#56cfff", friendly: "#30ff80", neutral: "#ffffff" }
     const units = Array.isArray(action.units) ? action.units : []
 
     units.forEach((unit, idx) => {
-      if (!unit.from || !unit.to) return
+      // Support Schema A (from/to/waypoints/type) and Schema B (origin/destination/path/icon)
+      const from = unit.from || unit.origin
+      const to   = unit.to   || unit.destination
+      if (!from || !to) return
+      unit = { ...unit, from, to,
+        waypoints: unit.waypoints || unit.path,
+        type:      unit.type      || unit.icon,
+      }
       const color     = factionColors[unit.faction] || "#ffffff"
       const unitType  = unit.type || "troops"
       const svg       = this._getUnitIcon(unitType, color)
-      const iconW     = 24, iconH = 24
+      const iconW     = 44, iconH = 44
 
       const icon = L.divIcon({
-        className: "",
-        html: `<div style="filter:drop-shadow(0 0 6px ${color});position:relative;">
+        className: "director-unit-marker",
+        html: `<div style="filter:drop-shadow(0 0 8px ${color});position:relative;display:flex;flex-direction:column;align-items:center;">
           ${svg}
-          ${unit.label ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);white-space:nowrap;color:${color};font-size:9px;font-weight:700;text-shadow:0 1px 4px #000;margin-top:2px;">${unit.label}</div>` : ""}
+          ${unit.label ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);white-space:nowrap;color:${color};font-size:9px;font-weight:700;text-shadow:0 1px 4px #000;margin-top:2px;background:rgba(0,0,0,0.6);padding:1px 5px;border-radius:3px;">${unit.label}</div>` : ""}
         </div>`,
         iconSize:   [iconW, iconH],
         iconAnchor: [iconW / 2, iconH / 2],
@@ -2104,9 +2176,13 @@ export class CommandRunner {
     const L   = window.L
     if (!map || !L) return
 
+    // Zoom-aware base radius: at zoom 8, ~4000m; at zoom 5, ~32000m
+    const zoom       = map.getZoom ? map.getZoom() : 7
+    const baseRadius = Math.max(1500, 50000 / Math.pow(2, Math.max(zoom - 4, 0)))
+
     // Flash
     try {
-      const flash = L.circle([lat, lon], { radius: 3000, color: "white", fillColor: color, fillOpacity: 0.95, weight: 0 }).addTo(map)
+      const flash = L.circle([lat, lon], { radius: baseRadius * 1.5, color: "white", fillColor: color, fillOpacity: 0.95, weight: 0 }).addTo(map)
       let fo = 0.95
       const fi = setInterval(() => {
         fo -= 0.09
@@ -2115,31 +2191,33 @@ export class CommandRunner {
       }, 35)
     } catch (_) {}
 
-    // 3 expanding rings
+    // 3 expanding rings — start at baseRadius and grow outward
     for (let i = 0; i < 3; i++) {
       setTimeout(() => {
         try {
           const ring = L.circle([lat, lon], {
-            radius: 500 + i * 400, color, fillColor: color, fillOpacity: 0.25, weight: 2, opacity: 1,
+            radius: baseRadius * (0.3 + i * 0.2), color, fillColor: color, fillOpacity: 0.2, weight: 3, opacity: 1,
           }).addTo(map)
-          let r = 500 + i * 400, op = 1
+          let r = baseRadius * (0.3 + i * 0.2), op = 1
+          const expandStep = baseRadius * 3
           const ri = setInterval(() => {
-            r  += 7000
-            op -= 0.045
+            r  += expandStep
+            op -= 0.04
             try {
               ring.setRadius(r)
-              ring.setStyle({ opacity: Math.max(op, 0), fillOpacity: Math.max(op * 0.2, 0) })
+              ring.setStyle({ opacity: Math.max(op, 0), fillOpacity: Math.max(op * 0.18, 0) })
             } catch (_) {}
             if (op <= 0) { clearInterval(ri); try { map.removeLayer(ring) } catch (_) {} }
           }, 35)
         } catch (_) {}
-      }, i * 220)
+      }, i * 200)
     }
 
-    // 8 debris particles
+    // 8 debris particles — scaled to baseRadius
+    const debrisScale = baseRadius / 50000
     for (let i = 0; i < 8; i++) {
       const angle = (i / 8) * Math.PI * 2
-      const speed = 0.018 + Math.random() * 0.012
+      const speed = (0.018 + Math.random() * 0.012) * debrisScale
       try {
         const pLat = lat + Math.cos(angle) * 0.004
         const pLon = lon + Math.sin(angle) * 0.006
@@ -2201,22 +2279,29 @@ export class CommandRunner {
     const cumLens = [0]
     segLens.forEach((l) => cumLens.push(cumLens[cumLens.length-1] + l))
 
+    // Glow layer grows alongside main line
+    const glowLine = L.polyline([], {
+      color, weight: 18, opacity: 0.15,
+      lineCap: "round", lineJoin: "round",
+    }).addTo(map)
     const line = L.polyline([], {
-      color, weight: 2.5, opacity: 0.9,
-      dashArray: dashed ? "8 4" : null,
+      color, weight: 5, opacity: 0.9,
+      dashArray: dashed ? "12 8" : null,
+      lineCap: "round", lineJoin: "round",
       className: "director-drawing-line",
     }).addTo(map)
 
     const dotIcon = L.divIcon({
       className: "",
-      html: `<div style="width:10px;height:10px;border-radius:50%;background:${color};box-shadow:0 0 10px ${color},0 0 20px ${color}88;"></div>`,
-      iconSize: [10, 10], iconAnchor: [5, 5],
+      html: `<div style="width:12px;height:12px;border-radius:50%;background:${color};box-shadow:0 0 12px ${color},0 0 24px ${color}88;"></div>`,
+      iconSize: [12, 12], iconAnchor: [6, 6],
     })
     const dot = L.marker(pts[0], { icon: dotIcon, interactive: false, zIndexOffset: 900 }).addTo(map)
 
-    const entry = { layer: line, animFrame: null }
-    const dotEntry = { layer: dot, animFrame: null }
-    this._drawings.push(entry, dotEntry)
+    const glowEntry = { layer: glowLine, animFrame: null }
+    const entry     = { layer: line,     animFrame: null }
+    const dotEntry  = { layer: dot,      animFrame: null }
+    this._drawings.push(glowEntry, entry, dotEntry)
 
     const startTime = Date.now()
     let stopped = false
@@ -2246,11 +2331,12 @@ export class CommandRunner {
         }
       }
       if (visPoints.length >= 2) {
-        try { line.setLatLngs(visPoints) } catch (_) {}
+        try { line.setLatLngs(visPoints); glowLine.setLatLngs(visPoints) } catch (_) {}
       }
       if (elapsed < duration) {
         rafId = requestAnimationFrame(animate)
-        entry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+        entry.animFrame     = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+        glowEntry.animFrame = entry.animFrame
       } else {
         stopped = true
         try { dot.setLatLng(pts[pts.length - 1]) } catch (_) {}
@@ -2260,7 +2346,8 @@ export class CommandRunner {
       }
     }
     rafId = requestAnimationFrame(animate)
-    entry.animFrame = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+    entry.animFrame     = () => { stopped = true; if (rafId) cancelAnimationFrame(rafId) }
+    glowEntry.animFrame = entry.animFrame
   }
 
   // ── Data callout card (DOM overlay) ───────────────────────────────────────
@@ -2364,7 +2451,9 @@ export class CommandRunner {
     const map = this.mapRef?.current
     const L   = window.L
     if (!map || !L) return
-    const keyPoints = Array.isArray(action.key_points) ? action.key_points : []
+    const keyPoints = Array.isArray(action.key_points) ? action.key_points
+                    : Array.isArray(action.locations)  ? action.locations
+                    : []
     const color     = action.color || "#56cfff"
 
     // Fly to bounds encompassing all key points
