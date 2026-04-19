@@ -1933,8 +1933,8 @@ export class CommandRunner {
     if (data.length === 0) return
 
     // Build at large size for full-screen display
-    const W = 500, H = 280
-    const pad = { top: 40, right: 28, bottom: 44, left: 56 }
+    const W = 600, H = 340
+    const pad = { top: 44, right: 32, bottom: 50, left: 62 }
     const cW  = W - pad.left - pad.right
     const cH  = H - pad.top - pad.bottom
 
@@ -1988,7 +1988,7 @@ export class CommandRunner {
     const overlay = document.createElement("div")
     overlay.style.cssText = "position:fixed;inset:0;z-index:9900;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);opacity:0;transition:opacity 400ms ease;"
     const box = document.createElement("div")
-    box.style.cssText = "border:1px solid rgba(86,207,255,0.25);border-radius:12px;box-shadow:0 12px 60px rgba(0,0,0,0.7),0 0 30px rgba(86,207,255,0.08);transform:scale(0.92);transition:transform 400ms cubic-bezier(0.34,1.56,0.64,1);"
+    box.style.cssText = "max-width:90vw;max-height:80vh;overflow:hidden;border:1px solid rgba(86,207,255,0.25);border-radius:12px;box-shadow:0 12px 60px rgba(0,0,0,0.7),0 0 30px rgba(86,207,255,0.08);transform:scale(0.92);transition:transform 400ms cubic-bezier(0.34,1.56,0.64,1);"
     box.innerHTML = svg
     overlay.appendChild(box)
     document.body.appendChild(overlay)
@@ -2125,10 +2125,10 @@ export class CommandRunner {
     const map = this.mapRef?.current
     const L   = window.L
     if (!map || !L) return
-    // Speed → duration: speed 0.15 → 53s, 0.3 → 26s, 1.0 → 8s
+    // Speed → duration: speed 0.2 → 25s, 0.25 → 20s, 0.5 → 10s, 1.0 → 5s
     const duration = action.speed
-      ? Math.round((1 / Math.max(action.speed, 0.05)) * 8000)
-      : (action.duration ?? 25000)
+      ? Math.round((1 / Math.max(action.speed, 0.05)) * 5000)
+      : (action.duration ?? 20000)
     const factionColors = { hostile: "#ff3030", allied: "#56cfff", friendly: "#30ff80", neutral: "#ffffff" }
     const units = Array.isArray(action.units) ? action.units : []
 

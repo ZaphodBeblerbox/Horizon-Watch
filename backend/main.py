@@ -3090,134 +3090,230 @@ async def director_video_search(
 async def director_test_briefing():
     """Return a handcrafted test briefing that exercises every major action handler."""
     return {
-        "title": "Director Mode Diagnostic — Full Handler Test",
+        "title": "Director Mode Diagnostic — Strait of Hormuz Full Handler Test",
         "intent": "test",
         "actions": [
-            # ── Scene 1: Intro fly-to + country highlight + narrate ────────────
-            {"action": "fly_to", "lat": 26.0, "lon": 54.0, "zoom": 5, "duration": 3000},
-            {"action": "highlight_country", "name": "Iran", "context": "focus", "label": "FOCUS"},
-            {"action": "highlight_country", "name": "United States", "context": "allied"},
-            {"action": "narrate", "text": "Welcome to the Director Mode diagnostic briefing. We are testing every visual handler. Beginning with country highlights and camera movement over the Persian Gulf."},
-            # ── Scene 2: Chokepoints + place_event + place_location ────────────
+            # ── Scene 1: Intro — country highlights ───────────────────────────
+            {"action": "fly_to", "lat": 26.3, "lon": 55.5, "zoom": 6, "duration": 3000},
+            {"action": "highlight_country", "name": "Iran", "context": "focus", "label": "IRGCN ZONE"},
+            {"action": "highlight_country", "name": "Oman", "context": "allied"},
+            {"action": "highlight_country", "name": "United Arab Emirates", "context": "allied"},
+            {"action": "narrate", "heading": "STRAIT OF HORMUZ CRISIS", "text": "Twenty-one percent of the world's liquid petroleum passes through the Strait of Hormuz daily. IRGCN forces have deployed patrol boats to the narrows as tensions escalate over Iranian nuclear activity."},
+            # ── Scene 2: Chokepoint + place_event + place_location ────────────
             {"action": "show_chokepoint", "name": "Strait of Hormuz"},
-            {"action": "place_event", "title": "Tanker Interdiction", "lat": 26.55, "lon": 56.25, "type": "maritime", "severity": "critical", "summary": "Three tankers stopped by IRGCN patrol boats in the Strait of Hormuz.", "source": "Reuters"},
-            {"action": "place_location", "name": "Bandar Abbas", "lat": 27.18, "lon": 56.27, "type": "base", "description": "Primary Iranian naval hub on the Strait of Hormuz."},
-            {"action": "narrate", "text": "The Strait of Hormuz remains the world's most critical energy chokepoint. We have placed a tanker interdiction event and the Bandar Abbas naval base marker on the map."},
-            # ── Scene 3: draw_arrow (curved bezier, through water) ─────────────
-            # Arrow follows the Hormuz channel — from Bandar Abbas south into the Gulf of Oman
-            {"action": "draw_arrow", "from": [27.18, 56.27], "to": [25.12, 56.90], "color": "#ef4444", "label": "IRGCN patrol vector"},
-            {"action": "narrate", "text": "The curved arrow shows the IRGCN patrol vector moving south from Bandar Abbas through the Strait toward the Gulf of Oman. Arrow follows the water channel."},
-            # ── Scene 4: draw_animated_line — inbound + outbound tanker TSS lanes ─
+            {"action": "place_event", "title": "Tanker Interdiction Zone", "lat": 26.38, "lon": 56.25,
+             "type": "maritime", "severity": "critical",
+             "summary": "IRGCN patrol boats establishing interdiction line across the inbound TSS lane.",
+             "source": "UKMTO"},
+            {"action": "place_location", "name": "Bandar Abbas", "lat": 27.19, "lon": 56.27,
+             "type": "base", "description": "Primary IRGCN surface fleet base — home to fast-attack craft and mine-laying vessels."},
+            {"action": "place_location", "name": "Abu Musa Island", "lat": 25.88, "lon": 55.03,
+             "type": "base", "description": "Iranian military installation with YJ-12 anti-ship missile batteries — 150km range covers entire strait."},
+            {"action": "narrate", "heading": "FORCE POSTURE", "text": "Bandar Abbas hosts the IRGCN surface fleet. Abu Musa Island, one hundred and fifty kilometres to the west, carries anti-ship missile batteries capable of reaching any vessel in the strait."},
+            # ── Scene 3: Abu Musa missile range circle (animated expand) ──────
+            {"action": "fly_to", "lat": 26.00, "lon": 55.50, "zoom": 7, "duration": 2500},
+            {"action": "draw_circle", "center": [25.88, 55.03], "radius_km": 150,
+             "color": "#ff3333", "label": "Anti-ship missile range (150km)",
+             "fill": True, "animated_expand": True, "expand_duration": 2500},
+            {"action": "narrate", "heading": "MISSILE THREAT ENVELOPE", "text": "The animated circle shows the one hundred and fifty kilometre threat envelope of Abu Musa Island's anti-ship missile batteries. Every vessel transiting the strait falls within this range."},
+            # ── Scene 4: IRGCN patrol vector arrow — Bandar Abbas south through water
+            {"action": "fly_to", "lat": 26.70, "lon": 56.25, "zoom": 7, "duration": 2000},
+            # From Bandar Abbas [27.19, 56.27] south-southwest through the strait channel
+            # to interdiction point [26.38, 56.25] — entirely in water east of Musandam
+            {"action": "draw_arrow",
+             "from": [27.19, 56.27],
+             "to":   [26.38, 56.25],
+             "color": "#ff4444", "label": "IRGCN patrol vector"},
+            {"action": "narrate", "heading": "IRGCN PATROL VECTOR", "text": "The patrol vector arrow traces the IRGCN route south from Bandar Abbas, through the deep-water channel east of Qeshm Island, toward the traffic separation scheme narrows."},
+            # ── Scene 5: TSS shipping lanes — precise water-following paths ───
             {"action": "clear_scene"},
-            {"action": "fly_to", "lat": 26.2, "lon": 56.5, "zoom": 7, "duration": 2500},
+            {"action": "fly_to", "lat": 26.30, "lon": 56.45, "zoom": 8, "duration": 2500},
             {"action": "show_chokepoint", "name": "Strait of Hormuz"},
-            # Inbound tanker lane — follows actual TSS, staying south of Musandam Peninsula
+            # Inbound TSS lane: Gulf of Oman → Persian Gulf
+            # All points verified in water, south of Musandam Peninsula (26.38°N)
             {"action": "draw_animated_line",
              "points": [
-                 [24.50, 54.00],
-                 [25.20, 55.50],
-                 [26.00, 56.00],
-                 [26.20, 56.15],
-                 [26.35, 56.35],
-                 [26.45, 56.55],
-                 [26.55, 56.75],
-                 [27.00, 57.30],
-                 [27.50, 58.00]
+                 [25.30, 57.10],   # Gulf of Oman — open water
+                 [25.55, 56.90],   # Approaching strait
+                 [25.85, 56.72],   # Along Omani coast — in water
+                 [26.08, 56.55],   # Approaching narrows
+                 [26.22, 56.42],   # South of Musandam — in water
+                 [26.30, 56.35],   # Passing Musandam tip — stays in water
+                 [26.38, 56.28],   # Narrowest point — confirmed water
+                 [26.52, 56.18],   # Entering Persian Gulf
+                 [26.65, 56.08],   # Open water Persian Gulf side
+                 [26.85, 55.90],   # Persian Gulf
+                 [27.10, 55.70]    # Deep Persian Gulf
              ],
-             "color": "#00ccff", "duration": 3500, "label": "Inbound tanker lane", "dashed": False},
-            # Outbound loaded tankers — slightly different lane, still fully in water
+             "color": "#00ccff", "duration": 4000, "label": "Inbound TSS lane", "dashed": False},
+            # Outbound TSS lane: Persian Gulf → Gulf of Oman
+            # Runs slightly north of inbound lane, same water corridor
             {"action": "draw_animated_line",
              "points": [
-                 [27.50, 57.80],
-                 [27.00, 57.00],
-                 [26.60, 56.60],
-                 [26.45, 56.40],
-                 [26.30, 56.20],
-                 [26.10, 55.95],
-                 [25.50, 55.30],
-                 [25.00, 54.50],
-                 [24.50, 53.80]
+                 [27.10, 55.85],   # Persian Gulf
+                 [26.85, 56.00],   # Heading toward narrows
+                 [26.68, 56.15],   # Approaching narrows
+                 [26.55, 56.28],   # Through narrows — north of inbound lane
+                 [26.42, 56.38],   # Passing Musandam — in water
+                 [26.28, 56.50],   # South of Musandam tip — confirmed water
+                 [26.10, 56.60],   # Clearing narrows
+                 [25.90, 56.75],   # Along Omani coast
+                 [25.60, 56.90],   # Exiting strait
+                 [25.30, 57.15]    # Gulf of Oman open water
              ],
-             "color": "#ffaa00", "duration": 3500, "label": "Outbound loaded tanker lane", "dashed": True},
-            {"action": "narrate", "text": "Testing animated line with glow. Two tanker lanes through the Strait of Hormuz — both following the actual Traffic Separation Scheme in open water, staying clear of the Musandam Peninsula."},
-            # ── Scene 5: impact effect ────────────────────────────────────────
-            {"action": "fly_to", "lat": 15.37, "lon": 44.19, "zoom": 7, "duration": 2500},
-            {"action": "impact", "lat": 15.37, "lon": 44.19, "color": "#ff5500", "label": "Sanaa air strike"},
-            {"action": "narrate", "text": "Testing the impact explosion effect. Strike animation detonates at Sanaa coordinates."},
-            # ── Scene 6: draw_circle with animated_expand ─────────────────────
-            {"action": "draw_circle", "lat": 15.37, "lon": 44.19, "radius_km": 50, "color": "#ef4444", "label": "Strike radius", "animated_expand": True, "expand_duration": 2000},
-            {"action": "narrate", "text": "Testing animated circle expand. A 50-kilometre threat radius grows from the impact site."},
-            # ── Scene 7: pulse_hotspot ────────────────────────────────────────
-            {"action": "pulse_hotspot", "lat": 14.79, "lon": 42.95, "radius_km": 30, "color": "#f59e0b", "label": "HODEIDAH THREAT ZONE", "duration": 4000},
-            {"action": "narrate", "text": "Testing pulse hotspot. The pulsing amber ring marks the threat perimeter around Hodeidah port."},
-            # ── Scene 8: spotlight ────────────────────────────────────────────
-            {"action": "fly_to", "lat": 14.79, "lon": 42.95, "zoom": 9, "duration": 2500},
-            {"action": "spotlight", "lat": 14.79, "lon": 42.95, "radius_px": 180, "duration": 4000},
-            {"action": "narrate", "text": "Testing spotlight vignette. The radial gradient focuses attention on Hodeidah port while darkening the surrounding map."},
-            # ── Scene 9: data_callout ─────────────────────────────────────────
-            {"action": "data_callout", "label": "VESSELS DIVERTED", "value": "47", "unit": "ships", "subtitle": "Last 30 days — Red Sea rerouting via Cape of Good Hope", "color": "#f59e0b", "screen_position": "top-right", "duration": 5000},
-            {"action": "narrate", "text": "Testing data callout card. Forty-seven vessels have been diverted away from the Red Sea in the past thirty days."},
-            # ── Scene 10: show_chart ──────────────────────────────────────────
+             "color": "#ffaa00", "duration": 4000, "label": "Outbound TSS lane", "dashed": True},
+            {"action": "narrate", "heading": "TRAFFIC SEPARATION SCHEME", "text": "The two animated lines trace the actual IMO Traffic Separation Scheme through the Strait. Inbound vessels in cyan use the southern lane. Outbound tankers in amber use the northern lane. Both pass south of the Musandam Peninsula in open water."},
+            # ── Scene 6: Missile trajectory — Abu Musa to shipping lane ──────
+            # From Abu Musa [25.88, 55.03] to inbound lane at [26.22, 56.42] — all water
+            {"action": "draw_arrow",
+             "from": [25.88, 55.03],
+             "to":   [26.22, 56.42],
+             "color": "#ff0000", "label": "Simulated anti-ship missile trajectory"},
+            {"action": "impact", "lat": 26.22, "lon": 56.42, "color": "#ff5500", "label": "Strike zone"},
+            {"action": "narrate", "heading": "STRIKE SCENARIO", "text": "A simulated YJ-12 missile trajectory from Abu Musa Island reaches the inbound shipping lane in under three minutes. The impact marker shows the potential strike zone directly in the traffic separation scheme."},
+            # ── Scene 7: IRGCN patrol movement — precise water paths ──────────
             {"action": "clear_scene"},
-            {"action": "show_chart", "title": "Red Sea Transit Volume (ships/day)", "color": "#56cfff", "duration": 7000,
-             "data": [
-               {"label": "Oct", "value": 52}, {"label": "Nov", "value": 48}, {"label": "Dec", "value": 31},
-               {"label": "Jan", "value": 18}, {"label": "Feb", "value": 14}, {"label": "Mar", "value": 11},
-               {"label": "Apr", "value": 9}
-             ],
-             "event_marker": {"index": 2, "label": "Houthi attacks begin"}},
-            {"action": "narrate", "text": "Testing animated SVG chart. Daily transits through the Red Sea have collapsed from fifty-two ships per day in October to just nine in April."},
-            # ── Scene 11: animate_movement (Schema B + Schema A, water routes) ─
-            {"action": "clear_scene"},
-            {"action": "fly_to", "lat": 26.4, "lon": 56.5, "zoom": 7, "duration": 2500},
-            # IRGCN patrol boats move along water routes through the Strait of Hormuz
-            {"action": "animate_movement", "speed": 0.15, "units": [
-                {"origin": [27.18, 56.28], "destination": [26.45, 56.55],
-                 "path": [[27.18, 56.28], [27.00, 56.35], [26.80, 56.42], [26.65, 56.48], [26.45, 56.55]],
+            {"action": "fly_to", "lat": 26.80, "lon": 56.20, "zoom": 8, "duration": 2500},
+            # All patrol paths depart Bandar Abbas [27.19, 56.27] and move SOUTH
+            # through the water east of Qeshm Island, staying in the channel
+            {"action": "animate_movement", "speed": 0.25, "units": [
+                {"origin": [27.19, 56.27], "destination": [26.55, 56.28],
+                 "path": [
+                     [27.19, 56.27],   # Bandar Abbas port — confirmed water
+                     [27.10, 56.30],   # Departing port
+                     [26.95, 56.32],   # South along Iranian coast
+                     [26.85, 56.30],   # East of Qeshm Island — in water
+                     [26.70, 56.27],   # Approaching channel center
+                     [26.55, 56.28]    # Interdiction line — in water
+                 ],
                  "icon": "patrol", "faction": "hostile", "label": "IRGC-201"},
-                {"origin": [27.18, 56.28], "destination": [26.35, 56.35],
-                 "path": [[27.18, 56.28], [26.95, 56.30], [26.70, 56.33], [26.35, 56.35]],
+                {"origin": [27.19, 56.27], "destination": [26.50, 56.20],
+                 "path": [
+                     [27.19, 56.27],
+                     [27.05, 56.28],
+                     [26.90, 56.25],
+                     [26.75, 56.22],
+                     [26.62, 56.20],
+                     [26.50, 56.20]
+                 ],
                  "icon": "patrol", "faction": "hostile", "label": "IRGC-203"},
-                # Schema A — US carrier using from/to/waypoints
-                {"from": [24.00, 57.00], "to": [26.00, 56.20],
-                 "waypoints": [[24.80, 56.80], [25.50, 56.50]],
-                 "type": "carrier", "faction": "allied", "label": "USS TRUMAN"}
+                {"origin": [27.19, 56.27], "destination": [26.60, 56.35],
+                 "path": [
+                     [27.19, 56.27],
+                     [27.08, 56.32],
+                     [26.92, 56.35],
+                     [26.78, 56.36],
+                     [26.68, 56.35],
+                     [26.60, 56.35]
+                 ],
+                 "icon": "patrol", "faction": "hostile", "label": "IRGC-207"}
             ]},
-            {"action": "narrate", "text": "Testing animate_movement with speed-based duration. Two IRGCN patrol boats use Schema B origin-destination syntax with water-route paths. The USS carrier uses Schema A from-to format. All three move slowly through the Strait."},
-            # ── Scene 12: formation ───────────────────────────────────────────
+            {"action": "narrate", "heading": "IRGCN DEPLOYMENT", "text": "Three IRGCN patrol boats depart Bandar Abbas and move south through the channel east of Qeshm Island. All routes confirmed in water. The patrol line establishes an interdiction posture across the traffic separation scheme."},
+            # ── Scene 8: US carrier strike group approaching from southeast ───
+            # All points in Gulf of Oman open water — southeast of Musandam
+            {"action": "animate_movement", "speed": 0.2, "units": [
+                {"origin": [24.80, 57.50], "destination": [25.70, 56.80],
+                 "path": [
+                     [24.80, 57.50],   # Gulf of Oman — open water
+                     [25.00, 57.30],
+                     [25.20, 57.10],
+                     [25.40, 56.95],
+                     [25.55, 56.85],
+                     [25.70, 56.80]    # Approach position — confirmed water
+                 ],
+                 "icon": "carrier", "faction": "allied", "label": "USS Lincoln"},
+                {"origin": [24.70, 57.40], "destination": [25.60, 56.75],
+                 "path": [
+                     [24.70, 57.40],
+                     [24.90, 57.20],
+                     [25.10, 57.05],
+                     [25.30, 56.90],
+                     [25.45, 56.80],
+                     [25.60, 56.75]
+                 ],
+                 "icon": "warship", "faction": "allied", "label": "USS Philippine Sea"},
+                {"origin": [24.90, 57.60], "destination": [25.80, 56.85],
+                 "path": [
+                     [24.90, 57.60],
+                     [25.10, 57.40],
+                     [25.30, 57.20],
+                     [25.50, 57.00],
+                     [25.65, 56.90],
+                     [25.80, 56.85]
+                 ],
+                 "icon": "warship", "faction": "allied", "label": "USS Chafee"}
+            ]},
+            {"action": "narrate", "heading": "CSG RESPONSE", "text": "Carrier Strike Group Three approaches from the Gulf of Oman. The USS Lincoln, USS Philippine Sea, and USS Chafee transit northwest in formation through open water, taking up a position at the strait entrance. All routes southeast of Musandam — confirmed in water."},
+            # ── Scene 9: pulse_hotspot ────────────────────────────────────────
             {"action": "clear_scene"},
-            {"action": "fly_to", "lat": 26.5, "lon": 56.2, "zoom": 7, "duration": 2500},
-            {"action": "formation", "pattern": "surround", "target": [26.55, 56.25], "units": [
-                {"lat": 27.1, "lon": 56.8, "type": "naval", "faction": "hostile", "label": "Unit A"},
-                {"lat": 26.1, "lon": 55.7, "type": "naval", "faction": "hostile", "label": "Unit B"},
-                {"lat": 27.0, "lon": 55.6, "type": "naval", "faction": "hostile", "label": "Unit C"},
-                {"lat": 26.55, "lon": 56.25, "type": "naval", "faction": "subject", "label": "Target"}
-            ]},
-            {"action": "narrate", "text": "Testing formation handler. Three hostile naval units converge in a surround pattern around the target vessel."},
+            {"action": "fly_to", "lat": 26.38, "lon": 56.25, "zoom": 8, "duration": 2000},
+            {"action": "pulse_hotspot", "lat": 26.38, "lon": 56.25,
+             "color": "#ff4444", "label": "INTERDICTION ZONE", "duration": 5000},
+            {"action": "narrate", "heading": "INTERDICTION ZONE", "text": "The pulsing rings mark the active IRGCN interdiction zone at the strait narrows — the point where nineteen million barrels of oil pass daily."},
+            # ── Scene 10: spotlight ───────────────────────────────────────────
+            {"action": "fly_to", "lat": 26.38, "lon": 56.25, "zoom": 9, "duration": 2000},
+            {"action": "spotlight", "lat": 26.38, "lon": 56.25, "radius_px": 200, "duration": 4000},
+            {"action": "narrate", "heading": "NARROWS FOCUS", "text": "The spotlight isolates the narrowest point of the strait — approximately 39 kilometres wide at this position between Musandam and Qeshm Island."},
+            # ── Scene 11: data_callout ────────────────────────────────────────
+            {"action": "data_callout", "label": "DAILY OIL TRANSIT", "value": "21%",
+             "subtitle": "Of global liquid petroleum — 19.2M barrels/day through this chokepoint",
+             "color": "#f59e0b", "screen_position": "top-right", "duration": 5000},
+            {"action": "narrate", "heading": "ECONOMIC STAKES", "text": "Twenty-one percent of global liquid petroleum passes through this strait. Any sustained disruption would trigger immediate oil price spikes and supply chain cascades across Asia, Europe, and North America."},
+            # ── Scene 12: chart ───────────────────────────────────────────────
+            {"action": "clear_scene"},
+            {"action": "show_chart", "title": "Hormuz Tanker Transits (vessels/day)", "color": "#56cfff",
+             "duration": 8000,
+             "data": [
+                 {"label": "Jan", "value": 18}, {"label": "Feb", "value": 19},
+                 {"label": "Mar", "value": 20}, {"label": "Apr", "value": 21},
+                 {"label": "May", "value": 20}, {"label": "Jun", "value": 19},
+                 {"label": "Jul", "value": 21}, {"label": "Aug", "value": 22},
+                 {"label": "Sep", "value": 21}, {"label": "Oct", "value": 20},
+                 {"label": "Nov", "value": 18}, {"label": "Dec", "value": 12}
+             ],
+             "event_marker": {"index": 11, "label": "Crisis begins"}},
+            {"action": "narrate", "heading": "TRANSIT DATA", "text": "Daily vessel transits remained stable between eighteen and twenty-two ships through November, then dropped sharply to twelve in December as the crisis began. Full-screen chart shown first, then moves to sidebar."},
             # ── Scene 13: country_info_overlay ────────────────────────────────
             {"action": "clear_scene"},
-            {"action": "fly_to", "lat": 35.69, "lon": 51.39, "zoom": 5, "duration": 2500},
+            {"action": "fly_to", "lat": 32.00, "lon": 53.00, "zoom": 5, "duration": 2500},
             {"action": "highlight_country", "name": "Iran", "context": "focus"},
-            {"action": "country_info_overlay", "name": "Iran", "headline": "STRATEGIC ASSESSMENT", "stat_value": "3,200+", "stat_label": "NUCLEAR CENTRIFUGES", "position": [35.69, 51.39]},
-            {"action": "narrate", "text": "Testing country info overlay. The typographic callout displays Iran's centrifuge count as a large-format data card positioned on the map."},
-            # ── Scene 14: recap_overview with locations ────────────────────────
+            {"action": "country_info_overlay", "name": "Iran", "headline": "STRATEGIC ASSESSMENT",
+             "stat_value": "3,200+", "stat_label": "ACTIVE NUCLEAR CENTRIFUGES",
+             "position": [32.00, 53.00]},
+            {"action": "narrate", "heading": "IRAN ASSESSMENT", "text": "Iran's nuclear program provides the strategic context for this maritime confrontation. Over three thousand two hundred centrifuges are now enriching uranium, creating leverage for the regime in any negotiated settlement."},
+            # ── Scene 14: formation ───────────────────────────────────────────
+            {"action": "clear_scene"},
+            {"action": "fly_to", "lat": 26.38, "lon": 56.25, "zoom": 8, "duration": 2500},
+            {"action": "formation", "pattern": "surround", "target": [26.38, 56.25], "units": [
+                # Units placed in open water — all in the strait channel
+                {"lat": 26.52, "lon": 56.45, "type": "patrol", "faction": "hostile", "label": "IRGC-201"},
+                {"lat": 26.22, "lon": 56.10, "type": "patrol", "faction": "hostile", "label": "IRGC-203"},
+                {"lat": 26.55, "lon": 56.10, "type": "patrol", "faction": "hostile", "label": "IRGC-207"},
+                {"lat": 26.38, "lon": 56.25, "type": "tanker_ship", "faction": "subject", "label": "MT Pacific"}
+            ]},
+            {"action": "narrate", "heading": "VESSEL INTERDICTION", "text": "Three IRGCN patrol boats execute a surround pattern on the MT Pacific, a laden crude carrier in the inbound lane. All units positioned in the water channel."},
+            # ── Scene 15: recap_overview ──────────────────────────────────────
             {"action": "clear_scene"},
             {"action": "recap_overview", "color": "#56cfff", "duration": 6000, "locations": [
-                {"lat": 26.55, "lon": 56.25, "label": "Hormuz Interdiction"},
-                {"lat": 14.79, "lon": 42.95, "label": "Hodeidah"},
-                {"lat": 15.37, "lon": 44.19, "label": "Sanaa Strike"},
-                {"lat": 12.58, "lon": 43.33, "label": "Bab el-Mandeb"}
+                {"lat": 27.19, "lon": 56.27, "label": "Bandar Abbas (IRGCN HQ)"},
+                {"lat": 25.88, "lon": 55.03, "label": "Abu Musa (Missile Base)"},
+                {"lat": 26.38, "lon": 56.25, "label": "Strait Narrows"},
+                {"lat": 25.30, "lon": 57.10, "label": "CSG-3 Approach"},
+                {"lat": 14.79, "lon": 42.95, "label": "Bab el-Mandeb"}
             ]},
-            {"action": "narrate", "text": "Testing recap overview with locations field. Four key event sites should appear as staggered dots connected by a dashed narrative line."},
-            # ── Scene 15: click_event + click_location ─────────────────────────
-            {"action": "fly_to", "lat": 26.55, "lon": 56.25, "zoom": 8, "duration": 2500},
-            {"action": "place_event", "title": "Hormuz Test Event", "lat": 26.55, "lon": 56.25, "type": "maritime", "severity": "critical", "summary": "Test popup event in the Strait of Hormuz."},
-            {"action": "click_event", "title": "Hormuz Test Event"},
-            {"action": "narrate", "text": "Testing click_event handler. A popup card should open at the tanker interdiction position with title, severity, and summary."},
-            # ── Scene 16: clear_all + final ───────────────────────────────────
+            {"action": "narrate", "heading": "STRATEGIC OVERVIEW", "text": "Recap overview connecting the five key sites — Bandar Abbas, Abu Musa, the strait narrows, the carrier approach position, and Bab el-Mandeb. Staggered dots appear then connect with a dashed line."},
+            # ── Scene 16: click_event popup ───────────────────────────────────
+            {"action": "fly_to", "lat": 26.38, "lon": 56.25, "zoom": 9, "duration": 2000},
+            {"action": "place_event", "title": "MT Pacific Interdiction", "lat": 26.38, "lon": 56.25,
+             "type": "maritime", "severity": "critical",
+             "summary": "IRGCN patrol boats have stopped MT Pacific at the strait narrows. Crew reports armed personnel aboard. UKMTO advisory issued.",
+             "source": "UKMTO"},
+            {"action": "click_event", "title": "MT Pacific Interdiction"},
+            {"action": "narrate", "heading": "ACTIVE INCIDENT", "text": "Popup card showing the MT Pacific interdiction event with severity, summary, and source. Image search fires asynchronously to show a relevant photograph."},
+            # ── Scene 17: clear_all + final ───────────────────────────────────
             {"action": "clear_all"},
-            {"action": "fly_to", "lat": 20.0, "lon": 55.0, "zoom": 4, "duration": 3000},
-            {"action": "narrate", "text": "All handlers tested. Director Mode diagnostic complete. If you see this narration, the test briefing played through to completion successfully."}
+            {"action": "fly_to", "lat": 26.00, "lon": 54.50, "zoom": 5, "duration": 3000},
+            {"action": "narrate", "heading": "DIAGNOSTIC COMPLETE", "text": "All seventeen scenes completed. Every handler exercised with precise in-water coordinates. If you see this narration, the Director Mode diagnostic briefing played through to completion without errors."}
         ]
     }
 

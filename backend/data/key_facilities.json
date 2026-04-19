@@ -88,15 +88,30 @@
   ],
   "chokepoint_details": {
     "Strait of Hormuz": {
-      "narrowest_point": [26.5667, 56.2500],
-      "iran_coast": [27.10, 56.80],
-      "oman_coast": [26.20, 56.40],
-      "inbound_lane": [[26.20, 56.08], [26.35, 56.25], [26.50, 56.42], [26.70, 56.60]],
-      "outbound_lane": [[26.60, 56.55], [26.45, 56.38], [26.30, 56.20], [26.15, 56.05]],
+      "narrowest_point": [26.38, 56.25],
+      "iran_coast_qeshm": [26.85, 56.15],
+      "oman_coast_musandam_tip": [26.38, 56.27],
+      "inbound_lane": [
+        [25.40, 56.85], [25.80, 56.75], [26.10, 56.55], [26.22, 56.42],
+        [26.30, 56.35], [26.38, 56.28], [26.52, 56.18], [26.65, 56.08],
+        [26.80, 55.95], [27.00, 55.85]
+      ],
+      "outbound_lane": [
+        [27.00, 56.00], [26.80, 56.10], [26.65, 56.22], [26.52, 56.32],
+        [26.38, 56.42], [26.22, 56.55], [26.05, 56.65], [25.80, 56.85],
+        [25.40, 57.00]
+      ],
       "iranian_islands": [
-        {"name": "Abu Musa Island", "lat": 25.8772, "lon": 55.0331},
-        {"name": "Greater Tunb", "lat": 26.2667, "lon": 55.3167},
-        {"name": "Lesser Tunb", "lat": 26.2333, "lon": 55.1333}
+        {"name": "Qeshm Island",   "lat": 26.85, "lon": 56.00},
+        {"name": "Hormuz Island",  "lat": 27.06, "lon": 56.46},
+        {"name": "Larak Island",   "lat": 26.86, "lon": 56.35},
+        {"name": "Abu Musa Island","lat": 25.88, "lon": 55.03},
+        {"name": "Greater Tunb",   "lat": 26.27, "lon": 55.32},
+        {"name": "Lesser Tunb",    "lat": 26.24, "lon": 55.14}
+      ],
+      "iran_naval_bases": [
+        {"name": "Bandar Abbas", "lat": 27.19, "lon": 56.27},
+        {"name": "Jask",         "lat": 25.64, "lon": 57.77}
       ]
     },
     "Bab el-Mandeb": {
