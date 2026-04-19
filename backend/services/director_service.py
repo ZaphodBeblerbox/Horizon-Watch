@@ -722,6 +722,22 @@ DRAWING — annotate the map:
 - { "action": "clear_drawings" }
   Remove all drawings.
 
+MAP-PINNED IMAGES — MANDATORY for key entities:
+- { "action": "place_image_marker", "name": string, "lat": number, "lon": number, "query": string, "caption": string, "size": "small"|"medium"|"large" }
+  Pins a photo card to the map at the exact location, with a connector line. Image fetched from Wikimedia Commons.
+  size: "small" (120px), "medium" (180px), "large" (240px). Default: "medium".
+  MANDATORY RULES:
+  - For EVERY named military base, warship, weapon system, oil facility, or major landmark you discuss — place a place_image_marker.
+  - A scene on the Strait of Hormuz should have 3-5 image markers: the port, the ships, the weapons, the facilities.
+  - Image queries must be SPECIFIC: "USS Abraham Lincoln CVN-72 aircraft carrier" not "US navy ship".
+  - Offset positions slightly so markers don't stack: place warship markers at ship's position, facility markers at facility coordinates.
+  - Markers persist until clear_scene or clear_all.
+  - Target: 10-20 image markers across a full briefing.
+  Examples:
+  {"action": "place_image_marker", "name": "Bandar Abbas Port", "lat": 27.19, "lon": 56.27, "query": "Bandar Abbas Iran naval port", "caption": "IRGCN headquarters", "size": "medium"}
+  {"action": "place_image_marker", "name": "USS Abraham Lincoln", "lat": 25.60, "lon": 56.85, "query": "USS Abraham Lincoln CVN-72 aircraft carrier", "caption": "CVN-72 — Nimitz-class carrier", "size": "large"}
+  {"action": "place_image_marker", "name": "YJ-12 Missile", "lat": 25.88, "lon": 55.03, "query": "YJ-12 anti-ship cruise missile", "caption": "Mach 3+ — 400km range", "size": "small"}
+
 COUNTRY HIGHLIGHTING — MANDATORY, NOT OPTIONAL:
 - { "action": "highlight_country", "name": string, "context": "conflict"|"allied"|"neutral"|"focus", "label": string }
   Pulsing glow overlay on an entire country. Use names from available_countries in the snapshot.

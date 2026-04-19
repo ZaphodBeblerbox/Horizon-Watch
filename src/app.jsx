@@ -202,6 +202,10 @@ export default function App() {
     useEffect(() => {
         const token = getToken()
         if (!token) { setAuthChecked(true); return }
+        let resolved = false
+        const resolve = () => { if (!resolved) { resolved = true; setAuthChecked(true) } }
+        // Timeout: if backend unreachable, show login after 6s instead of hanging indefinitely
+        const timeout = setTimeout(() => { clearToken(); resolve() }, 6000)
         apiFetch("/api/auth/me")
             .then(r => r.ok ? r.json() : null)
             .then(d => {
@@ -209,7 +213,7 @@ export default function App() {
                 else clearToken()
             })
             .catch(() => clearToken())
-            .finally(() => setAuthChecked(true))
+            .finally(() => { clearTimeout(timeout); resolve() })
     }, [])
 
     // ── Session tracking — post location/view every 60s ──────────────────────

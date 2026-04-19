@@ -5885,7 +5885,8 @@ export default function MapPage({
     const dirVessel       = isDirectorMode ? (directorItems?.vessels              ?? new Set()) : null
     const dirAC           = isDirectorMode ? (directorItems?.aircraft             ?? new Set()) : null
     const dirSat          = isDirectorMode ? (directorItems?.satellite            ?? false)    : null
-    const dirCountries    = isDirectorMode ? (directorItems?.highlightedCountries  ?? new Map()) : null
+    const dirCountries           = isDirectorMode ? (directorItems?.highlightedCountries  ?? new Map()) : null
+    const dirCountryInfoOverlays = isDirectorMode ? (directorItems?.countryInfoOverlays   ?? new Set()) : new Set()
     const dirPlacedEvents     = isDirectorMode ? (directorItems?.placedEvents     ?? new Map()) : null
     const dirPlacedLocations  = isDirectorMode ? (directorItems?.placedLocations  ?? new Map()) : null
 
@@ -7109,9 +7110,11 @@ export default function MapPage({
         updateOpacityForZoom()
 
         // Country labels — ONE label per director country name, no context description
+        // Skip countries that have an active country_info_overlay (avoids duplicated name)
         const labeledCountries = new Set()
         for (const { feature, hlName } of matchedFeatures) {
             if (labeledCountries.has(hlName)) continue
+            if (dirCountryInfoOverlays.has(hlName)) continue
             labeledCountries.add(hlName)
 
             const hi = dirCountries.get(hlName) || { context: "focus" }

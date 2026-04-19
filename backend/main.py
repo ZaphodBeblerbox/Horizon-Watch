@@ -3109,17 +3109,25 @@ async def director_test_briefing():
              "type": "base", "description": "Primary IRGCN surface fleet base — home to fast-attack craft and mine-laying vessels."},
             {"action": "place_location", "name": "Abu Musa Island", "lat": 25.88, "lon": 55.03,
              "type": "base", "description": "Iranian military installation with YJ-12 anti-ship missile batteries — 150km range covers entire strait."},
+            {"action": "place_image_marker", "name": "Bandar Abbas Port", "lat": 27.19, "lon": 56.27,
+             "query": "Bandar Abbas Iran naval port IRGC", "caption": "IRGCN HQ — fast-attack craft home port", "size": "medium"},
+            {"action": "place_image_marker", "name": "Abu Musa Island", "lat": 25.88, "lon": 55.03,
+             "query": "Abu Musa Island Iran Persian Gulf aerial", "caption": "Iranian garrison with anti-ship missile batteries", "size": "small"},
             {"action": "narrate", "heading": "FORCE POSTURE", "text": "Bandar Abbas hosts the IRGCN surface fleet. Abu Musa Island, one hundred and fifty kilometres to the west, carries anti-ship missile batteries capable of reaching any vessel in the strait."},
             # ── Scene 3: Abu Musa missile range circle (animated expand) ──────
             {"action": "fly_to", "lat": 26.00, "lon": 55.50, "zoom": 7, "duration": 2500},
             {"action": "draw_circle", "center": [25.88, 55.03], "radius_km": 150,
              "color": "#ff3333", "label": "Anti-ship missile range (150km)",
              "fill": True, "animated_expand": True, "expand_duration": 2500},
+            {"action": "place_image_marker", "name": "YJ-12 Anti-Ship Missile", "lat": 25.88, "lon": 55.03,
+             "query": "YJ-12 anti-ship cruise missile China military", "caption": "Mach 3+ sea-skimming — 400km range", "size": "small"},
             {"action": "narrate", "heading": "MISSILE THREAT ENVELOPE", "text": "The animated circle shows the one hundred and fifty kilometre threat envelope of Abu Musa Island's anti-ship missile batteries. Every vessel transiting the strait falls within this range."},
             # ── Scene 4: IRGCN patrol vector arrow — Bandar Abbas south through water
             {"action": "fly_to", "lat": 26.70, "lon": 56.25, "zoom": 7, "duration": 2000},
             # From Bandar Abbas [27.19, 56.27] south-southwest through the strait channel
             # to interdiction point [26.38, 56.25] — entirely in water east of Musandam
+            {"action": "place_image_marker", "name": "IRGC Fast Attack Craft", "lat": 26.90, "lon": 56.30,
+             "query": "IRGC Iran fast attack boat speedboat naval", "caption": "Armed with C-802 missiles and RPGs", "size": "small"},
             {"action": "draw_arrow",
              "from": [27.19, 56.27],
              "to":   [26.38, 56.25],
@@ -3130,36 +3138,38 @@ async def director_test_briefing():
             {"action": "fly_to", "lat": 26.30, "lon": 56.45, "zoom": 8, "duration": 2500},
             {"action": "show_chokepoint", "name": "Strait of Hormuz"},
             # Inbound TSS lane: Gulf of Oman → Persian Gulf
-            # All points verified in water, south of Musandam Peninsula (26.38°N)
+            # Arc AROUND Musandam — tip is at 26.38°N, 56.27°E
+            # All points pass east and south of the tip, confirmed in water
             {"action": "draw_animated_line",
              "points": [
-                 [25.30, 57.10],   # Gulf of Oman — open water
-                 [25.55, 56.90],   # Approaching strait
-                 [25.85, 56.72],   # Along Omani coast — in water
-                 [26.08, 56.55],   # Approaching narrows
-                 [26.22, 56.42],   # South of Musandam — in water
-                 [26.30, 56.35],   # Passing Musandam tip — stays in water
-                 [26.38, 56.28],   # Narrowest point — confirmed water
-                 [26.52, 56.18],   # Entering Persian Gulf
-                 [26.65, 56.08],   # Open water Persian Gulf side
-                 [26.85, 55.90],   # Persian Gulf
-                 [27.10, 55.70]    # Deep Persian Gulf
+                 [25.20, 57.20],   # Gulf of Oman — well southeast, open water
+                 [25.50, 57.00],   # Approach corridor
+                 [25.80, 56.80],   # Along Oman coast — in water
+                 [26.00, 56.65],   # Curving north toward narrows
+                 [26.15, 56.52],   # Approaching narrows
+                 [26.25, 56.43],   # South of Musandam tip — in water
+                 [26.32, 56.37],   # Just south/east of tip — CRITICAL in water
+                 [26.38, 56.32],   # Clearing the tip — stays east of 56.27°E
+                 [26.42, 56.27],   # North side of narrows — entering Gulf
+                 [26.50, 56.18],   # Clearing into Persian Gulf
+                 [26.60, 56.05],   # Open Gulf
+                 [26.75, 55.90]    # Into the Gulf proper
              ],
              "color": "#00ccff", "duration": 4000, "label": "Inbound TSS lane", "dashed": False},
             # Outbound TSS lane: Persian Gulf → Gulf of Oman
             # Runs slightly north of inbound lane, same water corridor
             {"action": "draw_animated_line",
              "points": [
-                 [27.10, 55.85],   # Persian Gulf
-                 [26.85, 56.00],   # Heading toward narrows
-                 [26.68, 56.15],   # Approaching narrows
-                 [26.55, 56.28],   # Through narrows — north of inbound lane
-                 [26.42, 56.38],   # Passing Musandam — in water
-                 [26.28, 56.50],   # South of Musandam tip — confirmed water
-                 [26.10, 56.60],   # Clearing narrows
-                 [25.90, 56.75],   # Along Omani coast
-                 [25.60, 56.90],   # Exiting strait
-                 [25.30, 57.15]    # Gulf of Oman open water
+                 [26.75, 56.00],   # Persian Gulf
+                 [26.60, 56.12],   # Heading east toward narrows
+                 [26.50, 56.22],   # Approaching narrows
+                 [26.42, 56.32],   # Through narrows — north of inbound
+                 [26.35, 56.40],   # Past Musandam — in water
+                 [26.25, 56.50],   # South of tip — confirmed water
+                 [26.10, 56.60],   # Along Oman coast
+                 [25.90, 56.75],   # Curving south
+                 [25.60, 56.95],   # Gulf of Oman
+                 [25.20, 57.20]    # Open water
              ],
              "color": "#ffaa00", "duration": 4000, "label": "Outbound TSS lane", "dashed": True},
             {"action": "narrate", "heading": "TRAFFIC SEPARATION SCHEME", "text": "The two animated lines trace the actual IMO Traffic Separation Scheme through the Strait. Inbound vessels in cyan use the southern lane. Outbound tankers in amber use the northern lane. Both pass south of the Musandam Peninsula in open water."},
@@ -3243,6 +3253,10 @@ async def director_test_briefing():
                  ],
                  "icon": "warship", "faction": "allied", "label": "USS Chafee"}
             ]},
+            {"action": "place_image_marker", "name": "USS Abraham Lincoln", "lat": 25.00, "lon": 57.50,
+             "query": "USS Abraham Lincoln CVN-72 aircraft carrier Nimitz", "caption": "CVN-72 — CSG-3 flagship, Nimitz-class nuclear carrier", "size": "large"},
+            {"action": "place_image_marker", "name": "USS Philippine Sea", "lat": 24.70, "lon": 57.40,
+             "query": "USS Philippine Sea CG-58 Ticonderoga cruiser", "caption": "CG-58 Ticonderoga-class guided missile cruiser", "size": "small"},
             {"action": "narrate", "heading": "CSG RESPONSE", "text": "Carrier Strike Group Three approaches from the Gulf of Oman. The USS Lincoln, USS Philippine Sea, and USS Chafee transit northwest in formation through open water, taking up a position at the strait entrance. All routes southeast of Musandam — confirmed in water."},
             # ── Scene 9: pulse_hotspot ────────────────────────────────────────
             {"action": "clear_scene"},
@@ -3273,10 +3287,17 @@ async def director_test_briefing():
              ],
              "event_marker": {"index": 11, "label": "Crisis begins"}},
             {"action": "narrate", "heading": "TRANSIT DATA", "text": "Daily vessel transits remained stable between eighteen and twenty-two ships through November, then dropped sharply to twelve in December as the crisis began. Full-screen chart shown first, then moves to sidebar."},
+            # ── Scene 12b: oil facility image ─────────────────────────────────
+            {"action": "place_image_marker", "name": "Kharg Island Oil Terminal", "lat": 29.23, "lon": 50.32,
+             "query": "Kharg Island oil terminal Iran aerial Persian Gulf", "caption": "Handles 90% of Iranian crude exports — primary economic leverage", "size": "large"},
+            {"action": "place_image_marker", "name": "VLCC Tanker", "lat": 26.40, "lon": 56.30,
+             "query": "VLCC supertanker crude oil loading berth", "caption": "Very Large Crude Carrier — 2 million barrel capacity", "size": "small"},
             # ── Scene 13: country_info_overlay ────────────────────────────────
             {"action": "clear_scene"},
             {"action": "fly_to", "lat": 32.00, "lon": 53.00, "zoom": 5, "duration": 2500},
             {"action": "highlight_country", "name": "Iran", "context": "focus"},
+            {"action": "place_image_marker", "name": "Natanz Nuclear Facility", "lat": 33.72, "lon": 51.73,
+             "query": "Natanz nuclear enrichment facility Iran satellite image", "caption": "Underground centrifuge halls — 3,200+ operating units", "size": "medium"},
             {"action": "country_info_overlay", "name": "Iran", "headline": "STRATEGIC ASSESSMENT",
              "stat_value": "3,200+", "stat_label": "ACTIVE NUCLEAR CENTRIFUGES",
              "position": [32.00, 53.00]},

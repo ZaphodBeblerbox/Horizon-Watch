@@ -681,6 +681,7 @@ export class CommandRunner {
             highlightedCountries: new Map(),
             placedEvents:         new Map(),
             placedLocations:      new Map(),
+            countryInfoOverlays:  new Set(),
           })
         }
         this.setHighlights([])
@@ -1176,6 +1177,11 @@ export class CommandRunner {
         if (action.label) layer.bindTooltip(action.label, { permanent: false, sticky: true })
         this._drawings.push(layer)
         return 600
+      }
+
+      case "place_image_marker": {
+        this._placeImageMarker(action)
+        return 300
       }
 
       case "clear_drawings":
@@ -1719,6 +1725,10 @@ export class CommandRunner {
     this._drawings = []
     // Sweep any orphaned spotlight overlays (e.g. if auto-remove timer hasn't fired yet)
     document.querySelectorAll(".director-spotlight-overlay").forEach(el => { try { el.remove() } catch (_) {} })
+    // Reset country info overlay suppression
+    if (this.setDirectorItems) {
+      this.setDirectorItems(prev => ({ ...prev, countryInfoOverlays: new Set() }))
+    }
     // Also clear person markers on full clear
     if (this._personMarkers) {
       Object.values(this._personMarkers).forEach(m => {
@@ -1912,18 +1922,115 @@ export class CommandRunner {
     if (!map || !L) return
     const position = action.position || [0, 0]
 
+    const countryFlags = {
+      'Iran': '🇮🇷', 'Israel': '🇮🇱', 'United States': '🇺🇸', 'Russia': '🇷🇺',
+      'China': '🇨🇳', 'Ukraine': '🇺🇦', 'Turkey': '🇹🇷', 'Saudi Arabia': '🇸🇦',
+      'United Arab Emirates': '🇦🇪', 'UAE': '🇦🇪', 'Qatar': '🇶🇦', 'Kuwait': '🇰🇼',
+      'Bahrain': '🇧🇭', 'Oman': '🇴🇲', 'Iraq': '🇮🇶', 'Syria': '🇸🇾', 'Yemen': '🇾🇪',
+      'Lebanon': '🇱🇧', 'Jordan': '🇯🇴', 'Egypt': '🇪🇬', 'Libya': '🇱🇾',
+      'Sudan': '🇸🇩', 'Somalia': '🇸🇴', 'Ethiopia': '🇪🇹', 'Eritrea': '🇪🇷',
+      'Djibouti': '🇩🇯', 'Kenya': '🇰🇪', 'Tanzania': '🇹🇿', 'Mozambique': '🇲🇿',
+      'South Africa': '🇿🇦', 'Nigeria': '🇳🇬', 'Senegal': '🇸🇳',
+      'India': '🇮🇳', 'Pakistan': '🇵🇰', 'Afghanistan': '🇦🇫',
+      'North Korea': '🇰🇵', 'South Korea': '🇰🇷', 'Japan': '🇯🇵', 'Taiwan': '🇹🇼',
+      'Philippines': '🇵🇭', 'Vietnam': '🇻🇳', 'Singapore': '🇸🇬', 'Myanmar': '🇲🇲',
+      'Germany': '🇩🇪', 'France': '🇫🇷', 'United Kingdom': '🇬🇧', 'Poland': '🇵🇱',
+      'Belarus': '🇧🇾', 'Venezuela': '🇻🇪', 'Cuba': '🇨🇺', 'Mexico': '🇲🇽',
+      'Canada': '🇨🇦', 'Australia': '🇦🇺', 'Indonesia': '🇮🇩', 'Malaysia': '🇲🇾',
+      'Thailand': '🇹🇭', 'Cambodia': '🇰🇭', 'Sri Lanka': '🇱🇰',
+    }
+    const flag = countryFlags[action.name] || ''
+
     const html = `<div style="text-align:center;pointer-events:none;animation:director-marker-arrive 800ms ease-out forwards;">
-      <div style="font-size:11px;letter-spacing:3px;color:rgba(255,255,255,0.55);text-transform:uppercase;margin-bottom:6px;text-shadow:0 2px 8px rgba(0,0,0,0.9);">${action.headline || ""}</div>
-      <div style="font-size:28px;font-weight:900;color:white;letter-spacing:2px;text-shadow:0 0 20px rgba(255,170,0,0.4),0 2px 8px rgba(0,0,0,0.9);margin-bottom:4px;">${(action.name || "").toUpperCase()}</div>
-      <div style="font-size:32px;font-weight:900;color:white;text-shadow:0 0 30px rgba(0,170,255,0.3),0 2px 8px rgba(0,0,0,0.9);margin-bottom:2px;">${action.stat_value || ""}</div>
-      <div style="font-size:12px;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;text-shadow:0 2px 8px rgba(0,0,0,0.9);">${action.stat_label || ""}</div>
+      <div style="font-size:12px;letter-spacing:3px;color:rgba(255,255,255,0.6);text-transform:uppercase;margin-bottom:8px;text-shadow:0 2px 8px rgba(0,0,0,0.9);">${action.headline || ""}</div>
+      <div style="font-size:32px;font-weight:900;color:white;letter-spacing:2px;text-shadow:0 0 20px rgba(255,170,0,0.4),0 2px 8px rgba(0,0,0,0.9);margin-bottom:6px;">${flag ? flag + ' ' : ''}${(action.name || "").toUpperCase()}</div>
+      <div style="font-size:36px;font-weight:900;color:white;text-shadow:0 0 30px rgba(0,170,255,0.3),0 2px 8px rgba(0,0,0,0.9);margin-bottom:4px;">${action.stat_value || ""}</div>
+      <div style="font-size:13px;letter-spacing:4px;color:rgba(255,255,255,0.5);text-transform:uppercase;text-shadow:0 2px 8px rgba(0,0,0,0.9);">${action.stat_label || ""}</div>
     </div>`
 
     const marker = L.marker(position, {
-      icon: L.divIcon({ className: "director-country-info-overlay", html, iconSize: [300, 120], iconAnchor: [150, 60] }),
+      icon: L.divIcon({ className: "director-country-info-overlay", html, iconSize: [320, 130], iconAnchor: [160, 65] }),
       interactive: false, pane: "tooltipPane",
     }).addTo(map)
     this._drawings.push({ layer: marker, animFrame: null })
+
+    // Suppress the small country label rendered by mappage.jsx for this country
+    if (action.name && this.setDirectorItems) {
+      this.setDirectorItems(prev => ({
+        ...prev,
+        countryInfoOverlays: new Set([...(prev.countryInfoOverlays || []), action.name]),
+      }))
+    }
+  }
+
+  // ── Map-pinned image marker with connector line ───────────────────────────
+
+  async _placeImageMarker(action) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L || !action.lat || !action.lon) return
+
+    const sizeMap  = { small: 120, medium: 180, large: 240 }
+    const imgW     = sizeMap[action.size] || 180
+    const imgH     = Math.round(imgW * 0.60)
+    const hdrs     = { Authorization: `Bearer ${localStorage.getItem("hw-auth-token")}` }
+
+    // Dot at exact coordinate
+    const dot = L.circleMarker([action.lat, action.lon], {
+      radius: 4, color: "white", fillColor: "white", fillOpacity: 1, weight: 1, pane: "markerPane",
+    }).addTo(map)
+    this._drawings.push({ layer: dot, animFrame: null })
+
+    // Fetch image async — card renders immediately then updates
+    let imageUrl = null
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/director/image-search?q=${encodeURIComponent(action.query || action.name)}`,
+        { headers: hdrs }
+      )
+      if (res.ok) {
+        const d = await res.json()
+        imageUrl = d.image_url || null
+      }
+    } catch (_) {}
+
+    // If aborted while fetching, bail
+    if (this._aborted) return
+
+    const cardHtml = `<div style="position:relative;animation:director-marker-arrive 600ms cubic-bezier(0.34,1.56,0.64,1) forwards;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.8));">
+      <div style="width:${imgW}px;background:rgba(8,14,28,0.95);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.15);border-radius:8px;overflow:hidden;">
+        ${imageUrl ? `<img src="${imageUrl}" style="width:100%;height:${imgH}px;object-fit:cover;display:block;" onerror="this.style.display='none'"/>` : ""}
+        <div style="padding:5px 8px 6px;">
+          <div style="font-size:11px;font-weight:700;color:white;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${imgW - 16}px;">${action.name || ""}</div>
+          ${action.caption ? `<div style="font-size:10px;color:rgba(255,255,255,0.5);line-height:1.3;">${action.caption}</div>` : ""}
+        </div>
+      </div>
+    </div>`
+
+    // Offset card above and slightly random laterally to avoid stacking
+    const latOff = 0.06 + Math.random() * 0.04
+    const lonOff = (Math.random() - 0.5) * 0.06
+    const cardLat = action.lat + latOff
+    const cardLon = action.lon + lonOff
+
+    const cardMarker = L.marker([cardLat, cardLon], {
+      icon: L.divIcon({
+        className: "director-image-marker",
+        html: cardHtml,
+        iconSize: [imgW, imgH + 44],
+        iconAnchor: [imgW / 2, imgH + 44],
+      }),
+      interactive: false,
+      pane: "tooltipPane",
+    }).addTo(map)
+    this._drawings.push({ layer: cardMarker, animFrame: null })
+
+    // Dashed connector from card bottom to dot
+    const connector = L.polyline(
+      [[cardLat, cardLon], [action.lat, action.lon]],
+      { color: "rgba(255,255,255,0.35)", weight: 1, dashArray: "3 4", pane: "markerPane" }
+    ).addTo(map)
+    this._drawings.push({ layer: connector, animFrame: null })
   }
 
   // ── Chart overlay ─────────────────────────────────────────────────────────
