@@ -496,6 +496,10 @@ _VALID_ACTIONS = {
     "spotlight", "country_info_overlay", "show_chart",
     # Video
     "show_video",
+    # Map-pinned images (Prompt 5)
+    "place_image_marker",
+    # Scene management aliases
+    "clear_scene", "clear_drawings",
     # Legacy (kept for backward-compat with saved sequences)
     "toggle_layer", "highlight_event", "clear_highlights",
 }
@@ -952,10 +956,53 @@ IMAGES — BE EXTREMELY GENEROUS:
 - EVERY time you narrate about a location, show at least one image of it.
 - EVERY time you narrate about military equipment, show an image of it.
 
+MAP-PINNED IMAGES — anchor photos directly to map locations:
+- {{ "action": "place_image_marker", "name": string, "lat": number, "lon": number, "query": string, "caption": string, "size": "small"|"medium"|"large" }}
+  Pins a photo card to the exact map coordinate with a connector dot. Image fetched from Wikimedia Commons.
+  MANDATORY: Use for every named military base, warship, weapon system, oil facility, and major landmark.
+  size: "small" (120px), "medium" (180px), "large" (240px).
+  Specific queries work best: "USS Abraham Lincoln CVN-72 aircraft carrier" not "US navy ship".
+  Examples:
+  {{ "action": "place_image_marker", "name": "Bandar Abbas Port", "lat": 27.19, "lon": 56.27, "query": "Bandar Abbas Iran naval port", "caption": "IRGCN headquarters", "size": "medium" }}
+  {{ "action": "place_image_marker", "name": "USS Abraham Lincoln", "lat": 25.70, "lon": 56.80, "query": "USS Abraham Lincoln CVN-72 aircraft carrier", "caption": "Nimitz-class carrier — CSG-3 flagship", "size": "large" }}
+  {{ "action": "place_image_marker", "name": "Kharg Island Terminal", "lat": 29.23, "lon": 50.32, "query": "Kharg Island oil terminal Iran aerial", "caption": "90% of Iranian crude exports", "size": "large" }}
+
+CLEAR SCENE — remove all drawings without resetting countries/events:
+- {{ "action": "clear_scene" }}
+  Removes all drawn lines, circles, arrows, image markers, and spotlights.
+  Use between scenes to clean up before drawing new annotations.
+  RULE: Start each new scene topic with clear_scene (not clear_all, unless transitioning to a completely different region).
+
+EXAMPLE SCENE — use this exact pattern for every scene:
+[
+  {{ "action": "clear_scene" }},
+  {{ "action": "highlight_country", "name": "Iran", "context": "conflict" }},
+  {{ "action": "fly_to", "lat": 26.5, "lon": 56.25, "zoom": 8, "duration": 3000 }},
+  {{ "action": "show_chokepoint", "name": "Strait of Hormuz" }},
+  {{ "action": "place_location", "name": "Bandar Abbas Naval Base", "lat": 27.19, "lon": 56.27, "type": "base", "description": "IRGCN headquarters" }},
+  {{ "action": "place_image_marker", "name": "Bandar Abbas Port", "lat": 27.19, "lon": 56.27, "query": "Bandar Abbas Iran naval port IRGC", "caption": "IRGCN headquarters and home port", "size": "medium" }},
+  {{ "action": "animate_movement", "speed": 0.25, "units": [{{"origin": [27.19, 56.27], "destination": [26.50, 56.22], "path": [[27.19, 56.27], [27.05, 56.30], [26.80, 56.28], [26.50, 56.22]], "icon": "patrol", "faction": "hostile", "label": "IRGC-201"}}] }},
+  {{ "action": "place_image_marker", "name": "IRGC Fast Attack Craft", "lat": 26.80, "lon": 56.28, "query": "IRGC Iran fast attack boat navy", "caption": "Armed with C-802 anti-ship missiles", "size": "small" }},
+  {{ "action": "draw_animated_line", "points": [[25.20, 57.20], [25.80, 56.80], [26.25, 56.43], [26.38, 56.32], [26.42, 56.27], [26.60, 56.05], [26.75, 55.90]], "color": "#00ccff", "duration": 4000, "label": "Inbound tanker lane" }},
+  {{ "action": "data_callout", "label": "DAILY OIL TRANSIT", "value": "21%", "subtitle": "19.2M barrels/day through Hormuz", "color": "#f59e0b", "screen_position": "top-right", "duration": 5000 }},
+  {{ "action": "show_image", "query": "Strait of Hormuz aerial shipping tankers", "caption": "Commercial tankers transiting the narrows" }},
+  {{ "action": "narrate", "heading": "HORMUZ BLOCKADE THREAT", "text": "The Strait of Hormuz is the world's most critical maritime chokepoint..." }}
+]
+
+KEY PATTERN RULES — EVERY scene must follow:
+1. clear_scene → highlight countries → fly_to → place_location + place_image_marker → animate_movement → draw lines → data_callout → show_image → narrate (LAST)
+2. narrate is ALWAYS the final action in each scene
+3. Every military entity gets: place_location + place_image_marker + animate_movement
+4. Every key statistic gets: data_callout before narrate
+5. Every shipping route gets: draw_animated_line with water-following coordinates
+6. Every attack gets: draw_arrow + impact before narrate
+7. Minimum 10 place_image_marker actions across the full briefing
+
 OUTPUT LENGTH AND DETAIL:
 - Generate 60-100 actions for a thorough briefing. More actions = better briefing.
 - Each narrate action should be 4-6 sentences of detailed, analyst-grade prose.
-- Include 15-20 images across the briefing (show_image and pin_images combined).
+- Include 10-15 place_image_marker actions pinned to exact map locations.
+- Include 10-15 show_image actions in the sidebar.
 - Include 3-5 person dossiers for key figures.
 - Include 5-8 data_callout cards with relevant statistics.
 - Include detailed animate_movement sequences for every military/naval/troop movement discussed.
@@ -1029,11 +1076,17 @@ def generate_sequence(
         snapshot=snapshot_str,
     )
 
+    logger.info("[DIRECTOR] Calling Claude for intent: %s", intent[:80])
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=16000,
+        timeout=180,  # 3-minute hard timeout — prevents indefinite hang
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
+    )
+    logger.info(
+        "[DIRECTOR] Claude responded: %d input tokens, %d output tokens",
+        message.usage.input_tokens, message.usage.output_tokens,
     )
     usage_tracker.record_call(
         message.usage.input_tokens,
@@ -1042,6 +1095,7 @@ def generate_sequence(
         headline=f"Director: {intent[:60]}",
     )
     raw = message.content[0].text.strip()
+    logger.info("[DIRECTOR] Raw response length: %d chars, first 200: %s", len(raw), raw[:200])
 
     # Parse JSON with tolerant fallbacks
     try:

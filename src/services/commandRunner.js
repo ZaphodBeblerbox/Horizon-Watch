@@ -96,6 +96,10 @@ export class CommandRunner {
     // Drawing layers stored here (Leaflet refs), added imperatively to map
     this._drawings    = []
 
+    // Collision tracking for image markers and labels
+    this._imageMarkerPositions = []
+    this._labelPositions       = []
+
     // Pending satellite observations to inject into next narrate
     this._pendingSatObservations = null
 
@@ -1723,6 +1727,8 @@ export class CommandRunner {
       } catch (_) {}
     }
     this._drawings = []
+    this._imageMarkerPositions = []
+    this._labelPositions       = []
     // Sweep any orphaned spotlight overlays (e.g. if auto-remove timer hasn't fired yet)
     document.querySelectorAll(".director-spotlight-overlay").forEach(el => { try { el.remove() } catch (_) {} })
     // Reset country info overlay suppression
@@ -1970,10 +1976,35 @@ export class CommandRunner {
     const L   = window.L
     if (!map || !L || !action.lat || !action.lon) return
 
-    const sizeMap  = { small: 120, medium: 180, large: 240 }
-    const imgW     = sizeMap[action.size] || 180
-    const imgH     = Math.round(imgW * 0.60)
-    const hdrs     = { Authorization: `Bearer ${localStorage.getItem("hw-auth-token")}` }
+    const sizeMap = { small: 120, medium: 180, large: 240 }
+    const imgW    = sizeMap[action.size] || 180
+    const imgH    = Math.round(imgW * 0.60)
+    const hdrs    = { Authorization: `Bearer ${localStorage.getItem("hw-auth-token")}` }
+
+    // ── Collision avoidance: find least-crowded offset direction ──────────────
+    const SPACING  = 0.10  // min degrees between card anchor points
+    const angles   = [90, 0, 180, 45, 135, 270, 315, 225]  // try North first, then E/W/diagonals
+    let bestAngle  = 90    // default: place card to the north of the point
+
+    if (this._imageMarkerPositions.length > 0) {
+      let maxMinDist = -1
+      for (const deg of angles) {
+        const rad     = deg * Math.PI / 180
+        const testLat = action.lat + Math.cos(rad) * SPACING
+        const testLon = action.lon + Math.sin(rad) * SPACING
+        let minDist   = Infinity
+        for (const existing of this._imageMarkerPositions) {
+          const d = Math.sqrt(Math.pow(testLat - existing.lat, 2) + Math.pow(testLon - existing.lon, 2))
+          minDist = Math.min(minDist, d)
+        }
+        if (minDist > maxMinDist) { maxMinDist = minDist; bestAngle = deg }
+      }
+    }
+
+    const rad     = bestAngle * Math.PI / 180
+    const cardLat = action.lat + Math.cos(rad) * SPACING
+    const cardLon = action.lon + Math.sin(rad) * SPACING
+    this._imageMarkerPositions.push({ lat: cardLat, lon: cardLon })
 
     // Dot at exact coordinate
     const dot = L.circleMarker([action.lat, action.lon], {
@@ -1981,7 +2012,7 @@ export class CommandRunner {
     }).addTo(map)
     this._drawings.push({ layer: dot, animFrame: null })
 
-    // Fetch image async — card renders immediately then updates
+    // Fetch image async
     let imageUrl = null
     try {
       const res = await fetch(
@@ -1994,7 +2025,6 @@ export class CommandRunner {
       }
     } catch (_) {}
 
-    // If aborted while fetching, bail
     if (this._aborted) return
 
     const cardHtml = `<div style="position:relative;animation:director-marker-arrive 600ms cubic-bezier(0.34,1.56,0.64,1) forwards;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.8));">
@@ -2006,12 +2036,6 @@ export class CommandRunner {
         </div>
       </div>
     </div>`
-
-    // Offset card above and slightly random laterally to avoid stacking
-    const latOff = 0.06 + Math.random() * 0.04
-    const lonOff = (Math.random() - 0.5) * 0.06
-    const cardLat = action.lat + latOff
-    const cardLon = action.lon + lonOff
 
     const cardMarker = L.marker([cardLat, cardLon], {
       icon: L.divIcon({
@@ -2025,7 +2049,7 @@ export class CommandRunner {
     }).addTo(map)
     this._drawings.push({ layer: cardMarker, animFrame: null })
 
-    // Dashed connector from card bottom to dot
+    // Dashed connector from card anchor to exact dot
     const connector = L.polyline(
       [[cardLat, cardLon], [action.lat, action.lon]],
       { color: "rgba(255,255,255,0.35)", weight: 1, dashArray: "3 4", pane: "markerPane" }
@@ -2674,11 +2698,22 @@ export async function fetchDirectorSnapshot() {
 }
 
 export async function generateDirectorSequence({ intent, snapshot }) {
-  const res = await fetch(`${API_BASE}/api/director/generate`, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json", ..._authHeaders() },
-    body:    JSON.stringify({ intent, snapshot }),
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 210_000) // 210s frontend timeout
+  let res
+  try {
+    res = await fetch(`${API_BASE}/api/director/generate`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body:    JSON.stringify({ intent, snapshot }),
+      signal:  controller.signal,
+    })
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("Generation timed out after 3 minutes — try a shorter briefing intent")
+    throw e
+  } finally {
+    clearTimeout(timeout)
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.detail || `generate: ${res.status}`)

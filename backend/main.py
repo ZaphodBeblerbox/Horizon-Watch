@@ -2893,16 +2893,21 @@ async def director_generate(
 
     loop = asyncio.get_event_loop()
     try:
-        sequence = await loop.run_in_executor(
-            _executor,
-            lambda: _director_svc.generate_sequence(
-                intent=intent,
-                snapshot=snapshot,
-                client=client,
-                usage_tracker=usage_tracker,
-                profile=_ACTIVE_PROFILE,
+        sequence = await asyncio.wait_for(
+            loop.run_in_executor(
+                _executor,
+                lambda: _director_svc.generate_sequence(
+                    intent=intent,
+                    snapshot=snapshot,
+                    client=client,
+                    usage_tracker=usage_tracker,
+                    profile=_ACTIVE_PROFILE,
+                ),
             ),
+            timeout=200,  # 200s max — enough for Claude + 20s headroom
         )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Director generation timed out — try a shorter briefing intent")
     except ValueError as exc:
         raise HTTPException(502, str(exc))
 
@@ -3101,7 +3106,7 @@ async def director_test_briefing():
             {"action": "narrate", "heading": "STRAIT OF HORMUZ CRISIS", "text": "Twenty-one percent of the world's liquid petroleum passes through the Strait of Hormuz daily. IRGCN forces have deployed patrol boats to the narrows as tensions escalate over Iranian nuclear activity."},
             # ── Scene 2: Chokepoint + place_event + place_location ────────────
             {"action": "show_chokepoint", "name": "Strait of Hormuz"},
-            {"action": "place_event", "title": "Tanker Interdiction Zone", "lat": 26.38, "lon": 56.25,
+            {"action": "place_event", "title": "Tanker Interdiction Zone", "lat": 26.44, "lon": 56.35,
              "type": "maritime", "severity": "critical",
              "summary": "IRGCN patrol boats establishing interdiction line across the inbound TSS lane.",
              "source": "UKMTO"},
