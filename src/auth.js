@@ -20,13 +20,26 @@ export function authHeaders() {
 }
 
 export async function apiFetch(path, options = {}) {
-    const res = await fetch(`${API_BASE}${path}`, {
-        ...options,
-        headers: {
-            "Content-Type": "application/json",
-            ...authHeaders(),
-            ...(options.headers || {}),
-        },
-    })
-    return res
+    const { _timeout = 12000, ...fetchOptions } = options
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), _timeout)
+    try {
+        const res = await fetch(`${API_BASE}${path}`, {
+            ...fetchOptions,
+            headers: {
+                "Content-Type": "application/json",
+                ...authHeaders(),
+                ...(fetchOptions.headers || {}),
+            },
+            signal: controller.signal,
+        })
+        return res
+    } catch (err) {
+        if (err.name === "AbortError") {
+            throw new Error("Request timed out — check your connection")
+        }
+        throw err
+    } finally {
+        clearTimeout(timer)
+    }
 }
