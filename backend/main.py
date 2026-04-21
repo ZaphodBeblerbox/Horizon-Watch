@@ -7651,6 +7651,7 @@ async def startup_event():
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
     print(f"[startup] *** HORIZON WATCH STARTING — env='{os.getenv('RAILWAY_ENVIRONMENT','local')}' DATA_DIR={DATA_DIR} ***")
+    print(f"[startup] ELEVENLABS_API_KEY present: {bool(os.getenv('ELEVENLABS_API_KEY'))}")
     # Initialise response cache
     if _HAS_RESPONSE_CACHE:
         FastAPICache.init(InMemoryBackend())
