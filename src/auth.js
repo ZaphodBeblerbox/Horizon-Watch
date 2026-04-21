@@ -20,7 +20,7 @@ export function authHeaders() {
 }
 
 export async function apiFetch(path, options = {}) {
-    const { _timeout = 12000, ...fetchOptions } = options
+    const { _timeout = 30000, ...fetchOptions } = options
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), _timeout)
     try {

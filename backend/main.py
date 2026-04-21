@@ -6934,13 +6934,6 @@ async def generate_briefing_manual(current_user=Depends(require_approved_user)):
 
 
 async def _startup_warmup_tasks():
-    try:
-        from database import migrate_db, init_db
-        migrate_db()
-        init_db()
-        print("[startup] database initialised and admins seeded")
-    except Exception as e:
-        print(f"[startup] database init error: {e}")
     """Run slow cache/data warmups after the API is already accepting requests."""
     loop = asyncio.get_event_loop()
 
@@ -7621,20 +7614,26 @@ Write in intelligence briefing style — 3–4 paragraphs maximum."""
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
+    loop = asyncio.get_event_loop()
     print(f"[startup] *** HORIZON WATCH STARTING — env='{os.getenv('RAILWAY_ENVIRONMENT','local')}' DATA_DIR={DATA_DIR} ***")
     # Initialise response cache
     if _HAS_RESPONSE_CACHE:
         FastAPICache.init(InMemoryBackend())
         print("[startup] fastapi-cache2 response cache initialised")
-    # Load persisted event store
+    # Load persisted event store (executor: file I/O can block on Railway's network volume)
     try:
-        es.load_from_disk(os.path.join(DATA_DIR, "event_store.json"))
+        _es_path = os.path.join(DATA_DIR, "event_store.json")
+        await asyncio.wait_for(
+            loop.run_in_executor(_executor, lambda: es.load_from_disk(_es_path)),
+            timeout=30,
+        )
     except Exception as _e:
         print(f"[startup] event store load error: {_e}")
-    # Initialise user database
+    # Initialise user database (executor: SQLite + bcrypt block the event loop)
     try:
-        from database import init_db
-        init_db()
+        from database import migrate_db as _migrate_db, init_db as _init_db
+        await asyncio.wait_for(loop.run_in_executor(_executor, _migrate_db), timeout=30)
+        await asyncio.wait_for(loop.run_in_executor(_executor, _init_db), timeout=30)
         print("[startup] database initialised")
     except Exception as _e:
         print(f"[startup] database init failed: {_e}")
@@ -7645,9 +7644,16 @@ async def startup_event():
     # Ensure document directories exist
     _ensure_docs_dirs()
 
-    # Load persisted briefing history
-    with _BRIEFING_LOCK:
-        _BRIEFING_STORE = _load_briefing_store()
+    # Load persisted briefing history (executor: file I/O)
+    try:
+        _store = await asyncio.wait_for(
+            loop.run_in_executor(_executor, _load_briefing_store),
+            timeout=15,
+        )
+        with _BRIEFING_LOCK:
+            _BRIEFING_STORE = _store
+    except Exception as _e:
+        print(f"[startup] briefing store load error: {_e}")
     print(f"[startup] loaded {len(_BRIEFING_STORE)} briefing(s) from disk")
 
     asyncio.create_task(_extract_news_conflicts_loop())
