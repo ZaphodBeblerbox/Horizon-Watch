@@ -4078,6 +4078,41 @@ async def director_image_search(
     return result or {"image_url": None}
 
 
+@app.post("/api/tts")
+async def text_to_speech(request: Request, current_user=Depends(require_approved_user)):
+    """ElevenLabs TTS proxy — streams audio/mpeg back to Director Mode."""
+    import httpx as _httpx
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "text is required"}, status_code=400)
+    voice_id = body.get("voice_id") or "fjnwTZkKtQOJaYzGLa6n"
+    api_key = os.getenv("ELEVENLABS_API_KEY")
+    if not api_key:
+        return JSONResponse({"error": "ElevenLabs not configured"}, status_code=503)
+    try:
+        async with _httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "text": text,
+                    "model_id": "eleven_turbo_v2_5",
+                    "voice_settings": {"stability": 0.6, "similarity_boost": 0.8, "style": 0.3},
+                },
+            )
+        if resp.status_code == 200:
+            return FastAPIResponse(content=resp.content, media_type="audio/mpeg",
+                                   headers={"Content-Type": "audio/mpeg", "Cache-Control": "no-store"})
+        error_text = resp.text[:300]
+        logger.warning("[TTS] ElevenLabs error %s: %s", resp.status_code, error_text)
+        return JSONResponse({"error": f"ElevenLabs: {resp.status_code}", "detail": error_text},
+                            status_code=resp.status_code)
+    except Exception as _e:
+        logger.error("[TTS] request failed: %s", _e)
+        return JSONResponse({"error": str(_e)}, status_code=502)
+
+
 # ── Real-time alert helpers ───────────────────────────────────────────────────
 
 def _parse_iso_ts(s: str) -> float:

@@ -192,8 +192,8 @@ const SIDEBAR_STYLES = `
 
   /* History */
   .dir-history-label {
-    font-size: 9px;
-    color: rgba(110,140,190,0.45);
+    font-size: 11px;
+    color: rgba(140,170,215,0.7);
     text-transform: uppercase;
     letter-spacing: 0.09em;
     font-weight: 600;
@@ -211,16 +211,16 @@ const SIDEBAR_STYLES = `
   }
   .dir-history-item:hover { opacity: 0.75; background: rgba(255,255,255,0.03); }
   .dir-history-item-heading {
-    font-size: 9px;
+    font-size: 14px;
     font-weight: 700;
-    color: rgba(170, 195, 235, 0.55);
+    color: #e2e8f0;
     text-transform: uppercase;
     letter-spacing: 0.07em;
     margin-bottom: 2px;
   }
   .dir-history-item-text {
-    font-size: 11px;
-    color: rgba(170, 195, 235, 0.45);
+    font-size: 13px;
+    color: #e2e8f0;
     line-height: 1.4;
     overflow: hidden;
     display: -webkit-box;
@@ -360,12 +360,17 @@ export default function DirectorSidebar({
   const isSummary = currentAction?.action === "summary"
 
   // History = all segments except the most recent, shown newest-first
-  // Filter out segments with no displayable content
+  // Filter out segments with no displayable content, deduplicate by heading
+  const _seenHeadings = new Set()
   const previousSegments = segments.slice(0, -1).reverse().filter(seg => {
     const text = seg.action.action === "summary"
       ? (seg.action.sections?.[0]?.text || "")
       : (seg.action.text || "")
-    return !!(seg.action.heading || seg.action.title || text)
+    if (!(seg.action.heading || seg.action.title || text)) return false
+    const heading = seg.action.heading || seg.action.title || ""
+    if (heading && _seenHeadings.has(heading)) return false
+    if (heading) _seenHeadings.add(heading)
+    return true
   })
 
   if (!visible) return null

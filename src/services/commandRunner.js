@@ -597,7 +597,22 @@ export class CommandRunner {
                 const caption = [action.name, action.flag].filter(Boolean).join(" · ") || `MMSI ${mmsi}`
                 this._pendingImage = { url: data.thumbnail_url || data.photo_url, caption, attribution: null, loading: false }
               } else {
-                this._pendingImage = null
+                const q = action.image_query || action.name
+                if (q) {
+                  fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(q)}`, { headers })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(imgData => {
+                      if (imgData?.image_url) {
+                        const caption = [action.name, action.flag].filter(Boolean).join(" · ") || `MMSI ${mmsi}`
+                        this._pendingImage = { url: imgData.image_url, caption, attribution: imgData.attribution || null, loading: false }
+                      } else {
+                        this._pendingImage = null
+                      }
+                    })
+                    .catch(() => { this._pendingImage = null })
+                } else {
+                  this._pendingImage = null
+                }
               }
             })
             .catch(() => { this._pendingImage = null })
@@ -638,7 +653,22 @@ export class CommandRunner {
                 const caption = [action.callsign, action.aircraft_type].filter(Boolean).join(" ") || icao.toUpperCase()
                 this._pendingImage = { url: data.thumbnail_url, caption, attribution: data.photographer ? `© ${data.photographer}` : null, loading: false }
               } else {
-                this._pendingImage = null
+                const q = action.image_query || action.callsign || action.aircraft_type
+                if (q) {
+                  fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(q)}`, { headers })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(imgData => {
+                      if (imgData?.image_url) {
+                        const caption = [action.callsign, action.aircraft_type].filter(Boolean).join(" ") || icao.toUpperCase()
+                        this._pendingImage = { url: imgData.image_url, caption, attribution: imgData.attribution || null, loading: false }
+                      } else {
+                        this._pendingImage = null
+                      }
+                    })
+                    .catch(() => { this._pendingImage = null })
+                } else {
+                  this._pendingImage = null
+                }
               }
             })
             .catch(() => { this._pendingImage = null })
@@ -2186,7 +2216,6 @@ export class CommandRunner {
     const startTime = Date.now()
     let stopped   = false
     let rafId     = null
-    const trail   = []
     let lastSeg   = 0
 
     const animate = () => {
@@ -2220,21 +2249,6 @@ export class CommandRunner {
               svgEl.style.transform = `rotate(${bearing}deg)`
               svgEl.style.transition = "transform 300ms ease"
             }
-          }
-        } catch (_) {}
-      }
-
-      // Sparse trail dots
-      if (Math.random() < 0.18) {
-        try {
-          const td = L.circleMarker([lat, lon], {
-            radius: 2.5, color: "#fff", fillColor: "#fff", fillOpacity: 0.45, weight: 0,
-          }).addTo(map)
-          trail.push(td)
-          this._drawings.push({ layer: td, animFrame: null })
-          if (trail.length > 12) {
-            const old = trail.shift()
-            try { map.removeLayer(old) } catch (_) {}
           }
         } catch (_) {}
       }

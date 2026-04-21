@@ -693,14 +693,14 @@ INDIVIDUAL DATA POINTS — existing tracked assets:
 - { "action": "click_chokepoint", "name": string }
   Open the detail panel for this chokepoint (simulates analyst clicking it).
 
-- { "action": "show_vessel", "mmsi": string, "name": string }
-  Show a tracked vessel by MMSI from the vessels list.
+- { "action": "show_vessel", "mmsi": string, "name": string, "image_query": string }
+  Show a tracked vessel by MMSI from the vessels list. Always include image_query: a specific search string for a Wikipedia/Wikimedia image of this vessel class or ship (e.g. "USS Abraham Lincoln CVN-72 aircraft carrier", "Type 052D destroyer PLAN"). This is used as fallback when vessel photo is unavailable.
 - { "action": "hide_vessel", "mmsi": string }
 - { "action": "click_vessel", "mmsi": string }
   Open the detail panel for this vessel.
 
-- { "action": "show_aircraft", "icao24": string, "callsign": string }
-  Show a tracked aircraft by ICAO24 from the aircraft list.
+- { "action": "show_aircraft", "icao24": string, "callsign": string, "aircraft_type": string, "image_query": string }
+  Show a tracked aircraft by ICAO24 from the aircraft list. Always include image_query: a specific search string for a Wikipedia/Wikimedia image of this aircraft type (e.g. "F/A-18E Super Hornet fighter jet", "P-8 Poseidon maritime patrol aircraft"). This is used as fallback when aircraft photo is unavailable.
 - { "action": "hide_aircraft", "icao24": string }
 - { "action": "click_aircraft", "icao24": string }
   Open the detail panel for this aircraft.
