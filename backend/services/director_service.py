@@ -648,9 +648,16 @@ YOUR ROLE AS ANALYST:
 Available actions (JSON array):
 
 CAMERA CONTROLS:
-- { "action": "fly_to", "lat": number, "lon": number, "zoom": number, "duration": 3000, "label": string }
+- {{ "action": "fly_to", "lat": number, "lon": number, "zoom": number, "duration": 3000, "label": string }}
   Smoothly pan and zoom the map. Default duration 3000ms.
-- { "action": "pause", "duration": number }
+  ZOOM GUIDE — use tight zooms, not wide ones:
+  • zoom 3-4: global or multi-continent overview (use sparingly, only for intro)
+  • zoom 5-6: country or wide regional view (e.g., "Middle East overview")
+  • zoom 7-8: strait, waterway, or narrow sea (e.g., Strait of Hormuz, Bab el-Mandeb, Suez Canal)
+  • zoom 9-10: coastal city, port, or bay (e.g., "Bandar Abbas port area")
+  • zoom 11-13: specific military base, airfield, or installation
+  RULE: Default to zoom 8 for chokepoints, zoom 10 for ports. Never use zoom < 5 mid-briefing.
+- {{ "action": "pause", "duration": number }}
   Wait for pacing. Default 2000ms.
 
 NARRATION:
@@ -1013,11 +1020,24 @@ KEY PATTERN RULES — EVERY scene must follow:
 6. Every attack gets: draw_arrow + impact before narrate
 7. Minimum 15 place_image_marker and 15 show_image actions across the full briefing
 
+USE EVERY VISUAL TOOL — a full briefing MUST include all of the following:
+☑ animate_movement — for EVERY vessel, aircraft, or troop movement discussed (not just mentioned)
+☑ show_vessel + show_aircraft — with lat/lon, type, faction for every tracked asset cited
+☑ spotlight — for at least one specific facility or installation per briefing
+☑ show_chart — at least 2 charts (oil price, shipping volume, casualty count, etc.)
+☑ data_callout — at least 5 statistics anchored to specific scenes
+☑ draw_circle — for threat envelopes, exclusion zones, patrol radii
+☑ impact — for every strike or attack discussed
+☑ show_person — for every named leader, commander, or official
+☑ pin_images — 2-4 photos at every significant location
+☑ draw_animated_line — for every shipping route, supply corridor, or pipeline
+☑ country_info_overlay — one overlay per country featured prominently
+
 OUTPUT LENGTH AND DETAIL:
-- Generate 60-100 actions for a thorough briefing. More actions = better briefing.
-- Each narrate action should be 4-6 sentences of detailed, analyst-grade prose.
-- Include 10-15 place_image_marker actions pinned to exact map locations.
-- Include 10-15 show_image actions in the sidebar.
+- Generate 80-120 actions for a thorough briefing. More actions = better briefing.
+- Each narrate action should be 3-5 sentences of analyst-grade prose written for voice.
+- Include 15+ place_image_marker actions pinned to exact map locations.
+- Include 15+ show_image actions in the sidebar.
 - Include 3-5 person dossiers for key figures.
 - Include 5-8 data_callout cards with relevant statistics.
 - Include detailed animate_movement sequences for every military/naval/troop movement discussed.

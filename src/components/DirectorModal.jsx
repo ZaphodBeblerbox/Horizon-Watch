@@ -347,9 +347,25 @@ export default function DirectorModal({
         const saved = localStorage.getItem(VOICE_STORAGE_KEY)
         return saved || ttsService.voicePreference || "british_male"
     })
+    const [elapsed,   setElapsed]   = useState(0)   // seconds since generation started
+    const [stageIdx,  setStageIdx]  = useState(0)   // cycling stage label index
     const textareaRef      = useRef(null)
     const dissolveTimerRef = useRef(null)
+    const elapsedTimerRef  = useRef(null)
+    const stageTimerRef    = useRef(null)
     const phaseRef         = useRef("prompt")
+
+    const STAGES = [
+        "Analysing intelligence feeds…",
+        "Identifying geopolitical events…",
+        "Building narrative structure…",
+        "Geocoding locations and events…",
+        "Choreographing map animations…",
+        "Adding visual elements…",
+        "Placing image markers…",
+        "Composing voice narration…",
+        "Finalising briefing sequence…",
+    ]
 
     // Apply saved voice on mount
     useEffect(() => {
@@ -387,18 +403,31 @@ export default function DirectorModal({
         }
     }, [open])
 
-    // Watch generating prop: when it goes true → loading, when false → dissolve (if no error)
+    // Watch generating prop: start/stop elapsed timer + stage cycling
     useEffect(() => {
         if (generating) {
             updatePhase("loading")
-        } else if (phaseRef.current === "loading" && !error) {
-            // Success: begin dissolve
-            updatePhase("dissolving")
-            dissolveTimerRef.current = setTimeout(() => {
-                onClose()
-            }, 800)
+            setElapsed(0)
+            setStageIdx(0)
+            // Elapsed counter — tick every second
+            elapsedTimerRef.current = setInterval(() => {
+                setElapsed(s => s + 1)
+            }, 1000)
+            // Stage cycling — advance every 18 seconds
+            stageTimerRef.current = setInterval(() => {
+                setStageIdx(i => (i + 1) % STAGES.length)
+            }, 18000)
+        } else {
+            clearInterval(elapsedTimerRef.current)
+            clearInterval(stageTimerRef.current)
+            if (phaseRef.current === "loading" && !error) {
+                updatePhase("dissolving")
+                dissolveTimerRef.current = setTimeout(() => { onClose() }, 800)
+            }
         }
         return () => {
+            clearInterval(elapsedTimerRef.current)
+            clearInterval(stageTimerRef.current)
             if (dissolveTimerRef.current) clearTimeout(dissolveTimerRef.current)
         }
     }, [generating, error]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -530,8 +559,20 @@ export default function DirectorModal({
                 {(phase === "loading" || phase === "dissolving") && (
                     <div className="director-loading-box" onClick={(e) => e.stopPropagation()}>
                         <div className="director-loading-diamond">◈</div>
-                        {!error && <div className="director-loading-label">Preparing your briefing…</div>}
-                        {!error && <div className="director-shimmer-bar" />}
+                        {!error && (
+                            <>
+                                <div className="director-loading-label">{STAGES[stageIdx]}</div>
+                                <div className="director-shimmer-bar" />
+                                <div style={{ display: "flex", gap: 18, alignItems: "center", marginTop: 4 }}>
+                                    <div style={{ fontSize: 12, color: "rgba(180,200,240,0.5)", fontVariantNumeric: "tabular-nums" }}>
+                                        {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")} elapsed
+                                    </div>
+                                    <div style={{ fontSize: 12, color: "rgba(245,158,11,0.55)" }}>
+                                        ~5–8 min estimated
+                                    </div>
+                                </div>
+                            </>
+                        )}
                         {error && (
                             <>
                                 <div className="director-loading-error">{error}</div>

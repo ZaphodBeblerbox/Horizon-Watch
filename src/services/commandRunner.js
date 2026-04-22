@@ -2054,23 +2054,23 @@ export class CommandRunner {
     const hdrs    = { Authorization: `Bearer ${localStorage.getItem("hw-auth-token")}` }
 
     // ── Collision avoidance: find least-crowded offset direction ──────────────
-    const SPACING  = 0.10  // min degrees between card anchor points
-    const angles   = [90, 0, 180, 45, 135, 270, 315, 225]  // try North first, then E/W/diagonals
-    let bestAngle  = 90    // default: place card to the north of the point
+    // Scale SPACING with how many markers already exist so later cards spread wider
+    const baseSpacing = 0.18
+    const SPACING  = baseSpacing + Math.min(this._imageMarkerPositions.length, 6) * 0.04
+    const angles   = [90, 0, 180, 45, 270, 135, 315, 225, 60, 120, 240, 300]
+    let bestAngle  = 90
+    let bestDist   = -1
 
-    if (this._imageMarkerPositions.length > 0) {
-      let maxMinDist = -1
-      for (const deg of angles) {
-        const rad     = deg * Math.PI / 180
-        const testLat = action.lat + Math.cos(rad) * SPACING
-        const testLon = action.lon + Math.sin(rad) * SPACING
-        let minDist   = Infinity
-        for (const existing of this._imageMarkerPositions) {
-          const d = Math.sqrt(Math.pow(testLat - existing.lat, 2) + Math.pow(testLon - existing.lon, 2))
-          minDist = Math.min(minDist, d)
-        }
-        if (minDist > maxMinDist) { maxMinDist = minDist; bestAngle = deg }
+    for (const deg of angles) {
+      const rad     = deg * Math.PI / 180
+      const testLat = action.lat + Math.cos(rad) * SPACING
+      const testLon = action.lon + Math.sin(rad) * SPACING
+      let minDist   = Infinity
+      for (const existing of this._imageMarkerPositions) {
+        const d = Math.sqrt(Math.pow(testLat - existing.lat, 2) + Math.pow(testLon - existing.lon, 2))
+        minDist = Math.min(minDist, d)
       }
+      if (minDist > bestDist) { bestDist = minDist; bestAngle = deg }
     }
 
     const rad     = bestAngle * Math.PI / 180
