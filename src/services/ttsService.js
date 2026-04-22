@@ -31,12 +31,13 @@ function _splitText(text) {
 
 class TTSService {
   constructor() {
-    this._muted          = false
-    this._speaking       = false
-    this._voicePreference = "elevenlabs"
-    this._currentAudio   = null
-    this._abortCtrl      = null
-    this._cache          = new Map()   // text → blob URL (session-scoped)
+    this._muted              = false
+    this._speaking           = false
+    this._voicePreference    = "elevenlabs"
+    this._currentAudio       = null
+    this._abortCtrl          = null
+    this._cache              = new Map()   // text → blob URL (session-scoped)
+    this._elevenLabsDisabled = false       // set true on quota/auth error
 
     // Browser voice fallback state
     this._browserVoice   = null
@@ -94,10 +95,14 @@ class TTSService {
 
   async speak(text) {
     if (this._muted || !text?.trim()) return
-    if (this._voicePreference !== "elevenlabs") {
-      return this._speakBrowser(text)
+    try {
+      if (this._voicePreference !== "elevenlabs" || this._elevenLabsDisabled) {
+        return await this._speakBrowser(text)
+      }
+      return await this._speakElevenLabs(text)
+    } catch (_) {
+      // Last-resort safety net — briefing must never crash due to TTS
     }
-    return this._speakElevenLabs(text)
   }
 
   stop() {
@@ -149,7 +154,14 @@ class TTSService {
         },
         body: JSON.stringify({ text }),
       })
-      if (!resp.ok) throw new Error(`TTS ${resp.status}`)
+      if (!resp.ok) {
+        // 401/403/422/429 = quota exceeded or misconfigured — disable for session
+        if ([401, 403, 422, 429, 503].includes(resp.status)) {
+          console.warn(`[TTS] ElevenLabs disabled for session (HTTP ${resp.status})`)
+          this._elevenLabsDisabled = true
+        }
+        throw new Error(`TTS ${resp.status}`)
+      }
       const blob = await resp.blob()
       const url  = URL.createObjectURL(blob)
       this._cache.set(text, url)

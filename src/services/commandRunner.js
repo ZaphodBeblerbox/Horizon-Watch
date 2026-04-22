@@ -239,16 +239,18 @@ export class CommandRunner {
         ttsPromise = new Promise(resolve => {
           setTimeout(async () => {
             if (!this.isPlaying || this._aborted) { resolve(); return }
-            const narAct2 = { ...narAction }
-            if (narAction.action === "summary") {
-              await ttsService.speak(narAction.title || "")
-              for (const sec of narAction.sections || []) {
-                if (this._aborted || !this.isPlaying) break
-                await ttsService.speak(sec.text || "")
+            try {
+              const narAct2 = { ...narAction }
+              if (narAction.action === "summary") {
+                await ttsService.speak(narAction.title || "")
+                for (const sec of narAction.sections || []) {
+                  if (this._aborted || !this.isPlaying) break
+                  await ttsService.speak(sec.text || "")
+                }
+              } else {
+                await ttsService.speak(narAct2.text || "")
               }
-            } else {
-              await ttsService.speak(narAct2.text || "")
-            }
+            } catch (_) {}
             resolve()
           }, 800)
         })
@@ -1672,7 +1674,7 @@ export class CommandRunner {
       }
       this.onNarrate(act2)
       // Speak narration text — awaits completion before advancing
-      await ttsService.speak(act2.text || "")
+      try { await ttsService.speak(act2.text || "") } catch (_) {}
     } else {
       // summary
       if (this._pendingImage) {
@@ -1683,18 +1685,20 @@ export class CommandRunner {
       }
       this.onNarrate(action)
       // Speak summary sequentially
-      if (!this._aborted) await ttsService.speak(action.title || "")
-      for (const section of action.sections || []) {
-        if (this._aborted) break
-        await ttsService.speak(section.text || "")
-      }
-      if (!this._aborted && (action.predictions || []).length > 0) {
-        await ttsService.speak("Predictions.")
-        for (const pred of action.predictions) {
+      try {
+        if (!this._aborted) await ttsService.speak(action.title || "")
+        for (const section of action.sections || []) {
           if (this._aborted) break
-          await ttsService.speak(`${pred.confidence} confidence: ${pred.prediction}`)
+          await ttsService.speak(section.text || "")
         }
-      }
+        if (!this._aborted && (action.predictions || []).length > 0) {
+          await ttsService.speak("Predictions.")
+          for (const pred of action.predictions) {
+            if (this._aborted) break
+            await ttsService.speak(`${pred.confidence} confidence: ${pred.prediction}`)
+          }
+        }
+      } catch (_) {}
     }
 
     // Advance only if still auto-playing and not aborted
