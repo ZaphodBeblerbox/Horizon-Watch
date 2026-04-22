@@ -693,15 +693,17 @@ INDIVIDUAL DATA POINTS — existing tracked assets:
 - { "action": "click_chokepoint", "name": string }
   Open the detail panel for this chokepoint (simulates analyst clicking it).
 
-- { "action": "show_vessel", "mmsi": string, "name": string, "image_query": string }
-  Show a tracked vessel by MMSI from the vessels list. Always include image_query: a specific search string for a Wikipedia/Wikimedia image of this vessel class or ship (e.g. "USS Abraham Lincoln CVN-72 aircraft carrier", "Type 052D destroyer PLAN"). This is used as fallback when vessel photo is unavailable.
-- { "action": "hide_vessel", "mmsi": string }
-- { "action": "click_vessel", "mmsi": string }
+- {{ "action": "show_vessel", "mmsi": string, "name": string, "lat": number, "lon": number, "vessel_type": "warship|carrier|submarine|patrol|tanker_ship|cargo_ship", "faction": "hostile|allied|friendly|neutral", "image_query": string }}
+  Show a tracked vessel. ALWAYS include lat/lon (vessel's current position), vessel_type for the correct icon, faction for color coding, and image_query for a fallback Wikipedia photo. If the MMSI comes from the vessels snapshot use the position from there; otherwise use the vessel's likely operating area.
+  Example: {{ "action": "show_vessel", "mmsi": "311000953", "name": "USS Abraham Lincoln", "lat": 25.70, "lon": 56.80, "vessel_type": "carrier", "faction": "allied", "image_query": "USS Abraham Lincoln CVN-72 aircraft carrier" }}
+- {{ "action": "hide_vessel", "mmsi": string }}
+- {{ "action": "click_vessel", "mmsi": string }}
   Open the detail panel for this vessel.
 
-- { "action": "show_aircraft", "icao24": string, "callsign": string, "aircraft_type": string, "image_query": string }
-  Show a tracked aircraft by ICAO24 from the aircraft list. Always include image_query: a specific search string for a Wikipedia/Wikimedia image of this aircraft type (e.g. "F/A-18E Super Hornet fighter jet", "P-8 Poseidon maritime patrol aircraft"). This is used as fallback when aircraft photo is unavailable.
-- { "action": "hide_aircraft", "icao24": string }
+- {{ "action": "show_aircraft", "icao24": string, "callsign": string, "lat": number, "lon": number, "aircraft_type": "fighter|bomber|helicopter|drone", "faction": "hostile|allied|friendly|neutral", "image_query": string }}
+  Show a tracked aircraft. ALWAYS include lat/lon (aircraft's current position), aircraft_type for the correct icon, faction for color coding, and image_query for a Wikipedia photo.
+  Example: {{ "action": "show_aircraft", "icao24": "ae1234", "callsign": "TOPGUN1", "lat": 26.0, "lon": 56.5, "aircraft_type": "fighter", "faction": "allied", "image_query": "F/A-18E Super Hornet fighter jet carrier" }}
+- {{ "action": "hide_aircraft", "icao24": string }}
 - { "action": "click_aircraft", "icao24": string }
   Open the detail panel for this aircraft.
 
@@ -948,13 +950,16 @@ CHARTS — animated data visualization:
   Example: {{ "action": "show_chart", "type": "line", "title": "BRENT CRUDE ($/BBL)", "data": [{{"label":"Feb 24","value":62}},{{"label":"Feb 25","value":63}},{{"label":"Feb 26","value":64}},{{"label":"Mar 1","value":72}},{{"label":"Mar 2","value":75}},{{"label":"Mar 3","value":74}}], "event_marker": {{"label": "Strike begins", "index": 3}}, "position": "sidebar", "duration": 8000 }}
 
 IMAGES — BE EXTREMELY GENEROUS:
-- Target 15-20 images per briefing minimum.
-- EVERY narration segment should have at least one associated show_image placed just before the narrate.
-- EVERY named facility should have a pin_images with 2-3 photos.
-- EVERY person mentioned should have show_person.
-- Use specific image queries: "{facility name} {country} aerial", "{military unit} {equipment}", "{event location} {event type}", "{city name} skyline".
+- Target 20-30 images per briefing minimum.
+- EVERY narration segment MUST have a show_image placed just before the narrate — no exceptions.
+- EVERY named facility, base, or port MUST have a place_image_marker at its coordinates.
+- EVERY person mentioned MUST have show_person.
+- EVERY vessel or aircraft MUST have place_image_marker at its location with a specific query.
+- Use hyper-specific queries: "USS Abraham Lincoln CVN-72 flight deck" not "aircraft carrier". "Bandar Abbas Iran naval base aerial 2023" not "Iran port".
 - EVERY time you narrate about a location, show at least one image of it.
-- EVERY time you narrate about military equipment, show an image of it.
+- EVERY time you narrate about military equipment, weapon, or vehicle, show an image of it.
+- Minimum 15 place_image_marker actions pinned to exact map locations.
+- Minimum 15 show_image actions in the sidebar.
 
 MAP-PINNED IMAGES — anchor photos directly to map locations:
 - {{ "action": "place_image_marker", "name": string, "lat": number, "lon": number, "query": string, "caption": string, "size": "small"|"medium"|"large" }}
@@ -989,6 +994,16 @@ EXAMPLE SCENE — use this exact pattern for every scene:
   {{ "action": "narrate", "heading": "HORMUZ BLOCKADE THREAT", "text": "The Strait of Hormuz is the world's most critical maritime chokepoint..." }}
 ]
 
+NARRATE VOICE STYLE — write narrate text for ElevenLabs AI voice synthesis:
+- Use commas naturally to create rhythmic pauses: "Iran's navy, now fully mobilized, has moved three frigates into the strait."
+- Spell out numbers under one hundred: "thirty-seven ships" not "37 ships". Spell out "million" and "billion".
+- Use em-dashes for dramatic beats: "The order came at midnight — and nothing would be the same."
+- Expand all acronyms on first use: "the Islamic Revolutionary Guard Corps Navy, or IRGCN" — not just "IRGCN".
+- Avoid symbols in text: write "percent" not "%", "degrees" not "°", "dollars" not "$".
+- Keep each narrate to 3-5 sentences. Short, punchy sentences land better in voice than long compound clauses.
+- Write in present tense for immediacy: "Iranian fast-attack boats are moving into position" not "moved".
+- End each narrate on a strong image or implication, not a trailing clause.
+
 KEY PATTERN RULES — EVERY scene must follow:
 1. clear_scene → highlight countries → fly_to → place_location + place_image_marker → animate_movement → draw lines → data_callout → show_image → narrate (LAST)
 2. narrate is ALWAYS the final action in each scene
@@ -996,7 +1011,7 @@ KEY PATTERN RULES — EVERY scene must follow:
 4. Every key statistic gets: data_callout before narrate
 5. Every shipping route gets: draw_animated_line with water-following coordinates
 6. Every attack gets: draw_arrow + impact before narrate
-7. Minimum 10 place_image_marker actions across the full briefing
+7. Minimum 15 place_image_marker and 15 show_image actions across the full briefing
 
 OUTPUT LENGTH AND DETAIL:
 - Generate 60-100 actions for a thorough briefing. More actions = better briefing.

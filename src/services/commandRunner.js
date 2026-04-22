@@ -587,6 +587,25 @@ export class CommandRunner {
             vessels: new Set([...prev.vessels, mmsi]),
           }))
         }
+        // Place a visible icon directly on the map when lat/lon provided
+        if (action.lat != null && action.lon != null) {
+          const L = window.L
+          const map = this.mapRef?.current
+          if (L && map) {
+            const FACTION_COLOR = { hostile: "#ef4444", allied: "#22d3ee", friendly: "#4ade80", neutral: "#e2e8f0" }
+            const color = FACTION_COLOR[action.faction] || "#e2e8f0"
+            const svgHtml = this._getUnitIcon(action.vessel_type || "warship", color)
+            const label = action.name || ""
+            const markerIcon = L.divIcon({
+              className: "",
+              html: `<div style="filter:drop-shadow(0 0 6px ${color});text-align:center">${svgHtml}${label ? `<div style="color:${color};font-size:10px;font-weight:700;text-shadow:0 0 4px #000,0 1px 2px #000;white-space:nowrap;margin-top:2px">${label}</div>` : ""}</div>`,
+              iconSize: [44, 56],
+              iconAnchor: [22, 28],
+            })
+            const marker = L.marker([action.lat, action.lon], { icon: markerIcon, interactive: false, zIndexOffset: 600 }).addTo(map)
+            this._drawings.push({ layer: marker, animFrame: null })
+          }
+        }
         // Fetch vessel photo asynchronously if no image already pending
         if (mmsi && !this._pendingImage) {
           this._pendingImage = { loading: true, url: null, caption: null }
@@ -642,6 +661,25 @@ export class CommandRunner {
             ...prev,
             aircraft: new Set([...prev.aircraft, icao]),
           }))
+        }
+        // Place a visible icon directly on the map when lat/lon provided
+        if (action.lat != null && action.lon != null) {
+          const L = window.L
+          const map = this.mapRef?.current
+          if (L && map) {
+            const FACTION_COLOR = { hostile: "#ef4444", allied: "#22d3ee", friendly: "#4ade80", neutral: "#e2e8f0" }
+            const color = FACTION_COLOR[action.faction] || "#e2e8f0"
+            const svgHtml = this._getUnitIcon(action.aircraft_type || "fighter", color)
+            const label = action.callsign || action.name || ""
+            const markerIcon = L.divIcon({
+              className: "",
+              html: `<div style="filter:drop-shadow(0 0 6px ${color});text-align:center">${svgHtml}${label ? `<div style="color:${color};font-size:10px;font-weight:700;text-shadow:0 0 4px #000,0 1px 2px #000;white-space:nowrap;margin-top:2px">${label}</div>` : ""}</div>`,
+              iconSize: [36, 46],
+              iconAnchor: [18, 23],
+            })
+            const marker = L.marker([action.lat, action.lon], { icon: markerIcon, interactive: false, zIndexOffset: 600 }).addTo(map)
+            this._drawings.push({ layer: marker, animFrame: null })
+          }
         }
         // Fetch photo asynchronously — don't block playback
         if (icao && !this._pendingImage) {

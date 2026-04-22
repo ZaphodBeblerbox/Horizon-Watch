@@ -4099,6 +4099,7 @@ async def text_to_speech(request: Request, current_user=Depends(require_approved
                     "text": text,
                     "model_id": "eleven_turbo_v2_5",
                     "voice_settings": {"stability": 0.6, "similarity_boost": 0.8, "style": 0.3},
+                    "speed": 0.85,
                 },
             )
         if resp.status_code == 200:
