@@ -261,11 +261,13 @@ export class CommandRunner {
 
       // Brief inter-scene pause
       if (this.isPlaying && !this._aborted) {
+        console.log(`[Director] Scene ${si + 1}/${scenes.length} complete, advancing`)
         await new Promise(r => { this._timer = setTimeout(r, 900) })
       }
     }
 
     if (this.isPlaying && !this._aborted) {
+      console.log(`[Director] Briefing complete — ${scenes.length} scenes played`)
       this.isPlaying = false
       this._notifyState()
       this.onComplete()
@@ -990,6 +992,13 @@ export class CommandRunner {
           console.log("[Director] clear_country_highlights")
         }
         return defaultDelay
+      }
+
+      // ── Border highlight animation ─────────────────────────────────────────
+
+      case "highlight_border": {
+        this._highlightBorder(action)
+        return action.duration ?? 6000
       }
 
       // ── Drawing ───────────────────────────────────────────────────────────
@@ -2129,6 +2138,72 @@ export class CommandRunner {
     this._drawings.push({ layer: connector, animFrame: null })
   }
 
+  // ── Border highlight animation ────────────────────────────────────────────
+
+  _highlightBorder(action) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+    const color    = action.color    || "#56cfff"
+    const duration = action.duration || 6000
+    const weight   = action.weight   || 3
+
+    // Mode A: explicit points polygon (preferred — Claude provides simplified border)
+    if (Array.isArray(action.points) && action.points.length >= 2) {
+      const latLngs = action.points.map(p => L.latLng(p[0], p[1]))
+      const poly = L.polyline(latLngs, {
+        color,
+        weight,
+        opacity: 0,
+        smoothFactor: 1,
+        dashArray: "8 6",
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(map)
+      this._drawings.push({ layer: poly, animFrame: null })
+
+      // Fade in + pulse opacity
+      let start = null
+      const glowEl = poly.getElement?.()
+      const step = (ts) => {
+        if (!start) start = ts
+        const t = Math.min((ts - start) / 600, 1)
+        const pulse = 0.55 + 0.35 * Math.sin((ts / 800) * Math.PI)
+        try { poly.setStyle({ opacity: t * pulse }) } catch (_) {}
+        if (ts - start < duration) requestAnimationFrame(step)
+        else try { poly.setStyle({ opacity: 0.6 }) } catch (_) {}
+      }
+      requestAnimationFrame(step)
+      return
+    }
+
+    // Mode B: lat/lon/radius_km pulse ring fallback
+    const lat = action.lat ?? 0
+    const lon = action.lon ?? 0
+    const radiusM = (action.radius_km ?? 300) * 1000
+
+    const ring = L.circle([lat, lon], {
+      radius: radiusM,
+      color,
+      weight,
+      fill: false,
+      opacity: 0,
+      dashArray: "10 8",
+    }).addTo(map)
+    this._drawings.push({ layer: ring, animFrame: null })
+
+    let start = null
+    const step = (ts) => {
+      if (!start) start = ts
+      const t = Math.min((ts - start) / 600, 1)
+      const pulse = 0.5 + 0.4 * Math.sin((ts / 900) * Math.PI)
+      try { ring.setStyle({ opacity: t * pulse }) } catch (_) {}
+      if (ts - start < duration) requestAnimationFrame(step)
+      else try { ring.setStyle({ opacity: 0.55 }) } catch (_) {}
+    }
+    requestAnimationFrame(step)
+  }
+
   // ── Chart overlay ─────────────────────────────────────────────────────────
 
   _renderChart(action) {
@@ -2299,8 +2374,6 @@ export class CommandRunner {
         rafId = requestAnimationFrame(animate)
       } else {
         stopped = true
-        try { map.removeLayer(marker) } catch (_) {}
-        trail.forEach(t => { try { map.removeLayer(t) } catch (_) {} })
         if (onComplete) onComplete()
       }
     }

@@ -1011,17 +1011,33 @@ NARRATE VOICE STYLE — write narrate text for ElevenLabs AI voice synthesis:
 - Write in present tense for immediacy: "Iranian fast-attack boats are moving into position" not "moved".
 - End each narrate on a strong image or implication, not a trailing clause.
 
+HIGHLIGHT BORDER — animated glowing border around a country or region:
+- {{ "action": "highlight_border", "name": string, "points": [[lat, lon]], "color": "#56cfff", "weight": 3, "duration": 6000 }}
+  Draws an animated pulsing dashed border polyline. Provide `points` as a simplified polygon (8-20 vertices) tracing the country or region boundary. Used to dramatize territorial disputes, sanctions zones, buffer zones, or exclusion areas.
+  Example: {{ "action": "highlight_border", "name": "Iran Exclusion Zone", "points": [[38.0,44.0],[37.5,48.5],[35.0,52.0],[30.0,57.0],[25.5,59.5],[25.0,61.0],[29.5,61.5],[31.0,49.5],[36.0,44.5],[38.0,44.0]], "color": "#ef4444", "weight": 3, "duration": 7000 }}
+  Alternative (lat/lon/radius): {{ "action": "highlight_border", "name": "Exclusion Zone", "lat": 26.5, "lon": 56.25, "radius_km": 150, "color": "#ef4444", "duration": 5000 }}
+
 KEY PATTERN RULES — EVERY scene must follow:
 1. clear_scene → highlight countries → fly_to → place_location + place_image_marker → animate_movement → draw lines → data_callout → show_image → narrate (LAST)
 2. narrate is ALWAYS the final action in each scene
 3. Every military entity gets: place_location + place_image_marker + animate_movement
 4. Every key statistic gets: data_callout before narrate
-5. Every shipping route gets: draw_animated_line with water-following coordinates
+5. Every shipping route gets: draw_animated_line with water-following coordinates that STAY IN WATER — never cut across land
 6. Every attack gets: draw_arrow + impact before narrate
-7. Minimum 15 place_image_marker and 15 show_image actions across the full briefing
+7. Every country featured gets: fly_to before its scene + highlight_country + highlight_border
+8. CAMERA MOVEMENT: fly_to MUST appear at the start of every scene — never stay static. Use tight zoom (9-11) for facilities, medium (7-8) for straits, wide (5-6) for regional overviews.
+9. Minimum 15 place_image_marker and 15 show_image actions across the full briefing
+
+MARITIME ROUTING RULES — ships and vessels MUST follow water:
+- NEVER draw a straight line across land. All animate_movement for naval units MUST include waypoints.
+- Hormuz: route through [26.5, 56.5] → [26.0, 56.3] → [25.5, 57.0] (the navigable channel)
+- Bab el-Mandeb: route through [12.6, 43.3] → [12.0, 43.5] → [11.5, 44.0]
+- Suez: route through [30.0, 32.6] → [28.0, 32.7] → [24.0, 32.9]
+- Malacca: route through [5.5, 100.3] → [2.5, 103.8] → [1.3, 103.7]
+- For long ocean transits, add 4-6 waypoints following the actual sea lane arc (not a straight line).
 
 USE EVERY VISUAL TOOL — a full briefing MUST include all of the following:
-☑ animate_movement — for EVERY vessel, aircraft, or troop movement discussed (not just mentioned)
+☑ animate_movement — for EVERY vessel, aircraft, or troop movement discussed (not just mentioned); naval units MUST have maritime waypoints
 ☑ show_vessel + show_aircraft — with lat/lon, type, faction for every tracked asset cited
 ☑ spotlight — for at least one specific facility or installation per briefing
 ☑ show_chart — at least 2 charts (oil price, shipping volume, casualty count, etc.)
@@ -1030,8 +1046,11 @@ USE EVERY VISUAL TOOL — a full briefing MUST include all of the following:
 ☑ impact — for every strike or attack discussed
 ☑ show_person — for every named leader, commander, or official
 ☑ pin_images — 2-4 photos at every significant location
-☑ draw_animated_line — for every shipping route, supply corridor, or pipeline
+☑ draw_animated_line — for every shipping route, supply corridor, or pipeline; STAY IN WATER for maritime routes
 ☑ country_info_overlay — one overlay per country featured prominently
+☑ highlight_border — animated border for every country with active territorial dispute, sanctions zone, or exclusion area
+☑ pulse_hotspot — for every active conflict zone or high-tension area
+☑ fly_to — at the start of EVERY scene; vary zoom levels to create cinematic depth
 
 OUTPUT LENGTH AND DETAIL:
 - Generate 80-120 actions for a thorough briefing. More actions = better briefing.
@@ -1042,9 +1061,12 @@ OUTPUT LENGTH AND DETAIL:
 - Include 5-8 data_callout cards with relevant statistics.
 - Include detailed animate_movement sequences for every military/naval/troop movement discussed.
 - Include 8-12 draw_animated_line or draw_line actions for routes, pipelines, borders, shipping lanes.
+- Include 3-5 highlight_border actions for disputed borders, exclusion zones, or sanctioned regions.
 - Draw impact effects for every attack or strike discussed.
+- Use pulse_hotspot for every active conflict area.
 - Take your time composing. Quality and completeness matter more than brevity.
-- Every scene should be rich with visual elements — never just narration over a blank map."""
+- Every scene should be rich with visual elements — never just narration over a blank map.
+- EVERY scene MUST open with fly_to — the camera must ALWAYS move between scenes."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 
