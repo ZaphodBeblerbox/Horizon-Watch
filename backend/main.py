@@ -94,7 +94,16 @@ except ImportError:
 
 try:
     import spacy as _spacy
-    _nlp = _spacy.load("en_core_web_sm")
+    try:
+        _nlp = _spacy.load("en_core_web_sm")
+    except OSError:
+        import subprocess, sys
+        print("[startup] en_core_web_sm not found — downloading now…")
+        subprocess.run(
+            [sys.executable, "-m", "spacy", "download", "en_core_web_sm"],
+            check=True, capture_output=True
+        )
+        _nlp = _spacy.load("en_core_web_sm")
     _HAS_SPACY = True
 except Exception:
     _HAS_SPACY = False

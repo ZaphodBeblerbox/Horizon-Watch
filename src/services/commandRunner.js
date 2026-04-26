@@ -2831,6 +2831,9 @@ export async function generateDirectorSequence({ intent, snapshot }) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("Session expired — please log in again")
+    }
     throw new Error(err.detail || `generate: ${res.status}`)
   }
   return res.json()
