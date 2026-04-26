@@ -222,33 +222,42 @@ export class CommandRunner {
         // Deliver pending image + fire onNarrate callback
         setTimeout(() => {
           if (!this.isPlaying || this._aborted) return
-          this.onAction(narAction, this.actions.indexOf(narAction))
-          // deliver pending image
-          if (this._pendingImage) { this.onImage(this._pendingImage); this._pendingImage = null }
-          else { this.onImage(null) }
+          // deliver pending image before narrate so _image is fresh
+          const img = this._pendingImage || null
+          this._pendingImage = null
+          this.onImage(img)
           // prepend satellite observations if pending
-          const narAct2 = { ...narAction }
+          const narAct2 = { ...narAction, _image: img }
           if (this._pendingSatObservations) {
             narAct2.text = `[Satellite Analysis] ${this._pendingSatObservations}\n\n${narAction.text || ""}`
             this._pendingSatObservations = null
           }
+          this.onAction(narAct2, this.actions.indexOf(narAction))
           this.onNarrate(narAct2)
         }, 500)
 
-        // TTS starts 800ms after scene begins
+        // TTS starts 800ms after scene begins — 60s per segment safety net
         ttsPromise = new Promise(resolve => {
           setTimeout(async () => {
             if (!this.isPlaying || this._aborted) { resolve(); return }
             try {
               const narAct2 = { ...narAction }
               if (narAction.action === "summary") {
-                await ttsService.speak(narAction.title || "")
-                for (const sec of narAction.sections || []) {
-                  if (this._aborted || !this.isPlaying) break
-                  await ttsService.speak(sec.text || "")
-                }
+                await Promise.race([
+                  (async () => {
+                    await ttsService.speak(narAction.title || "")
+                    for (const sec of narAction.sections || []) {
+                      if (this._aborted || !this.isPlaying) break
+                      await ttsService.speak(sec.text || "")
+                    }
+                  })(),
+                  new Promise(r => setTimeout(r, 90000)),
+                ])
               } else {
-                await ttsService.speak(narAct2.text || "")
+                await Promise.race([
+                  ttsService.speak(narAct2.text || ""),
+                  new Promise(r => setTimeout(r, 60000)),
+                ])
               }
             } catch (_) {}
             resolve()

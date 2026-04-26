@@ -201,30 +201,44 @@ const SIDEBAR_STYLES = `
   }
   .dir-history-item {
     border: 1px solid rgba(255,255,255,0.05);
+    border-left: 2px solid transparent;
     border-radius: 5px;
     background: rgba(255,255,255,0.02);
     padding: 7px 10px;
     cursor: pointer;
-    opacity: 0.5;
-    transition: opacity 0.15s, background 0.15s;
+    opacity: 0.48;
+    transition: opacity 0.15s, background 0.15s, border-color 0.15s;
     flex-shrink: 0;
   }
-  .dir-history-item:hover { opacity: 0.75; background: rgba(255,255,255,0.03); }
+  .dir-history-item:hover { opacity: 0.72; background: rgba(255,255,255,0.03); }
+  .dir-history-item.recent {
+    border-left-color: rgba(86,207,255,0.55);
+    opacity: 0.72;
+    background: rgba(86,207,255,0.03);
+  }
+  .dir-history-item-img {
+    width: 100%;
+    max-height: 120px;
+    object-fit: cover;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    display: block;
+  }
   .dir-history-item-heading {
     font-size: 14px;
     font-weight: 700;
     color: #e2e8f0;
     text-transform: uppercase;
     letter-spacing: 0.07em;
-    margin-bottom: 2px;
+    margin-bottom: 3px;
   }
   .dir-history-item-text {
     font-size: 13px;
-    color: #e2e8f0;
-    line-height: 1.4;
+    color: #94a3b8;
+    line-height: 1.45;
     overflow: hidden;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
   }
   .dir-history-item.expanded .dir-history-item-text {
@@ -519,17 +533,27 @@ export default function DirectorSidebar({
               <div className="dir-history-label">Previous segments</div>
               {previousSegments.map((seg, i) => {
                 const isExpanded = expandedHist === i
+                const isRecent   = i === 0
                 const heading = seg.action.heading || seg.action.title || "Intelligence Update"
                 const text =
                   seg.action.action === "summary"
                     ? (seg.action.sections?.[0]?.text || "")
                     : (seg.action.text || "")
+                const imgUrl = seg.image?.url || null
                 return (
                   <div
                     key={i}
-                    className={`dir-history-item${isExpanded ? " expanded" : ""}`}
+                    className={`dir-history-item${isExpanded ? " expanded" : ""}${isRecent ? " recent" : ""}`}
                     onClick={() => setExpandedHist(isExpanded ? null : i)}
                   >
+                    {imgUrl && (
+                      <img
+                        src={imgUrl}
+                        alt={seg.image?.caption || heading}
+                        className="dir-history-item-img"
+                        onError={e => { e.currentTarget.style.display = "none" }}
+                      />
+                    )}
                     <div className="dir-history-item-heading">{heading}</div>
                     <div className="dir-history-item-text">{text}</div>
                   </div>

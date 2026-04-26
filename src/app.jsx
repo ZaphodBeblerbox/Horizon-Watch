@@ -884,8 +884,13 @@ export default function App() {
             setHighlights:     setDirectorHighlights,
             onAction:   (action, idx) => {
                 setDirectorCurrentAction(action)
-                setDirectorSegments(prev => [...prev, { action, segIdx: idx }])
-                setDirectorImage(null)
+                // Only narrate/summary actions build the segment history; visual actions are excluded
+                if (action.action === "narrate" || action.action === "summary") {
+                    setDirectorSegments(prev => [...prev, { action, segIdx: idx, image: action._image || null }])
+                    // image already set via onImage (fired just before onAction for narrate)
+                } else {
+                    setDirectorImage(null)
+                }
             },
             onIndicator:  (action) => setDirectorIndicators(prev => [...prev, action]),
             onContextCard:(action) => setDirectorContextCards(prev => [...prev, action]),

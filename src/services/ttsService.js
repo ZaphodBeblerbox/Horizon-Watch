@@ -179,9 +179,10 @@ class TTSService {
     return new Promise((resolve) => {
       const audio = new Audio(url)
       this._currentAudio = audio
-      audio.onended = () => { this._currentAudio = null; resolve() }
-      audio.onerror = () => { this._currentAudio = null; resolve() }
-      audio.play().catch(() => resolve())
+      const done = () => { this._currentAudio = null; resolve() }
+      audio.addEventListener('ended', done, { once: true })
+      audio.addEventListener('error', done, { once: true })
+      audio.play().catch(() => done())
     })
   }
 

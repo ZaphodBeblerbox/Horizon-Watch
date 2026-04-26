@@ -8404,10 +8404,16 @@ async def _get_copernicus_access_token(client_h: httpx.AsyncClient) -> tuple[Opt
         expires_in = int(payload.get("expires_in", 3600))
         if not access_token:
             return None, "token_missing_in_response"
+        expires_at_ts = now + max(300, expires_in - 120)
         _COPERNICUS_TOKEN_CACHE["access_token"] = access_token
-        _COPERNICUS_TOKEN_CACHE["expires_at"] = now + max(300, expires_in - 120)
+        _COPERNICUS_TOKEN_CACHE["expires_at"] = expires_at_ts
+        with _DS_STATUS_LOCK:
+            _DS_STATUS["copernicus"]["token_valid"] = True
+            _DS_STATUS["copernicus"]["expires_at"] = expires_at_ts
         return access_token, None
     except Exception as ex:
+        with _DS_STATUS_LOCK:
+            _DS_STATUS["copernicus"]["token_valid"] = False
         return None, str(ex)
 
 
