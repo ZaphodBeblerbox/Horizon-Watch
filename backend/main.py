@@ -4088,7 +4088,7 @@ async def director_image_search(
 
 
 @app.post("/api/tts")
-async def text_to_speech(request: Request, current_user=Depends(require_approved_user)):
+async def text_to_speech(request: Request):
     """ElevenLabs TTS proxy — streams audio/mpeg back to Director Mode."""
     body = await request.json()
     text = (body.get("text") or "").strip()

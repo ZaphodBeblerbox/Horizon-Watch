@@ -155,8 +155,8 @@ class TTSService {
         body: JSON.stringify({ text }),
       })
       if (!resp.ok) {
-        if ([401, 403, 422, 429, 503].includes(resp.status)) {
-          console.warn(`[TTS] ElevenLabs disabled for session (HTTP ${resp.status})`)
+        if ([429, 503].includes(resp.status)) {
+          console.warn(`[TTS] ElevenLabs quota/unavailable (HTTP ${resp.status}) — disabling for session`)
           this._elevenLabsDisabled = true
         }
         throw new Error(`TTS ${resp.status}`)
