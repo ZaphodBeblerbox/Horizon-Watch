@@ -115,6 +115,39 @@ export class CommandRunner {
 
     // Person dossier markers (name → Leaflet marker)
     this._personMarkers = {}
+
+    // Image cache: query → url string (avoids re-fetching same image)
+    this._imageCache = new Map()
+  }
+
+  // ── Image fetch helper: backend → Wikipedia fallback ─────────────────────
+
+  async _fetchImage(query) {
+    if (!query) return null
+    const key = query.trim().toLowerCase()
+    if (this._imageCache.has(key)) return this._imageCache.get(key)
+    const tok  = localStorage.getItem("hw-auth-token")
+    const hdrs = tok ? { Authorization: `Bearer ${tok}` } : {}
+    // 1. Backend image search
+    try {
+      const r = await fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(query)}`, { headers: hdrs })
+      if (r.ok) {
+        const d = await r.json()
+        if (d?.image_url) { this._imageCache.set(key, d.image_url); return d.image_url }
+      }
+    } catch (_) {}
+    // 2. Wikipedia REST API fallback
+    try {
+      const wikiQuery = query.replace(/\s+/g, '_')
+      const r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`)
+      if (r.ok) {
+        const d = await r.json()
+        const url = d?.thumbnail?.source || d?.originalimage?.source || null
+        if (url) { this._imageCache.set(key, url); return url }
+      }
+    } catch (_) {}
+    this._imageCache.set(key, null)
+    return null
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -193,6 +226,8 @@ export class CommandRunner {
       if (!this.isPlaying || this._aborted) break
       this._sceneIndex = si
       const scene = scenes[si]
+      // Auto-clear previous scene's markers so they don't pile up between scenes
+      if (si > startScene) this._clearAllDrawings()
 
       // Map scene index back to the last action index for progress tracking
       // (the narration action's position in the flat actions array)
@@ -842,19 +877,13 @@ export class CommandRunner {
           .setContent(html)
           .openOn(map)
         this._drawings.push(popup)
-        // Async: fetch image and inject into popup
-        const q = `${ev.title} ${ev.source || ""}`.trim()
-        const tok = localStorage.getItem("hw-auth-token")
-        const hdrs = tok ? { Authorization: `Bearer ${tok}` } : {}
-        fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(q)}`, { headers: hdrs })
-          .then(r => r.ok ? r.json() : null)
-          .then(data => {
-            if (data?.image_url) {
-              const el = document.getElementById(imgId)
-              if (el) el.innerHTML = `<img src="${data.image_url}" style="width:100%;border-radius:4px;margin-top:6px"/>${data.attribution ? `<div style="font-size:10px;opacity:0.5;margin-top:2px">${data.attribution}</div>` : ""}`
-            }
-          })
-          .catch(() => {})
+        // Async: fetch image and inject (backend → Wikipedia fallback)
+        this._fetchImage(`${ev.title} ${ev.source || ""}`.trim()).then(url => {
+          if (url) {
+            const el = document.getElementById(imgId)
+            if (el) el.innerHTML = `<img src="${url}" style="width:100%;border-radius:4px;margin-top:6px"/>`
+          }
+        })
         return 1000
       }
 
@@ -942,18 +971,13 @@ export class CommandRunner {
           .openOn(map)
         this._drawings.push(popup)
 
-        // Async: fetch image and inject
-        const tok  = localStorage.getItem("hw-auth-token")
-        const hdrs = tok ? { Authorization: `Bearer ${tok}` } : {}
-        fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(loc.name)}`, { headers: hdrs })
-          .then(r => r.ok ? r.json() : null)
-          .then(data => {
-            if (data?.image_url) {
-              const el = document.getElementById(imgId)
-              if (el) el.innerHTML = `<img src="${data.image_url}" alt="${loc.name}" style="width:100%;border-radius:6px;margin-bottom:8px;"/>${data.attribution ? `<div style="font-size:10px;opacity:0.4;margin-bottom:6px;">${data.attribution}</div>` : ""}`
-            }
-          })
-          .catch(() => {})
+        // Async: fetch image and inject (backend → Wikipedia fallback)
+        this._fetchImage(loc.name).then(url => {
+          if (url) {
+            const el = document.getElementById(imgId)
+            if (el) el.innerHTML = `<img src="${url}" alt="${loc.name}" style="width:100%;border-radius:6px;margin-bottom:8px;"/>`
+          }
+        })
         return 1200
       }
 
@@ -1357,33 +1381,11 @@ export class CommandRunner {
         }).addTo(map)
         this._drawings.push({ layer: dot, animFrame: null })
 
-        // Label
-        if (action.label) {
-          const lm = L.marker([lat, lon], {
-            icon: L.divIcon({
-              className: "",
-              html: `<div style="color:white;font-size:13px;font-weight:700;text-shadow:0 0 8px rgba(255,48,48,0.8),0 2px 4px rgba(0,0,0,0.9);white-space:nowrap;pointer-events:none;margin-top:10px;">${action.label}</div>`,
-              iconSize: [0, 0], iconAnchor: [0, -14],
-            }),
-            interactive: false, pane: "tooltipPane",
-          }).addTo(map)
-          this._drawings.push({ layer: lm, animFrame: null })
-        }
-
-        // Fetch images in parallel
+        // Fetch images in parallel (backend → Wikipedia fallback)
         const fetched = await Promise.all(
           (action.images || []).slice(0, 4).map(async (img) => {
-            try {
-              const r = await fetch(
-                `${API_BASE}/api/director/image-search?q=${encodeURIComponent(img.query)}`,
-                { headers }
-              )
-              if (r.ok) {
-                const d = await r.json()
-                return d.image_url ? { url: d.image_url, caption: img.caption, attribution: d.attribution } : null
-              }
-            } catch (_) {}
-            return null
+            const url = await this._fetchImage(img.query)
+            return url ? { url, caption: img.caption } : null
           })
         )
         const imgs = fetched.filter(Boolean)
@@ -2102,18 +2104,8 @@ export class CommandRunner {
     }).addTo(map)
     this._drawings.push({ layer: dot, animFrame: null })
 
-    // Fetch image async
-    let imageUrl = null
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/director/image-search?q=${encodeURIComponent(action.query || action.name)}`,
-        { headers: hdrs }
-      )
-      if (res.ok) {
-        const d = await res.json()
-        imageUrl = d.image_url || null
-      }
-    } catch (_) {}
+    // Fetch image async (backend → Wikipedia fallback)
+    const imageUrl = await this._fetchImage(action.query || action.name)
 
     if (this._aborted) return
 
@@ -2506,21 +2498,6 @@ export class CommandRunner {
       } catch (_) {}
     }
 
-    // Label
-    if (label) {
-      try {
-        const lm = L.marker([lat, lon], {
-          icon: L.divIcon({
-            className: "",
-            html: `<div style="color:${color};font-size:11px;font-weight:700;text-shadow:0 0 8px ${color},0 2px 4px #000;white-space:nowrap;pointer-events:none;margin-top:8px;">${label}</div>`,
-            iconSize: [0, 0], iconAnchor: [0, -16],
-          }),
-          interactive: false, pane: "tooltipPane",
-        }).addTo(map)
-        this._drawings.push({ layer: lm, animFrame: null })
-        setTimeout(() => { try { map.removeLayer(lm) } catch (_) {} }, 5000)
-      } catch (_) {}
-    }
   }
 
   // ── Animated line drawing ─────────────────────────────────────────────────
@@ -2682,10 +2659,10 @@ export class CommandRunner {
     const pos = action.screen_position || "top-right"
     const posStyles = {
       "top-right":    "top:80px;right:24px;",
-      "top-left":     "top:80px;left:24px;",
+      "top-left":     "top:80px;left:420px;",   // avoid sidebar (340px wide from left:48px)
       "bottom-right": "bottom:80px;right:24px;",
-      "bottom-left":  "bottom:80px;left:24px;",
-      "center":       "top:50%;left:50%;transform:translate(-50%,-50%);",
+      "bottom-left":  "bottom:80px;left:50%;transform:translateX(-50%);",   // remap to center
+      "center":       "bottom:80px;left:50%;transform:translateX(-50%);",
     }
     el.style.cssText = posStyles[pos] || posStyles["top-right"]
 
@@ -2752,7 +2729,7 @@ export class CommandRunner {
             const lm = L.marker([pt.lat, pt.lon], {
               icon: L.divIcon({
                 className: "",
-                html: `<div style="color:white;font-size:10px;font-weight:700;text-shadow:0 0 8px ${color},0 2px 4px #000;white-space:nowrap;pointer-events:none;margin-top:6px;">${pt.label}</div>`,
+                html: `<div style="color:white;font-size:10px;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,0.9),0 2px 6px rgba(0,0,0,0.7);white-space:nowrap;pointer-events:none;margin-top:6px;background:rgba(0,0,0,0.55);padding:1px 5px;border-radius:3px;">${pt.label}</div>`,
                 iconSize: [0, 0], iconAnchor: [0, -14],
               }),
               interactive: false, pane: "tooltipPane",

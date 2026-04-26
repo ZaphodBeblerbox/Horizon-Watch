@@ -883,12 +883,12 @@ export default function App() {
             setLayerOverrides: setDirectorLayerOverrides,
             setHighlights:     setDirectorHighlights,
             onAction:   (action, idx) => {
-                setDirectorCurrentAction(action)
-                // Only narrate/summary actions build the segment history; visual actions are excluded
                 if (action.action === "narrate" || action.action === "summary") {
+                    // Update current display and segment history together — image already set via onImage
+                    setDirectorCurrentAction(action)
                     setDirectorSegments(prev => [...prev, { action, segIdx: idx, image: action._image || null }])
-                    // image already set via onImage (fired just before onAction for narrate)
                 } else {
+                    // Visual actions: clear image but don't overwrite current narrate text
                     setDirectorImage(null)
                 }
             },

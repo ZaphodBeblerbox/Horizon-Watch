@@ -36,7 +36,7 @@ class TTSService {
     this._voicePreference    = "elevenlabs"
     this._currentAudio       = null
     this._abortCtrl          = null
-    this._cache              = new Map()   // text → blob URL (session-scoped)
+    this._cache              = new Map()   // text → Blob (session-scoped, not URL)
     this._elevenLabsDisabled = false       // set true on quota/auth error
 
     // Browser voice fallback state
@@ -108,7 +108,7 @@ class TTSService {
   stop() {
     // Stop ElevenLabs audio
     if (this._currentAudio) {
-      try { this._currentAudio.pause(); this._currentAudio.src = "" } catch (_) {}
+      try { this._currentAudio.pause() } catch (_) {}
       this._currentAudio = null
     }
     if (this._abortCtrl) {
@@ -137,9 +137,9 @@ class TTSService {
   }
 
   async _speakChunk(text) {
-    // Check session cache first
+    // Check session blob cache first
     if (this._cache.has(text)) {
-      return this._playUrl(this._cache.get(text))
+      return this._playBlob(this._cache.get(text))
     }
 
     this._abortCtrl = new AbortController()
@@ -155,7 +155,6 @@ class TTSService {
         body: JSON.stringify({ text }),
       })
       if (!resp.ok) {
-        // 401/403/422/429 = quota exceeded or misconfigured — disable for session
         if ([401, 403, 422, 429, 503].includes(resp.status)) {
           console.warn(`[TTS] ElevenLabs disabled for session (HTTP ${resp.status})`)
           this._elevenLabsDisabled = true
@@ -163,9 +162,8 @@ class TTSService {
         throw new Error(`TTS ${resp.status}`)
       }
       const blob = await resp.blob()
-      const url  = URL.createObjectURL(blob)
-      this._cache.set(text, url)
-      return this._playUrl(url)
+      this._cache.set(text, blob)   // cache the blob, not the URL
+      return this._playBlob(blob)
     } catch (err) {
       if (err.name === "AbortError") return
       console.warn("[TTS] ElevenLabs failed, using browser fallback:", err.message)
@@ -175,14 +173,48 @@ class TTSService {
     }
   }
 
-  _playUrl(url) {
+  _playBlob(blob) {
     return new Promise((resolve) => {
+      // Create a fresh URL each play — blob URLs can silently stop firing 'ended'
+      // if reused across multiple Audio instances.
+      const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       this._currentAudio = audio
-      const done = () => { this._currentAudio = null; resolve() }
-      audio.addEventListener('ended', done, { once: true })
-      audio.addEventListener('error', done, { once: true })
-      audio.play().catch(() => done())
+
+      let resolved = false
+      const done = (reason) => {
+        if (resolved) return
+        resolved = true
+        try { audio.pause() } catch (_) {}
+        try { URL.revokeObjectURL(url) } catch (_) {}
+        this._currentAudio = null
+        console.log(`[TTS] chunk done (${reason})`)
+        resolve()
+      }
+
+      audio.addEventListener('ended', () => done('ended'), { once: true })
+      audio.addEventListener('error', () => done('error'), { once: true })
+
+      // Smart timeout: (duration + 5s) once we know the audio length
+      audio.addEventListener('loadedmetadata', () => {
+        const maxWait = Math.max((audio.duration || 0) * 1000 + 5000, 10000)
+        setTimeout(() => {
+          if (!resolved) {
+            console.warn('[TTS] Duration timeout — force advancing')
+            done('duration-timeout')
+          }
+        }, maxWait)
+      }, { once: true })
+
+      // Hard 60s fallback regardless of loadedmetadata
+      setTimeout(() => {
+        if (!resolved) {
+          console.warn('[TTS] Hard 60s timeout — force advancing')
+          done('hard-timeout')
+        }
+      }, 60000)
+
+      audio.play().catch(() => done('play-rejected'))
     })
   }
 

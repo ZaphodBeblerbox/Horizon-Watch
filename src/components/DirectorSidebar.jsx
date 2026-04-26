@@ -67,16 +67,20 @@ const SIDEBAR_STYLES = `
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #c89040;
-    margin-bottom: 2px;
+    color: #56cfff;
+    margin-bottom: 4px;
     flex-shrink: 0;
   }
+  .dir-seg-heading.conflict { color: #ef4444; }
+  .dir-seg-heading.warning  { color: #f59e0b; }
+  .dir-seg-heading.intel    { color: #56cfff; }
+  .dir-seg-heading.neutral  { color: #94a3b8; }
 
   /* Narration text */
   .dir-narration-text {
-    font-size: 14px;
-    line-height: 1.65;
-    color: rgba(225, 238, 255, 0.9);
+    font-size: 13px;
+    line-height: 1.6;
+    color: #e2e8f0;
     animation: dir-narration-fade 350ms ease-out;
     flex-shrink: 0;
   }
@@ -328,10 +332,19 @@ const SIDEBAR_STYLES = `
   }
 `
 
+// Classify heading by topic keywords → CSS class for color
+function _headingClass(heading = "") {
+  const h = heading.toLowerCase()
+  if (/conflict|combat|attack|strike|war|military|force|kill|fight|offensive|assault|bomb|missile/i.test(h)) return "conflict"
+  if (/warning|alert|threat|risk|danger|crisis|tension|escalat/i.test(h)) return "warning"
+  if (/intel|intelligence|analysis|report|overview|briefing|update|situation/i.test(h)) return "intel"
+  return "neutral"
+}
+
 export default function DirectorSidebar({
   visible       = false,
   currentAction = null,
-  segments      = [],       // [{action, segIdx}] — all narrate actions in order
+  segments      = [],       // [{action, segIdx, image}] — narrate actions only
   indicators    = [],
   contextCards  = [],
   currentImage  = null,     // {url, caption, attribution, loading} | null
@@ -344,6 +357,8 @@ export default function DirectorSidebar({
   const [imgLoaded,    setImgLoaded]    = useState(false)
   const prevImgUrl                      = useRef(null)
   const inputRef                        = useRef(null)
+  const currentSegRef                   = useRef(null)
+  const scrollRef                       = useRef(null)
 
   const { currentIndex, total } = runnerState
   const hasSequence = total > 0
@@ -356,6 +371,15 @@ export default function DirectorSidebar({
       prevImgUrl.current = url
     }
   }, [currentImage?.url])
+
+  // Auto-scroll to current segment when it changes
+  useEffect(() => {
+    if (currentSegRef.current && scrollRef.current) {
+      setTimeout(() => {
+        try { currentSegRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }) } catch (_) {}
+      }, 150)
+    }
+  }, [currentAction?.text, currentAction?.heading])
 
   // Focus input when sidebar becomes visible and there's no sequence
   useEffect(() => {
@@ -393,7 +417,7 @@ export default function DirectorSidebar({
     <>
       <style>{SIDEBAR_STYLES}</style>
       <div className="dir-sidebar">
-        <div className="dir-sidebar-scroll">
+        <div className="dir-sidebar-scroll" ref={scrollRef}>
 
           {/* ── Generating ── */}
           {generating && (
@@ -432,10 +456,10 @@ export default function DirectorSidebar({
 
           {/* ── Current segment content ── */}
           {currentAction && !generating && (
-            <>
-              {/* Heading */}
+            <div ref={currentSegRef}>
+              {/* Heading — colored by topic */}
               {(currentAction.heading || currentAction.title) && (
-                <div className="dir-seg-heading">
+                <div className={`dir-seg-heading ${_headingClass(currentAction.heading || currentAction.title)}`}>
                   {currentAction.heading || currentAction.title}
                 </div>
               )}
@@ -453,7 +477,7 @@ export default function DirectorSidebar({
                   {(currentAction.sections || []).map((sec, i) => (
                     <div key={i}>
                       {sec.heading && (
-                        <div className="dir-seg-heading" style={{ marginBottom: 3 }}>
+                        <div className={`dir-seg-heading ${_headingClass(sec.heading)}`} style={{ marginBottom: 3 }}>
                           {sec.heading}
                         </div>
                       )}
@@ -523,7 +547,7 @@ export default function DirectorSidebar({
                   ))}
                 </div>
               )}
-            </>
+            </div>
           )}
 
           {/* ── Previous segments history ── */}
