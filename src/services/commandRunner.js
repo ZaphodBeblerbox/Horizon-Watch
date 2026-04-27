@@ -127,29 +127,29 @@ export class CommandRunner {
     if (!query) return null
     const key = query.trim().toLowerCase()
     if (this._imageCache.has(key)) return this._imageCache.get(key)
-    // 1. Hardcoded image database — instant, no network
+    // 1. Wikipedia REST API via backend proxy (primary — reliable article thumbnails, no auth)
+    try {
+      const r = await fetch(`${API_BASE}/api/image/wiki?q=${encodeURIComponent(query)}`)
+      if (r.ok) {
+        const d = await r.json()
+        if (d?.image) { this._imageCache.set(key, d.image); return d.image }
+      }
+    } catch (_) {}
+    // 2. Hardcoded database — covers entities with no Wikipedia page
     const hardcoded = findDirectorImage(query)
     if (hardcoded) { this._imageCache.set(key, hardcoded); return hardcoded }
-    const tok  = localStorage.getItem("hw-auth-token")
-    const hdrs = tok ? { Authorization: `Bearer ${tok}` } : {}
-    // 2. Backend image search
-    try {
-      const r = await fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(query)}`, { headers: hdrs })
-      if (r.ok) {
-        const d = await r.json()
-        if (d?.image_url) { this._imageCache.set(key, d.image_url); return d.image_url }
-      }
-    } catch (_) {}
-    // 3. Wikipedia REST API fallback
-    try {
-      const wikiQuery = query.replace(/\s+/g, '_')
-      const r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`)
-      if (r.ok) {
-        const d = await r.json()
-        const url = d?.thumbnail?.source || d?.originalimage?.source || null
-        if (url) { this._imageCache.set(key, url); return url }
-      }
-    } catch (_) {}
+    // 3. Wikimedia Commons search (slow, last resort)
+    const tok = localStorage.getItem("hw-auth-token")
+    if (tok) {
+      try {
+        const r = await fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(query)}`,
+          { headers: { Authorization: `Bearer ${tok}` } })
+        if (r.ok) {
+          const d = await r.json()
+          if (d?.image_url) { this._imageCache.set(key, d.image_url); return d.image_url }
+        }
+      } catch (_) {}
+    }
     this._imageCache.set(key, null)
     return null
   }

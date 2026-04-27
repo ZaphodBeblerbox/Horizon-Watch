@@ -1012,6 +1012,26 @@ EXAMPLE SCENE — use this exact pattern for every scene:
   {{ "action": "narrate", "heading": "HORMUZ BLOCKADE THREAT", "text": "The Strait of Hormuz is the world's most critical maritime chokepoint..." }}
 ]
 
+IMAGE QUERY PRECISION — use EXACT Wikipedia article titles for reliable images:
+Wikipedia's REST API is the primary image source. Use the exact article title to guarantee a hit:
+- People: "Kim Jong Un", "Ali Khamenei", "Volodymyr Zelenskyy", "Mohammed bin Salman"
+- Vessels: "USS Abraham Lincoln (CVN-72)", "Arleigh Burke-class destroyer", "Nimitz-class aircraft carrier"
+- Aircraft: "General Atomics MQ-9 Reaper", "Lockheed Martin F-35", "Boeing P-8 Poseidon", "Sukhoi Su-35"
+- Missiles: "Tomahawk (missile)", "Iron Dome", "S-400 missile system", "HIMARS"
+- Cities: "Bandar Abbas", "Odesa", "Kyiv", "Gao", "Khartoum", "Mogadishu"
+- Facilities: "Camp Lemonnier", "Strait of Hormuz", "Suez Canal", "Bab-el-Mandeb Strait"
+- Groups: "Islamic Revolutionary Guard Corps", "Hezbollah", "Hamas", "Wagner Group"
+- Vehicles: "M1 Abrams", "T-72", "AH-64 Apache"
+ALWAYS use the exact Wikipedia article title. Never use abbreviations, nicknames, or descriptions as image_query.
+
+ANIMATION REQUIREMENTS — every scene must be visually rich:
+- City under siege: zoom 10-11, troop_movement with 2+ converging columns, spotlight on city, impact markers on key facilities
+- Naval activity: animate_movement for every vessel along realistic sea routes (waypoints in water), zoom 8-9 for straits, zoom 12 for port level
+- Airstrike: draw_arrow from launch base to target, animate_movement for the aircraft, impact_fx at target, zoom 10 for strike area
+- Person mentioned: show_person action with exact capital city position, zoom 9-10 to their country
+- EVERY scene: fly_to with a DIFFERENT zoom level than the previous scene — never repeat the same zoom consecutively
+- Each scene minimum: fly_to + country highlight + 2 place_image_markers + 1 data_callout + narrate
+
 NARRATE VOICE STYLE — write narrate text for ElevenLabs AI voice synthesis:
 - Use commas naturally to create rhythmic pauses: "Iran's navy, now fully mobilized, has moved three frigates into the strait."
 - Spell out numbers under one hundred: "thirty-seven ships" not "37 ships". Spell out "million" and "billion".

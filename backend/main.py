@@ -4049,6 +4049,46 @@ def _wikimedia_image_search(query: str) -> dict | None:
     return None
 
 
+_WIKI_IMAGE_CACHE: dict = {}
+
+@app.get("/api/image/wiki")
+async def get_wiki_image(q: str = Query(..., min_length=1, max_length=200)):
+    """Wikipedia REST API image proxy — fast, reliable, no auth required. Cached in memory."""
+    if q in _WIKI_IMAGE_CACHE:
+        return _WIKI_IMAGE_CACHE[q]
+    # Try query variations: original, spaces→underscores, strip hyphens
+    variants: list[str] = []
+    for v in [q, q.replace(" ", "_"), q.replace("-", " ")]:
+        if v not in variants:
+            variants.append(v)
+    async with httpx.AsyncClient(timeout=6) as client:
+        for variant in variants:
+            try:
+                resp = await client.get(
+                    f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(variant)}",
+                    headers={"User-Agent": "NAGINI/2.0 (intelligence platform)"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    thumb = (
+                        (data.get("thumbnail") or {}).get("source")
+                        or (data.get("originalimage") or {}).get("source")
+                    )
+                    if thumb:
+                        result = {
+                            "image":   thumb,
+                            "extract": (data.get("extract") or "")[:200],
+                            "title":   data.get("title", q),
+                        }
+                        _WIKI_IMAGE_CACHE[q] = result
+                        return result
+            except Exception:
+                continue
+    result = {"image": None, "extract": None, "title": q}
+    _WIKI_IMAGE_CACHE[q] = result
+    return result
+
+
 @app.get("/api/director/image-search")
 async def director_image_search(
     q: str = Query(..., min_length=2, max_length=200),
