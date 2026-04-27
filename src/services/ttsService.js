@@ -1,20 +1,16 @@
 /**
  * ttsService.js — Director Mode TTS using ElevenLabs, falling back to browser SpeechSynthesis.
- *
- * Public API is unchanged from the previous browser-only version so all existing
- * callers (commandRunner.js, DirectorBar, DirectorModal, DirectorSubtitle) work
- * without modification.
  */
 
 import API_BASE from "../apiBase.js"
 
 const DEFAULT_VOICE_ID = "fjnwTZkKtQOJaYzGLa6n"
 const MAX_CHUNK_CHARS  = 500
+const INTER_CHUNK_MS   = 250   // pause between sequential chunks to avoid rate limits
 
 function _splitText(text) {
   if (text.length <= MAX_CHUNK_CHARS) return [text]
   const chunks = []
-  // Split on sentence endings, keeping the delimiter with the preceding chunk
   const sentences = text.match(/[^.!?]+[.!?]*/g) || [text]
   let current = ""
   for (const s of sentences) {
@@ -29,6 +25,10 @@ function _splitText(text) {
   return chunks.length ? chunks : [text]
 }
 
+function _delay(ms) {
+  return new Promise(r => setTimeout(r, ms))
+}
+
 class TTSService {
   constructor() {
     this._muted              = false
@@ -36,14 +36,14 @@ class TTSService {
     this._voicePreference    = "elevenlabs"
     this._currentAudio       = null
     this._abortCtrl          = null
-    this._cache              = new Map()   // text → Blob (session-scoped, not URL)
-    this._elevenLabsDisabled = false       // set true on quota/auth error
+    this._cache              = new Map()   // text → Blob
+    this._elevenLabsDisabled = false       // only set true on sustained quota failure
+    this._consecutiveFails   = 0           // reset on success; disable after 3
 
-    // Browser voice fallback state
-    this._browserVoice   = null
-    this._rate           = 0.95
-    this._pitch          = 0.9
-    this._volume         = 1.0
+    this._browserVoice    = null
+    this._rate            = 0.95
+    this._pitch           = 0.9
+    this._volume          = 1.0
     this._currentUtterance = null
 
     this._loadBrowserVoices()
@@ -51,8 +51,6 @@ class TTSService {
       window.speechSynthesis.onvoiceschanged = () => this._loadBrowserVoices()
     }
   }
-
-  // ── Browser voice helpers (fallback only) ────────────────────────────────
 
   _loadBrowserVoices() {
     if (!window.speechSynthesis) return
@@ -70,9 +68,9 @@ class TTSService {
   get isSpeaking()      { return this._speaking }
   get voicePreference() { return this._voicePreference }
 
-  mute()        { this._muted = true;  this.stop() }
-  unmute()      { this._muted = false }
-  toggleMute()  { if (this._muted) this.unmute(); else this.mute(); return this._muted }
+  mute()       { this._muted = true;  this.stop() }
+  unmute()     { this._muted = false }
+  toggleMute() { if (this._muted) this.unmute(); else this.mute(); return this._muted }
 
   setVoice(preference) {
     this._voicePreference = preference
@@ -101,12 +99,11 @@ class TTSService {
       }
       return await this._speakElevenLabs(text)
     } catch (_) {
-      // Last-resort safety net — briefing must never crash due to TTS
+      // Safety net — briefing must never crash due to TTS
     }
   }
 
   stop() {
-    // Stop ElevenLabs audio
     if (this._currentAudio) {
       try { this._currentAudio.pause() } catch (_) {}
       this._currentAudio = null
@@ -115,7 +112,6 @@ class TTSService {
       try { this._abortCtrl.abort() } catch (_) {}
       this._abortCtrl = null
     }
-    // Stop browser TTS
     if (window.speechSynthesis) window.speechSynthesis.cancel()
     this._currentUtterance = null
     this._speaking = false
@@ -125,11 +121,19 @@ class TTSService {
 
   async _speakElevenLabs(text) {
     const chunks = _splitText(text)
+    console.log(`[TTS] ElevenLabs: ${chunks.length} chunk(s) for ${text.length} chars`)
     this._speaking = true
     try {
-      for (const chunk of chunks) {
+      for (let i = 0; i < chunks.length; i++) {
         if (this._muted) break
-        await this._speakChunk(chunk)
+        if (i > 0) await _delay(INTER_CHUNK_MS)
+        await this._speakChunk(chunks[i])
+        // If ElevenLabs got permanently disabled mid-loop, switch to browser for rest
+        if (this._elevenLabsDisabled) {
+          const remaining = chunks.slice(i + 1).join(" ")
+          if (remaining.trim()) await this._doSpeakBrowser(remaining)
+          break
+        }
       }
     } finally {
       this._speaking = false
@@ -137,11 +141,12 @@ class TTSService {
   }
 
   async _speakChunk(text) {
-    // Check session blob cache first
     if (this._cache.has(text)) {
+      console.log(`[TTS] cache hit (${text.length} chars)`)
       return this._playBlob(this._cache.get(text))
     }
 
+    console.log(`[TTS] requesting ElevenLabs, text length: ${text.length} chars`)
     this._abortCtrl = new AbortController()
     const tok = localStorage.getItem("hw-auth-token")
     try {
@@ -149,25 +154,45 @@ class TTSService {
         method:  "POST",
         signal:  this._abortCtrl.signal,
         headers: {
-          "Content-Type":  "application/json",
+          "Content-Type": "application/json",
           ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
         },
         body: JSON.stringify({ text }),
       })
+
+      console.log(`[TTS] ElevenLabs response: ${resp.status}`)
+
       if (!resp.ok) {
-        if ([429, 503].includes(resp.status)) {
-          console.warn(`[TTS] ElevenLabs quota/unavailable (HTTP ${resp.status}) — disabling for session`)
-          this._elevenLabsDisabled = true
+        const errBody = await resp.text().catch(() => "")
+        console.error(`[TTS] ElevenLabs failed ${resp.status}:`, errBody.slice(0, 200))
+        if (resp.status === 429) {
+          this._consecutiveFails++
+          console.warn(`[TTS] Rate limited (fail #${this._consecutiveFails}) — backing off 2s`)
+          await _delay(2000)
+          if (this._consecutiveFails >= 3) {
+            console.warn("[TTS] 3 consecutive rate limits — disabling ElevenLabs for session")
+            this._elevenLabsDisabled = true
+          }
+        } else if (resp.status === 503) {
+          this._consecutiveFails++
+          if (this._consecutiveFails >= 3) {
+            this._elevenLabsDisabled = true
+          }
         }
-        throw new Error(`TTS ${resp.status}`)
+        // Fall back to browser TTS for this chunk
+        return this._doSpeakBrowser(text)
       }
+
+      // Success — reset fail counter
+      this._consecutiveFails = 0
       const blob = await resp.blob()
-      this._cache.set(text, blob)   // cache the blob, not the URL
+      this._cache.set(text, blob)
       return this._playBlob(blob)
+
     } catch (err) {
       if (err.name === "AbortError") return
-      console.warn("[TTS] ElevenLabs failed, using browser fallback:", err.message)
-      return this._speakBrowser(text)
+      console.warn("[TTS] fetch error, using browser fallback:", err.message)
+      return this._doSpeakBrowser(text)
     } finally {
       this._abortCtrl = null
     }
@@ -175,9 +200,7 @@ class TTSService {
 
   _playBlob(blob) {
     return new Promise((resolve) => {
-      // Create a fresh URL each play — blob URLs can silently stop firing 'ended'
-      // if reused across multiple Audio instances.
-      const url = URL.createObjectURL(blob)
+      const url   = URL.createObjectURL(blob)
       const audio = new Audio(url)
       this._currentAudio = audio
 
@@ -188,42 +211,53 @@ class TTSService {
         try { audio.pause() } catch (_) {}
         try { URL.revokeObjectURL(url) } catch (_) {}
         this._currentAudio = null
-        console.log(`[TTS] chunk done (${reason})`)
+        console.log(`[TTS] playback done (${reason})`)
         resolve()
       }
 
-      audio.addEventListener('ended', () => done('ended'), { once: true })
-      audio.addEventListener('error', () => done('error'), { once: true })
+      audio.addEventListener('ended',  () => done('ended'),  { once: true })
+      audio.addEventListener('error',  () => done('error'),  { once: true })
 
-      // Smart timeout: (duration + 5s) once we know the audio length
+      // Smart timeout based on audio duration
       audio.addEventListener('loadedmetadata', () => {
         const maxWait = Math.max((audio.duration || 0) * 1000 + 5000, 10000)
+        console.log(`[TTS] audio duration ${audio.duration?.toFixed(1)}s, timeout in ${(maxWait/1000).toFixed(0)}s`)
         setTimeout(() => {
           if (!resolved) {
-            console.warn('[TTS] Duration timeout — force advancing')
+            console.warn("[TTS] duration timeout — force advancing")
             done('duration-timeout')
           }
         }, maxWait)
       }, { once: true })
 
-      // Hard 60s fallback regardless of loadedmetadata
+      // Hard 60s safety net
       setTimeout(() => {
         if (!resolved) {
-          console.warn('[TTS] Hard 60s timeout — force advancing')
+          console.warn("[TTS] hard 60s timeout — force advancing")
           done('hard-timeout')
         }
       }, 60000)
 
-      audio.play().catch(() => done('play-rejected'))
+      audio.play().catch(e => {
+        console.error("[TTS] audio.play() rejected:", e.message)
+        done('play-rejected')
+      })
     })
   }
 
-  // ── Browser TTS fallback ─────────────────────────────────────────────────
+  // ── Browser TTS ──────────────────────────────────────────────────────────
 
+  // Public-facing: stops any current audio before speaking
   _speakBrowser(text) {
+    this.stop()
+    return this._doSpeakBrowser(text)
+  }
+
+  // Internal: speaks without stopping — safe to call as a fallback mid-loop
+  _doSpeakBrowser(text) {
     return new Promise((resolve) => {
-      if (!window.speechSynthesis || !text) { resolve(); return }
-      this.stop()
+      if (!window.speechSynthesis || !text?.trim()) { resolve(); return }
+      console.log(`[TTS] browser TTS fallback for ${text.length} chars`)
       const utterance    = new SpeechSynthesisUtterance(text)
       utterance.voice    = this._browserVoice
       utterance.rate     = this._rate
@@ -238,17 +272,25 @@ class TTSService {
         }
       }, 10000)
 
+      let resolved = false
       const done = () => {
+        if (resolved) return
+        resolved = true
         clearInterval(keepAlive)
-        this._speaking = false
         this._currentUtterance = null
         resolve()
       }
+
+      // Hard 45s timeout — browser TTS should never hang forever
+      setTimeout(done, 45000)
+
       utterance.onend   = done
-      utterance.onerror = done
+      utterance.onerror = (e) => {
+        console.error("[TTS] browser TTS error:", e.error)
+        done()
+      }
 
       this._currentUtterance = utterance
-      this._speaking = true
       window.speechSynthesis.speak(utterance)
     })
   }
