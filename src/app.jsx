@@ -933,7 +933,13 @@ export default function App() {
             _startDirectorPlayback(sequence, intent)
         } catch (err) {
             console.error("[Director] generate failed:", err)
-            setDirectorError(err.message || "Director generation failed")
+            const msg = err.message || "Director generation failed"
+            if (msg.toLowerCase().includes("session expired") || msg.toLowerCase().includes("authentication")) {
+                clearToken()
+                setCurrentUser(null)
+            } else {
+                setDirectorError(msg)
+            }
         } finally {
             setDirectorGenerating(false)
         }

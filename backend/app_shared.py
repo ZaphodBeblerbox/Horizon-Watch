@@ -16,7 +16,7 @@ from fastapi import HTTPException, Depends
 # ── JWT / auth config ─────────────────────────────────────────────────────────
 JWT_SECRET      = os.getenv("JWT_SECRET", "hw-dev-secret-change-in-prod")
 JWT_ALGORITHM   = "HS256"
-JWT_EXPIRE_DAYS = 7
+JWT_EXPIRE_DAYS = 30
 FRONTEND_URL    = os.getenv("FRONTEND_URL", "http://localhost:5173")
 RESEND_API_KEY  = os.getenv("RESEND_API_KEY", "")
 
