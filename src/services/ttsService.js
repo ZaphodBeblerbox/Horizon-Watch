@@ -167,17 +167,31 @@ class TTSService {
         console.error(`[TTS] ElevenLabs failed ${resp.status}:`, errBody.slice(0, 200))
         if (resp.status === 429) {
           this._consecutiveFails++
-          console.warn(`[TTS] Rate limited (fail #${this._consecutiveFails}) — backing off 2s`)
-          await _delay(2000)
+          console.warn(`[TTS] Rate limited (fail #${this._consecutiveFails}) — waiting 3s then retrying once`)
+          await _delay(3000)
+          // Retry once after back-off
+          try {
+            const retry = await fetch(`${API_BASE}/api/tts`, {
+              method:  "POST",
+              headers: { "Content-Type": "application/json",
+                         ...(localStorage.getItem("hw-auth-token") ? { Authorization: `Bearer ${localStorage.getItem("hw-auth-token")}` } : {}) },
+              body: JSON.stringify({ text }),
+            })
+            if (retry.ok) {
+              console.log(`[TTS] Retry succeeded after rate limit`)
+              this._consecutiveFails = 0
+              const blob = await retry.blob()
+              this._cache.set(text, blob)
+              return this._playBlob(blob)
+            }
+          } catch (_) {}
           if (this._consecutiveFails >= 3) {
             console.warn("[TTS] 3 consecutive rate limits — disabling ElevenLabs for session")
             this._elevenLabsDisabled = true
           }
         } else if (resp.status === 503) {
           this._consecutiveFails++
-          if (this._consecutiveFails >= 3) {
-            this._elevenLabsDisabled = true
-          }
+          if (this._consecutiveFails >= 3) { this._elevenLabsDisabled = true }
         }
         // Fall back to browser TTS for this chunk
         return this._doSpeakBrowser(text)

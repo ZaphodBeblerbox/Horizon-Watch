@@ -27,6 +27,7 @@
 
 import API_BASE from "../apiBase.js"
 import ttsService from "./ttsService.js"
+import { findDirectorImage } from "./directorImages.js"
 
 const AUTH_KEY = "hw-auth-token"
 
@@ -126,9 +127,12 @@ export class CommandRunner {
     if (!query) return null
     const key = query.trim().toLowerCase()
     if (this._imageCache.has(key)) return this._imageCache.get(key)
+    // 1. Hardcoded image database — instant, no network
+    const hardcoded = findDirectorImage(query)
+    if (hardcoded) { this._imageCache.set(key, hardcoded); return hardcoded }
     const tok  = localStorage.getItem("hw-auth-token")
     const hdrs = tok ? { Authorization: `Bearer ${tok}` } : {}
-    // 1. Backend image search
+    // 2. Backend image search
     try {
       const r = await fetch(`${API_BASE}/api/director/image-search?q=${encodeURIComponent(query)}`, { headers: hdrs })
       if (r.ok) {
@@ -136,7 +140,7 @@ export class CommandRunner {
         if (d?.image_url) { this._imageCache.set(key, d.image_url); return d.image_url }
       }
     } catch (_) {}
-    // 2. Wikipedia REST API fallback
+    // 3. Wikipedia REST API fallback
     try {
       const wikiQuery = query.replace(/\s+/g, '_')
       const r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`)
@@ -306,7 +310,7 @@ export class CommandRunner {
       // Brief inter-scene pause
       if (this.isPlaying && !this._aborted) {
         console.log(`[Director] Scene ${si + 1}/${scenes.length} complete, advancing`)
-        await new Promise(r => { this._timer = setTimeout(r, 900) })
+        await new Promise(r => { this._timer = setTimeout(r, 1000) })
       }
     }
 
@@ -1560,6 +1564,16 @@ export class CommandRunner {
         return (action.duration ?? 8000) + 1200
       }
 
+      // ── Troop movement — converging columns toward a target city ─────────────
+
+      case "troop_movement": {
+        const map = this.mapRef?.current
+        const L   = window.L
+        if (!map || !L) return defaultDelay
+        this._animateTroopMovement(action)
+        return 9000
+      }
+
       // ── Impact / explosion effect ──────────────────────────────────────────
 
       case "impact": {
@@ -2428,6 +2442,54 @@ export class CommandRunner {
         entry.animFrame = cancel
       }, delay)
     })
+  }
+
+  // ── Troop movement (converging columns) ──────────────────────────────────
+
+  _animateTroopMovement(action) {
+    const map = this.mapRef?.current
+    const L   = window.L
+    if (!map || !L) return
+    const units   = action.units || []
+    const target  = action.target  // { name, lat, lng } or { lat, lon }
+    const tLat    = target?.lat ?? target?.lat
+    const tLon    = target?.lng ?? target?.lon
+    const duration = 7000
+
+    units.forEach((unit, i) => {
+      const color   = unit.color || "#ef4444"
+      const start   = unit.start || [unit.from?.[0], unit.from?.[1]]
+      const end     = tLat != null ? [tLat, tLon] : (unit.end || start)
+      if (!start[0] || !end[0]) return
+
+      // Dashed animated advance line
+      const path = L.polyline([start, end], {
+        color, weight: 2, dashArray: "6,6", opacity: 0.7,
+      }).addTo(map)
+      this._drawings.push({ layer: path, animFrame: null })
+
+      // Moving troop icon (small filled circle)
+      const icon = L.divIcon({
+        html: `<svg width="14" height="14" viewBox="0 0 14 14"><polygon points="7,1 13,13 1,13" fill="${color}" stroke="#000" stroke-width="1"/></svg>`,
+        className: "", iconSize: [14, 14], iconAnchor: [7, 7],
+      })
+      const marker = L.marker(start, { icon, zIndexOffset: 800 }).addTo(map)
+      this._drawings.push({ layer: marker, animFrame: null })
+
+      // Stagger start by 500ms per unit
+      setTimeout(() => {
+        this._animateAlongPath(marker, [start, end], duration, map, () => {})
+      }, i * 500)
+    })
+
+    // Pulsing siege circle at target
+    if (tLat != null) {
+      const siegeCircle = L.circle([tLat, tLon], {
+        radius: 15000, color: "#ef4444", fillColor: "#ef4444",
+        fillOpacity: 0.15, weight: 2, dashArray: "8,4",
+      }).addTo(map)
+      this._drawings.push({ layer: siegeCircle, animFrame: null })
+    }
   }
 
   // ── Impact / explosion ────────────────────────────────────────────────────

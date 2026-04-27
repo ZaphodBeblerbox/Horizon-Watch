@@ -489,6 +489,8 @@ _VALID_ACTIONS = {
     "summary",
     # Formation (multi-unit tactical animation)
     "formation",
+    # Troop movement (converging ground columns)
+    "troop_movement",
     # Animated movements, effects, overlays (Prompt 3)
     "animate_movement", "impact", "draw_animated_line",
     "data_callout", "pulse_hotspot", "recap_overview",
@@ -578,6 +580,8 @@ def _validate_action(action: dict) -> bool:
         return "lat" in action and "lon" in action
     if act == "formation":
         return "units" in action and "target" in action and "pattern" in action
+    if act == "troop_movement":
+        return "units" in action and "target" in action
     if act == "show_video":
         return "query" in action
     return True
@@ -780,6 +784,13 @@ MULTI-UNIT FORMATIONS — for tactical scenarios:
   Use for: ship surrounding scenarios, air intercepts, naval blockades, encirclement operations.
   Example (Chinese ships surrounding Philippine vessel at Scarborough Shoal):
   { "action": "formation", "units": [{"lat":15.25,"lon":117.80,"type":"ship","faction":"hostile","label":"CCG-5204"},{"lat":15.18,"lon":117.78,"type":"ship","faction":"subject","label":"BRP Sierra Madre"}], "target": [15.17, 117.77], "pattern": "surround" }
+
+TROOP MOVEMENT — converging columns toward a city (sieges, advances, offensives):
+- {{ "action": "troop_movement", "units": [{{"name": string, "start": [lat, lon], "end": [lat, lon], "color": "#ef4444"}}], "target": {{"name": string, "lat": number, "lng": number}}, "animation": "converge" }}
+  Renders each unit as a moving triangle icon advancing from start to the target city, with a dashed polyline trail and a pulsing red siege circle at the target.
+  Use whenever ground forces are advancing on a city, encircling a position, or converging for an offensive.
+  Example (JNIM besieging Gao):
+  {{ "action": "troop_movement", "units": [{{"name": "JNIM northern column", "start": [16.8, -0.8], "end": [16.27, -0.05], "color": "#ef4444"}}, {{"name": "JNIM western column", "start": [16.0, -1.2], "end": [16.27, -0.05], "color": "#ef4444"}}], "target": {{"name": "Gao", "lat": 16.27, "lng": -0.05}}, "animation": "converge" }}
 
 SUMMARY — always the final action:
 - { "action": "summary", "title": string, "sections": [{ "heading": string, "text": string }], "predictions": [{ "prediction": string, "confidence": "high"|"medium"|"low", "basis": string }] }
@@ -1037,7 +1048,8 @@ MARITIME ROUTING RULES — ships and vessels MUST follow water:
 - For long ocean transits, add 4-6 waypoints following the actual sea lane arc (not a straight line).
 
 USE EVERY VISUAL TOOL — a full briefing MUST include all of the following:
-☑ animate_movement — for EVERY vessel, aircraft, or troop movement discussed (not just mentioned); naval units MUST have maritime waypoints
+☑ animate_movement — for EVERY vessel and aircraft movement discussed; naval units MUST have maritime waypoints
+☑ troop_movement — for EVERY ground force advance, siege, or encirclement; include 2+ converging columns
 ☑ show_vessel + show_aircraft — with lat/lon, type, faction for every tracked asset cited
 ☑ spotlight — for at least one specific facility or installation per briefing
 ☑ show_chart — at least 2 charts (oil price, shipping volume, casualty count, etc.)
