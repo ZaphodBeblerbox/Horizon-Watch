@@ -295,7 +295,7 @@ export class CommandRunner {
               } else {
                 await Promise.race([
                   ttsService.speak(narAct2.text || ""),
-                  new Promise(r => setTimeout(r, 60000)),
+                  new Promise(r => setTimeout(r, 120000)),  // 2-min cap for long narrations
                 ])
               }
             } catch (_) {}
@@ -304,13 +304,22 @@ export class CommandRunner {
         })
       }
 
-      // Wait for both visuals and TTS
-      await Promise.all([...visualPromises, ttsPromise])
+      // Minimum scene floor: fly_to animation (2.5s) + visuals + 1s settle.
+      // Estimated from narration length: ~150 words/min = ~2.5s per sentence.
+      // This prevents racing through scenes when TTS fails silently.
+      const narText  = scene.narration?.text || scene.narration?.title || ""
+      const wordCount = narText.split(/\s+/).filter(Boolean).length
+      const estSpeakMs = Math.max(wordCount / 150 * 60000, 5000)  // min 5s
+      const floorMs  = 3200 + estSpeakMs  // fly_to + speech estimate
+      const floorPromise = new Promise(r => setTimeout(r, floorMs))
+
+      // Wait for visuals, TTS, and the floor — whichever is longest
+      await Promise.all([...visualPromises, ttsPromise, floorPromise])
 
       // Brief inter-scene pause
       if (this.isPlaying && !this._aborted) {
-        console.log(`[Director] Scene ${si + 1}/${scenes.length} complete, advancing`)
-        await new Promise(r => { this._timer = setTimeout(r, 1000) })
+        console.log(`[Director] Scene ${si + 1}/${scenes.length} complete (floor=${(floorMs/1000).toFixed(1)}s), advancing`)
+        await new Promise(r => { this._timer = setTimeout(r, 1200) })
       }
     }
 
