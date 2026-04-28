@@ -391,6 +391,7 @@ export default function DirectorSidebar({
   onGenerate    = () => {},
   demoChoices   = [],       // RULE 8: interactive choices rendered here, not in a centered overlay
   onDemoChoice  = () => {},
+  demoChart     = null,     // {title, bars:[{label,value,color}], unit, anomaly} | null
 }) {
   const [intent,       setIntent]       = useState("")
   const [expandedHist, setExpandedHist] = useState(null)
@@ -613,6 +614,50 @@ export default function DirectorSidebar({
                   ))}
                 </div>
               )}
+
+              {/* Inline bar chart (Part 2C — charts in sidebar, not floating overlay) */}
+              {demoChart && (() => {
+                const maxVal = Math.max(...demoChart.bars.map(b => b.value), 1)
+                return (
+                  <div style={{
+                    marginTop: 8,
+                    background: "rgba(6,12,28,0.70)",
+                    border: "1px solid rgba(56,139,255,0.2)",
+                    borderRadius: 8,
+                    padding: "10px 12px",
+                  }}>
+                    <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "rgba(160,190,255,0.55)", textTransform: "uppercase", marginBottom: 10 }}>
+                      {demoChart.title}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 72 }}>
+                      {demoChart.bars.map((bar, bi) => {
+                        const pct = bar.value / maxVal
+                        return (
+                          <div key={bi} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flex: 1 }}>
+                            <div style={{ fontSize: 9, fontWeight: 700, color: bar.color, lineHeight: 1 }}>{bar.value}</div>
+                            <div style={{
+                              width: "100%", height: Math.max(4, Math.round(pct * 48)) + "px",
+                              background: bar.color, borderRadius: "3px 3px 0 0", opacity: 0.82,
+                              transition: "height 500ms ease",
+                            }} />
+                            <div style={{ fontSize: 7, color: "rgba(160,190,255,0.5)", textAlign: "center", lineHeight: 1.2, letterSpacing: "0.03em" }}>
+                              {bar.label}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {demoChart.unit && (
+                      <div style={{ fontSize: 8, color: "rgba(160,190,255,0.3)", marginTop: 5, textAlign: "right", letterSpacing: "0.05em" }}>{demoChart.unit}</div>
+                    )}
+                    {demoChart.anomaly && (
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#f59e0b", marginTop: 6, textAlign: "center", letterSpacing: "0.05em" }}>
+                        ⚠ {demoChart.anomaly}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           )}
 

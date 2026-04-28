@@ -193,6 +193,7 @@ export default function App() {
     const [directorDemoCallouts,  setDirectorDemoCallouts]  = useState([])
     const [directorDemoChart,     setDirectorDemoChart]     = useState(null)
     const [directorDemoScanPrompt, setDirectorDemoScanPrompt] = useState(null)
+    const [directorScanProgress,  setDirectorScanProgress]  = useState(null)
     const [showStartupModal,  setShowStartupModal]  = useState(false)
     const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
     const [showStartupChoice, setShowStartupChoice] = useState(false)
@@ -1024,6 +1025,7 @@ export default function App() {
                 setDirectorDemoChoices([])
                 setDirectorDemoCallouts([])
                 setDirectorDemoScanPrompt(null)
+                setDirectorScanProgress(null)
             },
             onImage:    (img) => {
                 setDirectorImage(img)
@@ -1035,14 +1037,16 @@ export default function App() {
                     })
                 }
             },
-            onCallouts:   (callouts) => setDirectorDemoCallouts(callouts),
-            onChart:      (chart)    => setDirectorDemoChart(chart),
-            onScanPrompt: (cb)       => setDirectorDemoScanPrompt(() => cb),
+            onCallouts:    (callouts) => setDirectorDemoCallouts(callouts),
+            onChart:       (chart)    => setDirectorDemoChart(chart),
+            onScanPrompt:  (cb)       => setDirectorDemoScanPrompt(() => cb),
+            onScanProgress:(p)        => setDirectorScanProgress(p),
             onClearScene: () => {
                 setDirectorDemoCallouts([])
                 setDirectorImage(null)
                 setDirectorDemoChart(null)
                 setDirectorDemoScanPrompt(null)
+                setDirectorScanProgress(null)
             },
         })
         runner.load(DEMO_BRIEFING_HORMUZ)
@@ -1288,6 +1292,7 @@ export default function App() {
                         onGenerate={handleDirectorGenerate}
                         demoChoices={directorDemoChoices}
                         onDemoChoice={handleDemoChoice}
+                        demoChart={directorDemoChart}
                     />
                     {directorVisible && directorCountryPanel && (
                         <DirectorCountryPanel
@@ -1596,73 +1601,41 @@ export default function App() {
                 </div>
             )}
 
-            {/* Demo chart overlay — bar chart for isfahan-analysis and similar scenes */}
-            {directorVisible && directorDemoChart && (() => {
-                const chart = directorDemoChart
-                const maxVal = Math.max(...chart.bars.map(b => b.value), 1)
-                return (
-                    <div style={{
-                        position: "fixed",
-                        bottom: 180,
-                        left: 20,
-                        zIndex: 8300,
-                        background: "rgba(6,12,28,0.90)",
-                        backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)",
-                        border: "1px solid rgba(56,139,255,0.25)",
-                        borderRadius: 12,
-                        padding: "14px 18px",
-                        minWidth: 220,
-                        pointerEvents: "auto",
-                        animation: "demo-chart-in 450ms cubic-bezier(0.34,1.56,0.64,1) both",
-                        boxShadow: "0 6px 32px rgba(0,0,0,0.55)",
-                    }}>
-                        <style>{`
-                            @keyframes demo-chart-in {
-                                from { opacity: 0; transform: translateY(20px) scale(0.94); }
-                                to   { opacity: 1; transform: translateY(0)    scale(1);    }
-                            }
-                        `}</style>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "rgba(160,190,255,0.6)", textTransform: "uppercase" }}>
-                                {chart.title}
-                            </div>
-                            <button
-                                onClick={() => setDirectorDemoChart(null)}
-                                style={{ background: "none", border: "none", color: "rgba(160,180,220,0.4)", fontSize: 14, cursor: "pointer", padding: "0 0 0 10px", lineHeight: 1 }}
-                            >×</button>
+            {/* ML scan progress bar — bottom centre, shown during overwatch_scan */}
+            {directorVisible && directorScanProgress && !directorScanProgress.complete && (
+                <div style={{
+                    position: "fixed",
+                    bottom: 60,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    zIndex: 8300,
+                    background: "rgba(6,12,28,0.88)",
+                    backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+                    border: "1px solid rgba(56,189,248,0.3)",
+                    borderRadius: 10,
+                    padding: "10px 18px",
+                    minWidth: 260,
+                    pointerEvents: "none",
+                }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "rgba(56,189,248,0.75)", textTransform: "uppercase" }}>
+                            {directorScanProgress.message || "ML SCAN IN PROGRESS"}
                         </div>
-                        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 80 }}>
-                            {chart.bars.map((bar, bi) => {
-                                const pct = bar.value / maxVal
-                                return (
-                                    <div key={bi} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 }}>
-                                        <div style={{ fontSize: 10, fontWeight: 700, color: bar.color, lineHeight: 1 }}>{bar.value}</div>
-                                        <div style={{
-                                            width: "100%", height: Math.round(pct * 52) + "px",
-                                            background: bar.color,
-                                            borderRadius: "3px 3px 0 0",
-                                            opacity: 0.85,
-                                            minHeight: 4,
-                                            transition: "height 600ms ease",
-                                        }} />
-                                        <div style={{ fontSize: 8, color: "rgba(160,190,255,0.5)", textAlign: "center", lineHeight: 1.2, letterSpacing: "0.04em" }}>
-                                            {bar.label}
-                                        </div>
-                                    </div>
-                                )
-                            })}
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8" }}>
+                            {directorScanProgress.percent}%
                         </div>
-                        {chart.unit && (
-                            <div style={{ fontSize: 9, color: "rgba(160,190,255,0.35)", marginTop: 6, textAlign: "right", letterSpacing: "0.06em" }}>{chart.unit}</div>
-                        )}
-                        {chart.anomaly && (
-                            <div style={{ fontSize: 10, fontWeight: 700, color: "#f59e0b", marginTop: 8, textAlign: "center", letterSpacing: "0.06em" }}>
-                                ⚠ {chart.anomaly}
-                            </div>
-                        )}
                     </div>
-                )
-            })()}
+                    <div style={{ height: 4, borderRadius: 2, background: "rgba(56,189,248,0.12)", overflow: "hidden" }}>
+                        <div style={{
+                            height: "100%",
+                            width: directorScanProgress.percent + "%",
+                            background: "linear-gradient(90deg, #38bdf8, #818cf8)",
+                            borderRadius: 2,
+                            transition: "width 250ms linear",
+                        }} />
+                    </div>
+                </div>
+            )}
 
             {/* Director generating indicator — subtle badge while background job runs */}
             {pendingJobId && (
