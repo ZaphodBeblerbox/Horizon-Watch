@@ -117,6 +117,16 @@ class TTSService {
     this._speaking = false
   }
 
+  pause() {
+    if (this._currentAudio) { try { this._currentAudio.pause() } catch (_) {} }
+    if (window.speechSynthesis?.speaking) { try { window.speechSynthesis.pause() } catch (_) {} }
+  }
+
+  resume() {
+    if (this._currentAudio) { try { this._currentAudio.play().catch(() => {}) } catch (_) {} }
+    if (window.speechSynthesis?.paused) { try { window.speechSynthesis.resume() } catch (_) {} }
+  }
+
   // ── ElevenLabs implementation ────────────────────────────────────────────
 
   async _speakElevenLabs(text) {

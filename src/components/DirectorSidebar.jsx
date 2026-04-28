@@ -260,6 +260,44 @@ const SIDEBAR_STYLES = `
     border-top: 1px solid rgba(255,255,255,0.05);
   }
 
+  /* Demo choice buttons (RULE 8: choices in sidebar only) */
+  .dir-choice-label {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: rgba(245,158,11,0.7);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+  }
+  .dir-choice-btn {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 10px 12px;
+    background: rgba(8,15,35,0.82);
+    border: 1px solid rgba(245,158,11,0.3);
+    border-radius: 8px;
+    color: #e8d5a0;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s, border-color 0.12s;
+    flex-shrink: 0;
+  }
+  .dir-choice-btn:hover {
+    background: rgba(245,158,11,0.15);
+    border-color: rgba(245,158,11,0.6);
+  }
+  .dir-choice-icon {
+    font-size: 16px;
+    min-width: 22px;
+    text-align: center;
+  }
+
   /* Generate form */
   .dir-generate-form {
     display: flex;
@@ -351,6 +389,8 @@ export default function DirectorSidebar({
   generating    = false,
   runnerState   = { currentIndex: -1, total: 0 },
   onGenerate    = () => {},
+  demoChoices   = [],       // RULE 8: interactive choices rendered here, not in a centered overlay
+  onDemoChoice  = () => {},
 }) {
   const [intent,       setIntent]       = useState("")
   const [expandedHist, setExpandedHist] = useState(null)
@@ -464,8 +504,17 @@ export default function DirectorSidebar({
                 </div>
               )}
 
+              {/* Demo bullet points — compact key-info list (used by DemoRunner) */}
+              {!isSummary && currentAction.bullets?.length > 0 && (
+                <ul key={`bullets-${currentIndex}`} style={{ margin: "4px 0 0", padding: "0 0 0 14px", listStyle: "disc" }}>
+                  {currentAction.bullets.map((b, i) => (
+                    <li key={i} style={{ fontSize: 12, color: "rgba(200,220,255,0.82)", lineHeight: 1.5, marginBottom: 2 }}>{b}</li>
+                  ))}
+                </ul>
+              )}
+
               {/* Narration text (keyed by text so fade animates on change) */}
-              {!isSummary && currentAction.text && (
+              {!isSummary && currentAction.text && !currentAction.bullets?.length && (
                 <div className="dir-narration-text" key={`narr-${currentIndex}`}>
                   {currentAction.text}
                 </div>
@@ -544,6 +593,23 @@ export default function DirectorSidebar({
                         <div className="dir-context-card-source">{card.source}</div>
                       )}
                     </div>
+                  ))}
+                </div>
+              )}
+
+              {/* RULE 8: interactive demo choices rendered in sidebar */}
+              {demoChoices.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                  <div className="dir-choice-label">Select Response</div>
+                  {demoChoices.map((choice, ci) => (
+                    <button
+                      key={choice.id || choice.next_scene || ci}
+                      className="dir-choice-btn"
+                      onClick={() => onDemoChoice(choice.id || choice.next_scene)}
+                    >
+                      {choice.icon && <span className="dir-choice-icon">{choice.icon}</span>}
+                      {choice.label}
+                    </button>
                   ))}
                 </div>
               )}

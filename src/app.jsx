@@ -37,6 +37,8 @@ import DirectorModal from "./components/DirectorModal.jsx"
 import DirectorSubtitle from "./components/DirectorSubtitle.jsx"
 import DirectorCountryPanel from "./components/DirectorCountryPanel.jsx"
 import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDirectorSequence, submitDirectorBriefing, pollDirectorStatus } from "./services/commandRunner.js"
+import { DemoRunner } from "./services/demoRunner.js"
+import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -184,8 +186,13 @@ export default function App() {
     const [directorImage, setDirectorImage] = useState(null)
     const mapInstanceRef = useRef(null)
     const directorRunnerRef = useRef(null)
+    const demoRunnerRef = useRef(null)
     const directorLayerSnapshotRef = useRef(null)
     const directorIntentRef = useRef("")
+    const [directorDemoChoices,   setDirectorDemoChoices]   = useState([])
+    const [directorDemoCallouts,  setDirectorDemoCallouts]  = useState([])
+    const [directorDemoChart,     setDirectorDemoChart]     = useState(null)
+    const [directorDemoScanPrompt, setDirectorDemoScanPrompt] = useState(null)
     const [showStartupModal,  setShowStartupModal]  = useState(false)
     const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
     const [showStartupChoice, setShowStartupChoice] = useState(false)
@@ -834,8 +841,8 @@ export default function App() {
     }, [])
 
     const handleDirectorClose = useCallback(() => {
-        const runner = directorRunnerRef.current
-        if (runner) runner.stop()
+        if (directorRunnerRef.current) { directorRunnerRef.current.stop(); directorRunnerRef.current = null }
+        if (demoRunnerRef.current)     { demoRunnerRef.current.stop();     demoRunnerRef.current = null }
         // Cancel any pending poll
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null }
         setPendingJobId(null)
@@ -854,6 +861,10 @@ export default function App() {
         setDirectorModalOpen(false)
         setDirectorError(null)
         setDirectorCountryPanel(null)
+        setDirectorDemoChoices([])
+        setDirectorDemoCallouts([])
+        setDirectorDemoChart(null)
+        setDirectorDemoScanPrompt(null)
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleReplayBriefing = useCallback(async (briefing) => {
@@ -981,6 +992,69 @@ export default function App() {
         return () => window.removeEventListener("keydown", handler)
     }, [handleDirectorLoadTest])
 
+    const handleDirectorLoadDemo = useCallback(() => {
+        // Stop any existing runner
+        if (directorRunnerRef.current) { directorRunnerRef.current.destroy(); directorRunnerRef.current = null }
+        if (demoRunnerRef.current)     { demoRunnerRef.current.destroy();     demoRunnerRef.current = null }
+
+        setDirectorModalOpen(false)
+        setDirectorError(null)
+        setDirectorCurrentAction(null)
+        setDirectorIndicators([])
+        setDirectorContextCards([])
+        setDirectorItems(_emptyDirectorItems())
+        setDirectorSegments([])
+        setDirectorImage(null)
+        setDirectorSavedStatus(null)
+        setDirectorDemoChoices([])
+        setDirectorDemoCallouts([])
+        setDirectorVisible(true)
+        setDirectorSequence({ actions: [] })  // placeholder so DirectorBar renders
+
+        const runner = new DemoRunner({
+            mapRef:      mapInstanceRef,
+            onNarrate:   (action) => {
+                setDirectorCurrentAction(action)
+                setDirectorSegments(prev => [...prev, { action, segIdx: prev.length, image: null }])
+            },
+            onStateChange:       (state) => setDirectorRunnerState(state),
+            onInteractiveChoice: (choices) => setDirectorDemoChoices(choices),
+            onComplete:          () => {
+                setDirectorRunnerState({ isPlaying: false, currentIndex: -1, total: 0 })
+                setDirectorDemoChoices([])
+                setDirectorDemoCallouts([])
+                setDirectorDemoScanPrompt(null)
+            },
+            onImage:    (img) => {
+                setDirectorImage(img)
+                if (img?.url) {
+                    setDirectorSegments(prev => {
+                        if (!prev.length) return prev
+                        const last = { ...prev[prev.length - 1], image: img }
+                        return [...prev.slice(0, -1), last]
+                    })
+                }
+            },
+            onCallouts:   (callouts) => setDirectorDemoCallouts(callouts),
+            onChart:      (chart)    => setDirectorDemoChart(chart),
+            onScanPrompt: (cb)       => setDirectorDemoScanPrompt(() => cb),
+            onClearScene: () => {
+                setDirectorDemoCallouts([])
+                setDirectorImage(null)
+                setDirectorDemoChart(null)
+                setDirectorDemoScanPrompt(null)
+            },
+        })
+        runner.load(DEMO_BRIEFING_HORMUZ)
+        demoRunnerRef.current    = runner
+        directorRunnerRef.current = runner   // expose to DirectorBar pause/play buttons
+        runner.play()
+    }, [_emptyDirectorItems]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handleDemoChoice = useCallback((sceneId) => {
+        demoRunnerRef.current?.resolveChoice(sceneId)
+    }, [])
+
     const handleDirectorSave = useCallback(async () => {
         if (!directorSequence) return
         setDirectorSavedStatus("saving")
@@ -1041,6 +1115,32 @@ export default function App() {
           .director-detail-panel-enter {
             animation: dir-panel-slide-in 400ms ease-out forwards;
           }
+          .demo-runner-tooltip {
+            background: rgba(8,15,35,0.88) !important;
+            border: 1px solid rgba(56,139,255,0.25) !important;
+            color: rgba(200,220,255,0.9) !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.04em !important;
+            padding: 3px 8px !important;
+            border-radius: 5px !important;
+            white-space: nowrap !important;
+            backdrop-filter: blur(8px) !important;
+          }
+          .demo-runner-tooltip::before { display: none !important; }
+          .demo-runner-rich-tooltip {
+            background: rgba(8,15,35,0.92) !important;
+            border: 1px solid rgba(56,139,255,0.3) !important;
+            border-radius: 7px !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important;
+            backdrop-filter: blur(12px) !important;
+            min-width: 130px !important;
+            max-width: 160px !important;
+          }
+          .demo-runner-rich-tooltip::before { display: none !important; }
+          .demo-runner-rich-tooltip img { display: block !important; }
         `}</style>
             {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
             {/* Auth gate — show login until token verified */}
@@ -1186,6 +1286,8 @@ export default function App() {
                         generating={directorGenerating}
                         runnerState={directorRunnerState}
                         onGenerate={handleDirectorGenerate}
+                        demoChoices={directorDemoChoices}
+                        onDemoChoice={handleDemoChoice}
                     />
                     {directorVisible && directorCountryPanel && (
                         <DirectorCountryPanel
@@ -1402,9 +1504,165 @@ export default function App() {
                 onClose={() => setDirectorModalOpen(false)}
                 onGenerate={handleDirectorGenerate}
                 onLoadTest={handleDirectorLoadTest}
+                onLoadDemo={handleDirectorLoadDemo}
                 generating={directorGenerating}
                 error={directorError}
             />
+
+            {/* Demo data callout overlays */}
+            {directorVisible && directorDemoCallouts.length > 0 && (
+                <>
+                    {directorDemoCallouts.map((callout, i) => {
+                        const posStyles = {
+                            "bottom-right":  { bottom: 180, right: 20 },
+                            "top-right":     { top: 80,     right: 20 },
+                            "bottom-center": { bottom: 180, left: "50%", transform: "translateX(-50%)" },
+                            "top-center":    { top: 80,     left: "50%", transform: "translateX(-50%)" },
+                        }
+                        const pos = posStyles[callout.position] || posStyles["bottom-right"]
+                        return (
+                            <div key={i} style={{
+                                position: "fixed",
+                                ...pos,
+                                zIndex: 8200,
+                                background: "rgba(8,15,35,0.82)",
+                                backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
+                                border: `1px solid ${callout.color ? callout.color + "55" : "rgba(56,139,255,0.25)"}`,
+                                borderRadius: 10, padding: "10px 16px",
+                                pointerEvents: "none",
+                                minWidth: 130,
+                                textAlign: "center",
+                            }}>
+                                <div style={{
+                                    fontSize: 9, fontWeight: 700, letterSpacing: "0.12em",
+                                    color: "rgba(160,180,220,0.6)", textTransform: "uppercase", marginBottom: 3,
+                                }}>{callout.label}</div>
+                                <div style={{
+                                    fontSize: 26, fontWeight: 800, lineHeight: 1,
+                                    color: callout.color || "#56cfff",
+                                    fontVariantNumeric: "tabular-nums",
+                                }}>{callout.value}</div>
+                                {callout.sublabel && (
+                                    <div style={{
+                                        fontSize: 10, color: "rgba(160,180,220,0.55)",
+                                        marginTop: 3, lineHeight: 1.3,
+                                    }}>{callout.sublabel}</div>
+                                )}
+                            </div>
+                        )
+                    })}
+                </>
+            )}
+
+            {/* Demo scan region prompt — shown when overwatch_scan is interactive */}
+            {directorVisible && directorDemoScanPrompt && (
+                <div style={{
+                    position: "fixed",
+                    bottom: 170,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    zIndex: 8600,
+                    animation: "demo-choices-in 400ms cubic-bezier(0.34,1.56,0.64,1) both",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 8,
+                }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(56,189,248,0.6)", textTransform: "uppercase" }}>
+                        Overwatch Scanner Ready
+                    </div>
+                    <button
+                        onClick={() => {
+                            if (directorDemoScanPrompt) directorDemoScanPrompt()
+                            setDirectorDemoScanPrompt(null)
+                        }}
+                        style={{
+                            padding: "13px 32px",
+                            background: "rgba(56,139,255,0.15)",
+                            backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+                            border: "1px solid rgba(56,189,248,0.5)",
+                            borderRadius: 10,
+                            color: "#38bdf8", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em",
+                            cursor: "pointer",
+                            boxShadow: "0 0 28px rgba(56,189,248,0.2), 0 4px 20px rgba(0,0,0,0.5)",
+                            transition: "background 0.15s, box-shadow 0.15s",
+                            fontFamily: "inherit",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "rgba(56,189,248,0.25)" }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "rgba(56,139,255,0.15)" }}
+                    >
+                        ⬛ SCAN REGION
+                    </button>
+                </div>
+            )}
+
+            {/* Demo chart overlay — bar chart for isfahan-analysis and similar scenes */}
+            {directorVisible && directorDemoChart && (() => {
+                const chart = directorDemoChart
+                const maxVal = Math.max(...chart.bars.map(b => b.value), 1)
+                return (
+                    <div style={{
+                        position: "fixed",
+                        bottom: 180,
+                        left: 20,
+                        zIndex: 8300,
+                        background: "rgba(6,12,28,0.90)",
+                        backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)",
+                        border: "1px solid rgba(56,139,255,0.25)",
+                        borderRadius: 12,
+                        padding: "14px 18px",
+                        minWidth: 220,
+                        pointerEvents: "auto",
+                        animation: "demo-chart-in 450ms cubic-bezier(0.34,1.56,0.64,1) both",
+                        boxShadow: "0 6px 32px rgba(0,0,0,0.55)",
+                    }}>
+                        <style>{`
+                            @keyframes demo-chart-in {
+                                from { opacity: 0; transform: translateY(20px) scale(0.94); }
+                                to   { opacity: 1; transform: translateY(0)    scale(1);    }
+                            }
+                        `}</style>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "rgba(160,190,255,0.6)", textTransform: "uppercase" }}>
+                                {chart.title}
+                            </div>
+                            <button
+                                onClick={() => setDirectorDemoChart(null)}
+                                style={{ background: "none", border: "none", color: "rgba(160,180,220,0.4)", fontSize: 14, cursor: "pointer", padding: "0 0 0 10px", lineHeight: 1 }}
+                            >×</button>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 80 }}>
+                            {chart.bars.map((bar, bi) => {
+                                const pct = bar.value / maxVal
+                                return (
+                                    <div key={bi} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 }}>
+                                        <div style={{ fontSize: 10, fontWeight: 700, color: bar.color, lineHeight: 1 }}>{bar.value}</div>
+                                        <div style={{
+                                            width: "100%", height: Math.round(pct * 52) + "px",
+                                            background: bar.color,
+                                            borderRadius: "3px 3px 0 0",
+                                            opacity: 0.85,
+                                            minHeight: 4,
+                                            transition: "height 600ms ease",
+                                        }} />
+                                        <div style={{ fontSize: 8, color: "rgba(160,190,255,0.5)", textAlign: "center", lineHeight: 1.2, letterSpacing: "0.04em" }}>
+                                            {bar.label}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                        {chart.unit && (
+                            <div style={{ fontSize: 9, color: "rgba(160,190,255,0.35)", marginTop: 6, textAlign: "right", letterSpacing: "0.06em" }}>{chart.unit}</div>
+                        )}
+                        {chart.anomaly && (
+                            <div style={{ fontSize: 10, fontWeight: 700, color: "#f59e0b", marginTop: 8, textAlign: "center", letterSpacing: "0.06em" }}>
+                                ⚠ {chart.anomaly}
+                            </div>
+                        )}
+                    </div>
+                )
+            })()}
 
             {/* Director generating indicator — subtle badge while background job runs */}
             {pendingJobId && (

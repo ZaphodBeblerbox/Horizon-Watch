@@ -6692,6 +6692,80 @@ async def geo_countries_endpoint():
     return data
 
 
+# ── Land-shape cache for route validation ────────────────────────────────────
+_LAND_SHAPES_CACHE: list | None = None
+
+def _get_land_shapes():
+    global _LAND_SHAPES_CACHE
+    if _LAND_SHAPES_CACHE is not None:
+        return _LAND_SHAPES_CACHE
+    if not _HAS_SHAPELY or not _GEO_COUNTRIES_FILE.exists():
+        return []
+    try:
+        data = _json.loads(_GEO_COUNTRIES_FILE.read_text(encoding="utf-8"))
+        _LAND_SHAPES_CACHE = [_shape(f["geometry"]) for f in data.get("features", []) if f.get("geometry")]
+        print(f"[validate-route] cached {len(_LAND_SHAPES_CACHE)} country shapes")
+    except Exception as e:
+        print(f"[validate-route] shape cache error: {e}")
+        _LAND_SHAPES_CACHE = []
+    return _LAND_SHAPES_CACHE
+
+
+def _validate_route_sync(points: list) -> dict:
+    if not _HAS_SHAPELY:
+        return {"points": [{"lat": p[0], "lon": p[1], "is_water": None} for p in points]}
+    from shapely.geometry import Point
+    from shapely.ops import nearest_points
+    land_shapes = _get_land_shapes()
+    if not land_shapes:
+        return {"points": [{"lat": p[0], "lon": p[1], "is_water": None} for p in points]}
+    result_pts = []
+    for lat, lon in points:
+        pt      = Point(lon, lat)
+        on_land = any(s.contains(pt) for s in land_shapes)
+        if not on_land:
+            result_pts.append({"lat": lat, "lon": lon, "is_water": True})
+        else:
+            # Snap to nearest coastline
+            snapped = False
+            for s in land_shapes:
+                if s.contains(pt):
+                    try:
+                        coast = nearest_points(pt, s.boundary)[1]
+                        result_pts.append({
+                            "lat": coast.y, "lon": coast.x,
+                            "is_water": True, "snapped": True,
+                            "original": {"lat": lat, "lon": lon},
+                        })
+                        snapped = True
+                    except Exception:
+                        pass
+                    break
+            if not snapped:
+                result_pts.append({"lat": lat, "lon": lon, "is_water": False})
+    return {"points": result_pts}
+
+
+@app.post("/api/geo/validate-route")
+async def geo_validate_route(request: Request):
+    """
+    Check each point in a route for land/water, snapping land points to the
+    nearest coast.  Body: {"points": [[lat, lon], ...]}
+    """
+    try:
+        body   = await request.json()
+        points = body.get("points", [])
+        if not points:
+            return JSONResponse({"points": []})
+        import functools
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, functools.partial(_validate_route_sync, points))
+        return JSONResponse(result)
+    except Exception as e:
+        print(f"[validate-route] endpoint error: {e}")
+        return JSONResponse({"error": str(e), "points": []})
+
+
 _EEZ_CACHE: dict | None = None
 
 
