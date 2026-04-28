@@ -336,6 +336,7 @@ export default function DirectorModal({
     onClose     = () => {},
     onGenerate  = async () => {},
     onLoadTest  = async () => {},
+    onLoadDemo  = async () => {},
     generating  = false,
     error       = null,
 }) {
@@ -531,7 +532,6 @@ export default function DirectorModal({
                                     background: "transparent",
                                     color: "rgba(86,207,255,0.55)",
                                     cursor: "pointer",
-                                    marginRight: "auto",
                                     letterSpacing: "0.04em",
                                 }}
                                 onClick={onLoadTest}
@@ -539,6 +539,25 @@ export default function DirectorModal({
                                 title="Ctrl+Shift+T"
                             >
                                 ⚙ Test
+                            </button>
+                            <button
+                                style={{
+                                    padding: "8px 14px",
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    border: "1px solid rgba(245,158,11,0.3)",
+                                    borderRadius: 7,
+                                    background: "rgba(245,158,11,0.08)",
+                                    color: "rgba(245,158,11,0.75)",
+                                    cursor: "pointer",
+                                    marginRight: "auto",
+                                    letterSpacing: "0.04em",
+                                }}
+                                onClick={onLoadDemo}
+                                type="button"
+                                title="Strait of Hormuz — interactive demo"
+                            >
+                                ◈ Demo
                             </button>
                             <button className="director-modal-cancel" onClick={onClose} type="button">
                                 Cancel

@@ -27,6 +27,9 @@ export const DIRECTOR_IMAGES = {
   'drone strike':             'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b0/MQ-9_Reaper_-_090609-F-0000M-777.JPG/300px-MQ-9_Reaper_-_090609-F-0000M-777.JPG',
   'shahed':                   'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Shahed_136.jpg/300px-Shahed_136.jpg',
   'helicopter':               'https://upload.wikimedia.org/wikipedia/commons/thumb/1/1e/AH-64D_Apache_Longbow.jpg/300px-AH-64D_Apache_Longbow.jpg',
+  'mirage 2000':              'https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Dassault_Mirage_2000C_Armee_de_lair.jpg/300px-Dassault_Mirage_2000C_Armee_de_lair.jpg',
+  'mirage 2000d':             'https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Dassault_Mirage_2000C_Armee_de_lair.jpg/300px-Dassault_Mirage_2000C_Armee_de_lair.jpg',
+  'barkhane':                 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Dassault_Mirage_2000C_Armee_de_lair.jpg/300px-Dassault_Mirage_2000C_Armee_de_lair.jpg',
 
   // ── Missiles & weapons ───────────────────────────────────────────────────────
   'shahab-3':                 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Shahab-3_Range.jpg/220px-Shahab-3_Range.jpg',
