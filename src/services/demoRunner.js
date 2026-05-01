@@ -95,6 +95,9 @@ export class DemoRunner {
     this._countriesCache        = null
     this._countriesFetchPromise = null
 
+    // Chokepoint DB cache: name → feature (shared across scenes)
+    this._chokepointCache = new Map()
+
     // RULE 5: ML detection results consumed by detection_boxes renderer
     this._latestMLDetections = null
   }
@@ -628,12 +631,16 @@ export class DemoRunner {
     const L   = window.L
     if (!map || !L) return
     try {
-      const name = encodeURIComponent(el.name || el.chokepoint_name || "")
-      const r    = await fetch(`${API_BASE}/api/infrastructure/chokepoints?name=${name}`)
-      if (!r.ok || this._aborted) return
-      const data = await r.json()
-      const feat = (data.chokepoints || data.items || data.features || [])[0]
-      if (!feat?.geometry) return
+      const rawName = el.name || el.chokepoint_name || ""
+      let feat = this._chokepointCache.get(rawName)
+      if (!feat) {
+        const r = await fetch(`${API_BASE}/api/infrastructure/chokepoints?name=${encodeURIComponent(rawName)}`)
+        if (!r.ok || this._aborted) return
+        const data = await r.json()
+        feat = (data.chokepoints || data.items || data.features || [])[0]
+        if (feat) this._chokepointCache.set(rawName, feat)
+      }
+      if (!feat?.geometry || this._aborted) return
       const layer = L.geoJSON(feat, {
         style: { color: el.color||"#ef4444", fillColor: el.color||"#ef4444", fillOpacity: 0.08, weight: 2, dashArray: "6 4", smoothFactor: 0 },
       }).addTo(map)

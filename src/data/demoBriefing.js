@@ -32,7 +32,7 @@ export const DEMO_BRIEFING_HORMUZ = {
       narration: "The Strait of Hormuz. Twenty-one percent of the world's liquid petroleum transits this narrow waterway every single day — roughly nineteen point two million barrels. At its narrowest point, the strait measures just twenty-one nautical miles across, with traffic separation lanes only two miles wide in each direction. Every tanker carrying Saudi, Kuwaiti, Emirati, or Iranian crude must pass through here. Horizon Watch maintains twenty-four hour surveillance of this chokepoint using AIS vessel tracking, satellite imagery, and signals intelligence.",
       center:   [26.56, 56.25], zoom: 8, duration: 3000,
       scene_elements: [
-        { type: "chokepoint_poly", coords: [[26.0,55.8],[25.7,56.1],[25.6,56.5],[25.8,57.0],[26.3,57.2],[26.8,56.8],[27.1,56.4],[27.2,56.0],[26.8,55.6],[26.0,55.8]], color: "#ef4444" },
+        { type: "chokepoint_from_db", name: "Strait of Hormuz", color: "#ef4444" },
         { type: "data_callout", label: "DAILY OIL TRANSIT",    value: "21%",    sublabel: "of global petroleum supply", position: "bottom-right" },
         { type: "data_callout", label: "DAILY VESSEL TRAFFIC", value: "80–130", sublabel: "ships per day",              position: "top-right" },
       ],
@@ -70,7 +70,7 @@ export const DEMO_BRIEFING_HORMUZ = {
       narration: "Horizon Watch predictive tracking has identified an intercept vector. The three IRGCN fast attack craft are on a converging course with Motor Vessel Pacific Trader — a Panamanian-flagged very large crude carrier currently transiting the eastbound lane at twelve knots. The Pacific Trader is carrying two million barrels of Saudi crude bound for Yokohama, Japan. Its cargo is valued at approximately one hundred sixty-four million dollars. Our algorithms estimate intercept in twelve minutes at current speeds.",
       center:   [26.55, 56.50], zoom: 10, duration: 2500,
       scene_elements: [
-        { type: "chokepoint_poly", coords: [[26.0,55.8],[25.7,56.1],[25.6,56.5],[25.8,57.0],[26.3,57.2],[26.8,56.8],[27.1,56.4],[27.2,56.0],[26.8,55.6],[26.0,55.8]], color: "#ef4444" },
+        { type: "chokepoint_from_db", name: "Strait of Hormuz", color: "#ef4444" },
         {
           type: "ship_animation",
           vessels: [
