@@ -601,16 +601,6 @@ const MAP_STYLES = `
 .leaflet-tile {
     animation: tileFadeIn 150ms ease forwards;
 }
-.leaflet-zoom-anim .leaflet-tile,
-.leaflet-pan-anim .leaflet-tile {
-    transition: none;
-}
-.leaflet-zoom-anim .leaflet-zoom-animated {
-    transition: transform 0.35s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
-}
-.leaflet-tile-container {
-    transition: opacity 0.15s linear;
-}
 @keyframes searchPulse {
     0%   { opacity: 0.5; transform: scale(1); }
     100% { opacity: 0;   transform: scale(2.2); }
@@ -6914,9 +6904,6 @@ export default function MapPage({
                 minZoom: 6,
                 maxZoom: 18,
                 zIndex: 400,
-                updateWhenIdle: true,
-                updateWhenZooming: false,
-                keepBuffer: 4,
             }
         ).addTo(mapRef.current)
     }, [effectiveActive.shippingLanes])
@@ -6941,7 +6928,7 @@ export default function MapPage({
         const selectStyle  = { color: "#38bdf8", weight: 2.5, opacity: 1, fillColor: "#38bdf8", fillOpacity: 0.14 }
 
         eezLayerRef.current = L.geoJSON(eezGeo, {
-            style: () => ({ ...defaultStyle, smoothFactor: 0, noClip: true }),
+            style: () => ({ ...defaultStyle }),
             onEachFeature: (feature, layer) => {
                 const p    = feature.properties || {}
                 const name = p.geoname || p.territory1 || "EEZ"
@@ -6992,8 +6979,8 @@ export default function MapPage({
         if (!effectiveActive.borders || !allCountriesGeo) return
 
         const baseColor    = borderGlowColor
-        const defaultStyle = { color: baseColor, weight: 1.25, opacity: 0.5, fill: true, fillColor: baseColor, fillOpacity: 0.02, pane: "context-polygons", smoothFactor: 0, noClip: true }
-        const hoverStyle   = { color: baseColor, weight: 2.2, opacity: 0.9, fillColor: baseColor, fillOpacity: 0.10, smoothFactor: 0, noClip: true }
+        const defaultStyle = { color: baseColor, weight: 1.25, opacity: 0.5, fill: true, fillColor: baseColor, fillOpacity: 0.02, pane: "context-polygons" }
+        const hoverStyle   = { color: baseColor, weight: 2.2, opacity: 0.9, fillColor: baseColor, fillOpacity: 0.10 }
 
         // Build a name→layers index so we can highlight the full sovereign group
         const layersByName = new Map()
@@ -7157,8 +7144,6 @@ export default function MapPage({
                         opacity:     1.0,
                         fillColor:   c.fill,
                         fillOpacity: c.fillOpacity || 0.30,
-                        smoothFactor: 0,
-                        noClip:      true,
                     }
                 },
             }
@@ -7842,7 +7827,7 @@ export default function MapPage({
         if (!mapRef.current || userTrackData.length < 2) return
         const group = L.layerGroup()
         const coords = userTrackData.map(p => [p.lat, p.lon])
-        L.polyline(coords, { color: "#3b82f6", weight: 2.5, opacity: 0.7, dashArray: "8 5", smoothFactor: 0 }).addTo(group)
+        L.polyline(coords, { color: "#3b82f6", weight: 2.5, opacity: 0.7, dashArray: "8 5" }).addTo(group)
         userTrackData.forEach((pt, i) => {
             const opacity = 0.25 + (i / userTrackData.length) * 0.75
             L.circleMarker([pt.lat, pt.lon], {
@@ -8842,7 +8827,7 @@ export default function MapPage({
                         key={`aggressor-country-${index}`}
                         pane="context-polygons"
                         data={feature}
-                        style={{ color: "rgba(220,38,38,0.7)", weight: 1, opacity: 1, fill: true, fillColor: "rgba(220,38,38,0.04)", fillOpacity: 1, smoothFactor: 0, noClip: true }}
+                        style={{ color: "rgba(220,38,38,0.7)", weight: 1, opacity: 1, fill: true, fillColor: "rgba(220,38,38,0.04)", fillOpacity: 1 }}
                     />
                 ))}
                 {affectedFeatures.map((feature, index) => (
@@ -8850,7 +8835,7 @@ export default function MapPage({
                         key={`affected-country-${index}`}
                         pane="context-polygons"
                         data={feature}
-                        style={{ color: "rgba(217,119,6,0.6)", weight: 1, opacity: 1, fill: true, fillColor: "rgba(217,119,6,0.03)", fillOpacity: 1, smoothFactor: 0, noClip: true }}
+                        style={{ color: "rgba(217,119,6,0.6)", weight: 1, opacity: 1, fill: true, fillColor: "rgba(217,119,6,0.03)", fillOpacity: 1 }}
                     />
                 ))}
                 {(enrichment.highlight_chokepoints || []).map((name, index) => {
@@ -9026,18 +9011,11 @@ export default function MapPage({
                 maxBounds={[[-90, -180], [90, 180]]}
                 maxBoundsViscosity={1.0}
                 minZoom={2}
-                maxZoom={22}
+                maxZoom={19}
                 zoomAnimation={true}
-                zoomAnimationThreshold={20}
                 fadeAnimation={true}
                 markerZoomAnimation={true}
-                zoomSnap={1}
-                zoomDelta={1}
-                wheelPxPerZoomLevel={60}
                 inertia={true}
-                inertiaDeceleration={2000}
-                inertiaMaxSpeed={1500}
-                easeLinearity={0.15}
             >
                 <MapPaneSetup />
                 <MapInstanceTracker mapRef={mapRef} depLayerRef={depLayerRef} onMapReady={onMapReady} />
@@ -9049,12 +9027,6 @@ export default function MapPage({
                         key="satellite"
                         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                         attribution="Tiles &copy; Esri &mdash; Source: Esri, Maxar, GeoEye, Earthstar Geographics"
-                        maxNativeZoom={19}
-                        maxZoom={22}
-                        tileSize={256}
-                        keepBuffer={6}
-                        updateWhenZooming={false}
-                        updateWhenIdle={true}
                     />
                 )}
                 {mapType === "dark" && (
@@ -9126,8 +9098,6 @@ export default function MapPage({
                             opacity:      0.9,
                             fillColor:    "#f5c518",
                             fillOpacity:  0.12,
-                            smoothFactor: 0,
-                            noClip:       true,
                         }}
                     />
                 )}
@@ -9138,9 +9108,9 @@ export default function MapPage({
                     const fade = ctxBorderVisible ? 1 : 0
                     return (
                         <Fragment key={`ctx-border-${name}-${fade}`}>
-                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 6, opacity: fade * 0.14, fill: true,  fillColor: "#0d9488", fillOpacity: fade * 0.045, smoothFactor: 0, noClip: true }} />
-                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 3.5, opacity: fade * 0.34,  fill: false, smoothFactor: 0, noClip: true }} />
-                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#5eead4", weight: 1.2, opacity: fade * 1.0,  fill: false, smoothFactor: 0, noClip: true }} />
+                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 6, opacity: fade * 0.14, fill: true,  fillColor: "#0d9488", fillOpacity: fade * 0.045 }} />
+                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 3.5, opacity: fade * 0.34,  fill: false }} />
+                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#5eead4", weight: 1.2, opacity: fade * 1.0,  fill: false }} />
                         </Fragment>
                     )
                 })}
@@ -9169,8 +9139,8 @@ export default function MapPage({
                     const fade = ctxBorderVisible ? 1 : 0
                     return (
                         <Fragment key={`ctx-eez-${name}-${fade}`}>
-                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 4, opacity: fade * 0.10, fill: true,  fillColor: "#0d9488", fillOpacity: fade * 0.03, smoothFactor: 0, noClip: true }} />
-                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 2, opacity: fade * 0.5,  fill: false, dashArray: "6 4", smoothFactor: 0, noClip: true }} />
+                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 4, opacity: fade * 0.10, fill: true,  fillColor: "#0d9488", fillOpacity: fade * 0.03 }} />
+                            <GeoJSON pane="context-polygons" data={f} style={{ color: "#0d9488", weight: 2, opacity: fade * 0.5,  fill: false, dashArray: "6 4" }} />
                         </Fragment>
                     )
                 })}
@@ -9190,8 +9160,6 @@ export default function MapPage({
                             fill: true,
                             fillColor: "#0d9488",
                             fillOpacity: 0.015,
-                            smoothFactor: 0,
-                            noClip: true,
                         }}
                     />
                 ))}
