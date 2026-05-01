@@ -130,6 +130,47 @@ const LANDING_API = "/data/landing-point-geo.json"
 const BORDER_API  = `${API}/geo/countries`
 const EEZ_API     = `${API}/geo/eez`
 
+// Maps territory name → sovereign country name (for grouped hover highlighting)
+const TERRITORY_SOVEREIGN = {
+    // France
+    "French Polynesia": "France", "French Southern and Antarctic Lands": "France",
+    "Saint Barthelemy": "France", "Saint Martin": "France",
+    "Saint Pierre and Miquelon": "France", "Wallis and Futuna": "France",
+    "New Caledonia": "France", "Clipperton Island": "France",
+    // United Kingdom
+    "British Indian Ocean Territory": "United Kingdom", "British Virgin Islands": "United Kingdom",
+    "Cayman Islands": "United Kingdom", "Falkland Islands": "United Kingdom",
+    "Gibraltar": "United Kingdom", "Guernsey": "United Kingdom",
+    "Isle of Man": "United Kingdom", "Jersey": "United Kingdom",
+    "Montserrat": "United Kingdom", "Pitcairn Islands": "United Kingdom",
+    "Saint Helena": "United Kingdom", "South Georgia and the Islands": "United Kingdom",
+    "Turks and Caicos Islands": "United Kingdom", "Anguilla": "United Kingdom",
+    "Bermuda": "United Kingdom", "Akrotiri Sovereign Base Area": "United Kingdom",
+    "Dhekelia Sovereign Base Area": "United Kingdom",
+    // United States of America
+    "Puerto Rico": "United States of America", "Guam": "United States of America",
+    "American Samoa": "United States of America", "United States Virgin Islands": "United States of America",
+    "Northern Mariana Islands": "United States of America",
+    "United States Minor Outlying Islands": "United States of America",
+    "US Naval Base Guantanamo Bay": "United States of America",
+    // Netherlands
+    "Aruba": "Netherlands", "Curaçao": "Netherlands", "Sint Maarten": "Netherlands",
+    // Denmark
+    "Greenland": "Denmark", "Faroe Islands": "Denmark",
+    // Australia
+    "Heard Island and McDonald Islands": "Australia", "Norfolk Island": "Australia",
+    "Coral Sea Islands": "Australia", "Ashmore and Cartier Islands": "Australia",
+    "Indian Ocean Territories": "Australia",
+    // New Zealand
+    "Cook Islands": "New Zealand", "Niue": "New Zealand",
+    // China
+    "Hong Kong S.A.R.": "China", "Macao S.A.R": "China",
+    // Norway
+    "Aland": "Finland",
+    // Disputed / administered
+    "Western Sahara": "Morocco",
+}
+
 // ── Contextual border helpers ─────────────────────────────────────────────────
 
 function findCountryByName(name, allGeo) {
@@ -6944,30 +6985,49 @@ export default function MapPage({
     // ── Sync selectedEezRef with state ────────────────────────────────────────────
     useEffect(() => { selectedEezRef.current = selectedEez }, [selectedEez])
 
-    // ── Country borders — imperative with hover tooltip ───────────────────────────
+    // ── Country borders — imperative with hover tooltip + territory grouping ─────
     useEffect(() => {
         if (!mapRef.current) return
         if (bordersLayerRef.current) { bordersLayerRef.current.remove(); bordersLayerRef.current = null }
         if (!effectiveActive.borders || !allCountriesGeo) return
 
-        const baseColor   = borderGlowColor
+        const baseColor    = borderGlowColor
         const defaultStyle = { color: baseColor, weight: 1.25, opacity: 0.5, fill: true, fillColor: baseColor, fillOpacity: 0.02, pane: "context-polygons" }
-        const hoverStyle   = { weight: 2,    opacity: 0.85, fillOpacity: 0.08 }
+        const hoverStyle   = { color: baseColor, weight: 2.2, opacity: 0.9, fillColor: baseColor, fillOpacity: 0.10 }
+
+        // Build a name→layers index so we can highlight the full sovereign group
+        const layersByName = new Map()
+
+        // Derive reverse map: sovereign → Set of territory names
+        const sovereignTerritories = new Map()
+        for (const [terr, sov] of Object.entries(TERRITORY_SOVEREIGN)) {
+            if (!sovereignTerritories.has(sov)) sovereignTerritories.set(sov, new Set())
+            sovereignTerritories.get(sov).add(terr)
+        }
 
         bordersLayerRef.current = L.geoJSON(allCountriesGeo, {
-            style:          () => ({ ...defaultStyle }),
-            pane:           "context-polygons",
-            onEachFeature:  (feature, layer) => {
+            style:         () => ({ ...defaultStyle }),
+            pane:          "context-polygons",
+            onEachFeature: (feature, layer) => {
                 const name = feature.properties?.name || ""
                 if (name) {
-                    layer.bindTooltip(name, {
-                        sticky:    true,
-                        direction: "top",
-                        className: "country-tooltip",
-                    })
+                    if (!layersByName.has(name)) layersByName.set(name, [])
+                    layersByName.get(name).push(layer)
+                    layer.bindTooltip(name, { sticky: true, direction: "top", className: "country-tooltip" })
                 }
-                layer.on("mouseover", () => layer.setStyle(hoverStyle))
-                layer.on("mouseout",  () => layer.setStyle(defaultStyle))
+
+                layer.on("mouseover", () => {
+                    // Resolve the sovereign for the hovered feature
+                    const sovereign = TERRITORY_SOVEREIGN[name] || name
+                    // Build the full group: sovereign + all its territories
+                    const group = new Set([sovereign, ...(sovereignTerritories.get(sovereign) || [])])
+                    for (const [n, layers] of layersByName) {
+                        if (group.has(n)) layers.forEach(l => l.setStyle(hoverStyle))
+                    }
+                })
+                layer.on("mouseout", () => {
+                    bordersLayerRef.current?.eachLayer(l => l.setStyle && l.setStyle(defaultStyle))
+                })
             },
         }).addTo(mapRef.current)
     }, [effectiveActive.borders, allCountriesGeo, borderGlowColor])
@@ -8971,7 +9031,7 @@ export default function MapPage({
                 markerZoomAnimation={true}
                 zoomSnap={0.25}
                 zoomDelta={0.5}
-                wheelPxPerZoomLevel={150}
+                wheelPxPerZoomLevel={80}
                 inertia={true}
                 inertiaDeceleration={2000}
                 inertiaMaxSpeed={1500}
