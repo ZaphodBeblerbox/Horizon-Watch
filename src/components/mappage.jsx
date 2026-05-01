@@ -560,6 +560,33 @@ const MAP_STYLES = `
 .leaflet-tile {
     animation: tileFadeIn 150ms ease forwards;
 }
+.leaflet-zoom-anim .leaflet-tile,
+.leaflet-pan-anim .leaflet-tile {
+    transition: none;
+}
+.leaflet-zoom-anim .leaflet-zoom-animated {
+    transition: transform 0.35s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+}
+.leaflet-tile-container {
+    transition: opacity 0.15s linear;
+}
+@keyframes searchPulse {
+    0%   { opacity: 0.5; transform: scale(1); }
+    100% { opacity: 0;   transform: scale(2.2); }
+}
+.search-pulse { animation: searchPulse 2s ease-out infinite; }
+.search-tooltip.leaflet-tooltip {
+    background: rgba(8, 15, 35, 0.95) !important;
+    color: #e2e8f0 !important;
+    border: 1px solid rgba(56, 189, 248, 0.35) !important;
+    border-radius: 6px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5) !important;
+    white-space: nowrap !important;
+}
+.search-tooltip.leaflet-tooltip::before { display: none !important; }
 @keyframes acGlowMil {
     0%, 100% { filter: drop-shadow(0 0 3px rgba(255, 80, 40, 0.65)); }
     50%       { filter: drop-shadow(0 0 7px rgba(255, 80, 40, 1.0));  }
@@ -8937,11 +8964,18 @@ export default function MapPage({
                 maxBounds={[[-90, -180], [90, 180]]}
                 maxBoundsViscosity={1.0}
                 minZoom={2}
-                maxZoom={19}
+                maxZoom={22}
                 zoomAnimation={true}
                 zoomAnimationThreshold={20}
                 fadeAnimation={true}
                 markerZoomAnimation={true}
+                zoomSnap={0.25}
+                zoomDelta={0.5}
+                wheelPxPerZoomLevel={150}
+                inertia={true}
+                inertiaDeceleration={2000}
+                inertiaMaxSpeed={1500}
+                easeLinearity={0.15}
             >
                 <MapPaneSetup />
                 <MapInstanceTracker mapRef={mapRef} depLayerRef={depLayerRef} onMapReady={onMapReady} />
@@ -8953,7 +8987,12 @@ export default function MapPage({
                         key="satellite"
                         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                         attribution="Tiles &copy; Esri &mdash; Source: Esri, Maxar, GeoEye, Earthstar Geographics"
-                        maxZoom={19}
+                        maxNativeZoom={19}
+                        maxZoom={22}
+                        tileSize={256}
+                        keepBuffer={6}
+                        updateWhenZooming={false}
+                        updateWhenIdle={true}
                     />
                 )}
                 {mapType === "dark" && (
@@ -9072,22 +9111,6 @@ export default function MapPage({
                     )
                 })}
 
-                {/* Profile focus-region borders removed — labels only (see below) */}
-                {/* Profile border country name labels */}
-                {!effectiveActive.borders && visibleProfileBorderFeatures.map((f, i) => {
-                    const centroid = featureApproxCentroid(f)
-                    if (!centroid) return null
-                    const name = f.properties?.ADMIN || f.properties?.name || ""
-                    return (
-                        <Marker key={`profile-label-${i}`} position={centroid} pane="country-labels" interactive={false}
-                            icon={L.divIcon({
-                                className:  "",
-                                iconAnchor: [0, 0],
-                                html: `<div style="transform:translate(-50%,-50%);font:700 10px/1 system-ui,sans-serif;letter-spacing:0.10em;text-transform:uppercase;color:#5eead4;opacity:0.9;text-shadow:0 0 2px rgba(0,0,0,0.95),0 0 8px rgba(0,0,0,0.9);white-space:nowrap;pointer-events:none;text-align:center;">${name}</div>`,
-                            })}
-                        />
-                    )
-                })}
 
                 {/* ── Profile focus EEZ baseline (situational only) ────────── */}
                 {!effectiveActive.eez && profileEezFeatures.map((f, i) => (
@@ -9517,13 +9540,29 @@ export default function MapPage({
                     </>
                 )}
 
-                {/* ── Temp address marker ───────────────────────────────────── */}
+                {/* ── Temp address marker — cyan design ────────────────────── */}
                 {tempMarker && (
-                    <Marker position={[tempMarker.lat, tempMarker.lon]} icon={makePinIcon("#ffffff")}>
-                        <Tooltip permanent direction="top" offset={[0, -28]}>
-                            <span style={{ fontSize: 10 }}>{tempMarker.label || "Location"}</span>
-                        </Tooltip>
-                    </Marker>
+                    <>
+                        <CircleMarker
+                            center={[tempMarker.lat, tempMarker.lon]}
+                            radius={18}
+                            pathOptions={{ color: "#38bdf8", fillColor: "#38bdf8", fillOpacity: 0.12, weight: 1.2, className: "search-pulse" }}
+                            interactive={false}
+                        />
+                        <Marker
+                            position={[tempMarker.lat, tempMarker.lon]}
+                            icon={L.divIcon({
+                                html: `<div style="width:22px;height:22px;background:rgba(56,189,248,0.92);border:2px solid #38bdf8;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 0 14px rgba(56,189,248,0.7),0 2px 6px rgba(0,0,0,0.5);"><div style="width:7px;height:7px;background:#fff;border-radius:50%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);"></div></div>`,
+                                className: "",
+                                iconSize:   [22, 22],
+                                iconAnchor: [11, 22],
+                            })}
+                        >
+                            <Tooltip permanent direction="top" offset={[0, -26]} className="search-tooltip">
+                                {tempMarker.label?.split(",")[0] || "Location"}
+                            </Tooltip>
+                        </Marker>
+                    </>
                 )}
 
                 {/* ── Webcam markers ────────────────────────────────────────── */}

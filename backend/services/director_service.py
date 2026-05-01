@@ -1101,7 +1101,11 @@ OUTPUT LENGTH AND QUALITY:
 - Draw impact_fx for every strike discussed.
 - Use pulse_hotspot for every active conflict zone.
 - Take your time composing. A scene with a 2-sentence narration is NOT acceptable.
-- EVERY scene MUST open with fly_to at a different zoom than the previous scene."""
+- EVERY scene MUST open with fly_to at a different zoom than the previous scene.
+- Use easeLinearity: 0.1 on all fly_to for cinematic camera movement.
+- Emit pulse_hotspot for EVERY active conflict zone, even if place_event is also used.
+- If a scene covers a country-level event, emit highlight_country immediately after fly_to.
+- Preload hint: always include a fly_to as the FIRST visual action in each scene group so tile preloading can extract the camera target."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 

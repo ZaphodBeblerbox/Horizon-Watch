@@ -253,6 +253,10 @@ export class DemoRunner {
     const floorP = this._pauseAwareSleep(floorMs)
     const ttsP   = scene.narration ? ttsService.speak(scene.narration).catch(() => {}) : Promise.resolve()
 
+    // Preload tiles for next scene while current scene narrates (fire-and-forget)
+    const nextScene = this._scenes[this._sceneIdx + 1]
+    if (nextScene?.center) this._preloadSceneTiles(nextScene)
+
     // Interactive strategy choice
     if (scene.interactive) {
       await Promise.all([floorP, ttsP])
@@ -290,7 +294,26 @@ export class DemoRunner {
     const map = this.mapRef?.current
     if (!map) return
     try { map.stop() } catch (_) {}
-    map.flyTo([center[0], center[1]], zoom, { duration, easeLinearity: 0.35 })
+    map.flyTo([center[0], center[1]], zoom, { duration, easeLinearity: 0.1, animate: true })
+  }
+
+  // ── Tile preloading for next scene ────────────────────────────────────────────
+
+  _preloadSceneTiles(scene) {
+    if (!scene?.center) return
+    const [lat, lng] = scene.center
+    const zoom = Math.min(Math.round(scene.zoom || 8), 16)
+    const n = Math.pow(2, zoom)
+    const tileX = Math.floor((lng + 180) / 360 * n)
+    const tileY = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n)
+    const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dy = -2; dy <= 2; dy++) {
+        const url = ESRI.replace("{z}", zoom).replace("{y}", tileY + dy).replace("{x}", tileX + dx)
+        const img = new Image()
+        img.src = url
+      }
+    }
   }
 
   // ── Element renderer ──────────────────────────────────────────────────────────

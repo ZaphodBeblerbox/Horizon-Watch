@@ -170,7 +170,7 @@ export class CommandRunner {
       }
     }
     // Pre-build scene groups for synchronized playback
-    this._scenes = this._groupActionsIntoScenes(this.actions)
+    this._scenes = this._enrichScenes(this._groupActionsIntoScenes(this.actions))
     this._sceneIndex = -1
 
     this.currentIndex = -1
@@ -202,6 +202,41 @@ export class CommandRunner {
       scenes.push({ visuals, narration: null })
     }
     return scenes
+  }
+
+  /**
+   * Enrich scenes from generated briefings: auto-inject pulse_hotspot at fly_to
+   * position for any scene that has a fly_to but no explicit hotspot anchor.
+   */
+  _enrichScenes(scenes) {
+    return scenes.map(scene => {
+      const flyTo = scene.visuals.find(v => v.action === "fly_to")
+      if (!flyTo) return scene
+      const hasHotspot = scene.visuals.some(v =>
+        v.action === "pulse_hotspot" || v.action === "place_event" || v.action === "place_image_marker"
+      )
+      if (hasHotspot) return scene
+      const auto = { action: "pulse_hotspot", lat: flyTo.lat, lon: flyTo.lon, color: "#38bdf8", radius: 8000, _auto: true }
+      return { ...scene, visuals: [scene.visuals[0], auto, ...scene.visuals.slice(1)] }
+    })
+  }
+
+  /** Preload a 5×5 ESRI tile grid around the first fly_to in a scene. */
+  _preloadSceneTiles(scene) {
+    const flyTo = scene?.visuals?.find(v => v.action === "fly_to")
+    if (!flyTo?.lat || !flyTo?.lon) return
+    const lat = flyTo.lat, lng = flyTo.lon
+    const zoom = Math.min(Math.round(flyTo.zoom ?? 8), 16)
+    const n    = Math.pow(2, zoom)
+    const tileX = Math.floor((lng + 180) / 360 * n)
+    const tileY = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n)
+    const ESRI  = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dy = -2; dy <= 2; dy++) {
+        const img = new Image()
+        img.src = ESRI.replace("{z}", zoom).replace("{y}", tileY + dy).replace("{x}", tileX + dx)
+      }
+    }
   }
 
   play() {
@@ -253,6 +288,10 @@ export class CommandRunner {
           }, idx * STAGGER)
         })
       )
+
+      // Preload tiles for next scene during current narration (fire-and-forget)
+      const nextScene = scenes[si + 1]
+      if (nextScene) this._preloadSceneTiles(nextScene)
 
       // ── Start narration 500ms after visuals begin (let first visuals land) ──
       let ttsPromise = Promise.resolve()
