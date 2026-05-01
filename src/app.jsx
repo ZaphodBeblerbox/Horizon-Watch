@@ -4,7 +4,6 @@ import TopBar from "./components/TopBar.jsx"
 import Sidebar from "./components/Sidebar.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
-import SituationsPanel from "./components/SituationsPanel.jsx"
 import ChatPanel from "./components/ChatPanel.jsx"
 import DirectChatPanel from "./components/DirectChatPanel.jsx"
 import TVWidget from "./components/tvwidget.jsx"
@@ -24,10 +23,7 @@ import PreferencesPanel, { loadSettings } from "./components/PreferencesPanel.js
 import LoginPage from "./components/LoginPage.jsx"
 import AdminPanel from "./components/AdminPanel.jsx"
 import NotificationBar from "./components/NotificationBar.jsx"
-import StartupModal from "./components/StartupModal.jsx"
-import WelcomeBackModal from "./components/WelcomeBackModal.jsx"
 import NewsPage from "./components/NewsPage.jsx"
-import StartupChoiceModal from "./components/StartupChoiceModal.jsx"
 import BottomNav from "./components/BottomNav.jsx"
 import MobileDrawer from "./components/MobileDrawer.jsx"
 import { getToken, clearToken, apiFetch } from "./auth.js"
@@ -194,9 +190,6 @@ export default function App() {
     const [directorDemoChart,     setDirectorDemoChart]     = useState(null)
     const [directorDemoScanPrompt, setDirectorDemoScanPrompt] = useState(null)
     const [directorScanProgress,  setDirectorScanProgress]  = useState(null)
-    const [showStartupModal,  setShowStartupModal]  = useState(false)
-    const [showWelcomeBack,   setShowWelcomeBack]   = useState(false)
-    const [showStartupChoice, setShowStartupChoice] = useState(false)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
 
@@ -237,23 +230,6 @@ export default function App() {
         const t = setInterval(post, 60000)
         return () => clearInterval(t)
     }, [currentUser])
-
-    // ── Startup choice modal — show once per browser session after login ─────
-    useEffect(() => {
-        if (!currentUser) return
-        const sessionKey = "hw-startup-choice-" + currentUser.id
-        if (!sessionStorage.getItem(sessionKey)) {
-            sessionStorage.setItem(sessionKey, "1")
-            setShowStartupChoice(true)
-        }
-    }, [currentUser])
-
-    const handleStartupChoice = (choice) => {
-        setShowStartupChoice(false)
-        if (choice === "news")     { openTab("news") }
-        if (choice === "briefing") { openTab("briefing") }
-        // "map" just closes
-    }
 
     // ── GPS location tracking — send to backend on login, then every 5 min ───
     useEffect(() => {
@@ -794,7 +770,7 @@ export default function App() {
         prevActiveTabIdRef.current = activeTabId
     }, [activeTabId, activeTabType, tabs])
 
-    // ── Situations ────────────────────────────────────────────────────────────
+    // ── Situations (state kept for ChatPanel context; no panel UI) ──────────
     const [situations,        setSituations]        = useState([])
     const [activeSituationId, setActiveSituationId] = useState(null)
     const activeSituation = situations.find(s => s.id === activeSituationId) || null
@@ -809,28 +785,6 @@ export default function App() {
                 : s
         ))
     }
-
-    useEffect(() => {
-        fetch(`${API}/situations/load`)
-            .then(r => r.json())
-            .then(d => {
-                setSituations(d.situations || [])
-                if (d.active_id) setActiveSituationId(d.active_id)
-            })
-            .catch(() => {})
-    }, [])
-
-    useEffect(() => {
-        if (situations.length === 0) return
-        const t = setTimeout(() => {
-            fetch(`${API}/situations/save`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ situations, active_id: activeSituationId }),
-            }).catch(() => {})
-        }, 2000)
-        return () => clearTimeout(t)
-    }, [situations, activeSituationId])
 
     // ── Director Mode handlers ────────────────────────────────────────────────
 
@@ -1151,13 +1105,6 @@ export default function App() {
             {authChecked && !currentUser && (
                 <LoginPage onAuthenticated={(user) => setCurrentUser(user)} />
             )}
-            {/* Onboarding — blocks everything until profile is set */}
-            {!profile && (
-                <div style={{ position: "fixed", inset: 0, zIndex: 200 }}>
-                    <MissionProfilePanel mode="onboarding" onSave={handleProfileSave} />
-                </div>
-            )}
-
             {/* ── Topbar — 40px, full width ─────────────────────────────────── */}
             <TopBar
                 tabs={tabs}
@@ -1167,6 +1114,9 @@ export default function App() {
                 onTabNew={openNewTab}
                 onTabReorder={reorderTabs}
                 onTabRename={renameTab}
+                showSearch={!!currentUser && activeTabType === "map"}
+                onSearchResult={(r) => setSearchTarget({ lat: r.lat, lon: r.lon, zoom: r.zoom, label: r.label, key: Date.now() })}
+                searchApiBase={API}
             />
 
             {/* ── Notification toasts — new event alerts ─────────────────────── */}
@@ -1414,24 +1364,6 @@ export default function App() {
                     </div>
                 )}
 
-                {rightPanel === "situations" && (currentUser?.role === "admin" || currentUser?.role === "super_admin") && (
-                    <div style={panelStyle}>
-                        <SituationsPanel
-                            situations={situations}
-                            setSituations={setSituations}
-                            activeSituationId={activeSituationId}
-                            setActiveSituationId={setActiveSituationId}
-                            onClose={() => setRightPanel(null)}
-                            onDrawTheater={() => { setRightPanel(null); setTheaterDrawing(true) }}
-                            profile={profile}
-                            onProfileSave={handleProfileSave}
-                            currentUser={currentUser}
-                            focusRegions={focusRegions}
-                            onFocusRegionsChange={setFocusRegions}
-                        />
-                    </div>
-                )}
-
                 {rightPanel === "chat" && (
                     <div style={panelStyle}>
                         <ChatPanel
@@ -1449,58 +1381,11 @@ export default function App() {
                     />
                 )}
 
-                {rightPanel === "alerts" && (
-                    <div style={{ ...panelStyle, padding: "12px" }}>
-                        <div style={{
-                            height:        36,
-                            display:       "flex",
-                            alignItems:    "center",
-                            justifyContent: "space-between",
-                            borderBottom:  "1px solid var(--akili-border)",
-                            marginBottom:  12,
-                            paddingBottom: 8,
-                        }}>
-                            <span style={{
-                                fontSize:      12,
-                                fontWeight:    700,
-                                letterSpacing: "0.08em",
-                                textTransform: "uppercase",
-                                color:         "var(--akili-text-secondary)",
-                            }}>
-                                Alerts — {flaggedEvents.length}
-                            </span>
-                            <button onClick={() => setRightPanel(null)} style={{ background:"none",border:"none",color:"var(--akili-text-muted)",cursor:"pointer",fontSize:16,lineHeight:1,padding:0 }}>×</button>
-                        </div>
-                        {flaggedEvents.length === 0 ? (
-                            <div style={{ fontSize: 12, color: "var(--akili-text-muted)", textAlign: "center", paddingTop: 24 }}>No flagged events</div>
-                        ) : flaggedEvents.map((ev, i) => (
-                            <div key={ev.id || i} style={{
-                                padding:      "8px 0",
-                                borderBottom: "1px solid var(--akili-border-subtle)",
-                                fontSize:     12,
-                            }}>
-                                <div style={{ color: ev.fatalities > 0 ? "#dc2626" : "var(--akili-text-primary)", fontWeight: ev.fatalities > 0 ? 600 : 400 }}>
-                                    {ev.location || ev.country || "Unknown"}
-                                    {ev.fatalities > 0 && ` — ${ev.fatalities} fatalities`}
-                                </div>
-                                <div style={{ color: "var(--akili-text-muted)", fontSize: 11, marginTop: 2 }}>
-                                    {ev.type || ev.event_type || ""}
-                                    {ev.date ? ` · ${ev.date}` : ""}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
             </div>
 
             {/* Admin panel */}
             {showAdmin && (currentUser?.role === "admin" || currentUser?.role === "super_admin") && (
                 <AdminPanel user={currentUser} onClose={() => setShowAdmin(false)} />
-            )}
-
-            {/* Startup choice modal — once per session, shown immediately after login */}
-            {showStartupChoice && (
-                <StartupChoiceModal onChoice={handleStartupChoice} />
             )}
 
             {/* Director Mode modal — portal-level, covers full screen */}

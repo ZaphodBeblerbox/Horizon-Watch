@@ -5834,7 +5834,7 @@ export default function MapPage({
             heatmap: true,
             eez: false,
             borders: false,
-            cityLabels: false,
+            cityLabels: true,
             newsConflicts: false,
             unifiedEvents: true,
             liveTicker: false,
@@ -5973,7 +5973,6 @@ export default function MapPage({
         const MAP = { satellite: "satellite", street: "standard", terrain: "dark" }
         return MAP[initialMapStyle] || "satellite"
     })
-    const [satLabels, setSatLabels]             = useState(false)
     useEffect(() => {
         const MAP = { satellite: "satellite", street: "standard", terrain: "dark" }
         const t = MAP[initialMapStyle]
@@ -8960,10 +8959,13 @@ export default function MapPage({
                 {mapType === "dark" && (
                     <TileLayer key="dark" url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
                 )}
-                {mapType === "satellite" && satLabels && (
+                {mapType === "satellite" && effectiveActive.cityLabels && (
                     <TileLayer
                         key="sat-labels"
-                        url="https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png"
+                        url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
+                        pane="overlayPane"
+                        zIndex={650}
+                        opacity={0.9}
                     />
                 )}
                 <ZoomTracker onZoom={(z) => { setZoom(z); setShowEventLabels(z >= 9) }} />
@@ -9107,8 +9109,8 @@ export default function MapPage({
 
                 {/* ── Country borders rendered imperatively via bordersLayerRef ─ */}
 
-                {/* ── City Labels (static major cities, zoom-aware) ─────────── */}
-                {effectiveActive.cityLabels && zoom >= 4 && MAJOR_CITIES.map(c => (
+                {/* ── City Labels — custom markers on satellite, built-in on dark/light ─ */}
+                {effectiveActive.cityLabels && mapType === "satellite" && zoom >= 4 && MAJOR_CITIES.map(c => (
                     <Marker key={c.name} position={[c.lat, c.lon]} interactive={false}
                         icon={L.divIcon({
                             className:  "",

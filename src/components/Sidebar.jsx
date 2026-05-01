@@ -398,7 +398,6 @@ export default function Sidebar({
                 )}
 
                 {isAnalyst && btn("layers",     <IconLayers />)}
-                {btn("alerts",     <IconAlerts />, alertCount)}
                 {/* Overwatch — satellite ML detection */}
                 {onToggleOverwatch && (
                     <button
@@ -454,7 +453,6 @@ export default function Sidebar({
                         ◈
                     </button>
                 )}
-                {isAdmin   && btn("situations", <IconSituations />)}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}
                 {isAdmin   && btn("health", <IconHealth />, null, null)}
 

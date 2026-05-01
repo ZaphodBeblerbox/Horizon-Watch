@@ -234,8 +234,8 @@ return (
                     </div>
                     <select value={s.mapStyle} onChange={e => update("mapStyle", e.target.value)} style={SELECT_STYLE}>
                         <option value="satellite">Satellite</option>
-                        <option value="street">Street</option>
-                        <option value="terrain">Terrain</option>
+                        <option value="terrain">Dark</option>
+                        <option value="street">Light</option>
                     </select>
                 </div>
 
