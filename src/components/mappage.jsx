@@ -9031,9 +9031,9 @@ export default function MapPage({
                 zoomAnimationThreshold={20}
                 fadeAnimation={true}
                 markerZoomAnimation={true}
-                zoomSnap={0.25}
-                zoomDelta={0.5}
-                wheelPxPerZoomLevel={80}
+                zoomSnap={1}
+                zoomDelta={1}
+                wheelPxPerZoomLevel={60}
                 inertia={true}
                 inertiaDeceleration={2000}
                 inertiaMaxSpeed={1500}
