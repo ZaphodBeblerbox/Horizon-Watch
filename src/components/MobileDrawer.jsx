@@ -78,7 +78,7 @@ export default function MobileDrawer({
     directorActive = false,
     onDirectorTap = null,
 }) {
-    const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin"
+    const isAdmin = true
 
     function panelRow(id, label, badge) {
         return (
@@ -175,8 +175,7 @@ export default function MobileDrawer({
                         active={false}
                         onClick={() => { onToggleNotif(); onClose() }}
                     />
-                    {currentUser && (
-                        <button
+                    <button
                             onClick={() => { onDirectorTap?.(); onClose() }}
                             style={{
                                 width:          "100%",
@@ -200,7 +199,6 @@ export default function MobileDrawer({
                             <span style={{ fontSize: 16, lineHeight: 1 }}>◈</span>
                             Director Mode
                         </button>
-                    )}
                     {panelRow("workspaces", "Workspaces")}
                     {isAdmin && panelRow("situations", "Situations")}
 

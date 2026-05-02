@@ -361,6 +361,24 @@ def build_snapshot(
     except Exception as _fe:
         logger.warning("[DIRECTOR] Failed to load facilities: %s", _fe)
 
+    # ── Weekly baseline (latest snapshot from DB for comparative analysis) ──────
+    weekly_baseline: dict = {}
+    try:
+        from database import WeeklySnapshot, get_db
+        with get_db() as db:
+            latest_weekly = db.query(WeeklySnapshot).order_by(WeeklySnapshot.week_start.desc()).first()
+        if latest_weekly:
+            import json as _j
+            weekly_baseline = {
+                "week": latest_weekly.week_start.isoformat(),
+                "maritime": _j.loads(latest_weekly.maritime_stats or '{}'),
+                "aviation": _j.loads(latest_weekly.aviation_stats or '{}'),
+                "trends":   _j.loads(latest_weekly.trends or '{}'),
+                "summary":  (latest_weekly.summary or '')[:500],
+            }
+    except Exception as _we:
+        logger.debug("[DIRECTOR] weekly baseline unavailable: %s", _we)
+
     snapshot = {
         "mission_profile":     profile_summary,
         "raw_intelligence":    raw_intel,
@@ -370,6 +388,7 @@ def build_snapshot(
         "infrastructure":      infrastructure,
         "available_countries": _COUNTRY_NAMES,
         "key_facilities":      facilities,
+        "weekly_baseline":     weekly_baseline,
         "generated_at":        datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1105,7 +1124,33 @@ OUTPUT LENGTH AND QUALITY:
 - Use easeLinearity: 0.1 on all fly_to for cinematic camera movement.
 - Emit pulse_hotspot for EVERY active conflict zone, even if place_event is also used.
 - If a scene covers a country-level event, emit highlight_country immediately after fly_to.
-- Preload hint: always include a fly_to as the FIRST visual action in each scene group so tile preloading can extract the camera target."""
+- Preload hint: always include a fly_to as the FIRST visual action in each scene group so tile preloading can extract the camera target.
+
+NATO ICON TYPES — animate_movement and show_vessel/show_aircraft use these exact type strings:
+Naval: "destroyer", "carrier", "fast_attack", "submarine", "tanker", "patrol", "cargo"
+Air:   "fighter", "helicopter", "drone", "bomber"
+Ground:"infantry", "armor", "artillery", "sam", "troops"
+DO NOT use generic names like "warship", "ship", "plane", "soldier". Use the specific NATO type.
+Examples: fast attack craft → "fast_attack", oil tanker → "tanker", F-35 → "fighter", Mi-24 → "helicopter", T-72 → "armor", IRGC boats → "fast_attack"
+
+IMAGE DATABASE — the system has pre-verified images for these entities. Use EXACT names for best results:
+Military vessels: "IRGC Fast Attack Craft", "Arleigh Burke Destroyer", "USS Abraham Lincoln", "Oil Tanker VLCC"
+Aircraft: "F-35 Lightning", "MQ-9 Reaper", "P-8 Poseidon", "Mi-24 Hind", "Su-35"
+People: "Vladimir Putin", "Volodymyr Zelenskyy", "Ali Khamenei", "Benjamin Netanyahu", "Hemedti", "Assimi Goita"
+Groups: "Wagner Group", "Hezbollah", "Hamas", "Houthi", "Al-Shabaab", "IRGC"
+Chokepoints: "Strait of Hormuz", "Bab el-Mandeb", "Suez Canal", "Strait of Malacca", "Taiwan Strait"
+Cities: "Bandar Abbas", "Khartoum", "Gao", "Kyiv", "Gaza", "Mogadishu", "Camp Lemonnier"
+Weapons: "Shahab-3", "Tomahawk", "S-400", "Iron Dome", "HIMARS", "Shahed drone"
+
+GROUND MOVEMENT ROUTING — specify type "ground" for troop movements:
+The system automatically routes ground movements along actual roads using OSRM. Only specify origin and destination (or waypoints along highways) — road-accurate path will be calculated.
+
+NAVAL MOVEMENT VALIDATION — all naval paths are checked to stay in water.
+Use the maritime routing waypoints specified above for key chokepoints.
+
+WEEKLY BASELINE — if weekly_baseline is present in the snapshot, reference it for trend context:
+"Vessel traffic through Hormuz is down 18 percent versus last week's baseline of 94 transits."
+Use baseline data to add analytical depth — compare current readings to historical averages."""
 
 USER_PROMPT_TEMPLATE = """User intent: {intent}
 

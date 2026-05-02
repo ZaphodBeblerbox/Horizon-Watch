@@ -1,6 +1,7 @@
-from sqlalchemy import create_engine, Column, String, Boolean, DateTime, Text, ForeignKey, Float
+from sqlalchemy import create_engine, Column, String, Boolean, DateTime, Text, ForeignKey, Float, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
 import uuid, datetime, os
 
 DATABASE_URL = f"sqlite:///{os.getenv('DATA_DIR', './data')}/akili.db"
@@ -46,9 +47,66 @@ class DirectMessage(Base):
     read_at         = Column(DateTime, nullable=True)
 
 
+class AircraftHistory(Base):
+    __tablename__ = 'aircraft_history'
+
+    id           = Column(Integer, primary_key=True)
+    icao24       = Column(String(10), index=True)
+    callsign     = Column(String(20))
+    lat          = Column(Float)
+    lon          = Column(Float)
+    altitude     = Column(Integer)
+    speed        = Column(Float)
+    heading      = Column(Float)
+    aircraft_type = Column(String(20))
+    is_military  = Column(Boolean, default=False)
+    timestamp    = Column(DateTime, index=True)
+
+
+class VesselHistory(Base):
+    __tablename__ = 'vessel_history'
+
+    id             = Column(Integer, primary_key=True)
+    mmsi           = Column(String(15), index=True)
+    name           = Column(String(100))
+    ship_type      = Column(Integer)
+    ship_type_text = Column(String(50))
+    lat            = Column(Float)
+    lon            = Column(Float)
+    speed          = Column(Float)
+    heading        = Column(Float)
+    flag           = Column(String(10))
+    destination    = Column(String(100))
+    timestamp      = Column(DateTime, index=True)
+
+
+class WeeklySnapshot(Base):
+    __tablename__ = 'weekly_snapshots'
+
+    id               = Column(Integer, primary_key=True)
+    week_start       = Column(DateTime, index=True)
+    week_end         = Column(DateTime)
+    maritime_stats   = Column(Text)   # JSON
+    aviation_stats   = Column(Text)   # JSON
+    news_stats       = Column(Text)   # JSON
+    alert_stats      = Column(Text)   # JSON
+    summary          = Column(Text)
+    threat_assessment = Column(Text)  # JSON
+    trends           = Column(Text)   # JSON
+    created_at       = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+@contextmanager
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 def migrate_db():
-    """Add missing columns to existing database."""
+    """Add missing columns to existing database and create new tables."""
     import sqlite3, os
     db_path = os.getenv('DATA_DIR', './data') + '/akili.db'
     if not os.path.exists(db_path):
@@ -72,6 +130,8 @@ def migrate_db():
             print(f'[db-migrate] added column: {col}')
     conn.commit()
     conn.close()
+    # Create new tables via SQLAlchemy (idempotent)
+    Base.metadata.create_all(bind=engine)
 
 def init_db():
     Base.metadata.create_all(bind=engine)

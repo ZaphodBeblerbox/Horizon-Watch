@@ -554,18 +554,14 @@ export default function LayersPanel({
                     onToggle={() => onNotificationsToggle?.()}
                 />
 
-                {/* INTELLIGENCE — superadmin only */}
-                {(currentUser?.is_super_admin || currentUser?.role === "superadmin") && (
-                    <>
-                        <SectionHeader label="Intelligence" />
-                        <LayerRow
-                            label="User Locations"
-                            hint="live operator positions"
-                            toggled={active.userLocations}
-                            onToggle={() => onToggle("userLocations")}
-                        />
-                    </>
-                )}
+                {/* INTELLIGENCE */}
+                <SectionHeader label="Intelligence" />
+                <LayerRow
+                    label="User Locations"
+                    hint="live operator positions"
+                    toggled={active.userLocations}
+                    onToggle={() => onToggle("userLocations")}
+                />
 
             </div>
         </div>

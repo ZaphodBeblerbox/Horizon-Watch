@@ -28,6 +28,7 @@
 import API_BASE from "../apiBase.js"
 import ttsService from "./ttsService.js"
 import { findDirectorImage } from "./directorImages.js"
+import { getDemoUnitIconSvg } from "./demoIconUtils.js"
 
 const AUTH_KEY = "hw-auth-token"
 
@@ -127,7 +128,10 @@ export class CommandRunner {
     if (!query) return null
     const key = query.trim().toLowerCase()
     if (this._imageCache.has(key)) return this._imageCache.get(key)
-    // 1. Wikipedia REST API via backend proxy (primary — reliable article thumbnails, no auth)
+    // 1. Hardcoded database — instant, no network, covers 100+ verified entities
+    const hardcoded = findDirectorImage(query)
+    if (hardcoded) { this._imageCache.set(key, hardcoded); return hardcoded }
+    // 2. Wikipedia REST API via backend proxy (reliable article thumbnails)
     try {
       const r = await fetch(`${API_BASE}/api/image/wiki?q=${encodeURIComponent(query)}`)
       if (r.ok) {
@@ -135,9 +139,6 @@ export class CommandRunner {
         if (d?.image) { this._imageCache.set(key, d.image); return d.image }
       }
     } catch (_) {}
-    // 2. Hardcoded database — covers entities with no Wikipedia page
-    const hardcoded = findDirectorImage(query)
-    if (hardcoded) { this._imageCache.set(key, hardcoded); return hardcoded }
     // 3. Wikimedia Commons search (slow, last resort)
     const tok = localStorage.getItem("hw-auth-token")
     if (tok) {
@@ -692,11 +693,10 @@ export class CommandRunner {
           if (L && map) {
             const FACTION_COLOR = { hostile: "#ef4444", allied: "#22d3ee", friendly: "#4ade80", neutral: "#e2e8f0" }
             const color = FACTION_COLOR[action.faction] || "#e2e8f0"
-            const svgHtml = this._getUnitIcon(action.vessel_type || "warship", color)
-            const label = action.name || ""
+            const iconHtml = this._getUnitIcon(action.vessel_type || "warship", color, action.name || "")
             const markerIcon = L.divIcon({
               className: "",
-              html: `<div style="filter:drop-shadow(0 0 6px ${color});text-align:center">${svgHtml}${label ? `<div style="color:${color};font-size:10px;font-weight:700;text-shadow:0 0 4px #000,0 1px 2px #000;white-space:nowrap;margin-top:2px">${label}</div>` : ""}</div>`,
+              html: `<div style="filter:drop-shadow(0 0 6px ${color});">${iconHtml}</div>`,
               iconSize: [44, 56],
               iconAnchor: [22, 28],
             })
@@ -767,11 +767,10 @@ export class CommandRunner {
           if (L && map) {
             const FACTION_COLOR = { hostile: "#ef4444", allied: "#22d3ee", friendly: "#4ade80", neutral: "#e2e8f0" }
             const color = FACTION_COLOR[action.faction] || "#e2e8f0"
-            const svgHtml = this._getUnitIcon(action.aircraft_type || "fighter", color)
-            const label = action.callsign || action.name || ""
+            const iconHtml = this._getUnitIcon(action.aircraft_type || "fighter", color, action.callsign || action.name || "")
             const markerIcon = L.divIcon({
               className: "",
-              html: `<div style="filter:drop-shadow(0 0 6px ${color});text-align:center">${svgHtml}${label ? `<div style="color:${color};font-size:10px;font-weight:700;text-shadow:0 0 4px #000,0 1px 2px #000;white-space:nowrap;margin-top:2px">${label}</div>` : ""}</div>`,
+              html: `<div style="filter:drop-shadow(0 0 6px ${color});">${iconHtml}</div>`,
               iconSize: [36, 46],
               iconAnchor: [18, 23],
             })
@@ -2354,23 +2353,36 @@ export class CommandRunner {
 
   // ── Animated unit movement ────────────────────────────────────────────────
 
-  _getUnitIcon(type, color) {
-    const svgs = {
-      warship:    `<svg width="36" height="36" viewBox="0 0 36 36"><path d="M18 4 L22 10 L24 16 L24 26 L22 30 L14 30 L12 26 L12 16 L14 10 Z" fill="${color}" stroke="rgba(255,255,255,0.6)" stroke-width="1"/><rect x="15" y="8" width="6" height="4" rx="1" fill="rgba(255,255,255,0.3)"/><rect x="16" y="14" width="4" height="8" rx="0.5" fill="rgba(255,255,255,0.2)"/><line x1="18" y1="26" x2="18" y2="30" stroke="rgba(255,255,255,0.3)" stroke-width="1"/></svg>`,
-      carrier:    `<svg width="44" height="44" viewBox="0 0 44 44"><path d="M22 2 L28 12 L30 18 L30 32 L28 38 L16 38 L14 32 L14 18 L16 12 Z" fill="${color}" stroke="rgba(255,255,255,0.6)" stroke-width="1"/><rect x="14" y="16" width="16" height="1" fill="rgba(255,255,255,0.4)"/><rect x="14" y="22" width="16" height="1" fill="rgba(255,255,255,0.3)"/><rect x="18" y="6" width="8" height="3" rx="1" fill="rgba(255,255,255,0.3)"/><line x1="16" y1="10" x2="28" y2="10" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/></svg>`,
-      submarine:  `<svg width="36" height="36" viewBox="0 0 36 36"><ellipse cx="18" cy="22" rx="13" ry="6" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="16" y="12" width="4" height="10" rx="2" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><line x1="18" y1="8" x2="18" y2="12" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/></svg>`,
-      patrol:     `<svg width="28" height="28" viewBox="0 0 28 28"><path d="M14 5 L18 11 L19 19 L17 23 L11 23 L9 19 L10 11 Z" fill="${color}" stroke="rgba(255,255,255,0.6)" stroke-width="0.8"/><rect x="12" y="9" width="4" height="3" rx="0.5" fill="rgba(255,255,255,0.3)"/></svg>`,
-      tanker_ship:`<svg width="36" height="36" viewBox="0 0 36 36"><path d="M18 5 L22 12 L24 28 L20 32 L16 32 L12 28 L14 12 Z" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="14" y="16" width="8" height="6" rx="1" fill="rgba(255,255,255,0.15)"/><rect x="14" y="24" width="8" height="4" rx="1" fill="rgba(255,255,255,0.1)"/></svg>`,
-      cargo_ship: `<svg width="34" height="34" viewBox="0 0 34 34"><path d="M17 4 L21 11 L23 26 L19 30 L15 30 L11 26 L13 11 Z" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="13" y="12" width="8" height="4" fill="rgba(255,255,255,0.15)"/><rect x="13" y="18" width="8" height="4" fill="rgba(255,255,255,0.1)"/><rect x="13" y="24" width="8" height="3" fill="rgba(255,255,255,0.1)"/></svg>`,
-      fighter:    `<svg width="32" height="32" viewBox="0 0 32 32"><path d="M16 2 L17.5 10 L28 15 L28 17 L17.5 14 L17.5 24 L22 27 L22 29 L16 27 L10 29 L10 27 L14.5 24 L14.5 14 L4 17 L4 15 L14.5 10 Z" fill="${color}" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/></svg>`,
-      bomber:     `<svg width="38" height="38" viewBox="0 0 38 38"><path d="M19 2 L21 12 L34 17 L34 20 L21 17 L21 28 L27 32 L27 34 L19 31 L11 34 L11 32 L17 28 L17 17 L4 20 L4 17 L17 12 Z" fill="${color}" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/></svg>`,
-      helicopter: `<svg width="30" height="30" viewBox="0 0 30 30"><line x1="5" y1="10" x2="25" y2="10" stroke="${color}" stroke-width="2" stroke-linecap="round"/><line x1="15" y1="10" x2="15" y2="14" stroke="${color}" stroke-width="2"/><ellipse cx="15" cy="18" rx="7" ry="4" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><line x1="8" y1="16" x2="3" y2="13" stroke="${color}" stroke-width="2" stroke-linecap="round"/></svg>`,
-      drone:      `<svg width="26" height="26" viewBox="0 0 26 26"><path d="M13 3 L14.5 9 L22 12 L22 14 L14.5 12 L14.5 20 L18 22 L18 23 L13 21 L8 23 L8 22 L11.5 20 L11.5 12 L4 14 L4 12 L11.5 9 Z" fill="${color}" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/></svg>`,
-      tank:       `<svg width="30" height="30" viewBox="0 0 30 30"><rect x="5" y="14" width="20" height="10" rx="3" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="10" y="8" width="10" height="8" rx="2" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><line x1="20" y1="11" x2="28" y2="8" stroke="${color}" stroke-width="3" stroke-linecap="round"/></svg>`,
-      apc:        `<svg width="30" height="30" viewBox="0 0 30 30"><rect x="4" y="13" width="22" height="10" rx="3" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><rect x="8" y="8" width="14" height="7" rx="2" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/></svg>`,
-      troops:     `<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/><path d="M6 22 L8 12 L16 12 L18 22" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="0.8"/></svg>`,
-    }
-    return svgs[type] || svgs.warship
+  // Maps action icon names → NATO badge types used by demoIconUtils
+  static _ICON_TYPE_MAP = {
+    warship:    'destroyer',
+    carrier:    'carrier',
+    patrol:     'fast_attack',
+    submarine:  'submarine',
+    tanker_ship:'tanker',
+    tanker:     'tanker',
+    cargo_ship: 'cargo',
+    cargo:      'cargo',
+    fighter:    'fighter',
+    bomber:     'fighter',
+    helicopter: 'helicopter',
+    drone:      'drone',
+    tank:       'armor',
+    apc:        'armor',
+    troops:     'troops',
+    // Direct NATO types pass through
+    infantry:   'infantry',
+    armor:      'armor',
+    artillery:  'artillery',
+    sam:        'sam',
+    destroyer:  'destroyer',
+    fast_attack:'fast_attack',
+    military:   'fast_attack',
+  }
+
+  _getUnitIcon(type, color, label) {
+    const natoType = CommandRunner._ICON_TYPE_MAP[type] || 'troops'
+    return getDemoUnitIconSvg(natoType, color, label)
   }
 
   // ── Bearing calculation ───────────────────────────────────────────────────
@@ -2464,17 +2476,14 @@ export class CommandRunner {
         waypoints: unit.waypoints || unit.path,
         type:      unit.type      || unit.icon,
       }
-      const color     = factionColors[unit.faction] || "#ffffff"
-      const unitType  = unit.type || "troops"
-      const svg       = this._getUnitIcon(unitType, color)
-      const iconW     = 44, iconH = 44
+      const color    = factionColors[unit.faction] || "#ffffff"
+      const unitType = unit.type || "troops"
+      const iconHtml = this._getUnitIcon(unitType, color, unit.label)
+      const iconW    = 44, iconH = 44
 
       const icon = L.divIcon({
         className: "director-unit-marker",
-        html: `<div style="filter:drop-shadow(0 0 8px ${color});position:relative;display:flex;flex-direction:column;align-items:center;">
-          ${svg}
-          ${unit.label ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);white-space:nowrap;color:${color};font-size:9px;font-weight:700;text-shadow:0 1px 4px #000;margin-top:2px;background:rgba(0,0,0,0.6);padding:1px 5px;border-radius:3px;">${unit.label}</div>` : ""}
-        </div>`,
+        html: `<div style="filter:drop-shadow(0 0 8px ${color});">${iconHtml}</div>`,
         iconSize:   [iconW, iconH],
         iconAnchor: [iconW / 2, iconH / 2],
       })

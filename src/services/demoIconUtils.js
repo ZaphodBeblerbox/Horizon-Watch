@@ -182,6 +182,18 @@ export function makeDeployZoneIcon(label) {
   return L.divIcon({ html, className: "", iconSize: [28, 28], iconAnchor: [14, 14] })
 }
 
+/**
+ * Returns a raw HTML string (SVG badge + label wrapper) for use inside a
+ * Leaflet divIcon that's constructed by the caller (e.g. CommandRunner).
+ * Does NOT require window.L — safe to call outside a useEffect.
+ */
+export function getDemoUnitIconSvg(type, color, label) {
+  const [w, h] = ICON_SIZES[type] || ICON_SIZES.default
+  const inner  = _getInner(type, w, h)
+  const svg    = _badge(w, h, color, inner)
+  return _wrapIcon(svg, w, h, label || null, null)
+}
+
 // ── Main dispatcher used by DemoRunner._spawnVessel ──────────────────────────
 
 export function makeDemoIcon(vessel, _path) {

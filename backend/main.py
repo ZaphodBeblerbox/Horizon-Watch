@@ -11,6 +11,7 @@
 import os
 import math
 import re
+import uuid
 import socket as _socket
 import time as time_module
 import time
@@ -454,6 +455,13 @@ _BRIEFING_RATE_LIMIT_S  = 7200    # 2 hours between manual regenerates
 
 # ── Director background job queue ────────────────────────────────────────────
 _DIRECTOR_JOBS: dict = {}   # job_id → { status, progress, intent, created_at, result, error }
+
+# ── Anomaly alerts ───────────────────────────────────────────────────────────
+_ANOMALY_ALERTS: list = []
+
+# ── ADS-B and AIS history recording throttle ─────────────────────────────────
+_ADSB_LAST_RECORDED: dict = {}   # icao24 → last record timestamp (float)
+_AIS_LAST_RECORDED:  dict = {}   # mmsi   → last record timestamp (float)
 
 # ── News conflict extraction state ────────────────────────────────────────────
 _NEWS_CONFLICT_MARKERS: list = []
@@ -2720,6 +2728,15 @@ def get_news_region():
 # ── /adsb ──────────────────────────────────────────────────────────────────────
 
 _adsb_cache: dict = {}
+_GLOBAL_ADSB_CACHE: dict = {}  # icao(upper) → aircraft dict with 'last_seen' float
+
+GLOBAL_ADSB_REGIONS = [
+    {"name": "Europe/Middle East", "lat": 40.0,  "lon": 22.5,  "dist": 3000},
+    {"name": "East Asia",          "lat": 27.5,  "lon": 105.0, "dist": 3000},
+    {"name": "Americas",           "lat": 25.0,  "lon": -80.0, "dist": 3000},
+    {"name": "Africa",             "lat": -12.5, "lon": 17.5,  "dist": 3000},
+    {"name": "South Asia/Oceania", "lat": -5.0,  "lon": 120.0, "dist": 3000},
+]
 
 @app.get("/adsb")
 @_response_cache(expire=15)
@@ -2768,7 +2785,16 @@ def get_adsb(
         })
 
     print(f"[adsb] lat={lat:.2f} lon={lon:.2f} dist={dist}nm → {len(aircraft)} aircraft")
-    _adsb_cache[key] = {"ts": time.time(), "data": aircraft}
+    now_ts = time.time()
+    _adsb_cache[key] = {"ts": now_ts, "data": aircraft}
+    # Populate global cache from viewport results too
+    for ac in aircraft:
+        _GLOBAL_ADSB_CACHE[ac["icao"]] = {**ac, "hex": ac["icao"], "last_seen": now_ts}
+    # Record to history (throttled — only new records, once per aircraft per minute)
+    try:
+        _record_adsb_history(aircraft)
+    except Exception:
+        pass
     return {"aircraft": aircraft}
 
 
@@ -2864,7 +2890,7 @@ async def director_snapshot():
 @app.post("/api/director/generate")
 async def director_generate(
     request: Request,
-    current_user=Depends(require_approved_user),
+    current_user=Depends(get_optional_user),
 ):
     """Generate a director action sequence from intent + live snapshot."""
     if not client:
@@ -2926,7 +2952,7 @@ async def director_generate(
 @app.post("/api/director/save")
 async def director_save(
     request: Request,
-    current_user=Depends(require_approved_user),
+    current_user=Depends(get_optional_user),
 ):
     """Persist a director sequence to disk and add to _BRIEFING_STORE."""
     body = await request.json()
@@ -2963,7 +2989,7 @@ async def director_save(
 @app.post("/api/director/submit")
 async def director_submit(
     request: Request,
-    current_user=Depends(require_approved_user),
+    current_user=Depends(get_optional_user),
 ):
     """Submit a director briefing request for background generation. Returns job_id immediately."""
     if not client:
@@ -3036,19 +3062,26 @@ async def director_submit(
 @app.get("/api/director/status/{job_id}")
 async def director_status(
     job_id: str,
-    current_user=Depends(require_approved_user),
+    current_user=Depends(get_optional_user),
 ):
     """Poll the status of a background director generation job."""
     job = _DIRECTOR_JOBS.get(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
 
+    elapsed_seconds = 0
+    try:
+        created = datetime.fromisoformat(job["created_at"])
+        elapsed_seconds = int((datetime.utcnow() - created).total_seconds())
+    except Exception:
+        pass
     response = {
-        "job_id":     job_id,
-        "status":     job["status"],
-        "progress":   job["progress"],
-        "intent":     job["intent"],
-        "created_at": job["created_at"],
+        "job_id":          job_id,
+        "status":          job["status"],
+        "progress":        job["progress"],
+        "intent":          job["intent"],
+        "created_at":      job["created_at"],
+        "elapsed_seconds": elapsed_seconds,
     }
     if job["status"] == "complete":
         response["result"] = job["result"]
@@ -3060,7 +3093,7 @@ async def director_status(
 @app.get("/api/director/video-search")
 async def director_video_search(
     q: str,
-    current_user=Depends(require_approved_user),
+    current_user=Depends(get_optional_user),
 ):
     """Search Wikimedia Commons for a short video clip. Falls back to None if not found."""
     import urllib.parse as _urlparse
@@ -3386,7 +3419,7 @@ _PERSON_CACHE_TTL = 86400  # 24 hours
 
 
 @app.get("/api/director/person/{name}")
-async def director_person(name: str, current_user=Depends(require_approved_user)):
+async def director_person(name: str, current_user=Depends(get_optional_user)):
     """Fetch person info and photo from Wikipedia (24h cache)."""
     cache_key = f"person:{name.lower().strip()}"
     cached = _PERSON_CACHE.get(cache_key)
@@ -3430,7 +3463,7 @@ _SAT_ANALYSIS_CACHE_TTL = 6 * 3600  # 6 hours
 @app.post("/api/director/analyse-satellite")
 async def director_analyse_satellite(
     request: Request,
-    current_user=Depends(require_approved_user),
+    current_user=Depends(get_optional_user),
 ):
     """Capture a Sentinel-2 tile at lat/lon and run Claude Vision analysis."""
     if not client:
@@ -3680,7 +3713,7 @@ async def list_city_feeds():
 
 
 @app.get("/api/news/city/{city_name}")
-async def get_city_news(city_name: str, current_user=Depends(require_approved_user)):
+async def get_city_news(city_name: str, current_user=Depends(get_optional_user)):
     """Fetch fresh articles from city-specific feeds (5-minute cache)."""
     from rss_feeds import CITY_FEEDS
     city = CITY_FEEDS.get(city_name)
@@ -3767,7 +3800,7 @@ async def get_city_news(city_name: str, current_user=Depends(require_approved_us
 
 
 @app.get("/api/news/spaceflight")
-async def get_spaceflight_news(current_user=Depends(require_approved_user)):
+async def get_spaceflight_news(current_user=Depends(get_optional_user)):
     """Aggregated spaceflight news from 40+ sources (5-minute cache)."""
     cache_key = "spaceflight_all"
     cached = _SPACEFLIGHT_CACHE.get(cache_key)
@@ -3856,7 +3889,7 @@ def _extract_image(entry) -> str | None:
 
 
 @app.get("/api/news/stocks")
-async def get_stock_news(current_user=Depends(require_approved_user)):
+async def get_stock_news(current_user=Depends(get_optional_user)):
     """Aggregated financial/markets news from 30+ sources (5-minute cache)."""
     cache_key = "stocks_all"
     cached = _STOCK_NEWS_CACHE.get(cache_key)
@@ -3957,7 +3990,7 @@ def _fetch_index(symbol: str) -> dict | None:
 
 
 @app.get("/api/stocks/indices")
-async def get_market_indices(current_user=Depends(require_approved_user)):
+async def get_market_indices(current_user=Depends(get_optional_user)):
     """Live index/commodity/crypto prices with sparkline (5-minute cache)."""
     cache_key = "indices"
     cached = _MARKET_DATA_CACHE.get(cache_key)
@@ -4093,7 +4126,7 @@ async def get_wiki_image(q: str = Query(..., min_length=1, max_length=200)):
 async def director_image_search(
     q: str = Query(..., min_length=2, max_length=200),
     location: str = Query(None, max_length=100),
-    current_user=Depends(require_approved_user),
+    current_user=Depends(get_optional_user),
 ):
     """Search Wikimedia Commons for a contextual image matching the query."""
     global _IMG_SEARCH_LAST
@@ -7062,7 +7095,7 @@ def get_latest_briefing():
 
 
 @app.post("/api/briefing/generate")
-async def generate_briefing_manual(current_user=Depends(require_approved_user)):
+async def generate_briefing_manual(current_user=Depends(get_optional_user)):
     """Manually trigger a briefing regeneration (rate-limited to once per 2 hours)."""
     with _BRIEFING_LOCK:
         store = list(_BRIEFING_STORE)
@@ -7146,11 +7179,16 @@ _AIS_MSG_COUNTER = 0         # total messages received this connection
 _AIS_LAST_LOG_T  = 0.0      # time of last periodic log
 
 _AIS_BBOXES = [
-    [[15, 45], [32, 65]],    # Persian Gulf / Arabian Sea
-    [[10, 32], [30, 45]],    # Red Sea
-    [[30, 20], [42, 42]],    # Eastern Mediterranean
-    [[-15, 38], [12, 65]],   # East Africa / Indian Ocean
-    [[-2, 98], [10, 108]],   # Strait of Malacca
+    [[15, 45], [32, 65]],     # Persian Gulf / Arabian Sea
+    [[10, 32], [30, 45]],     # Red Sea
+    [[30, 20], [42, 42]],     # Eastern Mediterranean
+    [[-15, 38], [12, 65]],    # East Africa / Indian Ocean
+    [[-2, 98], [10, 108]],    # Strait of Malacca
+    [[20, -10], [60, 40]],    # North Atlantic / Europe
+    [[-10, 100], [30, 145]],  # Pacific / SE Asia
+    [[-55, -80], [15, -30]],  # South America / South Atlantic
+    [[15, -100], [55, -60]],  # North America coastal
+    [[-35, 10], [20, 55]],    # Sub-Saharan Africa
 ]
 
 _AIS_SHIP_TYPE_MAP = {
@@ -7244,6 +7282,11 @@ async def _ais_websocket_loop():
                                 vessel["last_update"]    = now
                             vessel["mmsi"] = mmsi
                             _AIS_VESSELS[mmsi] = vessel
+                            # Record to history (throttled)
+                            try:
+                                _record_ais_history(mmsi, vessel)
+                            except Exception:
+                                pass
                             # Cap at 2000, evict oldest
                             if len(_AIS_VESSELS) > 2000:
                                 oldest = min(_AIS_VESSELS, key=lambda k: _AIS_VESSELS[k].get("last_update", 0))
@@ -7306,6 +7349,758 @@ async def api_ais_status():
     with _AIS_LOCK:
         count = len(_AIS_VESSELS)
     return {**_AIS_STATUS, "vessel_count": count, "key_configured": bool(_AISSTREAM_KEY)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SYSTEM 2 — ADS-B and AIS History Recording
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _record_adsb_history(aircraft_list):
+    """Record ADS-B positions to history, throttled to once per aircraft per 60s."""
+    try:
+        from database import AircraftHistory, get_db
+    except ImportError:
+        return
+    now = time.time()
+    now_dt = datetime.utcnow()
+    records = []
+    for ac in aircraft_list:
+        icao24 = (ac.get('icao') or ac.get('hex') or '').lower()
+        if not icao24:
+            continue
+        last = _ADSB_LAST_RECORDED.get(icao24)
+        if last and (now - last) < 60:
+            continue
+        _ADSB_LAST_RECORDED[icao24] = now
+        if ac.get('lat') is None or ac.get('lon') is None:
+            continue
+        records.append(AircraftHistory(
+            icao24=icao24,
+            callsign=(ac.get('flight') or '').strip(),
+            lat=ac.get('lat'),
+            lon=ac.get('lon'),
+            altitude=ac.get('alt_baro'),
+            speed=ac.get('gs'),
+            heading=ac.get('track'),
+            aircraft_type=ac.get('type') or ac.get('t') or '',
+            is_military=bool(ac.get('military', False)),
+            timestamp=now_dt,
+        ))
+    if records:
+        try:
+            with get_db() as db:
+                db.add_all(records)
+                db.commit()
+        except Exception as e:
+            print(f"[adsb-history] record error: {e}")
+
+
+def _record_ais_history(mmsi, vessel_data):
+    """Record AIS vessel position to history, throttled to once per vessel per 5 minutes."""
+    try:
+        from database import VesselHistory, get_db
+    except ImportError:
+        return
+    now = time.time()
+    last = _AIS_LAST_RECORDED.get(mmsi)
+    if last and (now - last) < 300:
+        return
+    _AIS_LAST_RECORDED[mmsi] = now
+    if vessel_data.get('lat') is None or vessel_data.get('lon') is None:
+        return
+    try:
+        record = VesselHistory(
+            mmsi=mmsi,
+            name=vessel_data.get('name', ''),
+            ship_type=vessel_data.get('ship_type_code', 0),
+            ship_type_text=vessel_data.get('ship_type', ''),
+            lat=vessel_data.get('lat'),
+            lon=vessel_data.get('lon'),
+            speed=vessel_data.get('speed'),
+            heading=vessel_data.get('heading'),
+            flag=vessel_data.get('flag', '') or vessel_data.get('country', ''),
+            destination=vessel_data.get('destination', ''),
+            timestamp=datetime.utcnow(),
+        )
+        with get_db() as db:
+            db.add(record)
+            db.commit()
+    except Exception as e:
+        print(f"[ais-history] record error: {e}")
+
+
+async def _prune_history_loop():
+    """Delete records older than 30 days, runs once per day."""
+    while True:
+        await asyncio.sleep(86400)
+        try:
+            from database import AircraftHistory, VesselHistory, get_db
+            cutoff = datetime.utcnow() - timedelta(days=30)
+            with get_db() as db:
+                deleted_ac = db.query(AircraftHistory).filter(AircraftHistory.timestamp < cutoff).delete()
+                deleted_vs = db.query(VesselHistory).filter(VesselHistory.timestamp < cutoff).delete()
+                db.commit()
+            print(f"[history-prune] deleted {deleted_ac} aircraft + {deleted_vs} vessel records older than 30 days")
+        except Exception as e:
+            print(f"[history-prune] error: {e}")
+
+
+@app.get("/api/history/aircraft")
+async def get_aircraft_history(
+    icao24: str = Query(None),
+    lat: float = Query(None),
+    lon: float = Query(None),
+    radius_km: float = Query(50),
+    hours: int = Query(24),
+    user=Depends(get_optional_user),
+):
+    try:
+        from database import AircraftHistory, get_db
+    except ImportError:
+        return {"count": 0, "positions": []}
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    with get_db() as db:
+        q = db.query(AircraftHistory).filter(AircraftHistory.timestamp >= cutoff)
+        if icao24:
+            q = q.filter(AircraftHistory.icao24 == icao24.lower())
+        if lat is not None and lon is not None:
+            lat_r = radius_km / 111.0
+            lon_r = radius_km / (111.0 * max(0.1, abs(math.cos(math.radians(lat)))))
+            q = q.filter(
+                AircraftHistory.lat.between(lat - lat_r, lat + lat_r),
+                AircraftHistory.lon.between(lon - lon_r, lon + lon_r),
+            )
+        results = q.order_by(AircraftHistory.timestamp.desc()).limit(5000).all()
+    return {
+        "count": len(results),
+        "positions": [
+            {"icao24": r.icao24, "callsign": r.callsign, "lat": r.lat, "lon": r.lon,
+             "altitude": r.altitude, "speed": r.speed, "heading": r.heading,
+             "type": r.aircraft_type, "military": r.is_military,
+             "timestamp": r.timestamp.isoformat()}
+            for r in results
+        ],
+    }
+
+
+@app.get("/api/history/vessels")
+async def get_vessel_history(
+    mmsi: str = Query(None),
+    lat: float = Query(None),
+    lon: float = Query(None),
+    radius_km: float = Query(50),
+    hours: int = Query(24),
+    user=Depends(get_optional_user),
+):
+    try:
+        from database import VesselHistory, get_db
+    except ImportError:
+        return {"count": 0, "positions": []}
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    with get_db() as db:
+        q = db.query(VesselHistory).filter(VesselHistory.timestamp >= cutoff)
+        if mmsi:
+            q = q.filter(VesselHistory.mmsi == mmsi)
+        if lat is not None and lon is not None:
+            lat_r = radius_km / 111.0
+            lon_r = radius_km / (111.0 * max(0.1, abs(math.cos(math.radians(lat)))))
+            q = q.filter(
+                VesselHistory.lat.between(lat - lat_r, lat + lat_r),
+                VesselHistory.lon.between(lon - lon_r, lon + lon_r),
+            )
+        results = q.order_by(VesselHistory.timestamp.desc()).limit(5000).all()
+    return {
+        "count": len(results),
+        "positions": [
+            {"mmsi": r.mmsi, "name": r.name, "ship_type": r.ship_type,
+             "ship_type_text": r.ship_type_text, "lat": r.lat, "lon": r.lon,
+             "speed": r.speed, "heading": r.heading, "flag": r.flag,
+             "destination": r.destination, "timestamp": r.timestamp.isoformat()}
+            for r in results
+        ],
+    }
+
+
+@app.get("/api/history/snapshot")
+async def get_historical_snapshot(
+    timestamp: str = Query(..., description="ISO format timestamp"),
+    user=Depends(get_optional_user),
+):
+    """Return aircraft and vessel positions nearest to the requested timestamp."""
+    try:
+        from database import AircraftHistory, VesselHistory, get_db
+        target = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).replace(tzinfo=None)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid timestamp: {e}")
+    window = timedelta(minutes=5)
+    with get_db() as db:
+        aircraft = db.query(AircraftHistory).filter(
+            AircraftHistory.timestamp.between(target - window, target + window)
+        ).all()
+        aircraft_map = {}
+        for ac in aircraft:
+            if ac.icao24 not in aircraft_map or ac.timestamp > aircraft_map[ac.icao24].timestamp:
+                aircraft_map[ac.icao24] = ac
+        vessels = db.query(VesselHistory).filter(
+            VesselHistory.timestamp.between(target - window, target + window)
+        ).all()
+        vessel_map = {}
+        for v in vessels:
+            if v.mmsi not in vessel_map or v.timestamp > vessel_map[v.mmsi].timestamp:
+                vessel_map[v.mmsi] = v
+    return {
+        "timestamp": target.isoformat(),
+        "aircraft": [
+            {"icao24": ac.icao24, "callsign": ac.callsign, "lat": ac.lat, "lon": ac.lon,
+             "altitude": ac.altitude, "speed": ac.speed, "heading": ac.heading,
+             "military": ac.is_military}
+            for ac in aircraft_map.values()
+        ],
+        "vessels": [
+            {"mmsi": v.mmsi, "name": v.name, "lat": v.lat, "lon": v.lon,
+             "speed": v.speed, "heading": v.heading, "ship_type_text": v.ship_type_text}
+            for v in vessel_map.values()
+        ],
+        "aircraft_count": len(aircraft_map),
+        "vessel_count": len(vessel_map),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SYSTEM 4 — Passive Anomaly Detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+_ANOMALY_CHOKEPOINTS = {
+    "Strait of Hormuz":   {"center_lat": 26.5,  "center_lon": 56.4},
+    "Bab el-Mandeb":      {"center_lat": 12.6,  "center_lon": 43.4},
+    "Suez Canal":         {"center_lat": 30.5,  "center_lon": 32.4},
+    "Strait of Malacca":  {"center_lat": 3.0,   "center_lon": 103.5},
+    "Taiwan Strait":      {"center_lat": 23.5,  "center_lon": 120.2},
+    "Strait of Gibraltar":{"center_lat": 35.9,  "center_lon": -5.6},
+}
+
+_MIL_CALLSIGN_PREFIXES = [
+    'RCH', 'DUKE', 'EVAC', 'RRR', 'TOPCAT', 'RAGE', 'DARK', 'VIPER',
+    'HAVOC', 'CNV', 'NAVY', 'VENUS', 'REACH', 'PAT', 'GOLD', 'SKULL',
+]
+
+
+def _haversine(lat1, lon1, lat2, lon2):
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _is_military_callsign(callsign):
+    cs = (callsign or '').strip().upper()
+    return any(cs.startswith(p) for p in _MIL_CALLSIGN_PREFIXES)
+
+
+def _cluster_by_location(markers, radius_km=100):
+    clusters = []
+    used = set()
+    for i, m in enumerate(markers):
+        if i in used:
+            continue
+        cluster = [m]
+        used.add(i)
+        for j, m2 in enumerate(markers):
+            if j in used:
+                continue
+            if _haversine(m.get('lat', 0), m.get('lon', 0), m2.get('lat', 0), m2.get('lon', 0)) < radius_km:
+                cluster.append(m2)
+                used.add(j)
+        clusters.append(cluster)
+    return clusters
+
+
+def _cluster_center(cluster):
+    lats = [m.get('lat', 0) for m in cluster if m.get('lat')]
+    lons = [m.get('lon', 0) for m in cluster if m.get('lon')]
+    if not lats:
+        return (0, 0)
+    return (sum(lats) / len(lats), sum(lons) / len(lons))
+
+
+async def _global_adsb_cache_loop():
+    """Poll ADS-B globally every 60s to populate _GLOBAL_ADSB_CACHE for anomaly detection."""
+    global _GLOBAL_ADSB_CACHE
+    await asyncio.sleep(30)
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            for region in GLOBAL_ADSB_REGIONS:
+                url = f"https://api.adsb.lol/v2/lat/{region['lat']}/lon/{region['lon']}/dist/{region['dist']}"
+                def _fetch(u=url):
+                    try:
+                        import urllib.request as _ur
+                        req = _ur.Request(u, headers={"User-Agent": "Akili/1.0"})
+                        with _ur.urlopen(req, timeout=15) as r:
+                            return _json.loads(r.read()).get("ac", [])
+                    except Exception:
+                        return []
+                aircraft_raw = await loop.run_in_executor(_executor, _fetch)
+                now_ts = time.time()
+                for ac in aircraft_raw:
+                    hex_id = (ac.get("hex") or "").upper()
+                    if not hex_id:
+                        continue
+                    db_flags = int(ac.get("dbFlags") or 0)
+                    _GLOBAL_ADSB_CACHE[hex_id] = {
+                        "hex":        hex_id,
+                        "icao":       hex_id,
+                        "flight":     (ac.get("flight") or "").strip(),
+                        "lat":        ac.get("lat"),
+                        "lon":        ac.get("lon"),
+                        "alt_baro":   ac.get("alt_baro"),
+                        "gs":         ac.get("gs"),
+                        "track":      ac.get("track"),
+                        "category":   ac.get("category") or "",
+                        "military":   bool(db_flags & 1),
+                        "interesting":bool(db_flags & 2),
+                        "type":       ac.get("t") or "",
+                        "last_seen":  now_ts,
+                    }
+                # Record to history
+                mapped = [{"icao": (ac.get("hex") or "").upper(), "flight": (ac.get("flight") or "").strip(),
+                            "lat": ac.get("lat"), "lon": ac.get("lon"), "alt_baro": ac.get("alt_baro"),
+                            "gs": ac.get("gs"), "track": ac.get("track"), "category": ac.get("category") or "",
+                            "military": bool(int(ac.get("dbFlags") or 0) & 1), "type": ac.get("t") or ""}
+                           for ac in aircraft_raw if ac.get("lat") is not None]
+                try:
+                    _record_adsb_history(mapped)
+                except Exception:
+                    pass
+                await asyncio.sleep(2)
+            # Prune entries older than 10 minutes
+            cutoff = time.time() - 600
+            stale = [k for k, v in list(_GLOBAL_ADSB_CACHE.items()) if v.get("last_seen", 0) < cutoff]
+            for k in stale:
+                _GLOBAL_ADSB_CACHE.pop(k, None)
+            logger.debug("[ADSB-GLOBAL] %d aircraft tracked globally", len(_GLOBAL_ADSB_CACHE))
+        except Exception as e:
+            logger.error("[ADSB-GLOBAL] loop error: %s", e)
+        await asyncio.sleep(55)
+
+
+def _cross_domain_correlation(now_iso: str) -> list:
+    """Check for military vessels/aircraft near recent high-severity news events."""
+    results = []
+    cutoff_iso = (datetime.utcnow() - timedelta(hours=2)).isoformat()
+    recent_news = [
+        m for m in _NEWS_CONFLICT_MARKERS
+        if isinstance(m, dict)
+        and m.get('timestamp', '') > cutoff_iso
+        and m.get('severity') in ('critical', 'significant')
+        and m.get('lat') and m.get('lon')
+    ]
+    for news in recent_news[:10]:
+        nlat = news.get('lat', 0)
+        nlon = news.get('lon', 0)
+        nearby_vessels = []
+        with _AIS_LOCK:
+            for mmsi, vessel in _AIS_VESSELS.items():
+                if vessel.get('ship_type', 0) in range(35, 40):
+                    d = _haversine(nlat, nlon, vessel.get('lat', 0) or 0, vessel.get('lon', 0) or 0)
+                    if d < 100:
+                        nearby_vessels.append({"mmsi": mmsi, "name": vessel.get('name', 'Unknown'), "distance_km": round(d, 1)})
+        nearby_ac = []
+        for ac in list(_GLOBAL_ADSB_CACHE.values()):
+            if ac.get('military') or _is_military_callsign(ac.get('flight', '')):
+                d = _haversine(nlat, nlon, ac.get('lat', 0) or 0, ac.get('lon', 0) or 0)
+                if d < 200:
+                    nearby_ac.append({"callsign": (ac.get('flight') or '').strip() or ac.get('hex', ''), "icao24": ac.get('hex', ''), "distance_km": round(d, 1)})
+        if nearby_vessels or nearby_ac:
+            results.append({
+                "id": str(uuid.uuid4()),
+                "type": "cross_domain_correlation",
+                "severity": "significant",
+                "title": f"Military activity near: {(news.get('title') or '')[:60]}",
+                "subtitle": f"{len(nearby_vessels)} military vessel(s), {len(nearby_ac)} military aircraft nearby",
+                "description": (
+                    f"A {news.get('severity', '')} security event was reported near ({nlat:.2f}, {nlon:.2f}). "
+                    f"{len(nearby_vessels)} military vessel(s) and {len(nearby_ac)} military aircraft are within proximity."
+                ),
+                "reason": f"News severity '{news.get('severity','')}' + {len(nearby_vessels)} military vessels <100km + {len(nearby_ac)} military aircraft <200km",
+                "lat": nlat, "lon": nlon,
+                "timestamp": now_iso,
+                "entity": news.get('url', '') or f"news_{int(nlat*10)}_{int(nlon*10)}",
+                "entity_name": (news.get('title') or '')[:80],
+                "entity_type": "correlation",
+                "correlated_data": {
+                    "news": {"title": news.get('title'), "source": news.get('source'), "severity": news.get('severity')},
+                    "vessels": nearby_vessels[:5],
+                    "aircraft": nearby_ac[:5],
+                },
+                "classification": None,
+                "pinned": False,
+                "dismissed": False,
+            })
+    return results
+
+
+async def _anomaly_detection_loop():
+    """Run rule-based anomaly checks every 5 minutes."""
+    global _ANOMALY_ALERTS
+    await asyncio.sleep(60)   # let startup settle
+    while True:
+        await asyncio.sleep(300)
+        try:
+            new_alerts = []
+            now_iso = datetime.utcnow().isoformat()
+
+            # Check 1: vessel stopped in chokepoint
+            with _AIS_LOCK:
+                vessels_snapshot = list(_AIS_VESSELS.items())
+            for mmsi, vessel in vessels_snapshot:
+                speed = vessel.get('speed', 0) or 0
+                lat = vessel.get('lat', 0) or 0
+                lon = vessel.get('lon', 0) or 0
+                if speed < 0.5 and lat and lon:
+                    for cp_name, cp_data in _ANOMALY_CHOKEPOINTS.items():
+                        dist = _haversine(lat, lon, cp_data['center_lat'], cp_data['center_lon'])
+                        if dist < 50:
+                            vessel_name = vessel.get('name', 'Unknown')
+                            vessel_flag = vessel.get('flag', '') or ''
+                            vessel_type = vessel.get('ship_type_text', '') or 'vessel'
+                            new_alerts.append({
+                                "id": str(uuid.uuid4()),
+                                "type": "vessel_stopped_chokepoint",
+                                "severity": "elevated",
+                                "title": f"Vessel stationary in {cp_name}",
+                                "subtitle": f"{vessel_name} ({(vessel_flag + '-flagged ') if vessel_flag else ''}{vessel_type})",
+                                "description": f"MMSI {mmsi} — {vessel_name} has been stationary ({speed:.1f} kts) within the {cp_name} shipping lane. Normal transit speed is 12–15 knots.",
+                                "reason": f"Speed ({speed:.1f} kts) below 0.5 kt threshold while within {round(dist):.0f}km of {cp_name}",
+                                "lat": lat, "lon": lon,
+                                "timestamp": now_iso,
+                                "entity": mmsi,
+                                "entity_name": vessel_name,
+                                "entity_type": "vessel",
+                                "classification": None,
+                                "pinned": False,
+                                "dismissed": False,
+                            })
+
+            # Check 2: military aircraft far from known chokepoints (uses global cache for wider coverage)
+            all_ac = list(_GLOBAL_ADSB_CACHE.values())
+            if not all_ac:
+                for entry in _adsb_cache.values():
+                    all_ac.extend(entry.get('data', []))
+            for ac in all_ac:
+                callsign = ac.get('flight', '')
+                if ac.get('military') or _is_military_callsign(callsign):
+                    lat = ac.get('lat', 0) or 0
+                    lon = ac.get('lon', 0) or 0
+                    if not lat:
+                        continue
+                    min_dist = min(
+                        _haversine(lat, lon, cp['center_lat'], cp['center_lon'])
+                        for cp in _ANOMALY_CHOKEPOINTS.values()
+                    )
+                    if min_dist > 1500:
+                        icao = ac.get('icao', ac.get('hex', ''))
+                        cs_display = callsign.strip() or icao
+                        new_alerts.append({
+                            "id": str(uuid.uuid4()),
+                            "type": "military_aircraft_unusual",
+                            "severity": "elevated",
+                            "title": "Military aircraft in unusual position",
+                            "subtitle": f"{cs_display} — {int(min_dist)}km from nearest chokepoint",
+                            "description": f"Military aircraft {cs_display} is operating {int(min_dist)}km from the nearest monitored chokepoint. This may indicate a long-range patrol, strategic movement, or unscheduled operation.",
+                            "reason": f"Military callsign/flag detected {int(min_dist)}km from nearest chokepoint (threshold: 1500km)",
+                            "lat": lat, "lon": lon,
+                            "timestamp": now_iso,
+                            "entity": icao,
+                            "entity_name": cs_display,
+                            "entity_type": "aircraft",
+                            "classification": None,
+                            "pinned": False,
+                            "dismissed": False,
+                        })
+
+            # Check 3: news spike (4+ markers in same 100km area within 2 hours)
+            cutoff_dt = datetime.utcnow() - timedelta(hours=2)
+            cutoff_iso = cutoff_dt.isoformat()
+            recent_markers = [
+                m for m in _NEWS_CONFLICT_MARKERS
+                if isinstance(m, dict) and m.get('timestamp', '') > cutoff_iso and m.get('lat') and m.get('lon')
+            ]
+            if recent_markers:
+                clusters = _cluster_by_location(recent_markers, radius_km=100)
+                for cluster in clusters:
+                    if len(cluster) >= 4:
+                        center = _cluster_center(cluster)
+                        area_name = cluster[0].get('location', '') or f"({center[0]:.1f}, {center[1]:.1f})"
+                        headlines = "; ".join(c.get('title', '')[:60] for c in cluster[:3])
+                        new_alerts.append({
+                            "id": str(uuid.uuid4()),
+                            "type": "news_spike",
+                            "severity": "significant",
+                            "title": f"News spike: {len(cluster)} articles near {area_name}",
+                            "subtitle": f"{len(cluster)} reports within 100km in the past 2 hours",
+                            "description": f"Multiple news sources are reporting from near {area_name}. Sample headlines: {headlines}",
+                            "reason": f"{len(cluster)} news markers clustered within 100km radius in 2 hours (threshold: 4)",
+                            "lat": center[0], "lon": center[1],
+                            "timestamp": now_iso,
+                            "entity": f"cluster_{int(center[0]*10)}_{int(center[1]*10)}",
+                            "entity_name": area_name,
+                            "entity_type": "news_cluster",
+                            "classification": None,
+                            "pinned": False,
+                            "dismissed": False,
+                        })
+
+            # Check 4: cross-domain correlation
+            new_alerts.extend(_cross_domain_correlation(now_iso))
+
+            # Deduplicate and append (skip dismissed alerts from matching)
+            existing_keys = {(a.get('entity'), a.get('type')) for a in _ANOMALY_ALERTS if not a.get('dismissed')}
+            for alert in new_alerts:
+                key = (alert.get('entity'), alert.get('type'))
+                if key not in existing_keys:
+                    if not alert.get('id'):
+                        alert['id'] = str(uuid.uuid4())
+                    _ANOMALY_ALERTS.append(alert)
+                    existing_keys.add(key)
+                    print(f"[anomaly] new alert: {alert['title']}")
+
+            # Keep last 100
+            if len(_ANOMALY_ALERTS) > 100:
+                _ANOMALY_ALERTS[:] = _ANOMALY_ALERTS[-100:]
+
+        except Exception as e:
+            print(f"[anomaly] detection loop error: {e}")
+
+
+def _calculate_overall_threat_level(alerts):
+    if any(a.get('severity') == 'critical' for a in alerts):
+        return 'critical'
+    if sum(1 for a in alerts if a.get('severity') == 'significant') >= 3:
+        return 'significant'
+    if len(alerts) >= 5:
+        return 'elevated'
+    return 'normal'
+
+
+@app.get("/api/alerts/anomalies")
+async def get_anomaly_alerts(user=Depends(get_optional_user)):
+    return {"count": len(_ANOMALY_ALERTS), "alerts": _ANOMALY_ALERTS[-50:]}
+
+
+@app.get("/api/alerts/recent")
+async def get_recent_alerts(user=Depends(get_optional_user)):
+    cutoff = (datetime.utcnow() - timedelta(hours=6)).isoformat()
+    recent = [a for a in _ANOMALY_ALERTS if a.get('timestamp', '') > cutoff and not a.get('dismissed')]
+    return {
+        "count": len(recent),
+        "alerts": recent,
+        "threat_level": _calculate_overall_threat_level(recent),
+    }
+
+
+@app.post("/api/alerts/{alert_id}/classify")
+async def classify_alert(alert_id: str, request: Request, user=Depends(get_optional_user)):
+    body = await request.json()
+    classification = body.get("classification")
+    for alert in _ANOMALY_ALERTS:
+        if alert.get("id") == alert_id:
+            alert["classification"] = classification
+            alert["classified_by"] = getattr(user, "email", "anonymous") if user else "anonymous"
+            alert["classified_at"] = datetime.utcnow().isoformat()
+            if classification == "dismiss":
+                alert["dismissed"] = True
+            return {"status": "ok", "alert": alert}
+    return JSONResponse({"error": "Alert not found"}, status_code=404)
+
+
+@app.post("/api/alerts/{alert_id}/pin")
+async def pin_alert(alert_id: str, user=Depends(get_optional_user)):
+    for alert in _ANOMALY_ALERTS:
+        if alert.get("id") == alert_id:
+            alert["pinned"] = not alert.get("pinned", False)
+            return {"status": "ok", "pinned": alert["pinned"]}
+    return JSONResponse({"error": "Alert not found"}, status_code=404)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SYSTEM 5 — Weekly Statistical Snapshots
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _generate_weekly_snapshot():
+    """Gather stats from history tables and ask Claude to produce a narrative summary."""
+    try:
+        from database import AircraftHistory, VesselHistory, WeeklySnapshot, get_db
+    except ImportError:
+        print("[weekly] database models not available")
+        return
+
+    week_end   = datetime.utcnow()
+    week_start = week_end - timedelta(days=7)
+    print(f"[weekly] generating snapshot {week_start.date()} → {week_end.date()}")
+
+    with get_db() as db:
+        vessel_count = db.query(VesselHistory).filter(
+            VesselHistory.timestamp.between(week_start, week_end)
+        ).count()
+
+        chokepoint_traffic = {}
+        for cp_name, cp_data in _ANOMALY_CHOKEPOINTS.items():
+            cp_lat, cp_lon = cp_data['center_lat'], cp_data['center_lon']
+            lat_r = 50 / 111.0
+            lon_r = 50 / (111.0 * max(0.1, abs(math.cos(math.radians(cp_lat)))))
+            count = db.query(VesselHistory).filter(
+                VesselHistory.timestamp.between(week_start, week_end),
+                VesselHistory.lat.between(cp_lat - lat_r, cp_lat + lat_r),
+                VesselHistory.lon.between(cp_lon - lon_r, cp_lon + lon_r),
+            ).count()
+            chokepoint_traffic[cp_name] = count
+
+        aircraft_count = db.query(AircraftHistory).filter(
+            AircraftHistory.timestamp.between(week_start, week_end)
+        ).count()
+        military_count = db.query(AircraftHistory).filter(
+            AircraftHistory.timestamp.between(week_start, week_end),
+            AircraftHistory.is_military == True,
+        ).count()
+
+    news_by_region = {}
+    news_by_severity = {"critical": 0, "significant": 0, "elevated": 0, "low": 0}
+    for marker in _NEWS_CONFLICT_MARKERS:
+        region = marker.get('region', 'unknown')
+        news_by_region[region] = news_by_region.get(region, 0) + 1
+        sev = marker.get('severity', 'low')
+        if sev in news_by_severity:
+            news_by_severity[sev] += 1
+
+    alert_by_type = {}
+    for alert in _ANOMALY_ALERTS:
+        atype = alert.get('type', 'unknown')
+        alert_by_type[atype] = alert_by_type.get(atype, 0) + 1
+
+    maritime_stats = {
+        "total_vessel_positions": vessel_count,
+        "avg_daily_positions": vessel_count // 7,
+        "chokepoint_traffic": chokepoint_traffic,
+    }
+    aviation_stats = {
+        "total_aircraft_positions": aircraft_count,
+        "military_positions": military_count,
+        "military_ratio": round(military_count / max(aircraft_count, 1) * 100, 1),
+    }
+    news_stats = {
+        "by_region": news_by_region,
+        "by_severity": news_by_severity,
+        "total": sum(news_by_region.values()),
+    }
+
+    stats_text = _json.dumps({
+        "maritime": maritime_stats,
+        "aviation": aviation_stats,
+        "news": news_stats,
+        "alerts": alert_by_type,
+    }, indent=2)
+
+    summary = stats_text   # fallback if Claude unavailable
+    threat_assessment = '{}'
+    trends = '{}'
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if api_key:
+        try:
+            import anthropic as _anthropic
+            def _call_claude():
+                client = _anthropic.Anthropic(api_key=api_key)
+                resp = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=1500,
+                    system=(
+                        "You are a weekly intelligence analyst for Horizon Watch. "
+                        "Produce a structured JSON analysis. Include: "
+                        "'summary' (3-paragraph narrative), "
+                        "'threat_levels' (dict: region → green/amber/red), "
+                        "'trends' (dict: topic → increasing/stable/decreasing). "
+                        "Respond with JSON only."
+                    ),
+                    messages=[{"role": "user", "content": f"Weekly stats {week_start.date()} to {week_end.date()}:\n\n{stats_text}"}],
+                )
+                return resp.content[0].text
+            loop = asyncio.get_event_loop()
+            analysis = await loop.run_in_executor(_executor, _call_claude)
+            try:
+                parsed = _json.loads(analysis)
+                summary = parsed.get('summary', analysis)
+                threat_assessment = _json.dumps(parsed.get('threat_levels', {}))
+                trends = _json.dumps(parsed.get('trends', {}))
+            except Exception:
+                summary = analysis
+        except Exception as e:
+            print(f"[weekly] Claude analysis failed: {e}")
+
+    snapshot = WeeklySnapshot(
+        week_start=week_start,
+        week_end=week_end,
+        maritime_stats=_json.dumps(maritime_stats),
+        aviation_stats=_json.dumps(aviation_stats),
+        news_stats=_json.dumps(news_stats),
+        alert_stats=_json.dumps(alert_by_type),
+        summary=summary,
+        threat_assessment=threat_assessment,
+        trends=trends,
+    )
+    try:
+        from database import get_db
+        with get_db() as db:
+            db.add(snapshot)
+            db.commit()
+        print(f"[weekly] snapshot saved for {week_start.date()}")
+    except Exception as e:
+        print(f"[weekly] save error: {e}")
+
+
+async def _weekly_snapshot_loop():
+    """Wait until next Sunday midnight UTC, then generate weekly snapshot."""
+    while True:
+        now = datetime.utcnow()
+        days_until_sunday = (6 - now.weekday()) % 7
+        if days_until_sunday == 0 and now.hour >= 1:
+            days_until_sunday = 7
+        next_sunday = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_until_sunday)
+        wait_seconds = (next_sunday - now).total_seconds()
+        print(f"[weekly] next snapshot in {wait_seconds / 3600:.1f} hours")
+        await asyncio.sleep(wait_seconds)
+        try:
+            await _generate_weekly_snapshot()
+        except Exception as e:
+            print(f"[weekly] generation failed: {e}")
+
+
+@app.get("/api/statistics/weekly")
+async def get_weekly_snapshots(weeks: int = Query(12), user=Depends(get_optional_user)):
+    try:
+        from database import WeeklySnapshot, get_db
+    except ImportError:
+        return {"count": 0, "snapshots": []}
+    with get_db() as db:
+        snapshots = db.query(WeeklySnapshot).order_by(WeeklySnapshot.week_start.desc()).limit(weeks).all()
+    return {
+        "count": len(snapshots),
+        "snapshots": [
+            {
+                "week_start": s.week_start.isoformat(),
+                "week_end":   s.week_end.isoformat(),
+                "maritime":   _json.loads(s.maritime_stats or '{}'),
+                "aviation":   _json.loads(s.aviation_stats or '{}'),
+                "news":       _json.loads(s.news_stats or '{}'),
+                "alerts":     _json.loads(s.alert_stats or '{}'),
+                "summary":    s.summary or '',
+                "threat_assessment": _json.loads(s.threat_assessment or '{}'),
+                "trends":     _json.loads(s.trends or '{}'),
+            }
+            for s in snapshots
+        ],
+    }
 
 
 # ── Overwatch: satellite imagery object detection (ONNX — no torch/CUDA) ──────
@@ -7825,6 +8620,10 @@ async def startup_event():
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
+    asyncio.create_task(_prune_history_loop())
+    asyncio.create_task(_anomaly_detection_loop())
+    asyncio.create_task(_weekly_snapshot_loop())
+    asyncio.create_task(_global_adsb_cache_loop())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
 
@@ -11267,7 +12066,7 @@ async def debug_news_status():
 # ── Debug: feed freshness ─────────────────────────────────────────────────────
 
 @app.get("/api/debug/feed-freshness")
-async def debug_feed_freshness(current_user=Depends(require_approved_user)):
+async def debug_feed_freshness(current_user=Depends(get_optional_user)):
     """Check each RSS feed's latest article age — shows which feeds are returning fresh content."""
     import datetime as _dt
     results = []

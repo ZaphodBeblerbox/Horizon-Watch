@@ -1740,31 +1740,12 @@ function _acIconParts(ac) {
     const type = _acClassify(ac)
 
     if (type === 'helicopter') {
-        // Side-profile helicopter: long rotor line on top, rounded fuselage, tail boom + rotor, skids
-        const c = "rgba(0,255,120,0.95)"
-        const s = "rgba(0,255,120,0.95)"
-        const svg =
-            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="26" height="26" class="ac-glow-grn">` +
-            // Main rotor
-            `<line x1="2" y1="8" x2="28" y2="8" stroke="${s}" stroke-width="1.8" stroke-linecap="round"/>` +
-            // Rotor mast
-            `<line x1="14" y1="8" x2="14" y2="12" stroke="${s}" stroke-width="1.5"/>` +
-            // Fuselage body
-            `<ellipse cx="14" cy="17" rx="8" ry="4.5" fill="${c}"/>` +
-            // Cockpit bubble (darker)
-            `<ellipse cx="19" cy="16" rx="3.5" ry="3" fill="rgba(0,0,0,0.3)"/>` +
-            // Tail boom
-            `<polygon points="6,16 2,13 2,15" fill="${c}"/>` +
-            `<rect x="2" y="13.5" width="5" height="1.5" fill="${c}"/>` +
-            // Tail rotor
-            `<line x1="2" y1="10" x2="2" y2="17" stroke="${s}" stroke-width="1.8" stroke-linecap="round"/>` +
-            // Skid struts
-            `<line x1="10" y1="21" x2="10" y2="24" stroke="${s}" stroke-width="1.2"/>` +
-            `<line x1="18" y1="21" x2="18" y2="24" stroke="${s}" stroke-width="1.2"/>` +
-            // Skid rails
-            `<line x1="7" y1="24" x2="21" y2="24" stroke="${s}" stroke-width="1.8" stroke-linecap="round"/>` +
+        // Green airplane silhouette — same shape as commercial, green tint
+        const color = "rgba(0,221,102,0.95)"
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="ac-glow-grn">` +
+            `<path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="${color}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>` +
             `</svg>`
-        return { svg, size: 26, anchor: 13 }
+        return { svg, size: 18, anchor: 9 }
     }
 
     if (type === 'general') {
@@ -2748,6 +2729,7 @@ function _segmentTrack(points) {
 const AircraftLayer = memo(function AircraftLayer({
     visible, showLabels, boundsRef, onCount, polling, activateKey,
     directorAC = null,  // Set<string> of icao24 (lowercase) — Director Mode filter
+    timeTravelTime = null, // ISO string — when set, replace live feed with snapshot data
 }) {
     const map = useMap()
     const [aircraft,   setAircraft]   = useState([])
@@ -2803,6 +2785,32 @@ const AircraftLayer = memo(function AircraftLayer({
         intervalRef.current = setInterval(fetchAdsb, 500)
         return () => clearInterval(intervalRef.current)
     }, [polling, activateKey])
+
+    // ── Time Travel: load historical aircraft snapshot ────────────────────────
+    useEffect(() => {
+        if (!timeTravelTime) return
+        clearInterval(intervalRef.current)   // stop live polling
+        const tok = localStorage.getItem("hw-auth-token")
+        const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+        fetch(`${API}/api/history/snapshot?timestamp=${encodeURIComponent(timeTravelTime)}`, { headers })
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (!data) return
+                const mapped = data.aircraft.map(ac => ({
+                    icao:     ac.icao24,
+                    flight:   ac.callsign || "",
+                    lat:      ac.lat,
+                    lon:      ac.lon,
+                    alt_baro: ac.altitude,
+                    gs:       ac.speed,
+                    track:    ac.heading,
+                    military: ac.military,
+                }))
+                setAircraft(mapped)
+                onCount(mapped.length)
+            })
+            .catch(() => {})
+    }, [timeTravelTime])  // eslint-disable-line
 
     // ── Follow mode: soft pan toward aircraft on each update ─────────────────
     // Uses panTo (not flyTo) so the user can freely pan away between ticks.
@@ -5863,6 +5871,7 @@ export default function MapPage({
     directorHighlights  = [],   // [{id, lat, lon, style}] — animated highlight markers
     directorItems       = null, // granular director visibility state from CommandRunner
     isDirectorMode      = false, // when true, layer toggles are ignored; directorItems controls what's visible
+    timeTravelTime      = null, // ISO string — when set, overrides live ADS-B + AIS with historical snapshot
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -6054,6 +6063,10 @@ export default function MapPage({
     const [aisStatus, setAisStatus]           = useState(null)  // {connected, error, vessel_count}
     const [selectedAisVessel, setSelectedAisVessel] = useState(null)
     const aisIntervalRef                      = useRef(null)
+
+    // ── Pinned anomaly alert markers ───────────────────────────────────────────
+    const [pinnedAlerts, setPinnedAlerts]     = useState([])
+    const alertMarkersRef                     = useRef([])
 
     // ── Shipping lanes (OpenSeaMap tile overlay) ──────────────────────────────
 
@@ -6887,6 +6900,76 @@ export default function MapPage({
         aisIntervalRef.current = setInterval(fetchVessels, 30000)
         return () => { if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null } }
     }, [effectiveActive.aisVessels, isDirectorMode])  // eslint-disable-line
+
+    // ── Time Travel: load historical AIS vessel snapshot ─────────────────────
+    useEffect(() => {
+        if (!timeTravelTime) return
+        if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null }
+        const tok = localStorage.getItem("hw-auth-token")
+        const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+        fetch(`${API}/api/history/snapshot?timestamp=${encodeURIComponent(timeTravelTime)}`, { headers })
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (!data) return
+                setAisVessels(data.vessels.map(v => ({
+                    mmsi:           v.mmsi,
+                    name:           v.name,
+                    lat:            v.lat,
+                    lon:            v.lon,
+                    sog:            v.speed,
+                    cog:            v.heading,
+                    ship_type_text: v.ship_type_text,
+                })))
+            })
+            .catch(() => {})
+    }, [timeTravelTime])  // eslint-disable-line
+
+    // ── Pinned anomaly alert markers: poll every 60s ──────────────────────────
+    useEffect(() => {
+        const fetchAlerts = () => {
+            const tok = localStorage.getItem("hw-auth-token")
+            const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+            fetch(`${API}/api/alerts/anomalies`, { headers })
+                .then(r => r.ok ? r.json() : null)
+                .then(d => {
+                    if (d) setPinnedAlerts((d.alerts || []).filter(a => a.pinned && !a.dismissed))
+                })
+                .catch(() => {})
+        }
+        fetchAlerts()
+        const tid = setInterval(fetchAlerts, 60_000)
+        return () => clearInterval(tid)
+    }, [])
+
+    useEffect(() => {
+        const map = mapRef.current
+        if (!map) return
+        // Remove old markers
+        alertMarkersRef.current.forEach(m => { try { m.remove() } catch {} })
+        alertMarkersRef.current = []
+        if (!pinnedAlerts.length) return
+        pinnedAlerts.forEach(alert => {
+            if (alert.lat == null || alert.lon == null) return
+            const pulse = alert.severity === 'critical' ? '#ff3333' : '#ffaa00'
+            const marker = L.marker([alert.lat, alert.lon], {
+                icon: L.divIcon({
+                    className: "",
+                    html: `<div style="position:relative;">
+                        <div style="width:14px;height:14px;border-radius:50%;background:${pulse};border:2px solid white;box-shadow:0 0 10px ${pulse};"></div>
+                        <div style="position:absolute;top:-26px;left:50%;transform:translateX(-50%);padding:2px 7px;border-radius:4px;background:rgba(0,0,0,0.82);color:${pulse};font-size:9px;font-weight:700;white-space:nowrap;border:1px solid ${pulse}40;font-family:system-ui;">⚠ ${(alert.title || '').substring(0, 32)}</div>
+                    </div>`,
+                    iconSize:   [14, 14],
+                    iconAnchor: [7, 7],
+                }),
+                zIndexOffset: 900,
+            }).addTo(map)
+            alertMarkersRef.current.push(marker)
+        })
+        return () => {
+            alertMarkersRef.current.forEach(m => { try { m.remove() } catch {} })
+            alertMarkersRef.current = []
+        }
+    }, [pinnedAlerts])  // eslint-disable-line
 
     // ── OpenSeaMap seamark tiles — shown at zoom ≥ 6, anti-flicker options ─────
     useEffect(() => {
@@ -9274,6 +9357,7 @@ export default function MapPage({
                     polling={adsbLive || (isDirectorMode && !!dirAC?.size)}
                     activateKey={adsbActivateKey}
                     directorAC={isDirectorMode ? dirAC : null}
+                    timeTravelTime={timeTravelTime}
                 />
 
                 {/* ── Route planner — origin, dest pins + polyline ──────────── */}

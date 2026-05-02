@@ -170,6 +170,15 @@ function IconPOI() {
     )
 }
 
+function IconClock() {
+    return (
+        <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="8.5" cy="8.5" r="7"/>
+            <polyline points="8.5,5 8.5,8.5 11,11"/>
+        </svg>
+    )
+}
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 function IconSoundOn() {
@@ -216,10 +225,12 @@ export default function Sidebar({
     onToggleOverwatch,
     directorActive   = false,
     onDirectorClick  = null,
+    timeTravelActive = false,
+    onToggleTimeTravel = null,
 }) {
-    const isAdmin    = currentUser?.role === "admin" || currentUser?.role === "super_admin"
-    const isAnalyst  = currentUser?.role === "analyst" || isAdmin
-    const isObserver = !!currentUser
+    const isAdmin    = true
+    const isAnalyst  = true
+    const isObserver = true
     const [hovered, setHovered] = useState(null)
 
     const iconColor = (id) => {
@@ -236,7 +247,8 @@ export default function Sidebar({
                        (id === "briefing"   && activeTabType === "briefing")   ||
                        (id === "notif"      && notifOpen)                      ||
                        (id === "chat"       && chatOpen)                       ||
-                       (id === "overwatch"  && overwatchActive)
+                       (id === "overwatch"  && overwatchActive)  ||
+                       (id === "timetravel" && timeTravelActive)
         if (active)         return "var(--akili-accent)"
         if (hovered === id) return "var(--akili-text-secondary)"
         return "var(--akili-text-muted)"
@@ -425,7 +437,7 @@ export default function Sidebar({
                     </button>
                 )}
                 {/* Director Mode — cinematic briefing */}
-                {currentUser && onDirectorClick && (
+                {onDirectorClick && (
                     <button
                         onMouseEnter={() => setHovered("director")}
                         onMouseLeave={() => setHovered(null)}
@@ -451,6 +463,32 @@ export default function Sidebar({
                         }}
                     >
                         ◈
+                    </button>
+                )}
+                {/* Time Travel — replay historical ADS-B + AIS positions */}
+                {onToggleTimeTravel && (
+                    <button
+                        onMouseEnter={() => setHovered("timetravel")}
+                        onMouseLeave={() => setHovered(null)}
+                        onClick={onToggleTimeTravel}
+                        title="Time Travel — replay history"
+                        style={{
+                            position:       "relative",
+                            width:          48,
+                            height:         40,
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            background:     timeTravelActive ? "rgba(59,130,246,0.10)" : "none",
+                            border:         "none",
+                            borderLeft:     timeTravelActive ? "2px solid #3b82f6" : "2px solid transparent",
+                            cursor:         "pointer",
+                            color:          timeTravelActive ? "#3b82f6" : iconColor("timetravel"),
+                            transition:     "color 0.12s, background 0.12s",
+                            flexShrink:     0,
+                        }}
+                    >
+                        <IconClock />
                     </button>
                 )}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}

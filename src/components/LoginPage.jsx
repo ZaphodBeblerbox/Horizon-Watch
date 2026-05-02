@@ -12,7 +12,7 @@ const STARS = Array.from({ length: 30 }, (_, i) => ({
     delay:  `${(i % 7) * -1.1}s`,
 }))
 
-export default function LoginPage({ onAuthenticated }) {
+export default function LoginPage({ onAuthenticated, onDismiss = null }) {
     const [mode,     setMode]     = useState("login")   // login | register | forgot | forgot_sent
     const [email,    setEmail]    = useState("")
     const [password, setPassword] = useState("")
@@ -119,6 +119,24 @@ export default function LoginPage({ onAuthenticated }) {
             fontFamily:     "Inter, -apple-system, sans-serif",
             overflow:       "hidden",
         }}>
+            {onDismiss && (
+                <button
+                    onClick={onDismiss}
+                    style={{
+                        position:   "absolute",
+                        top:        16,
+                        right:      20,
+                        background: "none",
+                        border:     "none",
+                        color:      "rgba(255,255,255,0.4)",
+                        fontSize:   22,
+                        cursor:     "pointer",
+                        zIndex:     10,
+                        lineHeight: 1,
+                    }}
+                    title="Continue without signing in"
+                >×</button>
+            )}
             {/* Starfield */}
             {STARS.map((s, i) => (
                 <div key={i} style={{

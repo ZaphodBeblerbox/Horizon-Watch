@@ -8,10 +8,10 @@ const getClearances = (user) => {
     return [
         { name: "Map Intelligence",  status: "GRANTED" },
         { name: "Briefings Access",  status: "GRANTED" },
-        { name: "POI Profiles",      status: (role === "analyst" || role === "admin") ? "GRANTED" : "OBSERVER" },
-        { name: "Claude Analysis",   status: (role === "analyst" || role === "admin") ? "GRANTED" : "DENIED" },
-        { name: "Admin Panel",       status: role === "admin" ? "GRANTED" : "DENIED" },
-        { name: "Export Reports",    status: role === "admin" ? "GRANTED" : "PENDING" },
+        { name: "POI Profiles",      status: "GRANTED" },
+        { name: "Claude Analysis",   status: "GRANTED" },
+        { name: "Admin Panel",       status: "GRANTED" },
+        { name: "Export Reports",    status: "GRANTED" },
     ]
 }
 

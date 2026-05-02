@@ -35,6 +35,7 @@ import DirectorCountryPanel from "./components/DirectorCountryPanel.jsx"
 import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDirectorSequence, submitDirectorBriefing, pollDirectorStatus } from "./services/commandRunner.js"
 import { DemoRunner } from "./services/demoRunner.js"
 import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
+import TimeSlider from "./components/TimeSlider.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -142,6 +143,9 @@ export default function App() {
     const [showChat,          setShowChat]          = useState(false)
     const [overwatchActive,   setOverwatchActive]   = useState(false)
     const [sentinel2Active,   setSentinel2Active]   = useState(false)
+    const [timeTravelActive,  setTimeTravelActive]  = useState(false)
+    const [timeTravelTime,    setTimeTravelTime]    = useState(null)
+    const [showLoginModal,    setShowLoginModal]    = useState(false)
 
     // ── Director Mode ──────────────────────────────────────────────────────────
     const [directorVisible,        setDirectorVisible]        = useState(false)
@@ -159,9 +163,12 @@ export default function App() {
     const [directorCountryPanel,   setDirectorCountryPanel]   = useState(null)  // country name for news panel
     // Background job polling
     const [pendingJobId,       setPendingJobId]       = useState(null)
+    const [pendingJobIntent,   setPendingJobIntent]   = useState("")
     const [briefingProgress,   setBriefingProgress]   = useState("")
+    const [briefingElapsed,    setBriefingElapsed]    = useState(0)
     const [readyBriefing,      setReadyBriefing]       = useState(null)  // { result, intent }
     const pollIntervalRef = useRef(null)
+    const elapsedTimerRef = useRef(null)
     // Granular director items — what's individually visible on the map
     const _emptyDirectorItems = () => ({
         chokepoints:          new Set(),
@@ -582,6 +589,82 @@ export default function App() {
         return () => clearInterval(tid)
     }, [profile, appSettings.alertInterval])  // eslint-disable-line react-hooks/exhaustive-deps
 
+    // ── Anomaly alert polling (System 6) — every 2 minutes ────────────────────
+    const anomalySeenRef = useRef(new Set())
+    const showAnomalyNotification = useCallback((alert) => {
+        const existing = document.getElementById(`hw-anomaly-${alert.id}`)
+        if (existing) return
+        const pulse = alert.severity === 'critical' ? 'rgba(255,50,50,0.5)' : 'rgba(255,170,0,0.4)'
+        const color = alert.severity === 'critical' ? '#ff4444' : '#ffaa00'
+        const el = document.createElement('div')
+        el.id = `hw-anomaly-${alert.id}`
+        el.style.cssText = `position:fixed;top:80px;right:20px;width:360px;background:rgba(10,15,25,0.95);backdrop-filter:blur(16px);border:1px solid ${pulse};border-radius:12px;padding:16px;z-index:9500;box-shadow:0 8px 32px rgba(0,0,0,0.5);font-family:system-ui;animation:hw-slide-in-r 400ms ease-out;`
+        el.innerHTML = `
+            <style>@keyframes hw-slide-in-r{from{transform:translateX(120px);opacity:0}to{transform:translateX(0);opacity:1}}</style>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                <div style="flex:1;min-width:0;">
+                    <div style="font-size:10px;letter-spacing:2px;color:${color};text-transform:uppercase;margin-bottom:4px;">⚠ ${(alert.type || '').replace(/_/g, ' ')}</div>
+                    <div style="font-size:14px;font-weight:700;color:white;margin-bottom:4px;">${alert.title || 'Anomaly'}</div>
+                    ${alert.subtitle ? `<div style="font-size:12px;color:rgba(0,170,255,0.85);margin-bottom:5px;">${alert.subtitle}</div>` : ''}
+                    <div style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1.45;margin-bottom:8px;">${alert.reason || alert.description || ''}</div>
+                </div>
+                <button id="hw-an-close-${alert.id}" style="background:none;border:none;color:rgba(255,255,255,0.3);font-size:18px;cursor:pointer;padding:0 2px;line-height:1;flex-shrink:0;">×</button>
+            </div>
+            <div style="display:flex;gap:8px;">
+                ${alert.lat != null ? `<button id="hw-an-map-${alert.id}" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:rgba(0,170,255,0.15);border:1px solid rgba(0,170,255,0.3);color:#00aaff;">📍 Show on Map</button>` : ''}
+                <button id="hw-an-pin-${alert.id}" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:rgba(255,170,0,0.15);border:1px solid rgba(255,170,0,0.3);color:#ffaa00;">📌 Pin</button>
+                <button id="hw-an-dismiss-${alert.id}" style="padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.4);">Dismiss</button>
+            </div>`
+        document.body.appendChild(el)
+        const remove = () => { el.style.opacity = '0'; el.style.transition = 'opacity 300ms'; setTimeout(() => el.remove(), 300) }
+        const closeBtn = document.getElementById(`hw-an-close-${alert.id}`)
+        if (closeBtn) closeBtn.onclick = remove
+        const mapBtn = document.getElementById(`hw-an-map-${alert.id}`)
+        if (mapBtn) mapBtn.onclick = () => {
+            setSearchTarget({ lat: alert.lat, lon: alert.lon, zoom: 9, key: Date.now() })
+            const mapTab = tabs.find(t => t.type === 'map')
+            if (mapTab) switchTab(mapTab.id)
+            remove()
+        }
+        const pinBtn = document.getElementById(`hw-an-pin-${alert.id}`)
+        if (pinBtn) pinBtn.onclick = () => {
+            const tok = localStorage.getItem('hw-auth-token')
+            fetch(`${API}/api/alerts/${alert.id}/pin`, { method: 'POST', headers: tok ? { Authorization: `Bearer ${tok}` } : {} }).catch(() => {})
+            remove()
+        }
+        const dismissBtn = document.getElementById(`hw-an-dismiss-${alert.id}`)
+        if (dismissBtn) dismissBtn.onclick = () => {
+            const tok = localStorage.getItem('hw-auth-token')
+            fetch(`${API}/api/alerts/${alert.id}/classify`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+                body: JSON.stringify({ classification: 'dismiss' })
+            }).catch(() => {})
+            remove()
+        }
+        setTimeout(() => { if (document.body.contains(el)) remove() }, 15000)
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        const poll = () => {
+            const tok = localStorage.getItem("hw-auth-token")
+            const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+            fetch(`${API}/api/alerts/recent`, { headers })
+                .then(r => r.ok ? r.json() : null)
+                .then(d => {
+                    if (!d?.alerts?.length) return
+                    d.alerts.forEach(alert => {
+                        if (!alert.id || anomalySeenRef.current.has(alert.id)) return
+                        anomalySeenRef.current.add(alert.id)
+                        showAnomalyNotification(alert)
+                    })
+                })
+                .catch(() => {})
+        }
+        const tid = setInterval(poll, 120_000)
+        poll()
+        return () => clearInterval(tid)
+    }, [showAnomalyNotification])  // eslint-disable-line react-hooks/exhaustive-deps
+
 // ── Budget (for sidebar indicator) ────────────────────────────────────────
     const [budgetPct, setBudgetPct] = useState(null)
 
@@ -800,8 +883,11 @@ export default function App() {
         if (demoRunnerRef.current)     { demoRunnerRef.current.stop();     demoRunnerRef.current = null }
         // Cancel any pending poll
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null }
+        if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null }
         setPendingJobId(null)
+        setPendingJobIntent("")
         setBriefingProgress("")
+        setBriefingElapsed(0)
         setDirectorVisible(false)
         setDirectorSequence(null)
         setDirectorLayerOverrides({})
@@ -885,31 +971,55 @@ export default function App() {
         directorIntentRef.current = intent || ""
         setDirectorError(null)
         setDirectorGenerating(true)
-        setDirectorCurrentAction(null)
-        setDirectorIndicators([])
-        setDirectorContextCards([])
-        setDirectorItems(_emptyDirectorItems())
-        setDirectorSegments([])
-        setDirectorImage(null)
-        setDirectorSavedStatus(null)
+        // Keep modal open — it shows its loading screen while the submit fires
         directorLayerSnapshotRef.current = { ...directorLayerOverrides }
         try {
-            const snapshot = await fetchDirectorSnapshot()
-            const sequence = await generateDirectorSequence({ intent, snapshot })
-            _startDirectorPlayback(sequence, intent)
+            const { job_id } = await submitDirectorBriefing(intent)
+            // Submit succeeded — close modal and show background badge together
+            setDirectorModalOpen(false)
+            setDirectorGenerating(false)
+            setPendingJobId(job_id)
+            setPendingJobIntent(intent)
+            setBriefingProgress("Generating…")
+            setBriefingElapsed(0)
+            if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current)
+            elapsedTimerRef.current = setInterval(() => setBriefingElapsed(e => e + 1), 1000)
+            // Poll for completion
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = setInterval(async () => {
+                try {
+                    const status = await pollDirectorStatus(job_id)
+                    if (status.progress) setBriefingProgress(status.progress)
+                    if (status.status === "complete") {
+                        clearInterval(pollIntervalRef.current); pollIntervalRef.current = null
+                        clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null
+                        setPendingJobId(null)
+                        setPendingJobIntent("")
+                        setBriefingProgress("")
+                        setBriefingElapsed(0)
+                        setReadyBriefing({ result: status.result, intent })
+                    } else if (status.status === "error") {
+                        clearInterval(pollIntervalRef.current); pollIntervalRef.current = null
+                        clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null
+                        setPendingJobId(null)
+                        setPendingJobIntent("")
+                        setBriefingProgress("")
+                        setBriefingElapsed(0)
+                        setDirectorError(status.error || "Briefing generation failed")
+                    }
+                } catch (e) { console.error("[Director] poll error:", e) }
+            }, 3000)
         } catch (err) {
             console.error("[Director] generate failed:", err)
+            setDirectorGenerating(false)
             const msg = err.message || "Director generation failed"
             if (msg.toLowerCase().includes("session expired") || msg.toLowerCase().includes("authentication")) {
-                clearToken()
-                setCurrentUser(null)
+                clearToken(); setCurrentUser(null)
             } else {
                 setDirectorError(msg)
             }
-        } finally {
-            setDirectorGenerating(false)
         }
-    }, [surfaceItems, directorLayerOverrides, _startDirectorPlayback]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [currentUser, directorLayerOverrides, _startDirectorPlayback]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorLoadTest = useCallback(async () => {
         setDirectorError(null)
@@ -1066,6 +1176,7 @@ export default function App() {
             fontFamily:    "system-ui, -apple-system, sans-serif",
         }}>
         <style>{`
+          @keyframes db-spin { to { transform: rotate(360deg); } }
           @keyframes dir-panel-slide-in {
             from { transform: translateX(100%); opacity: 0; }
             to   { transform: translateX(0);    opacity: 1; }
@@ -1101,9 +1212,38 @@ export default function App() {
           .demo-runner-rich-tooltip img { display: block !important; }
         `}</style>
             {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
-            {/* Auth gate — show login until token verified */}
-            {authChecked && !currentUser && (
-                <LoginPage onAuthenticated={(user) => setCurrentUser(user)} />
+            {/* Login overlay — shown when user explicitly requests sign-in */}
+            {showLoginModal && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 99999 }}>
+                    <LoginPage
+                        onAuthenticated={(user) => { setCurrentUser(user); setShowLoginModal(false) }}
+                        onDismiss={() => setShowLoginModal(false)}
+                    />
+                </div>
+            )}
+            {/* Sign-in button for unauthenticated users */}
+            {authChecked && !currentUser && !showLoginModal && (
+                <button
+                    onClick={() => setShowLoginModal(true)}
+                    style={{
+                        position:    "fixed",
+                        top:         6,
+                        right:       12,
+                        zIndex:      9998,
+                        padding:     "5px 14px",
+                        fontSize:    11,
+                        fontWeight:  700,
+                        letterSpacing: "0.04em",
+                        color:       "var(--akili-accent, #3b82f6)",
+                        background:  "rgba(59,130,246,0.10)",
+                        border:      "1px solid rgba(59,130,246,0.35)",
+                        borderRadius: 6,
+                        cursor:      "pointer",
+                        transition:  "background 0.15s",
+                    }}
+                >
+                    Sign in
+                </button>
             )}
             {/* ── Topbar — 40px, full width ─────────────────────────────────── */}
             <TopBar
@@ -1114,7 +1254,7 @@ export default function App() {
                 onTabNew={openNewTab}
                 onTabReorder={reorderTabs}
                 onTabRename={renameTab}
-                showSearch={!!currentUser && activeTabType === "map"}
+                showSearch={activeTabType === "map"}
                 onSearchResult={(r) => setSearchTarget({ lat: r.lat, lon: r.lon, zoom: r.zoom, label: r.label, key: Date.now() })}
                 searchApiBase={API}
             />
@@ -1161,6 +1301,12 @@ export default function App() {
                             } else {
                                 setDirectorModalOpen(true)
                             }
+                        }}
+                        timeTravelActive={timeTravelActive}
+                        onToggleTimeTravel={() => {
+                            const next = !timeTravelActive
+                            setTimeTravelActive(next)
+                            if (!next) setTimeTravelTime(null)
                         }}
                     />
                 )}
@@ -1229,7 +1375,14 @@ export default function App() {
                         directorHighlights={directorHighlights}
                         directorItems={directorItems}
                         isDirectorMode={directorVisible}
+                        timeTravelTime={timeTravelTime}
                     />
+                    {timeTravelActive && (
+                        <TimeSlider
+                            onTimeChange={setTimeTravelTime}
+                            onClose={() => { setTimeTravelActive(false); setTimeTravelTime(null) }}
+                        />
+                    )}
                     <DirectorSidebar
                         visible={directorVisible}
                         currentAction={directorCurrentAction}
@@ -1384,7 +1537,7 @@ export default function App() {
             </div>
 
             {/* Admin panel */}
-            {showAdmin && (currentUser?.role === "admin" || currentUser?.role === "super_admin") && (
+            {showAdmin && (
                 <AdminPanel user={currentUser} onClose={() => setShowAdmin(false)} />
             )}
 
@@ -1522,24 +1675,29 @@ export default function App() {
                 </div>
             )}
 
-            {/* Director generating indicator — subtle badge while background job runs */}
+            {/* Director generating indicator — persistent badge while background job runs */}
             {pendingJobId && (
                 <div style={{
-                    position: "fixed", top: 60, right: 16, display: "flex", alignItems: "center",
-                    gap: 8, padding: "8px 14px", background: "rgba(10,15,25,0.88)",
-                    backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
-                    border: "1px solid rgba(255,170,0,0.3)", borderRadius: 20,
-                    color: "rgba(255,255,255,0.7)", fontSize: 12, zIndex: 8000,
-                    boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+                    position: "fixed", top: 76, right: 16, display: "flex", alignItems: "center",
+                    gap: 10, padding: "10px 16px", background: "rgba(10,15,25,0.92)",
+                    backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+                    border: "1px solid rgba(0,170,255,0.3)", borderRadius: 22,
+                    zIndex: 8000, boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
                 }}>
                     <div style={{
                         width: 14, height: 14,
-                        border: "2px solid rgba(255,170,0,0.2)",
-                        borderTopColor: "rgba(255,170,0,0.85)",
+                        border: "2px solid rgba(0,170,255,0.2)",
+                        borderTopColor: "#00aaff",
                         borderRadius: "50%",
                         animation: "db-spin 0.9s linear infinite",
+                        flexShrink: 0,
                     }} />
-                    <span>{briefingProgress || "Generating briefing…"}</span>
+                    <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "white" }}>Generating briefing</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontVariantNumeric: "tabular-nums" }}>
+                            {briefingProgress || "Preparing…"} · {Math.floor(briefingElapsed / 60)}:{String(briefingElapsed % 60).padStart(2, "0")}
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -1553,7 +1711,7 @@ export default function App() {
                         background: "rgba(10,15,25,0.93)", backdropFilter: "blur(16px)",
                         WebkitBackdropFilter: "blur(16px)",
                         border: "1px solid rgba(0,170,255,0.4)", borderRadius: 14,
-                        cursor: "pointer", zIndex: 9000,
+                        position: "relative", cursor: "pointer", zIndex: 9000,
                         boxShadow: "0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(0,170,255,0.15)",
                         animation: "director-ready-slide-in 500ms cubic-bezier(0.34,1.56,0.64,1)",
                         maxWidth: 400,
