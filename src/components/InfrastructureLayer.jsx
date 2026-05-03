@@ -1,16 +1,34 @@
 import { useEffect, useRef } from "react"
 import { useMap } from "react-leaflet"
 import L from "leaflet"
-import "leaflet.vectorgrid"
 import { formatInfraPopup } from "../services/infraPopupFormatter.js"
+
+// leaflet.vectorgrid is a legacy IIFE that patches window.L.
+// Importing it at module level causes a TDZ crash in Vite's production bundle
+// because Rollup doesn't know it depends on Leaflet (no require() call) and
+// may evaluate the IIFE before Leaflet's const binding is assigned.
+// Solution: lazy-load it once inside useEffect, after setting window.L = L.
+let vectorGridReady = false
+const vectorGridCallbacks = []
+function ensureVectorGrid() {
+    if (vectorGridReady) return Promise.resolve()
+    return new Promise((resolve) => {
+        vectorGridCallbacks.push(resolve)
+        if (vectorGridCallbacks.length > 1) return  // already loading
+        window.L = L  // expose L as global so the IIFE can patch it
+        import("leaflet.vectorgrid").then(() => {
+            vectorGridReady = true
+            vectorGridCallbacks.splice(0).forEach(cb => cb())
+        }).catch(() => {
+            vectorGridCallbacks.splice(0).forEach(cb => cb())
+        })
+    })
+}
 
 const OIM_BASE  = "https://openinframap.org/tiles"
 const OIM_PANE  = "oim-layer"
-
-// Minimum zoom per sub-layer — tiles don't load below these levels
 const MIN_ZOOM  = { power: 5, telecoms: 8, petroleum: 6, water: 8 }
 
-// VectorGrid vectorTileLayerStyles per group
 const STYLES = {
     power: {
         power_line:        (p) => { const v = parseInt(p.voltage, 10) || 0; return { color: "#E8B23A", weight: v >= 220000 ? 2.5 : 1.5, opacity: v >= 220000 ? 0.8 : 0.6, fill: false } },
@@ -50,7 +68,11 @@ const SUB_LAYERS = [
 
 export default function InfrastructureLayer({ active, onUnavailable }) {
     const map = useMap()
-    const layersRef = useRef({})
+    const layersRef   = useRef({})
+    const activeRef   = useRef(active)
+    const unmountedRef = useRef(false)
+
+    useEffect(() => { activeRef.current = active })
 
     // Create OIM pane at z-index 150 (above base map, below detections/tracks)
     useEffect(() => {
@@ -60,12 +82,11 @@ export default function InfrastructureLayer({ active, onUnavailable }) {
         }
     }, [map])
 
-    // Manage sub-layer lifecycle based on active flags
-    useEffect(() => {
-        if (!L.vectorGrid) return  // library not loaded yet
-
+    function applyLayers() {
+        if (unmountedRef.current) return
+        const a = activeRef.current
         SUB_LAYERS.forEach(({ key, activeKey, tileLayer }) => {
-            const shouldShow = !!(active.oim && active[activeKey])
+            const shouldShow = !!(a.oim && a[activeKey])
             const existing   = layersRef.current[key]
 
             if (!shouldShow && existing) {
@@ -98,19 +119,33 @@ export default function InfrastructureLayer({ active, onUnavailable }) {
                         .openOn(map)
                 })
 
-                layer.on("tileerror", () => {
-                    onUnavailable?.(key)
-                })
+                layer.on("tileerror", () => { onUnavailable?.(key) })
 
                 try { layer.addTo(map) } catch (_) {}
                 layersRef.current[key] = layer
             }
         })
+    }
+
+    // Manage sub-layer lifecycle — wait for vectorgrid to load on first activation
+    useEffect(() => {
+        if (!active.oim) {
+            // Remove any active layers immediately without loading vectorgrid
+            Object.keys(layersRef.current).forEach(key => {
+                if (layersRef.current[key]) {
+                    try { map.removeLayer(layersRef.current[key]) } catch (_) {}
+                    layersRef.current[key] = null
+                }
+            })
+            return
+        }
+        ensureVectorGrid().then(applyLayers)
     }, [map, active.oim, active.oimPower, active.oimTelecoms, active.oimPetroleum, active.oimWater]) // eslint-disable-line
 
     // Cleanup on unmount
     useEffect(() => {
         return () => {
+            unmountedRef.current = true
             Object.values(layersRef.current).forEach(layer => {
                 if (layer) try { map.removeLayer(layer) } catch (_) {}
             })
