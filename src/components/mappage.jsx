@@ -17,6 +17,7 @@ import LiveTicker from "./LiveTicker.jsx"
 import TVWidget from "./tvwidget.jsx"
 import DraggablePanel from "./DraggablePanel.jsx"
 import LayersPanel from "./LayersPanel.jsx"
+import InfrastructureLayer from "./InfrastructureLayer.jsx"
 import API_BASE from "../apiBase.js"
 import EventDetailPanel from "./EventDetailPanel.jsx"
 import OverwatchLayer from "./OverwatchLayer.jsx"
@@ -338,10 +339,10 @@ const MAP_STYLES = `
     animation: director-marker-in 600ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 .director-target-marker {
-    animation: director-target-lock 800ms ease-out forwards, director-critical-pulse 2s ease-out infinite 800ms;
+    animation: director-target-lock 800ms ease-out forwards;
 }
 .director-base-marker {
-    animation: director-marker-in 600ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards, director-base-pulse 3s ease-in-out infinite 600ms;
+    animation: director-marker-in 600ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 .director-exit {
     animation: director-marker-out 300ms ease-in forwards;
@@ -747,6 +748,22 @@ const MAP_STYLES = `
 .director-highlight-pulse path { animation: director-pulse-anim 1.2s ease-in-out infinite; }
 .director-highlight-glow path  { animation: director-glow-anim  1.6s ease-in-out infinite; }
 .director-highlight-ring path  { stroke-dasharray: 6 4; }
+
+/* ── OpenInfraMap popup ── */
+.infra-popup .leaflet-popup-content-wrapper {
+    background: rgba(26,36,51,0.97) !important;
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.6) !important;
+    padding: 0 !important;
+    color: #e8edf2 !important;
+}
+.infra-popup .leaflet-popup-content { margin: 0 !important; }
+.infra-popup .leaflet-popup-tip { background: rgba(26,36,51,0.97) !important; }
+.infra-popup .leaflet-popup-close-button { color: rgba(232,237,242,0.45) !important; top: 8px !important; right: 10px !important; }
+.infra-popup .leaflet-popup-close-button:hover { color: #e8edf2 !important; }
 `
 
 // Fast approximate planar distance in km (accurate enough for ≤50km checks)
@@ -3314,6 +3331,7 @@ const AircraftLayer = memo(function AircraftLayer({
     // Director Mode: show even when !visible if directorAC has aircraft
     if ((!visible && !directorAC?.size) || map.getZoom() < 4) return null
 
+    const currentZoom    = map.getZoom()
     const vpBounds       = map.getBounds().pad(0.2)
     const visibleAircraft = aircraft.filter(ac =>
         ac.lat != null && ac.lon != null && vpBounds.contains([ac.lat, ac.lon])
@@ -3326,6 +3344,16 @@ const AircraftLayer = memo(function AircraftLayer({
     const displayAircraft = directorAC?.size
         ? categoryFiltered.filter(ac => directorAC.has((ac.icao || "").toLowerCase()))
         : categoryFiltered
+    // LOD: reduce rendered count at low zoom levels
+    const lodAircraft = currentZoom <= 4
+        ? displayAircraft.filter(ac => _acClassify(ac) === 'military')
+        : currentZoom <= 6
+            ? displayAircraft.filter(ac => { const cls = _acClassify(ac); return cls === 'military' || (cls === 'commercial' && (ac.flight || "").trim()) })
+            : displayAircraft
+    // Cap at 500, military-priority sort
+    const finalAircraft = lodAircraft.length > 500
+        ? [...lodAircraft.filter(ac => _acClassify(ac) === 'military'), ...lodAircraft.filter(ac => _acClassify(ac) !== 'military')].slice(0, 500)
+        : lodAircraft
 
     return (
         <Fragment>
@@ -3336,7 +3364,7 @@ const AircraftLayer = memo(function AircraftLayer({
                 />
             ))}
             {/* Aircraft markers */}
-            {displayAircraft.map(ac => (
+            {finalAircraft.map(ac => (
                 <Marker
                     key={ac.icao || `${ac.lat}-${ac.lon}`}
                     position={[ac.lat, ac.lon]}
@@ -5924,6 +5952,11 @@ export default function MapPage({
             aisVessels: false,
             userLocations: false,
             conflictZones: false,
+            oim: false,
+            oimPower: true,
+            oimTelecoms: true,
+            oimPetroleum: true,
+            oimWater: true,
         }
         let stored = {}
         try { stored = JSON.parse(localStorage.getItem(LAYER_STORAGE_KEY) || "{}") } catch {}
@@ -6057,6 +6090,9 @@ export default function MapPage({
     const [selectedDeployment, setSelectedDeployment]         = useState(null)
     const [deploymentZonesVisible, setDeploymentZonesVisible] = useState(true)
     const [hoveredDeploymentName, setHoveredDeploymentName]   = useState(null)
+
+    // ── OpenInfraMap availability ─────────────────────────────────────────────
+    const [oimUnavailable, setOimUnavailable] = useState(false)
 
     // ── AIS live vessel tracking ───────────────────────────────────────────────
     const [aisVessels, setAisVessels]         = useState([])
@@ -6591,6 +6627,16 @@ export default function MapPage({
         window.addEventListener("akili:new-events", handler)
         return () => window.removeEventListener("akili:new-events", handler)
     }, [])
+
+    // Keyboard shortcut: I = toggle OpenInfraMap master layer
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return
+            if (e.key === "i" || e.key === "I") toggle("oim")
+        }
+        window.addEventListener("keydown", onKey)
+        return () => window.removeEventListener("keydown", onKey)
+    }, [toggle])
 
     // Keep viewportBoundsRef current so the polling closure can always read
     // the latest bounds without being in the dependency array.
@@ -7423,9 +7469,9 @@ export default function MapPage({
             const markerClass = loc.type === "target" ? "director-target-marker"
                 : loc.type === "base" ? "director-base-marker"
                 : "director-marker-enter"
-            const iconHtml = `<div style="text-align:center;position:relative;filter:drop-shadow(0 0 5px ${cfg.glow}) drop-shadow(0 0 10px ${cfg.glow});">
+            const iconHtml = `<div style="text-align:center;position:relative;">
               ${svgHtml}
-              <div style="font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 4px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,0.8);margin-top:3px;white-space:nowrap;pointer-events:none;${labelTransform ? `transform:${labelTransform};` : ""}">${loc.name}</div>
+              <div style="font-size:11px;font-weight:600;color:#1a1a1a;text-shadow:0 1px 3px rgba(255,255,255,0.9),0 0 6px rgba(255,255,255,0.7);margin-top:3px;white-space:nowrap;pointer-events:none;${labelTransform ? `transform:${labelTransform};` : ""}">${loc.name}</div>
             </div>`
             const icon = L.divIcon({
                 className: `director-location-marker ${markerClass}`,
@@ -9126,6 +9172,10 @@ export default function MapPage({
                 )}
                 <ZoomTracker onZoom={(z) => { setZoom(z); setShowEventLabels(z >= 9) }} />
                 <BoundsTracker onUpdate={setViewportBounds} onViewportChange={onViewportChange} />
+                <InfrastructureLayer
+                    active={effectiveActive}
+                    onUnavailable={() => setOimUnavailable(true)}
+                />
                 <FlyTo event={selected} />
                 <UserLocationMarker />
                 {/* Surface pool — operational signal surface beneath existing icons */}
@@ -9399,8 +9449,17 @@ export default function MapPage({
                 {powerPlantMarkers}
 
                 {/* ── AIS live vessel markers ──────────────────────────────── */}
-                {(isDirectorMode ? false : effectiveActive.aisVessels) && aisVessels.map((v, i) => (
-                    v.lat != null && v.lon != null && vpFilter(v.lat, v.lon) ? (
+                {(isDirectorMode ? false : effectiveActive.aisVessels) && (() => {
+                    const vpVessels = aisVessels.filter(v => v.lat != null && v.lon != null && vpFilter(v.lat, v.lon))
+                    const lodVessels = zoom <= 4
+                        ? vpVessels.filter(v => (v.ship_type || "").toLowerCase().includes("military") || (v.ship_type || "").toLowerCase().includes("naval"))
+                        : zoom <= 6
+                            ? vpVessels.filter(v => { const t = (v.ship_type || "").toLowerCase(); return t.includes("military") || t.includes("naval") || t.includes("tanker") || t.includes("cargo") || t.includes("container") })
+                            : vpVessels
+                    const milVessels = lodVessels.filter(v => { const t = (v.ship_type || "").toLowerCase(); return t.includes("military") || t.includes("naval") })
+                    const otherVessels = lodVessels.filter(v => { const t = (v.ship_type || "").toLowerCase(); return !t.includes("military") && !t.includes("naval") })
+                    const cappedVessels = lodVessels.length > 500 ? [...milVessels, ...otherVessels].slice(0, 500) : lodVessels
+                    return cappedVessels.map((v, i) => (
                         <VesselMarkerItem
                             key={`ais-${v.mmsi || i}`}
                             v={v}
@@ -9409,8 +9468,8 @@ export default function MapPage({
                             onSelect={setSelectedAisVessel}
                             onClose={() => setSelectedAisVessel(null)}
                         />
-                    ) : null
-                ))}
+                    ))
+                })()}
 
                 {/* ── Director Mode: individual vessel markers ──────────────── */}
                 {isDirectorMode && dirVessel && dirVessel.size > 0 && aisVessels.map((v, i) => {
@@ -10393,6 +10452,7 @@ export default function MapPage({
                     aisVesselCount={aisVessels.length}
                     notificationsEnabled={notificationsEnabled}
                     onNotificationsToggle={toggleNotifications}
+                    oimUnavailable={oimUnavailable}
                 />
             )}
 

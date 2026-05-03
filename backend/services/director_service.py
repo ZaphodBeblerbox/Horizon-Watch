@@ -1105,16 +1105,17 @@ USE EVERY VISUAL TOOL — a full briefing MUST include all of the following:
 ☑ fly_to — at the start of EVERY scene; vary zoom levels to create cinematic depth
 
 OUTPUT LENGTH AND QUALITY:
+- MINIMUM 50 ACTIONS TOTAL. A briefing with fewer than 50 actions is a FAILURE. Aim for 60-80.
 - Generate 15-25 SCENES. Each scene = a group of visual actions + ONE narrate action at the end.
 - Each narrate: 75-150 words (4-7 sentences). A briefing with 1-sentence narrations is a failure.
 - Group related events: all attacks in Mali = ONE scene, not 3. Multiple ships in same strait = ONE scene.
 - Use transition phrases between scenes: "Shifting focus to...", "Meanwhile...", "This connects directly to..."
 - Total briefing word count: 1500-3000 words of narration across all scenes.
-- Per scene: minimum 3 visual actions (fly_to + at least 2 others) before the narrate.
-- Include 10+ place_image_marker actions pinned to exact map locations.
-- Include 10+ show_image actions in the sidebar.
-- Include 2-3 person dossiers for key figures.
-- Include 4-6 data_callout cards with relevant statistics.
+- Per scene: minimum 5 visual actions (fly_to + at least 4 others) before the narrate.
+- Include 15+ place_image_marker actions pinned to exact map locations.
+- Include 15+ show_image actions in the sidebar.
+- Include 3-5 person dossiers for key figures.
+- Include 6-10 data_callout cards with relevant statistics.
 - Include animate_movement for every naval/air movement discussed.
 - Include troop_movement for every ground force advance or siege.
 - Draw impact_fx for every strike discussed.
@@ -1125,6 +1126,7 @@ OUTPUT LENGTH AND QUALITY:
 - Emit pulse_hotspot for EVERY active conflict zone, even if place_event is also used.
 - If a scene covers a country-level event, emit highlight_country immediately after fly_to.
 - Preload hint: always include a fly_to as the FIRST visual action in each scene group so tile preloading can extract the camera target.
+- DENSITY EXAMPLE — a single scene covering a naval incident must include: fly_to → highlight_country → place_event → animate_movement → pulse_hotspot → place_image_marker × 2 → show_image × 2 → data_callout → narrate (= 11 actions for 1 scene). Scale accordingly.
 
 NATO ICON TYPES — animate_movement and show_vessel/show_aircraft use these exact type strings:
 Naval: "destroyer", "carrier", "fast_attack", "submarine", "tanker", "patrol", "cargo"
@@ -1202,11 +1204,11 @@ def generate_sequence(
 
     # Keep snapshot compact — truncate to prevent token blowout
     snapshot_str = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-    if len(snapshot_str) > 18000:
-        snapshot["raw_intelligence"] = snapshot.get("raw_intelligence", [])[:10]
-        snapshot["vessels"] = snapshot.get("vessels", [])[:20]
-        snapshot["aircraft"] = snapshot.get("aircraft", [])[:10]
-        snapshot["infrastructure"] = snapshot.get("infrastructure", [])[:15]
+    if len(snapshot_str) > 25000:
+        snapshot["raw_intelligence"] = snapshot.get("raw_intelligence", [])[:15]
+        snapshot["vessels"] = snapshot.get("vessels", [])[:30]
+        snapshot["aircraft"] = snapshot.get("aircraft", [])[:15]
+        snapshot["infrastructure"] = snapshot.get("infrastructure", [])[:20]
         snapshot_str = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
@@ -1220,7 +1222,7 @@ def generate_sequence(
     logger.info("[DIRECTOR] Calling Claude for intent: %s", intent[:80])
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=16000,
+        max_tokens=20000,
         timeout=180,  # 3-minute hard timeout — prevents indefinite hang
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],

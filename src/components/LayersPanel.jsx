@@ -133,6 +133,8 @@ function SectionHeader({ label }) {
     )
 }
 
+const OIM_MIN_ZOOM = { oimPower: 5, oimTelecoms: 8, oimPetroleum: 6, oimWater: 8 }
+
 export default function LayersPanel({
     active,
     onToggle,
@@ -177,6 +179,8 @@ export default function LayersPanel({
     // Notifications
     notificationsEnabled,
     onNotificationsToggle,
+    // OIM availability
+    oimUnavailable,
     // Auth
     currentUser,
 }) {
@@ -444,6 +448,53 @@ export default function LayersPanel({
                     isManual={isManual("cables")}
                 />
 
+                {/* OpenInfraMap sub-group */}
+                <div style={{ marginTop: 6 }}>
+                    <LayerRow
+                        label={
+                            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                OpenInfraMap
+                                {oimUnavailable && (
+                                    <span style={{ fontSize: 9, color: "rgba(232,237,242,0.35)", fontWeight: 400 }}>(unavailable)</span>
+                                )}
+                                <span style={{ fontSize: 9, color: "rgba(232,237,242,0.3)", fontWeight: 400, letterSpacing: "0.03em" }}>I</span>
+                            </span>
+                        }
+                        hint="power, telecoms, oil & gas, water"
+                        toggled={active.oim}
+                        onToggle={() => onToggle("oim")}
+                    />
+                    {active.oim && (
+                        <div style={{ marginLeft: 12, borderLeft: "2px solid rgba(255,255,255,0.07)", paddingLeft: 10, marginBottom: 4 }}>
+                            {[
+                                { key: "oimPower",     label: "Power Grid",  color: "#E8B23A" },
+                                { key: "oimTelecoms",  label: "Telecoms",    color: "#6C9CE0" },
+                                { key: "oimPetroleum", label: "Oil & Gas", color: "#E55757" },
+                                { key: "oimWater",     label: "Water",       color: "#4A9EE0" },
+                            ].map(({ key, label, color }) => {
+                                const belowZoom = zoom < (OIM_MIN_ZOOM[key] || 0)
+                                return (
+                                    <div key={key}
+                                        style={{ display: "flex", alignItems: "center", padding: "5px 0", cursor: "pointer" }}
+                                        onClick={() => onToggle(key)}
+                                    >
+                                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block", marginRight: 8, flexShrink: 0 }} />
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontSize: 12, color: "#e8edf2" }}>{label}</div>
+                                            {belowZoom && active[key] && (
+                                                <div style={{ fontSize: 9, color: "rgba(232,237,242,0.35)", marginTop: 1 }}>
+                                                    zoom in to activate
+                                                </div>
+                                            )}
+                                        </div>
+                                        <Toggle value={!!active[key]} onChange={() => onToggle(key)} />
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    )}
+                </div>
+
                 {/* MARITIME */}
                 <SectionHeader label="Maritime" />
 
@@ -597,6 +648,19 @@ export default function LayersPanel({
                     <LayerRow label="Police & Security" toggled={active.police}   onToggle={() => onToggle("police")}      isManual={isManual("police")} />
                     <LayerRow label="Military"       toggled={active.military}    onToggle={() => onToggle("military")}    isManual={isManual("military")} />
                     <LayerRow label="Submarine Cables" toggled={active.cables}   onToggle={() => onToggle("cables")}      isManual={isManual("cables")} />
+                    <LayerRow label="OpenInfraMap" hint="power, telecoms, oil & gas, water" toggled={active.oim} onToggle={() => onToggle("oim")} />
+                    {active.oim && [
+                        { key: "oimPower", label: "Power Grid", color: "#E8B23A" },
+                        { key: "oimTelecoms", label: "Telecoms", color: "#6C9CE0" },
+                        { key: "oimPetroleum", label: "Oil & Gas", color: "#E55757" },
+                        { key: "oimWater", label: "Water", color: "#4A9EE0" },
+                    ].map(({ key, label, color }) => (
+                        <div key={key} style={{ display: "flex", alignItems: "center", padding: "5px 0 5px 22px", cursor: "pointer" }} onClick={() => onToggle(key)}>
+                            <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, display: "inline-block", marginRight: 8, flexShrink: 0 }} />
+                            <span style={{ flex: 1, fontSize: 12, color: "#e8edf2" }}>{label}</span>
+                            <Toggle value={!!active[key]} onChange={() => onToggle(key)} />
+                        </div>
+                    ))}
                     <SectionHeader label="Maritime" />
                     <LayerRow label="Nautical Chart" toggled={active.shippingLanes} onToggle={() => onToggle("shippingLanes")} isManual={isManual("shippingLanes")} />
                     <LayerRow label="IMB Piracy"     toggled={active.imbPiracy}     onToggle={() => onToggle("imbPiracy")}     isManual={isManual("imbPiracy")} />
