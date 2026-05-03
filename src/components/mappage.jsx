@@ -9175,15 +9175,7 @@ export default function MapPage({
                 )}
                 <ZoomTracker onZoom={(z) => { setZoom(z); setShowEventLabels(z >= 9) }} />
                 <BoundsTracker onUpdate={setViewportBounds} onViewportChange={onViewportChange} />
-                <InfrastructureLayer
-                    enabled={effectiveActive.oim}
-                    types={{
-                        power:     effectiveActive.oimPower,
-                        telecoms:  effectiveActive.oimTelecoms,
-                        petroleum: effectiveActive.oimPetroleum,
-                        water:     effectiveActive.oimWater,
-                    }}
-                />
+                <InfrastructureLayer enabled={effectiveActive.oim} />
                 <FlyTo event={selected} />
                 <UserLocationMarker />
                 {/* Surface pool — operational signal surface beneath existing icons */}
