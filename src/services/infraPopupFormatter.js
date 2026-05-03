@@ -1,59 +1,57 @@
 const ICONS  = { power: "⚡", telecoms: "📡", petroleum: "🛢", water: "💧" }
 const COLORS = { power: "#E8B23A", telecoms: "#6C9CE0", petroleum: "#E55757", water: "#4A9EE0" }
 
+// Layer names verified against live OpenInfraMap PBF tiles
 const FEATURE_NAMES = {
-    power_line:            "Power Line",
-    power_cable:           "Underground Cable",
-    power_substation:      "Substation",
-    power_generator:       "Generator",
-    power_plant:           "Power Plant",
-    power_transformer:     "Transformer",
-    power_tower:           "Transmission Tower",
-    power_pole:            "Utility Pole",
-    telecoms_line:         "Telecoms Line",
-    telecoms_mast:         "Telecoms Mast",
-    telecoms_exchange:     "Exchange / Data Centre",
-    petroleum_pipeline:    "Pipeline",
-    petroleum_well:        "Well",
-    petroleum_site:        "Facility",
-    water_pipeline:        "Water Main",
-    water_treatment:       "Treatment Plant",
-    water_tower:           "Water Tower",
-    water_pumping_station: "Pumping Station",
-    water_reservoir:       "Reservoir",
+    power_line:             "Power Line",
+    power_substation:       "Substation",
+    power_substation_point: "Substation",
+    power_generator:        "Generator",
+    power_generator_area:   "Generator",
+    power_plant:            "Power Plant",
+    power_plant_point:      "Power Plant",
+    petroleum_pipeline:     "Pipeline",
+    petroleum_well:         "Well",
+    petroleum_site:         "Facility",
+    telecoms_mast:          "Telecoms Mast",
+    telecoms_data_center:   "Data Centre",
+    water_pipeline:         "Water Main",
 }
 
+// Voltage is stored in kV in OpenInfraMap tiles (e.g. 275 = 275 kV)
 function formatVoltage(v) {
     const n = parseInt(v, 10)
-    if (isNaN(n)) return v
-    return n >= 1000 ? `${(n / 1000).toFixed(0)} kV` : `${n} V`
+    if (isNaN(n)) return String(v)
+    return `${n} kV`
 }
 
 function buildRows(group, props) {
     const f = []
     if (group === "power") {
-        if (props.voltage)   f.push(["Voltage",   formatVoltage(String(props.voltage))])
+        if (props.voltage)   f.push(["Voltage",   formatVoltage(props.voltage)])
         if (props.circuits)  f.push(["Circuits",  props.circuits])
-        if (props.cables)    f.push(["Cables",    props.cables])
         if (props.operator)  f.push(["Operator",  props.operator])
         if (props.name)      f.push(["Name",      props.name])
         if (props.location)  f.push(["Location",  props.location])
         if (props.frequency) f.push(["Frequency", `${props.frequency} Hz`])
+        if (props.source)    f.push(["Source",    props.source])
+        if (props.output)    f.push(["Output",    props.output])
         if (props.ref)       f.push(["Ref",       props.ref])
     } else if (group === "telecoms") {
         if (props.operator)  f.push(["Operator",  props.operator])
         if (props.name)      f.push(["Name",      props.name])
-        if (props.height)    f.push(["Height",    `${props.height} m`])
+        if (props.type)      f.push(["Type",      props.type])
         if (props.ref)       f.push(["Ref",       props.ref])
     } else if (group === "petroleum") {
         if (props.substance) f.push(["Substance", props.substance])
         if (props.operator)  f.push(["Operator",  props.operator])
-        if (props.diameter)  f.push(["Diameter",  `${props.diameter} mm`])
-        if (props.pressure)  f.push(["Pressure",  `${props.pressure} bar`])
+        if (props.location)  f.push(["Location",  props.location])
         if (props.name)      f.push(["Name",      props.name])
         if (props.ref)       f.push(["Ref",       props.ref])
     } else if (group === "water") {
         if (props.operator)  f.push(["Operator",  props.operator])
+        if (props.substance) f.push(["Substance", props.substance])
+        if (props.location)  f.push(["Location",  props.location])
         if (props.name)      f.push(["Name",      props.name])
         if (props.ref)       f.push(["Ref",       props.ref])
     }
@@ -61,14 +59,16 @@ function buildRows(group, props) {
 }
 
 export function formatInfraPopup(group, props) {
-    const subLayer = props["@type"] || props.type || group
-    const featureName = FEATURE_NAMES[subLayer] || FEATURE_NAMES[`${group}_${subLayer}`] || "Infrastructure"
+    // VectorGrid exposes the tile layer name via properties["@type"] or sourceTarget.options.layerName
+    // Fall back to the group name for the feature label
+    const layerName   = props["@type"] || `${group}_${props.type || ""}`.trim()
+    const featureName = FEATURE_NAMES[layerName] || FEATURE_NAMES[`${group}_${props.type}`] || group.charAt(0).toUpperCase() + group.slice(1)
     const icon  = ICONS[group]  || "●"
     const color = COLORS[group] || "#888"
     const fields = buildRows(group, props)
 
-    const osmId  = props["@id"] || props.osm_id
-    const osmUrl = osmId ? `https://www.openstreetmap.org/${osmId}` : null
+    const osmId  = props.osm_id
+    const osmUrl = osmId ? `https://www.openstreetmap.org/way/${osmId}` : null
 
     const rows = fields.length
         ? fields.map(([label, value]) =>
