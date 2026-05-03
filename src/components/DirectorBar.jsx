@@ -19,7 +19,6 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import ttsService from "../services/ttsService.js"
 
 const BAR_STYLES = `
   @keyframes director-bar-slide-up {
@@ -383,23 +382,6 @@ const BAR_STYLES = `
     margin-top: 1px;
   }
 
-  .db-mute-btn {
-    width: 36px;
-    height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    background: transparent;
-    border-radius: 6px;
-    cursor: pointer;
-    color: white;
-    transition: color 200ms, background 150ms;
-    flex-shrink: 0;
-  }
-  .db-mute-btn:hover { background: rgba(255,255,255,0.1); }
-  .db-mute-btn.muted { color: rgba(255,255,255,0.35); }
-
   @media (max-width: 768px) {
     .director-bar {
       display: none;
@@ -411,25 +393,6 @@ function StyleTag() {
   return <style>{BAR_STYLES}</style>
 }
 
-function IconUnmuted() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path d="M3 9v6h4l5 5V4L7 9H3z" fill="currentColor"/>
-      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" fill="currentColor"/>
-      <path d="M19 12c0 2.45-1.4 4.57-3.43 5.6L17 19.02C19.59 17.71 21.5 15.07 21.5 12s-1.91-5.71-4.5-7.02L15.57 6.4C17.6 7.43 19 9.55 19 12z" fill="currentColor"/>
-    </svg>
-  )
-}
-
-function IconMuted() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path d="M3 9v6h4l5 5V4L7 9H3z" fill="currentColor"/>
-      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63z" fill="currentColor"/>
-      <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth="2"/>
-    </svg>
-  )
-}
 
 export default function DirectorBar({
   visible        = false,
@@ -448,13 +411,7 @@ export default function DirectorBar({
 }) {
   const [collapsed, setCollapsed]   = useState(false)
   const [intent,    setIntent]      = useState("")
-  const [isMuted,   setIsMuted]     = useState(() => ttsService.muted)
   const intentRef                   = useRef(null)
-
-  const handleToggleMute = useCallback(() => {
-    const nowMuted = ttsService.toggleMute()
-    setIsMuted(nowMuted)
-  }, [])
 
   const { isPlaying, currentIndex, total } = runnerState
   const hasSequence = sequence && total > 0
@@ -518,15 +475,6 @@ export default function DirectorBar({
               style={{ width: hasSequence ? `${pct}%` : "0%" }}
             />
           </div>
-
-          {/* Mute button — always visible */}
-          <button
-            className={`db-mute-btn${isMuted ? " muted" : ""}`}
-            title={isMuted ? "Unmute narration" : "Mute narration"}
-            onClick={handleToggleMute}
-          >
-            {isMuted ? <IconMuted /> : <IconUnmuted />}
-          </button>
 
           {/* Playback controls */}
           {hasSequence && (

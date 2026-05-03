@@ -1221,8 +1221,8 @@ export default function App() {
                     />
                 </div>
             )}
-            {/* Sign-in button for unauthenticated users */}
-            {authChecked && !currentUser && !showLoginModal && (
+            {/* Sign-in button — mobile only (desktop handled inside TopBar) */}
+            {isMobile && authChecked && !currentUser && !showLoginModal && (
                 <button
                     onClick={() => setShowLoginModal(true)}
                     style={{
@@ -1230,7 +1230,7 @@ export default function App() {
                         top:         6,
                         right:       12,
                         zIndex:      9998,
-                        padding:     "5px 14px",
+                        padding:     "4px 14px",
                         fontSize:    11,
                         fontWeight:  700,
                         letterSpacing: "0.04em",
@@ -1257,6 +1257,8 @@ export default function App() {
                 showSearch={activeTabType === "map"}
                 onSearchResult={(r) => setSearchTarget({ lat: r.lat, lon: r.lon, zoom: r.zoom, label: r.label, key: Date.now() })}
                 searchApiBase={API}
+                showSignIn={authChecked && !currentUser && !showLoginModal}
+                onSignIn={() => setShowLoginModal(true)}
             />
 
             {/* ── Notification toasts — new event alerts ─────────────────────── */}

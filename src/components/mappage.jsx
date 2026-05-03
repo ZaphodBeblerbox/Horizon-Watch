@@ -9176,8 +9176,13 @@ export default function MapPage({
                 <ZoomTracker onZoom={(z) => { setZoom(z); setShowEventLabels(z >= 9) }} />
                 <BoundsTracker onUpdate={setViewportBounds} onViewportChange={onViewportChange} />
                 <InfrastructureLayer
-                    active={effectiveActive}
-                    onUnavailable={() => setOimUnavailable(true)}
+                    enabled={effectiveActive.oim}
+                    types={{
+                        power:     effectiveActive.oimPower,
+                        telecoms:  effectiveActive.oimTelecoms,
+                        petroleum: effectiveActive.oimPetroleum,
+                        water:     effectiveActive.oimWater,
+                    }}
                 />
                 <FlyTo event={selected} />
                 <UserLocationMarker />

@@ -283,6 +283,9 @@ export default function TopBar({
     showSearch     = false,
     onSearchResult = null,
     searchApiBase  = API_BASE,
+    // Auth
+    showSignIn     = false,
+    onSignIn       = null,
 }) {
     const [time,       setTime]       = useState(new Date())
     const [fullscreen, setFullscreen] = useState(false)
@@ -380,6 +383,25 @@ export default function TopBar({
                         onRename={onTabRename}
                         canClose={tab => tab.type !== "map"}
                     />
+                    {showSignIn && onSignIn && (
+                        <button
+                            onClick={onSignIn}
+                            style={{
+                                flexShrink:    0,
+                                padding:       "4px 14px",
+                                fontSize:      11,
+                                fontWeight:    700,
+                                letterSpacing: "0.04em",
+                                color:         "var(--akili-accent, #3b82f6)",
+                                background:    "rgba(59,130,246,0.10)",
+                                border:        "1px solid rgba(59,130,246,0.35)",
+                                borderRadius:  6,
+                                cursor:        "pointer",
+                                whiteSpace:    "nowrap",
+                                transition:    "background 0.15s",
+                            }}
+                        >Sign in</button>
+                    )}
                     {showSearch && onSearchResult && (
                         <InlineSearch onResult={onSearchResult} apiBase={searchApiBase} />
                     )}
