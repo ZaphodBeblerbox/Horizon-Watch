@@ -6629,14 +6629,17 @@ export default function MapPage({
     }, [])
 
     // Keyboard shortcut: I = toggle OpenInfraMap master layer
+    // Uses setActive directly (stable React dispatcher) to avoid referencing
+    // the `toggle` useCallback which is declared 2000 lines later — that
+    // forward-reference causes a TDZ crash in the production bundle.
     useEffect(() => {
         const onKey = (e) => {
             if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return
-            if (e.key === "i" || e.key === "I") toggle("oim")
+            if (e.key === "i" || e.key === "I") setActive(a => ({ ...a, oim: !a.oim }))
         }
         window.addEventListener("keydown", onKey)
         return () => window.removeEventListener("keydown", onKey)
-    }, [toggle])
+    }, [])
 
     // Keep viewportBoundsRef current so the polling closure can always read
     // the latest bounds without being in the dependency array.
