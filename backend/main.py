@@ -165,11 +165,13 @@ _HTTPCreds = None  # only used in moved auth code
 from routers import auth as _auth_router, admin as _admin_router
 from routers import intelligence as _intel_router, briefings as _briefings_router
 from routers import infrastructure as _infra_router
+from routers import tile_proxy as _tile_proxy_router
 app.include_router(_auth_router.router)
 app.include_router(_admin_router.router)
 app.include_router(_intel_router.router)
 app.include_router(_briefings_router.router)
 app.include_router(_infra_router.router)
+app.include_router(_tile_proxy_router.router)
 
 # ── Optional fastapi-cache2 response caching ──────────────────────────────────
 try:

@@ -212,7 +212,7 @@ export default function LayersPanel({
             right:           0,
             width:           280,
             height:          "calc(100vh - 54px)",
-            background:      "rgba(0,0,0,0.35)",
+            background:      "rgba(6,14,45,0.96)",
             backdropFilter:  "blur(12px)",
             WebkitBackdropFilter: "blur(12px)",
             borderLeft:      "1px solid rgba(255,255,255,0.08)",
