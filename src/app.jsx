@@ -1226,30 +1226,6 @@ export default function App() {
                     />
                 </div>
             )}
-            {/* Sign-in button — mobile only (desktop handled inside TopBar) */}
-            {isMobile && authChecked && !currentUser && !showLoginModal && (
-                <button
-                    onClick={() => setShowLoginModal(true)}
-                    style={{
-                        position:    "fixed",
-                        top:         6,
-                        right:       12,
-                        zIndex:      9998,
-                        padding:     "4px 8px",
-                        fontSize:    11,
-                        fontWeight:  700,
-                        letterSpacing: "0.04em",
-                        color:       "var(--akili-accent, #3b82f6)",
-                        background:  "rgba(59,130,246,0.10)",
-                        border:      "1px solid rgba(59,130,246,0.35)",
-                        borderRadius: 6,
-                        cursor:      "pointer",
-                        transition:  "background 0.15s",
-                    }}
-                >
-                    Sign in
-                </button>
-            )}
             {/* ── Topbar — 40px, full width ─────────────────────────────────── */}
             <TopBar
                 tabs={tabs}

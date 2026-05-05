@@ -411,7 +411,11 @@ export default function TopBar({
                     )}
                 </div>
             ) : (
-                <div style={{ flex: 1 }} />
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 10 }}>
+                    {onViewModeChange && (
+                        <ViewToggle mode={viewMode} onToggle={onViewModeChange} />
+                    )}
+                </div>
             )}
 
             {/* Right: view toggle + fullscreen + clock — desktop only */}
