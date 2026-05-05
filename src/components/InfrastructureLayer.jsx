@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import { useMap } from "react-leaflet"
 import L from "leaflet"
 import "leaflet.vectorgrid"
+import API_BASE from "../apiBase.js"
 
 // OIM PBF layer → display type mapping (confirmed from tile inspection)
 const LAYER_TYPES = {
@@ -46,64 +47,6 @@ function buildStyles(enabled) {
     return out
 }
 
-function formatPopup(layerName, props) {
-    const type  = LAYER_TYPES[layerName] || "unknown"
-    const color = TYPE_COLORS[type]      || "#E8ECF1"
-    const label = TYPE_LABELS[type]      || layerName
-
-    const FIELD_LABELS = {
-        voltage:     "Voltage",
-        circuits:    "Circuits",
-        cables:      "Cables",
-        operator:    "Operator",
-        name:        "Name",
-        ref:         "Ref",
-        location:    "Location",
-        substance:   "Substance",
-        diameter:    "Diameter",
-        pressure:    "Pressure",
-        frequency:   "Frequency",
-        power:       "Power",
-        plant:       "Plant type",
-        "plant:source": "Energy source",
-        output:      "Output",
-        capacity:    "Capacity",
-        "capacity:power": "Capacity",
-        communication: "Communication",
-        technology:  "Technology",
-        provider:    "Provider",
-        intermittent:"Intermittent",
-    }
-
-    const rows = Object.entries(FIELD_LABELS)
-        .map(([k, label]) => {
-            let v = props[k]
-            if (!v) return null
-            if (k === "voltage") v = v.split(";").map(n => `${(+n / 1000).toFixed(0)} kV`).join(" / ")
-            return `<tr>
-                <td style="color:#9AA4B5;padding:2px 10px 2px 0;white-space:nowrap">${label}</td>
-                <td style="color:#E8ECF1">${v}</td>
-            </tr>`
-        })
-        .filter(Boolean)
-        .join("")
-
-    return `<div style="
-        font-family:Arial,sans-serif;font-size:12px;
-        background:#131e2e;color:#E8ECF1;
-        padding:10px 12px;border-radius:6px;
-        border:1px solid #2C3645;min-width:180px;max-width:260px;
-    ">
-        <div style="color:${color};font-weight:bold;font-size:13px;
-                    margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid #2C3645">
-            ${label}
-        </div>
-        ${rows
-            ? `<table style="width:100%;border-collapse:collapse">${rows}</table>`
-            : `<span style="color:#9AA4B5;font-size:11px">No additional data</span>`
-        }
-    </div>`
-}
 
 export default function InfrastructureLayer({
     enabled,
@@ -130,27 +73,18 @@ export default function InfrastructureLayer({
 
         const styles = buildStyles(enabledTypes)
 
-        const layer = L.vectorGrid.protobuf("/api/tiles/openinfra/{z}/{x}/{y}.pbf", {
-            maxNativeZoom:       14,
-            maxZoom:             20,
-            minZoom:             2,
-            attribution:         '&copy; <a href="https://openinframap.org" target="_blank" rel="noopener">OpenInfraMap</a>',
-            vectorTileLayerStyles: styles,
-            rendererFactory:     L.svg.tile,
-            interactive:         true,
-            getFeatureId:        f => f.properties.osm_id || f.properties.id,
-        })
-
-        layer.on("click", e => {
-            const lyr  = e.layer
-            const name = lyr.options?.layerName || ""
-            const type = LAYER_TYPES[name]
-            if (!type || !enabledTypes[type]) return
-            L.popup({ maxWidth: 280, className: "infra-popup" })
-                .setLatLng(e.latlng)
-                .setContent(formatPopup(name, lyr.properties || {}))
-                .openOn(map)
-        })
+        const layer = L.vectorGrid.protobuf(
+            `${API_BASE}/api/tiles/openinfra/{z}/{x}/{y}.pbf`,
+            {
+                maxNativeZoom:         14,
+                maxZoom:               20,
+                minZoom:               2,
+                attribution:           '&copy; <a href="https://openinframap.org" target="_blank" rel="noopener">OpenInfraMap</a>',
+                vectorTileLayerStyles: styles,
+                rendererFactory:       L.svg.tile,
+                interactive:           false,
+            }
+        )
 
         layer.addTo(map)
         layRef.current = layer

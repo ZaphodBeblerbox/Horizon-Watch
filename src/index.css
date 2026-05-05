@@ -414,7 +414,21 @@ textarea::placeholder {
 }
 .infra-popup .leaflet-popup-content {
     margin: 0;
+    line-height: 1.4;
 }
-.infra-popup .leaflet-popup-tip-container {
-    display: none;
+.infra-popup .leaflet-popup-tip {
+    background: #1A2433;
+    border: 1px solid #2C3645;
+    box-shadow: none;
+}
+.infra-popup .leaflet-popup-close-button {
+    color: #9AA4B5 !important;
+    font-size: 18px;
+    padding: 4px 8px;
+}
+.infra-popup .leaflet-popup-close-button:hover {
+    color: #E8ECF1 !important;
+}
+@keyframes infra-spin {
+    to { transform: rotate(360deg); }
 }

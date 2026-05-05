@@ -18,6 +18,7 @@ import TVWidget from "./tvwidget.jsx"
 import DraggablePanel from "./DraggablePanel.jsx"
 import LayersPanel from "./LayersPanel.jsx"
 import InfrastructureLayer from "./InfrastructureLayer.jsx"
+import useInfraClick from "./useInfraClick.js"
 import API_BASE from "../apiBase.js"
 import EventDetailPanel from "./EventDetailPanel.jsx"
 import OverwatchLayer from "./OverwatchLayer.jsx"
@@ -811,6 +812,11 @@ function createDragHandler(panelRef, setPos, containerRef) {
 
 function ZoomTracker({ onZoom }) {
     useMapEvents({ zoomend: (e) => onZoom(e.target.getZoom()) })
+    return null
+}
+
+function InfraClickHandler({ enabled }) {
+    useInfraClick({ enabled })
     return null
 }
 
@@ -9182,6 +9188,7 @@ export default function MapPage({
                     petroleumEnabled={effectiveActive.oimPetroleum !== false}
                     waterEnabled={effectiveActive.oimWater !== false}
                 />
+                <InfraClickHandler enabled={!!effectiveActive.oim} />
                 <FlyTo event={selected} />
                 <UserLocationMarker />
                 {/* Surface pool — operational signal surface beneath existing icons */}
