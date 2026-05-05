@@ -404,3 +404,17 @@ textarea::placeholder {
 .ow-det-label::before {
     display: none !important;
 }
+
+/* ── OpenInfraMap popup ─────────────────────────────────────── */
+.infra-popup .leaflet-popup-content-wrapper {
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+}
+.infra-popup .leaflet-popup-content {
+    margin: 0;
+}
+.infra-popup .leaflet-popup-tip-container {
+    display: none;
+}

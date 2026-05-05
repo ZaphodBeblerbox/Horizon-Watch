@@ -9175,7 +9175,13 @@ export default function MapPage({
                 )}
                 <ZoomTracker onZoom={(z) => { setZoom(z); setShowEventLabels(z >= 9) }} />
                 <BoundsTracker onUpdate={setViewportBounds} onViewportChange={onViewportChange} />
-                <InfrastructureLayer enabled={effectiveActive.oim} />
+                <InfrastructureLayer
+                    enabled={effectiveActive.oim}
+                    powerEnabled={effectiveActive.oimPower !== false}
+                    telecomsEnabled={effectiveActive.oimTelecoms !== false}
+                    petroleumEnabled={effectiveActive.oimPetroleum !== false}
+                    waterEnabled={effectiveActive.oimWater !== false}
+                />
                 <FlyTo event={selected} />
                 <UserLocationMarker />
                 {/* Surface pool — operational signal surface beneath existing icons */}
@@ -10401,8 +10407,8 @@ export default function MapPage({
 
             </div>{/* end map area */}
 
-            {/* ── Layer Toggle Panel ────────────────────────────────────────────── */}
-            {layersPanelOpen && (
+            {/* ── Layer Toggle Panel — portalled to body so Cesium compositing can't bury it ── */}
+            {layersPanelOpen && createPortal(
                 <LayersPanel
                     active={active}
                     onToggle={toggle}
@@ -10453,7 +10459,8 @@ export default function MapPage({
                     notificationsEnabled={notificationsEnabled}
                     onNotificationsToggle={toggleNotifications}
                     oimUnavailable={oimUnavailable}
-                />
+                />,
+                document.body
             )}
 
         {/* ── Live Ticker ──────────────────────────────────────────────────────── */}
