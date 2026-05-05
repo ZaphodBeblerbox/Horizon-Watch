@@ -1315,6 +1315,12 @@ export default function App() {
                                     nauticalEnabled={activeWorkspace?.layers?.shippingLanes ?? false}
                                     adsbEnabled={activeWorkspace?.layers?.adsb ?? false}
                                     aisEnabled={activeWorkspace?.layers?.aisVessels ?? false}
+                                    eezEnabled={activeWorkspace?.layers?.eez ?? false}
+                                    bordersEnabled={activeWorkspace?.layers?.borders ?? false}
+                                    cablesEnabled={activeWorkspace?.layers?.cables ?? false}
+                                    chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
+                                    poiEnabled={activeWorkspace?.layers?.poi ?? false}
+                                    eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                                     surfaceItems={surfaceItems}
                                 />
                             </Suspense>

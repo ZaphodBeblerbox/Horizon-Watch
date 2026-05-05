@@ -1,53 +1,50 @@
 import "../cesiumConfig.js"
 import { useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer, Cesium3DTileset } from "resium"
-import { Cartesian3, IonResource, Ion } from "cesium"
+import { Cartesian3, IonResource } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
 import { esriSatelliteProvider, openSeaMapProvider } from "../globe/imageryProviders.js"
-import GlobeAlertLayer from "../globe/GlobeAlertLayer.jsx"
-import GlobeAISLayer   from "../globe/GlobeAISLayer.jsx"
-import GlobeADSBLayer  from "../globe/GlobeADSBLayer.jsx"
+import GlobeAlertLayer          from "../globe/GlobeAlertLayer.jsx"
+import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
+import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
+import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
+import GlobeCountryBordersLayer from "../globe/GlobeCountryBordersLayer.jsx"
+import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
+import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
+import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
+import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
 import API_BASE from "../apiBase.js"
 
 const API = API_BASE
-
-// NOTE: Cesium3DTileStyle is NOT used here.
-// Google Photorealistic 3D Tiles (GLB/glTF content) do not support Cesium3DTileStyle —
-// applying any style replaces the texture pipeline with flat geometry, causing the blue-grid
-// artefact. Instead, when an imagery overlay is enabled we swap out the 3D tileset entirely
-// and use ESRI satellite as the base so ImageryLayers can render on the ellipsoid surface.
 
 function zoomToAlt(zoom) {
     return 38_000_000 / Math.pow(2, zoom || 3)
 }
 
 export default function GlobeView({
-    center          = [20, 10],
-    zoom            = 3,
-    infraEnabled    = false,
-    nauticalEnabled = false,
-    adsbEnabled     = false,
-    aisEnabled      = false,
-    surfaceItems    = [],
+    center           = [20, 10],
+    zoom             = 3,
+    // Layer toggles — mirror workspace layer keys
+    infraEnabled     = false,   // OIM — PBF tiles, 2D-only; accepted but not rendered
+    nauticalEnabled  = false,
+    adsbEnabled      = false,
+    aisEnabled       = false,
+    eezEnabled       = false,
+    bordersEnabled   = false,
+    cablesEnabled    = false,
+    chokepointsEnabled = false,
+    poiEnabled       = false,
+    eventsEnabled    = true,
+    // Data props (optional — GlobeView fetches internally when null)
+    surfaceItems     = [],
     aisVessels:   externalAIS  = null,
     adsbAircraft: externalADSB = null,
 }) {
     const viewerRef = useRef(null)
-
     const [vessels,  setVessels]  = useState([])
     const [aircraft, setAircraft] = useState([])
 
-    // Diagnostic — logs to console so prop wiring can be verified in DevTools
-    useEffect(() => {
-        console.log("[GlobeView] props:", {
-            infraEnabled, nauticalEnabled, adsbEnabled, aisEnabled,
-            surfaceItems: surfaceItems.length,
-            externalAIS:  externalAIS?.length  ?? "internal",
-            externalADSB: externalADSB?.length ?? "internal",
-            ionToken: !!Ion.defaultAccessToken,
-        })
-    })
-
+    // AIS — use external prop if provided, otherwise fetch internally
     useEffect(() => {
         if (!aisEnabled) return
         if (externalAIS !== null) { setVessels(externalAIS); return }
@@ -61,6 +58,7 @@ export default function GlobeView({
         return () => clearInterval(t)
     }, [aisEnabled, externalAIS])
 
+    // ADSB — use external prop if provided, otherwise fetch internally
     useEffect(() => {
         if (!adsbEnabled) return
         if (externalADSB !== null) { setAircraft(externalADSB); return }
@@ -83,11 +81,8 @@ export default function GlobeView({
         Cartesian3.fromDegrees(center[1] ?? 10, center[0] ?? 20, zoomToAlt(zoom))
     , []) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Swap base layer when nautical overlay is active:
-    //   - Default: Google Photorealistic 3D Tiles
-    //   - Nautical active: ESRI satellite base + OpenSeaMap on top
-    //   OIM infrastructure tiles are PBF vector — Cesium cannot render them, so infraEnabled
-    //   has no effect in globe mode (it renders via InfrastructureLayer in Leaflet only).
+    // When any tile overlay layer is active, swap from 3D photorealistic tiles to
+    // ESRI satellite so ImageryLayers render on the ellipsoid surface unobstructed.
     const overlayActive = nauticalEnabled
 
     return (
@@ -110,28 +105,37 @@ export default function GlobeView({
                 selectionIndicator={false}
                 scene3DOnly={true}
             >
+                {/* ── Base layer ─────────────────────────────────────────────── */}
                 {!overlayActive ? (
                     <Cesium3DTileset
                         url={IonResource.fromAssetId(2275207)}
                         showCreditsOnScreen={true}
-                        onReady={ts  => console.log("[GlobeView] 3D tileset ready, tiles:", ts.tilesLoaded)}
-                        onError={err => console.error("[GlobeView] 3D tileset error:", err)}
+                        onReady={ts  => console.log("[GlobeView] tileset ready, tiles:", ts.tilesLoaded)}
+                        onError={err => console.error("[GlobeView] tileset error:", err)}
                     />
                 ) : (
                     <>
                         <ImageryLayer imageryProvider={esriSatelliteProvider} />
-                        {nauticalEnabled && (
-                            <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} />
-                        )}
+                        <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} />
                     </>
                 )}
 
-                {/* Nautical can also overlay on top of the 3D tiles over water */}
+                {/* Nautical seamark overlay on top of 3D tiles */}
                 {!overlayActive && nauticalEnabled && (
                     <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} />
                 )}
 
-                {/* Intelligence surface events — always rendered, no toggle required */}
+                {/* ── GeoJSON line layers ─────────────────────────────────────── */}
+                <GlobeEEZLayer            enabled={eezEnabled} />
+                <GlobeCountryBordersLayer enabled={bordersEnabled} />
+                <GlobeCablesLayer         enabled={cablesEnabled} />
+
+                {/* ── Point / entity layers ───────────────────────────────────── */}
+                <GlobeChokepointsLayer enabled={chokepointsEnabled} />
+                <GlobePOILayer         enabled={poiEnabled} />
+                <GlobeEventsLayer      enabled={eventsEnabled} />
+
+                {/* Intelligence surface events — severity-ringed alert markers */}
                 <GlobeAlertLayer alerts={surfaceItems} />
 
                 {aisEnabled  && <GlobeAISLayer  vessels={aisData}  />}
