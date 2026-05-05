@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
 import MapPage from "./components/mappage.jsx"
+const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
 import TopBar from "./components/TopBar.jsx"
 import Sidebar from "./components/Sidebar.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
@@ -199,6 +200,7 @@ export default function App() {
     const [directorScanProgress,  setDirectorScanProgress]  = useState(null)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+    const [viewMode,     setViewMode]     = useState("2d")
 
     useEffect(() => {
         const handler = () => setIsMobile(window.innerWidth < 768)
@@ -654,6 +656,9 @@ export default function App() {
                     if (!d?.alerts?.length) return
                     d.alerts.forEach(alert => {
                         if (!alert.id || anomalySeenRef.current.has(alert.id)) return
+                        // Suppress automated anomaly alerts (unusual aircraft/vessels) —
+                        // these generate too many false positives for operational use
+                        if (/unusual|anomal/i.test(alert.type || "")) return
                         anomalySeenRef.current.add(alert.id)
                         showAnomalyNotification(alert)
                     })
@@ -1230,7 +1235,7 @@ export default function App() {
                         top:         6,
                         right:       12,
                         zIndex:      9998,
-                        padding:     "4px 14px",
+                        padding:     "4px 8px",
                         fontSize:    11,
                         fontWeight:  700,
                         letterSpacing: "0.04em",
@@ -1259,6 +1264,8 @@ export default function App() {
                 searchApiBase={API}
                 showSignIn={authChecked && !currentUser && !showLoginModal}
                 onSignIn={() => setShowLoginModal(true)}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
             />
 
             {/* ── Notification toasts — new event alerts ─────────────────────── */}
@@ -1317,6 +1324,26 @@ export default function App() {
 
                 {/* Map — always mounted */}
                 <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", display: activeTabType === "map" ? "block" : "none" }}>
+                    {/* 3D Globe overlay — lazy-loaded, absolute so MapPage stays mounted underneath */}
+                    {viewMode === "3d" && (
+                        <div style={{ position: "absolute", inset: 0, zIndex: 500 }}>
+                            <Suspense fallback={
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "#050c1c", color: "rgba(148,163,184,0.7)", fontFamily: "system-ui", fontSize: 14 }}>
+                                    Loading 3D Globe…
+                                </div>
+                            }>
+                                <GlobeView
+                                    center={activeWorkspace?.center || [20, 10]}
+                                    zoom={activeWorkspace?.zoom || 3}
+                                    infraEnabled={activeWorkspace?.layers?.oim ?? false}
+                                    nauticalEnabled={activeWorkspace?.layers?.shippingLanes ?? false}
+                                    adsbEnabled={activeWorkspace?.layers?.adsb ?? false}
+                                    aisEnabled={activeWorkspace?.layers?.aisVessels ?? false}
+                                    surfaceItems={surfaceItems}
+                                />
+                            </Suspense>
+                        </div>
+                    )}
                     {profile && (
                         <NotificationsDrawer
                             items={surfaceItems}

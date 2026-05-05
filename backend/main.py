@@ -8623,7 +8623,7 @@ async def startup_event():
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
     asyncio.create_task(_prune_history_loop())
-    asyncio.create_task(_anomaly_detection_loop())
+    # asyncio.create_task(_anomaly_detection_loop())  # disabled — too many false positives
     asyncio.create_task(_weekly_snapshot_loop())
     asyncio.create_task(_global_adsb_cache_loop())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"

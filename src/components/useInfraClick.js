@@ -1,8 +1,7 @@
 import { useEffect, useRef } from "react"
 import { useMap } from "react-leaflet"
 import L from "leaflet"
-
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+import API_BASE from "../apiBase.js"
 
 function buildQuery(lat, lon, radius) {
     return `[out:json][timeout:10];(
@@ -148,7 +147,7 @@ export default function useInfraClick({ enabled }) {
 
                 for (const radius of [50, 200]) {
                     const r = await fetch(
-                        `${OVERPASS_URL}?data=${encodeURIComponent(buildQuery(lat, lng, radius))}`,
+                        `${API_BASE}/api/overpass?data=${encodeURIComponent(buildQuery(lat, lng, radius))}`,
                         { signal: abortRef.current.signal }
                     )
                     data = await r.json()

@@ -9214,7 +9214,7 @@ export default function MapPage({
 
                 {/* ── Country click — map-level PIP detection ───────────────── */}
                 {/* Suppressed during Overwatch/Sentinel draw mode so pointer events go to draw tool */}
-                {!overwatchActive && !effectiveActive.sentinel2 && <CountryClickHandler
+                {!overwatchActive && !effectiveActive.sentinel2 && !effectiveActive.oim && <CountryClickHandler
                     countriesGeo={allCountriesGeo}
                     onCountryClick={(feature, name) => {
                         setSelectedEvent(null)

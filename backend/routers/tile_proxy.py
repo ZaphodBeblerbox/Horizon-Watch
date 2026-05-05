@@ -2,7 +2,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import Response
 
-router = APIRouter(prefix="/api/tiles", tags=["tiles"])
+router = APIRouter(prefix="/api", tags=["proxy"])
 
 _OIM_BASE = "https://openinframap.org/tiles"
 _HEADERS  = {"User-Agent": "NAGINI/2.0 tile-proxy (+https://github.com/nagini)"}
@@ -16,7 +16,7 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-@router.get("/openinfra/{z}/{x}/{y}.pbf")
+@router.get("/tiles/openinfra/{z}/{x}/{y}.pbf")
 async def openinfra_tile(
     z: int = Path(..., ge=0, le=20),
     x: int = Path(..., ge=0),
@@ -38,4 +38,29 @@ async def openinfra_tile(
         content=r.content,
         media_type="application/vnd.mapbox-vector-tile",
         headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.get("/overpass")
+async def proxy_overpass(data: str):
+    """Proxy Overpass API queries to bypass browser CORS restrictions."""
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+        try:
+            r = await client.get(
+                "https://overpass-api.de/api/interpreter",
+                params={"data": data},
+                headers={"User-Agent": "NAGINI/2.0 overpass-proxy"},
+            )
+        except httpx.TimeoutException:
+            raise HTTPException(504, detail="Overpass timeout")
+        except httpx.RequestError as exc:
+            raise HTTPException(502, detail=str(exc))
+
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, detail="Overpass upstream error")
+
+    return Response(
+        content=r.content,
+        media_type="application/json",
+        headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300"},
     )
