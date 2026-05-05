@@ -1,8 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
 import MapPage from "./components/mappage.jsx"
-const GlobeView = import.meta.env.VITE_ENABLE_3D === "true"
-    ? lazy(() => import(/* @vite-ignore */ "./components/GlobeView.jsx"))
-    : null
+const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
 import TopBar from "./components/TopBar.jsx"
 import Sidebar from "./components/Sidebar.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
@@ -1267,7 +1265,7 @@ export default function App() {
                 showSignIn={authChecked && !currentUser && !showLoginModal}
                 onSignIn={() => setShowLoginModal(true)}
                 viewMode={viewMode}
-                onViewModeChange={import.meta.env.VITE_ENABLE_3D === "true" ? setViewMode : undefined}
+                onViewModeChange={setViewMode}
             />
 
             {/* ── Notification toasts — new event alerts ─────────────────────── */}
@@ -1327,7 +1325,7 @@ export default function App() {
                 {/* Map — always mounted */}
                 <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", display: activeTabType === "map" ? "block" : "none" }}>
                     {/* 3D Globe overlay — lazy-loaded, absolute so MapPage stays mounted underneath */}
-                    {import.meta.env.VITE_ENABLE_3D === "true" && viewMode === "3d" && (
+                    {viewMode === "3d" && (
                         <div style={{ position: "absolute", inset: 0, zIndex: 500 }}>
                             <Suspense fallback={
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "#050c1c", color: "rgba(148,163,184,0.7)", fontFamily: "system-ui", fontSize: 14 }}>

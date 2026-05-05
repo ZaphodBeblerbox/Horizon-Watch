@@ -1,3 +1,4 @@
 import { Ion } from "cesium"
 
 Ion.defaultAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIxZDgwMzg3Zi03OTgyLTRiMWMtYjg0ZS1iOTUwMGIzYTNhNjUiLCJpZCI6MzYxODYyLCJpYXQiOjE3NjQxNzI0NTZ9._2EXtBq0qZlg_aG_ZnsYFuPm6s4Hv8w7G7HibcBmHCc"
+// window.CESIUM_BASE_URL is set in index.html before any modules load
