@@ -2,12 +2,16 @@ import { useEffect } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
-    Transforms, HeadingPitchRoll, Math as CesiumMath,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { altColorHex } from "./iconUtils.js"
-import { AIRCRAFT_ARROW_URI } from "./gltfUtils.js"
+import { acClassify, makeAircraftCanvas, altColorHex } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+
+const ICON_CACHE = {}
+function getIcon(type) {
+    if (!ICON_CACHE[type]) ICON_CACHE[type] = makeAircraftCanvas(type)
+    return ICON_CACHE[type]
+}
 
 export default function GlobeADSBLayer({ aircraft }) {
     useEffect(() => {
@@ -34,29 +38,33 @@ export default function GlobeADSBLayer({ aircraft }) {
                 const alt    = ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0
                 const altNum = isFinite(Number(alt)) ? Number(alt) : 0
                 const altM   = altNum * 0.3048
-                const track  = isFinite(Number(ac.track ?? ac.heading)) ? Number(ac.track ?? ac.heading ?? 0) : 0
+                const track  = isFinite(Number(ac.track ?? ac.heading))
+                    ? Number(ac.track ?? ac.heading ?? 0) : 0
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                // Military aircraft always render red; others use altitude band colour
-                const hexCol     = (ac.military || ac.interesting) ? "#FF5028" : altColorHex(altNum)
-                const color      = Color.fromCssColorString(hexCol)
-                const position   = Cartesian3.fromDegrees(lon, lat, altM)
-                const hpr        = new HeadingPitchRoll(CesiumMath.toRadians(track), 0, 0)
-                const orientation = Transforms.headingPitchRollQuaternion(position, hpr)
+                const type   = acClassify(ac)
+                const icon   = getIcon(type)
+                if (!icon || icon.width === 0 || icon.height === 0) return null
+
+                const hexCol   = altColorHex(altNum)
+                const color    = Color.fromCssColorString(hexCol)
+                const rotRad   = -(track * Math.PI / 180)
+                const position = Cartesian3.fromDegrees(lon, lat, altM)
 
                 return (
                     <Entity
                         id={`adsb-${icao}`}
                         key={icao || `${lat}-${lon}`}
                         position={position}
-                        orientation={orientation}
-                        model={{
-                            uri:              AIRCRAFT_ARROW_URI,
-                            color,
-                            minimumPixelSize: 24,
-                            maximumScale:     400,
+                        billboard={{
+                            image:      icon,
+                            width:      28,
+                            height:     28,
+                            rotation:   rotRad,
+                            scaleByDistance:          new NearFarScalar(1000, 1.6, 8_000_000, 0.35),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
+                            eyeOffset:  new Cartesian3(0, 0, -100),
                         }}
                         label={{
                             text:       cs || icao,
@@ -74,7 +82,7 @@ export default function GlobeADSBLayer({ aircraft }) {
                         polyline={{
                             positions: [position, Cartesian3.fromDegrees(lon, lat, 0)],
                             width:    1,
-                            material: color.withAlpha(0.3),
+                            material: color.withAlpha(0.25),
                         }}
                     />
                 )
