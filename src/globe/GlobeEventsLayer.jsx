@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
-import { makeEventCanvas } from "./iconUtils.js"
+import { makeTypedEventCanvas } from "./iconUtils.js"
 
 const TYPE_HEX = {
     missile:      "#ef4444",
@@ -15,18 +15,43 @@ const TYPE_HEX = {
     earthquake:   "#a855f7",
     fire:         "#f97316",
     assassination:"#ef4444",
+    aviation:     "#38bdf8",
+    energy:       "#facc15",
+    medical:      "#22c55e",
 }
 const DEFAULT_HEX = "#64748b"
+
+// Maps raw event_type strings to makeTypedEventCanvas type keys
+const TYPE_MAP = {
+    missile:      "missile",
+    airstrike:    "explosion",
+    explosion:    "explosion",
+    armed_clash:  "armed_clash",
+    fight:        "armed_clash",
+    maritime:     "maritime",
+    protest:      "protest",
+    earthquake:   "earthquake",
+    fire:         "fire",
+    aviation:     "aviation",
+    energy:       "energy",
+    medical:      "medical",
+}
 
 function hexForEvent(ev) {
     const t = (ev.event_type || ev.type || "").toLowerCase()
     return TYPE_HEX[t] || DEFAULT_HEX
 }
 
+function typeForEvent(ev) {
+    const t = (ev.event_type || ev.type || "").toLowerCase()
+    return TYPE_MAP[t] || "general"
+}
+
 const ICON_CACHE = {}
-function getIcon(hex) {
-    if (!ICON_CACHE[hex]) ICON_CACHE[hex] = makeEventCanvas(hex)
-    return ICON_CACHE[hex]
+function getIcon(type, hex) {
+    const key = `${type}-${hex}`
+    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeTypedEventCanvas(type, hex)
+    return ICON_CACHE[key]
 }
 
 export default function GlobeEventsLayer({ enabled }) {
@@ -52,6 +77,7 @@ export default function GlobeEventsLayer({ enabled }) {
             {events.map(ev => {
                 if (!ev.lat || !ev.lon) return null
                 const hex   = hexForEvent(ev)
+                const type  = typeForEvent(ev)
                 const title = ev.headline || ev.title || "Event"
                 let timeStr = ""
                 try {
@@ -64,11 +90,11 @@ export default function GlobeEventsLayer({ enabled }) {
                         key={ev.thread_id || ev.id}
                         position={Cartesian3.fromDegrees(ev.lon, ev.lat, 0)}
                         billboard={{
-                            image:      getIcon(hex),
-                            width:      20,
-                            height:     20,
+                            image:      getIcon(type, hex),
+                            width:      44,
+                            height:     44,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance:          new NearFarScalar(1000, 1.4, 8_000_000, 0.3),
+                            scaleByDistance:          new NearFarScalar(1000, 1.0, 8_000_000, 0.25),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
                             eyeOffset:  new Cartesian3(0, 0, -50),
                         }}

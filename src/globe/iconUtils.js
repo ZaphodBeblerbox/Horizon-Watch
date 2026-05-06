@@ -158,6 +158,105 @@ export function makeChokepointCanvas() {
     return _chokepointCanvas
 }
 
+// ── Typed event icons matching 2D EVENT_ICON_SVG ─────────────────────────────
+// SVG path data is in a 32×32 viewBox — scaled to fit the symbol area.
+const _EVENT_FILL_PATHS = {
+    explosion:  "M16 2l3 8 9-1-5 6 7 5-9 1-1 9-4-7-7 5 2-8-8-3 8-4-2-8 7 5z",
+    missile:    "M24 6l2 8-9 9-5 1 1-5 9-9z",
+    fire:       "M18 4c1 5-3 6-2 10 1 2 4 3 4 7a6 6 0 11-12 0c0-4 3-6 5-9 2-3 1-5 5-8z",
+    aviation:   "M28 20v-2l-10-6V5.5a1.8 1.8 0 00-1.8-1.8h-.4A1.8 1.8 0 0014 5.5V12L4 18v2l10-2.6V24l-2.5 1.9v1.7l4.5-1.3 4.5 1.3v-1.7L18 24v-6.6z",
+    maritime:   "M16 4a4 4 0 100 8 4 4 0 000-8zm2 7.7V24c4-.6 7-3.4 7-6h-3l4-4 4 4h-3c0 5-4.9 9-11 9S5 23 5 18H2l4-4 4 4H7c0 2.6 3 5.4 7 6V11.7z",
+    energy:     "M13 3v11h-4l10 15v-11h4L13 3z",
+    medical:    "M13 6h6v7h7v6h-7v7h-6v-7H6v-6h7V6z",
+    general:    "M16 4l10 12-10 12L6 16 16 4z",
+}
+
+function _hexToRgb(hex) {
+    const n = parseInt(hex.replace("#", ""), 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+export function makeTypedEventCanvas(type, hex) {
+    const SIZE = 44          // total canvas logical pixels
+    const CORE = 28          // core circle diameter
+    const SYM  = 14          // symbol size in canvas coords (paths are 32×32)
+    return makeCanvas(SIZE, SIZE, (ctx, w, h) => {
+        const cx = w / 2, cy = h / 2
+        const [r, g, b] = _hexToRgb(hex)
+
+        // Radial glow
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2)
+        grd.addColorStop(0,   `rgba(${r},${g},${b},0.45)`)
+        grd.addColorStop(0.5, `rgba(${r},${g},${b},0.22)`)
+        grd.addColorStop(1,   `rgba(${r},${g},${b},0)`)
+        ctx.beginPath()
+        ctx.arc(cx, cy, w / 2, 0, Math.PI * 2)
+        ctx.fillStyle = grd
+        ctx.fill()
+
+        // Core circle
+        ctx.beginPath()
+        ctx.arc(cx, cy, CORE / 2, 0, Math.PI * 2)
+        ctx.fillStyle = "rgba(15,23,42,0.86)"
+        ctx.fill()
+        ctx.strokeStyle = `rgba(${r},${g},${b},0.82)`
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+
+        // Type symbol
+        ctx.save()
+        if (_EVENT_FILL_PATHS[type]) {
+            ctx.translate(cx - SYM / 2, cy - SYM / 2)
+            ctx.scale(SYM / 32, SYM / 32)
+            ctx.fillStyle = hex
+            ctx.fill(new Path2D(_EVENT_FILL_PATHS[type]))
+        } else if (type === "armed_clash") {
+            // Crosshair
+            ctx.strokeStyle = hex
+            ctx.lineWidth = 1.4
+            ctx.beginPath()
+            ctx.arc(cx, cy, SYM * 0.3, 0, Math.PI * 2)
+            ctx.stroke()
+            ctx.beginPath()
+            ctx.moveTo(cx, cy - SYM / 2); ctx.lineTo(cx, cy + SYM / 2)
+            ctx.moveTo(cx - SYM / 2, cy); ctx.lineTo(cx + SYM / 2, cy)
+            ctx.stroke()
+        } else if (type === "earthquake") {
+            // Concentric rings
+            for (const [ri, op] of [[3.5, 1], [5.5, 0.65], [7.5, 0.38]]) {
+                ctx.globalAlpha = op
+                ctx.strokeStyle = hex
+                ctx.lineWidth = 1.4
+                ctx.beginPath()
+                ctx.arc(cx, cy, ri, 0, Math.PI * 2)
+                ctx.stroke()
+            }
+            ctx.globalAlpha = 1
+        } else if (type === "protest") {
+            // Flag on a pole
+            ctx.strokeStyle = hex; ctx.lineWidth = 1.4
+            ctx.beginPath()
+            ctx.moveTo(cx - SYM / 2 + 1, cy - SYM / 2 + 1)
+            ctx.lineTo(cx - SYM / 2 + 1, cy + SYM / 2 - 1)
+            ctx.stroke()
+            ctx.fillStyle = hex
+            ctx.beginPath()
+            ctx.moveTo(cx - SYM / 2 + 2, cy - SYM / 2 + 1)
+            ctx.lineTo(cx + SYM / 2 - 1, cy - SYM / 2 + 1 + SYM * 0.35)
+            ctx.lineTo(cx - SYM / 2 + 2, cy - SYM / 2 + 1 + SYM * 0.7)
+            ctx.closePath()
+            ctx.fill()
+        } else {
+            // Generic dot
+            ctx.beginPath()
+            ctx.arc(cx, cy, 3, 0, Math.PI * 2)
+            ctx.fillStyle = hex
+            ctx.fill()
+        }
+        ctx.restore()
+    })
+}
+
 // ── Aircraft classification ───────────────────────────────────────────────────
 export function acClassify(ac) {
     if (ac.military || ac.interesting) return "military"

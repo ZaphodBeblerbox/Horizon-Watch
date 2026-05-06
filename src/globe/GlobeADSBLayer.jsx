@@ -1,9 +1,11 @@
+import { useEffect } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color, Ellipsoid,
+    Cartesian3, Cartesian2, Color,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { acClassify, makeAircraftCanvas, altColorHex } from "./iconUtils.js"
+import { setEntity, deleteEntity } from "./entityStore.js"
 
 const ICON_CACHE = {}
 function getIcon(type) {
@@ -12,6 +14,19 @@ function getIcon(type) {
 }
 
 export default function GlobeADSBLayer({ aircraft }) {
+    useEffect(() => {
+        if (!aircraft?.length) return
+        const ids = []
+        aircraft.forEach(ac => {
+            const icao = ac.icao ?? ac.icao24 ?? ""
+            if (icao) {
+                setEntity(`adsb-${icao}`, "aircraft", ac)
+                ids.push(`adsb-${icao}`)
+            }
+        })
+        return () => ids.forEach(deleteEntity)
+    }, [aircraft])
+
     if (!aircraft?.length) return null
     return (
         <>
@@ -32,8 +47,10 @@ export default function GlobeADSBLayer({ aircraft }) {
                 const hexCol  = altColorHex(altNum)
                 const color   = Color.fromCssColorString(hexCol)
                 const rotRad  = -(track * Math.PI / 180)
-                const surfPos = Cartesian3.fromDegrees(lon, lat, 0)
-                const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(surfPos, new Cartesian3())
+                const alignedAxis = Cartesian3.normalize(
+                    Cartesian3.fromDegrees(lon, lat, altM),
+                    new Cartesian3()
+                )
 
                 return (
                     <Entity
@@ -71,18 +88,6 @@ export default function GlobeADSBLayer({ aircraft }) {
                             width:    1,
                             material: color.withAlpha(0.25),
                         }}
-                        description={`<div style="font-family:Arial;color:#E8ECF1;background:#1A2433;padding:12px;border-radius:6px;min-width:200px">
-                            <div style="color:${hexCol};font-weight:bold;font-size:14px;margin-bottom:8px">${cs || icao}</div>
-                            <table style="width:100%;font-size:12px;border-collapse:collapse">
-                                <tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">ICAO</td><td>${icao}</td></tr>
-                                ${cs ? `<tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Callsign</td><td>${cs}</td></tr>` : ""}
-                                <tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Altitude</td><td>${altNum ? altNum.toLocaleString() + " ft" : "?"}</td></tr>
-                                <tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Speed</td><td>${gs != null ? Math.round(gs) + " kts" : "?"}</td></tr>
-                                <tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Track</td><td>${track}°</td></tr>
-                                ${ac.squawk ? `<tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Squawk</td><td>${ac.squawk}</td></tr>` : ""}
-                                ${ac.origin_country ? `<tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Origin</td><td>${ac.origin_country}</td></tr>` : ""}
-                            </table>
-                        </div>`}
                     />
                 )
             })}

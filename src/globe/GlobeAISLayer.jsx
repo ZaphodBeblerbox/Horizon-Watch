@@ -1,9 +1,11 @@
+import { useEffect } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color, Ellipsoid,
+    Cartesian3, Cartesian2, Color,
     HeightReference, NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType, makeVesselCanvas, VESSEL_COLORS } from "./iconUtils.js"
+import { setEntity, deleteEntity } from "./entityStore.js"
 
 const ICON_CACHE = {}
 function getIcon(shipType) {
@@ -12,6 +14,18 @@ function getIcon(shipType) {
 }
 
 export default function GlobeAISLayer({ vessels }) {
+    useEffect(() => {
+        if (!vessels?.length) return
+        const ids = []
+        vessels.forEach(v => {
+            if (v.mmsi) {
+                setEntity(`ais-${v.mmsi}`, "vessel", v)
+                ids.push(`ais-${v.mmsi}`)
+            }
+        })
+        return () => ids.forEach(deleteEntity)
+    }, [vessels])
+
     if (!vessels?.length) return null
     return (
         <>
@@ -24,14 +38,16 @@ export default function GlobeAISLayer({ vessels }) {
                     ? Number(v.heading)
                     : (v.cog ?? 0)
                 const rotRad      = -(hdg * Math.PI / 180)
-                const surfacePos  = Cartesian3.fromDegrees(v.lon, v.lat, 0)
-                const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(surfacePos, new Cartesian3())
+                const alignedAxis = Cartesian3.normalize(
+                    Cartesian3.fromDegrees(v.lon, v.lat, 0),
+                    new Cartesian3()
+                )
 
                 return (
                     <Entity
                         id={`ais-${v.mmsi}`}
                         key={v.mmsi}
-                        position={surfacePos}
+                        position={Cartesian3.fromDegrees(v.lon, v.lat, 0)}
                         billboard={{
                             image:      getIcon(shipType),
                             width:      14,
@@ -56,20 +72,6 @@ export default function GlobeAISLayer({ vessels }) {
                             showBackground: true,
                             backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.8),
                         }}
-                        description={`<div style="font-family:Arial;color:#E8ECF1;background:#1A2433;padding:12px;border-radius:6px;min-width:200px">
-                            <div style="color:${hex};font-weight:bold;font-size:14px;margin-bottom:8px">${v.name || "Unknown Vessel"}</div>
-                            <table style="width:100%;font-size:12px;border-collapse:collapse">
-                                <tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">MMSI</td><td>${v.mmsi}</td></tr>
-                                ${v.callsign ? `<tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Callsign</td><td>${v.callsign}</td></tr>` : ""}
-                                <tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">SOG</td><td>${v.sog ?? v.speed ?? "?"} kn</td></tr>
-                                <tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">COG</td><td>${v.cog ?? "?"}°</td></tr>
-                                ${v.heading != null ? `<tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Heading</td><td>${v.heading}°</td></tr>` : ""}
-                                <tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Type</td><td>${v.ship_type || "Unknown"}</td></tr>
-                                ${v.nav_status ? `<tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Status</td><td>${v.nav_status}</td></tr>` : ""}
-                                ${v.destination ? `<tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Destination</td><td>${v.destination}</td></tr>` : ""}
-                                ${v.length ? `<tr><td style="color:#9AA4B5;padding:2px 8px 2px 0">Dimensions</td><td>${v.length}m × ${v.beam || "?"}m</td></tr>` : ""}
-                            </table>
-                        </div>`}
                     />
                 )
             })}
