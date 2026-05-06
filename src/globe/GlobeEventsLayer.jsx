@@ -3,25 +3,25 @@ import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { makeTypedEventCanvas } from "./iconUtils.js"
+import { setEntity, deleteEntity } from "./entityStore.js"
 
 const TYPE_HEX = {
     missile:      "#ef4444",
     airstrike:    "#ef4444",
+    assassination:"#ef4444",
     explosion:    "#f97316",
     armed_clash:  "#f97316",
     fight:        "#f97316",
+    fire:         "#f97316",
     maritime:     "#3b82f6",
     protest:      "#eab308",
     earthquake:   "#a855f7",
-    fire:         "#f97316",
-    assassination:"#ef4444",
     aviation:     "#38bdf8",
     energy:       "#facc15",
     medical:      "#22c55e",
 }
 const DEFAULT_HEX = "#64748b"
 
-// Maps raw event_type strings to makeTypedEventCanvas type keys
 const TYPE_MAP = {
     missile:      "missile",
     airstrike:    "explosion",
@@ -70,27 +70,35 @@ export default function GlobeEventsLayer({ enabled }) {
         return () => { cancelled = true; clearInterval(iv) }
     }, [enabled])
 
+    // Register in entityStore so GlobePopup can render GlobeEventPopup
+    useEffect(() => {
+        if (!events.length) return
+        const ids = []
+        events.forEach(ev => {
+            const id = `event-${ev.thread_id || ev.id}`
+            setEntity(id, "event", ev)
+            ids.push(id)
+        })
+        return () => ids.forEach(deleteEntity)
+    }, [events])
+
     if (!enabled || !events.length) return null
 
     return (
         <>
             {events.map(ev => {
-                if (!ev.lat || !ev.lon) return null
+                if (!ev.lat || !ev.lon || !isFinite(ev.lat) || !isFinite(ev.lon)) return null
                 const hex   = hexForEvent(ev)
                 const type  = typeForEvent(ev)
-                const title = ev.headline || ev.title || "Event"
-                let timeStr = ""
-                try {
-                    const d = ev.published_at || ev.published
-                    if (d) timeStr = new Date(d).toUTCString().slice(0, 22)
-                } catch {}
+                const icon  = getIcon(type, hex)
+                if (!icon || icon.width === 0 || icon.height === 0) return null
                 return (
                     <Entity
                         id={`event-${ev.thread_id || ev.id}`}
                         key={ev.thread_id || ev.id}
                         position={Cartesian3.fromDegrees(ev.lon, ev.lat, 0)}
                         billboard={{
-                            image:      getIcon(type, hex),
+                            image:      icon,
                             width:      44,
                             height:     44,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
@@ -98,12 +106,6 @@ export default function GlobeEventsLayer({ enabled }) {
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
                             eyeOffset:  new Cartesian3(0, 0, -50),
                         }}
-                        description={`<div style="font-family:Arial;color:#E8ECF1;background:#1A2433;padding:12px;border-radius:6px;min-width:200px;max-width:280px">
-                            <div style="color:${hex};font-weight:bold;font-size:13px;margin-bottom:4px">${title}</div>
-                            <div style="font-size:10px;color:#9AA4B5;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">${(ev.event_type || ev.type || "").replace(/_/g, " ")}${ev.location ? " · " + ev.location : ""}</div>
-                            ${ev.summary ? `<div style="font-size:11px;line-height:1.5;margin-bottom:8px">${ev.summary.slice(0, 240)}</div>` : ""}
-                            ${timeStr ? `<div style="font-size:10px;color:#9AA4B5">${timeStr}</div>` : ""}
-                        </div>`}
                     />
                 )
             })}

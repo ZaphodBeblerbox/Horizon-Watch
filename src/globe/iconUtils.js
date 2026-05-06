@@ -2,13 +2,15 @@
 // Cesium can't reliably render SVG data-URIs — canvas elements work everywhere.
 
 function makeCanvas(w, h, draw) {
+    const safeW = Math.max(w || 1, 1)
+    const safeH = Math.max(h || 1, 1)
     const dpr = Math.max(typeof window !== "undefined" ? (window.devicePixelRatio || 2) : 2, 2)
     const canvas = document.createElement("canvas")
-    canvas.width  = w * dpr
-    canvas.height = h * dpr
+    canvas.width  = safeW * dpr
+    canvas.height = safeH * dpr
     const ctx = canvas.getContext("2d")
     ctx.scale(dpr, dpr)
-    draw(ctx, w, h)
+    draw(ctx, safeW, safeH)
     return canvas
 }
 

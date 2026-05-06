@@ -3,6 +3,7 @@ import { ScreenSpaceEventHandler, ScreenSpaceEventType, defined, SceneTransforms
 import { getEntity } from "./entityStore.js"
 import GlobeAircraftPopup from "./GlobeAircraftPopup.jsx"
 import GlobeVesselPopup from "./GlobeVesselPopup.jsx"
+import GlobeEventPopup from "./GlobeEventPopup.jsx"
 
 export default function GlobePopup({ viewerRef }) {
     const [popup, setPopup] = useState(null)
@@ -110,6 +111,8 @@ export default function GlobePopup({ viewerRef }) {
                 <GlobeAircraftPopup data={popup.data} onClose={handleClose} onFollow={handleFollow} />
             ) : popup.type === "vessel" ? (
                 <GlobeVesselPopup data={popup.data} onClose={handleClose} onFollow={handleFollow} />
+            ) : popup.type === "event" ? (
+                <GlobeEventPopup data={popup.data} onClose={handleClose} />
             ) : (
                 <>
                     <button

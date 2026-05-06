@@ -22,6 +22,10 @@ function zoomToAlt(zoom) {
     return 38_000_000 / Math.pow(2, zoom || 3)
 }
 
+const isMobile = /iPhone|iPad|Android/i.test(
+    typeof navigator !== "undefined" ? navigator.userAgent : ""
+) || (typeof window !== "undefined" && window.innerWidth < 1024)
+
 export default function GlobeView({
     center           = [20, 10],
     zoom             = 3,
@@ -75,7 +79,7 @@ export default function GlobeView({
         return () => clearInterval(t)
     }, [adsbEnabled, externalADSB]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Maximise rendering quality once viewer is ready
+    // Apply adaptive rendering quality once viewer is ready
     useEffect(() => {
         let attempts = 0
         const tryApply = () => {
@@ -84,11 +88,11 @@ export default function GlobeView({
                 if (attempts++ < 15) setTimeout(tryApply, 250)
                 return
             }
-            viewer.resolutionScale = window.devicePixelRatio || 1.0
-            viewer.scene.globe.maximumScreenSpaceError = 1.0   // default 2.0 — sharper terrain
-            viewer.scene.postProcessStages.fxaa.enabled = true
+            viewer.resolutionScale = isMobile ? 1.0 : (window.devicePixelRatio || 1.0)
+            viewer.scene.globe.maximumScreenSpaceError = isMobile ? 4.0 : 1.5
+            viewer.scene.postProcessStages.fxaa.enabled = !isMobile
             viewer.scene.highDynamicRange = false
-            viewer.scene.globe.tileCacheSize = 1000
+            viewer.scene.globe.tileCacheSize = isMobile ? 200 : 1000
         }
         tryApply()
     }, [])
@@ -150,8 +154,8 @@ export default function GlobeView({
                     <Cesium3DTileset
                         url={IonResource.fromAssetId(2275207)}
                         showCreditsOnScreen={true}
-                        maximumScreenSpaceError={4}
-                        maximumMemoryUsage={2048}
+                        maximumScreenSpaceError={isMobile ? 16 : 8}
+                        maximumMemoryUsage={isMobile ? 256 : 1024}
                         dynamicScreenSpaceError={true}
                         dynamicScreenSpaceErrorDensity={0.00278}
                         dynamicScreenSpaceErrorFactor={4.0}

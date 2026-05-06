@@ -1,7 +1,7 @@
 import { useEffect } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color,
+    Cartesian3, Cartesian2, Color, Ellipsoid,
     HeightReference, NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType, makeVesselCanvas, VESSEL_COLORS } from "./iconUtils.js"
@@ -30,26 +30,27 @@ export default function GlobeAISLayer({ vessels }) {
     return (
         <>
             {vessels.map(v => {
-                if (v.lat == null || v.lon == null) return null
+                if (v.lat == null || v.lon == null || !isFinite(v.lat) || !isFinite(v.lon)) return null
 
                 const shipType = vesselShipType(v)
+                const icon     = getIcon(shipType)
+                if (!icon || icon.width === 0 || icon.height === 0) return null
+
                 const hex      = VESSEL_COLORS[shipType] || VESSEL_COLORS.other
                 const hdg      = isFinite(Number(v.heading)) && Number(v.heading) !== 511
                     ? Number(v.heading)
                     : (v.cog ?? 0)
                 const rotRad      = -(hdg * Math.PI / 180)
-                const alignedAxis = Cartesian3.normalize(
-                    Cartesian3.fromDegrees(v.lon, v.lat, 0),
-                    new Cartesian3()
-                )
+                const surfacePos  = Cartesian3.fromDegrees(v.lon, v.lat, 0)
+                const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(surfacePos, new Cartesian3())
 
                 return (
                     <Entity
                         id={`ais-${v.mmsi}`}
                         key={v.mmsi}
-                        position={Cartesian3.fromDegrees(v.lon, v.lat, 0)}
+                        position={surfacePos}
                         billboard={{
-                            image:      getIcon(shipType),
+                            image:      icon,
                             width:      14,
                             height:     25,
                             rotation:   rotRad,

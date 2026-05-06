@@ -1,7 +1,7 @@
 import { useEffect } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color,
+    Cartesian3, Cartesian2, Color, Ellipsoid,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { acClassify, makeAircraftCanvas, altColorHex } from "./iconUtils.js"
@@ -33,32 +33,33 @@ export default function GlobeADSBLayer({ aircraft }) {
             {aircraft.map(ac => {
                 const lon = ac.lon ?? ac.longitude
                 const lat = ac.lat ?? ac.latitude
-                if (lat == null || lon == null) return null
+                if (lat == null || lon == null || !isFinite(lat) || !isFinite(lon)) return null
 
                 const alt    = ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0
-                const altNum = typeof alt === "number" && !isNaN(alt) ? alt : 0
+                const altNum = isFinite(Number(alt)) ? Number(alt) : 0
                 const altM   = altNum * 0.3048
                 const track  = ac.track ?? ac.heading ?? 0
                 const gs     = ac.gs ?? ac.velocity ?? ac.ground_speed
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                const type    = acClassify(ac)
-                const hexCol  = altColorHex(altNum)
-                const color   = Color.fromCssColorString(hexCol)
-                const rotRad  = -(track * Math.PI / 180)
-                const alignedAxis = Cartesian3.normalize(
-                    Cartesian3.fromDegrees(lon, lat, altM),
-                    new Cartesian3()
-                )
+                const type   = acClassify(ac)
+                const icon   = getIcon(type)
+                if (!icon || icon.width === 0 || icon.height === 0) return null
+
+                const hexCol     = altColorHex(altNum)
+                const color      = Color.fromCssColorString(hexCol)
+                const rotRad     = -(track * Math.PI / 180)
+                const position   = Cartesian3.fromDegrees(lon, lat, altM)
+                const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(position, new Cartesian3())
 
                 return (
                     <Entity
                         id={`adsb-${icao}`}
                         key={icao || `${lat}-${lon}`}
-                        position={Cartesian3.fromDegrees(lon, lat, altM)}
+                        position={position}
                         billboard={{
-                            image:      getIcon(type),
+                            image:      icon,
                             width:      28,
                             height:     28,
                             rotation:   rotRad,
@@ -82,7 +83,7 @@ export default function GlobeADSBLayer({ aircraft }) {
                         }}
                         polyline={{
                             positions: [
-                                Cartesian3.fromDegrees(lon, lat, altM),
+                                position,
                                 Cartesian3.fromDegrees(lon, lat, 0),
                             ],
                             width:    1,
