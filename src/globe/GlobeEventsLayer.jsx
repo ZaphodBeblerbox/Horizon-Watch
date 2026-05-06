@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
-import { eventSvgUri } from "./iconUtils.js"
+import { makeEventCanvas } from "./iconUtils.js"
 
 const TYPE_HEX = {
     missile:      "#ef4444",
@@ -25,7 +25,7 @@ function hexForEvent(ev) {
 
 const ICON_CACHE = {}
 function getIcon(hex) {
-    if (!ICON_CACHE[hex]) ICON_CACHE[hex] = eventSvgUri(hex)
+    if (!ICON_CACHE[hex]) ICON_CACHE[hex] = makeEventCanvas(hex)
     return ICON_CACHE[hex]
 }
 
@@ -65,8 +65,8 @@ export default function GlobeEventsLayer({ enabled }) {
                         position={Cartesian3.fromDegrees(ev.lon, ev.lat, 0)}
                         billboard={{
                             image:      getIcon(hex),
-                            width:      18,
-                            height:     18,
+                            width:      20,
+                            height:     20,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
                             scaleByDistance:          new NearFarScalar(1000, 1.4, 8_000_000, 0.3),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),

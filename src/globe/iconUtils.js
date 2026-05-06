@@ -1,30 +1,46 @@
-// SVG data-URI generators for Cesium billboard icons
+// Canvas-based icon generators for Cesium billboards.
+// Cesium can't reliably render SVG data-URIs — canvas elements work everywhere.
 
-function svgUri(svgStr) {
-    return "data:image/svg+xml," + encodeURIComponent(svgStr)
+function makeCanvas(w, h, draw) {
+    const dpr = Math.max(typeof window !== "undefined" ? (window.devicePixelRatio || 2) : 2, 2)
+    const canvas = document.createElement("canvas")
+    canvas.width  = w * dpr
+    canvas.height = h * dpr
+    const ctx = canvas.getContext("2d")
+    ctx.scale(dpr, dpr)
+    draw(ctx, w, h)
+    return canvas
 }
 
-// ── Aircraft ─────────────────────────────────────────────────────────────────
-// Top-down airliner silhouette (24×24 viewBox, bow points up = north)
-const AC_PATH = "M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"
+// ── Aircraft ──────────────────────────────────────────────────────────────────
+// Airliner silhouette path from a 24×24 SVG viewBox (bow points up = north)
+const AC_PATH_STR = "M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"
 
-export function aircraftSvgUri(type = "commercial") {
-    const colors = {
-        commercial: "rgba(0,200,255,0.95)",
-        military:   "rgba(255,80,40,0.95)",
-        helicopter: "rgba(0,221,102,0.95)",
-        general:    "rgba(200,200,255,0.85)",
-    }
-    const color = colors[type] || colors.commercial
-    return svgUri(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">` +
-        `<path d="${AC_PATH}" fill="${color}" stroke="rgba(0,0,0,0.5)" stroke-width="0.8"/>` +
-        `</svg>`
-    )
+const AC_COLORS = {
+    commercial: "#00C8FF",
+    military:   "#FF5028",
+    helicopter: "#00DD66",
+    general:    "#C8C8FF",
+}
+
+export function makeAircraftCanvas(type = "commercial") {
+    const color = AC_COLORS[type] || AC_COLORS.commercial
+    return makeCanvas(28, 28, (ctx, w, h) => {
+        ctx.save()
+        ctx.scale(w / 24, h / 24)   // map 24×24 SVG coords to canvas w×h
+        const path = new Path2D(AC_PATH_STR)
+        ctx.fillStyle = color
+        ctx.fill(path)
+        ctx.strokeStyle = "rgba(0,0,0,0.45)"
+        ctx.lineWidth = 0.7
+        ctx.stroke(path)
+        ctx.restore()
+    })
 }
 
 // ── Vessels ───────────────────────────────────────────────────────────────────
-const VESSEL_HULL = {
+// Hull paths in a ~16×28 coordinate space (bow points up = north)
+const VESSEL_PATHS = {
     tanker:    "M8,1 L13,7 L14,14 L14,24 L11,27 L5,27 L2,24 L2,14 L3,7 Z",
     container: "M8,1 L14,8 L14,25 L12,27 L4,27 L2,25 L2,8 Z",
     cargo:     "M8,1 L13,7 L13,24 L11,27 L5,27 L3,24 L3,7 Z",
@@ -33,6 +49,7 @@ const VESSEL_HULL = {
     fishing:   "M8,2 L12,8 L12,22 L10,25 L6,25 L4,22 L4,8 Z",
     other:     "M8,2 L13,8 L13,23 L11,26 L5,26 L3,23 L3,8 Z",
 }
+
 export const VESSEL_COLORS = {
     tanker:    "#f59e0b",
     cargo:     "#14b8a6",
@@ -54,57 +71,106 @@ export function vesselShipType(vessel) {
     return "other"
 }
 
-export function vesselSvgUri(shipType = "other") {
-    const color = VESSEL_COLORS[shipType] || VESSEL_COLORS.other
-    const path  = VESSEL_HULL[shipType]  || VESSEL_HULL.other
-    return svgUri(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 28" width="16" height="28">` +
-        `<path d="${path}" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="0.8"/>` +
-        `</svg>`
-    )
+export function makeVesselCanvas(shipType = "other") {
+    const color   = VESSEL_COLORS[shipType] || VESSEL_COLORS.other
+    const pathStr = VESSEL_PATHS[shipType]  || VESSEL_PATHS.other
+    return makeCanvas(14, 25, (ctx, w, h) => {
+        ctx.save()
+        ctx.scale(w / 16, h / 28)
+        const path = new Path2D(pathStr)
+        ctx.fillStyle = color
+        ctx.fill(path)
+        ctx.strokeStyle = "rgba(0,0,0,0.5)"
+        ctx.lineWidth = 0.9
+        ctx.stroke(path)
+        ctx.restore()
+    })
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────
-export function eventSvgUri(hex) {
-    return svgUri(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20">` +
-        `<circle cx="10" cy="10" r="7" fill="${hex}" stroke="#0F1721" stroke-width="1.5"/>` +
-        `<circle cx="10" cy="10" r="3" fill="rgba(255,255,255,0.6)"/>` +
-        `</svg>`
-    )
+export function makeEventCanvas(hex) {
+    return makeCanvas(20, 20, (ctx, w, h) => {
+        ctx.beginPath()
+        ctx.arc(w / 2, h / 2, w / 2 - 1.5, 0, Math.PI * 2)
+        ctx.fillStyle = hex
+        ctx.fill()
+        ctx.strokeStyle = "#0F1721"
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.arc(w / 2, h / 2, 3, 0, Math.PI * 2)
+        ctx.fillStyle = "rgba(255,255,255,0.6)"
+        ctx.fill()
+    })
 }
 
 // ── POI ───────────────────────────────────────────────────────────────────────
-export function poiSvgUri(hex) {
-    return svgUri(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 24" width="20" height="24">` +
-        `<path d="M10 1 C6 1 3 4 3 8 C3 13 10 23 10 23 C10 23 17 13 17 8 C17 4 14 1 10 1Z" fill="${hex}" stroke="#0F1721" stroke-width="1.2"/>` +
-        `<circle cx="10" cy="8" r="3" fill="rgba(255,255,255,0.7)"/>` +
-        `</svg>`
-    )
+export function makePOICanvas(hex) {
+    return makeCanvas(20, 26, (ctx, w, h) => {
+        const cx = w / 2
+        const cr = 7
+        const cy = cr + 1
+        // Pin circle
+        ctx.beginPath()
+        ctx.arc(cx, cy, cr, 0, Math.PI * 2)
+        ctx.fillStyle = hex
+        ctx.fill()
+        ctx.strokeStyle = "#0F1721"
+        ctx.lineWidth = 1.2
+        ctx.stroke()
+        // Pin tail
+        ctx.beginPath()
+        ctx.moveTo(cx, h - 1)
+        ctx.lineTo(cx - 5, cy + cr - 1)
+        ctx.lineTo(cx + 5, cy + cr - 1)
+        ctx.closePath()
+        ctx.fillStyle = hex
+        ctx.fill()
+        // Inner highlight
+        ctx.beginPath()
+        ctx.arc(cx, cy, 3, 0, Math.PI * 2)
+        ctx.fillStyle = "rgba(255,255,255,0.7)"
+        ctx.fill()
+    })
 }
 
 // ── Chokepoints ───────────────────────────────────────────────────────────────
-export const CHOKEPOINT_URI = svgUri(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">` +
-    `<path d="M12 2 L22 12 L12 22 L2 12 Z" fill="#FF6D00" stroke="rgba(255,255,255,0.8)" stroke-width="1.5"/>` +
-    `<circle cx="12" cy="12" r="3" fill="rgba(255,255,255,0.7)"/>` +
-    `</svg>`
-)
+let _chokepointCanvas = null
+export function makeChokepointCanvas() {
+    if (_chokepointCanvas) return _chokepointCanvas
+    _chokepointCanvas = makeCanvas(24, 24, (ctx, w, h) => {
+        ctx.beginPath()
+        ctx.moveTo(w / 2, 2)
+        ctx.lineTo(w - 2, h / 2)
+        ctx.lineTo(w / 2, h - 2)
+        ctx.lineTo(2, h / 2)
+        ctx.closePath()
+        ctx.fillStyle = "#FF6D00"
+        ctx.fill()
+        ctx.strokeStyle = "rgba(255,255,255,0.8)"
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.arc(w / 2, h / 2, 3, 0, Math.PI * 2)
+        ctx.fillStyle = "rgba(255,255,255,0.7)"
+        ctx.fill()
+    })
+    return _chokepointCanvas
+}
 
 // ── Aircraft classification ───────────────────────────────────────────────────
 export function acClassify(ac) {
     if (ac.military || ac.interesting) return "military"
     const cat = ac.category || ""
     if (cat === "A7") return "helicopter"
-    if (["A1","A2"].includes(cat)) return "general"
-    if (["A3","A4","A5","A6"].includes(cat)) return "commercial"
+    if (["A1", "A2"].includes(cat)) return "general"
+    if (["A3", "A4", "A5", "A6"].includes(cat)) return "commercial"
     const cs = (ac.flight || "").trim().toUpperCase()
     if (/^[A-Z]{3}\d/.test(cs)) return "commercial"
     return "general"
 }
 
-// Altitude coloring (ft) matching 2D layer
+// Altitude coloring (ft) — matches 2D layer
 export function altColorHex(alt) {
     if (alt == null || isNaN(alt)) return "#94a3b8"
     if (alt < 10000) return "#22c55e"

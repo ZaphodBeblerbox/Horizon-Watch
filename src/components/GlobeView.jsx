@@ -107,7 +107,25 @@ export default function GlobeView({
     return (
         <div style={{ position: "absolute", inset: 0 }}>
             <style>{`
-                .cesium-viewer .cesium-widget-credits { font-size: 10px !important; opacity: 0.55; }
+                /* Minimise Cesium branding — required by Ion ToS but can be shrunk */
+                .cesium-viewer .cesium-widget-credits {
+                    font-size: 8px !important;
+                    opacity: 0.35 !important;
+                    transform: scale(0.75);
+                    transform-origin: bottom right;
+                    right: 4px !important;
+                    bottom: 4px !important;
+                    left: auto !important;
+                    position: absolute !important;
+                }
+                .cesium-viewer .cesium-credit-logoContainer img {
+                    height: 12px !important;
+                    opacity: 0.4;
+                }
+                .cesium-viewer .cesium-credit-textContainer {
+                    font-size: 8px !important;
+                    opacity: 0.3 !important;
+                }
                 .cesium-viewer-bottom { bottom: 0 !important; }
                 /* Suppress the default selection indicator green ring */
                 .cesium-selection-wrapper { display: none !important; }

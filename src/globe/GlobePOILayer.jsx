@@ -5,7 +5,7 @@ import {
     HeightReference, NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
-import { poiSvgUri } from "./iconUtils.js"
+import { makePOICanvas } from "./iconUtils.js"
 
 const CAT_HEX = {
     military:       "#E55757",
@@ -26,7 +26,7 @@ function hexForPoi(poi) {
 
 const ICON_CACHE = {}
 function getIcon(hex) {
-    if (!ICON_CACHE[hex]) ICON_CACHE[hex] = poiSvgUri(hex)
+    if (!ICON_CACHE[hex]) ICON_CACHE[hex] = makePOICanvas(hex)
     return ICON_CACHE[hex]
 }
 
@@ -56,28 +56,28 @@ export default function GlobePOILayer({ enabled }) {
                         key={p.id}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
-                            image: getIcon(hex),
-                            width: 20,
-                            height: 24,
-                            heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.5, 5_000_000, 0.4),
+                            image:      getIcon(hex),
+                            width:      20,
+                            height:     26,
+                            heightReference:          HeightReference.CLAMP_TO_GROUND,
+                            scaleByDistance:          new NearFarScalar(1000, 1.5, 5_000_000, 0.4),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 10_000_000),
-                            eyeOffset: new Cartesian3(0, 0, -100),
+                            eyeOffset:  new Cartesian3(0, 0, -100),
                         }}
                         label={{
-                            text: p.name || "",
-                            font: "11px Arial",
-                            fillColor: Color.fromCssColorString("#E8ECF1"),
+                            text:       p.name || "",
+                            font:       "11px Arial",
+                            fillColor:  Color.fromCssColorString("#E8ECF1"),
                             outlineColor: Color.fromCssColorString("#0F1721"),
                             outlineWidth: 2,
-                            style: 2,
-                            pixelOffset: new Cartesian2(0, -18),
-                            scaleByDistance: new NearFarScalar(1000, 1.0, 2_000_000, 0.0),
+                            style:      2,
+                            pixelOffset: new Cartesian2(0, -20),
+                            scaleByDistance:          new NearFarScalar(1000, 1.0, 2_000_000, 0.0),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 800_000),
                             showBackground: true,
                             backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.8),
                         }}
-                        description={`<div style="font-family:Arial;color:#E8ECF1;background:#1A2433;padding:12px;border:1px solid #2C3645;border-radius:6px;min-width:180px">
+                        description={`<div style="font-family:Arial;color:#E8ECF1;background:#1A2433;padding:12px;border-radius:6px;min-width:180px">
                             <div style="color:${hex};font-weight:bold;font-size:14px;margin-bottom:6px">${p.name || "POI"}</div>
                             ${p.category ? `<div style="font-size:10px;color:#9AA4B5;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${p.category}</div>` : ""}
                             ${p.notes || p.description ? `<div style="font-size:12px;line-height:1.4;margin-bottom:6px">${p.notes || p.description}</div>` : ""}

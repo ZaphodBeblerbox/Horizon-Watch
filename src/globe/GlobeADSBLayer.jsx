@@ -3,11 +3,11 @@ import {
     Cartesian3, Cartesian2, Color, Ellipsoid,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { acClassify, aircraftSvgUri, altColorHex } from "./iconUtils.js"
+import { acClassify, makeAircraftCanvas, altColorHex } from "./iconUtils.js"
 
 const ICON_CACHE = {}
 function getIcon(type) {
-    if (!ICON_CACHE[type]) ICON_CACHE[type] = aircraftSvgUri(type)
+    if (!ICON_CACHE[type]) ICON_CACHE[type] = makeAircraftCanvas(type)
     return ICON_CACHE[type]
 }
 
@@ -28,13 +28,12 @@ export default function GlobeADSBLayer({ aircraft }) {
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                const type     = acClassify(ac)
-                const hexCol   = altColorHex(altNum)
-                const color    = Color.fromCssColorString(hexCol)
-                const rotRad   = -(track * Math.PI / 180)
-                // Surface normal → billboard lies flat on globe
-                const surfacePos = Cartesian3.fromDegrees(lon, lat, 0)
-                const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(surfacePos, new Cartesian3())
+                const type    = acClassify(ac)
+                const hexCol  = altColorHex(altNum)
+                const color   = Color.fromCssColorString(hexCol)
+                const rotRad  = -(track * Math.PI / 180)
+                const surfPos = Cartesian3.fromDegrees(lon, lat, 0)
+                const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(surfPos, new Cartesian3())
 
                 return (
                     <Entity
@@ -47,8 +46,8 @@ export default function GlobeADSBLayer({ aircraft }) {
                             height:     28,
                             rotation:   rotRad,
                             alignedAxis,
-                            scaleByDistance:            new NearFarScalar(1000, 1.6, 8_000_000, 0.35),
-                            distanceDisplayCondition:   new DistanceDisplayCondition(0, 20_000_000),
+                            scaleByDistance:          new NearFarScalar(1000, 1.6, 8_000_000, 0.35),
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
                             eyeOffset:  new Cartesian3(0, 0, -100),
                         }}
                         label={{

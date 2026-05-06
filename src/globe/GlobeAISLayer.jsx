@@ -3,11 +3,11 @@ import {
     Cartesian3, Cartesian2, Color, Ellipsoid,
     HeightReference, NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { vesselShipType, vesselSvgUri, VESSEL_COLORS } from "./iconUtils.js"
+import { vesselShipType, makeVesselCanvas, VESSEL_COLORS } from "./iconUtils.js"
 
 const ICON_CACHE = {}
 function getIcon(shipType) {
-    if (!ICON_CACHE[shipType]) ICON_CACHE[shipType] = vesselSvgUri(shipType)
+    if (!ICON_CACHE[shipType]) ICON_CACHE[shipType] = makeVesselCanvas(shipType)
     return ICON_CACHE[shipType]
 }
 
@@ -23,8 +23,7 @@ export default function GlobeAISLayer({ vessels }) {
                 const hdg      = isFinite(Number(v.heading)) && Number(v.heading) !== 511
                     ? Number(v.heading)
                     : (v.cog ?? 0)
-                const rotRad   = -(hdg * Math.PI / 180)
-                // Surface normal → icon lies flat on globe
+                const rotRad      = -(hdg * Math.PI / 180)
                 const surfacePos  = Cartesian3.fromDegrees(v.lon, v.lat, 0)
                 const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(surfacePos, new Cartesian3())
 
@@ -35,8 +34,8 @@ export default function GlobeAISLayer({ vessels }) {
                         position={surfacePos}
                         billboard={{
                             image:      getIcon(shipType),
-                            width:      16,
-                            height:     28,
+                            width:      14,
+                            height:     25,
                             rotation:   rotRad,
                             alignedAxis,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,

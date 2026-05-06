@@ -5,7 +5,7 @@ import {
     HeightReference, NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
-import { CHOKEPOINT_URI } from "./iconUtils.js"
+import { makeChokepointCanvas } from "./iconUtils.js"
 
 export default function GlobeChokepointsLayer({ enabled }) {
     const [data, setData] = useState([])
@@ -34,28 +34,28 @@ export default function GlobeChokepointsLayer({ enabled }) {
                         key={c.id ?? name}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
-                            image: CHOKEPOINT_URI,
-                            width: 24,
-                            height: 24,
-                            heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.5, 10_000_000, 0.5),
+                            image:      makeChokepointCanvas(),
+                            width:      24,
+                            height:     24,
+                            heightReference:          HeightReference.CLAMP_TO_GROUND,
+                            scaleByDistance:          new NearFarScalar(1000, 1.5, 10_000_000, 0.5),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
-                            eyeOffset: new Cartesian3(0, 0, -100),
+                            eyeOffset:  new Cartesian3(0, 0, -100),
                         }}
                         label={{
-                            text: name,
-                            font: "bold 11px Arial",
-                            fillColor: Color.fromCssColorString("#FF6D00"),
+                            text:       name,
+                            font:       "bold 11px Arial",
+                            fillColor:  Color.fromCssColorString("#FF6D00"),
                             outlineColor: Color.fromCssColorString("#0F1721"),
                             outlineWidth: 2,
-                            style: 2,
-                            pixelOffset: new Cartesian2(0, -18),
-                            scaleByDistance: new NearFarScalar(1000, 1.0, 5_000_000, 0.3),
+                            style:      2,
+                            pixelOffset: new Cartesian2(0, -20),
+                            scaleByDistance:          new NearFarScalar(1000, 1.0, 5_000_000, 0.3),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 4_000_000),
                             showBackground: true,
                             backgroundColor: Color.fromCssColorString("#0F1721").withAlpha(0.85),
                         }}
-                        description={`<div style="font-family:Arial;color:#E8ECF1;background:#1A2433;padding:12px;border:1px solid #2C3645;border-radius:6px;min-width:180px">
+                        description={`<div style="font-family:Arial;color:#E8ECF1;background:#1A2433;padding:12px;border-radius:6px;min-width:180px">
                             <div style="color:#FF6D00;font-weight:bold;font-size:14px;margin-bottom:6px">◆ ${name}</div>
                             ${desc ? `<div style="font-size:12px;line-height:1.4;margin-bottom:6px">${desc}</div>` : ""}
                             <div style="font-size:10px;color:#9AA4B5">${lat.toFixed(3)}°, ${lon.toFixed(3)}°</div>
