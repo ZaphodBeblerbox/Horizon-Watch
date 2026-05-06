@@ -1,17 +1,13 @@
 import { useEffect } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color, Ellipsoid,
-    HeightReference, NearFarScalar, DistanceDisplayCondition,
+    Cartesian3, Cartesian2, Color,
+    Transforms, HeadingPitchRoll, Math as CesiumMath,
+    NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { vesselShipType, makeVesselCanvas, VESSEL_COLORS } from "./iconUtils.js"
+import { vesselShipType, VESSEL_COLORS } from "./iconUtils.js"
+import { VESSEL_HULL_URI } from "./gltfUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-
-const ICON_CACHE = {}
-function getIcon(shipType) {
-    if (!ICON_CACHE[shipType]) ICON_CACHE[shipType] = makeVesselCanvas(shipType)
-    return ICON_CACHE[shipType]
-}
 
 export default function GlobeAISLayer({ vessels }) {
     useEffect(() => {
@@ -33,32 +29,30 @@ export default function GlobeAISLayer({ vessels }) {
                 if (v.lat == null || v.lon == null || !isFinite(v.lat) || !isFinite(v.lon)) return null
 
                 const shipType = vesselShipType(v)
-                const icon     = getIcon(shipType)
-                if (!icon || icon.width === 0 || icon.height === 0) return null
-
                 const hex      = VESSEL_COLORS[shipType] || VESSEL_COLORS.other
-                const hdg      = isFinite(Number(v.heading)) && Number(v.heading) !== 511
+                const color    = Color.fromCssColorString(hex)
+
+                // Prefer true heading; fall back to COG; default 0
+                const hdg = isFinite(Number(v.heading)) && Number(v.heading) !== 511
                     ? Number(v.heading)
-                    : (v.cog ?? 0)
-                const rotRad      = -(hdg * Math.PI / 180)
-                const surfacePos  = Cartesian3.fromDegrees(v.lon, v.lat, 0)
-                const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(surfacePos, new Cartesian3())
+                    : isFinite(Number(v.cog)) ? Number(v.cog) : 0
+
+                const position    = Cartesian3.fromDegrees(v.lon, v.lat, 0)
+                const hpr         = new HeadingPitchRoll(CesiumMath.toRadians(hdg), 0, 0)
+                const orientation = Transforms.headingPitchRollQuaternion(position, hpr)
 
                 return (
                     <Entity
                         id={`ais-${v.mmsi}`}
                         key={v.mmsi}
-                        position={surfacePos}
-                        billboard={{
-                            image:      icon,
-                            width:      14,
-                            height:     25,
-                            rotation:   rotRad,
-                            alignedAxis,
-                            heightReference:          HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance:          new NearFarScalar(1000, 1.8, 5_000_000, 0.3),
+                        position={position}
+                        orientation={orientation}
+                        model={{
+                            uri:              VESSEL_HULL_URI,
+                            color,
+                            minimumPixelSize: 18,
+                            maximumScale:     300,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
-                            eyeOffset:  new Cartesian3(0, 0, -100),
                         }}
                         label={{
                             text:       v.name || "",

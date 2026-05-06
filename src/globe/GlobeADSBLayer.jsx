@@ -1,17 +1,13 @@
 import { useEffect } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color, Ellipsoid,
+    Cartesian3, Cartesian2, Color,
+    Transforms, HeadingPitchRoll, Math as CesiumMath,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { acClassify, makeAircraftCanvas, altColorHex } from "./iconUtils.js"
+import { altColorHex } from "./iconUtils.js"
+import { AIRCRAFT_ARROW_URI } from "./gltfUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-
-const ICON_CACHE = {}
-function getIcon(type) {
-    if (!ICON_CACHE[type]) ICON_CACHE[type] = makeAircraftCanvas(type)
-    return ICON_CACHE[type]
-}
 
 export default function GlobeADSBLayer({ aircraft }) {
     useEffect(() => {
@@ -38,35 +34,29 @@ export default function GlobeADSBLayer({ aircraft }) {
                 const alt    = ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0
                 const altNum = isFinite(Number(alt)) ? Number(alt) : 0
                 const altM   = altNum * 0.3048
-                const track  = ac.track ?? ac.heading ?? 0
-                const gs     = ac.gs ?? ac.velocity ?? ac.ground_speed
+                const track  = isFinite(Number(ac.track ?? ac.heading)) ? Number(ac.track ?? ac.heading ?? 0) : 0
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                const type   = acClassify(ac)
-                const icon   = getIcon(type)
-                if (!icon || icon.width === 0 || icon.height === 0) return null
-
-                const hexCol     = altColorHex(altNum)
+                // Military aircraft always render red; others use altitude band colour
+                const hexCol     = (ac.military || ac.interesting) ? "#FF5028" : altColorHex(altNum)
                 const color      = Color.fromCssColorString(hexCol)
-                const rotRad     = -(track * Math.PI / 180)
                 const position   = Cartesian3.fromDegrees(lon, lat, altM)
-                const alignedAxis = Ellipsoid.WGS84.geodeticSurfaceNormal(position, new Cartesian3())
+                const hpr        = new HeadingPitchRoll(CesiumMath.toRadians(track), 0, 0)
+                const orientation = Transforms.headingPitchRollQuaternion(position, hpr)
 
                 return (
                     <Entity
                         id={`adsb-${icao}`}
                         key={icao || `${lat}-${lon}`}
                         position={position}
-                        billboard={{
-                            image:      icon,
-                            width:      28,
-                            height:     28,
-                            rotation:   rotRad,
-                            alignedAxis,
-                            scaleByDistance:          new NearFarScalar(1000, 1.6, 8_000_000, 0.35),
+                        orientation={orientation}
+                        model={{
+                            uri:              AIRCRAFT_ARROW_URI,
+                            color,
+                            minimumPixelSize: 24,
+                            maximumScale:     400,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
-                            eyeOffset:  new Cartesian3(0, 0, -100),
                         }}
                         label={{
                             text:       cs || icao,
@@ -82,12 +72,9 @@ export default function GlobeADSBLayer({ aircraft }) {
                             backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.8),
                         }}
                         polyline={{
-                            positions: [
-                                position,
-                                Cartesian3.fromDegrees(lon, lat, 0),
-                            ],
+                            positions: [position, Cartesian3.fromDegrees(lon, lat, 0)],
                             width:    1,
-                            material: color.withAlpha(0.25),
+                            material: color.withAlpha(0.3),
                         }}
                     />
                 )
