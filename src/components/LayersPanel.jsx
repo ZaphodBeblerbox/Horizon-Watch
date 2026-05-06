@@ -181,6 +181,8 @@ export default function LayersPanel({
     onNotificationsToggle,
     // OIM availability
     oimUnavailable,
+    // View mode
+    viewMode = "2d",
     // Auth
     currentUser,
 }) {
@@ -456,6 +458,9 @@ export default function LayersPanel({
                                 OpenInfraMap
                                 {oimUnavailable && (
                                     <span style={{ fontSize: 9, color: "rgba(232,237,242,0.35)", fontWeight: 400 }}>(unavailable)</span>
+                                )}
+                                {viewMode === "3d" && (
+                                    <span style={{ fontSize: 9, color: "#f97316", fontWeight: 500, letterSpacing: "0.02em" }}>2D only</span>
                                 )}
                                 <span style={{ fontSize: 9, color: "rgba(232,237,242,0.3)", fontWeight: 400, letterSpacing: "0.03em" }}>I</span>
                             </span>

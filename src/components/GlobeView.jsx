@@ -13,6 +13,7 @@ import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
 import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
+import GlobePopup               from "../globe/GlobePopup.jsx"
 import API_BASE from "../apiBase.js"
 
 const API = API_BASE
@@ -74,6 +75,24 @@ export default function GlobeView({
         return () => clearInterval(t)
     }, [adsbEnabled, externalADSB]) // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Maximise rendering quality once viewer is ready
+    useEffect(() => {
+        let attempts = 0
+        const tryApply = () => {
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer) {
+                if (attempts++ < 15) setTimeout(tryApply, 250)
+                return
+            }
+            viewer.resolutionScale = window.devicePixelRatio || 1.0
+            viewer.scene.globe.maximumScreenSpaceError = 1.0   // default 2.0 — sharper terrain
+            viewer.scene.postProcessStages.fxaa.enabled = true
+            viewer.scene.highDynamicRange = false
+            viewer.scene.globe.tileCacheSize = 1000
+        }
+        tryApply()
+    }, [])
+
     const aisData  = externalAIS  !== null ? externalAIS  : vessels
     const adsbData = externalADSB !== null ? externalADSB : aircraft
 
@@ -90,6 +109,8 @@ export default function GlobeView({
             <style>{`
                 .cesium-viewer .cesium-widget-credits { font-size: 10px !important; opacity: 0.55; }
                 .cesium-viewer-bottom { bottom: 0 !important; }
+                /* Suppress the default selection indicator green ring */
+                .cesium-selection-wrapper { display: none !important; }
             `}</style>
             <Viewer
                 ref={viewerRef}
@@ -103,6 +124,7 @@ export default function GlobeView({
                 navigationHelpButton={false}
                 fullscreenButton={false}
                 selectionIndicator={false}
+                infoBox={false}
                 scene3DOnly={true}
             >
                 {/* ── Base layer ─────────────────────────────────────────────── */}
@@ -110,19 +132,25 @@ export default function GlobeView({
                     <Cesium3DTileset
                         url={IonResource.fromAssetId(2275207)}
                         showCreditsOnScreen={true}
+                        maximumScreenSpaceError={4}
+                        maximumMemoryUsage={2048}
+                        dynamicScreenSpaceError={true}
+                        dynamicScreenSpaceErrorDensity={0.00278}
+                        dynamicScreenSpaceErrorFactor={4.0}
+                        preferLeaves={true}
                         onReady={ts  => console.log("[GlobeView] tileset ready, tiles:", ts.tilesLoaded)}
                         onError={err => console.error("[GlobeView] tileset error:", err)}
                     />
                 ) : (
                     <>
-                        <ImageryLayer imageryProvider={esriSatelliteProvider} />
-                        <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} />
+                        <ImageryLayer imageryProvider={esriSatelliteProvider} maximumTerrainLevel={20} />
+                        <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} maximumTerrainLevel={18} />
                     </>
                 )}
 
                 {/* Nautical seamark overlay on top of 3D tiles */}
                 {!overlayActive && nauticalEnabled && (
-                    <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} />
+                    <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} maximumTerrainLevel={18} />
                 )}
 
                 {/* ── GeoJSON line layers ─────────────────────────────────────── */}
@@ -147,6 +175,9 @@ export default function GlobeView({
                     once={true}
                 />
             </Viewer>
+
+            {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
+            <GlobePopup viewerRef={viewerRef} />
         </div>
     )
 }

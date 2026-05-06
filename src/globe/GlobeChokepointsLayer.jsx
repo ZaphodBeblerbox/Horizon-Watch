@@ -5,8 +5,7 @@ import {
     HeightReference, NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
-
-const PT_COLOR = Color.fromCssColorString("#FF6D00")
+import { CHOKEPOINT_URI } from "./iconUtils.js"
 
 export default function GlobeChokepointsLayer({ enabled }) {
     const [data, setData] = useState([])
@@ -31,21 +30,22 @@ export default function GlobeChokepointsLayer({ enabled }) {
                 const desc = c.description ?? c.properties?.description ?? ""
                 return (
                     <Entity
+                        id={`choke-${c.id ?? name}`}
                         key={c.id ?? name}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
-                        point={{
-                            pixelSize: 10,
-                            color: PT_COLOR,
-                            outlineColor: Color.WHITE,
-                            outlineWidth: 2,
+                        billboard={{
+                            image: CHOKEPOINT_URI,
+                            width: 24,
+                            height: 24,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             scaleByDistance: new NearFarScalar(1000, 1.5, 10_000_000, 0.5),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
+                            eyeOffset: new Cartesian3(0, 0, -100),
                         }}
                         label={{
                             text: name,
                             font: "bold 11px Arial",
-                            fillColor: PT_COLOR,
+                            fillColor: Color.fromCssColorString("#FF6D00"),
                             outlineColor: Color.fromCssColorString("#0F1721"),
                             outlineWidth: 2,
                             style: 2,

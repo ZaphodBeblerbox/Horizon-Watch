@@ -5906,6 +5906,7 @@ export default function MapPage({
     directorItems       = null, // granular director visibility state from CommandRunner
     isDirectorMode      = false, // when true, layer toggles are ignored; directorItems controls what's visible
     timeTravelTime      = null, // ISO string — when set, overrides live ADS-B + AIS with historical snapshot
+    viewMode            = "2d", // "2d" | "3d" — passed to LayersPanel for per-mode badges
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -10466,6 +10467,7 @@ export default function MapPage({
                     notificationsEnabled={notificationsEnabled}
                     onNotificationsToggle={toggleNotifications}
                     oimUnavailable={oimUnavailable}
+                    viewMode={viewMode}
                 />,
                 document.body
             )}

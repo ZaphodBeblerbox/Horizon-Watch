@@ -1387,6 +1387,7 @@ export default function App() {
                         directorItems={directorItems}
                         isDirectorMode={directorVisible}
                         timeTravelTime={timeTravelTime}
+                        viewMode={viewMode}
                     />
                     {timeTravelActive && (
                         <TimeSlider

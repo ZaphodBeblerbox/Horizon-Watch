@@ -5,6 +5,7 @@ import {
     HeightReference, NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
+import { poiSvgUri } from "./iconUtils.js"
 
 const CAT_HEX = {
     military:       "#E55757",
@@ -21,6 +22,12 @@ function hexForPoi(poi) {
         if (c.includes(k)) return v
     }
     return DEFAULT_HEX
+}
+
+const ICON_CACHE = {}
+function getIcon(hex) {
+    if (!ICON_CACHE[hex]) ICON_CACHE[hex] = poiSvgUri(hex)
+    return ICON_CACHE[hex]
 }
 
 export default function GlobePOILayer({ enabled }) {
@@ -42,20 +49,20 @@ export default function GlobePOILayer({ enabled }) {
                 const lat = p.lat ?? p.location?.lat
                 const lon = p.lon ?? p.location?.lon
                 if (lat == null || lon == null) return null
-                const hex   = hexForPoi(p)
-                const color = Color.fromCssColorString(hex)
+                const hex = hexForPoi(p)
                 return (
                     <Entity
+                        id={`poi-${p.id}`}
                         key={p.id}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
-                        point={{
-                            pixelSize: 9,
-                            color,
-                            outlineColor: Color.BLACK,
-                            outlineWidth: 1,
+                        billboard={{
+                            image: getIcon(hex),
+                            width: 20,
+                            height: 24,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             scaleByDistance: new NearFarScalar(1000, 1.5, 5_000_000, 0.4),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 10_000_000),
+                            eyeOffset: new Cartesian3(0, 0, -100),
                         }}
                         label={{
                             text: p.name || "",
@@ -64,7 +71,7 @@ export default function GlobePOILayer({ enabled }) {
                             outlineColor: Color.fromCssColorString("#0F1721"),
                             outlineWidth: 2,
                             style: 2,
-                            pixelOffset: new Cartesian2(0, -14),
+                            pixelOffset: new Cartesian2(0, -18),
                             scaleByDistance: new NearFarScalar(1000, 1.0, 2_000_000, 0.0),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 800_000),
                             showBackground: true,
