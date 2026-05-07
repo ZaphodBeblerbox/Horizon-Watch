@@ -1,10 +1,9 @@
 import "../cesiumConfig.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer, Cesium3DTileset } from "resium"
-import { Cartesian3, IonResource } from "cesium"
+import { Cartesian3, IonResource, Math as CesiumMath } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
 import { esriSatelliteProvider, openSeaMapProvider } from "../globe/imageryProviders.js"
-import GlobeAlertLayer          from "../globe/GlobeAlertLayer.jsx"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
@@ -81,13 +80,13 @@ export default function GlobeView({
     poiEnabled       = false,
     eventsEnabled    = true,
     // Data props (optional — GlobeView fetches internally when null)
-    surfaceItems     = [],
     aisVessels:   externalAIS  = null,
     adsbAircraft: externalADSB = null,
 }) {
     const viewerRef = useRef(null)
     const [vessels,  setVessels]  = useState([])
     const [aircraft, setAircraft] = useState([])
+    const [viewBounds, setViewBounds] = useState(null)
 
     // AIS — use external prop if provided, otherwise fetch internally
     useEffect(() => {
@@ -135,6 +134,38 @@ export default function GlobeView({
             viewer.scene.globe.tileCacheSize = isMobile ? 200 : 1000
         }
         tryApply()
+    }, [])
+
+    // Track camera viewport bounds for event layer scoping
+    useEffect(() => {
+        let cleanup = null
+        let attempts = 0
+        const tryAttach = () => {
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer) {
+                if (attempts++ < 20) setTimeout(tryAttach, 300)
+                return
+            }
+            const update = () => {
+                const rect = viewer.camera.computeViewRectangle()
+                if (!rect) return
+                const w = CesiumMath.toDegrees(rect.west)
+                const s = CesiumMath.toDegrees(rect.south)
+                const e = CesiumMath.toDegrees(rect.east)
+                const n = CesiumMath.toDegrees(rect.north)
+                // Don't bother with bbox when nearly whole globe is visible
+                if ((n - s) > 160 || (e - w) > 340) {
+                    setViewBounds(null)
+                } else {
+                    setViewBounds({ south: s, north: n, west: w, east: e })
+                }
+            }
+            update()
+            viewer.camera.moveEnd.addEventListener(update)
+            cleanup = () => viewer.camera.moveEnd.removeEventListener(update)
+        }
+        tryAttach()
+        return () => { cleanup?.() }
     }, [])
 
     const aisData  = externalAIS  !== null ? externalAIS  : vessels
@@ -224,10 +255,7 @@ export default function GlobeView({
                 {/* ── Point / entity layers ───────────────────────────────────── */}
                 <GlobeChokepointsLayer enabled={chokepointsEnabled} />
                 <GlobePOILayer         enabled={poiEnabled} />
-                <GlobeEventsLayer      enabled={eventsEnabled} />
-
-                {/* Intelligence surface events — severity-ringed alert markers */}
-                <GlobeAlertLayer alerts={surfaceItems} />
+                <GlobeEventsLayer      enabled={eventsEnabled} bounds={viewBounds} />
 
                 {aisEnabled  && <GlobeAISLayer  vessels={aisData}  />}
                 {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} />}

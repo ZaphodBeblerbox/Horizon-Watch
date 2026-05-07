@@ -54,21 +54,26 @@ function getIcon(type, hex) {
     return ICON_CACHE[key]
 }
 
-export default function GlobeEventsLayer({ enabled }) {
+export default function GlobeEventsLayer({ enabled, bounds = null }) {
     const [events, setEvents] = useState([])
 
     useEffect(() => {
         if (!enabled) { setEvents([]); return }
         let cancelled = false
-        const load = () =>
-            fetch(`${API_BASE}/api/v2/events?mode=threads&max_age_hours=72&limit=500`)
+        const load = () => {
+            let url = `${API_BASE}/api/v2/events?mode=threads&max_age_hours=72&limit=500`
+            if (bounds && bounds.south != null) {
+                url += `&south=${bounds.south.toFixed(3)}&north=${bounds.north.toFixed(3)}&west=${bounds.west.toFixed(3)}&east=${bounds.east.toFixed(3)}`
+            }
+            return fetch(url)
                 .then(r => r.ok ? r.json() : null)
                 .then(d => { if (!cancelled) setEvents(d?.events || []) })
                 .catch(() => {})
+        }
         load()
         const iv = setInterval(load, 30_000)
         return () => { cancelled = true; clearInterval(iv) }
-    }, [enabled])
+    }, [enabled, bounds?.south, bounds?.north, bounds?.west, bounds?.east]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Register in entityStore so GlobePopup can render GlobeEventPopup
     useEffect(() => {

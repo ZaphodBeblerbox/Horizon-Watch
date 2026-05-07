@@ -1322,7 +1322,6 @@ export default function App() {
                                     chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
                                     poiEnabled={activeWorkspace?.layers?.poi ?? false}
                                     eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
-                                    surfaceItems={surfaceItems}
                                 />
                             </Suspense>
                         </div>
