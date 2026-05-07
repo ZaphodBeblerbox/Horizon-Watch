@@ -92,6 +92,11 @@ export default function GlobeEventsLayer({ enabled }) {
                 const type  = typeForEvent(ev)
                 const icon  = getIcon(type, hex)
                 if (!icon || icon.width === 0 || icon.height === 0) return null
+                // Approximate position (geocoded to city/region centroid) — smaller icon
+                const approxConf = ev.location_confidence || ""
+                const isApprox = approxConf === "fallback_region" || approxConf === "relaxed" || approxConf === "fallback_country"
+                const iconSize = isApprox ? 32 : 44
+
                 return (
                     <Entity
                         id={`event-${ev.thread_id || ev.id}`}
@@ -99,8 +104,9 @@ export default function GlobeEventsLayer({ enabled }) {
                         position={Cartesian3.fromDegrees(ev.lon, ev.lat, 0)}
                         billboard={{
                             image:      icon,
-                            width:      44,
-                            height:     44,
+                            width:      iconSize,
+                            height:     iconSize,
+                            color:      isApprox ? Color.fromAlpha(Color.WHITE, 0.6) : undefined,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
                             scaleByDistance:          new NearFarScalar(1000, 1.0, 8_000_000, 0.25),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),

@@ -91,6 +91,7 @@ def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn):
                 source_name=article.get('source_name') or article.get('feed_name') or article.get('source') or '',
                 event_type=bridge_event_type,
                 significance_score=int(article.get('relevance_score') or 50),
+                location_confidence=article.get('location_confidence') or '',
             )
             if result:
                 ingested += 1

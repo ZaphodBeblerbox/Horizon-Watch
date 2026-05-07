@@ -30,18 +30,28 @@ const TYPE_HEX = {
     medical:      "#22c55e",
 }
 
+const SEVERITY_COLORS = {
+    critical:    "#ef4444",
+    significant: "#f97316",
+    elevated:    "#eab308",
+    low:         "#64748b",
+}
+
 export default function GlobeEventPopup({ data: ev, onClose }) {
-    const rawType  = (ev.event_type || ev.type || "").toLowerCase()
-    const accent   = TYPE_HEX[rawType] || "#64748b"
+    const rawType   = (ev.event_type || ev.type || "").toLowerCase()
+    const accent    = TYPE_HEX[rawType] || "#64748b"
     const typeLabel = TYPE_LABELS[rawType]
         || rawType.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
         || "Event"
-    const title = ev.headline || ev.title || "Event"
-    const image = ev.image || ev.thumbnail || ev.thumbnail_url || ev.urlToImage || ev.img || null
+    const title    = ev.headline || ev.clean_title || ev.title || "Event"
+    const image    = ev.image_url || ev.image || ev.thumbnail || ev.thumbnail_url || ev.urlToImage || ev.img || null
+    const severity = (ev.severity_tier || "").toLowerCase()
+    const sources  = Array.isArray(ev.sources) ? ev.sources : (ev.source_name ? [ev.source_name] : [])
+    const articleUrl = ev.url || (ev.timeline?.[0]?.url) || null
 
     let timeStr = ""
     try {
-        const d = ev.published_at || ev.published
+        const d = ev.latest_event || ev.published_at || ev.published
         if (d) timeStr = new Date(d).toLocaleDateString("en-US", {
             year: "numeric", month: "short", day: "numeric",
         })
@@ -74,12 +84,35 @@ export default function GlobeEventPopup({ data: ev, onClose }) {
             }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div style={{ flex: 1, paddingRight: 8 }}>
+                        {/* Type + severity badges */}
+                        <div style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
+                            <span style={{
+                                fontSize: 10, fontWeight: 700, color: accent,
+                                textTransform: "uppercase", letterSpacing: "0.06em",
+                                background: `${accent}18`, padding: "2px 6px", borderRadius: 3,
+                                border: `1px solid ${accent}40`,
+                            }}>
+                                {typeLabel}
+                            </span>
+                            {severity && severity !== "low" && (
+                                <span style={{
+                                    fontSize: 10, fontWeight: 700,
+                                    color: "#fff", background: SEVERITY_COLORS[severity] || "#64748b",
+                                    padding: "2px 6px", borderRadius: 3,
+                                    textTransform: "uppercase", letterSpacing: "0.04em",
+                                }}>
+                                    {severity}
+                                </span>
+                            )}
+                        </div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#E8ECF1", lineHeight: 1.35 }}>
                             {title}
                         </div>
-                        <div style={{ fontSize: 10, color: accent, textTransform: "uppercase", letterSpacing: "0.05em", marginTop: 3 }}>
-                            {typeLabel}{ev.location ? ` · ${ev.location}` : ""}
-                        </div>
+                        {ev.location && (
+                            <div style={{ fontSize: 10, color: "#9AA4B5", marginTop: 3 }}>
+                                {ev.location}
+                            </div>
+                        )}
                     </div>
                     <button
                         onClick={onClose}
@@ -89,33 +122,37 @@ export default function GlobeEventPopup({ data: ev, onClose }) {
             </div>
 
             {/* Summary */}
-            {ev.summary && (
+            {(ev.body || ev.summary) && (
                 <div style={{ padding: "8px 14px 6px", fontSize: 11, color: "#C8D0DB", lineHeight: 1.55 }}>
-                    {ev.summary.length > 300 ? ev.summary.slice(0, 300) + "…" : ev.summary}
+                    {(ev.body || ev.summary || "").slice(0, 280)}
+                    {(ev.body || ev.summary || "").length > 280 ? "…" : ""}
                 </div>
             )}
 
+            {/* Meta row */}
+            <div style={{ padding: "5px 14px 8px", fontSize: 10, color: "#9AA4B5", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>{sources.slice(0, 2).join(" · ") || ""}</span>
+                <span>{timeStr}</span>
+            </div>
+
             {/* Footer */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 14px 12px" }}>
-                <span style={{ fontSize: 10, color: "#9AA4B5" }}>{timeStr}</span>
-                <div style={{ display: "flex", gap: 6 }}>
-                    {ev.url && (
-                        <a
-                            href={ev.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ fontSize: 11, color: "#38bdf8", textDecoration: "none", padding: "4px 8px", border: "1px solid #38bdf840", borderRadius: 4 }}
-                        >
-                            Source ↗
-                        </a>
-                    )}
-                    <button
-                        onClick={onClose}
-                        style={{ fontSize: 11, background: "#1E2B3D", color: "#E8ECF1", border: "1px solid #2C3645", borderRadius: 4, padding: "4px 10px", cursor: "pointer" }}
+            <div style={{ display: "flex", gap: 6, padding: "6px 14px 12px", borderTop: "1px solid #1E2B3D" }}>
+                <button
+                    onClick={onClose}
+                    style={{ flex: 1, fontSize: 11, background: "#1E2B3D", color: "#E8ECF1", border: "1px solid #2C3645", borderRadius: 4, padding: "5px 10px", cursor: "pointer" }}
+                >
+                    Close
+                </button>
+                {articleUrl && (
+                    <a
+                        href={articleUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ flex: 2, fontSize: 11, fontWeight: 700, color: "#0F1721", background: "#38bdf8", border: "none", borderRadius: 4, padding: "5px 10px", cursor: "pointer", textDecoration: "none", textAlign: "center" }}
                     >
-                        Close
-                    </button>
-                </div>
+                        Read Article ↗
+                    </a>
+                )}
             </div>
         </div>
     )

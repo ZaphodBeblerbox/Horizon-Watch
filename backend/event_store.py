@@ -189,6 +189,7 @@ def ingest_event(
     significance_score: int = 0,
     gdelt_goldstein: float = 0.0,
     gdelt_mentions: int = 0,
+    location_confidence: str = '',
     extra: dict = None,
 ) -> Optional[str]:
     """
@@ -279,6 +280,7 @@ def ingest_event(
             'casualties': casualties,
             'gdelt_goldstein': gdelt_goldstein,
             'gdelt_mentions': gdelt_mentions,
+            'location_confidence': location_confidence,
             'corroboration_count': 1,
             'thread_id': None,
             'infra_types': INFRA_RELEVANCE.get(event_type, INFRA_RELEVANCE['general']),
@@ -496,10 +498,13 @@ def build_threads() -> dict:
                 }
                 for e in thread_events
             ],
+            'url':                 latest.get('url', ''),
+            'source_name':         latest.get('source_name', ''),
             'body':                latest.get('body', '') or latest.get('summary', ''),
             'casualties':          next((e.get('casualties') for e in reversed(thread_events) if e.get('casualties')), None),
             'infra_types':         INFRA_RELEVANCE.get(top_severity.get('event_type', 'general'), INFRA_RELEVANCE['general']),
             'country_code':        latest.get('country_code', ''),
+            'location_confidence': latest.get('location_confidence', ''),
             'corroboration_count': sum(e.get('corroboration_count', 1) for e in thread_events),
         }
 
