@@ -2,16 +2,11 @@ import { useEffect } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
-    NearFarScalar, DistanceDisplayCondition,
+    Math as CesiumMath, Transforms, HeadingPitchRoll,
+    NearFarScalar, DistanceDisplayCondition, ColorBlendMode,
 } from "cesium"
-import { vesselShipType, makeVesselCanvas, VESSEL_COLORS } from "./iconUtils.js"
+import { vesselShipType, VESSEL_COLORS } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-
-const ICON_CACHE = {}
-function getIcon(type) {
-    if (!ICON_CACHE[type]) ICON_CACHE[type] = makeVesselCanvas(type)
-    return ICON_CACHE[type]
-}
 
 export default function GlobeAISLayer({ vessels }) {
     useEffect(() => {
@@ -40,26 +35,23 @@ export default function GlobeAISLayer({ vessels }) {
                     ? Number(v.heading)
                     : isFinite(Number(v.cog)) ? Number(v.cog) : 0
 
-                const rotRad  = -(hdg * Math.PI / 180)
-                const position = Cartesian3.fromDegrees(v.lon, v.lat, 0)
-
-                const icon = getIcon(shipType)
-                if (!icon || icon.width === 0 || icon.height === 0) return null
+                const position    = Cartesian3.fromDegrees(v.lon, v.lat, 0)
+                const hpr         = new HeadingPitchRoll(CesiumMath.toRadians(hdg), 0, 0)
+                const orientation = Transforms.headingPitchRollQuaternion(position, hpr)
 
                 return (
                     <Entity
                         id={`ais-${v.mmsi}`}
                         key={v.mmsi}
                         position={position}
-                        billboard={{
-                            image:    icon,
-                            width:    24,
-                            height:   24,
-                            rotation: rotRad,
+                        orientation={orientation}
+                        model={{
+                            uri:              "/models/vessel.glb",
+                            minimumPixelSize: 20,
+                            maximumScale:     300,
                             color,
-                            scaleByDistance:          new NearFarScalar(1000, 1.6, 8_000_000, 0.35),
+                            colorBlendMode:   ColorBlendMode.REPLACE,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
-                            eyeOffset: new Cartesian3(0, 0, -100),
                         }}
                         label={{
                             text:       v.name || "",

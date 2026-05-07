@@ -2,16 +2,11 @@ import { useEffect } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
-    NearFarScalar, DistanceDisplayCondition,
+    Math as CesiumMath, Transforms, HeadingPitchRoll,
+    NearFarScalar, DistanceDisplayCondition, ColorBlendMode,
 } from "cesium"
-import { acClassify, makeAircraftCanvas, altColorHex } from "./iconUtils.js"
+import { acClassify, altColorHex } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-
-const ICON_CACHE = {}
-function getIcon(type) {
-    if (!ICON_CACHE[type]) ICON_CACHE[type] = makeAircraftCanvas(type)
-    return ICON_CACHE[type]
-}
 
 export default function GlobeADSBLayer({ aircraft }) {
     useEffect(() => {
@@ -43,28 +38,26 @@ export default function GlobeADSBLayer({ aircraft }) {
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                const type   = acClassify(ac)
-                const icon   = getIcon(type)
-                if (!icon || icon.width === 0 || icon.height === 0) return null
-
-                const hexCol   = altColorHex(altNum)
-                const color    = Color.fromCssColorString(hexCol)
-                const rotRad   = -(track * Math.PI / 180)
+                const hexCol  = altColorHex(altNum)
+                const color   = Color.fromCssColorString(hexCol)
                 const position = Cartesian3.fromDegrees(lon, lat, altM)
+
+                const hpr         = new HeadingPitchRoll(CesiumMath.toRadians(track), 0, 0)
+                const orientation = Transforms.headingPitchRollQuaternion(position, hpr)
 
                 return (
                     <Entity
                         id={`adsb-${icao}`}
                         key={icao || `${lat}-${lon}`}
                         position={position}
-                        billboard={{
-                            image:      icon,
-                            width:      28,
-                            height:     28,
-                            rotation:   rotRad,
-                            scaleByDistance:          new NearFarScalar(1000, 1.6, 8_000_000, 0.35),
+                        orientation={orientation}
+                        model={{
+                            uri:              "/models/aircraft.glb",
+                            minimumPixelSize: 28,
+                            maximumScale:     400,
+                            color,
+                            colorBlendMode:   ColorBlendMode.REPLACE,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
-                            eyeOffset:  new Cartesian3(0, 0, -100),
                         }}
                         label={{
                             text:       cs || icao,
