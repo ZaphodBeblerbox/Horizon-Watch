@@ -1,5 +1,5 @@
 import "../cesiumConfig.js"
-import { useRef, useMemo, useState, useEffect } from "react"
+import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer, Cesium3DTileset } from "resium"
 import { Cartesian3, IonResource } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
@@ -17,6 +17,46 @@ import GlobePopup               from "../globe/GlobePopup.jsx"
 import API_BASE from "../apiBase.js"
 
 const API = API_BASE
+
+// Catches WebGL context loss and other Cesium render errors on mobile —
+// returns a recovery UI instead of crashing the whole app.
+class GlobeErrorBoundary extends Component {
+    constructor(props) {
+        super(props)
+        this.state = { crashed: false }
+    }
+    static getDerivedStateFromError() {
+        return { crashed: true }
+    }
+    componentDidCatch(err) {
+        console.error("[GlobeView] fatal render error:", err)
+    }
+    render() {
+        if (this.state.crashed) {
+            return (
+                <div style={{
+                    position: "absolute", inset: 0, background: "#050c1c",
+                    display: "flex", flexDirection: "column", alignItems: "center",
+                    justifyContent: "center", gap: 16, color: "rgba(148,163,184,0.7)",
+                    fontFamily: "system-ui", fontSize: 13,
+                }}>
+                    <div style={{ fontSize: 28, opacity: 0.4 }}>⬡</div>
+                    <div>3D globe failed to load</div>
+                    <button
+                        onClick={() => this.setState({ crashed: false })}
+                        style={{
+                            padding: "8px 20px", background: "rgba(45,143,232,0.15)",
+                            border: "1px solid rgba(45,143,232,0.35)", borderRadius: 6,
+                            color: "#2d8fe8", cursor: "pointer", fontSize: 12,
+                            fontFamily: "inherit",
+                        }}
+                    >Retry</button>
+                </div>
+            )
+        }
+        return this.props.children
+    }
+}
 
 function zoomToAlt(zoom) {
     return 38_000_000 / Math.pow(2, zoom || 3)
@@ -109,6 +149,7 @@ export default function GlobeView({
     const overlayActive = nauticalEnabled
 
     return (
+        <GlobeErrorBoundary>
         <div style={{ position: "absolute", inset: 0 }}>
             <style>{`
                 /* Minimise Cesium branding — required by Ion ToS but can be shrunk */
@@ -201,5 +242,6 @@ export default function GlobeView({
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} />
         </div>
+        </GlobeErrorBoundary>
     )
 }

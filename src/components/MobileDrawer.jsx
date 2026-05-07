@@ -119,7 +119,7 @@ export default function MobileDrawer({
                 position:       "fixed",
                 top:            40,   // Below TopBar
                 right:          0,
-                bottom:         56,   // Above BottomNav
+                bottom:         "calc(56px + env(safe-area-inset-bottom, 0px))",
                 width:          240,
                 maxWidth:       "65vw",
                 background:     "rgba(6,13,26,0.92)",

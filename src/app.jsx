@@ -600,7 +600,8 @@ export default function App() {
         const color = alert.severity === 'critical' ? '#ff4444' : '#ffaa00'
         const el = document.createElement('div')
         el.id = `hw-anomaly-${alert.id}`
-        el.style.cssText = `position:fixed;top:80px;right:20px;width:360px;background:rgba(10,15,25,0.95);backdrop-filter:blur(16px);border:1px solid ${pulse};border-radius:12px;padding:16px;z-index:9500;box-shadow:0 8px 32px rgba(0,0,0,0.5);font-family:system-ui;animation:hw-slide-in-r 400ms ease-out;`
+        const _mob = window.innerWidth < 768
+        el.style.cssText = `position:fixed;top:${_mob ? '52px' : '80px'};right:${_mob ? '10px' : '20px'};width:340px;max-width:calc(100vw - 20px);background:rgba(10,15,25,0.95);backdrop-filter:blur(16px);border:1px solid ${pulse};border-radius:12px;padding:${_mob ? '12px' : '16px'};z-index:9500;box-shadow:0 8px 32px rgba(0,0,0,0.5);font-family:system-ui;animation:hw-slide-in-r 400ms ease-out;`
         el.innerHTML = `
             <style>@keyframes hw-slide-in-r{from{transform:translateX(120px);opacity:0}to{transform:translateX(0);opacity:1}}</style>
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -1613,7 +1614,7 @@ export default function App() {
             {directorVisible && directorDemoScanPrompt && (
                 <div style={{
                     position: "fixed",
-                    bottom: 170,
+                    bottom: isMobile ? 226 : 170,
                     left: "50%",
                     transform: "translateX(-50%)",
                     zIndex: 8600,
@@ -1655,7 +1656,7 @@ export default function App() {
             {directorVisible && directorScanProgress && !directorScanProgress.complete && (
                 <div style={{
                     position: "fixed",
-                    bottom: 60,
+                    bottom: isMobile ? 80 : 60,
                     left: "50%",
                     transform: "translateX(-50%)",
                     zIndex: 8300,
@@ -1718,15 +1719,17 @@ export default function App() {
                 <div
                     onClick={() => { _startDirectorPlayback(readyBriefing.result, readyBriefing.intent); setReadyBriefing(null) }}
                     style={{
-                        position: "fixed", bottom: 24, right: 24,
+                        position: "fixed",
+                        bottom: isMobile ? 80 : 24,
+                        right:  isMobile ? 10 : 24,
                         display: "flex", alignItems: "center", gap: 12, padding: "16px 20px",
                         background: "rgba(10,15,25,0.93)", backdropFilter: "blur(16px)",
                         WebkitBackdropFilter: "blur(16px)",
                         border: "1px solid rgba(0,170,255,0.4)", borderRadius: 14,
-                        position: "relative", cursor: "pointer", zIndex: 9000,
+                        cursor: "pointer", zIndex: 9000,
                         boxShadow: "0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(0,170,255,0.15)",
                         animation: "director-ready-slide-in 500ms cubic-bezier(0.34,1.56,0.64,1)",
-                        maxWidth: 400,
+                        maxWidth: isMobile ? "calc(100vw - 20px)" : 400,
                     }}
                 >
                     <style>{`
