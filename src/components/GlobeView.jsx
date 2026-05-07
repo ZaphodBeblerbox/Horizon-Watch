@@ -3,7 +3,7 @@ import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer, Cesium3DTileset } from "resium"
 import { Cartesian3, IonResource, Math as CesiumMath } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
-import { esriSatelliteProvider, openSeaMapProvider } from "../globe/imageryProviders.js"
+import { esriSatelliteProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
@@ -175,9 +175,9 @@ export default function GlobeView({
         Cartesian3.fromDegrees(center[1] ?? 10, center[0] ?? 20, zoomToAlt(zoom))
     , []) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // When any tile overlay layer is active, swap from 3D photorealistic tiles to
-    // ESRI satellite so ImageryLayers render on the ellipsoid surface unobstructed.
-    const overlayActive = nauticalEnabled
+    // When any raster imagery overlay is active, swap from 3D photorealistic tiles to
+    // flat ESRI satellite so ImageryLayers render on the ellipsoid unobstructed.
+    const overlayActive = nauticalEnabled || infraEnabled
 
     return (
         <GlobeErrorBoundary>
@@ -236,15 +236,15 @@ export default function GlobeView({
                         onError={err => console.error("[GlobeView] tileset error:", err)}
                     />
                 ) : (
-                    <>
-                        <ImageryLayer imageryProvider={esriSatelliteProvider} maximumTerrainLevel={20} />
-                        <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} maximumTerrainLevel={18} />
-                    </>
+                    <ImageryLayer imageryProvider={esriSatelliteProvider} maximumTerrainLevel={20} />
                 )}
 
-                {/* Nautical seamark overlay on top of 3D tiles */}
-                {!overlayActive && nauticalEnabled && (
+                {/* Raster overlays — rendered on top of ESRI base when active */}
+                {nauticalEnabled && (
                     <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} maximumTerrainLevel={18} />
+                )}
+                {infraEnabled && (
+                    <ImageryLayer imageryProvider={openInfraRasterProvider} alpha={0.85} maximumTerrainLevel={17} />
                 )}
 
                 {/* ── GeoJSON line layers ─────────────────────────────────────── */}
@@ -268,7 +268,7 @@ export default function GlobeView({
             </Viewer>
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
-            <GlobePopup viewerRef={viewerRef} />
+            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} />
         </div>
         </GlobeErrorBoundary>
     )
