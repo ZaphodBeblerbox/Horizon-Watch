@@ -2757,6 +2757,9 @@ const AircraftLayer = memo(function AircraftLayer({
 }) {
     const map = useMap()
     const [aircraft,   setAircraft]   = useState([])
+    const [smoothAircraft, setSmoothAircraft] = useState([])
+    const drBaseRef  = useRef({})   // icao → { lat, lon, track, gs, ts }
+    const rawAcRef   = useRef([])
     const [trackState, setTrackState] = useState({ icao: null, segments: [], status: "idle", pointCount: 0 })
     const [selectedAc, setSelectedAc] = useState(null)   // compact tooltip
     const [detailAc,   setDetailAc]   = useState(null)   // full detail panel
@@ -2779,36 +2782,79 @@ const AircraftLayer = memo(function AircraftLayer({
             onCount(0)
             return
         }
+        let abortCtrl = null
         const fetchAdsb = () => {
             const bounds = boundsRef.current
             if (!bounds) return
+            // Cancel previous in-flight request to prevent stacking
+            abortCtrl?.abort()
+            abortCtrl = new AbortController()
             const { north, south, east, west, zoom: z } = bounds
             const centerLat = (north + south) / 2
             const centerLon = (east + west) / 2
             const dist = z < 3 ? 1500 : z < 5 ? 1000 : z < 7 ? 600 : z < 9 ? 300 : 150
-            fetch(`${API}/adsb?lat=${centerLat.toFixed(4)}&lon=${centerLon.toFixed(4)}&dist=${dist}`)
+            fetch(`${API}/adsb?lat=${centerLat.toFixed(4)}&lon=${centerLon.toFixed(4)}&dist=${dist}`, { signal: abortCtrl.signal })
                 .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
                 .then(data => {
                     const list = data.aircraft || []
                     setAircraft(list)
                     onCount(list.length)
-                    // Accumulate track history per aircraft (capped at 300 pts, ~2.5 min at 500ms)
+                    // Accumulate track history per aircraft (capped at 120 pts, ~10 min at 5s)
                     const now = Date.now()
                     list.forEach(ac => {
                         if (ac.lat == null || ac.lon == null) return
                         const hist = trackHistoryRef.current[ac.icao] || []
                         hist.push({ lat: ac.lat, lon: ac.lon, alt: ac.alt_baro, ts: now })
-                        if (hist.length > 300) hist.splice(0, hist.length - 300)
+                        if (hist.length > 120) hist.splice(0, hist.length - 120)
                         trackHistoryRef.current[ac.icao] = hist
                     })
                 })
-                .catch(err => console.error("[adsb] fetch error:", err))
+                .catch(err => { if (err.name !== "AbortError") console.error("[adsb] fetch error:", err) })
         }
         clearInterval(intervalRef.current)
         fetchAdsb()
-        intervalRef.current = setInterval(fetchAdsb, 500)
+        intervalRef.current = setInterval(fetchAdsb, 5000)
         return () => clearInterval(intervalRef.current)
     }, [polling, activateKey])
+
+    // ── Dead-reckoning: smooth aircraft positions between 5s polls ───────────
+    useEffect(() => {
+        rawAcRef.current = aircraft
+        const now = Date.now()
+        aircraft.forEach(ac => {
+            if (ac.lat == null || ac.lon == null) return
+            drBaseRef.current[ac.icao] = { lat: ac.lat, lon: ac.lon, track: ac.track ?? 0, gs: ac.gs ?? 0, ts: now }
+        })
+        const live = new Set(aircraft.map(a => a.icao))
+        Object.keys(drBaseRef.current).forEach(k => { if (!live.has(k)) delete drBaseRef.current[k] })
+        setSmoothAircraft(aircraft)
+    }, [aircraft])
+
+    useEffect(() => {
+        function drCalc(lat, lon, track, gs, dt) {
+            if (!gs || gs < 10) return [lat, lon]
+            const dist = gs * 0.514444 * dt
+            const R = 6371000, d = dist / R, θ = track * Math.PI / 180
+            const φ1 = lat * Math.PI / 180, λ1 = lon * Math.PI / 180
+            const sinφ2 = Math.sin(φ1) * Math.cos(d) + Math.cos(φ1) * Math.sin(d) * Math.cos(θ)
+            const φ2 = Math.asin(sinφ2)
+            const λ2 = λ1 + Math.atan2(Math.sin(θ) * Math.sin(d) * Math.cos(φ1), Math.cos(d) - Math.sin(φ1) * sinφ2)
+            return [φ2 * 180 / Math.PI, λ2 * 180 / Math.PI]
+        }
+        const iv = setInterval(() => {
+            if (!rawAcRef.current.length) return
+            const now = Date.now()
+            setSmoothAircraft(rawAcRef.current.map(ac => {
+                const base = drBaseRef.current[ac.icao]
+                if (!base) return ac
+                const dt = (now - base.ts) / 1000
+                if (dt < 0.1 || dt > 30) return ac
+                const [lat, lon] = drCalc(base.lat, base.lon, base.track, base.gs, dt)
+                return { ...ac, lat, lon }
+            }))
+        }, 100)
+        return () => clearInterval(iv)
+    }, [])
 
     // ── Time Travel: load historical aircraft snapshot ────────────────────────
     useEffect(() => {
@@ -3340,7 +3386,7 @@ const AircraftLayer = memo(function AircraftLayer({
 
     const currentZoom    = map.getZoom()
     const vpBounds       = map.getBounds().pad(0.2)
-    const visibleAircraft = aircraft.filter(ac =>
+    const visibleAircraft = smoothAircraft.filter(ac =>
         ac.lat != null && ac.lon != null && vpBounds.contains([ac.lat, ac.lon])
     )
     // In follow mode, hide all other aircraft; otherwise apply category filter

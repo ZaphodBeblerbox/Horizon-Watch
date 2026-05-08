@@ -65,10 +65,13 @@ function useOGImage(href, initialImg) {
         if (img || tried.current || !href) return
         tried.current = true
         if (_ogCache[href] !== undefined) { setImg(_ogCache[href]); return }
-        fetch(`${API_BASE}/api/og?url=${encodeURIComponent(href)}`)
+        const ac = new AbortController()
+        const tid = setTimeout(() => ac.abort(), 5000)
+        fetch(`${API_BASE}/api/og?url=${encodeURIComponent(href)}`, { signal: ac.signal })
             .then(r => r.json())
             .then(d => { _ogCache[href] = d.thumbnail || null; setImg(d.thumbnail || null) })
             .catch(() => { _ogCache[href] = null })
+            .finally(() => clearTimeout(tid))
     }, [href, img])
     return img
 }

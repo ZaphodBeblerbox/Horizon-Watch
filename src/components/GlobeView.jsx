@@ -96,6 +96,7 @@ export default function GlobeView({
     const [vessels,  setVessels]  = useState([])
     const [aircraft, setAircraft] = useState([])
     const [viewBounds, setViewBounds] = useState(null)
+    const [webglLost, setWebglLost] = useState(false)
 
     // AIS — use external prop if provided, otherwise fetch internally
     useEffect(() => {
@@ -127,9 +128,12 @@ export default function GlobeView({
         return () => clearInterval(t)
     }, [adsbEnabled, externalADSB]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Apply maximum rendering quality — same settings for all devices
+    // Apply maximum rendering quality + WebGL context loss recovery
     useEffect(() => {
         let attempts = 0
+        let canvas = null
+        const onLost    = () => setWebglLost(true)
+        const onRestored = () => setWebglLost(false)
         const tryApply = () => {
             const viewer = viewerRef.current?.cesiumElement
             if (!viewer) {
@@ -147,8 +151,16 @@ export default function GlobeView({
             viewer.scene.globe.tileCacheSize = 1000
             viewer.targetFrameRate = 60
             viewer.scene.requestRenderMode = false
+            // Listen for WebGL context loss on the Cesium canvas
+            canvas = viewer.canvas
+            canvas.addEventListener("webglcontextlost",     onLost)
+            canvas.addEventListener("webglcontextrestored", onRestored)
         }
         tryApply()
+        return () => {
+            canvas?.removeEventListener("webglcontextlost",     onLost)
+            canvas?.removeEventListener("webglcontextrestored", onRestored)
+        }
     }, [])
 
     // Track camera viewport bounds for event layer scoping
@@ -204,6 +216,26 @@ export default function GlobeView({
     // When any raster imagery overlay is active, swap from 3D photorealistic tiles to
     // flat ESRI satellite so ImageryLayers render on the ellipsoid unobstructed.
     const overlayActive = nauticalEnabled || infraEnabled || satelliteEnabled
+
+    if (webglLost) return (
+        <div style={{
+            position: "absolute", inset: 0, background: "#050c1c",
+            display: "flex", flexDirection: "column", alignItems: "center",
+            justifyContent: "center", gap: 16, color: "rgba(148,163,184,0.7)",
+            fontFamily: "system-ui", fontSize: 13,
+        }}>
+            <div style={{ fontSize: 28, opacity: 0.4 }}>⬡</div>
+            <div>WebGL context lost — recovering…</div>
+            <button
+                onClick={() => setWebglLost(false)}
+                style={{
+                    padding: "8px 20px", background: "rgba(45,143,232,0.15)",
+                    border: "1px solid rgba(45,143,232,0.35)", borderRadius: 6,
+                    color: "#2d8fe8", cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+                }}
+            >Retry</button>
+        </div>
+    )
 
     return (
         <GlobeErrorBoundary>

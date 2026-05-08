@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState, useRef } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
@@ -9,16 +9,63 @@ import { altColorHex } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 
+function drCalc(lat, lon, track, gs, dt) {
+    if (!gs || gs < 10) return [lat, lon]
+    const dist = gs * 0.514444 * dt
+    const R = 6371000, d = dist / R, θ = track * Math.PI / 180
+    const φ1 = lat * Math.PI / 180, λ1 = lon * Math.PI / 180
+    const sinφ2 = Math.sin(φ1) * Math.cos(d) + Math.cos(φ1) * Math.sin(d) * Math.cos(θ)
+    const φ2 = Math.asin(sinφ2)
+    const λ2 = λ1 + Math.atan2(Math.sin(θ) * Math.sin(d) * Math.cos(φ1), Math.cos(d) - Math.sin(φ1) * sinφ2)
+    return [φ2 * 180 / Math.PI, λ2 * 180 / Math.PI]
+}
+
 export default function GlobeADSBLayer({ aircraft }) {
+    const drBaseRef = useRef({})
+    const rawRef    = useRef([])
+    const [smooth, setSmooth] = useState([])
+
+    useEffect(() => {
+        rawRef.current = aircraft ?? []
+        const now = Date.now()
+        ;(aircraft ?? []).forEach(ac => {
+            const icao = ac.icao ?? ac.icao24 ?? ""
+            const lat  = ac.lat  ?? ac.latitude
+            const lon  = ac.lon  ?? ac.longitude
+            if (icao && lat != null && lon != null)
+                drBaseRef.current[icao] = { lat, lon, track: ac.track ?? ac.heading ?? 0, gs: ac.gs ?? 0, ts: now }
+        })
+        const live = new Set((aircraft ?? []).map(a => a.icao ?? a.icao24 ?? ""))
+        Object.keys(drBaseRef.current).forEach(k => { if (!live.has(k)) delete drBaseRef.current[k] })
+        setSmooth(aircraft ?? [])
+    }, [aircraft])
+
+    useEffect(() => {
+        const iv = setInterval(() => {
+            if (!rawRef.current.length) return
+            const now = Date.now()
+            setSmooth(rawRef.current.map(ac => {
+                const icao = ac.icao ?? ac.icao24 ?? ""
+                const base = drBaseRef.current[icao]
+                if (!base) return ac
+                const dt = (now - base.ts) / 1000
+                if (dt < 0.1 || dt > 30) return ac
+                const [lat, lon] = drCalc(base.lat, base.lon, base.track, base.gs, dt)
+                return { ...ac, lat, lon }
+            }))
+        }, 100)
+        return () => clearInterval(iv)
+    }, [])
+
     // On mobile, prefer high-altitude (commercial) aircraft and cap count to prevent OOM/crash.
     const filtered = useMemo(() => {
-        if (!aircraft?.length) return []
-        if (!isMobile) return aircraft
-        return [...aircraft]
+        if (!smooth?.length) return []
+        if (!isMobile) return smooth
+        return [...smooth]
             .filter(ac => (ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0) > 5000)
             .sort((a, b) => (b.alt_baro ?? b.altitude ?? 0) - (a.alt_baro ?? a.altitude ?? 0))
             .slice(0, ADSB_CAP)
-    }, [aircraft])
+    }, [smooth])
 
     useEffect(() => {
         if (!filtered.length) return

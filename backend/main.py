@@ -2743,16 +2743,16 @@ GLOBAL_ADSB_REGIONS = [
 ]
 
 @app.get("/adsb")
-@_response_cache(expire=15)
+@_response_cache(expire=30)
 def get_adsb(
     lat:  float = Query(...),
     lon:  float = Query(...),
     dist: int   = Query(250),
 ):
-    """Live ADS-B aircraft from adsb.lol within dist nautical miles of lat/lon. Cached 15 s."""
+    """Live ADS-B aircraft from adsb.lol within dist nautical miles of lat/lon. Cached 30 s."""
     key = f"{round(lat, 2)},{round(lon, 2)},{dist}"
     cached = _adsb_cache.get(key)
-    if cached and (time.time() - cached["ts"]) < 15:
+    if cached and (time.time() - cached["ts"]) < 30:
         return {"aircraft": cached["data"]}
 
     url = f"https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{dist}"
