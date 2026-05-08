@@ -14,6 +14,7 @@ import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
 import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import API_BASE from "../apiBase.js"
+import { isMobile } from "../globe/isMobile.js"
 
 const API = API_BASE
 
@@ -60,10 +61,6 @@ class GlobeErrorBoundary extends Component {
 function zoomToAlt(zoom) {
     return 38_000_000 / Math.pow(2, zoom || 3)
 }
-
-const isMobile = /iPhone|iPad|Android/i.test(
-    typeof navigator !== "undefined" ? navigator.userAgent : ""
-) || (typeof window !== "undefined" && window.innerWidth < 1024)
 
 export default function GlobeView({
     center           = [20, 10],
@@ -127,11 +124,28 @@ export default function GlobeView({
                 if (attempts++ < 15) setTimeout(tryApply, 250)
                 return
             }
-            viewer.resolutionScale = isMobile ? 1.0 : (window.devicePixelRatio || 1.0)
-            viewer.scene.globe.maximumScreenSpaceError = isMobile ? 4.0 : 1.5
-            viewer.scene.postProcessStages.fxaa.enabled = !isMobile
-            viewer.scene.highDynamicRange = false
-            viewer.scene.globe.tileCacheSize = isMobile ? 200 : 1000
+            if (isMobile) {
+                // Render at 75% resolution → ~40% GPU savings
+                viewer.resolutionScale = 0.75
+                viewer.scene.globe.maximumScreenSpaceError = 4.0
+                viewer.scene.postProcessStages.fxaa.enabled = false
+                viewer.scene.highDynamicRange = false
+                viewer.scene.fog.enabled = false
+                viewer.scene.globe.showGroundAtmosphere = false
+                if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false
+                viewer.scene.globe.tileCacheSize = 100
+                viewer.targetFrameRate = 30
+                viewer.scene.requestRenderMode = true
+                viewer.scene.maximumRenderTimeChange = 0.1
+            } else {
+                viewer.resolutionScale = window.devicePixelRatio || 1.0
+                viewer.scene.globe.maximumScreenSpaceError = 1.5
+                viewer.scene.postProcessStages.fxaa.enabled = true
+                viewer.scene.highDynamicRange = false
+                viewer.scene.globe.tileCacheSize = 1000
+                viewer.targetFrameRate = 60
+                viewer.scene.requestRenderMode = false
+            }
         }
         tryApply()
     }, [])
@@ -226,8 +240,10 @@ export default function GlobeView({
                     <Cesium3DTileset
                         url={IonResource.fromAssetId(2275207)}
                         showCreditsOnScreen={true}
-                        maximumScreenSpaceError={isMobile ? 16 : 8}
-                        maximumMemoryUsage={isMobile ? 256 : 1024}
+                        maximumScreenSpaceError={isMobile ? 24 : 8}
+                        maximumMemoryUsage={isMobile ? 128 : 1024}
+                        preloadWhenHidden={false}
+                        skipLevelOfDetail={isMobile}
                         dynamicScreenSpaceError={true}
                         dynamicScreenSpaceErrorDensity={0.00278}
                         dynamicScreenSpaceErrorFactor={4.0}
@@ -269,6 +285,28 @@ export default function GlobeView({
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} />
+
+            {/* Mobile reduced-quality indicator */}
+            {isMobile && (
+                <div style={{
+                    position:     "absolute",
+                    bottom:       64,
+                    left:         8,
+                    zIndex:       1000,
+                    background:   "rgba(26,36,51,0.85)",
+                    color:        "rgba(154,164,181,0.85)",
+                    padding:      "3px 7px",
+                    borderRadius: 3,
+                    fontSize:     9,
+                    fontWeight:   600,
+                    letterSpacing: "0.05em",
+                    border:       "1px solid rgba(255,255,255,0.06)",
+                    pointerEvents: "none",
+                    backdropFilter: "blur(4px)",
+                }}>
+                    MOBILE · REDUCED QUALITY
+                </div>
+            )}
         </div>
         </GlobeErrorBoundary>
     )

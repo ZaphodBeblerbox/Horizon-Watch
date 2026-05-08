@@ -4,6 +4,7 @@ import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondi
 import API_BASE from "../apiBase.js"
 import { makeTypedEventCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { isMobile, EVENTS_CAP } from "./isMobile.js"
 
 const TYPE_HEX = {
     missile:      "#ef4444",
@@ -89,9 +90,13 @@ export default function GlobeEventsLayer({ enabled, bounds = null }) {
 
     if (!enabled || !events.length) return null
 
+    // Mobile: cap rendered events to prevent crash. Backend already returns
+    // most-recent-first so .slice() preserves the freshest events.
+    const visible = isMobile ? events.slice(0, EVENTS_CAP) : events
+
     return (
         <>
-            {events.map(ev => {
+            {visible.map(ev => {
                 if (!ev.lat || !ev.lon || !isFinite(ev.lat) || !isFinite(ev.lon)) return null
                 const hex   = hexForEvent(ev)
                 const type  = typeForEvent(ev)

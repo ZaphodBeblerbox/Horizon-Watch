@@ -1,18 +1,29 @@
-import { useEffect } from "react"
+import { useEffect, useMemo } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
     Math as CesiumMath, Transforms, HeadingPitchRoll,
     NearFarScalar, DistanceDisplayCondition, ColorBlendMode,
 } from "cesium"
-import { acClassify, altColorHex } from "./iconUtils.js"
+import { altColorHex } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { isMobile, ADSB_CAP } from "./isMobile.js"
 
 export default function GlobeADSBLayer({ aircraft }) {
+    // On mobile, prefer high-altitude (commercial) aircraft and cap count to prevent OOM/crash.
+    const filtered = useMemo(() => {
+        if (!aircraft?.length) return []
+        if (!isMobile) return aircraft
+        return [...aircraft]
+            .filter(ac => (ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0) > 5000)
+            .sort((a, b) => (b.alt_baro ?? b.altitude ?? 0) - (a.alt_baro ?? a.altitude ?? 0))
+            .slice(0, ADSB_CAP)
+    }, [aircraft])
+
     useEffect(() => {
-        if (!aircraft?.length) return
+        if (!filtered.length) return
         const ids = []
-        aircraft.forEach(ac => {
+        filtered.forEach(ac => {
             const icao = ac.icao ?? ac.icao24 ?? ""
             if (icao) {
                 setEntity(`adsb-${icao}`, "aircraft", ac)
@@ -20,12 +31,12 @@ export default function GlobeADSBLayer({ aircraft }) {
             }
         })
         return () => ids.forEach(deleteEntity)
-    }, [aircraft])
+    }, [filtered])
 
-    if (!aircraft?.length) return null
+    if (!filtered.length) return null
     return (
         <>
-            {aircraft.map(ac => {
+            {filtered.map(ac => {
                 const lon = ac.lon ?? ac.longitude
                 const lat = ac.lat ?? ac.latitude
                 if (lat == null || lon == null || !isFinite(lat) || !isFinite(lon)) return null
@@ -59,7 +70,7 @@ export default function GlobeADSBLayer({ aircraft }) {
                             colorBlendMode:   ColorBlendMode.REPLACE,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
                         }}
-                        label={{
+                        label={isMobile ? undefined : {
                             text:       cs || icao,
                             font:       "12px Arial",
                             fillColor:  Color.fromCssColorString("#E8ECF1"),
@@ -72,7 +83,7 @@ export default function GlobeADSBLayer({ aircraft }) {
                             showBackground: true,
                             backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.8),
                         }}
-                        polyline={{
+                        polyline={isMobile ? undefined : {
                             positions: [position, Cartesian3.fromDegrees(lon, lat, 0)],
                             width:    1,
                             material: color.withAlpha(0.25),

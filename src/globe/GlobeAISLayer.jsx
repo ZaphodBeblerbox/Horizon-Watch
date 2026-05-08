@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useMemo } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
@@ -7,24 +7,36 @@ import {
 } from "cesium"
 import { vesselShipType, VESSEL_COLORS } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { isMobile, AIS_CAP } from "./isMobile.js"
 
 export default function GlobeAISLayer({ vessels }) {
+    // On mobile, cap vessel count to prevent crashes; prefer larger/cargo types.
+    const filtered = useMemo(() => {
+        if (!vessels?.length) return []
+        if (!isMobile) return vessels
+        const priority = (v) => {
+            const t = vesselShipType(v)
+            return t === "cargo" || t === "tanker" ? 0 : t === "passenger" ? 1 : 2
+        }
+        return [...vessels].sort((a, b) => priority(a) - priority(b)).slice(0, AIS_CAP)
+    }, [vessels])
+
     useEffect(() => {
-        if (!vessels?.length) return
+        if (!filtered.length) return
         const ids = []
-        vessels.forEach(v => {
+        filtered.forEach(v => {
             if (v.mmsi) {
                 setEntity(`ais-${v.mmsi}`, "vessel", v)
                 ids.push(`ais-${v.mmsi}`)
             }
         })
         return () => ids.forEach(deleteEntity)
-    }, [vessels])
+    }, [filtered])
 
-    if (!vessels?.length) return null
+    if (!filtered.length) return null
     return (
         <>
-            {vessels.map(v => {
+            {filtered.map(v => {
                 if (v.lat == null || v.lon == null || !isFinite(v.lat) || !isFinite(v.lon)) return null
 
                 const shipType = vesselShipType(v)
@@ -53,7 +65,7 @@ export default function GlobeAISLayer({ vessels }) {
                             colorBlendMode:   ColorBlendMode.REPLACE,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
                         }}
-                        label={{
+                        label={isMobile ? undefined : {
                             text:       v.name || "",
                             font:       "11px Arial",
                             fillColor:  Color.fromCssColorString("#E8ECF1"),
