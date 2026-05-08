@@ -13,6 +13,7 @@ import L from "leaflet"
 import Markdown from "react-markdown"
 import CountryPanel from "./CountryPanel.jsx"
 import EEZPanel from "./EEZPanel.jsx"
+import TrafficHeatmapLayer from "./TrafficHeatmapLayer.jsx"
 import LiveTicker from "./LiveTicker.jsx"
 import TVWidget from "./tvwidget.jsx"
 import DraggablePanel from "./DraggablePanel.jsx"
@@ -9986,6 +9987,10 @@ export default function MapPage({
                         }}
                     />
                 ))}
+
+                {/* Traffic heatmap overlays — backed by /api/analytics/heatmap */}
+                <TrafficHeatmapLayer enabled={!!effectiveActive.aisHeatmap}  domain="ais"  hours={24} />
+                <TrafficHeatmapLayer enabled={!!effectiveActive.adsbHeatmap} domain="adsb" hours={24} />
 
             </MapContainer>
 

@@ -96,6 +96,18 @@ function IconHealth() {
     )
 }
 
+function IconAnalytics() {
+    // Bar chart with rising trend
+    return (
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2"  y="11" width="2.4" height="5"/>
+            <rect x="6"  y="8"  width="2.4" height="8"/>
+            <rect x="10" y="5"  width="2.4" height="11"/>
+            <rect x="14" y="2"  width="2.4" height="14"/>
+        </svg>
+    )
+}
+
 function IconOverwatch() {
     return (
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -241,6 +253,7 @@ export default function Sidebar({
                        (id === "settings"   && rightPanel === "settings")      ||
                        (id === "profile"    && rightPanel === "profile")       ||
                        (id === "health"     && rightPanel === "health")        ||
+                       (id === "analytics"  && rightPanel === "analytics")     ||
                        (id === "poi"        && activeTabType === "poi")        ||
                        (id === "map"        && activeTabType === "map")        ||
                        (id === "news"       && activeTabType === "news")       ||
@@ -492,6 +505,7 @@ export default function Sidebar({
                     </button>
                 )}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}
+                {isAnalyst && btn("analytics", <IconAnalytics />, null, null)}
                 {isAdmin   && btn("health", <IconHealth />, null, null)}
 
                 {/* Chat — analyst + admin only */}

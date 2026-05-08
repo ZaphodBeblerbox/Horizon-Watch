@@ -16,6 +16,7 @@ import ToastSystem from "./components/ToastSystem.jsx"
 import { playAlert, resumeAudio } from "./soundSystem.js"
 import SettingsPanel from "./components/SettingsPanel.jsx"
 import HealthPanel from "./components/HealthPanel.jsx"
+import AnalyticsPanel from "./components/AnalyticsPanel.jsx"
 import POIPanel from "./components/POIPanel.jsx"
 import API_BASE from "./apiBase.js"
 import LoadingScreen from "./components/LoadingScreen.jsx"
@@ -1322,6 +1323,8 @@ export default function App() {
                                     chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
                                     poiEnabled={activeWorkspace?.layers?.poi ?? false}
                                     eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
+                                    aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
+                                    adsbHeatmapEnabled={activeWorkspace?.layers?.adsbHeatmap ?? false}
                                 />
                             </Suspense>
                         </div>
@@ -1513,6 +1516,12 @@ export default function App() {
                 {rightPanel === "health" && (
                     <div style={panelStyle}>
                         <HealthPanel onClose={() => setRightPanel(null)} />
+                    </div>
+                )}
+
+                {rightPanel === "analytics" && (
+                    <div style={panelStyle}>
+                        <AnalyticsPanel onClose={() => setRightPanel(null)} />
                     </div>
                 )}
 

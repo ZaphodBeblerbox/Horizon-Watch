@@ -12,6 +12,7 @@ import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
 import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
+import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
@@ -76,6 +77,9 @@ export default function GlobeView({
     chokepointsEnabled = false,
     poiEnabled       = false,
     eventsEnabled    = true,
+    aisHeatmapEnabled  = false,
+    adsbHeatmapEnabled = false,
+    heatmapHours     = 24,
     // Data props (optional — GlobeView fetches internally when null)
     aisVessels:   externalAIS  = null,
     adsbAircraft: externalADSB = null,
@@ -272,6 +276,10 @@ export default function GlobeView({
                 <GlobeChokepointsLayer enabled={chokepointsEnabled} />
                 <GlobePOILayer         enabled={poiEnabled} />
                 <GlobeEventsLayer      enabled={eventsEnabled} bounds={viewBounds} />
+
+                {/* ── Heatmap overlays (rectangle entities, clamped to ground) ─ */}
+                <GlobeHeatmapLayer enabled={aisHeatmapEnabled}  domain="ais"  hours={heatmapHours} bounds={viewBounds} />
+                <GlobeHeatmapLayer enabled={adsbHeatmapEnabled} domain="adsb" hours={heatmapHours} bounds={viewBounds} />
 
                 {aisEnabled  && <GlobeAISLayer  vessels={aisData}  />}
                 {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} />}

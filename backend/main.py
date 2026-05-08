@@ -166,12 +166,14 @@ from routers import auth as _auth_router, admin as _admin_router
 from routers import intelligence as _intel_router, briefings as _briefings_router
 from routers import infrastructure as _infra_router
 from routers import tile_proxy as _tile_proxy_router
+from routers import analytics as _analytics_router
 app.include_router(_auth_router.router)
 app.include_router(_admin_router.router)
 app.include_router(_intel_router.router)
 app.include_router(_briefings_router.router)
 app.include_router(_infra_router.router)
 app.include_router(_tile_proxy_router.router)
+app.include_router(_analytics_router.router)
 
 # ── Optional fastapi-cache2 response caching ──────────────────────────────────
 try:
@@ -7358,11 +7360,20 @@ async def api_ais_status():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _record_adsb_history(aircraft_list):
-    """Record ADS-B positions to history, throttled to once per aircraft per 60s."""
+    """Record ADS-B positions to history (throttled per aircraft per 60s) AND
+    aggregate to track_density grid cells (always)."""
     try:
         from database import AircraftHistory, get_db
+        from track_aggregator import aggregate_tracks
     except ImportError:
         return
+
+    # Always aggregate the full batch — cheap upsert, gives heatmap coverage
+    try:
+        aggregate_tracks(aircraft_list, domain="adsb")
+    except Exception as e:
+        print(f"[adsb-aggregate] error: {e}")
+
     now = time.time()
     now_dt = datetime.utcnow()
     records = []
@@ -7397,19 +7408,39 @@ def _record_adsb_history(aircraft_list):
             print(f"[adsb-history] record error: {e}")
 
 
+# AIS aggregation buffer — flushed by _ais_aggregate_loop every 60s
+_AIS_AGG_BUFFER: dict[str, dict] = {}
+_AIS_AGG_LOCK   = threading.Lock()
+
+
 def _record_ais_history(mmsi, vessel_data):
-    """Record AIS vessel position to history, throttled to once per vessel per 5 minutes."""
+    """Record AIS vessel position to history (throttled 5 min per vessel) AND
+    accumulate into the aggregation buffer (one entry per mmsi, latest wins)."""
     try:
         from database import VesselHistory, get_db
     except ImportError:
         return
+
+    if vessel_data.get('lat') is None or vessel_data.get('lon') is None:
+        return
+
+    # Always update the aggregation buffer with the latest position for this mmsi
+    try:
+        with _AIS_AGG_LOCK:
+            _AIS_AGG_BUFFER[mmsi] = {
+                "lat":       vessel_data.get('lat'),
+                "lon":       vessel_data.get('lon'),
+                "speed":     vessel_data.get('speed'),
+                "ship_type": vessel_data.get('ship_type', ''),
+            }
+    except Exception:
+        pass
+
     now = time.time()
     last = _AIS_LAST_RECORDED.get(mmsi)
     if last and (now - last) < 300:
         return
     _AIS_LAST_RECORDED[mmsi] = now
-    if vessel_data.get('lat') is None or vessel_data.get('lon') is None:
-        return
     try:
         record = VesselHistory(
             mmsi=mmsi,
@@ -7431,18 +7462,38 @@ def _record_ais_history(mmsi, vessel_data):
         print(f"[ais-history] record error: {e}")
 
 
+async def _ais_aggregate_loop():
+    """Flush the AIS aggregation buffer to track_density every 60s."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            from track_aggregator import aggregate_tracks
+            with _AIS_AGG_LOCK:
+                if not _AIS_AGG_BUFFER:
+                    continue
+                batch = list(_AIS_AGG_BUFFER.values())
+                _AIS_AGG_BUFFER.clear()
+            aggregate_tracks(batch, domain="ais")
+        except Exception as e:
+            print(f"[ais-aggregate] loop error: {e}")
+
+
 async def _prune_history_loop():
-    """Delete records older than 30 days, runs once per day."""
+    """Delete raw history older than 24 hours and aggregated density older
+    than 90 days. Runs once per day."""
     while True:
         await asyncio.sleep(86400)
         try:
-            from database import AircraftHistory, VesselHistory, get_db
-            cutoff = datetime.utcnow() - timedelta(days=30)
+            from database import AircraftHistory, VesselHistory, TrackDensity, get_db
+            now = datetime.utcnow()
+            raw_cutoff     = now - timedelta(hours=24)
+            density_cutoff = now - timedelta(days=90)
             with get_db() as db:
-                deleted_ac = db.query(AircraftHistory).filter(AircraftHistory.timestamp < cutoff).delete()
-                deleted_vs = db.query(VesselHistory).filter(VesselHistory.timestamp < cutoff).delete()
+                deleted_ac = db.query(AircraftHistory).filter(AircraftHistory.timestamp < raw_cutoff).delete()
+                deleted_vs = db.query(VesselHistory).filter(VesselHistory.timestamp < raw_cutoff).delete()
+                deleted_td = db.query(TrackDensity).filter(TrackDensity.hour < density_cutoff).delete()
                 db.commit()
-            print(f"[history-prune] deleted {deleted_ac} aircraft + {deleted_vs} vessel records older than 30 days")
+            print(f"[history-prune] raw: -{deleted_ac} ac, -{deleted_vs} vs (>24h); density: -{deleted_td} (>90d)")
         except Exception as e:
             print(f"[history-prune] error: {e}")
 
@@ -8623,6 +8674,7 @@ async def startup_event():
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
     asyncio.create_task(_prune_history_loop())
+    asyncio.create_task(_ais_aggregate_loop())
     # asyncio.create_task(_anomaly_detection_loop())  # disabled — too many false positives
     asyncio.create_task(_weekly_snapshot_loop())
     asyncio.create_task(_global_adsb_cache_loop())

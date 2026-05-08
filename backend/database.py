@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Boolean, DateTime, Text, ForeignKey, Float, Integer
+from sqlalchemy import create_engine, Column, String, Boolean, DateTime, Text, ForeignKey, Float, Integer, JSON, UniqueConstraint, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
@@ -78,6 +78,30 @@ class VesselHistory(Base):
     flag           = Column(String(10))
     destination    = Column(String(100))
     timestamp      = Column(DateTime, index=True)
+
+
+class TrackDensity(Base):
+    """Hourly grid-cell aggregation of AIS / ADS-B positions.
+    One row per (grid_lat, grid_lon, hour, domain) tuple. Replaces the
+    multi-million-row raw history tables for heatmaps and trend graphs."""
+    __tablename__ = "track_density"
+
+    id           = Column(Integer, primary_key=True)
+    grid_lat     = Column(Float, index=True)     # rounded to 0.1° (~11km)
+    grid_lon     = Column(Float, index=True)
+    hour         = Column(DateTime, index=True)  # truncated to hour
+    domain       = Column(String(10), index=True) # 'ais' or 'adsb'
+    count        = Column(Integer, default=0)    # unique tracks this cell-hour
+    vessel_types = Column(JSON, nullable=True)   # {'cargo': 5, 'tanker': 3, ...}
+    avg_speed    = Column(Float, nullable=True)
+    updated_at   = Column(DateTime, default=datetime.datetime.utcnow,
+                          onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("grid_lat", "grid_lon", "hour", "domain",
+                         name="uq_density_cell_hour_domain"),
+        Index("ix_density_hour_domain", "hour", "domain"),
+    )
 
 
 class WeeklySnapshot(Base):

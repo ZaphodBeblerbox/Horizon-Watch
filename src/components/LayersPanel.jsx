@@ -547,6 +547,13 @@ export default function LayersPanel({
                     </div>
                 )}
 
+                <LayerRow
+                    label="Vessel Heatmap (24h)"
+                    hint="aggregated AIS density"
+                    toggled={active.aisHeatmap}
+                    onToggle={() => onToggle("aisHeatmap")}
+                />
+
                 {/* OVERLAYS */}
                 <SectionHeader label="Overlays" />
 
@@ -583,6 +590,12 @@ export default function LayersPanel({
                     toggled={active.adsb}
                     onToggle={() => onToggle("adsb")}
                     isManual={isManual("adsb")}
+                />
+                <LayerRow
+                    label="Aircraft Heatmap (24h)"
+                    hint="aggregated ADS-B density"
+                    toggled={active.adsbHeatmap}
+                    onToggle={() => onToggle("adsbHeatmap")}
                 />
                 <LayerRow
                     label="POI Profiles"
@@ -672,10 +685,12 @@ export default function LayersPanel({
                     <LayerRow label="EEZ Boundaries" toggled={active.eez}           onToggle={() => onToggle("eez")}           isManual={isManual("eez")} />
                     <LayerRow label="Chokepoints"    toggled={active.chokepoints}   onToggle={() => onToggle("chokepoints")}   isManual={isManual("chokepoints")} />
                     <LayerRow label="Live Vessels (AIS)" statusKey="aisVessels" sourceStatus={ss} toggled={active.aisVessels} onToggle={() => onToggle("aisVessels")} badge={active.aisVessels && aisVesselCount > 0 ? aisVesselCount : undefined} isManual={isManual("aisVessels")} />
+                    <LayerRow label="Vessel Heatmap (24h)"  hint="aggregated AIS density" toggled={active.aisHeatmap}  onToggle={() => onToggle("aisHeatmap")} />
                     <SectionHeader label="Overlays" />
                     <LayerRow label="Country Borders"     toggled={active.borders}       onToggle={() => onToggle("borders")}       isManual={isManual("borders")} />
                     <LayerRow label="News Conflicts"    statusKey="rss" sourceStatus={ss} toggled={active.newsConflicts} onToggle={() => onToggle("newsConflicts")} badge={newsConflictCount} isManual={isManual("newsConflicts")} />
                     <LayerRow label="ADS-B Traffic"     toggled={active.adsb}          onToggle={() => onToggle("adsb")}          isManual={isManual("adsb")} />
+                    <LayerRow label="Aircraft Heatmap (24h)" hint="aggregated ADS-B density" toggled={active.adsbHeatmap} onToggle={() => onToggle("adsbHeatmap")} />
                     <LayerRow label="POI Profiles"      toggled={active.poi}           onToggle={() => onToggle("poi")}           badge={poiCount} isManual={isManual("poi")} />
                     <SectionHeader label="App" />
                     <LayerRow label="Notifications" hint="event toast alerts" toggled={!!notificationsEnabled} onToggle={() => onNotificationsToggle?.()} />
