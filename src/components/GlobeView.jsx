@@ -14,6 +14,7 @@ import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
 import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
+import GlobeCityLabelsLayer     from "../globe/GlobeCityLabelsLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
@@ -78,6 +79,7 @@ export default function GlobeView({
     chokepointsEnabled = false,
     poiEnabled       = false,
     eventsEnabled    = true,
+    cityLabelsEnabled = false,
     aisHeatmapEnabled  = false,
     adsbHeatmapEnabled = false,
     heatmapHours     = 24,
@@ -282,9 +284,10 @@ export default function GlobeView({
                 <GlobeCablesLayer         enabled={cablesEnabled} />
 
                 {/* ── Point / entity layers ───────────────────────────────────── */}
-                <GlobeChokepointsLayer enabled={chokepointsEnabled} />
-                <GlobePOILayer         enabled={poiEnabled} />
-                <GlobeEventsLayer      enabled={eventsEnabled} bounds={viewBounds} />
+                <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
+                <GlobePOILayer          enabled={poiEnabled} />
+                <GlobeEventsLayer       enabled={eventsEnabled} bounds={viewBounds} />
+                <GlobeCityLabelsLayer   enabled={cityLabelsEnabled} />
 
                 {/* ── Heatmap overlays (rectangle entities, clamped to ground) ─ */}
                 <GlobeHeatmapLayer enabled={aisHeatmapEnabled}  domain="ais"  hours={heatmapHours} bounds={viewBounds} />
