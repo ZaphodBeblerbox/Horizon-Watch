@@ -30,13 +30,13 @@ _LAYER_COLORS: dict[str, tuple[int, int, int, int]] = {
     "power_cable":           (232, 178,  58, 150),
     "power_substation":      (232, 178,  58, 180),
     "power_plant":           (232, 178,  58, 120),
-    "telecoms_line":         (108, 156, 224, 150),
-    "telecoms_data_center":  (108, 156, 224, 180),
+    "telecoms_line":         ( 46, 204, 113, 150),
+    "telecoms_data_center":  ( 46, 204, 113, 180),
     "petroleum_pipeline":    (229,  87,  87, 180),
     "petroleum_well":        (229,  87,  87, 200),
     "water_pipeline":        ( 74, 158, 224, 150),
     "gas_pipeline":          (250, 170,  30, 160),
-    "communication_line":    (108, 156, 224, 130),
+    "communication_line":    ( 46, 204, 113, 130),
 }
 _DEFAULT_COLOR: tuple[int, int, int, int] = (180, 180, 180, 100)
 
@@ -76,11 +76,11 @@ async def openinfra_tile(
 
 @router.get("/tiles/openinfra-render/{z}/{x}/{y}.png")
 async def openinfra_render(
-    z: int = Path(..., ge=0, le=18),
+    z: int = Path(..., ge=0, le=19),
     x: int = Path(..., ge=0),
     y: int = Path(..., ge=0),
 ):
-    """Fetch OIM PBF tile and render it to a 512×512 PNG raster for Cesium ImageryLayer."""
+    """Fetch OIM PBF tile and render it to a 1024×1024 PNG raster for Cesium ImageryLayer."""
     try:
         import mapbox_vector_tile as _mvt
         from PIL import Image, ImageDraw
@@ -110,7 +110,7 @@ async def openinfra_render(
     except Exception:
         return Response(content=_TRANSPARENT_PNG, media_type="image/png")
 
-    size   = 512
+    size   = 1024
     extent = 4096
     img    = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw   = ImageDraw.Draw(img)

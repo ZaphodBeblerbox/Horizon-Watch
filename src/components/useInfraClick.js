@@ -42,7 +42,7 @@ function formatPopup(el) {
     } else if (t.communication) {
         const labels = { line: "Telecom Line", tower: "Telecom Tower", cable: "Telecom Cable" }
         category = labels[t.communication] || `Telecom (${t.communication})`
-        color    = "#6C9CE0"
+        color    = "#2ECC71"
     } else if (t.man_made === "water_works") {
         category = "Water Works"
         color    = "#4A9EE0"

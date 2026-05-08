@@ -473,7 +473,7 @@ export default function LayersPanel({
                         <div style={{ marginLeft: 12, borderLeft: "2px solid rgba(255,255,255,0.07)", paddingLeft: 10, marginBottom: 4 }}>
                             {[
                                 { key: "oimPower",     label: "Power Grid",  color: "#E8B23A" },
-                                { key: "oimTelecoms",  label: "Telecoms",    color: "#6C9CE0" },
+                                { key: "oimTelecoms",  label: "Telecoms",    color: "#2ECC71" },
                                 { key: "oimPetroleum", label: "Oil & Gas", color: "#E55757" },
                                 { key: "oimWater",     label: "Water",       color: "#4A9EE0" },
                             ].map(({ key, label, color }) => {
@@ -669,7 +669,7 @@ export default function LayersPanel({
                     <LayerRow label="OpenInfraMap" hint="power, telecoms, oil & gas, water" toggled={active.oim} onToggle={() => onToggle("oim")} />
                     {active.oim && [
                         { key: "oimPower", label: "Power Grid", color: "#E8B23A" },
-                        { key: "oimTelecoms", label: "Telecoms", color: "#6C9CE0" },
+                        { key: "oimTelecoms", label: "Telecoms", color: "#2ECC71" },
                         { key: "oimPetroleum", label: "Oil & Gas", color: "#E55757" },
                         { key: "oimWater", label: "Water", color: "#4A9EE0" },
                     ].map(({ key, label, color }) => (

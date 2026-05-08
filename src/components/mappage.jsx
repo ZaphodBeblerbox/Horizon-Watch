@@ -5906,9 +5906,10 @@ export default function MapPage({
     directorHighlights  = [],   // [{id, lat, lon, style}] — animated highlight markers
     directorItems       = null, // granular director visibility state from CommandRunner
     isDirectorMode      = false, // when true, layer toggles are ignored; directorItems controls what's visible
-    timeTravelTime      = null, // ISO string — when set, overrides live ADS-B + AIS with historical snapshot
-    viewMode            = "2d", // "2d" | "3d" — passed to LayersPanel for per-mode badges
-    heatmapHours        = 24,  // shared time window for traffic heatmap layers
+    timeTravelTime           = null, // ISO string — when set, overrides live ADS-B + AIS with historical snapshot
+    viewMode                 = "2d", // "2d" | "3d" — passed to LayersPanel for per-mode badges
+    heatmapHours             = 24,  // shared time window for traffic heatmap layers
+    onOverwatchDetections    = null, // (detections) => void — lifted for 3D rendering
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -9971,6 +9972,7 @@ export default function MapPage({
                     sentinelImageData={sentinelImageData}
                     sentinel2Active={effectiveActive.sentinel2}
                     onToggleSentinel2={() => toggle("sentinel2")}
+                    onDetections={onOverwatchDetections}
                 />
 
                 {/* ── Director Mode highlight markers ───────────────────────── */}

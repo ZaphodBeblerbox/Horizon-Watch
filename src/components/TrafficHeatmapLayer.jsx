@@ -8,10 +8,16 @@ import "leaflet.heat"
 import API_BASE from "../apiBase.js"
 
 const GRADIENT = {
-    0.15: "#4A9EE0",
-    0.35: "#5BC97F",
-    0.65: "#E8B23A",
-    1.00: "#E55757",
+    0.0:  "#0033FF",
+    0.2:  "#0099FF",
+    0.3:  "#00FFCC",
+    0.4:  "#66FF00",
+    0.5:  "#CCFF00",
+    0.6:  "#FFCC00",
+    0.7:  "#FF9900",
+    0.8:  "#FF6600",
+    0.9:  "#FF3300",
+    1.0:  "#FF0000",
 }
 
 export default function TrafficHeatmapLayer({ enabled, domain = "ais", hours = 24 }) {

@@ -20,8 +20,8 @@ export const openSeaMapProvider = new UrlTemplateImageryProvider({
 // Requires backend /api/tiles/openinfra-render/{z}/{x}/{y}.png endpoint.
 export const openInfraRasterProvider = new UrlTemplateImageryProvider({
     url:          `${API_BASE}/api/tiles/openinfra-render/{z}/{x}/{y}.png`,
-    tileWidth:    512,
-    tileHeight:   512,
-    maximumLevel: 17,
+    tileWidth:    1024,
+    tileHeight:   1024,
+    maximumLevel: 18,
     credit:       new Credit("OpenInfraMap contributors (ODbL)", false),
 })

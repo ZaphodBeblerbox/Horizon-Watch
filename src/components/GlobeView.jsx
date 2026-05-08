@@ -1,7 +1,7 @@
 import "../cesiumConfig.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer, Cesium3DTileset } from "resium"
-import { Cartesian3, IonResource, Math as CesiumMath } from "cesium"
+import { Cartesian3, IonResource, Math as CesiumMath, UrlTemplateImageryProvider, Credit } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
 import { esriSatelliteProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
@@ -13,6 +13,7 @@ import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
 import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
+import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
@@ -67,7 +68,7 @@ export default function GlobeView({
     center           = [20, 10],
     zoom             = 3,
     // Layer toggles — mirror workspace layer keys
-    infraEnabled     = false,   // OIM — PBF tiles, 2D-only; accepted but not rendered
+    infraEnabled     = false,
     nauticalEnabled  = false,
     adsbEnabled      = false,
     aisEnabled       = false,
@@ -80,6 +81,11 @@ export default function GlobeView({
     aisHeatmapEnabled  = false,
     adsbHeatmapEnabled = false,
     heatmapHours     = 24,
+    // Overwatch ML detections
+    overwatchEnabled    = false,
+    overwatchDetections = [],
+    // Satellite imagery overlay (Sentinel-2)
+    satelliteEnabled = false,
     // Data props (optional — GlobeView fetches internally when null)
     aisVessels:   externalAIS  = null,
     adsbAircraft: externalADSB = null,
@@ -119,7 +125,7 @@ export default function GlobeView({
         return () => clearInterval(t)
     }, [adsbEnabled, externalADSB]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Apply adaptive rendering quality once viewer is ready
+    // Apply maximum rendering quality — same settings for all devices
     useEffect(() => {
         let attempts = 0
         const tryApply = () => {
@@ -128,28 +134,17 @@ export default function GlobeView({
                 if (attempts++ < 15) setTimeout(tryApply, 250)
                 return
             }
-            if (isMobile) {
-                // Render at 75% resolution → ~40% GPU savings
-                viewer.resolutionScale = 0.75
-                viewer.scene.globe.maximumScreenSpaceError = 4.0
-                viewer.scene.postProcessStages.fxaa.enabled = false
-                viewer.scene.highDynamicRange = false
-                viewer.scene.fog.enabled = false
-                viewer.scene.globe.showGroundAtmosphere = false
-                if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false
-                viewer.scene.globe.tileCacheSize = 100
-                viewer.targetFrameRate = 30
-                viewer.scene.requestRenderMode = true
-                viewer.scene.maximumRenderTimeChange = 0.1
-            } else {
-                viewer.resolutionScale = window.devicePixelRatio || 1.0
-                viewer.scene.globe.maximumScreenSpaceError = 1.5
-                viewer.scene.postProcessStages.fxaa.enabled = true
-                viewer.scene.highDynamicRange = false
-                viewer.scene.globe.tileCacheSize = 1000
-                viewer.targetFrameRate = 60
-                viewer.scene.requestRenderMode = false
-            }
+            viewer.resolutionScale = window.devicePixelRatio || 2.0
+            viewer.scene.globe.maximumScreenSpaceError = 1.0
+            viewer.scene.postProcessStages.fxaa.enabled = true
+            viewer.scene.highDynamicRange = false
+            viewer.scene.fog.enabled = true
+            viewer.scene.fog.density = 0.0002
+            viewer.scene.globe.showGroundAtmosphere = true
+            if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
+            viewer.scene.globe.tileCacheSize = 1000
+            viewer.targetFrameRate = 60
+            viewer.scene.requestRenderMode = false
         }
         tryApply()
     }, [])
@@ -193,9 +188,20 @@ export default function GlobeView({
         Cartesian3.fromDegrees(center[1] ?? 10, center[0] ?? 20, zoomToAlt(zoom))
     , []) // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Sentinel-2 imagery provider — recreated only when enabled (requires Copernicus credentials)
+    const sentinelProvider = useMemo(() => {
+        if (!satelliteEnabled) return null
+        return new UrlTemplateImageryProvider({
+            url:          `${API_BASE}/satellite/tile/{z}/{x}/{y}.png`,
+            minimumLevel: 8,
+            maximumLevel: 18,
+            credit:       new Credit("Copernicus Sentinel-2", false),
+        })
+    }, [satelliteEnabled])
+
     // When any raster imagery overlay is active, swap from 3D photorealistic tiles to
     // flat ESRI satellite so ImageryLayers render on the ellipsoid unobstructed.
-    const overlayActive = nauticalEnabled || infraEnabled
+    const overlayActive = nauticalEnabled || infraEnabled || satelliteEnabled
 
     return (
         <GlobeErrorBoundary>
@@ -244,10 +250,10 @@ export default function GlobeView({
                     <Cesium3DTileset
                         url={IonResource.fromAssetId(2275207)}
                         showCreditsOnScreen={true}
-                        maximumScreenSpaceError={isMobile ? 24 : 8}
-                        maximumMemoryUsage={isMobile ? 128 : 1024}
+                        maximumScreenSpaceError={4}
+                        maximumMemoryUsage={2048}
                         preloadWhenHidden={false}
-                        skipLevelOfDetail={isMobile}
+                        skipLevelOfDetail={false}
                         dynamicScreenSpaceError={true}
                         dynamicScreenSpaceErrorDensity={0.00278}
                         dynamicScreenSpaceErrorFactor={4.0}
@@ -260,11 +266,14 @@ export default function GlobeView({
                 )}
 
                 {/* Raster overlays — rendered on top of ESRI base when active */}
+                {satelliteEnabled && sentinelProvider && (
+                    <ImageryLayer imageryProvider={sentinelProvider} alpha={0.9} maximumTerrainLevel={18} />
+                )}
                 {nauticalEnabled && (
                     <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} maximumTerrainLevel={18} />
                 )}
                 {infraEnabled && (
-                    <ImageryLayer imageryProvider={openInfraRasterProvider} alpha={0.85} maximumTerrainLevel={17} />
+                    <ImageryLayer imageryProvider={openInfraRasterProvider} alpha={0.85} maximumTerrainLevel={18} />
                 )}
 
                 {/* ── GeoJSON line layers ─────────────────────────────────────── */}
@@ -284,6 +293,9 @@ export default function GlobeView({
                 {aisEnabled  && <GlobeAISLayer  vessels={aisData}  />}
                 {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} />}
 
+                {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
+                <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} />
+
                 <CameraFlyTo
                     destination={initialDestination}
                     duration={0}
@@ -294,27 +306,6 @@ export default function GlobeView({
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} />
 
-            {/* Mobile reduced-quality indicator */}
-            {isMobile && (
-                <div style={{
-                    position:     "absolute",
-                    bottom:       64,
-                    left:         8,
-                    zIndex:       1000,
-                    background:   "rgba(26,36,51,0.85)",
-                    color:        "rgba(154,164,181,0.85)",
-                    padding:      "3px 7px",
-                    borderRadius: 3,
-                    fontSize:     9,
-                    fontWeight:   600,
-                    letterSpacing: "0.05em",
-                    border:       "1px solid rgba(255,255,255,0.06)",
-                    pointerEvents: "none",
-                    backdropFilter: "blur(4px)",
-                }}>
-                    MOBILE · REDUCED QUALITY
-                </div>
-            )}
         </div>
         </GlobeErrorBoundary>
     )

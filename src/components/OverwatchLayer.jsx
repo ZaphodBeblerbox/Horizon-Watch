@@ -98,6 +98,7 @@ const OverwatchLayer = memo(function OverwatchLayer({
     sentinelImageData    = null,   // from external SentinelLayer — used for ML-on-sentinel
     sentinel2Active      = false,
     onToggleSentinel2    = null,
+    onDetections         = null,   // (detections) => void — lifted to parent for 3D rendering
 }) {
     const map = useMap()
 
@@ -150,6 +151,11 @@ const OverwatchLayer = memo(function OverwatchLayer({
         window.addEventListener("resize", h)
         return () => window.removeEventListener("resize", h)
     }, [])
+
+    // Lift visible detections to parent for 3D globe rendering
+    useEffect(() => {
+        onDetections?.(visible)
+    }, [visible, onDetections]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Active toggle ─────────────────────────────────────────────────────────
     useEffect(() => {

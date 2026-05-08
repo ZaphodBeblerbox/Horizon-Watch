@@ -18,7 +18,7 @@ const LAYER_TYPES = {
 const TYPE_COLORS = {
     power:     "#E8B23A",
     petroleum: "#E55757",
-    telecoms:  "#9AA4B5",
+    telecoms:  "#2ECC71",
     water:     "#4A9EE0",
 }
 

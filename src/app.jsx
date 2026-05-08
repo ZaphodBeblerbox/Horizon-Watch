@@ -204,6 +204,7 @@ export default function App() {
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
     const [viewMode,     setViewMode]     = useState("2d")
     const [heatmapHours, setHeatmapHours] = useState(24)
+    const [overwatchDetections, setOverwatchDetections] = useState([])
 
     useEffect(() => {
         const handler = () => setIsMobile(window.innerWidth < 768)
@@ -1329,6 +1330,9 @@ export default function App() {
                                     aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
                                     adsbHeatmapEnabled={activeWorkspace?.layers?.adsbHeatmap ?? false}
                                     heatmapHours={heatmapHours}
+                                    overwatchEnabled={overwatchActive}
+                                    overwatchDetections={overwatchDetections}
+                                    satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
                                 />
                             </Suspense>
                         </div>
@@ -1396,6 +1400,7 @@ export default function App() {
                         timeTravelTime={timeTravelTime}
                         viewMode={viewMode}
                         heatmapHours={heatmapHours}
+                        onOverwatchDetections={setOverwatchDetections}
                     />
                     {timeTravelActive && (
                         <TimeSlider
