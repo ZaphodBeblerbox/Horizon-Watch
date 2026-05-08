@@ -11,6 +11,7 @@ import GlobeEventPopup    from "./GlobeEventPopup.jsx"
 import GlobeEEZPopup      from "./GlobeEEZPopup.jsx"
 import GlobeCablePopup    from "./GlobeCablePopup.jsx"
 import GlobeInfraPopup    from "./GlobeInfraPopup.jsx"
+import GlobeHeatmapPopup  from "./GlobeHeatmapPopup.jsx"
 import API_BASE           from "../apiBase.js"
 
 const HOVER_TYPES = new Set(["eez", "cable"])
@@ -213,6 +214,8 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                         <GlobeCablePopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "infra" ? (
                         <GlobeInfraPopup data={popup.data} onClose={handleClose} />
+                    ) : popup.type === "heatmap_cell" ? (
+                        <GlobeHeatmapPopup data={popup.data} onClose={handleClose} />
                     ) : (
                         <>
                             <button

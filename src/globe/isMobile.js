@@ -1,9 +1,12 @@
 // Shared mobile detection so layers can apply aggressive perf limits.
-// Captured once at module load (matches GlobeView's behavior).
-export const isMobile = (
-    /iPhone|iPad|iPod|Android/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "")
-    || (typeof window !== "undefined" && window.innerWidth < 1024)
-)
+// UA + physical screen size — avoids false positives on non-maximised desktop windows.
+export const isMobile = (() => {
+    if (typeof navigator === "undefined") return false
+    const ua = navigator.userAgent
+    if (/iPhone|iPod|Android.*Mobile/i.test(ua)) return true
+    if (typeof window !== "undefined" && window.screen.width < 768 && "ontouchstart" in window) return true
+    return false
+})()
 
 // Per-layer entity caps on mobile. Desktop is unbounded.
 export const ADSB_CAP   = isMobile ? 100 : Infinity

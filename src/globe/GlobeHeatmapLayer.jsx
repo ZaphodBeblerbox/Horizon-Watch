@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react"
 import { useCesium } from "resium"
 import { Rectangle, Color, HeightReference } from "cesium"
 import API_BASE from "../apiBase.js"
+import { setEntity, deleteEntity } from "./entityStore.js"
 
 const HALF_CELL = 0.05  // 0.1° grid → ±0.05° from center
 
@@ -47,6 +48,7 @@ export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24,
         const cleanup = () => {
             entitiesRef.current.forEach(e => {
                 if (viewer.entities.contains(e)) viewer.entities.remove(e)
+                if (e.id) deleteEntity(e.id)
             })
             entitiesRef.current = []
         }
@@ -59,7 +61,9 @@ export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24,
 
         cells.forEach(cell => {
             const intensity = cell.count / max
+            const entityId = `heatmap-${domain}-${cell.lat.toFixed(3)}-${cell.lon.toFixed(3)}`
             const entity = viewer.entities.add({
+                id: entityId,
                 rectangle: {
                     coordinates: Rectangle.fromDegrees(
                         cell.lon - HALF_CELL, cell.lat - HALF_CELL,
@@ -68,6 +72,11 @@ export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24,
                     material:        colorFor(intensity),
                     heightReference: HeightReference.CLAMP_TO_GROUND,
                 },
+            })
+            setEntity(entityId, "heatmap_cell", {
+                lat: cell.lat, lon: cell.lon,
+                count: cell.count, avg_speed: cell.avg_speed,
+                domain, intensity,
             })
             added.push(entity)
         })

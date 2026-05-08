@@ -27,7 +27,17 @@ const DOMAIN_OPTIONS = [
     { label: "Aircraft (ADS-B)", value: "adsb" },
 ]
 
-export default function AnalyticsPanel({ onClose }) {
+// Expand icon (diagonal arrows)
+function IconExpand() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+            <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+        </svg>
+    )
+}
+
+export default function AnalyticsPanel({ onClose, onExpand = null, isTabMode = false }) {
     const [domain, setDomain] = useState("ais")
     const [hours,  setHours]  = useState(24)
 
@@ -65,7 +75,20 @@ export default function AnalyticsPanel({ onClose }) {
                     <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Traffic Analytics</div>
                     <div style={{ fontSize: 12, color: "#9AA4B5", marginTop: 2 }}>Heatmap-aggregated track density</div>
                 </div>
-                <button onClick={onClose} style={{ background: "none", border: "none", color: "#9AA4B5", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    {!isTabMode && onExpand && (
+                        <button
+                            onClick={onExpand}
+                            title="Open in full tab"
+                            style={{ background: "none", border: "none", color: "#9AA4B5", cursor: "pointer", lineHeight: 1, padding: "2px 4px", display: "flex", alignItems: "center" }}
+                        >
+                            <IconExpand />
+                        </button>
+                    )}
+                    {!isTabMode && (
+                        <button onClick={onClose} style={{ background: "none", border: "none", color: "#9AA4B5", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
+                    )}
+                </div>
             </div>
 
             {/* Controls */}
@@ -112,54 +135,102 @@ export default function AnalyticsPanel({ onClose }) {
             </div>
 
             {/* Charts (scrollable body) */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
-                {loading && (
-                    <div style={{ color: "#9AA4B5", fontSize: 11, textAlign: "center", padding: 12 }}>Loading…</div>
-                )}
-
-                <SectionHeader>Activity over time</SectionHeader>
-                {timeseries.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={180}>
-                        <LineChart data={timeseries} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                            <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
-                            <XAxis dataKey="time" tick={{ fill: "#9AA4B5", fontSize: 9 }} interval="preserveStartEnd" minTickGap={32} />
-                            <YAxis tick={{ fill: "#9AA4B5", fontSize: 9 }} />
-                            <Tooltip
-                                contentStyle={{ background: "#0F1721", border: "1px solid #2C3645", fontSize: 11, color: "#E8ECF1" }}
-                                labelStyle={{ color: "#9AA4B5" }}
-                            />
-                            <Line type="monotone" dataKey="count" stroke="#4A9EE0" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                        </LineChart>
-                    </ResponsiveContainer>
-                ) : !loading && (
-                    <Empty>No activity in window</Empty>
-                )}
-
-                <SectionHeader style={{ marginTop: 18 }}>Type breakdown</SectionHeader>
-                {breakdown.length > 0 ? (
-                    <>
-                        <ResponsiveContainer width="100%" height={180}>
-                            <PieChart>
-                                <Pie data={breakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} innerRadius={36}>
-                                    {breakdown.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                                </Pie>
-                                <Tooltip contentStyle={{ background: "#0F1721", border: "1px solid #2C3645", fontSize: 11, color: "#E8ECF1" }} />
-                            </PieChart>
-                        </ResponsiveContainer>
-                        <div style={{ marginTop: 8 }}>
-                            {breakdown.map((b, i) => (
-                                <div key={b.name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 11 }}>
-                                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
-                                    <span style={{ flex: 1, color: "#E8ECF1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
-                                    <span style={{ color: "#9AA4B5" }}>{b.value.toLocaleString()}</span>
+            {isTabMode ? (
+                /* Side-by-side layout in full tab mode */
+                <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                    {loading && (
+                        <div style={{ gridColumn: "1/-1", color: "#9AA4B5", fontSize: 11, textAlign: "center", padding: 12 }}>Loading…</div>
+                    )}
+                    <div>
+                        <SectionHeader>Activity over time</SectionHeader>
+                        {timeseries.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={260}>
+                                <LineChart data={timeseries} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                                    <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+                                    <XAxis dataKey="time" tick={{ fill: "#9AA4B5", fontSize: 10 }} interval="preserveStartEnd" minTickGap={32} />
+                                    <YAxis tick={{ fill: "#9AA4B5", fontSize: 10 }} />
+                                    <Tooltip contentStyle={{ background: "#0F1721", border: "1px solid #2C3645", fontSize: 12, color: "#E8ECF1" }} labelStyle={{ color: "#9AA4B5" }} />
+                                    <Line type="monotone" dataKey="count" stroke="#4A9EE0" strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        ) : !loading && <Empty>No activity in window</Empty>}
+                    </div>
+                    <div>
+                        <SectionHeader>Type breakdown</SectionHeader>
+                        {breakdown.length > 0 ? (
+                            <>
+                                <ResponsiveContainer width="100%" height={220}>
+                                    <PieChart>
+                                        <Pie data={breakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} innerRadius={44}>
+                                            {breakdown.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                                        </Pie>
+                                        <Tooltip contentStyle={{ background: "#0F1721", border: "1px solid #2C3645", fontSize: 12, color: "#E8ECF1" }} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                                <div style={{ marginTop: 10 }}>
+                                    {breakdown.map((b, i) => (
+                                        <div key={b.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0", fontSize: 12 }}>
+                                            <span style={{ width: 10, height: 10, borderRadius: "50%", background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                                            <span style={{ flex: 1, color: "#E8ECF1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
+                                            <span style={{ color: "#9AA4B5" }}>{b.value.toLocaleString()}</span>
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
-                        </div>
-                    </>
-                ) : !loading && (
-                    <Empty>No type data</Empty>
-                )}
-            </div>
+                            </>
+                        ) : !loading && <Empty>No type data</Empty>}
+                    </div>
+                </div>
+            ) : (
+                /* Stacked layout in right panel mode */
+                <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
+                    {loading && (
+                        <div style={{ color: "#9AA4B5", fontSize: 11, textAlign: "center", padding: 12 }}>Loading…</div>
+                    )}
+
+                    <SectionHeader>Activity over time</SectionHeader>
+                    {timeseries.length > 0 ? (
+                        <ResponsiveContainer width="100%" height={180}>
+                            <LineChart data={timeseries} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                                <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+                                <XAxis dataKey="time" tick={{ fill: "#9AA4B5", fontSize: 9 }} interval="preserveStartEnd" minTickGap={32} />
+                                <YAxis tick={{ fill: "#9AA4B5", fontSize: 9 }} />
+                                <Tooltip
+                                    contentStyle={{ background: "#0F1721", border: "1px solid #2C3645", fontSize: 11, color: "#E8ECF1" }}
+                                    labelStyle={{ color: "#9AA4B5" }}
+                                />
+                                <Line type="monotone" dataKey="count" stroke="#4A9EE0" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    ) : !loading && (
+                        <Empty>No activity in window</Empty>
+                    )}
+
+                    <SectionHeader style={{ marginTop: 18 }}>Type breakdown</SectionHeader>
+                    {breakdown.length > 0 ? (
+                        <>
+                            <ResponsiveContainer width="100%" height={180}>
+                                <PieChart>
+                                    <Pie data={breakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} innerRadius={36}>
+                                        {breakdown.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                                    </Pie>
+                                    <Tooltip contentStyle={{ background: "#0F1721", border: "1px solid #2C3645", fontSize: 11, color: "#E8ECF1" }} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            <div style={{ marginTop: 8 }}>
+                                {breakdown.map((b, i) => (
+                                    <div key={b.name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 11 }}>
+                                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                                        <span style={{ flex: 1, color: "#E8ECF1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
+                                        <span style={{ color: "#9AA4B5" }}>{b.value.toLocaleString()}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    ) : !loading && (
+                        <Empty>No type data</Empty>
+                    )}
+                </div>
+            )}
         </div>
     )
 }

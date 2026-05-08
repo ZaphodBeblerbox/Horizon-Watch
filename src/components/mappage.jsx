@@ -5908,6 +5908,7 @@ export default function MapPage({
     isDirectorMode      = false, // when true, layer toggles are ignored; directorItems controls what's visible
     timeTravelTime      = null, // ISO string — when set, overrides live ADS-B + AIS with historical snapshot
     viewMode            = "2d", // "2d" | "3d" — passed to LayersPanel for per-mode badges
+    heatmapHours        = 24,  // shared time window for traffic heatmap layers
 }) {
     const [zoom, setZoom] = useState(6)
     const [showEventLabels, setShowEventLabels] = useState(false)
@@ -9989,8 +9990,8 @@ export default function MapPage({
                 ))}
 
                 {/* Traffic heatmap overlays — backed by /api/analytics/heatmap */}
-                <TrafficHeatmapLayer enabled={!!effectiveActive.aisHeatmap}  domain="ais"  hours={24} />
-                <TrafficHeatmapLayer enabled={!!effectiveActive.adsbHeatmap} domain="adsb" hours={24} />
+                <TrafficHeatmapLayer enabled={!!effectiveActive.aisHeatmap}  domain="ais"  hours={heatmapHours} />
+                <TrafficHeatmapLayer enabled={!!effectiveActive.adsbHeatmap} domain="adsb" hours={heatmapHours} />
 
             </MapContainer>
 

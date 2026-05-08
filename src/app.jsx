@@ -38,6 +38,7 @@ import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDir
 import { DemoRunner } from "./services/demoRunner.js"
 import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 import TimeSlider from "./components/TimeSlider.jsx"
+import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -202,6 +203,7 @@ export default function App() {
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
     const [viewMode,     setViewMode]     = useState("2d")
+    const [heatmapHours, setHeatmapHours] = useState(24)
 
     useEffect(() => {
         const handler = () => setIsMobile(window.innerWidth < 768)
@@ -779,7 +781,7 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed" }
+        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics" }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
         const newId = crypto.randomUUID()
@@ -825,9 +827,10 @@ export default function App() {
 
     const openNewTab = useCallback(() => {
         const order = [
-            { type: "poi",      label: "POI" },
-            { type: "briefing", label: "Briefings" },
-            { type: "news",     label: "News Feed" },
+            { type: "poi",       label: "POI" },
+            { type: "briefing",  label: "Briefings" },
+            { type: "news",      label: "News Feed" },
+            { type: "analytics", label: "Analytics" },
         ]
         for (const { type } of order) {
             if (!tabs.find(t => t.type === type)) { openTab(type); return }
@@ -1325,6 +1328,7 @@ export default function App() {
                                     eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                                     aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
                                     adsbHeatmapEnabled={activeWorkspace?.layers?.adsbHeatmap ?? false}
+                                    heatmapHours={heatmapHours}
                                 />
                             </Suspense>
                         </div>
@@ -1391,11 +1395,19 @@ export default function App() {
                         isDirectorMode={directorVisible}
                         timeTravelTime={timeTravelTime}
                         viewMode={viewMode}
+                        heatmapHours={heatmapHours}
                     />
                     {timeTravelActive && (
                         <TimeSlider
                             onTimeChange={setTimeTravelTime}
                             onClose={() => { setTimeTravelActive(false); setTimeTravelTime(null) }}
+                        />
+                    )}
+                    {(activeWorkspace?.layers?.aisHeatmap || activeWorkspace?.layers?.adsbHeatmap) && (
+                        <HeatmapTimeSlider
+                            hours={heatmapHours}
+                            onHoursChange={setHeatmapHours}
+                            isMobile={isMobile}
                         />
                     )}
                     <DirectorSidebar
@@ -1476,6 +1488,21 @@ export default function App() {
                     </div>
                 )}
 
+                {/* Analytics — full-width tab */}
+                {tabs.some(t => t.type === "analytics") && (
+                    <div style={{
+                        flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
+                        display: activeTabType === "analytics" ? "flex" : "none",
+                        flexDirection: "column",
+                        background: "#080f1e",
+                    }}>
+                        <AnalyticsPanel
+                            isTabMode={true}
+                            onClose={() => closeTab(tabs.find(t => t.type === "analytics")?.id)}
+                        />
+                    </div>
+                )}
+
                 {/* ── Right panel slot — 300px, only one at a time ──────────── */}
                 {rightPanel === "detail" && selectedSurface && (
                     <SurfaceDetailPanel
@@ -1521,7 +1548,10 @@ export default function App() {
 
                 {rightPanel === "analytics" && (
                     <div style={panelStyle}>
-                        <AnalyticsPanel onClose={() => setRightPanel(null)} />
+                        <AnalyticsPanel
+                            onClose={() => setRightPanel(null)}
+                            onExpand={() => { setRightPanel(null); openTab("analytics") }}
+                        />
                     </div>
                 )}
 
