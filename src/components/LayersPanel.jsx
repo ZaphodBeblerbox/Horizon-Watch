@@ -72,20 +72,6 @@ function SectionHeader({ label }) {
     )
 }
 
-function LayerRows2D({ active, onToggle }) {
-    return (
-        <>
-            <SectionHeader label="Imagery" />
-            <LayerRow
-                label="Sentinel-2 Satellite"
-                hint="Copernicus true-colour imagery"
-                toggled={active.satellite}
-                onToggle={() => onToggle("satellite")}
-            />
-        </>
-    )
-}
-
 function LayerRows3D({ active, onToggle }) {
     return (
         <>
@@ -188,7 +174,6 @@ export default function LayersPanel({
     active,
     onToggle,
     onClose,
-    viewMode = "2d",
 }) {
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
     useEffect(() => {
@@ -197,9 +182,7 @@ export default function LayersPanel({
         return () => window.removeEventListener("resize", h)
     }, [])
 
-    const rows = viewMode === "3d"
-        ? <LayerRows3D active={active} onToggle={onToggle} />
-        : <LayerRows2D active={active} onToggle={onToggle} />
+    const rows = <LayerRows3D active={active} onToggle={onToggle} />
 
     const header = (
         <div style={{

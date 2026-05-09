@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import TabBar from "./TabBar.jsx"
 import Logo from "./Logo.jsx"
 import API_BASE from "../apiBase.js"
-import ViewToggle from "./ViewToggle.jsx"
 
 function IconExpand() {
     return (
@@ -287,9 +286,6 @@ export default function TopBar({
     // Auth
     showSignIn     = false,
     onSignIn       = null,
-    // View mode
-    viewMode       = "2d",
-    onViewModeChange = null,
 }) {
     const [time,       setTime]       = useState(new Date())
     const [fullscreen, setFullscreen] = useState(false)
@@ -411,21 +407,12 @@ export default function TopBar({
                     )}
                 </div>
             ) : (
-                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 10 }}>
-                    {onViewModeChange && (
-                        <ViewToggle mode={viewMode} onToggle={onViewModeChange} />
-                    )}
-                </div>
+                <div style={{ flex: 1 }} />
             )}
 
-            {/* Right: view toggle + fullscreen + clock — desktop only */}
+            {/* Right: fullscreen + clock — desktop only */}
             {!isMobile && (
                 <div style={{ display: "flex", alignItems: "center", flexShrink: 0, borderLeft: "1px solid rgba(255,255,255,0.06)" }}>
-                    {onViewModeChange && (
-                        <div style={{ padding: "0 10px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
-                            <ViewToggle mode={viewMode} onToggle={onViewModeChange} />
-                        </div>
-                    )}
                     <button
                         onClick={toggleFullscreen}
                         onMouseEnter={() => setFsHover(true)}

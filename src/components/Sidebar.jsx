@@ -237,8 +237,6 @@ export default function Sidebar({
     onToggleOverwatch,
     directorActive   = false,
     onDirectorClick  = null,
-    timeTravelActive = false,
-    onToggleTimeTravel = null,
 }) {
     const isAdmin    = true
     const isAnalyst  = true
@@ -260,8 +258,7 @@ export default function Sidebar({
                        (id === "briefing"   && activeTabType === "briefing")   ||
                        (id === "notif"      && notifOpen)                      ||
                        (id === "chat"       && chatOpen)                       ||
-                       (id === "overwatch"  && overwatchActive)  ||
-                       (id === "timetravel" && timeTravelActive)
+                       (id === "overwatch"  && overwatchActive)
         if (active)         return "var(--akili-accent)"
         if (hovered === id) return "var(--akili-text-secondary)"
         return "var(--akili-text-muted)"
@@ -476,32 +473,6 @@ export default function Sidebar({
                         }}
                     >
                         ◈
-                    </button>
-                )}
-                {/* Time Travel — replay historical ADS-B + AIS positions */}
-                {onToggleTimeTravel && (
-                    <button
-                        onMouseEnter={() => setHovered("timetravel")}
-                        onMouseLeave={() => setHovered(null)}
-                        onClick={onToggleTimeTravel}
-                        title="Time Travel — replay history"
-                        style={{
-                            position:       "relative",
-                            width:          48,
-                            height:         40,
-                            display:        "flex",
-                            alignItems:     "center",
-                            justifyContent: "center",
-                            background:     timeTravelActive ? "rgba(59,130,246,0.10)" : "none",
-                            border:         "none",
-                            borderLeft:     timeTravelActive ? "2px solid #3b82f6" : "2px solid transparent",
-                            cursor:         "pointer",
-                            color:          timeTravelActive ? "#3b82f6" : iconColor("timetravel"),
-                            transition:     "color 0.12s, background 0.12s",
-                            flexShrink:     0,
-                        }}
-                    >
-                        <IconClock />
                     </button>
                 )}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}
