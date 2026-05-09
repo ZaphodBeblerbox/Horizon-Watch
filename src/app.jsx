@@ -39,6 +39,7 @@ import { DemoRunner } from "./services/demoRunner.js"
 import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 import TimeSlider from "./components/TimeSlider.jsx"
 import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
+import LayersPanel from "./components/LayersPanel.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -1307,6 +1308,7 @@ export default function App() {
                 {/* Map — exclusive: only one renderer alive at a time */}
                 <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", display: activeTabType === "map" ? "block" : "none" }}>
                     {viewMode === "3d" ? (
+                        <>
                         <Suspense fallback={
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "#050c1c", color: "rgba(148,163,184,0.7)", fontFamily: "system-ui", fontSize: 14 }}>
                                 Loading 3D Globe…
@@ -1334,6 +1336,18 @@ export default function App() {
                                 satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
                             />
                         </Suspense>
+                        {rightPanel === "layers" && (
+                            <LayersPanel
+                                active={activeWorkspace?.layers ?? {}}
+                                onToggle={(key) => handleLayersChange({
+                                    ...(activeWorkspace?.layers ?? {}),
+                                    [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
+                                })}
+                                onClose={() => setRightPanel(null)}
+                                viewMode="3d"
+                            />
+                        )}
+                        </>
                     ) : (
                         <>
                             {profile && (

@@ -1,4 +1,3 @@
-// LayersPanel.jsx — 2D map layer toggles (satellite + overwatch only)
 import { useState, useEffect } from "react"
 import BottomSheet from "./BottomSheet.jsx"
 
@@ -73,6 +72,118 @@ function SectionHeader({ label }) {
     )
 }
 
+function LayerRows2D({ active, onToggle }) {
+    return (
+        <>
+            <SectionHeader label="Imagery" />
+            <LayerRow
+                label="Sentinel-2 Satellite"
+                hint="Copernicus true-colour imagery"
+                toggled={active.satellite}
+                onToggle={() => onToggle("satellite")}
+            />
+        </>
+    )
+}
+
+function LayerRows3D({ active, onToggle }) {
+    return (
+        <>
+            <SectionHeader label="Imagery" />
+            <LayerRow
+                label="Sentinel-2 Satellite"
+                hint="Copernicus true-colour imagery"
+                toggled={active.satellite}
+                onToggle={() => onToggle("satellite")}
+            />
+            <LayerRow
+                label="Nautical Chart"
+                hint="OpenSeaMap vector overlay"
+                toggled={active.shippingLanes}
+                onToggle={() => onToggle("shippingLanes")}
+            />
+            <LayerRow
+                label="Infrastructure"
+                hint="OpenInfraMap — power, telecoms, pipelines"
+                toggled={active.oim}
+                onToggle={() => onToggle("oim")}
+            />
+
+            <SectionHeader label="Live Traffic" />
+            <LayerRow
+                label="ADS-B Aircraft"
+                hint="Real-time transponder positions"
+                toggled={active.adsb}
+                onToggle={() => onToggle("adsb")}
+            />
+            <LayerRow
+                label="AIS Vessels"
+                hint="Maritime transponder positions"
+                toggled={active.aisVessels}
+                onToggle={() => onToggle("aisVessels")}
+            />
+
+            <SectionHeader label="Boundaries" />
+            <LayerRow
+                label="Country Borders"
+                toggled={active.borders}
+                onToggle={() => onToggle("borders")}
+            />
+            <LayerRow
+                label="Exclusive Economic Zones"
+                hint="200 nm maritime boundaries"
+                toggled={active.eez}
+                onToggle={() => onToggle("eez")}
+            />
+            <LayerRow
+                label="City Labels"
+                toggled={active.cityLabels}
+                onToggle={() => onToggle("cityLabels")}
+            />
+
+            <SectionHeader label="Intelligence" />
+            <LayerRow
+                label="Intelligence Events"
+                hint="Unified news & conflict events"
+                toggled={active.unifiedEvents ?? true}
+                onToggle={() => onToggle("unifiedEvents")}
+            />
+            <LayerRow
+                label="Points of Interest"
+                hint="Airports, ports, power plants"
+                toggled={active.poi}
+                onToggle={() => onToggle("poi")}
+            />
+            <LayerRow
+                label="Chokepoints"
+                hint="Strategic maritime passages"
+                toggled={active.chokepoints}
+                onToggle={() => onToggle("chokepoints")}
+            />
+            <LayerRow
+                label="Submarine Cables"
+                hint="Global undersea fibre routes"
+                toggled={active.cables}
+                onToggle={() => onToggle("cables")}
+            />
+
+            <SectionHeader label="Heatmaps" />
+            <LayerRow
+                label="AIS Density"
+                hint="Vessel track density over time"
+                toggled={active.aisHeatmap}
+                onToggle={() => onToggle("aisHeatmap")}
+            />
+            <LayerRow
+                label="ADS-B Density"
+                hint="Aircraft track density over time"
+                toggled={active.adsbHeatmap}
+                onToggle={() => onToggle("adsbHeatmap")}
+            />
+        </>
+    )
+}
+
 export default function LayersPanel({
     active,
     onToggle,
@@ -86,26 +197,9 @@ export default function LayersPanel({
         return () => window.removeEventListener("resize", h)
     }, [])
 
-    const content = (
-        <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 16px" }}>
-            <SectionHeader label="Imagery" />
-            <LayerRow
-                label="Sentinel-2 Satellite"
-                hint="Copernicus true-colour imagery"
-                toggled={active.satellite}
-                onToggle={() => onToggle("satellite")}
-            />
-
-            {viewMode === "3d" && (
-                <>
-                    <SectionHeader label="3D Layers" />
-                    <div style={{ fontSize: 11, color: "rgba(232,237,242,0.35)", padding: "6px 0 2px", lineHeight: 1.5 }}>
-                        Use workspace settings to configure 3D globe layers.
-                    </div>
-                </>
-            )}
-        </div>
-    )
+    const rows = viewMode === "3d"
+        ? <LayerRows3D active={active} onToggle={onToggle} />
+        : <LayerRows2D active={active} onToggle={onToggle} />
 
     const header = (
         <div style={{
@@ -147,13 +241,7 @@ export default function LayersPanel({
         return (
             <BottomSheet isOpen title="Layers" onClose={onClose} height="full">
                 <div style={{ padding: "16px 12px 24px" }}>
-                    <SectionHeader label="Imagery" />
-                    <LayerRow
-                        label="Sentinel-2 Satellite"
-                        hint="Copernicus true-colour imagery"
-                        toggled={active.satellite}
-                        onToggle={() => onToggle("satellite")}
-                    />
+                    {rows}
                 </div>
             </BottomSheet>
         )
@@ -176,7 +264,9 @@ export default function LayersPanel({
             fontFamily:      "inherit",
         }}>
             {header}
-            {content}
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 16px" }}>
+                {rows}
+            </div>
         </div>
     )
 }
