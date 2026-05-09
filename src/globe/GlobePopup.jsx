@@ -56,7 +56,22 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
             // ── Click popup ──────────────────────────────────────────────────
             handler.setInputAction(async (click) => {
                 setTooltip(null)
-                const picked = viewer.scene.pick(click.position)
+
+                // Primary pick; if it misses, search a ring of nearby pixels
+                // to handle fat-finger taps on mobile 3D models.
+                let picked = viewer.scene.pick(click.position)
+                if (!defined(picked) || !picked.id) {
+                    const ring = [
+                        [-14, 0], [14, 0], [0, -14], [0, 14],
+                        [-10, -10], [10, -10], [-10, 10], [10, 10],
+                        [-14, -7], [14, -7], [-14, 7], [14, 7],
+                    ]
+                    for (const [dx, dy] of ring) {
+                        const p = new Cartesian2(click.position.x + dx, click.position.y + dy)
+                        const c = viewer.scene.pick(p)
+                        if (defined(c) && c.id) { picked = c; break }
+                    }
+                }
 
                 if (defined(picked) && picked.id) {
                     const entity   = picked.id
