@@ -86,7 +86,15 @@ const REGION_COORDS = {
 // ── Workspace helpers ─────────────────────────────────────────────────────────
 
 function newWorkspace(name) {
-    return { id: crypto.randomUUID(), name, center: [20, 0], zoom: 2, layers: null }
+    return { id: crypto.randomUUID(), name, center: [20, 0], zoom: 2, layers: { unifiedEvents: true } }
+}
+
+// Ensure unifiedEvents is enabled on all existing workspaces that predate 3D-only mode.
+function migrateWorkspaces(workspaces) {
+    return workspaces.map(w => {
+        if (w.layers?.unifiedEvents !== false) return w
+        return { ...w, layers: { ...w.layers, unifiedEvents: true } }
+    })
 }
 
 function loadWorkspaces() {
@@ -94,7 +102,7 @@ function loadWorkspaces() {
         const raw = localStorage.getItem(WS_STORAGE_KEY)
         if (raw) {
             const parsed = JSON.parse(raw)
-            if (Array.isArray(parsed) && parsed.length > 0) return parsed
+            if (Array.isArray(parsed) && parsed.length > 0) return migrateWorkspaces(parsed)
         }
     } catch { /* ignore */ }
     return [newWorkspace("Default")]
