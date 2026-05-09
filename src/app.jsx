@@ -1304,164 +1304,164 @@ export default function App() {
 
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
 
-                {/* Map — always mounted */}
+                {/* Map — exclusive: only one renderer alive at a time */}
                 <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", display: activeTabType === "map" ? "block" : "none" }}>
-                    {/* 3D Globe overlay — lazy-loaded, absolute so MapPage stays mounted underneath */}
-                    {viewMode === "3d" && (
-                        <div style={{ position: "absolute", inset: 0, zIndex: 500 }}>
-                            <Suspense fallback={
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "#050c1c", color: "rgba(148,163,184,0.7)", fontFamily: "system-ui", fontSize: 14 }}>
-                                    Loading 3D Globe…
-                                </div>
-                            }>
-                                <GlobeView
-                                    center={activeWorkspace?.center || [20, 10]}
-                                    zoom={activeWorkspace?.zoom || 3}
-                                    infraEnabled={activeWorkspace?.layers?.oim ?? false}
-                                    nauticalEnabled={activeWorkspace?.layers?.shippingLanes ?? false}
-                                    adsbEnabled={activeWorkspace?.layers?.adsb ?? false}
-                                    aisEnabled={activeWorkspace?.layers?.aisVessels ?? false}
-                                    eezEnabled={activeWorkspace?.layers?.eez ?? false}
-                                    bordersEnabled={activeWorkspace?.layers?.borders ?? false}
-                                    cityLabelsEnabled={activeWorkspace?.layers?.cityLabels ?? false}
-                                    cablesEnabled={activeWorkspace?.layers?.cables ?? false}
-                                    chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
-                                    poiEnabled={activeWorkspace?.layers?.poi ?? false}
-                                    eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
-                                    aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
-                                    adsbHeatmapEnabled={activeWorkspace?.layers?.adsbHeatmap ?? false}
-                                    heatmapHours={heatmapHours}
-                                    overwatchEnabled={overwatchActive}
-                                    overwatchDetections={overwatchDetections}
-                                    satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
+                    {viewMode === "3d" ? (
+                        <Suspense fallback={
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "#050c1c", color: "rgba(148,163,184,0.7)", fontFamily: "system-ui", fontSize: 14 }}>
+                                Loading 3D Globe…
+                            </div>
+                        }>
+                            <GlobeView
+                                center={activeWorkspace?.center || [20, 10]}
+                                zoom={activeWorkspace?.zoom || 3}
+                                infraEnabled={activeWorkspace?.layers?.oim ?? false}
+                                nauticalEnabled={activeWorkspace?.layers?.shippingLanes ?? false}
+                                adsbEnabled={activeWorkspace?.layers?.adsb ?? false}
+                                aisEnabled={activeWorkspace?.layers?.aisVessels ?? false}
+                                eezEnabled={activeWorkspace?.layers?.eez ?? false}
+                                bordersEnabled={activeWorkspace?.layers?.borders ?? false}
+                                cityLabelsEnabled={activeWorkspace?.layers?.cityLabels ?? false}
+                                cablesEnabled={activeWorkspace?.layers?.cables ?? false}
+                                chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
+                                poiEnabled={activeWorkspace?.layers?.poi ?? false}
+                                eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
+                                aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
+                                adsbHeatmapEnabled={activeWorkspace?.layers?.adsbHeatmap ?? false}
+                                heatmapHours={heatmapHours}
+                                overwatchEnabled={overwatchActive}
+                                overwatchDetections={overwatchDetections}
+                                satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
+                            />
+                        </Suspense>
+                    ) : (
+                        <>
+                            {profile && (
+                                <NotificationsDrawer
+                                    items={surfaceItems}
+                                    readIds={readIds}
+                                    onMarkRead={handleMarkRead}
+                                    onSelectItem={handleNotifSelect}
+                                    open={notifOpen}
+                                    onClose={() => setNotifOpen(false)}
+                                    sortMode={notifSortMode}
+                                    onSortModeChange={setNotifSortMode}
                                 />
-                            </Suspense>
-                        </div>
+                            )}
+                            {theaterDrawing && (
+                                <div style={{ position: "absolute", top: 54, left: "50%", transform: "translateX(-50%)", zIndex: 900, background: "rgba(168,85,247,0.92)", color: "#fff", fontSize: 11, fontWeight: 700, padding: "6px 16px", borderRadius: 6, letterSpacing: "0.05em", pointerEvents: "none", backdropFilter: "blur(8px)" }}>
+                                    THEATER DRAW — click to add vertices · double-click to finish
+                                </div>
+                            )}
+                            <MapPage
+                                key={activeWorkspaceId}
+                                selected={null}
+                                onSelect={() => {}}
+                                currentUser={currentUser}
+                                initialMapStyle={appSettings.mapStyle}
+                                activeSituation={activeSituation}
+                                searchTarget={searchTarget}
+                                profile={profile}
+                                onSituationAnnotationsChange={(annotations) => {
+                                    if (!activeSituationId) return
+                                    setSituations(prev => prev.map(s =>
+                                        s.id === activeSituationId
+                                            ? { ...s, annotations, lastModified: new Date().toISOString() }
+                                            : s
+                                    ))
+                                }}
+                                onConflictEventsToggle={() => {}}
+                                layersPanelOpen={rightPanel === "layers"}
+                                onLayersPanelClose={() => setRightPanel(null)}
+                                initialActive={activeWorkspace.layers || null}
+                                onActiveChange={handleLayersChange}
+                                onViewportChange={handleViewportChange}
+                                surfaceItems={surfaceItems}
+                                onSurfaceItemClick={handleSurfaceItemClick}
+                                contextualLayers={contextualLayers}
+                                selectedSurface={selectedSurface}
+                                surfaceContext={surfaceContext}
+                                surfaceEnrichment={surfaceEnrichment}
+                                theaterDrawing={theaterDrawing}
+                                onTheaterDrawEnd={handleTheaterDrawEnd}
+                                focusRegions={focusRegions}
+                                onPanelOpen={() => setRightPanel(null)}
+                                externalPanelOpen={rightPanel !== null}
+                                overwatchActive={overwatchActive}
+                                onOverwatchExit={() => setOverwatchActive(false)}
+                                sentinel2Active={sentinel2Active}
+                                onSentinel2Exit={() => setSentinel2Active(false)}
+                                onMapReady={(map) => { mapInstanceRef.current = map }}
+                                directorLayerOverrides={directorLayerOverrides}
+                                directorHighlights={directorHighlights}
+                                directorItems={directorItems}
+                                isDirectorMode={directorVisible}
+                                timeTravelTime={timeTravelTime}
+                                viewMode={viewMode}
+                                heatmapHours={heatmapHours}
+                                onOverwatchDetections={setOverwatchDetections}
+                            />
+                            {timeTravelActive && (
+                                <TimeSlider
+                                    onTimeChange={setTimeTravelTime}
+                                    onClose={() => { setTimeTravelActive(false); setTimeTravelTime(null) }}
+                                />
+                            )}
+                            {(activeWorkspace?.layers?.aisHeatmap || activeWorkspace?.layers?.adsbHeatmap) && (
+                                <HeatmapTimeSlider
+                                    hours={heatmapHours}
+                                    onHoursChange={setHeatmapHours}
+                                    isMobile={isMobile}
+                                />
+                            )}
+                            <DirectorSidebar
+                                visible={directorVisible}
+                                currentAction={directorCurrentAction}
+                                segments={directorSegments}
+                                indicators={directorIndicators}
+                                contextCards={directorContextCards}
+                                currentImage={directorImage}
+                                generating={directorGenerating}
+                                runnerState={directorRunnerState}
+                                onGenerate={handleDirectorGenerate}
+                                demoChoices={directorDemoChoices}
+                                onDemoChoice={handleDemoChoice}
+                                demoChart={directorDemoChart}
+                            />
+                            {directorVisible && directorCountryPanel && (
+                                <DirectorCountryPanel
+                                    country={directorCountryPanel}
+                                    onClose={() => setDirectorCountryPanel(null)}
+                                />
+                            )}
+                            <DirectorBar
+                                visible={directorVisible}
+                                sequence={directorSequence}
+                                runner={directorRunnerRef.current}
+                                runnerState={directorRunnerState}
+                                currentAction={directorCurrentAction}
+                                indicators={directorIndicators}
+                                contextCards={directorContextCards}
+                                generating={directorGenerating}
+                                onGenerate={handleDirectorGenerate}
+                                onSave={handleDirectorSave}
+                                onClose={handleDirectorClose}
+                                savedStatus={directorSavedStatus}
+                                controlsOnly={true}
+                            />
+                            <DirectorSubtitle
+                                visible={directorVisible}
+                                sequence={directorSequence}
+                                runner={directorRunnerRef.current}
+                                runnerState={directorRunnerState}
+                                currentAction={directorCurrentAction}
+                                indicators={directorIndicators}
+                                onSave={handleDirectorSave}
+                                onClose={handleDirectorClose}
+                                savedStatus={directorSavedStatus}
+                            />
+                        </>
                     )}
-                    {profile && (
-                        <NotificationsDrawer
-                            items={surfaceItems}
-                            readIds={readIds}
-                            onMarkRead={handleMarkRead}
-                            onSelectItem={handleNotifSelect}
-                            open={notifOpen}
-                            onClose={() => setNotifOpen(false)}
-                            sortMode={notifSortMode}
-                            onSortModeChange={setNotifSortMode}
-                        />
-                    )}
-                    {theaterDrawing && (
-                        <div style={{ position: "absolute", top: 54, left: "50%", transform: "translateX(-50%)", zIndex: 900, background: "rgba(168,85,247,0.92)", color: "#fff", fontSize: 11, fontWeight: 700, padding: "6px 16px", borderRadius: 6, letterSpacing: "0.05em", pointerEvents: "none", backdropFilter: "blur(8px)" }}>
-                            THEATER DRAW — click to add vertices · double-click to finish
-                        </div>
-                    )}
-                    <MapPage
-                        key={activeWorkspaceId}
-                        selected={null}
-                        onSelect={() => {}}
-                        currentUser={currentUser}
-                        initialMapStyle={appSettings.mapStyle}
-                        activeSituation={activeSituation}
-                        searchTarget={searchTarget}
-                        profile={profile}
-                        onSituationAnnotationsChange={(annotations) => {
-                            if (!activeSituationId) return
-                            setSituations(prev => prev.map(s =>
-                                s.id === activeSituationId
-                                    ? { ...s, annotations, lastModified: new Date().toISOString() }
-                                    : s
-                            ))
-                        }}
-                        onConflictEventsToggle={() => {}}
-                        layersPanelOpen={rightPanel === "layers"}
-                        onLayersPanelClose={() => setRightPanel(null)}
-                        initialActive={activeWorkspace.layers || null}
-                        onActiveChange={handleLayersChange}
-                        onViewportChange={handleViewportChange}
-                        surfaceItems={surfaceItems}
-                        onSurfaceItemClick={handleSurfaceItemClick}
-                        contextualLayers={contextualLayers}
-                        selectedSurface={selectedSurface}
-                        surfaceContext={surfaceContext}
-                        surfaceEnrichment={surfaceEnrichment}
-                        theaterDrawing={theaterDrawing}
-                        onTheaterDrawEnd={handleTheaterDrawEnd}
-                        focusRegions={focusRegions}
-                        onPanelOpen={() => setRightPanel(null)}
-                        externalPanelOpen={rightPanel !== null}
-                        overwatchActive={overwatchActive}
-                        onOverwatchExit={() => setOverwatchActive(false)}
-                        sentinel2Active={sentinel2Active}
-                        onSentinel2Exit={() => setSentinel2Active(false)}
-                        onMapReady={(map) => { mapInstanceRef.current = map }}
-                        directorLayerOverrides={directorLayerOverrides}
-                        directorHighlights={directorHighlights}
-                        directorItems={directorItems}
-                        isDirectorMode={directorVisible}
-                        timeTravelTime={timeTravelTime}
-                        viewMode={viewMode}
-                        heatmapHours={heatmapHours}
-                        onOverwatchDetections={setOverwatchDetections}
-                    />
-                    {timeTravelActive && (
-                        <TimeSlider
-                            onTimeChange={setTimeTravelTime}
-                            onClose={() => { setTimeTravelActive(false); setTimeTravelTime(null) }}
-                        />
-                    )}
-                    {(activeWorkspace?.layers?.aisHeatmap || activeWorkspace?.layers?.adsbHeatmap) && (
-                        <HeatmapTimeSlider
-                            hours={heatmapHours}
-                            onHoursChange={setHeatmapHours}
-                            isMobile={isMobile}
-                        />
-                    )}
-                    <DirectorSidebar
-                        visible={directorVisible}
-                        currentAction={directorCurrentAction}
-                        segments={directorSegments}
-                        indicators={directorIndicators}
-                        contextCards={directorContextCards}
-                        currentImage={directorImage}
-                        generating={directorGenerating}
-                        runnerState={directorRunnerState}
-                        onGenerate={handleDirectorGenerate}
-                        demoChoices={directorDemoChoices}
-                        onDemoChoice={handleDemoChoice}
-                        demoChart={directorDemoChart}
-                    />
-                    {directorVisible && directorCountryPanel && (
-                        <DirectorCountryPanel
-                            country={directorCountryPanel}
-                            onClose={() => setDirectorCountryPanel(null)}
-                        />
-                    )}
-                    <DirectorBar
-                        visible={directorVisible}
-                        sequence={directorSequence}
-                        runner={directorRunnerRef.current}
-                        runnerState={directorRunnerState}
-                        currentAction={directorCurrentAction}
-                        indicators={directorIndicators}
-                        contextCards={directorContextCards}
-                        generating={directorGenerating}
-                        onGenerate={handleDirectorGenerate}
-                        onSave={handleDirectorSave}
-                        onClose={handleDirectorClose}
-                        savedStatus={directorSavedStatus}
-                        controlsOnly={true}
-                    />
-                    <DirectorSubtitle
-                        visible={directorVisible}
-                        sequence={directorSequence}
-                        runner={directorRunnerRef.current}
-                        runnerState={directorRunnerState}
-                        currentAction={directorCurrentAction}
-                        indicators={directorIndicators}
-                        onSave={handleDirectorSave}
-                        onClose={handleDirectorClose}
-                        savedStatus={directorSavedStatus}
-                    />
                 </div>
 
                 {/* TV overlay */}

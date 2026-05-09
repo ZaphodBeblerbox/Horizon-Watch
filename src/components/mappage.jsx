@@ -6792,11 +6792,7 @@ export default function MapPage({
 
         // Compute news markers within 50km of the route (sample every 10 coords)
         const routeSample = routeGeo.filter((_, i) => i % 10 === 0)
-        const nearby_news = newsConflictsData
-            .filter(m => m.confidence === "high" || m.confidence === "medium")
-            .filter(m => routeSample.some(([lon, lat]) => haversineKm(lat, lon, m.lat, m.lon) <= 50))
-            .slice(0, 5)
-            .map(m => ({
+        const nearby_news = [].map(m => ({
                 headline:      m.headline,
                 source:        m.source,
                 location_name: m.location,
@@ -6979,55 +6975,6 @@ export default function MapPage({
             .catch(() => {})
     }, [effectiveActive.ports, viewportBounds])  // eslint-disable-line
 
-    // ── AIS vessel tracking: poll every 30s when layer on OR Director Mode active ─
-    // Uses viewportBoundsRef (not viewportBounds state) so the interval does not
-    // restart on every map move — only when the toggle itself changes.
-    useEffect(() => {
-        if (!effectiveActive.aisVessels && !isDirectorMode) {
-            setAisVessels([])
-            setSelectedAisVessel(null)
-            if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null }
-            return
-        }
-        const fetchVessels = () => {
-            const b = viewportBoundsRef.current
-            const q = b ? `?bbox=${b.south.toFixed(4)},${b.west.toFixed(4)},${b.north.toFixed(4)},${b.east.toFixed(4)}` : ""
-            fetch(`${API}/api/ais/vessels${q}`)
-                .then(r => r.json())
-                .then(d => {
-                    setAisVessels(d.vessels || [])
-                    if (d.status) setAisStatus(d.status)
-                })
-                .catch(() => {})
-        }
-        fetchVessels()  // immediate fetch on toggle-on or director start
-        if (aisIntervalRef.current) clearInterval(aisIntervalRef.current)
-        aisIntervalRef.current = setInterval(fetchVessels, 30000)
-        return () => { if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null } }
-    }, [effectiveActive.aisVessels, isDirectorMode])  // eslint-disable-line
-
-    // ── Time Travel: load historical AIS vessel snapshot ─────────────────────
-    useEffect(() => {
-        if (!timeTravelTime) return
-        if (aisIntervalRef.current) { clearInterval(aisIntervalRef.current); aisIntervalRef.current = null }
-        const tok = localStorage.getItem("hw-auth-token")
-        const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
-        fetch(`${API}/api/history/snapshot?timestamp=${encodeURIComponent(timeTravelTime)}`, { headers })
-            .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                if (!data) return
-                setAisVessels(data.vessels.map(v => ({
-                    mmsi:           v.mmsi,
-                    name:           v.name,
-                    lat:            v.lat,
-                    lon:            v.lon,
-                    sog:            v.speed,
-                    cog:            v.heading,
-                    ship_type_text: v.ship_type_text,
-                })))
-            })
-            .catch(() => {})
-    }, [timeTravelTime])  // eslint-disable-line
 
     // ── Pinned anomaly alert markers: poll every 60s ──────────────────────────
     useEffect(() => {
@@ -7555,108 +7502,6 @@ export default function MapPage({
         }
     }, [isDirectorMode, dirPlacedLocations])  // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── News conflicts: fetch all markers globally, refresh every 15 min ─────────
-    // Also fetches when isDirectorMode is true so Director show_event works
-    useEffect(() => {
-        if ((!effectiveActive.newsConflicts && !isDirectorMode) || !viewportBounds) {
-            setNewsConflictsData([])
-            setNewsConflictsCount(0)
-            return
-        }
-
-        const normalizeMarkers = (items) => (
-            (Array.isArray(items) ? items : [])
-                .map((item) => {
-                    const lat = Number(item?.lat)
-                    const lon = Number(item?.lon)
-                    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
-                    return {
-                        ...item,
-                        lat,
-                        lon,
-                        headline: item?.headline || item?.title || "Untitled",
-                        location: item?.location || item?.location_name || "Unknown location",
-                        confidence: item?.confidence || "medium",
-                    }
-                })
-                .filter(Boolean)
-        )
-
-        const fetchAll = async () => {
-            try {
-                const { south, west, north, east, zoom: viewportZoom } = viewportBounds
-                console.info("[news-conflicts/request]", {
-                    south, west, north, east, zoom: viewportZoom || zoom,
-                })
-                const params = new URLSearchParams({
-                    south: String(south),
-                    west: String(west),
-                    north: String(north),
-                    east: String(east),
-                })
-                const primaryUrl = `${API}/news-conflicts?${params.toString()}`
-                const fallbackUrl = `${API}/news-geocoded`
-                const [r1, r2] = await Promise.allSettled([
-                    fetch(primaryUrl).then(r => r.json()),
-                    fetch(fallbackUrl).then(r => r.json()),
-                ])
-
-                const d1 = r1.status === "fulfilled" ? r1.value : {}
-                const d2 = r2.status === "fulfilled" ? r2.value : {}
-
-                const raw1 = d1.markers || d1.articles || []
-                const raw2 = d2.articles || d2.markers || []
-
-                const first1 = raw1[0] || {}
-                const first2 = raw2[0] || {}
-                const fallback = normalizeMarkers(raw2).filter(m => pointInBounds(m, viewportBounds))
-                const combined = [...normalizeMarkers(raw1), ...fallback]
-                const seen = new Set()
-                const deduped = combined.filter((m) => {
-                    const key = m.url || `${m.headline}_${m.lat.toFixed(4)}_${m.lon.toFixed(4)}`
-                    if (seen.has(key)) return false
-                    seen.add(key)
-                    return true
-                })
-
-                console.info("[news-conflicts/fetch]", { count: deduped.length })
-                setNewsConflictsData(prev => {
-                    const existingKeys = new Set(prev.map(m =>
-                        m.url || `${m.headline}_${(m.lat || 0).toFixed(3)}_${(m.lon || 0).toFixed(3)}`
-                    ))
-                    const brandNew = deduped.filter(m => {
-                        const key = m.url || `${m.headline}_${(m.lat || 0).toFixed(3)}_${(m.lon || 0).toFixed(3)}`
-                        return !existingKeys.has(key)
-                    })
-                    if (brandNew.length > 0 && prev.length > 0) {
-                        const hasCritical = brandNew.some(m => m.severity_tier === "critical")
-                        const hasSignificant = brandNew.some(m => m.severity_tier === "significant")
-                        const topRegion = brandNew[0]?.location?.split(",").slice(-1)[0]?.trim() || "region"
-                        window.dispatchEvent(new CustomEvent("akili:new-events", {
-                            detail: {
-                                count: brandNew.length,
-                                severity: hasCritical ? "critical" : hasSignificant ? "significant" : "elevated",
-                                region: topRegion,
-                                items: brandNew.slice(0, 3),
-                            },
-                        }))
-                    }
-                    const combined = [...prev, ...brandNew]
-                    if (combined.length > 200) {
-                        combined.sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0))
-                        return combined.slice(0, 200)
-                    }
-                    return combined
-                })
-                setNewsConflictsCount(deduped.length)
-            } catch {
-                // keep existing markers on fetch error
-            }
-        }
-        fetchAll()
-        const iv = setInterval(fetchAll, 30 * 1000)
-        return () => clearInterval(iv)
-    }, [effectiveActive.newsConflicts, isDirectorMode, viewportBounds, zoom])
 
     // ── Unified Intelligence Feed — two-phase: fast preload then full set ────────
     useEffect(() => {
@@ -7717,11 +7562,6 @@ export default function MapPage({
         return () => { cancelled = true; clearInterval(iv) }
     }, [effectiveActive.unifiedEvents])
 
-    // ── Pipeline lines — use hardcoded dataset (remote GOPIT sources are dead) ──
-    useEffect(() => {
-        if (effectiveActive.pipelines) setPipelineGeoData(_HARDCODED_PIPELINES)
-        else setPipelineGeoData([])
-    }, [effectiveActive.pipelines])
 
     // ── Unified events render — imperative Leaflet layerGroup ─────────────────
     useEffect(() => {
@@ -8797,10 +8637,7 @@ export default function MapPage({
             )
     ), [effectiveActive.earthquakeEvents, surveillanceAlerts])
 
-    const piracyAlertItems = useMemo(() => {
-        if (!effectiveActive.imbPiracy) return []
-        return [...newsConflictsData].filter(isPiracySignal)
-    }, [effectiveActive.imbPiracy, newsConflictsData, isPiracySignal])
+    const piracyAlertItems = []
 
     const visibleSurfaceItems = useMemo(() => (
         (surfaceItems || []).filter(item => pointInBounds(item, viewportBounds))
@@ -8810,10 +8647,8 @@ export default function MapPage({
         if (!effectiveActive.heatmap) return []
         const merged = [
             ...visibleSurfaceItems,
-            ...(effectiveActive.newsConflicts ? newsConflictsData : []),
             ...missileAlertItems,
             ...earthquakeAlertItems,
-            ...piracyAlertItems,
         ]
         const seen = new Set()
         const hasRegionFilter = focusRegions.length > 0 && !focusRegions.includes("Global")
@@ -8833,7 +8668,7 @@ export default function MapPage({
             }
             return true
         })
-    }, [effectiveActive.heatmap, effectiveActive.newsConflicts, visibleSurfaceItems, newsConflictsData, missileAlertItems, earthquakeAlertItems, piracyAlertItems, focusRegions])
+    }, [effectiveActive.heatmap, visibleSurfaceItems, missileAlertItems, earthquakeAlertItems, focusRegions])
 
     const clusterMarkers = useMemo(() => {
         const clickableItems = visibleSurfaceItems.filter(item => item.source_type !== "conflict_zone")
@@ -8883,7 +8718,7 @@ export default function MapPage({
 
 
     const surveillanceMarkers = useMemo(() => {
-        const items = [...missileAlertItems, ...earthquakeAlertItems, ...piracyAlertItems]
+        const items = [...missileAlertItems, ...earthquakeAlertItems]
         if (!items.length || zoom < 6) return null
 
         const seen = new Set()
@@ -8920,7 +8755,7 @@ export default function MapPage({
                 </Marker>
             )
         })
-    }, [zoom, missileAlertItems, earthquakeAlertItems, piracyAlertItems])
+    }, [zoom, missileAlertItems, earthquakeAlertItems])
 
 
     // ── Conflict cluster theater polygons — intentionally disabled ───────────
@@ -9104,76 +8939,6 @@ export default function MapPage({
                lon >= west  - lonBuf && lon <= east  + lonBuf
     }, [viewportBounds])
 
-    const osmInfraMarkers = useMemo(() => (
-        Object.entries(infraData).flatMap(([category, features]) => (
-            (features || []).map((feature, i) => {
-                const pos = featureLatLon(feature)
-                if (!pos || !vpFilter(pos[0], pos[1])) return null
-                const props = feature.properties || {}
-                return (
-                    <Marker
-                        key={`infra-${category}-${props.id || props.name || i}`}
-                        position={pos}
-                        pane="infra-icons"
-                        icon={makeInfraIcon(category, props.name || props.operator || category)}
-                        eventHandlers={{ click: () => { setInfraSelected({ feature, category }); setDsSelected(null); setImpactEvent(null) } }}
-                    >
-                        <Tooltip direction="top" offset={[0, -14]}>
-                            <span style={{ fontSize: 10 }}>{props.name || props.operator || INFRA_CATS[category]?.label || category}</span>
-                        </Tooltip>
-                    </Marker>
-                )
-            })
-        ))
-    ), [infraData, vpFilter])
-
-    const airportMarkers = useMemo(() => (
-        !effectiveActive.airports || !dsActive.airport ? null : dsData.airport.filter(item => vpFilter(item.lat, item.lon)).map((item, i) => (
-            <Marker
-                key={`ap-${item.icao || i}`}
-                position={[item.lat, item.lon]}
-                pane="infra-icons"
-                icon={makeAirportIcon(item.name)}
-                eventHandlers={{ click: () => { setDsSelected({ ...item, _id: `ap-${i}` }); setInfraSelected(null); setImpactEvent(null) } }}
-            >
-                <Tooltip direction="top" offset={[0, -14]}>
-                    <span style={{ fontSize: 10 }}>{item.icao} · {item.name}</span>
-                </Tooltip>
-            </Marker>
-        ))
-    ), [effectiveActive.airports, dsActive.airport, dsData.airport, vpFilter])
-
-    const portMarkers = useMemo(() => (
-        !effectiveActive.ports ? null : portsData.filter(item => vpFilter(item.lat, item.lon)).slice(0, 300).map((item, i) => (
-            <Marker
-                key={`pt-${item.name || i}`}
-                position={[item.lat, item.lon]}
-                pane="infra-icons"
-                icon={makePortIcon(item.name)}
-                eventHandlers={{ click: () => { setPortSelected({ ...item, _id: `pt-${i}` }); setDsSelected(null); setInfraSelected(null); setImpactEvent(null) } }}
-            >
-                <Tooltip direction="top" offset={[0, -12]}>
-                    <span style={{ fontSize: 10 }}>{item.name}{item.country ? ` · ${item.country}` : ""}</span>
-                </Tooltip>
-            </Marker>
-        ))
-    ), [effectiveActive.ports, portsData, vpFilter])
-
-    const powerPlantMarkers = useMemo(() => (
-        !effectiveActive.powerPlants || !dsActive.power ? null : dsData.power.filter(item => vpFilter(item.lat, item.lon)).map((item, i) => (
-            <Marker
-                key={`pw-${item.name || i}`}
-                position={[item.lat, item.lon]}
-                pane="infra-icons"
-                icon={makePowerIcon(item.name, item.primary_fuel)}
-                eventHandlers={{ click: () => { setDsSelected({ ...item, _id: `pw-${i}` }); setInfraSelected(null); setImpactEvent(null) } }}
-            >
-                <Tooltip direction="top" offset={[0, -14]}>
-                    <span style={{ fontSize: 10 }}>{item.name} · {item.primary_fuel}{item.capacity_mw ? ` · ${item.capacity_mw}MW` : ""}</span>
-                </Tooltip>
-            </Marker>
-        ))
-    ), [effectiveActive.powerPlants, dsActive.power, dsData.power, vpFilter])
 
     return (
         <div
@@ -9423,55 +9188,7 @@ export default function MapPage({
                     )
                 })}
 
-                {/* ── Pipeline lines ───────────────────────────────────────── */}
-                {effectiveActive.pipelines && pipelineGeoData.map((f, fi) => {
-                    if (!f.geometry) return null
-                    const p      = f.properties || {}
-                    const t      = (p.type || "").toLowerCase()
-                    const color  = t.includes("oil") ? "#d97706" : t.includes("lng") ? "#7c3aed" : "#0d9488"
-                    const weight = t.includes("lng") ? 1.5 : 2
-                    const dashed = (p.status || "").toLowerCase().includes("proposed")
-                    const lines  = f.geometry.type === "MultiLineString" ? f.geometry.coordinates
-                                 : f.geometry.type === "LineString"      ? [f.geometry.coordinates]
-                                 : null
-                    if (!lines) return null
-                    return lines.map((line, li) => (
-                        <Polyline
-                            key={`pipe-${fi}-${li}`}
-                            positions={line.map(([lng, lat]) => [lat, lng])}
-                            pathOptions={{ color, weight, opacity: 0.75, dashArray: dashed ? "8 5" : undefined }}
-                        >
-                            <Tooltip sticky>
-                                <div style={{ background:"rgba(14,20,32,0.9)", padding:"8px 10px", border:"1px solid rgba(255,255,255,0.1)", color:"#e8edf2", fontSize:12, borderRadius:4, maxWidth:260 }}>
-                                    <strong style={{ color }}>{p.name || "Pipeline"}</strong>
-                                    {p.operator && <div style={{ fontSize:11, color:"rgba(232,237,242,0.6)", marginTop:2 }}>{p.operator}</div>}
-                                    <div style={{ fontSize:10, color:"rgba(232,237,242,0.5)", marginTop:3 }}>
-                                        {[p.type, p.status, p.countries].filter(Boolean).join(" · ")}
-                                    </div>
-                                </div>
-                            </Tooltip>
-                        </Polyline>
-                    ))
-                })}
-
                 {/* Shipping lanes rendered imperatively via useEffect + shippingLanesLayerRef */}
-
-                {/* ── Deployments layer — managed via vanilla Leaflet in useEffect above ── */}
-
-                {/* ── ADS-B Aircraft ────────────────────────────────────────── */}
-                {/* Isolated child: aircraft state + polling live in AircraftLayer
-                    so setAircraft() ticks don't re-render MapPage or conflict markers. */}
-                <AircraftLayer
-                    visible={effectiveActive.adsb}
-                    showLabels={effectiveActive.adsbLabels}
-                    refreshRate={adsbRefreshRate}
-                    boundsRef={viewportBoundsRef}
-                    onCount={setAdsbCount}
-                    polling={adsbLive || (isDirectorMode && !!dirAC?.size)}
-                    activateKey={adsbActivateKey}
-                    directorAC={isDirectorMode ? dirAC : null}
-                    timeTravelTime={timeTravelTime}
-                />
 
                 {/* ── Route planner — origin, dest pins + polyline ──────────── */}
                 {effectiveActive.route && routeOrigin && (
@@ -9503,53 +9220,6 @@ export default function MapPage({
                     />
                 )}
 
-                {/* ── OSM infrastructure markers ──────────────────────────── */}
-                {osmInfraMarkers}
-
-                {/* ── Dataset infrastructure markers ──────────────────────── */}
-                {airportMarkers}
-                {portMarkers}
-                {powerPlantMarkers}
-
-                {/* ── AIS live vessel markers ──────────────────────────────── */}
-                {(isDirectorMode ? false : effectiveActive.aisVessels) && (() => {
-                    const vpVessels = aisVessels.filter(v => v.lat != null && v.lon != null && vpFilter(v.lat, v.lon))
-                    const lodVessels = zoom <= 4
-                        ? vpVessels.filter(v => (v.ship_type || "").toLowerCase().includes("military") || (v.ship_type || "").toLowerCase().includes("naval"))
-                        : zoom <= 6
-                            ? vpVessels.filter(v => { const t = (v.ship_type || "").toLowerCase(); return t.includes("military") || t.includes("naval") || t.includes("tanker") || t.includes("cargo") || t.includes("container") })
-                            : vpVessels
-                    const milVessels = lodVessels.filter(v => { const t = (v.ship_type || "").toLowerCase(); return t.includes("military") || t.includes("naval") })
-                    const otherVessels = lodVessels.filter(v => { const t = (v.ship_type || "").toLowerCase(); return !t.includes("military") && !t.includes("naval") })
-                    const cappedVessels = lodVessels.length > 500 ? [...milVessels, ...otherVessels].slice(0, 500) : lodVessels
-                    return cappedVessels.map((v, i) => (
-                        <VesselMarkerItem
-                            key={`ais-${v.mmsi || i}`}
-                            v={v}
-                            zoom={zoom}
-                            isSelected={selectedAisVessel?.mmsi === v.mmsi}
-                            onSelect={setSelectedAisVessel}
-                            onClose={() => setSelectedAisVessel(null)}
-                        />
-                    ))
-                })()}
-
-                {/* ── Director Mode: individual vessel markers ──────────────── */}
-                {isDirectorMode && dirVessel && dirVessel.size > 0 && aisVessels.map((v, i) => {
-                    const mmsi = String(v.mmsi || "")
-                    if (!dirVessel.has(mmsi)) return null
-                    if (v.lat == null || v.lon == null) return null
-                    return (
-                        <VesselMarkerItem
-                            key={`dir-ais-${mmsi || i}`}
-                            v={v}
-                            zoom={zoom}
-                            isSelected={selectedAisVessel?.mmsi === v.mmsi}
-                            onSelect={setSelectedAisVessel}
-                            onClose={() => setSelectedAisVessel(null)}
-                        />
-                    )
-                })}
 
                 {/* ── Chokepoints layer — polygon outlines, toggled via layers panel ── */}
                 {!isDirectorMode && !effectiveActive.chokepoints && profileChokepoints.map((cp, i) => {
@@ -9630,56 +9300,6 @@ export default function MapPage({
                     )
                 })}
 
-                {/* ── News conflict markers — click opens EventDetailPanel ─────── */}
-                {/* Normal mode: all news conflicts when layer is on */}
-                {!isDirectorMode && effectiveActive.newsConflicts && newsConflictsData.map((m, i) => {
-                    if (!vpFilter(m.lat, m.lon)) return null
-                    const showNewsLabel = zoom >= 7
-                    const html = getNewsMarkerHTML(m, showNewsLabel)
-                    const sz = m.severity_tier === "critical" ? 32 : (m.severity_tier === "high" || m.severity_tier === "significant") ? 26 : (m.severity_tier === "medium" || m.severity_tier === "elevated") ? 20 : 16
-                    const hitSz = sz + 8
-                    const icon = L.divIcon({ html, className: "", iconSize: [hitSz, hitSz], iconAnchor: [hitSz / 2, hitSz / 2] })
-                    return (
-                        <Marker
-                            key={i}
-                            position={[m.lat, m.lon]}
-                            pane="event-icons"
-                            icon={icon}
-                            eventHandlers={{ click: () => { setSelectedEvent(m); setImpactEvent(null); setInfraSelected(null) } }}
-                        >
-                            {!showNewsLabel && (
-                                <Tooltip direction="top" offset={[0, -10]}>
-                                    <span style={{ fontSize: 10 }}>{m.headline?.length > 80 ? m.headline.slice(0, 80) + "…" : m.headline}</span>
-                                </Tooltip>
-                            )}
-                        </Marker>
-                    )
-                })}
-
-                {/* ── Director Mode: individual event markers ──────────────── */}
-                {isDirectorMode && dirEvt && dirEvt.size > 0 && newsConflictsData.map((m, i) => {
-                    const eventId = m.id || m.url || ""
-                    if (!dirEvt.has(eventId)) return null
-                    if (!m.lat || !m.lon) return null
-                    const showNewsLabel = zoom >= 7
-                    const html = getNewsMarkerHTML(m, showNewsLabel)
-                    const sz = m.severity_tier === "critical" ? 32 : (m.severity_tier === "high" || m.severity_tier === "significant") ? 26 : 20
-                    const hitSz = sz + 8
-                    const icon = L.divIcon({ html: `<div class="director-marker-enter">${html}</div>`, className: "", iconSize: [hitSz, hitSz], iconAnchor: [hitSz / 2, hitSz / 2] })
-                    return (
-                        <Marker
-                            key={`dir-evt-${eventId || i}`}
-                            position={[m.lat, m.lon]}
-                            pane="event-icons"
-                            icon={icon}
-                            eventHandlers={{ click: () => { setSelectedEvent(m); setImpactEvent(null); setInfraSelected(null) } }}
-                        >
-                            <Tooltip direction="top" offset={[0, -10]}>
-                                <span style={{ fontSize: 10 }}>{m.headline?.length > 80 ? m.headline.slice(0, 80) + "…" : m.headline}</span>
-                            </Tooltip>
-                        </Marker>
-                    )
-                })}
 
                 {/* ── POI profile markers ───────────────────────────────────── */}
                 {effectiveActive.poi && poiData.map((poi) => (
@@ -10474,53 +10094,7 @@ export default function MapPage({
                 <LayersPanel
                     active={active}
                     onToggle={toggle}
-                    infraActive={infraActive}
-                    onInfraToggle={toggleInfra}
-                    zoom={zoom}
                     onClose={onLayersPanelClose}
-                    currentUser={currentUser}
-                    sourceStatus={sourceStatus}
-                    adsbLive={adsbLive}
-                    adsbCount={adsbCount}
-                    adsbRefreshRate={adsbRefreshRate}
-                    adsbSliderVal={adsbSliderVal}
-                    onAdsbSliderChange={setAdsbSliderVal}
-                    onAdsbActivate={activateAdsb}
-                    onAdsbStop={stopAdsb}
-                    adsbLabels={effectiveActive.adsbLabels}
-                    onAdsbLabelsToggle={() => toggle("adsbLabels")}
-                    routeInfo={routeInfo ? {
-                        calculating: routeLoading,
-                        distance: routeInfo.distance_km != null ? `${routeInfo.distance_km.toFixed(0)} km` : null,
-                        duration: routeInfo.duration_min != null ? `${Math.round(routeInfo.duration_min)} min` : null,
-                    } : routeLoading ? { calculating: true } : null}
-                    unifiedEventsCount={filteredUnifiedEvents.length}
-                    conflictZoneCount={0}
-                    conflictZonesLoading={false}
-                    newsConflictCount={newsConflictsData.length}
-                    newsConflictTotal={newsConflictsCount}
-                    infraLoading={infraLoading}
-                    infraData={infraData}
-                    poiCount={poiData.length}
-                    deploymentsCount={deploymentsData ? (
-                        (deploymentsData.carrier_strike_groups?.length || 0) +
-                        (deploymentsData.amphibious_ready_groups?.length || 0) +
-                        (deploymentsData.notable_surface_units?.length || 0)
-                    ) : 0}
-                    onEditDeployments={() => {
-                        const json = JSON.stringify(deploymentsData, null, 2)
-                        const blob = new Blob([json], { type: "application/json" })
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement("a")
-                        a.href = url; a.download = "deployments.json"; a.click()
-                        URL.revokeObjectURL(url)
-                    }}
-                    manualOverrides={manualOverrides}
-                    aisStatus={aisStatus}
-                    aisVesselCount={aisVessels.length}
-                    notificationsEnabled={notificationsEnabled}
-                    onNotificationsToggle={toggleNotifications}
-                    oimUnavailable={oimUnavailable}
                     viewMode={viewMode}
                 />,
                 document.body
