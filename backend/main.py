@@ -54,7 +54,6 @@ import anthropic
 import feedparser
 from email.utils import parsedate_to_datetime
 
-from tanzania_context import get_context_for_prompt, get_minimal_context, get_full_context
 from rss_feeds import ADDITIONAL_SCAN_FEEDS, RSS_FEED_META, LOCAL_CITY_FEEDS
 
 # ── Web push (optional — gracefully disabled if pywebpush not installed) ──────
@@ -1081,7 +1080,7 @@ async def analyse_event(payload: dict):
             f"say so directly in one sentence rather than producing a full brief.\n\n"
         )
 
-    context_block = profile_context + mission_context + (get_context_for_prompt() + "\n\n" if contextual else "")
+    context_block = profile_context + mission_context
 
     _event_data = (
         f"- Date: {event.get('date')}\n"
@@ -1349,7 +1348,7 @@ async def analyse_news_marker(payload: dict):
             f"relevant to this objective. If this event is irrelevant to the mission, "
             f"say so directly in one sentence rather than producing a full brief.\n\n"
         )
-    context_block = profile_context + mission_context + (get_minimal_context() + "\n\n" if contextual else "")
+    context_block = profile_context + mission_context
 
     _news_data = (
         f"Headline: {marker.get('headline', '')}\n"
@@ -4529,7 +4528,7 @@ def analyse_route(body: dict = Body(...)):
             f"relevant to this objective. If this route is irrelevant to the mission, "
             f"say so directly in one sentence rather than producing a full brief.\n\n"
         )
-    context_block = _profile_ctx + _mission_context + (get_context_for_prompt(sections=["security", "foreign_policy", "current_context_2025", "analytical_framework"]) + "\n\n" if contextual else "")
+    context_block = _profile_ctx + _mission_context
 
     _route_data = (
         f"Distance: {distance_km}km | Estimated travel time: {duration_min} minutes\n"
@@ -10081,7 +10080,7 @@ async def mission_chat(request: Request):
     if mission_brief:
         system += f"CURRENT MISSION:\n{mission_brief}\n\n"
     if contextual:
-        system += get_minimal_context()
+        pass
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -11223,10 +11222,7 @@ async def detail_analyse_surface_item(payload: dict):
         f"{airport_ctx}{adsb_ctx}"
     )
 
-    try:
-        region_ctx = get_minimal_context()
-    except Exception:
-        region_ctx = ""
+    region_ctx = ""
 
     try:
         response = client.messages.create(
