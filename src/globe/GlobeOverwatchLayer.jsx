@@ -9,15 +9,24 @@ import {
 } from "cesium"
 
 const CLASS_COLORS = {
-    vessel:   "#5BC97F",
-    ship:     "#5BC97F",
-    aircraft: "#4A9EE0",
-    plane:    "#4A9EE0",
-    vehicle:  "#E8B23A",
-    car:      "#E8B23A",
-    truck:    "#E8B23A",
-    building: "#9AA4B5",
-    unknown:  "#666666",
+    vessel:               "#5BC97F",
+    ship:                 "#5BC97F",
+    harbor:               "#5BC97F",
+    aircraft:             "#4A9EE0",
+    plane:                "#4A9EE0",
+    helicopter:           "#4A9EE0",
+    "helicopter-pad":     "#4A9EE0",
+    vehicle:              "#E8B23A",
+    "large-vehicle":      "#E8B23A",
+    "small-vehicle":      "#E8B23A",
+    car:                  "#E8B23A",
+    truck:                "#E8B23A",
+    "storage-tank":       "#E8B23A",
+    building:             "#9AA4B5",
+    bridge:               "#9AA4B5",
+    roundabout:           "#9AA4B5",
+    "swimming-pool":      "#22d3ee",
+    unknown:              "#666666",
 }
 
 function colorForClass(cls) {
@@ -53,6 +62,14 @@ export default function GlobeOverwatchLayer({ enabled, detections = [] }) {
                 const lons = det.polygon.map(v => v[1])
                 south = Math.min(...lats); north = Math.max(...lats)
                 west  = Math.min(...lons); east  = Math.max(...lons)
+            } else if (det.corners?.length >= 3) {
+                const lats = det.corners.map(v => v[0])
+                const lons = det.corners.map(v => v[1])
+                south = Math.min(...lats); north = Math.max(...lats)
+                west  = Math.min(...lons); east  = Math.max(...lons)
+            } else if (det.center?.length === 2 && det.north != null) {
+                // Explicit NSEW bounds on the detection itself
+                north = det.north; south = det.south; east = det.east; west = det.west
             } else {
                 return
             }

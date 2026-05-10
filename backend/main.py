@@ -12372,15 +12372,37 @@ _FORGE_SCAN_SITES = [
     {"name": "Karachi Port",        "lat": 24.84, "lon": 67.02},
 ]
 
+_FORGE_CLASS_COLORS = {
+    "plane":              "#4A9EE0",
+    "helicopter":         "#4A9EE0",
+    "helicopter-pad":     "#4A9EE0",
+    "ship":               "#5BC97F",
+    "harbor":             "#5BC97F",
+    "storage-tank":       "#E8B23A",
+    "large-vehicle":      "#E8B23A",
+    "small-vehicle":      "#E8B23A",
+    "vehicle":            "#E8B23A",
+    "bridge":             "#9AA4B5",
+    "roundabout":         "#9AA4B5",
+    "baseball-diamond":   "#9AA4B5",
+    "tennis-court":       "#9AA4B5",
+    "basketball-court":   "#9AA4B5",
+    "ground-track-field": "#9AA4B5",
+    "soccer-ball-field":  "#9AA4B5",
+    "swimming-pool":      "#22d3ee",
+}
+
 
 def _run_batch_scan_for_site(site, zoom=15):
-    """Fetch satellite tiles for a site, run ONNX inference (or mock), return detections with base64 crops."""
+    """Fetch satellite tiles, run ONNX (or mock), return detections with crop_image / full_image / bbox overlays."""
     import random, base64, io
-    from PIL import Image, ImageDraw
+    from PIL import Image
 
     lat, lon = float(site["lat"]), float(site["lon"])
     pad = 0.012  # ~1.2 km radius
-    TILE_SZ = 256
+    TILE_SZ   = 256
+    CROP_SIZE = 160  # px crop thumbnail
+    MAX_FULL  = 512  # max dimension of full_image
 
     x_min = int(_ow_lon_to_tile_x_frac(lon - pad, zoom))
     x_max = int(_ow_lon_to_tile_x_frac(lon + pad, zoom))
@@ -12406,75 +12428,95 @@ def _run_batch_scan_for_site(site, zoom=15):
     def px_lat(py): return float((lat + pad) - (py / img_h) * (2 * pad))
     def px_lon(px_): return float((lon - pad) + (px_ / img_w) * (2 * pad))
 
+    try:
+        _rf = Image.Resampling.LANCZOS
+    except AttributeError:
+        _rf = Image.ANTIALIAS  # Pillow < 9
+
+    # Encode full stitched image at reduced size
+    full_thumb = stitched.copy()
+    full_thumb.thumbnail((MAX_FULL, MAX_FULL), _rf)
+    _fbuf = io.BytesIO()
+    full_thumb.save(_fbuf, "JPEG", quality=72)
+    full_b64 = base64.b64encode(_fbuf.getvalue()).decode()
+    del full_thumb, _fbuf
+    full_w = min(img_w, MAX_FULL)
+    full_h = min(img_h, MAX_FULL)
+    scale_x = full_w / img_w
+    scale_y = full_h / img_h
+
+    def make_crop_b64(x1, y1, x2, y2, px=28):
+        cx1 = max(0, x1 - px);  cy1 = max(0, y1 - px)
+        cx2 = min(img_w, x2 + px); cy2 = min(img_h, y2 + px)
+        crop = stitched.crop((cx1, cy1, cx2, cy2)).resize((CROP_SIZE, CROP_SIZE), _rf)
+        buf = io.BytesIO(); crop.save(buf, "JPEG", quality=75)
+        cw = cx2 - cx1; ch = cy2 - cy1
+        box = {
+            "x": round((x1 - cx1) / cw * 100, 1),
+            "y": round((y1 - cy1) / ch * 100, 1),
+            "w": round((x2 - x1)  / cw * 100, 1),
+            "h": round((y2 - y1)  / ch * 100, 1),
+        }
+        return base64.b64encode(buf.getvalue()).decode(), box
+
     session = _get_ort_session("dota")
-    detections_out = []
-    pad_px = 24
+    raw_dets = []  # list of (det, [x1,y1,x2,y2])
 
     if session is not None:
         bounds = {"north": lat + pad, "south": lat - pad, "east": lon + pad, "west": lon - pad}
         result = _run_inference_on_image(stitched, bounds, 0.35, False, "dota", keep_px=True)
         for det in result.get("detections", []):
             px_box = det.pop("_px", None)
-            if px_box:
-                x1, y1, x2, y2 = [int(v) for v in px_box]
-                crop = stitched.crop((max(0, x1 - pad_px), max(0, y1 - pad_px),
-                                      min(img_w, x2 + pad_px), min(img_h, y2 + pad_px)))
-            else:
+            if not px_box:
                 c = det.get("center", [lat, lon])
                 cx = int((c[1] - (lon - pad)) / (2 * pad) * img_w)
                 cy = int(((lat + pad) - c[0]) / (2 * pad) * img_h)
-                crop = stitched.crop((max(0, cx - 64), max(0, cy - 64),
-                                      min(img_w, cx + 64), min(img_h, cy + 64)))
-            try:
-                resize_filter = Image.Resampling.LANCZOS
-            except AttributeError:
-                resize_filter = Image.ANTIALIAS  # Pillow < 9
-            crop = crop.resize((128, 128), resize_filter)
-            buf = io.BytesIO()
-            crop.save(buf, "JPEG", quality=72)
-            det["crop_b64"] = base64.b64encode(buf.getvalue()).decode()
-            det["id"] = str(uuid.uuid4())
-            det["site"] = site["name"]
-            detections_out.append(det)
+                px_box = [cx - 32, cy - 32, cx + 32, cy + 32]
+            raw_dets.append((det, [int(v) for v in px_box]))
     else:
-        # Mock mode — random detections with real Esri satellite imagery crops
         MOCK_CLASSES = ["plane", "large-vehicle", "vehicle", "ship", "storage-tank", "helicopter-pad"]
         for _ in range(random.randint(2, 6)):
             cx = random.randint(64, img_w - 64)
             cy = random.randint(64, img_h - 64)
-            w  = random.randint(30, 70)
-            h  = random.randint(30, 70)
-            x1 = max(0, cx - w // 2)
-            y1 = max(0, cy - h // 2)
-            x2 = min(img_w, cx + w // 2)
-            y2 = min(img_h, cy + h // 2)
-            crop = stitched.crop((max(0, x1 - pad_px), max(0, y1 - pad_px),
-                                   min(img_w, x2 + pad_px), min(img_h, y2 + pad_px)))
-            draw_img = crop.copy()
-            draw = ImageDraw.Draw(draw_img)
-            cw, ch = draw_img.size
-            draw.rectangle([pad_px - 2, pad_px - 2, cw - pad_px + 2, ch - pad_px + 2],
-                           outline=(255, 200, 0), width=2)
-            try:
-                resize_filter = Image.Resampling.LANCZOS
-            except AttributeError:
-                resize_filter = Image.ANTIALIAS
-            draw_img = draw_img.resize((128, 128), resize_filter)
-            buf = io.BytesIO()
-            draw_img.save(buf, "JPEG", quality=72)
-            detections_out.append({
-                "id":          str(uuid.uuid4()),
-                "class":       random.choice(MOCK_CLASSES),
-                "category":    "Object",
-                "subcategory": "Unknown",
-                "confidence":  round(random.uniform(0.52, 0.91), 2),
-                "center":      [round(px_lat(cy), 5), round(px_lon(cx), 5)],
-                "lat":         round(px_lat(cy), 5),
-                "lon":         round(px_lon(cx), 5),
-                "site":        site["name"],
-                "mock":        True,
-                "crop_b64":    base64.b64encode(buf.getvalue()).decode(),
-            })
+            w  = random.randint(28, 68); h = random.randint(28, 68)
+            cls = random.choice(MOCK_CLASSES)
+            raw_dets.append(({
+                "class": cls, "category": "Object", "subcategory": "Unknown",
+                "confidence": round(random.uniform(0.52, 0.91), 2),
+                "center": [round(px_lat(cy), 5), round(px_lon(cx), 5)],
+                "lat": round(px_lat(cy), 5), "lon": round(px_lon(cx), 5),
+                "mock": True,
+            }, [max(0, cx-w//2), max(0, cy-h//2), min(img_w, cx+w//2), min(img_h, cy+h//2)]))
+
+    # Build all_detections as percentage positions in the (possibly downscaled) full_image
+    all_dets_pct = []
+    for det, (x1, y1, x2, y2) in raw_dets:
+        color = _FORGE_CLASS_COLORS.get((det.get("class") or "").lower(), "#38bdf8")
+        all_dets_pct.append({
+            "label":      det.get("class", "unknown"),
+            "confidence": det.get("confidence", 0),
+            "x_pct":      round(x1 * scale_x / full_w * 100, 1),
+            "y_pct":      round(y1 * scale_y / full_h * 100, 1),
+            "w_pct":      round((x2 - x1) * scale_x / full_w * 100, 1),
+            "h_pct":      round((y2 - y1) * scale_y / full_h * 100, 1),
+            "color":      color,
+        })
+
+    detections_out = []
+    for det, (x1, y1, x2, y2) in raw_dets:
+        cls_name = (det.get("class") or "unknown").lower()
+        color    = _FORGE_CLASS_COLORS.get(cls_name, "#38bdf8")
+        crop_b64, box_in_crop = make_crop_b64(x1, y1, x2, y2)
+        det.update({
+            "id":             str(uuid.uuid4()),
+            "site":           site["name"],
+            "crop_image":     crop_b64,
+            "full_image":     full_b64,
+            "box_in_crop":    box_in_crop,
+            "all_detections": all_dets_pct,
+            "color":          color,
+        })
+        detections_out.append(det)
 
     import gc
     del stitched
@@ -12641,4 +12683,6 @@ async def forge_label_detection(request: Request, _user=Depends(require_admin_us
     return {"ok": True}
 
 
-
+@app.get("/api/forge/labels")
+def forge_get_labels(_user=Depends(require_admin_user)):
+    return {"labels": _forge_load("forge_labels.json")}
