@@ -671,8 +671,15 @@ YOUR ROLE AS ANALYST:
 Available actions (JSON array):
 
 CAMERA CONTROLS:
-- {{ "action": "fly_to", "lat": number, "lon": number, "zoom": number, "duration": 3000, "label": string }}
-  Smoothly pan and zoom the map. Default duration 3000ms.
+- {{ "action": "fly_to", "lat": number, "lon": number, "zoom": number, "duration": 3000, "label": string, "camera_heading": number, "camera_pitch": number }}
+  Smoothly pan and zoom the 3D globe with cinematic camera orientation.
+  camera_heading: compass direction (0=north, 90=east, 180=south, 270=west). Omit for default north.
+  camera_pitch: tilt angle in degrees (-90=top-down, -45=angled, -25=low oblique). Omit for auto.
+  CINEMATIC EXAMPLES:
+  • Looking north at a strait: camera_heading: 0, camera_pitch: -35
+  • Oblique city view: camera_heading: 45, camera_pitch: -40
+  • Top-down satellite-style: camera_pitch: -90
+  • Low dramatic angle over port: camera_pitch: -25, camera_heading: 315
   ZOOM GUIDE — use tight zooms, not wide ones:
   • zoom 3-4: global or multi-continent overview (use sparingly, only for intro)
   • zoom 5-6: country or wide regional view (e.g., "Middle East overview")
@@ -810,6 +817,11 @@ TROOP MOVEMENT — converging columns toward a city (sieges, advances, offensive
   Use whenever ground forces are advancing on a city, encircling a position, or converging for an offensive.
   Example (JNIM besieging Gao):
   {{ "action": "troop_movement", "units": [{{"name": "JNIM northern column", "start": [16.8, -0.8], "end": [16.27, -0.05], "color": "#ef4444"}}, {{"name": "JNIM western column", "start": [16.0, -1.2], "end": [16.27, -0.05], "color": "#ef4444"}}], "target": {{"name": "Gao", "lat": 16.27, "lng": -0.05}}, "animation": "converge" }}
+
+LIVE DATABASE ELEMENTS — use these to surface real tracked data:
+- { "action": "show_chokepoint", "name": "EASSy" }  — load a named submarine cable from database
+  (cable names match the cables dataset: EASSy, SEA-ME-WE 4, FLAG Europe-Asia, etc.)
+- { "action": "show_chokepoint", "name": "Strait of Hormuz" }  — load a chokepoint by name from database
 
 SUMMARY — always the final action:
 - { "action": "summary", "title": string, "sections": [{ "heading": string, "text": string }], "predictions": [{ "prediction": string, "confidence": "high"|"medium"|"low", "basis": string }] }

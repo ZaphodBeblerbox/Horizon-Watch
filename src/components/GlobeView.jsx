@@ -14,8 +14,10 @@ import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
 import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
+import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
 import GlobeCityLabelsLayer     from "../globe/GlobeCityLabelsLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
+import GlobeDirectorLayer       from "../globe/GlobeDirectorLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -83,11 +85,15 @@ export default function GlobeView({
     aisHeatmapEnabled  = false,
     adsbHeatmapEnabled = false,
     heatmapHours     = 24,
-    // Overwatch ML detections
+    // Overwatch ML detections + draw mode
     overwatchEnabled    = false,
     overwatchDetections = [],
+    overwatchDrawActive = false,
+    onOverwatchBounds   = null,
     // Satellite imagery overlay (Sentinel-2)
     satelliteEnabled = false,
+    // Director Mode scene (null when inactive)
+    directorScene = null,
     // Data props (optional — GlobeView fetches internally when null)
     aisVessels:   externalAIS  = null,
     adsbAircraft: externalADSB = null,
@@ -330,6 +336,12 @@ export default function GlobeView({
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} />
+
+                {/* ── Overwatch draw mode: two-click rectangle selection on globe ── */}
+                <GlobeOverwatchDrawLayer active={overwatchDrawActive} onBounds={onOverwatchBounds} />
+
+                {/* ── Director Mode 3D rendering ──────────────────────────────── */}
+                <GlobeDirectorLayer scene={directorScene} />
 
                 <CameraFlyTo
                     destination={initialDestination}

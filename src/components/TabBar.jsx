@@ -42,7 +42,11 @@ function NewsIcon({ size }) {
     )
 }
 
-const TYPE_ICON = { map: MapIcon, poi: POIIcon, briefing: BriefingIcon, news: NewsIcon }
+function ForgeIcon({ size }) {
+    return <span style={{ fontSize: size * 0.85, lineHeight: 1 }}>⚒</span>
+}
+
+const TYPE_ICON = { map: MapIcon, poi: POIIcon, briefing: BriefingIcon, news: NewsIcon, forge: ForgeIcon }
 
 // ── TabBar ─────────────────────────────────────────────────────────────────────
 //

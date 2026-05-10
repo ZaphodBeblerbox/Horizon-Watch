@@ -3055,7 +3055,7 @@ async def director_submit(
             _DIRECTOR_JOBS[job_id]["status"]   = "complete"
             _DIRECTOR_JOBS[job_id]["result"]   = result
         except Exception as exc:
-            logger.error("[DIRECTOR] Background generation failed: %s", exc, exc_info=True)
+            print(f"[DIRECTOR] Background generation failed: {exc}")
             _DIRECTOR_JOBS[job_id]["status"] = "error"
             _DIRECTOR_JOBS[job_id]["error"]  = str(exc)
 
@@ -7732,9 +7732,9 @@ async def _global_adsb_cache_loop():
             stale = [k for k, v in list(_GLOBAL_ADSB_CACHE.items()) if v.get("last_seen", 0) < cutoff]
             for k in stale:
                 _GLOBAL_ADSB_CACHE.pop(k, None)
-            logger.debug("[ADSB-GLOBAL] %d aircraft tracked globally", len(_GLOBAL_ADSB_CACHE))
+            print(f"[ADSB-GLOBAL] {len(_GLOBAL_ADSB_CACHE)} aircraft tracked globally")
         except Exception as e:
-            logger.error("[ADSB-GLOBAL] loop error: %s", e)
+            print(f"[ADSB-GLOBAL] loop error: {e}")
         await asyncio.sleep(55)
 
 
@@ -8326,7 +8326,7 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     return result
 
 
-def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_key="dota"):
+def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_key="dota", keep_px=False):
     """Run tiled ONNX inference on a PIL Image cropped to `bounds`. Returns detection dict."""
     import numpy as np
     from PIL import Image
@@ -8463,6 +8463,9 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
                 "_px":         px_box,
             })
 
+    # Save pixel boxes before enhance/cleanup so keep_px can restore them
+    _px_saved = {id(d): d.get("_px") for d in detections} if keep_px else {}
+
     # ── Optional Claude enhance pass ──────────────────────────────────────────
     if enhance and detections:
         import base64 as _b64
@@ -8497,6 +8500,13 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
             for det in detections: det.pop("_px", None)
     else:
         for det in detections: det.pop("_px", None)
+
+    # Restore saved pixel boxes if requested
+    if keep_px:
+        for det in detections:
+            px = _px_saved.get(id(det))
+            if px is not None:
+                det["_px"] = px
 
     print(f"[overwatch] {len(detections)} detections (model={model_key}, conf≥{confidence})")
 
@@ -12204,6 +12214,431 @@ def api_deployments_put(payload: dict = Body(...)):
         return {"ok": True, "last_updated": payload.get("last_updated")}
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Forge — Intelligence Training Lab (admin-only)
+# Data stored as JSON files in DATA_DIR/forge/
+# ══════════════════════════════════════════════════════════════════════════════
+
+_FORGE_DIR = Path(DATA_DIR) / "forge"
+
+def _forge_load(filename: str) -> list:
+    path = _FORGE_DIR / filename
+    if not path.exists():
+        return []
+    try:
+        return _json.loads(path.read_text())
+    except Exception:
+        return []
+
+def _forge_save(filename: str, data: list):
+    _FORGE_DIR.mkdir(parents=True, exist_ok=True)
+    (_FORGE_DIR / filename).write_text(_json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@app.get("/api/forge/rules")
+def forge_get_rules(_user=Depends(require_admin_user)):
+    return {"rules": _forge_load("rules.json")}
+
+
+@app.post("/api/forge/rules")
+async def forge_create_rule(request: Request, _user=Depends(require_admin_user)):
+    body = await request.json()
+    rules = _forge_load("rules.json")
+    rule = {
+        "id":          str(uuid.uuid4()),
+        "name":        body.get("name", "Unnamed Rule"),
+        "source":      body.get("source", "AIS"),
+        "trigger_type": body.get("trigger_type", ""),
+        "description": body.get("description", ""),
+        "status":      body.get("status", "active"),
+        "triggers":    0,
+        "lastTrigger": "never",
+        "created_at":  datetime.now(timezone.utc).isoformat(),
+    }
+    rules.insert(0, rule)
+    _forge_save("rules.json", rules)
+    return rule
+
+
+@app.put("/api/forge/rules/{rule_id}")
+async def forge_update_rule(rule_id: str, request: Request, _user=Depends(require_admin_user)):
+    body = await request.json()
+    rules = _forge_load("rules.json")
+    for i, r in enumerate(rules):
+        if r.get("id") == rule_id:
+            rules[i] = {**r, **{k: v for k, v in body.items() if k != "id"}}
+            _forge_save("rules.json", rules)
+            return rules[i]
+    raise HTTPException(status_code=404, detail="Rule not found")
+
+
+@app.delete("/api/forge/rules/{rule_id}")
+def forge_delete_rule(rule_id: str, _user=Depends(require_admin_user)):
+    rules = _forge_load("rules.json")
+    rules = [r for r in rules if r.get("id") != rule_id]
+    _forge_save("rules.json", rules)
+    return {"ok": True}
+
+
+@app.get("/api/forge/watch-areas")
+def forge_get_watch_areas(_user=Depends(require_admin_user)):
+    return {"areas": _forge_load("watch_areas.json")}
+
+
+@app.post("/api/forge/watch-areas")
+async def forge_create_watch_area(request: Request, _user=Depends(require_admin_user)):
+    body = await request.json()
+    areas = _forge_load("watch_areas.json")
+    area = {
+        "id":         str(uuid.uuid4()),
+        "name":       body.get("name", "Unnamed Area"),
+        "coords":     body.get("coords", ""),
+        "lat":        body.get("lat"),
+        "lon":        body.get("lon"),
+        "frequency":  body.get("frequency", "Weekly"),
+        "lastScan":   "never",
+        "detections": 0,
+        "change":     "No data",
+        "status":     "normal",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    areas.insert(0, area)
+    _forge_save("watch_areas.json", areas)
+    return area
+
+
+@app.delete("/api/forge/watch-areas/{area_id}")
+def forge_delete_watch_area(area_id: str, _user=Depends(require_admin_user)):
+    areas = _forge_load("watch_areas.json")
+    areas = [a for a in areas if a.get("id") != area_id]
+    _forge_save("watch_areas.json", areas)
+    return {"ok": True}
+
+
+@app.get("/api/forge/detections")
+def forge_get_detections(_user=Depends(require_admin_user)):
+    return {"detections": _forge_load("detection_corrections.json")}
+
+
+@app.post("/api/forge/detection/{detection_id}/confirm")
+def forge_confirm_detection(detection_id: str, _user=Depends(require_admin_user)):
+    items = _forge_load("detection_corrections.json")
+    for item in items:
+        if item.get("id") == detection_id:
+            item["review"] = "confirmed"
+            item["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+            break
+    else:
+        items.append({"id": detection_id, "review": "confirmed", "reviewed_at": datetime.now(timezone.utc).isoformat()})
+    _forge_save("detection_corrections.json", items)
+    return {"ok": True}
+
+
+@app.post("/api/forge/detection/{detection_id}/correct")
+async def forge_correct_detection(detection_id: str, request: Request, _user=Depends(require_admin_user)):
+    body = await request.json()
+    items = _forge_load("detection_corrections.json")
+    for item in items:
+        if item.get("id") == detection_id:
+            item["review"] = "corrected"
+            item["correct_label"] = body.get("label")
+            item["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+            break
+    else:
+        items.append({
+            "id": detection_id,
+            "review": "corrected",
+            "correct_label": body.get("label"),
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        })
+    _forge_save("detection_corrections.json", items)
+    return {"ok": True}
+
+
+# ── Forge Phase 2: batch scan helper ──────────────────────────────────────────
+
+_FORGE_SCAN_SITES = [
+    {"name": "Isfahan Air Base",    "lat": 32.64, "lon": 51.68},
+    {"name": "Bandar Abbas Naval",  "lat": 27.18, "lon": 56.28},
+    {"name": "Hmeimim Air Base",    "lat": 35.41, "lon": 35.95},
+    {"name": "Tartus Naval Base",   "lat": 34.89, "lon": 35.87},
+    {"name": "Latakia Port",        "lat": 35.52, "lon": 35.77},
+    {"name": "Erebuni Airport",     "lat": 40.12, "lon": 44.46},
+    {"name": "Tabriz Airport",      "lat": 38.13, "lon": 46.23},
+    {"name": "Natanz Nuclear",      "lat": 33.72, "lon": 51.73},
+    {"name": "Bushehr Naval",       "lat": 28.92, "lon": 50.83},
+    {"name": "Karachi Port",        "lat": 24.84, "lon": 67.02},
+]
+
+
+def _run_batch_scan_for_site(site, zoom=15):
+    """Fetch satellite tiles for a site, run ONNX inference (or mock), return detections with base64 crops."""
+    import random, base64, io
+    from PIL import Image, ImageDraw
+
+    lat, lon = float(site["lat"]), float(site["lon"])
+    pad = 0.012  # ~1.2 km radius
+    TILE_SZ = 256
+
+    x_min = int(_ow_lon_to_tile_x_frac(lon - pad, zoom))
+    x_max = int(_ow_lon_to_tile_x_frac(lon + pad, zoom))
+    y_min = int(_ow_lat_to_tile_y_frac(lat + pad, zoom))
+    y_max = int(_ow_lat_to_tile_y_frac(lat - pad, zoom))
+    x_min, x_max = min(x_min, x_max), max(x_min, x_max)
+    y_min, y_max = min(y_min, y_max), max(y_min, y_max)
+
+    stitch_w = (x_max - x_min + 1) * TILE_SZ
+    stitch_h = (y_max - y_min + 1) * TILE_SZ
+    stitched = Image.new("RGB", (stitch_w, stitch_h))
+
+    for xi in range(x_min, x_max + 1):
+        for yi in range(y_min, y_max + 1):
+            try:
+                tile = _fetch_esri_tile(zoom, xi, yi)
+                stitched.paste(tile, ((xi - x_min) * TILE_SZ, (yi - y_min) * TILE_SZ))
+            except Exception as e:
+                print(f"[forge/batch] tile {zoom}/{xi}/{yi} failed: {e}")
+
+    img_w, img_h = stitched.size
+
+    def px_lat(py): return float((lat + pad) - (py / img_h) * (2 * pad))
+    def px_lon(px_): return float((lon - pad) + (px_ / img_w) * (2 * pad))
+
+    session = _get_ort_session("dota")
+    detections_out = []
+    pad_px = 24
+
+    if session is not None:
+        bounds = {"north": lat + pad, "south": lat - pad, "east": lon + pad, "west": lon - pad}
+        result = _run_inference_on_image(stitched, bounds, 0.35, False, "dota", keep_px=True)
+        for det in result.get("detections", []):
+            px_box = det.pop("_px", None)
+            if px_box:
+                x1, y1, x2, y2 = [int(v) for v in px_box]
+                crop = stitched.crop((max(0, x1 - pad_px), max(0, y1 - pad_px),
+                                      min(img_w, x2 + pad_px), min(img_h, y2 + pad_px)))
+            else:
+                c = det.get("center", [lat, lon])
+                cx = int((c[1] - (lon - pad)) / (2 * pad) * img_w)
+                cy = int(((lat + pad) - c[0]) / (2 * pad) * img_h)
+                crop = stitched.crop((max(0, cx - 64), max(0, cy - 64),
+                                      min(img_w, cx + 64), min(img_h, cy + 64)))
+            try:
+                resize_filter = Image.Resampling.LANCZOS
+            except AttributeError:
+                resize_filter = Image.ANTIALIAS  # Pillow < 9
+            crop = crop.resize((128, 128), resize_filter)
+            buf = io.BytesIO()
+            crop.save(buf, "JPEG", quality=72)
+            det["crop_b64"] = base64.b64encode(buf.getvalue()).decode()
+            det["id"] = str(uuid.uuid4())
+            det["site"] = site["name"]
+            detections_out.append(det)
+    else:
+        # Mock mode — random detections with real Esri satellite imagery crops
+        MOCK_CLASSES = ["plane", "large-vehicle", "vehicle", "ship", "storage-tank", "helicopter-pad"]
+        for _ in range(random.randint(2, 6)):
+            cx = random.randint(64, img_w - 64)
+            cy = random.randint(64, img_h - 64)
+            w  = random.randint(30, 70)
+            h  = random.randint(30, 70)
+            x1 = max(0, cx - w // 2)
+            y1 = max(0, cy - h // 2)
+            x2 = min(img_w, cx + w // 2)
+            y2 = min(img_h, cy + h // 2)
+            crop = stitched.crop((max(0, x1 - pad_px), max(0, y1 - pad_px),
+                                   min(img_w, x2 + pad_px), min(img_h, y2 + pad_px)))
+            draw_img = crop.copy()
+            draw = ImageDraw.Draw(draw_img)
+            cw, ch = draw_img.size
+            draw.rectangle([pad_px - 2, pad_px - 2, cw - pad_px + 2, ch - pad_px + 2],
+                           outline=(255, 200, 0), width=2)
+            try:
+                resize_filter = Image.Resampling.LANCZOS
+            except AttributeError:
+                resize_filter = Image.ANTIALIAS
+            draw_img = draw_img.resize((128, 128), resize_filter)
+            buf = io.BytesIO()
+            draw_img.save(buf, "JPEG", quality=72)
+            detections_out.append({
+                "id":          str(uuid.uuid4()),
+                "class":       random.choice(MOCK_CLASSES),
+                "category":    "Object",
+                "subcategory": "Unknown",
+                "confidence":  round(random.uniform(0.52, 0.91), 2),
+                "center":      [round(px_lat(cy), 5), round(px_lon(cx), 5)],
+                "lat":         round(px_lat(cy), 5),
+                "lon":         round(px_lon(cx), 5),
+                "site":        site["name"],
+                "mock":        True,
+                "crop_b64":    base64.b64encode(buf.getvalue()).decode(),
+            })
+
+    import gc
+    del stitched
+    gc.collect()
+    return detections_out
+
+
+# ── Forge Phase 2: batch generation endpoints ──────────────────────────────────
+
+@app.post("/api/forge/overwatch/generate-batch")
+async def forge_overwatch_generate_batch(request: Request, _user=Depends(require_admin_user)):
+    import functools, random
+    body = await request.json()
+    n = min(int(body.get("n", 10)), 20)
+
+    sites = list(_FORGE_SCAN_SITES)
+    for area in _forge_load("watch_areas.json"):
+        if area.get("lat") and area.get("lon"):
+            sites.append({"name": area["name"], "lat": area["lat"], "lon": area["lon"]})
+    random.shuffle(sites)
+
+    loop = asyncio.get_event_loop()
+    all_detections = []
+    for site in sites[:3]:
+        try:
+            dets = await loop.run_in_executor(None, functools.partial(_run_batch_scan_for_site, site))
+            all_detections.extend(dets)
+        except Exception as e:
+            print(f"[forge/overwatch/batch] {site['name']} failed: {e}")
+
+    random.shuffle(all_detections)
+    result = all_detections[:n]
+    return {"detections": result, "count": len(result)}
+
+
+@app.post("/api/forge/ais/generate-batch")
+async def forge_ais_generate_batch(request: Request, _user=Depends(require_admin_user)):
+    import random
+    body = await request.json()
+    n = min(int(body.get("n", 20)), 50)
+
+    vessels = [v for v in _AIS_VESSELS.values() if v.get("lat") and v.get("lon")]
+
+    if len(vessels) < 5:
+        MOCK_TYPES  = ["Tanker", "Cargo", "Container Ship", "Military", "Fishing", "Bulk Carrier", "General Cargo"]
+        MOCK_FLAGS  = ["Iran", "Russia", "China", "Panama", "Marshall Islands", "Liberia", "Bahamas", "Singapore"]
+        MOCK_DESTS  = ["Bandar Abbas", "Jeddah", "Shanghai", "Rotterdam", "Houston", "Novorossiysk", "Tartus", ""]
+        vessels = []
+        for _ in range(n):
+            mmsi = str(random.randint(300000000, 799999999))
+            vessels.append({
+                "mmsi":        mmsi,
+                "name":        f"VESSEL {random.randint(100, 999)}",
+                "ship_type":   random.choice(MOCK_TYPES),
+                "flag":        random.choice(MOCK_FLAGS),
+                "lat":         round(random.uniform(15, 45), 4),
+                "lon":         round(random.uniform(30, 80), 4),
+                "speed":       round(random.uniform(0, 18), 1),
+                "heading":     random.randint(0, 359),
+                "destination": random.choice(MOCK_DESTS),
+                "callsign":    f"A{random.randint(1000, 9999)}",
+                "mock":        True,
+            })
+    else:
+        random.shuffle(vessels)
+        vessels = vessels[:n]
+
+    for v in vessels:
+        v["review_id"] = str(uuid.uuid4())
+
+    return {"vessels": vessels, "count": len(vessels)}
+
+
+@app.post("/api/forge/news/generate-batch")
+async def forge_news_generate_batch(request: Request, _user=Depends(require_admin_user)):
+    import random
+    body = await request.json()
+    n = min(int(body.get("n", 15)), 50)
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    with _NEWS_STORE_LOCK:
+        candidates = [
+            a for a in _NEWS_ARTICLE_STORE.values()
+            if a.get("published", "") >= cutoff and a.get("title")
+        ]
+
+    if len(candidates) < 3:
+        MOCK_TITLES = [
+            "Iran IRGC Conducts Naval Exercise Near Strait of Hormuz",
+            "Houthi Missile Strike Targets Red Sea Shipping Lane",
+            "Russia Deploys Additional Forces to Hmeimim Air Base",
+            "Sudan Armed Forces Report Ambush Near El Fasher",
+            "Turkish Drone Strike Kills 12 PKK Militants in Northern Iraq",
+            "China Expands Naval Base Facilities at Djibouti",
+            "Al-Shabaab Claims Ambush on AU Convoy in Somalia",
+            "Israeli Airstrikes Target Syrian Military Positions Near Deir ez-Zor",
+        ]
+        MOCK_TIERS   = ["critical", "significant", "elevated", "low"]
+        MOCK_TYPES   = ["Conflict", "Explosion / Remote Violence", "Strategic Developments"]
+        MOCK_SOURCES = ["Reuters", "AP", "BBC World", "Al Jazeera", "The Guardian"]
+        candidates = []
+        for i, title in enumerate(MOCK_TITLES):
+            candidates.append({
+                "id":            str(uuid.uuid4()),
+                "url":           f"https://example.com/mock/{i}",
+                "title":         title,
+                "source":        random.choice(MOCK_SOURCES),
+                "published":     (datetime.now(timezone.utc) - timedelta(hours=random.randint(1, 48))).isoformat(),
+                "severity_tier": random.choice(MOCK_TIERS),
+                "event_type":    random.choice(MOCK_TYPES),
+                "lat":           round(random.uniform(10, 45), 3),
+                "lon":           round(random.uniform(25, 75), 3),
+                "mock":          True,
+            })
+    else:
+        random.shuffle(candidates)
+        candidates = candidates[:n]
+
+    articles = []
+    for a in candidates:
+        articles.append({
+            "id":            a.get("id") or a.get("url") or str(uuid.uuid4()),
+            "url":           a.get("url", ""),
+            "title":         a.get("title", ""),
+            "source":        a.get("source") or a.get("feed_source") or "Unknown",
+            "published":     a.get("published", ""),
+            "severity_tier": a.get("severity_tier") or "elevated",
+            "event_type":    a.get("event_type") or a.get("type") or "Conflict",
+            "lat":           a.get("lat"),
+            "lon":           a.get("lon"),
+            "region":        a.get("region") or a.get("feed_region") or "",
+            "mock":          a.get("mock", False),
+        })
+
+    return {"articles": articles, "count": len(articles)}
+
+
+@app.post("/api/forge/detection/label")
+async def forge_label_detection(request: Request, _user=Depends(require_admin_user)):
+    body = await request.json()
+    detection_id = body.get("id") or body.get("detection_id")
+    if not detection_id:
+        raise HTTPException(status_code=400, detail="id required")
+
+    labels = _forge_load("forge_labels.json")
+    entry = {
+        "id":           detection_id,
+        "label":        body.get("label"),
+        "correction":   body.get("correction"),
+        "source_type":  body.get("source_type", "overwatch"),
+        "reason":       body.get("reason"),
+        "severity":     body.get("severity"),
+        "event_type":   body.get("event_type"),
+        "labeled_at":   datetime.now(timezone.utc).isoformat(),
+        "labeled_by":   getattr(_user, "email", None) or getattr(_user, "username", None),
+    }
+    for i, existing in enumerate(labels):
+        if existing.get("id") == detection_id:
+            labels[i] = entry
+            _forge_save("forge_labels.json", labels)
+            return {"ok": True}
+    labels.insert(0, entry)
+    _forge_save("forge_labels.json", labels)
+    return {"ok": True}
 
 
 

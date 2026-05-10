@@ -237,6 +237,7 @@ export default function Sidebar({
     onToggleOverwatch,
     directorActive   = false,
     onDirectorClick  = null,
+    onOpenForge      = null,
 }) {
     const isAdmin    = true
     const isAnalyst  = true
@@ -258,7 +259,8 @@ export default function Sidebar({
                        (id === "briefing"   && activeTabType === "briefing")   ||
                        (id === "notif"      && notifOpen)                      ||
                        (id === "chat"       && chatOpen)                       ||
-                       (id === "overwatch"  && overwatchActive)
+                       (id === "overwatch"  && overwatchActive)  ||
+                       (id === "forge"      && activeTabType === "forge")
         if (active)         return "var(--akili-accent)"
         if (hovered === id) return "var(--akili-text-secondary)"
         return "var(--akili-text-muted)"
@@ -473,6 +475,33 @@ export default function Sidebar({
                         }}
                     >
                         ◈
+                    </button>
+                )}
+                {/* Forge — admin-only intelligence training lab */}
+                {onOpenForge && (
+                    <button
+                        onMouseEnter={() => setHovered("forge")}
+                        onMouseLeave={() => setHovered(null)}
+                        onClick={onOpenForge}
+                        title="Forge — Intelligence Training Lab"
+                        style={{
+                            width:          48,
+                            height:         40,
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            background:     activeTabType === "forge" ? "rgba(56,189,248,0.1)" : "none",
+                            border:         "none",
+                            borderLeft:     activeTabType === "forge" ? "2px solid #38bdf8" : "2px solid transparent",
+                            cursor:         "pointer",
+                            color:          iconColor("forge"),
+                            fontSize:       15,
+                            lineHeight:     1,
+                            transition:     "color 0.12s, background 0.12s",
+                            flexShrink:     0,
+                        }}
+                    >
+                        ⚒
                     </button>
                 )}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}

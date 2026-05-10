@@ -37,6 +37,8 @@ import { DemoRunner } from "./services/demoRunner.js"
 import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
 import LayersPanel from "./components/LayersPanel.jsx"
+import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
+import ForgePanel from "./components/ForgePanel.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -150,7 +152,19 @@ export default function App() {
     const [currentUser,  setCurrentUser]  = useState(null)
     const [showAdmin,         setShowAdmin]         = useState(false)
     const [showChat,          setShowChat]          = useState(false)
-    const [overwatchActive,   setOverwatchActive]   = useState(false)
+    const [overwatchActive,     setOverwatchActive]     = useState(false)
+    const [overwatchDrawActive, setOverwatchDrawActive] = useState(false)
+    // Overwatch panel state (managed here, fed to OverwatchSidebar)
+    const [owMode,       setOwMode]       = useState("idle")    // idle|drawing|analyzing|results
+    const [owDetections, setOwDetections] = useState([])
+    const [owStats,      setOwStats]      = useState(null)
+    const [owEnhance,    setOwEnhance]    = useState(false)
+    const [owMinConf,    setOwMinConf]    = useState(0.15)
+    const [owSavedScans,  setOwSavedScans]  = useState(() => loadSavedScans())
+    const [owSavedImages, setOwSavedImages] = useState(() => loadSavedImages())
+    const [owAnalysis,   setOwAnalysis]   = useState(null)
+    const [owAnalyzing,  setOwAnalyzing]  = useState(false)
+    const [owBounds,     setOwBounds]     = useState(null)
     const [showLoginModal,    setShowLoginModal]    = useState(false)
 
     // ── Director Mode ──────────────────────────────────────────────────────────
@@ -202,6 +216,8 @@ export default function App() {
     const [directorDemoCallouts,  setDirectorDemoCallouts]  = useState([])
     const [directorDemoChart,     setDirectorDemoChart]     = useState(null)
     const [directorDemoScanPrompt, setDirectorDemoScanPrompt] = useState(null)
+    // Current Director/Demo scene — passed to GlobeDirectorLayer for 3D rendering
+    const [directorScene, setDirectorScene] = useState(null)
     const [directorScanProgress,  setDirectorScanProgress]  = useState(null)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
@@ -784,7 +800,7 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics" }
+        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge" }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
         const newId = crypto.randomUUID()
@@ -901,7 +917,41 @@ export default function App() {
         setDirectorDemoCallouts([])
         setDirectorDemoChart(null)
         setDirectorDemoScanPrompt(null)
+        setDirectorScene(null)
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Overwatch scan handler (called from GlobeOverwatchDrawLayer bounds callback) ──
+    const handleOverwatchBounds = useCallback(async (bounds) => {
+        setOverwatchDrawActive(false)
+        setOwMode("analyzing")
+        setOwBounds(bounds)
+        try {
+            const tok = localStorage.getItem("hw-auth-token")
+            const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
+            const res = await fetch(`${API}/api/overwatch/detect`, {
+                method: "POST", headers,
+                body: JSON.stringify({ bounds, zoom: 15, confidence: owMinConf, enhance: owEnhance }),
+            })
+            if (res.ok) {
+                const data = await res.json()
+                const dets = data.detections || []
+                setOwDetections(dets)
+                setOverwatchDetections(dets)
+                const catCounts = {}
+                for (const d of dets) {
+                    const cat = d.category || d.class || "Object"
+                    catCounts[cat] = (catCounts[cat] || 0) + 1
+                }
+                setOwStats({ total: dets.length, byCategory: catCounts })
+                setOwMode("results")
+            } else {
+                setOwMode("idle")
+            }
+        } catch (e) {
+            console.error("[Overwatch]", e)
+            setOwMode("idle")
+        }
+    }, [owMinConf, owEnhance]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleReplayBriefing = useCallback(async (briefing) => {
         if (!briefing?.actions?.length) return
@@ -914,8 +964,58 @@ export default function App() {
         }, 300)
     }, [tabs]) // eslint-disable-line react-hooks/exhaustive-deps
 
+    // ── Post-process CommandRunner scenes: auto-enrich with hotspots + country highlights ──
+    const _postProcessSequence = useCallback(async (scenes) => {
+        if (!scenes?.length) return
+        // Load country list once for auto-enrichment
+        let countryNames = []
+        try {
+            const r = await fetch(`${API}/geo/countries`)
+            if (r.ok) {
+                const geo = await r.json()
+                countryNames = (geo.features || []).map(f =>
+                    f.properties?.NAME || f.properties?.name || f.properties?.ADMIN || ""
+                ).filter(Boolean)
+            }
+        } catch (_) {}
+
+        for (const scene of scenes) {
+            const visuals = scene.visuals || []
+
+            // Auto-enrich: if no pulse_hotspot after fly_to, add one
+            const ft = visuals.find(v => v.action === "fly_to")
+            const hasHotspot = visuals.some(v => v.action === "pulse_hotspot" || v.action === "place_event" || v.action === "place_location")
+            if (ft && !hasHotspot) {
+                scene.visuals = [
+                    ...visuals.slice(0, visuals.indexOf(ft) + 1),
+                    { action: "pulse_hotspot", lat: ft.lat, lon: ft.lon, color: "#38bdf8", radius: 12_000, _auto: true },
+                    ...visuals.slice(visuals.indexOf(ft) + 1),
+                ]
+            }
+
+            // Auto-enrich: if narration mentions a country not yet highlighted, add highlight
+            const narAction = scene.narration
+            const narText   = narAction?.text || ""
+            const highlighted = new Set(visuals.filter(v => v.action === "highlight_country").map(v => (v.name || "").toLowerCase()))
+            if (narText && countryNames.length) {
+                for (const name of countryNames) {
+                    if (
+                        !highlighted.has(name.toLowerCase()) &&
+                        narText.includes(name)
+                    ) {
+                        scene.visuals = [
+                            { action: "highlight_country", name, context: "focus", _auto: true },
+                            ...scene.visuals,
+                        ]
+                        highlighted.add(name.toLowerCase())
+                    }
+                }
+            }
+        }
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
     // ── Start playback from a ready sequence ────────────────────────────────
-    const _startDirectorPlayback = useCallback((sequence, intent) => {
+    const _startDirectorPlayback = useCallback(async (sequence, intent) => {
         handleDirectorClose()
         directorIntentRef.current = intent || ""
         setDirectorSavedStatus(null)
@@ -924,6 +1024,8 @@ export default function App() {
         setDirectorSequence(sequence)
         setDirectorVisible(true)
         if (directorRunnerRef.current) directorRunnerRef.current.destroy()
+        // Show "Preparing briefing visuals…" while post-processing
+        setBriefingProgress("Preparing briefing visuals…")
         const runner = new CommandRunner({
             mapRef:            mapInstanceRef,
             setDirectorItems,
@@ -956,11 +1058,16 @@ export default function App() {
             },
             onCloseDetail: () => { setRightPanel(null); setSelectedSurface(null); setSurfaceContext(null); setSurfaceEnrichment(null) },
             onComplete: () => {},
+            onScene:    (scene) => setDirectorScene(scene),
         })
         runner.load(sequence)
-        directorRunnerRef.current = runner
-        runner.play()
-    }, [surfaceItems]) // eslint-disable-line react-hooks/exhaustive-deps
+        // Post-process scenes (auto-enrichment, hotspot injection) then start playback
+        _postProcessSequence(runner._scenes).then(() => {
+            setBriefingProgress("")
+            directorRunnerRef.current = runner
+            runner.play()
+        })
+    }, [surfaceItems, _postProcessSequence]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorGenerate = useCallback(async (intent) => {
         directorIntentRef.current = intent || ""
@@ -1100,6 +1207,7 @@ export default function App() {
             onChart:       (chart)    => setDirectorDemoChart(chart),
             onScanPrompt:  (cb)       => setDirectorDemoScanPrompt(() => cb),
             onScanProgress:(p)        => setDirectorScanProgress(p),
+            onScene:       (scene)    => setDirectorScene(scene),
             onClearScene: () => {
                 setDirectorDemoCallouts([])
                 setDirectorImage(null)
@@ -1275,6 +1383,9 @@ export default function App() {
                                 setDirectorModalOpen(true)
                             }
                         }}
+                        onOpenForge={(currentUser?.role === "admin" || currentUser?.role === "super_admin" || currentUser?.is_super_admin)
+                            ? () => openTab("forge")
+                            : null}
                     />
                 )}
 
@@ -1306,7 +1417,10 @@ export default function App() {
                             heatmapHours={heatmapHours}
                             overwatchEnabled={overwatchActive}
                             overwatchDetections={overwatchDetections}
+                            overwatchDrawActive={overwatchDrawActive}
+                            onOverwatchBounds={handleOverwatchBounds}
                             satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
+                            directorScene={directorScene}
                         />
                     </Suspense>
                     {rightPanel === "layers" && (
@@ -1415,6 +1529,20 @@ export default function App() {
                         <AnalyticsPanel
                             isTabMode={true}
                             onClose={() => closeTab(tabs.find(t => t.type === "analytics")?.id)}
+                        />
+                    </div>
+                )}
+
+                {/* Forge — admin intelligence training lab */}
+                {tabs.some(t => t.type === "forge") && (
+                    <div style={{
+                        flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
+                        display: activeTabType === "forge" ? "block" : "none",
+                        position: "relative",
+                    }}>
+                        <ForgePanel
+                            user={currentUser}
+                            onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
                         />
                     </div>
                 )}
@@ -1707,6 +1835,63 @@ export default function App() {
                         style={{ position: "absolute", top: 6, right: 8, background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 16, cursor: "pointer", padding: 4 }}
                     >×</button>
                 </div>
+            )}
+
+            {/* ── Overwatch panel — shown when overwatchActive, no Leaflet dependency ── */}
+            {overwatchActive && (
+                <OverwatchSidebar
+                    isMobile={isMobile}
+                    open={true}
+                    onClose={() => { setOverwatchActive(false); setOverwatchDrawActive(false); setOwMode("idle") }}
+                    mode={owMode}
+                    drawTarget="ml"
+                    vertCount={0}
+                    onStartMLDraw={() => {
+                        setOwMode("drawing")
+                        setOverwatchDrawActive(true)
+                    }}
+                    onCancelDraw={() => { setOwMode("idle"); setOverwatchDrawActive(false) }}
+                    stats={owStats}
+                    detections={owDetections}
+                    visible={new Set()}
+                    minConf={owMinConf}
+                    onMinConfChange={setOwMinConf}
+                    enhance={owEnhance}
+                    onEnhanceToggle={() => setOwEnhance(v => !v)}
+                    enhanced={false}
+                    analysis={owAnalysis}
+                    analyzing={owAnalyzing}
+                    onAnalyze={async () => {
+                        if (!owBounds || !owDetections.length) return
+                        setOwAnalyzing(true)
+                        try {
+                            const tok = localStorage.getItem("hw-auth-token")
+                            const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
+                            const res = await fetch(`${API}/api/overwatch/analyze`, {
+                                method: "POST", headers,
+                                body: JSON.stringify({ detections: owDetections, bounds: owBounds }),
+                            })
+                            if (res.ok) setOwAnalysis((await res.json()).analysis || null)
+                        } catch (_) {}
+                        setOwAnalyzing(false)
+                    }}
+                    onDismissAnalysis={() => setOwAnalysis(null)}
+                    onClear={() => { setOwDetections([]); setOverwatchDetections([]); setOwStats(null); setOwAnalysis(null); setOwMode("idle") }}
+                    onRescan={() => { setOwMode("idle"); setOverwatchDrawActive(false) }}
+                    savedScans={owSavedScans}
+                    onSave={() => {
+                        const entry = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), bounds: owBounds, detections: owDetections, stats: owStats }
+                        const next = [entry, ...owSavedScans].slice(0, 20)
+                        setOwSavedScans(next); persistSavedScans(next)
+                    }}
+                    onDeleteSaved={(id) => { const next = owSavedScans.filter(s => s.id !== id); setOwSavedScans(next); persistSavedScans(next) }}
+                    onRestoreSaved={(scan) => { setOwDetections(scan.detections || []); setOverwatchDetections(scan.detections || []); setOwStats(scan.stats || null); setOwBounds(scan.bounds || null); setOwMode("results") }}
+                    savedImages={owSavedImages}
+                    onDeleteSavedImage={(id) => { const next = owSavedImages.filter(i => i.id !== id); setOwSavedImages(next); persistSavedImages(next) }}
+                    selectedCats={new Set()}
+                    onCatToggle={() => {}}
+                    onFilterChange={() => {}}
+                />
             )}
 
             {/* Real-time toast notifications */}

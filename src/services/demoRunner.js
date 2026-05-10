@@ -56,6 +56,7 @@ export class DemoRunner {
     onChart             = () => {},
     onScanPrompt        = () => {},
     onScanProgress      = () => {},
+    onScene             = () => {},
   } = {}) {
     this.mapRef              = mapRef
     this.onNarrate           = onNarrate
@@ -68,6 +69,7 @@ export class DemoRunner {
     this.onChart             = onChart
     this.onScanPrompt        = onScanPrompt
     this.onScanProgress      = onScanProgress
+    this.onScene             = onScene
 
     this._scenes           = []
     this._sceneById        = {}
@@ -150,6 +152,7 @@ export class DemoRunner {
     this._clearLayers()
     this._clearPersistentLayers()
     ttsService.stop()
+    this.onScene(null)
     this.onInteractiveChoice([])
     this.onCallouts([])
     this.onClearScene()
@@ -188,6 +191,9 @@ export class DemoRunner {
   }
 
   async _playScene(scene) {
+    // Fire onScene so GlobeDirectorLayer can render elements in 3D
+    this.onScene(scene)
+
     // RULE 6: clear persistent layers on scenario change
     if (scene.scenario && scene.scenario !== this._currentScenario) {
       this._clearPersistentLayers()

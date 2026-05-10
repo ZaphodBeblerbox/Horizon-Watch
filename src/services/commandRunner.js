@@ -70,6 +70,7 @@ export class CommandRunner {
     onOpenDetail   = () => {},  // (type, id) => void — opens the real UI detail panel
     onCloseDetail  = () => {},  // () => void — closes the real UI detail panel
     onChart        = null,      // ({svg, title, duration}) => void — optional chart receiver
+    onScene        = () => {},  // (scene|null) => void — fires when each scene starts, null on stop
   } = {}) {
     this.mapRef            = mapRef
     this.setDirectorItems  = setDirectorItems
@@ -88,6 +89,7 @@ export class CommandRunner {
     this.onOpenDetail      = onOpenDetail
     this.onCloseDetail     = onCloseDetail
     this.onChart           = onChart
+    this.onScene           = onScene
 
     this.actions      = []
     this.currentIndex = -1
@@ -269,6 +271,9 @@ export class CommandRunner {
       // Auto-clear previous scene's markers so they don't pile up between scenes
       if (si > startScene) this._clearAllDrawings()
 
+      // Notify GlobeDirectorLayer of new scene (visuals format)
+      this.onScene(scene)
+
       // Map scene index back to the last action index for progress tracking
       // (the narration action's position in the flat actions array)
       const narIdx = scene.narration
@@ -423,6 +428,7 @@ export class CommandRunner {
     this._sceneIndex  = -1
     this._clearAllDrawings()
     ttsService.stop()
+    this.onScene(null)
     this._notifyState()
   }
 
