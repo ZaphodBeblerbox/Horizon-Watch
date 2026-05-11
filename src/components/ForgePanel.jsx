@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import API_BASE from "../apiBase.js"
 import ReviewQueue from "./forge/ReviewQueue.jsx"
 import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.jsx"
@@ -128,6 +128,32 @@ const btnDanger = {
     background: "transparent", color: "#ef4444", cursor: "pointer",
 }
 
+const inputStyle = {
+    width: "100%", padding: "6px 8px", boxSizing: "border-box",
+    background: "rgba(30,41,59,0.8)", border: "1px solid rgba(148,163,184,0.15)",
+    borderRadius: 4, color: "#e2e8f0", fontSize: 12, outline: "none",
+}
+
+const chipStyle = {
+    display: "inline-flex", alignItems: "center", gap: 4,
+    padding: "2px 8px", borderRadius: 10, fontSize: 11,
+    background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.2)",
+    color: "#60a5fa",
+}
+
+function SectionHeader({ children }) {
+    return <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, marginTop: 14 }}>{children}</div>
+}
+
+function Stat({ label, value, color = "#e2e8f0" }) {
+    return (
+        <div style={{ ...card, flex: 1, textAlign: "center", padding: "10px 8px", marginBottom: 0 }}>
+            <div style={{ color, fontSize: 20, fontWeight: 700 }}>{value}</div>
+            <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{label}</div>
+        </div>
+    )
+}
+
 // ── Pipeline data model ────────────────────────────────────────────────────────
 export const PIPELINE_NODES = [
     { id: 'src_ais',         label: 'AIS Vessel Feed',      column: 0, type: 'source',       status: 'active',     config: { vessels_tracked: 0, bboxes: 5 } },
@@ -175,6 +201,8 @@ export const PIPELINE_EDGES = [
     { from: 'int_threat',      to: 'out_briefings' },
     { from: 'int_patterns',    to: 'out_reports' },
 ]
+
+const BRAIN_NODE_IDS = new Set(['enr_correlation', 'int_threat', 'int_patterns', 'int_escalation'])
 
 // ── Esri tile helper ───────────────────────────────────────────────────────────
 function esriTileUrl(lat, lon, zoom = 10) {
@@ -546,73 +574,61 @@ function NewsTrainingView() {
     )
 }
 
-// ── Training overlay ───────────────────────────────────────────────────────────
-function TrainingOverlay({ node, onClose }) {
-    const trainingMap = {
-        det_overwatch: 'object',
-        det_ais:       'ais',
-        det_adsb:      'ais',
-        det_news:      'news',
-    }
-    const trainingType = trainingMap[node.id]
-
-    return (
-        <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", zIndex: 20, display: "flex", flexDirection: "column" }}>
-            <div style={{ padding: "12px 20px", borderBottom: "1px solid rgba(148,163,184,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-                <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>Training: {node.label}</div>
-                <button onClick={onClose} style={{ ...btnGhost, fontSize: 12 }}>← Back to Pipeline</button>
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: "20px 28px" }}>
-                {trainingType === 'object' && <ObjectTrainingView />}
-                {trainingType === 'ais'    && <AISTrainingView />}
-                {trainingType === 'news'   && <NewsTrainingView />}
-                {!trainingType && (
-                    <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: 48 }}>No training interface available for this detector.</div>
-                )}
-            </div>
-        </div>
-    )
-}
-
-// ── Node inspector: Source ─────────────────────────────────────────────────────
-function SourceInspector({ node, brainStatus }) {
-    const [uploads, setUploads] = useState([])
+// ── Training History ───────────────────────────────────────────────────────────
+function TrainingHistory({ detectorId }) {
+    const [stats, setStats] = useState(null)
 
     useEffect(() => {
-        if (node.id === 'src_uploads') {
-            fetch(`${API}/api/forge/uploads`, { headers: forgeHeaders() })
-                .then(r => r.ok ? r.json() : [])
-                .then(data => setUploads(Array.isArray(data) ? data.slice(0, 6) : []))
-                .catch(() => {})
-        }
-    }, [node.id])
+        fetch(`${API}/api/forge/training/stats/${detectorId}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => setStats(d))
+            .catch(() => {})
+    }, [detectorId])
 
-    const detail = {
-        src_ais:       { label: "Vessels tracked", value: brainStatus?.vessels_tracked ?? "—", note: "Live AIS stream across 5 maritime bounding boxes" },
-        src_adsb:      { label: "Refresh", value: "10s", note: "Live ADS-B polling via OpenSky Network" },
-        src_news:      { label: "Feeds", value: node.config?.feeds || 277, note: "RSS / atom feed aggregator, scoring every 5 min" },
-        src_satellite: { label: "Resolution", value: "10m", note: "Sentinel-2 imagery via Overwatch ML pipeline" },
-        src_osint:     { label: "Source", value: "GDELT", note: "Global event stream mapped to lat/lng" },
-        src_uploads:   { label: "Files", value: uploads.length, note: "CSV, KML, GeoJSON, PDF — auto entity-extraction" },
-    }[node.id] || {}
+    if (!stats) return <div style={{ color: "#475569", fontSize: 12, padding: 20, textAlign: "center" }}>Loading…</div>
+
+    const barW = Math.min(stats.accuracy, 100)
+    const barColor = stats.accuracy >= 80 ? "#22c55e" : stats.accuracy >= 60 ? "#f59e0b" : "#ef4444"
+    const classes = Object.entries(stats.classes || {}).sort((a, b) => b[1].total - a[1].total)
 
     return (
         <div>
-            <StatusRow status={node.status} />
-            {detail.label && (
-                <div style={{ marginBottom: 16 }}>
-                    <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", marginBottom: 4 }}>{detail.label}</div>
-                    <div style={{ color: "#e2e8f0", fontSize: 22, fontWeight: 700 }}>{detail.value}</div>
-                    <div style={{ color: "#475569", fontSize: 11, marginTop: 4 }}>{detail.note}</div>
+            <div style={{ ...card, marginBottom: 16 }}>
+                <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Overall Accuracy</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
+                    <div style={{ color: barColor, fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{stats.accuracy}%</div>
+                    <div style={{ color: "#64748b", fontSize: 11 }}>{stats.total} samples · {stats.confirmed} confirmed · {stats.corrected} corrected · {stats.skipped} skipped</div>
+                </div>
+                <div style={{ height: 6, background: "#1e293b", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ width: `${barW}%`, height: "100%", background: barColor, borderRadius: 3, transition: "width 0.4s" }} />
+                </div>
+            </div>
+            {classes.length > 0 && (
+                <div style={{ ...card }}>
+                    <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Per-Class Breakdown</div>
+                    {classes.map(([cls, c]) => {
+                        const acc = Math.round(c.confirmed / Math.max(c.confirmed + c.corrected, 1) * 100)
+                        return (
+                            <div key={cls} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 7 }}>
+                                <div style={{ flex: 1, color: "#94a3b8", fontSize: 11, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cls}</div>
+                                <div style={{ width: 80, height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
+                                    <div style={{ width: `${acc}%`, height: "100%", background: acc >= 80 ? "#22c55e" : acc >= 60 ? "#f59e0b" : "#ef4444", borderRadius: 2 }} />
+                                </div>
+                                <div style={{ color: "#64748b", fontSize: 10, width: 36, textAlign: "right" }}>{acc}%</div>
+                                <div style={{ color: "#334155", fontSize: 10, width: 28, textAlign: "right" }}>{c.total}</div>
+                            </div>
+                        )
+                    })}
                 </div>
             )}
-            {node.id === 'src_uploads' && uploads.length > 0 && (
-                <div>
-                    <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", marginBottom: 6 }}>Recent Uploads</div>
-                    {uploads.map((u, i) => (
-                        <div key={i} style={{ ...card, padding: "8px 10px", marginBottom: 6 }}>
-                            <div style={{ color: "#cbd5e1", fontSize: 11, fontWeight: 600 }}>{u.original_name || u.filename}</div>
-                            <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{u.data_type || "auto"} · {u.entities_added || 0} entities extracted</div>
+            {stats.recent?.length > 0 && (
+                <div style={{ ...card }}>
+                    <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Recent Labels</div>
+                    {stats.recent.slice(0, 10).map((l, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                            <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: l.label === "confirm" || l.label === "correct" ? "rgba(34,197,94,0.1)" : l.label === "skip" ? "rgba(71,85,105,0.1)" : "rgba(245,158,11,0.1)", color: l.label === "confirm" || l.label === "correct" ? "#22c55e" : l.label === "skip" ? "#64748b" : "#f59e0b" }}>{l.label}</span>
+                            <span style={{ color: "#64748b", fontSize: 10, flex: 1 }}>{l.original_label || l.correction || l.class || "—"}</span>
+                            <span style={{ color: "#334155", fontSize: 9 }}>{l.labeled_at?.slice(0, 10)}</span>
                         </div>
                     ))}
                 </div>
@@ -621,7 +637,421 @@ function SourceInspector({ node, brainStatus }) {
     )
 }
 
+// ── Training Export ────────────────────────────────────────────────────────────
+function TrainingExport({ detectorId }) {
+    const [models, setModels] = useState([])
+    const [uploading, setUploading] = useState(false)
+    const [uploadMsg, setUploadMsg] = useState("")
+    const fileRef = useRef(null)
+
+    useEffect(() => {
+        fetch(`${API}/api/forge/models`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : {})
+            .then(d => setModels(d.models || []))
+            .catch(() => {})
+    }, [])
+
+    const download = (fmt) => {
+        const url = `${API}/api/forge/training/export/${fmt}`
+        const a = document.createElement("a")
+        a.href = url
+        a.setAttribute("download", "")
+        Object.entries(forgeHeaders()).forEach(([k, v]) => {})
+        const token = localStorage.getItem("hw-auth-token") || ""
+        const passcode = localStorage.getItem("forge_passcode") || ""
+        fetch(url, { headers: forgeHeaders() })
+            .then(r => r.blob())
+            .then(blob => {
+                const burl = URL.createObjectURL(blob)
+                const a2 = document.createElement("a")
+                a2.href = burl
+                a2.download = `forge_export.${fmt === "yolo" ? "zip" : fmt}`
+                a2.click()
+                URL.revokeObjectURL(burl)
+            })
+            .catch(() => {})
+    }
+
+    const downloadModel = (name) => {
+        fetch(`${API}/api/forge/models/download/${encodeURIComponent(name)}`, { headers: forgeHeaders() })
+            .then(r => r.blob())
+            .then(blob => {
+                const burl = URL.createObjectURL(blob)
+                const a = document.createElement("a")
+                a.href = burl
+                a.download = name
+                a.click()
+                URL.revokeObjectURL(burl)
+            })
+            .catch(() => {})
+    }
+
+    const uploadModel = async (e) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        setUploading(true); setUploadMsg("")
+        const fd = new FormData()
+        fd.append("file", file)
+        try {
+            const res = await fetch(`${API}/api/forge/models/upload`, { method: "POST", headers: forgeFormHeaders(), body: fd })
+            const d = await res.json()
+            setUploadMsg(res.ok ? `Uploaded: ${d.name || file.name}` : d.detail || "Upload failed")
+            if (res.ok) {
+                const mr = await fetch(`${API}/api/forge/models`, { headers: forgeHeaders() })
+                const md = await mr.json()
+                setModels(md.models || [])
+            }
+        } catch { setUploadMsg("Upload failed") }
+        finally { setUploading(false); if (fileRef.current) fileRef.current.value = "" }
+    }
+
+    return (
+        <div>
+            <SectionHeader>Export Training Data</SectionHeader>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                {[["JSON", "json"], ["CSV", "csv"], ["YOLO", "yolo"]].map(([label, fmt]) => (
+                    <button key={fmt} onClick={() => download(fmt)} style={{ flex: 1, padding: "9px 0", borderRadius: 6, border: "1px solid rgba(96,165,250,0.3)", background: "rgba(96,165,250,0.06)", color: "#60a5fa", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                        ↓ {label}
+                    </button>
+                ))}
+            </div>
+
+            <SectionHeader>ML Models</SectionHeader>
+            {models.map(m => (
+                <div key={m.name} style={{ ...card, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                        <div style={{ color: "#cbd5e1", fontSize: 12, fontWeight: 600 }}>{m.name}</div>
+                        <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{m.type} · {m.size_mb} MB · <span style={{ color: m.status === "active" ? "#22c55e" : "#f59e0b" }}>{m.status}</span></div>
+                    </div>
+                    <button onClick={() => downloadModel(m.name)} style={{ ...btnGhost, fontSize: 10 }}>↓ Download</button>
+                </div>
+            ))}
+            {models.length === 0 && <div style={{ color: "#334155", fontSize: 11, marginBottom: 12 }}>No model files found.</div>}
+
+            <div style={{ ...card, padding: "12px" }}>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>Upload retrained model (.onnx)</div>
+                <input ref={fileRef} type="file" accept=".onnx" onChange={uploadModel} disabled={uploading} style={{ display: "none" }} id="model-upload-input" />
+                <label htmlFor="model-upload-input" style={{ ...btnGhost, display: "inline-block", cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.5 : 1 }}>
+                    {uploading ? "Uploading…" : "Choose .onnx file"}
+                </label>
+                {uploadMsg && <div style={{ color: uploadMsg.startsWith("Uploaded") ? "#22c55e" : "#ef4444", fontSize: 11, marginTop: 8 }}>{uploadMsg}</div>}
+            </div>
+        </div>
+    )
+}
+
+// ── Training Center (full-screen overlay) ──────────────────────────────────────
+function TrainingCenter({ node, onClose }) {
+    const trainingMap = {
+        det_overwatch: 'object',
+        det_ais:       'ais',
+        det_adsb:      'ais',
+        det_news:      'news',
+    }
+    const trainingType = trainingMap[node.id]
+    const [tab, setTab] = useState("review")
+    const tabs = [
+        { id: "review",  label: "Review" },
+        { id: "history", label: "History" },
+        { id: "export",  label: "Export" },
+    ]
+
+    return (
+        <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", zIndex: 20, display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "0 20px", height: 48, flexShrink: 0, borderBottom: "1px solid rgba(148,163,184,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                    <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>Training: {node.label}</div>
+                    <div style={{ display: "flex", gap: 2 }}>
+                        {tabs.map(t => (
+                            <button key={t.id} onClick={() => setTab(t.id)} style={{
+                                padding: "5px 12px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12, fontWeight: tab === t.id ? 600 : 400,
+                                background: tab === t.id ? "rgba(96,165,250,0.12)" : "transparent",
+                                color: tab === t.id ? "#60a5fa" : "#64748b",
+                            }}>{t.label}</button>
+                        ))}
+                    </div>
+                </div>
+                <button onClick={onClose} style={{ ...btnGhost, fontSize: 12 }}>← Back to Pipeline</button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "20px 28px" }}>
+                {tab === "review" && (
+                    <>
+                        {trainingType === 'object' && <ObjectTrainingView />}
+                        {trainingType === 'ais'    && <AISTrainingView />}
+                        {trainingType === 'news'   && <NewsTrainingView />}
+                        {!trainingType && <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: 48 }}>No training interface available for this detector.</div>}
+                    </>
+                )}
+                {tab === "history" && <TrainingHistory detectorId={node.id} />}
+                {tab === "export"  && <TrainingExport  detectorId={node.id} />}
+            </div>
+        </div>
+    )
+}
+
+// ── Node inspector: Source ─────────────────────────────────────────────────────
+function SourceInspector({ node, brainStatus }) {
+    const [config,    setConfig]    = useState(null)
+    const [saving,    setSaving]    = useState(false)
+    const [newKw,     setNewKw]     = useState("")
+    const [uploading, setUploading] = useState(false)
+    const fileRef = useRef(null)
+
+    useEffect(() => {
+        fetch(`${API}/api/forge/source/${node.id}/config`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : {})
+            .then(d => setConfig(d))
+            .catch(() => setConfig({}))
+    }, [node.id])
+
+    const save = async (patch) => {
+        setSaving(true)
+        try {
+            const res = await fetch(`${API}/api/forge/source/${node.id}/config`, {
+                method: "PUT", headers: forgeHeaders(), body: JSON.stringify(patch),
+            })
+            const d = await res.json()
+            setConfig(d)
+        } catch {}
+        finally { setSaving(false) }
+    }
+
+    const addKeyword = () => {
+        const kw = newKw.trim()
+        if (!kw) return
+        const kws = [...(config?.keywords || []), kw]
+        setConfig(c => ({ ...c, keywords: kws }))
+        setNewKw("")
+        save({ keywords: kws })
+    }
+
+    const removeKeyword = (kw) => {
+        const kws = (config?.keywords || []).filter(k => k !== kw)
+        setConfig(c => ({ ...c, keywords: kws }))
+        save({ keywords: kws })
+    }
+
+    const uploadFile = async (e) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        setUploading(true)
+        const fd = new FormData()
+        fd.append("file", file)
+        try {
+            const res = await fetch(`${API}/api/forge/upload`, { method: "POST", headers: forgeFormHeaders(), body: fd })
+            if (res.ok) {
+                const cfgRes = await fetch(`${API}/api/forge/source/${node.id}/config`, { headers: forgeHeaders() })
+                if (cfgRes.ok) setConfig(await cfgRes.json())
+            }
+        } catch {}
+        finally { setUploading(false); if (fileRef.current) fileRef.current.value = "" }
+    }
+
+    if (!config) return <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div>
+
+    return (
+        <div>
+            <StatusRow status={node.status} />
+
+            {node.id === 'src_ais' && (
+                <>
+                    <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                        <Stat label="Vessels" value={brainStatus?.vessels_tracked ?? config.vessels_tracked ?? "—"} color="#3b82f6" />
+                        <Stat label="Regions" value={config.bboxes ?? 15} color="#60a5fa" />
+                    </div>
+                    <SectionHeader>Vessel Filters</SectionHeader>
+                    <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>Filter by flag, type, or MMSI range. Affects AIS anomaly detection scope.</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+                        {(config.filters || []).map(f => (
+                            <span key={f} style={chipStyle}>
+                                {f}
+                                <button onClick={() => { const fs = (config.filters || []).filter(x => x !== f); setConfig(c => ({ ...c, filters: fs })); save({ filters: fs }) }} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 0, fontSize: 12 }}>×</button>
+                            </span>
+                        ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        <input style={{ ...inputStyle, flex: 1 }} placeholder="e.g. MMSI:123456 or FLAG:IR" onKeyDown={e => { if (e.key === "Enter") { const fs = [...(config.filters || []), e.target.value.trim()]; setConfig(c => ({ ...c, filters: fs })); save({ filters: fs }); e.target.value = "" } }} />
+                    </div>
+                </>
+            )}
+
+            {node.id === 'src_news' && (
+                <>
+                    <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                        <Stat label="Feeds" value={config.feed_count ?? 277} color="#3b82f6" />
+                    </div>
+                    <SectionHeader>Keywords</SectionHeader>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+                        {(config.keywords || []).map(kw => (
+                            <span key={kw} style={chipStyle}>
+                                {kw}
+                                <button onClick={() => removeKeyword(kw)} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 0, fontSize: 12 }}>×</button>
+                            </span>
+                        ))}
+                        {(config.keywords || []).length === 0 && <span style={{ color: "#334155", fontSize: 11 }}>No keywords configured</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        <input style={{ ...inputStyle, flex: 1 }} value={newKw} onChange={e => setNewKw(e.target.value)} placeholder="Add keyword…" onKeyDown={e => e.key === "Enter" && addKeyword()} />
+                        <button onClick={addKeyword} style={{ ...btnGhost, flexShrink: 0 }}>Add</button>
+                    </div>
+                    {Object.keys(config.feed_health || {}).length > 0 && (
+                        <>
+                            <SectionHeader>Feed Health</SectionHeader>
+                            {Object.entries(config.feed_health).slice(0, 6).map(([name, failures]) => (
+                                <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                                    <span style={{ color: "#94a3b8", fontSize: 11 }}>{name}</span>
+                                    <span style={{ color: failures > 0 ? "#ef4444" : "#22c55e", fontSize: 11 }}>{failures > 0 ? `${failures} failures` : "ok"}</span>
+                                </div>
+                            ))}
+                        </>
+                    )}
+                </>
+            )}
+
+            {node.id === 'src_satellite' && (
+                <>
+                    <div style={{ color: "#64748b", fontSize: 12, marginBottom: 12 }}>10m resolution Sentinel-2 imagery via Overwatch ML pipeline.</div>
+                    <SectionHeader>Sentinel Token</SectionHeader>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        <input
+                            type="password"
+                            style={{ ...inputStyle, flex: 1 }}
+                            defaultValue={config.sentinel_token || ""}
+                            placeholder="Enter Sentinel Hub token…"
+                            onBlur={e => { if (e.target.value !== (config.sentinel_token || "")) save({ sentinel_token: e.target.value }) }}
+                        />
+                    </div>
+                    <div style={{ color: config.token_set ? "#22c55e" : "#f59e0b", fontSize: 11, marginTop: 6 }}>
+                        {config.token_set ? "Token configured" : "No token — using simulated imagery"}
+                    </div>
+                </>
+            )}
+
+            {node.id === 'src_adsb' && (
+                <>
+                    <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                        <Stat label="Refresh (ms)" value={config.refresh_ms ?? 10000} color="#3b82f6" />
+                    </div>
+                    <SectionHeader>Poll Interval</SectionHeader>
+                    <select style={{ ...inputStyle }} value={config.refresh_ms ?? 10000} onChange={e => { const v = Number(e.target.value); setConfig(c => ({ ...c, refresh_ms: v })); save({ refresh_ms: v }) }}>
+                        {[5000, 10000, 30000, 60000].map(v => <option key={v} value={v}>{v / 1000}s</option>)}
+                    </select>
+                </>
+            )}
+
+            {node.id === 'src_osint' && (
+                <div style={{ color: "#64748b", fontSize: 12 }}>GDELT global event stream — mapped to lat/lng coordinates. Feeds news scoring and correlation engine.</div>
+            )}
+
+            {node.id === 'src_uploads' && (
+                <>
+                    <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                        <Stat label="Files uploaded" value={config.count ?? 0} color="#3b82f6" />
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                        <input ref={fileRef} type="file" accept=".csv,.kml,.geojson,.json,.pdf" onChange={uploadFile} disabled={uploading} style={{ display: "none" }} id="src-upload-input" />
+                        <label htmlFor="src-upload-input" style={{ ...btnGhost, display: "inline-block", cursor: uploading ? "default" : "pointer" }}>
+                            {uploading ? "Uploading…" : "+ Upload File"}
+                        </label>
+                        <span style={{ color: "#334155", fontSize: 10, marginLeft: 8 }}>CSV, KML, GeoJSON, PDF</span>
+                    </div>
+                    {(config.uploads || []).slice(0, 6).map((u, i) => (
+                        <div key={i} style={{ ...card, padding: "8px 10px", marginBottom: 5 }}>
+                            <div style={{ color: "#cbd5e1", fontSize: 11, fontWeight: 600 }}>{u.original_name || u.filename}</div>
+                            <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{u.data_type || "auto"} · {u.entities_added || 0} entities</div>
+                        </div>
+                    ))}
+                </>
+            )}
+        </div>
+    )
+}
+
 // ── Node inspector: Detector ───────────────────────────────────────────────────
+function RuleRow({ rule, onToggle, onDelete, onDryRun }) {
+    const [expanded, setExpanded] = useState(false)
+    const [params,   setParams]   = useState(rule.params || {})
+    const [drySaving, setDrySaving] = useState(false)
+    const [dryResult, setDryResult] = useState(null)
+
+    const saveParams = async (newParams) => {
+        setDrySaving(true)
+        try {
+            await fetch(`${API}/api/forge/rules/${rule.id}`, {
+                method: "PUT", headers: forgeHeaders(), body: JSON.stringify({ params: newParams }),
+            })
+        } catch {}
+        finally { setDrySaving(false) }
+    }
+
+    const runDryRun = async () => {
+        setDryResult(null); setDrySaving(true)
+        try {
+            const res = await fetch(`${API}/api/forge/rules/${rule.id}/test`, { method: "POST", headers: forgeHeaders() })
+            const d = await res.json()
+            setDryResult(d)
+        } catch { setDryResult({ error: "Failed" }) }
+        finally { setDrySaving(false) }
+    }
+
+    const isActive = rule.status === "active"
+
+    return (
+        <div style={{ background: "#0c1018", borderRadius: 5, marginBottom: 5, border: `1px solid ${isActive ? "rgba(34,197,94,0.12)" : "rgba(148,163,184,0.06)"}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", cursor: "pointer" }} onClick={() => setExpanded(v => !v)}>
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: STATUS_DOT[isActive ? "active" : "inactive"], flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: "#cbd5e1", fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rule.name}</div>
+                    <div style={{ color: "#475569", fontSize: 9, marginTop: 1 }}>{rule.trigger_type} · {rule.severity}</div>
+                </div>
+                <div style={{ color: "#334155", fontSize: 13 }}>{expanded ? "▾" : "▸"}</div>
+            </div>
+            {expanded && (
+                <div style={{ padding: "0 10px 10px" }}>
+                    {Object.keys(params).length > 0 && (
+                        <>
+                            <div style={{ color: "#475569", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Parameters</div>
+                            {Object.entries(params).map(([k, v]) => (
+                                <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                                    <span style={{ color: "#475569", fontSize: 10, width: 110, flexShrink: 0 }}>{k}</span>
+                                    <input
+                                        style={{ ...inputStyle, flex: 1, fontSize: 10, padding: "3px 6px" }}
+                                        defaultValue={typeof v === "object" ? JSON.stringify(v) : String(v)}
+                                        onBlur={e => {
+                                            let parsed = e.target.value
+                                            try { parsed = JSON.parse(parsed) } catch {}
+                                            const np = { ...params, [k]: parsed }
+                                            setParams(np)
+                                            saveParams(np)
+                                        }}
+                                    />
+                                </div>
+                            ))}
+                        </>
+                    )}
+                    {dryResult && (
+                        <div style={{ marginTop: 8, padding: "6px 8px", background: "rgba(30,41,59,0.6)", borderRadius: 4 }}>
+                            {dryResult.error
+                                ? <span style={{ color: "#ef4444", fontSize: 10 }}>{dryResult.error}</span>
+                                : <span style={{ color: "#94a3b8", fontSize: 10 }}>{dryResult.hits} hit{dryResult.hits !== 1 ? "s" : ""} from {dryResult.vessels_tested} vessels tested</span>
+                            }
+                        </div>
+                    )}
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <button onClick={runDryRun} disabled={drySaving} style={{ ...btnGhost, fontSize: 10, opacity: drySaving ? 0.5 : 1 }}>
+                            {drySaving ? "Running…" : "Dry Run"}
+                        </button>
+                        <button onClick={() => onToggle(rule.id, isActive ? "paused" : "active")} style={{ ...btnGhost, fontSize: 10 }}>
+                            {isActive ? "Pause" : "Activate"}
+                        </button>
+                        <button onClick={() => onDelete(rule.id)} style={{ ...btnDanger, fontSize: 10, marginLeft: "auto" }}>Delete</button>
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
 function DetectorInspector({ node }) {
     const [rules,  setRules]  = useState([])
     const [alerts, setAlerts] = useState([])
@@ -629,7 +1059,7 @@ function DetectorInspector({ node }) {
     const sourceMap = { det_ais: 'AIS', det_adsb: 'ADSB', det_news: 'NEWS', det_overwatch: 'SATELLITE' }
     const source = sourceMap[node.id]
 
-    useEffect(() => {
+    const reload = () => {
         fetch(`${API}/api/forge/rules`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
             .then(data => {
@@ -637,7 +1067,10 @@ function DetectorInspector({ node }) {
                 setRules(list.filter(r => r.source === source || r.source === source?.toLowerCase()))
             })
             .catch(() => {})
+    }
 
+    useEffect(() => {
+        reload()
         fetch(`${API}/api/forge/alerts`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
             .then(data => {
@@ -650,25 +1083,26 @@ function DetectorInspector({ node }) {
             .catch(() => {})
     }, [node.id, source])
 
+    const toggle = async (ruleId, newStatus) => {
+        await fetch(`${API}/api/forge/rules/${ruleId}`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify({ status: newStatus }) })
+        reload()
+    }
+
+    const del = async (ruleId) => {
+        await fetch(`${API}/api/forge/rules/${ruleId}`, { method: "DELETE", headers: forgeHeaders() })
+        reload()
+    }
+
     return (
         <div>
             <StatusRow status={node.status} />
             <div style={{ marginBottom: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                     <span style={{ color: "#475569", fontSize: 10, textTransform: "uppercase" }}>Rules ({rules.length})</span>
+                    <span style={{ color: "#22c55e", fontSize: 10 }}>{rules.filter(r => r.status === "active").length} active</span>
                 </div>
                 {rules.map(rule => (
-                    <div key={rule.id} style={{ background: "#0f1219", borderRadius: 4, padding: "9px 10px", marginBottom: 4, borderLeft: `2px solid ${rule.status === 'active' ? '#22c55e' : '#475569'}` }}>
-                        <div style={{ color: "#cbd5e1", fontSize: 11, fontWeight: 600 }}>{rule.name}</div>
-                        <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{rule.trigger_type} · {rule.severity}</div>
-                        {rule.params && (
-                            <div style={{ color: "#334155", fontSize: 9, marginTop: 3 }}>
-                                {Object.entries(rule.params).slice(0, 3).map(([k, v]) => (
-                                    <span key={k} style={{ marginRight: 8 }}>{k}: {typeof v === "object" ? JSON.stringify(v) : v}</span>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                    <RuleRow key={rule.id} rule={rule} onToggle={toggle} onDelete={del} />
                 ))}
                 {rules.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No rules for this detector.</div>}
             </div>
@@ -713,20 +1147,14 @@ function EnrichmentInspector({ node }) {
             {node.id === 'enr_correlation' && stats && (
                 <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
                     {[["Total", stats.total, "#60a5fa"], ["Critical", stats.critical, "#ef4444"], ["High", stats.high, "#f59e0b"]].map(([l, v, c]) => (
-                        <div key={l} style={{ ...card, flex: 1, textAlign: "center", padding: "10px 8px", marginBottom: 0 }}>
-                            <div style={{ color: c, fontSize: 18, fontWeight: 700 }}>{v}</div>
-                            <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{l}</div>
-                        </div>
+                        <Stat key={l} label={l} value={v} color={c} />
                     ))}
                 </div>
             )}
             {node.id === 'enr_ontology' && stats && (
                 <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
                     {[["Entities", stats.nodes, "#8b5cf6"], ["Connections", stats.edges, "#60a5fa"]].map(([l, v, c]) => (
-                        <div key={l} style={{ ...card, flex: 1, textAlign: "center", padding: "10px 8px", marginBottom: 0 }}>
-                            <div style={{ color: c, fontSize: 22, fontWeight: 700 }}>{v}</div>
-                            <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{l}</div>
-                        </div>
+                        <Stat key={l} label={l} value={v} color={c} />
                     ))}
                 </div>
             )}
@@ -852,12 +1280,148 @@ function NodeInspector({ node, brainStatus, onClose, onOpenTraining }) {
     )
 }
 
+// ── Brain Inspector ────────────────────────────────────────────────────────────
+function BrainInspector({ onClose }) {
+    const [data, setData] = useState(null)
+
+    useEffect(() => {
+        fetch(`${API}/api/forge/brain/inspect`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => setData(d))
+            .catch(() => {})
+    }, [])
+
+    if (!data) return (
+        <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", zIndex: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ color: "#475569", fontSize: 13 }}>Loading brain state…</div>
+        </div>
+    )
+
+    const weights = Object.entries(data.weights || {})
+    const history = data.cycle_history || []
+
+    return (
+        <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", zIndex: 20, display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "0 20px", height: 48, flexShrink: 0, borderBottom: "1px solid rgba(148,163,184,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ color: "#8b5cf6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Brain Inspector</span>
+                    <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>Correlation Engine</span>
+                </div>
+                <button onClick={onClose} style={{ ...btnGhost, fontSize: 12 }}>← Back to Pipeline</button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", padding: "20px 28px" }}>
+                {/* Live stats */}
+                <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+                    {[
+                        ["Vessels Live", data.live?.vessels ?? 0, "#3b82f6"],
+                        ["Aircraft", data.live?.aircraft ?? 0, "#60a5fa"],
+                        ["Alerts 24h", data.live?.alerts_24h ?? 0, "#f59e0b"],
+                        ["Correlations", data.live?.correlations ?? 0, "#8b5cf6"],
+                    ].map(([l, v, c]) => <Stat key={l} label={l} value={v} color={c} />)}
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                    {/* Threat weights */}
+                    <div style={card}>
+                        <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Threat Weights</div>
+                        {weights.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No weight data</div>}
+                        {weights.map(([key, val]) => {
+                            const pct = Math.round((val || 0) * 100)
+                            return (
+                                <div key={key} style={{ marginBottom: 8 }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                                        <span style={{ color: "#94a3b8", fontSize: 10 }}>{key.replace(/_/g, " ")}</span>
+                                        <span style={{ color: "#e2e8f0", fontSize: 10, fontWeight: 700 }}>{val?.toFixed ? val.toFixed(2) : val}</span>
+                                    </div>
+                                    <div style={{ height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
+                                        <div style={{ width: `${pct}%`, height: "100%", background: "#8b5cf6", borderRadius: 2 }} />
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+
+                    {/* Correlation params */}
+                    <div style={card}>
+                        <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Correlation Parameters</div>
+                        {Object.keys(data.corr_params || {}).length === 0
+                            ? <div style={{ color: "#334155", fontSize: 11 }}>Engine params not exposed</div>
+                            : Object.entries(data.corr_params).map(([k, v]) => (
+                                <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                                    <span style={{ color: "#64748b", fontSize: 11 }}>{k.replace(/_/g, " ")}</span>
+                                    <span style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600 }}>{v}</span>
+                                </div>
+                            ))
+                        }
+                    </div>
+
+                    {/* Rules summary */}
+                    <div style={card}>
+                        <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Rules</div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                            <span style={{ color: "#64748b", fontSize: 12 }}>Total</span>
+                            <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 700 }}>{data.rules_total}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                            <span style={{ color: "#64748b", fontSize: 12 }}>Active</span>
+                            <span style={{ color: "#22c55e", fontSize: 12, fontWeight: 700 }}>{data.rules_active}</span>
+                        </div>
+                        {Object.entries(data.rules_by_source || {}).map(([src, cnt]) => (
+                            <div key={src} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                                <span style={{ color: "#475569", fontSize: 10 }}>{src}</span>
+                                <span style={{ color: "#94a3b8", fontSize: 10 }}>{cnt}</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* ML models + training */}
+                    <div style={card}>
+                        <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>ML Models</div>
+                        {(data.models || []).map(m => (
+                            <div key={m.name} style={{ marginBottom: 8 }}>
+                                <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>{m.name}</div>
+                                <div style={{ color: "#475569", fontSize: 10, marginTop: 1 }}>{m.size_mb} MB · <span style={{ color: m.status === "active" ? "#22c55e" : "#f59e0b" }}>{m.status}</span></div>
+                            </div>
+                        ))}
+                        {(data.models || []).length === 0 && <div style={{ color: "#334155", fontSize: 11, marginBottom: 8 }}>No models on disk</div>}
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(148,163,184,0.06)" }}>
+                            <div style={{ color: "#475569", fontSize: 10, marginBottom: 4 }}>Training Labels: <span style={{ color: "#e2e8f0" }}>{data.training_labels}</span></div>
+                            <div style={{ color: "#475569", fontSize: 10 }}>Accuracy: <span style={{ color: data.training_accuracy >= 80 ? "#22c55e" : data.training_accuracy >= 60 ? "#f59e0b" : "#ef4444" }}>{data.training_accuracy}%</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Cycle history */}
+                {history.length > 0 && (
+                    <div style={{ ...card, marginTop: 16 }}>
+                        <div style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Cycle Log (last {history.length})</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 6 }}>
+                            {history.map((c, i) => (
+                                <div key={i} style={{ background: "#0c1018", borderRadius: 4, padding: "7px 10px" }}>
+                                    <div style={{ color: "#64748b", fontSize: 9, marginBottom: 4 }}>{new Date(c.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
+                                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                        {[["vessels", c.vessels, "#3b82f6"], ["rules", c.rules, "#94a3b8"], ["ais", c.ais_alerts, "#f59e0b"], ["adsb", c.adsb_alerts, "#8b5cf6"], ["corr", c.correlations, "#ef4444"]].map(([k, v, col]) => (
+                                            <span key={k} style={{ color: col, fontSize: 10 }}>{k}: <span style={{ color: "#e2e8f0", fontWeight: 700 }}>{v}</span></span>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
 // ── ForgePanel (main export) ───────────────────────────────────────────────────
 export default function ForgePanel({ user, onClose }) {
-    const [brainStatus,   setBrainStatus]   = useState(null)
-    const [selectedNode,  setSelectedNode]  = useState(null)
-    const [trainingNode,  setTrainingNode]  = useState(null)
-    const [pipelineNodes, setPipelineNodes] = useState(PIPELINE_NODES)
+    const [brainStatus,      setBrainStatus]      = useState(null)
+    const [selectedNode,     setSelectedNode]     = useState(null)
+    const [trainingNode,     setTrainingNode]     = useState(null)
+    const [brainInspectorOpen, setBrainInspectorOpen] = useState(false)
+    const [pipelineNodes,    setPipelineNodes]    = useState(PIPELINE_NODES)
 
     useEffect(() => {
         const load = () =>
@@ -867,8 +1431,8 @@ export default function ForgePanel({ user, onClose }) {
                     setBrainStatus(d)
                     if (d) {
                         setPipelineNodes(prev => prev.map(node => {
-                            if (node.id === 'src_ais')   return { ...node, config: { ...node.config, vessels_tracked: d.vessels_tracked } }
-                            if (node.id === 'det_ais')   return { ...node, config: { ...node.config, rules: d.rules_active } }
+                            if (node.id === 'src_ais')    return { ...node, config: { ...node.config, vessels_tracked: d.vessels_tracked } }
+                            if (node.id === 'det_ais')    return { ...node, config: { ...node.config, rules: d.rules_active } }
                             if (node.id === 'out_alerts') return { ...node, config: { ...node.config, alerts_24h: d.alerts_24h } }
                             return node
                         }))
@@ -882,8 +1446,15 @@ export default function ForgePanel({ user, onClose }) {
 
     const handleNodeClick = (id, node) => {
         if (selectedNode?.id === id) { setSelectedNode(null); return }
+        if (BRAIN_NODE_IDS.has(id)) {
+            setBrainInspectorOpen(true)
+            setSelectedNode(null)
+            setTrainingNode(null)
+            return
+        }
         setSelectedNode(node)
         setTrainingNode(null)
+        setBrainInspectorOpen(false)
     }
 
     const handleOpenTraining = (node) => {
@@ -925,7 +1496,7 @@ export default function ForgePanel({ user, onClose }) {
                     onNodeClick={handleNodeClick}
                 />
 
-                {selectedNode && !trainingNode && (
+                {selectedNode && !trainingNode && !brainInspectorOpen && (
                     <NodeInspector
                         node={selectedNode}
                         brainStatus={brainStatus}
@@ -935,9 +1506,15 @@ export default function ForgePanel({ user, onClose }) {
                 )}
 
                 {trainingNode && (
-                    <TrainingOverlay
+                    <TrainingCenter
                         node={trainingNode}
                         onClose={() => setTrainingNode(null)}
+                    />
+                )}
+
+                {brainInspectorOpen && (
+                    <BrainInspector
+                        onClose={() => setBrainInspectorOpen(false)}
                     />
                 )}
             </div>

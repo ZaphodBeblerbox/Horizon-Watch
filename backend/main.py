@@ -7201,6 +7201,7 @@ else:
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
 _correlation_assessments: list = []  # cross-domain correlation results (24h)
 _last_cycle_stats: dict = {}         # stats from the most-recent detection cycle
+_cycle_history: list = []            # last 20 detection cycle summaries
 _AIS_STATUS      = {"connected": False, "error": None, "vessel_count": 0, "last_msg": None, "last_poll": None}
 _AIS_MSG_COUNTER = 0         # total messages received this connection
 _AIS_LAST_LOG_T  = 0.0      # time of last periodic log
@@ -13402,6 +13403,18 @@ async def _forge_detection_cycle():
                 "correlations_24h":  len(_correlation_assessments),
                 "weights":           _threat_engine.weights if _threat_engine else {},
             }
+            _cycle_history.append({
+                "ts":            _last_cycle_stats["last_cycle"],
+                "vessels":       len(vessels_snap),
+                "aircraft":      len(_GLOBAL_ADSB_CACHE),
+                "rules":         active_rule_count,
+                "ais_alerts":    len(new_ais_alerts),
+                "adsb_alerts":   len(new_adsb_alerts),
+                "correlations":  len(new_assessments),
+                "alerts_24h":    len(_forge_alerts),
+            })
+            while len(_cycle_history) > 20:
+                _cycle_history.pop(0)
             print(
                 f"[forge-brain] cycle — {len(_forge_alerts)} alerts, "
                 f"{len(new_assessments)} correlations, "
@@ -13410,6 +13423,263 @@ async def _forge_detection_cycle():
         except Exception as _ex:
             print(f"[forge-brain] cycle error: {_ex}")
         await asyncio.sleep(300)
+
+
+# ── Forge source config ───────────────────────────────────────────────────────
+
+def _get_forge_config() -> dict:
+    path = _FORGE_DIR / "forge_config.json"
+    if not path.exists():
+        return {}
+    try:
+        return _json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
+def _save_forge_config(cfg: dict):
+    _FORGE_DIR.mkdir(parents=True, exist_ok=True)
+    (_FORGE_DIR / "forge_config.json").write_text(_json.dumps(cfg, indent=2))
+
+
+@app.get("/api/forge/source/{source_id}/config")
+def forge_get_source_config(source_id: str, _forge=Depends(_require_forge)):
+    cfg = _get_forge_config()
+    src_cfg = cfg.get(source_id, {})
+
+    if source_id == "src_ais":
+        src_cfg.setdefault("bboxes", len(_AIS_BBOXES))
+        src_cfg.setdefault("vessels_tracked", len(_AIS_VESSELS))
+        src_cfg.setdefault("filters", cfg.get("src_ais", {}).get("filters", []))
+
+    elif source_id == "src_news":
+        src_cfg.setdefault("keywords", cfg.get("src_news", {}).get("keywords", []))
+        src_cfg.setdefault("feed_count", len(_SCAN_FEEDS) if "_SCAN_FEEDS" in dir() else 277)
+        health = {}
+        for name, url in (_DS_STATUS or {}).items():
+            if isinstance(url, dict):
+                health[name] = url.get("failures", 0)
+        src_cfg["feed_health"] = health
+
+    elif source_id == "src_uploads":
+        uploads = _forge_load("uploads.json")
+        src_cfg["uploads"] = uploads
+        src_cfg["count"] = len(uploads)
+
+    elif source_id == "src_satellite":
+        src_cfg.setdefault("token_set", bool(src_cfg.get("sentinel_token", "")))
+
+    elif source_id == "src_adsb":
+        src_cfg.setdefault("refresh_ms", 10000)
+
+    return src_cfg
+
+
+@app.put("/api/forge/source/{source_id}/config")
+async def forge_update_source_config(source_id: str, request: Request, _forge=Depends(_require_forge)):
+    body = await request.json()
+    cfg = _get_forge_config()
+    cfg[source_id] = {**(cfg.get(source_id) or {}), **body}
+    _save_forge_config(cfg)
+    return cfg[source_id]
+
+
+# ── Forge rule dry-run ────────────────────────────────────────────────────────
+
+@app.post("/api/forge/rules/{rule_id}/test")
+def forge_test_rule(rule_id: str, _forge=Depends(_require_forge)):
+    if not _HAS_DETECTORS:
+        raise HTTPException(status_code=503, detail="Detector engine not available")
+    rules = _forge_load("rules.json")
+    rule = next((r for r in rules if r.get("id") == rule_id), None)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    tester = _AISAnomalyDetector()
+    tester.load_rules([rule])
+    with _AIS_LOCK:
+        vessels_snap = dict(_AIS_VESSELS)
+
+    cables = _prep_cables_for_detector()
+    hits = []
+    for mmsi, vessel in list(vessels_snap.items())[:500]:
+        lon_val = vessel.get("lon") or vessel.get("longitude")
+        if vessel.get("lng") is None and lon_val is not None:
+            vessel = {**vessel, "lng": lon_val}
+        if not vessel.get("name"):
+            vessel = {**vessel, "name": f"MMSI:{mmsi}"}
+        alerts = tester.check_vessel(vessel, cables=cables, chokepoints=_CHOKEPOINT_DEFS, all_vessels=vessels_snap)
+        hits.extend(alerts)
+
+    return {
+        "rule_id":   rule_id,
+        "rule_name": rule.get("name"),
+        "vessels_tested": min(len(vessels_snap), 500),
+        "hits":      len(hits),
+        "sample":    hits[:10],
+    }
+
+
+# ── Forge training stats ──────────────────────────────────────────────────────
+
+@app.get("/api/forge/training/stats/{detector_id}")
+def forge_training_stats(detector_id: str, _forge=Depends(_require_forge)):
+    labels = _forge_load("forge_labels.json")
+    type_map = {
+        "det_overwatch": "overwatch",
+        "det_ais":       "ais",
+        "det_adsb":      "ais",
+        "det_news":      "news",
+    }
+    src_type = type_map.get(detector_id)
+    if src_type:
+        labels = [l for l in labels if l.get("source_type") == src_type]
+
+    total     = len(labels)
+    confirmed = sum(1 for l in labels if l.get("label") in ("confirm", "confirmed", "correct"))
+    corrected = sum(1 for l in labels if l.get("label") in ("correct", "corrected", "adjusted"))
+    skipped   = sum(1 for l in labels if l.get("label") == "skip")
+    accuracy  = round(confirmed / max(confirmed + corrected, 1) * 100, 1)
+
+    # Per-class breakdown for overwatch
+    classes: dict = {}
+    for l in labels:
+        cls = l.get("original_label") or l.get("class") or "unknown"
+        if cls not in classes:
+            classes[cls] = {"confirmed": 0, "corrected": 0, "total": 0}
+        classes[cls]["total"] += 1
+        if l.get("label") in ("confirm", "confirmed"):
+            classes[cls]["confirmed"] += 1
+        elif l.get("label") in ("correct", "corrected", "adjusted"):
+            classes[cls]["corrected"] += 1
+
+    return {
+        "detector_id": detector_id,
+        "total":       total,
+        "confirmed":   confirmed,
+        "corrected":   corrected,
+        "skipped":     skipped,
+        "accuracy":    accuracy,
+        "classes":     classes,
+        "recent":      labels[-20:][::-1],
+    }
+
+
+# ── Forge training export ─────────────────────────────────────────────────────
+
+@app.get("/api/forge/training/export/{fmt}")
+def forge_training_export(fmt: str, _forge=Depends(_require_forge)):
+    from fastapi.responses import Response
+    labels = _forge_load("forge_labels.json")
+
+    if fmt == "json":
+        content = _json.dumps(labels, indent=2)
+        return Response(content=content, media_type="application/json",
+                        headers={"Content-Disposition": "attachment; filename=forge_labels.json"})
+
+    elif fmt == "csv":
+        import io
+        buf = io.StringIO()
+        buf.write("id,label,source_type,original_label,correction,labeled_at\n")
+        for l in labels:
+            row = ",".join([
+                str(l.get("id", "")),
+                str(l.get("label", "")),
+                str(l.get("source_type", "")),
+                str(l.get("original_label", "")),
+                str(l.get("correction", "")),
+                str(l.get("labeled_at", "")),
+            ])
+            buf.write(row + "\n")
+        return Response(content=buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=forge_labels.csv"})
+
+    elif fmt == "yolo":
+        import io, zipfile
+        buf = io.BytesIO()
+        ow_labels = [l for l in labels if l.get("source_type") == "overwatch"]
+        classes = sorted(set(l.get("correction") or l.get("original_label", "unknown") for l in ow_labels))
+        cls_map = {c: i for i, c in enumerate(classes)}
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("classes.txt", "\n".join(classes))
+            for i, l in enumerate(ow_labels):
+                cls_name = l.get("correction") or l.get("original_label", "unknown")
+                cls_idx  = cls_map.get(cls_name, 0)
+                zf.writestr(f"labels/{i:05d}.txt", f"{cls_idx} 0.5 0.5 0.5 0.5\n")
+        return Response(content=buf.getvalue(), media_type="application/zip",
+                        headers={"Content-Disposition": "attachment; filename=forge_yolo_export.zip"})
+
+    raise HTTPException(status_code=400, detail=f"Unknown format: {fmt}")
+
+
+# ── Forge model download ──────────────────────────────────────────────────────
+
+@app.get("/api/forge/models/download/{model_name}")
+def forge_download_model(model_name: str, _forge=Depends(_require_forge)):
+    from fastapi.responses import FileResponse
+    safe = model_name.replace("/", "").replace("..", "")
+    backend_dir = Path(__file__).parent
+    path = backend_dir / safe
+    if not path.exists() or not safe.endswith(".onnx"):
+        raise HTTPException(status_code=404, detail="Model not found")
+    return FileResponse(str(path), media_type="application/octet-stream",
+                        headers={"Content-Disposition": f"attachment; filename={safe}"})
+
+
+# ── Forge brain inspect ───────────────────────────────────────────────────────
+
+@app.get("/api/forge/brain/inspect")
+def forge_brain_inspect(_forge=Depends(_require_forge)):
+    rules = _forge_load("rules.json")
+    labels = _forge_load("forge_labels.json")
+    confirmed = sum(1 for l in labels if l.get("label") in ("confirm", "confirmed", "correct"))
+    corrected  = sum(1 for l in labels if l.get("label") in ("correct", "corrected", "adjusted"))
+
+    # ML models
+    backend_dir = Path(__file__).parent
+    models = []
+    for fname in ("yolov8n-obb.onnx", "yolov8n.onnx"):
+        fpath = backend_dir / fname
+        if fpath.exists():
+            models.append({
+                "name":    fname,
+                "size_mb": round(fpath.stat().st_size / (1024 * 1024), 1),
+                "status":  "active" if "obb" in fname else "standby",
+            })
+
+    # Correlation engine params
+    corr_params = {}
+    if _correlation_engine:
+        try:
+            corr_params = {
+                "time_window_s":    getattr(_correlation_engine, "time_window",    3600),
+                "distance_km":      getattr(_correlation_engine, "distance_km",    150),
+                "min_confidence":   getattr(_correlation_engine, "min_confidence", 0.6),
+                "min_signals":      getattr(_correlation_engine, "min_signals",    2),
+            }
+        except Exception:
+            pass
+
+    return {
+        "weights":         _threat_engine.weights if _threat_engine else {},
+        "corr_params":     corr_params,
+        "rules_total":     len(rules),
+        "rules_active":    sum(1 for r in rules if r.get("status") == "active"),
+        "rules_by_source": {
+            src: sum(1 for r in rules if r.get("source") == src)
+            for src in ("AIS", "ADSB", "NEWS", "SATELLITE")
+        },
+        "models":          models,
+        "training_labels": len(labels),
+        "training_accuracy": round(confirmed / max(confirmed + corrected, 1) * 100, 1),
+        "cycle_history":   list(reversed(_cycle_history)),
+        "live": {
+            "vessels":      len(_AIS_VESSELS),
+            "aircraft":     len(_GLOBAL_ADSB_CACHE),
+            "alerts_24h":   len(_forge_alerts),
+            "correlations": len(_correlation_assessments),
+        },
+    }
 
 
 # ── Forge alerts ──────────────────────────────────────────────────────────────
