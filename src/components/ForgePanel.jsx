@@ -1414,48 +1414,132 @@ function BrainWorkspace({ brainStatus }) {
 // ONTOLOGY + ALERTS WORKSPACES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const ONTOLOGY_TYPE_COLORS = {
+    vessel: "#60a5fa", aircraft: "#a78bfa", country: "#34d399", group: "#fb923c",
+    event: "#f87171", cable: "#fbbf24", rule: "#94a3b8", alert: "#ef4444",
+    person: "#e879f9", chokepoint: "#22d3ee",
+}
+const ONTOLOGY_TYPES = ["all", "vessel", "aircraft", "country", "group", "event", "cable", "rule", "alert", "person", "chokepoint"]
+
 function OntologyWorkspace() {
     const [data, setData] = useState(null)
     const [search, setSearch] = useState("")
+    const [typeFilter, setTypeFilter] = useState("all")
+    const [building, setBuilding] = useState(false)
+    const [buildMsg, setBuildMsg] = useState(null)
+    const [selectedNode, setSelectedNode] = useState(null)
 
-    useEffect(() => {
+    const loadOntology = () =>
         fetch(`${API}/api/forge/ontology`, { headers: forgeHeaders() })
-            .then(r => r.ok ? r.json() : { nodes: [], edges: [] }).then(setData).catch(() => {})
-    }, [])
+            .then(r => r.ok ? r.json() : { nodes: [], edges: [] })
+            .then(setData).catch(() => {})
 
-    const nodes = (data?.nodes || []).filter(n => !search || (n.id || n.label || "").toLowerCase().includes(search.toLowerCase()))
+    useEffect(() => { loadOntology() }, [])
+
+    const buildOntology = async () => {
+        setBuilding(true); setBuildMsg(null)
+        try {
+            const res = await fetch(`${API}/api/forge/ontology/build`, { method: "POST", headers: forgeHeaders() })
+            const d = await res.json()
+            if (res.ok) {
+                setBuildMsg(`Built: ${d.nodes} entities · ${d.edges} connections`)
+                await loadOntology()
+            } else {
+                setBuildMsg(`Error: ${d.detail || "Build failed"}`)
+            }
+        } catch (e) {
+            setBuildMsg(`Error: ${e.message}`)
+        } finally {
+            setBuilding(false)
+        }
+    }
+
+    const edgeCounts = {}
+    for (const e of (data?.edges || [])) {
+        edgeCounts[e.source] = (edgeCounts[e.source] || 0) + 1
+        edgeCounts[e.target] = (edgeCounts[e.target] || 0) + 1
+    }
+
+    const nodes = (data?.nodes || []).filter(n => {
+        if (typeFilter !== "all" && n.type !== typeFilter) return false
+        if (search && !(n.label || n.id || "").toLowerCase().includes(search.toLowerCase())) return false
+        return true
+    })
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
             <Toolbar>
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…" style={{ ...inputStyle, flex: 1, maxWidth: 320 }} />
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…" style={{ ...inputStyle, flex: 1, maxWidth: 260 }} />
+                <button onClick={buildOntology} disabled={building} style={{ padding: "5px 12px", borderRadius: 5, border: "none", background: building ? "#1e293b" : "#60a5fa", color: building ? "#475569" : "#0f172a", fontWeight: 700, cursor: building ? "default" : "pointer", fontSize: 11 }}>
+                    {building ? "Building…" : "Build from Live Data"}
+                </button>
                 <span style={{ color: "#334155", fontSize: 10 }}>{data?.nodes?.length ?? 0} entities · {data?.edges?.length ?? 0} connections</span>
+                {buildMsg && <span style={{ color: buildMsg.startsWith("Error") ? "#f87171" : "#4ade80", fontSize: 10 }}>{buildMsg}</span>}
             </Toolbar>
+            <div style={{ display: "flex", gap: 4, padding: "6px 12px", flexWrap: "wrap", borderBottom: "1px solid rgba(148,163,184,0.06)" }}>
+                {ONTOLOGY_TYPES.map(t => (
+                    <button key={t} onClick={() => setTypeFilter(t)} style={{ padding: "2px 8px", borderRadius: 10, border: "1px solid " + (typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") : "rgba(148,163,184,0.15)"), background: typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") + "22" : "transparent", color: typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") : "#475569", fontSize: 10, cursor: "pointer", fontWeight: typeFilter === t ? 700 : 400 }}>{t}</button>
+                ))}
+            </div>
             <WorkspaceBody>
                 {!data ? <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div> :
-                nodes.length === 0 ? <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>No entities yet. Upload intelligence files to populate the ontology.</div> :
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                        <tr style={{ borderBottom: "1px solid rgba(148,163,184,0.08)" }}>
-                            {["Entity", "Type", "Source", "Created"].map(h => (
-                                <th key={h} style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", textAlign: "left", padding: "5px 8px", fontWeight: 600 }}>{h}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {nodes.slice(0, 200).map((n, i) => (
-                            <tr key={i} style={{ borderBottom: "1px solid rgba(148,163,184,0.03)" }}
-                                onMouseEnter={e => e.currentTarget.style.background = "#0d1422"}
-                                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                                <td style={{ ...cellStyle, color: "#cbd5e1" }}>{n.id || n.label || "—"}</td>
-                                <td style={cellStyle}>{n.type || "—"}</td>
-                                <td style={cellStyle}>{n.source || "—"}</td>
-                                <td style={cellStyle}>{n.created_at?.slice(0, 10) || "—"}</td>
+                nodes.length === 0 ? (
+                    <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>
+                        {data.nodes?.length === 0 ? "No entities yet — click \"Build from Live Data\" to populate the ontology." : `No ${typeFilter === "all" ? "" : typeFilter + " "}entities match.`}
+                    </div>
+                ) : (
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                            <tr style={{ borderBottom: "1px solid rgba(148,163,184,0.08)" }}>
+                                {["Type", "Name", "Description", "Lat", "Lng", "Connections"].map(h => (
+                                    <th key={h} style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", textAlign: "left", padding: "5px 8px", fontWeight: 600 }}>{h}</th>
+                                ))}
                             </tr>
-                        ))}
-                    </tbody>
-                </table>}
+                        </thead>
+                        <tbody>
+                            {nodes.slice(0, 300).map((n, i) => {
+                                const typeColor = ONTOLOGY_TYPE_COLORS[n.type] || "#475569"
+                                const connCount = edgeCounts[n.id] || 0
+                                const isSelected = selectedNode?.id === n.id
+                                return (
+                                    <tr key={i}
+                                        onClick={() => setSelectedNode(isSelected ? null : n)}
+                                        style={{ borderBottom: "1px solid rgba(148,163,184,0.03)", cursor: "pointer", background: isSelected ? "#0d1422" : "transparent" }}
+                                        onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#0a0f1a" }}
+                                        onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent" }}>
+                                        <td style={cellStyle}>
+                                            <span style={{ padding: "1px 6px", borderRadius: 8, background: typeColor + "22", color: typeColor, fontSize: 9, fontWeight: 600 }}>{n.type || "—"}</span>
+                                        </td>
+                                        <td style={{ ...cellStyle, color: "#cbd5e1", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.label || n.id || "—"}</td>
+                                        <td style={{ ...cellStyle, color: "#475569", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.description || "—"}</td>
+                                        <td style={cellStyle}>{n.lat != null ? n.lat.toFixed(2) : "—"}</td>
+                                        <td style={cellStyle}>{n.lng != null ? n.lng.toFixed(2) : "—"}</td>
+                                        <td style={{ ...cellStyle, color: connCount > 0 ? "#60a5fa" : "#334155" }}>{connCount || "—"}</td>
+                                    </tr>
+                                )
+                            })}
+                        </tbody>
+                    </table>
+                )}
             </WorkspaceBody>
+            {selectedNode && (
+                <div style={{ borderTop: "1px solid rgba(148,163,184,0.08)", padding: "12px 16px", background: "#0a0f1a", minHeight: 80 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <span style={{ padding: "2px 8px", borderRadius: 10, background: (ONTOLOGY_TYPE_COLORS[selectedNode.type] || "#475569") + "22", color: ONTOLOGY_TYPE_COLORS[selectedNode.type] || "#475569", fontSize: 10, fontWeight: 700 }}>{selectedNode.type}</span>
+                        <span style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600 }}>{selectedNode.label || selectedNode.id}</span>
+                        <button onClick={() => setSelectedNode(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 14 }}>✕</button>
+                    </div>
+                    <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                        {selectedNode.description && <span style={{ color: "#64748b", fontSize: 11 }}>{selectedNode.description}</span>}
+                        {selectedNode.lat != null && <span style={{ color: "#475569", fontSize: 10 }}>Lat: {selectedNode.lat.toFixed(4)}</span>}
+                        {selectedNode.lng != null && <span style={{ color: "#475569", fontSize: 10 }}>Lng: {selectedNode.lng.toFixed(4)}</span>}
+                        {selectedNode.flag && <span style={{ color: "#475569", fontSize: 10 }}>Flag: {selectedNode.flag}</span>}
+                        {selectedNode.mmsi && <span style={{ color: "#475569", fontSize: 10 }}>MMSI: {selectedNode.mmsi}</span>}
+                        {selectedNode.icao && <span style={{ color: "#475569", fontSize: 10 }}>ICAO: {selectedNode.icao}</span>}
+                        <span style={{ color: "#334155", fontSize: 10 }}>{edgeCounts[selectedNode.id] || 0} connections</span>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
