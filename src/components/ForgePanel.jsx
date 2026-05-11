@@ -144,14 +144,13 @@ const FORGE_TABS = [
     { id: "entities",      label: "Entity Networks",    icon: <FIcoNetwork /> },
     { id: "feeds",         label: "Data Feeds",         icon: <FIcoAntenna /> },
     { id: "models",        label: "Model Management",   icon: <FIcoBrain /> },
-    { id: "overlays",      label: "Map Overlays",       icon: <FIcoMapGrid /> },
 ]
 
 // ── Shared styles ──────────────────────────────────────────────────────────────
 
 const card = {
-    background: "rgba(15, 23, 42, 0.8)",
-    border: "1px solid rgba(56, 189, 248, 0.1)",
+    background: "#111827",
+    border: "1px solid rgba(148,163,184,0.1)",
     borderRadius: 8,
     padding: 16,
     marginBottom: 12,
@@ -159,13 +158,13 @@ const card = {
 
 const btnGhost = {
     fontSize: 11, padding: "4px 10px", borderRadius: 4,
-    border: "1px solid rgba(56,189,248,0.3)",
-    background: "transparent", color: "#38bdf8", cursor: "pointer",
+    border: "1px solid rgba(148,163,184,0.2)",
+    background: "transparent", color: "#94a3b8", cursor: "pointer",
 }
 
 const btnDanger = {
     fontSize: 11, padding: "4px 10px", borderRadius: 4,
-    border: "1px solid rgba(239,68,68,0.3)",
+    border: "1px solid rgba(239,68,68,0.25)",
     background: "transparent", color: "#ef4444", cursor: "pointer",
 }
 
@@ -356,16 +355,18 @@ function ThreatDashboard({ setActiveTab, onFlyTo }) {
     const [scores,       setScores]       = useState([])
     const [alerts,       setAlerts]       = useState([])
     const [correlations, setCorrelations] = useState([])
+    const [brainStatus,  setBrainStatus]  = useState(null)
     const [loading,      setLoading]      = useState(true)
 
     const loadScores       = () => fetch(`${API}/api/forge/threat-scores`, { headers: forgeHeaders() }).then(r => r.ok ? r.json() : []).catch(() => [])
     const loadAlerts       = () => fetch(`${API}/api/forge/alerts`,         { headers: forgeHeaders() }).then(r => r.ok ? r.json() : []).catch(() => [])
     const loadCorrelations = () => fetch(`${API}/api/forge/correlations`,   { headers: forgeHeaders() }).then(r => r.ok ? r.json() : []).catch(() => [])
+    const loadBrainStatus  = () => fetch(`${API}/api/forge/brain-status`,   { headers: forgeHeaders() }).then(r => r.ok ? r.json() : null).catch(() => null)
 
     const refresh = () => {
         setLoading(true)
-        Promise.all([loadScores(), loadAlerts(), loadCorrelations()])
-            .then(([s, a, c]) => { setScores(s); setAlerts(a); setCorrelations(c) })
+        Promise.all([loadScores(), loadAlerts(), loadCorrelations(), loadBrainStatus()])
+            .then(([s, a, c, b]) => { setScores(s); setAlerts(a); setCorrelations(c); setBrainStatus(b) })
             .finally(() => setLoading(false))
     }
 
@@ -378,21 +379,47 @@ function ThreatDashboard({ setActiveTab, onFlyTo }) {
     const sendFeedback = (idx, action) => {
         fetch(`${API}/api/forge/alerts/${idx}/feedback`, {
             method: "POST",
-            headers: { ...headers, "Content-Type": "application/json" },
+            headers: forgeHeaders(),
             body: JSON.stringify({ action }),
         }).then(r => r.ok ? r.json() : null).then(d => { if (d) refresh() }).catch(() => {})
     }
 
     const sevColor = sev => sev === "critical" ? "#ef4444" : sev === "high" ? "#f59e0b" : sev === "medium" ? "#38bdf8" : "#64748b"
 
+    const statBarStyle = {
+        display: "flex", gap: 0, marginBottom: 20,
+        background: "rgba(10,14,26,0.8)", border: "1px solid rgba(148,163,184,0.1)",
+        borderRadius: 8, overflow: "hidden",
+    }
+    const statCellStyle = {
+        flex: 1, padding: "10px 14px", borderRight: "1px solid rgba(148,163,184,0.08)",
+        display: "flex", flexDirection: "column", gap: 2,
+    }
+
     return (
         <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <div>
                     <h2 style={{ color: "#e2e8f0", margin: "0 0 3px", fontSize: 16 }}>Threat Assessment Matrix</h2>
-                    <div style={{ color: "#475569", fontSize: 11 }}>Refreshes every 60s • detection cycle every 5 min</div>
+                    <div style={{ color: "#475569", fontSize: 11 }}>Refreshes every 60s · detection cycle every 5 min</div>
                 </div>
                 <button onClick={refresh} style={btnGhost}>{loading ? "Loading…" : "↻ Refresh"}</button>
+            </div>
+
+            {/* Brain status stat bar */}
+            <div style={statBarStyle}>
+                {[
+                    { label: "Last Cycle", value: brainStatus?.last_cycle ? new Date(brainStatus.last_cycle).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—" },
+                    { label: "Vessels", value: brainStatus?.vessels_tracked ?? "—" },
+                    { label: "Active Rules", value: brainStatus?.rules_active ?? "—" },
+                    { label: "Alerts (24h)", value: brainStatus?.alerts_24h ?? "—" },
+                    { label: "Correlations", value: brainStatus?.correlations_24h ?? "—" },
+                ].map((stat, i, arr) => (
+                    <div key={stat.label} style={{ ...statCellStyle, borderRight: i === arr.length - 1 ? "none" : statCellStyle.borderRight }}>
+                        <div style={{ color: "#94a3b8", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>{stat.label}</div>
+                        <div style={{ color: "#e2e8f0", fontSize: 18, fontWeight: 700, lineHeight: 1 }}>{stat.value}</div>
+                    </div>
+                ))}
             </div>
 
             {/* Region score cards */}
@@ -557,9 +584,6 @@ function CreateRuleModal({ onClose, onCreate }) {
                 </select>
                 <label style={labelStyle}>Description (optional)</label>
                 <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="What does this rule detect?" style={inputStyle} />
-                <div style={{ color: "#64748b", fontSize: 12, padding: "10px 12px", background: "rgba(30,41,59,0.5)", borderRadius: 6, marginBottom: 16 }}>
-                    Detection logic will be wired in Phase 2. Rules are saved as templates.
-                </div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                     <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid rgba(100,116,139,0.3)", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>Cancel</button>
                     <button onClick={handleCreate} style={{ padding: "8px 18px", borderRadius: 6, border: "none", background: "#38bdf8", color: "#0f172a", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Create Rule</button>
@@ -798,8 +822,9 @@ function PatternRulesTab() {
 // ── Watch Areas ────────────────────────────────────────────────────────────────
 
 function WatchAreasTab() {
-    const [areas,   setAreas]   = useState([])
-    const [loading, setLoading] = useState(true)
+    const [areas,    setAreas]    = useState([])
+    const [loading,  setLoading]  = useState(true)
+    const [scanning, setScanning] = useState({})
 
     const loadAreas = () => {
         fetch(`${API}/api/forge/watch-areas`, { headers: forgeHeaders() })
@@ -813,6 +838,21 @@ function WatchAreasTab() {
     const deleteArea = (id) => {
         fetch(`${API}/api/forge/watch-areas/${id}`, { method: "DELETE", headers: forgeHeaders() }).catch(() => {})
         setAreas(prev => prev.filter(a => a.id !== id))
+    }
+
+    const scanArea = (id) => {
+        setScanning(prev => ({ ...prev, [id]: true }))
+        fetch(`${API}/api/forge/watch-areas/${id}/scan`, { method: "POST", headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(result => {
+                if (result) {
+                    setAreas(prev => prev.map(a => a.id === id
+                        ? { ...a, last_scan: result.last_scan, detections: result.detections, status: result.status }
+                        : a))
+                }
+            })
+            .catch(() => {})
+            .finally(() => setScanning(prev => { const n = { ...prev }; delete n[id]; return n }))
     }
 
     return (
@@ -847,7 +887,7 @@ function WatchAreasTab() {
                             </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: 16 }}>
-                            <button style={btnGhost}>Scan Now</button>
+                            <button onClick={() => scanArea(area.id)} disabled={!!scanning[area.id]} style={{ ...btnGhost, opacity: scanning[area.id] ? 0.5 : 1 }}>{scanning[area.id] ? "Scanning…" : "Scan Now"}</button>
                             <button onClick={() => deleteArea(area.id)} style={btnDanger}>Remove</button>
                         </div>
                     </div>
@@ -1695,23 +1735,25 @@ function EntityNetworksTab({ onViewOnMap, mission }) {
 
     const buildFromLiveData = () => {
         setLoading(true)
-        fetch(`${API}/api/forge/ontology/build`, { method: "POST", headers })
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), 30000)
+        fetch(`${API}/api/forge/ontology/build`, { method: "POST", headers: forgeHeaders(), signal: ctrl.signal })
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d) { setNodes(d.nodes || []); setEdges(d.edges || []) } })
-            .catch(() => {})
-            .finally(() => setLoading(false))
+            .catch(e => { if (e.name !== "AbortError") console.warn("[forge/ontology/build]", e) })
+            .finally(() => { clearTimeout(timer); setLoading(false) })
     }
 
     const addEdge = ({ source, target, type }) => {
         fetch(`${API}/api/forge/ontology/edge`, {
             method: "POST",
-            headers: { ...headers, "Content-Type": "application/json" },
+            headers: forgeHeaders(),
             body: JSON.stringify({ source, target, type }),
         }).then(r => r.ok ? r.json() : null).then(e => { if (e) setEdges(prev => [...prev, e]) }).catch(() => {})
     }
 
     const removeEdge = (edgeId) => {
-        fetch(`${API}/api/forge/ontology/edge/${edgeId}`, { method: "DELETE", headers })
+        fetch(`${API}/api/forge/ontology/edge/${edgeId}`, { method: "DELETE", headers: forgeHeaders() })
             .then(() => { setEdges(prev => prev.filter(e => e.id !== edgeId)) })
             .catch(() => {})
     }
@@ -1929,7 +1971,7 @@ function DataFeedsTab({ missionId }) {
         fd.append("data_type",   "auto")
         fd.append("description", "")
         try {
-            const resp   = await fetch(`${API}/api/forge/upload`, { method: "POST", headers, body: fd })
+            const resp   = await fetch(`${API}/api/forge/upload`, { method: "POST", headers: forgeFormHeaders(), body: fd })
             const result = await resp.json()
             if (result.error) { setUploadMsg({ ok: false, text: result.error }); return }
             setUploads(prev => [result, ...prev])
@@ -2064,56 +2106,6 @@ function DataFeedsTab({ missionId }) {
     )
 }
 
-// ── Skeleton (fallback) ────────────────────────────────────────────────────────
-
-function SkeletonTab({ title, description, icon }) {
-    return (
-        <div>
-            <h2 style={{ color: "#e2e8f0", margin: "0 0 6px", fontSize: 16 }}>{icon} {title}</h2>
-            <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 24 }}>{description}</p>
-            <div style={{ color: "#64748b", fontSize: 13, padding: 32, textAlign: "center", background: "rgba(15,23,42,0.5)", borderRadius: 8, border: "1px dashed rgba(56,189,248,0.18)" }}>
-                This module will be built out in a future session.
-            </div>
-        </div>
-    )
-}
-
-// ── Map Overlays ───────────────────────────────────────────────────────────────
-
-const OVERLAYS = [
-    { name: "Light Pollution (VIIRS Nighttime Lights)", description: "VIIRS nighttime lights — shows human activity, energy infrastructure, urbanisation. Updated nightly by NASA.", source: "NASA GIBS / Earth Observation Group", available: true, id: "light-pollution" },
-    { name: "GPS Jamming Zones", description: "Known GPS interference areas from OPSGROUP reports — updated weekly from pilot reports.", source: "OPSGROUP", available: false, id: "gps-jam" },
-    { name: "Nuclear Facilities", description: "IAEA global nuclear installation database — power plants, research reactors, enrichment facilities.", source: "IAEA", available: false, id: "nuclear" },
-    { name: "UNHCR Refugee Camps", description: "UNHCR-registered camp locations with population estimates. Updated quarterly.", source: "UNHCR", available: false, id: "refugees" },
-]
-
-function MapOverlaysTab({ onAddOverlay }) {
-    const [active, setActive] = useState(new Set())
-    const toggle = (id) => {
-        const next = new Set(active)
-        if (next.has(id)) next.delete(id); else next.add(id)
-        setActive(next)
-        onAddOverlay?.(id, !active.has(id))
-    }
-    return (
-        <div>
-            <h2 style={{ color: "#e2e8f0", margin: "0 0 6px", fontSize: 16 }}>Custom Map Overlays</h2>
-            <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 20 }}>Add supplemental data layers to the 3D globe.</p>
-            {OVERLAYS.map(o => (
-                <div key={o.id} style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", border: active.has(o.id) ? "1px solid rgba(56,189,248,0.3)" : "1px solid rgba(56,189,248,0.1)" }}>
-                    <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
-                        <div style={{ color: "#e2e8f0", fontWeight: 600, fontSize: 13 }}>{o.name}</div>
-                        <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 3, lineHeight: 1.4 }}>{o.description}</div>
-                        <div style={{ color: "#64748b", fontSize: 11, marginTop: 4 }}>Source: {o.source}</div>
-                    </div>
-                    <button disabled={!o.available} onClick={() => o.available && toggle(o.id)} style={{ padding: "7px 14px", borderRadius: 6, border: "none", cursor: o.available ? "pointer" : "not-allowed", background: !o.available ? "rgba(100,116,139,0.2)" : active.has(o.id) ? "rgba(56,189,248,0.25)" : "#38bdf8", color: !o.available ? "#64748b" : active.has(o.id) ? "#38bdf8" : "#0f172a", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", flexShrink: 0 }}>
-                        {!o.available ? "Coming Soon" : active.has(o.id) ? "Remove Layer" : "Add to Globe"}
-                    </button>
-                </div>
-            ))}
-        </div>
-    )
-}
 
 // ── Mission System ────────────────────────────────────────────────────────────
 
@@ -2272,19 +2264,19 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
     const activeMission = missions.find(m => m.active) || null
 
     const activateMission = (id) => {
-        fetch(`${API}/api/forge/missions/${id}/activate`, { method: "PUT", headers })
+        fetch(`${API}/api/forge/missions/${id}/activate`, { method: "PUT", headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : null)
             .then(() => setMissions(prev => prev.map(m => ({ ...m, active: m.id === id }))))
             .catch(() => {})
     }
 
     return (
-        <div style={{ position: "absolute", inset: 0, background: "rgba(5, 9, 20, 0.98)", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif", zIndex: 50 }}>
+        <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif", zIndex: 50 }}>
             {/* Header */}
-            <div style={{ padding: "0 24px", height: 50, flexShrink: 0, borderBottom: "1px solid rgba(56, 189, 248, 0.12)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ padding: "0 24px", height: 50, flexShrink: 0, borderBottom: "1px solid rgba(148,163,184,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontSize: 17, fontWeight: 800, color: "#e2e8f0", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 7 }}><FIcoHammer w={16} h={16} /> FORGE</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "#38bdf8", background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.25)", padding: "2px 8px", borderRadius: 4 }}>INTELLIGENCE TRAINING LAB</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: "#e2e8f0", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 7 }}><FIcoHammer w={14} h={14} /> FORGE</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", color: "#60a5fa", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.2)", padding: "2px 8px", borderRadius: 4 }}>INTELLIGENCE TRAINING LAB</span>
                     <span style={{ fontSize: 11, color: "#475569" }}>{user?.email || "admin"}</span>
                 </div>
                 {onClose && <button onClick={onClose} title="Close Forge" style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "4px 8px" }}>×</button>}
@@ -2300,10 +2292,10 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
             )}
 
             {/* Tab bar */}
-            <div style={{ display: "flex", gap: 2, padding: "6px 24px 0", borderBottom: "1px solid rgba(56, 189, 248, 0.08)", flexShrink: 0, overflowX: "auto" }}>
+            <div style={{ display: "flex", gap: 1, padding: "8px 24px 0", borderBottom: "1px solid rgba(148,163,184,0.08)", flexShrink: 0, overflowX: "auto" }}>
                 {FORGE_TABS.map(tab => (
-                    <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding: "6px 12px 8px", borderRadius: "6px 6px 0 0", border: "none", borderBottom: activeTab === tab.id ? "2px solid #38bdf8" : "2px solid transparent", cursor: "pointer", background: activeTab === tab.id ? "rgba(56,189,248,0.08)" : "transparent", color: activeTab === tab.id ? "#38bdf8" : "#64748b", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", transition: "color 0.12s, background 0.12s" }}>
-                        {tab.icon} {tab.label}
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding: "6px 14px 8px", borderRadius: "6px 6px 0 0", border: "none", borderBottom: activeTab === tab.id ? "2px solid #60a5fa" : "2px solid transparent", cursor: "pointer", background: activeTab === tab.id ? "rgba(96,165,250,0.07)" : "transparent", color: activeTab === tab.id ? "#60a5fa" : "#64748b", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", transition: "color 0.12s, background 0.12s" }}>
+                        {tab.label}
                     </button>
                 ))}
             </div>
@@ -2319,7 +2311,6 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
                 {activeTab === "entities"      && <EntityNetworksTab mission={activeMission} onViewOnMap={node => { onFlyTo?.(node); onClose?.() }} />}
                 {activeTab === "feeds"         && <DataFeedsTab missionId={activeMission?.id} />}
                 {activeTab === "models"        && <ModelManagementTab />}
-                {activeTab === "overlays"      && <MapOverlaysTab onAddOverlay={onAddOverlay} />}
             </div>
 
             {showWizard && (

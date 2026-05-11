@@ -7200,6 +7200,7 @@ else:
     _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
 _correlation_assessments: list = []  # cross-domain correlation results (24h)
+_last_cycle_stats: dict = {}         # stats from the most-recent detection cycle
 _AIS_STATUS      = {"connected": False, "error": None, "vessel_count": 0, "last_msg": None, "last_poll": None}
 _AIS_MSG_COUNTER = 0         # total messages received this connection
 _AIS_LAST_LOG_T  = 0.0      # time of last periodic log
@@ -12733,6 +12734,54 @@ def forge_delete_watch_area(area_id: str, _forge=Depends(_require_forge)):
     return {"ok": True}
 
 
+@app.post("/api/forge/watch-areas/{area_id}/scan")
+async def forge_scan_watch_area(area_id: str, request: Request, _forge=Depends(_require_forge)):
+    areas = _forge_load("watch_areas.json")
+    area  = next((a for a in areas if a.get("id") == area_id), None)
+    if not area:
+        raise HTTPException(status_code=404, detail="Watch area not found")
+
+    bounds = area.get("bounds")
+    if not bounds and area.get("lat") and area.get("lng"):
+        lat, lng = float(area["lat"]), float(area.get("lng") or area.get("lon", 0))
+        delta = 0.5
+        bounds = [lat - delta, lng - delta, lat + delta, lng + delta]
+    if not bounds:
+        raise HTTPException(status_code=422, detail="Watch area has no bounds or coordinates")
+
+    try:
+        loop  = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(_run_overwatch_inference, bounds, 17, 0.2, False, "dota"),
+        )
+        detections = result.get("detections", []) if isinstance(result, dict) else []
+    except Exception as _se:
+        detections = []
+        print(f"[forge/scan] {area_id} error: {_se}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    for a in areas:
+        if a.get("id") == area_id:
+            a["last_scan"]   = now
+            a["detections"]  = len(detections)
+            a["last_change"] = now
+            a["status"]      = "alert" if len(detections) > (a.get("baseline_detections") or 0) else "ok"
+            break
+    _forge_save("watch_areas.json", areas)
+    return {"ok": True, "detections": len(detections), "last_scan": now, "status": areas[next((i for i, a in enumerate(areas) if a.get("id") == area_id), 0)].get("status")}
+
+
+@app.get("/api/forge/brain-status")
+def forge_brain_status(_forge=Depends(_require_forge)):
+    return {
+        **_last_cycle_stats,
+        "detector_ready": _HAS_DETECTORS,
+        "alerts_in_memory": len(_forge_alerts),
+        "correlations_in_memory": len(_correlation_assessments),
+    }
+
+
 @app.get("/api/forge/detections")
 def forge_get_detections(_forge=Depends(_require_forge)):
     return {"detections": _forge_load("detection_corrections.json")}
@@ -13199,7 +13248,7 @@ def _prep_cables_for_detector():
 
 async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
-    global _forge_alerts, _correlation_assessments
+    global _forge_alerts, _correlation_assessments, _last_cycle_stats
     while True:
         try:
             # Bootstrap default rules on first run
@@ -13340,6 +13389,19 @@ async def _forge_detection_cycle():
             _forge_alerts = list(reversed(deduped))[:500]
             _correlation_assessments = _correlation_assessments[-200:]
 
+            active_rule_count = len(active_rules)
+            _last_cycle_stats = {
+                "last_cycle":        datetime.now(timezone.utc).isoformat(),
+                "vessels_tracked":   len(vessels_snap),
+                "aircraft_tracked":  len(_GLOBAL_ADSB_CACHE),
+                "rules_active":      active_rule_count,
+                "ais_alerts":        len(new_ais_alerts),
+                "adsb_alerts":       len(new_adsb_alerts),
+                "new_correlations":  len(new_assessments),
+                "alerts_24h":        len(_forge_alerts),
+                "correlations_24h":  len(_correlation_assessments),
+                "weights":           _threat_engine.weights if _threat_engine else {},
+            }
             print(
                 f"[forge-brain] cycle — {len(_forge_alerts)} alerts, "
                 f"{len(new_assessments)} correlations, "
