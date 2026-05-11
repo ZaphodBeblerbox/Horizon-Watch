@@ -18,7 +18,7 @@ class ADSBPatternDetector:
         if any(callsign.upper().startswith(p) for p in prefixes):
             alerts.append({
                 "type":      "military_aircraft",
-                "source":    "adsb_anomaly",
+                "source":    "ADSB",
                 "severity":  "info",
                 "aircraft":  callsign,
                 "icao":      aircraft.get("hex"),
@@ -38,7 +38,7 @@ class ADSBPatternDetector:
             }
             alerts.append({
                 "type":      "emergency_squawk",
-                "source":    "adsb_anomaly",
+                "source":    "ADSB",
                 "severity":  "critical",
                 "aircraft":  callsign,
                 "squawk":    squawk,

@@ -13280,15 +13280,23 @@ async def _forge_detection_cycle():
         try:
             cycle_start = datetime.now(timezone.utc)
 
-            # Bootstrap default rules on first run
+            # Bootstrap default rules on first run; backfill missing sources on subsequent runs
             rules = _forge_load("rules.json")
-            if not rules:
-                try:
-                    from detectors.default_rules import DEFAULT_RULES as _DR
+            try:
+                from detectors.default_rules import DEFAULT_RULES as _DR
+                if not rules:
                     rules = _DR
                     _forge_save("rules.json", rules)
                     print("[forge-brain] bootstrapped default rules")
-                except ImportError:
+                else:
+                    existing_ids = {r.get("id") for r in rules}
+                    added = [r for r in _DR if r.get("id") not in existing_ids]
+                    if added:
+                        rules = rules + added
+                        _forge_save("rules.json", rules)
+                        print(f"[forge-brain] backfilled {len(added)} missing default rules: {[r['id'] for r in added]}")
+            except ImportError:
+                if not rules:
                     rules = []
             active_rules = [r for r in rules if r.get("status") == "active"]
 
@@ -13321,45 +13329,33 @@ async def _forge_detection_cycle():
                     pass
             print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
 
-            # Stage 2 — ADS-B anomaly detection
+            # Stage 2 — ADS-B anomaly detection via _adsb_detector
             new_adsb_alerts: list = []
+            adsb_forge_rules = [r for r in active_rules if r.get("source") in ("ADSB", "adsb")]
+            # Build combined callsign prefix set from forge rules + detector built-ins
+            forge_prefixes = []
+            for _r in adsb_forge_rules:
+                forge_prefixes.extend(_r.get("params", {}).get("callsign_prefixes", []))
+            emergency_codes = {"7500", "7600", "7700"}
+            for _r in adsb_forge_rules:
+                emergency_codes.update(_r.get("params", {}).get("squawk_codes", []))
             try:
-                adsb_rules = [r for r in active_rules if r.get("source") in ("ADSB", "adsb")]
-                for ac in list(_GLOBAL_ADSB_CACHE.values())[:300]:
-                    callsign = (ac.get("flight") or "").strip().upper()
-                    squawk   = str(ac.get("squawk") or "")
-                    for rule in adsb_rules:
-                        if rule.get("status") != "active":
-                            continue
-                        trigger = rule.get("trigger_type", "")
-                        params  = rule.get("params", {})
-                        if trigger == "emergency_squawk" and squawk in params.get("squawk_codes", ["7500","7600","7700"]):
-                            labels = {"7500": "HIJACK", "7600": "COMMS FAILURE", "7700": "EMERGENCY"}
-                            new_adsb_alerts.append({
-                                "rule_id":   rule["id"],
-                                "rule_name": rule["name"],
-                                "source":    "ADSB",
-                                "severity":  "critical",
-                                "aircraft":  callsign or ac.get("hex"),
-                                "lat":       ac.get("lat"),
-                                "lng":       ac.get("lon"),
-                                "message":   f"{labels.get(squawk,'EMERGENCY')}: {callsign or ac.get('hex','?')} squawking {squawk}",
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            })
-                        elif trigger == "military_callsign":
-                            prefixes = params.get("callsign_prefixes", [])
-                            if callsign and any(callsign.startswith(p) for p in prefixes):
-                                new_adsb_alerts.append({
-                                    "rule_id":   rule["id"],
-                                    "rule_name": rule["name"],
-                                    "source":    "ADSB",
-                                    "severity":  "info",
-                                    "aircraft":  callsign,
-                                    "lat":       ac.get("lat"),
-                                    "lng":       ac.get("lon"),
-                                    "message":   f"Military aircraft: {callsign} alt={ac.get('alt_baro','?')}ft",
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                })
+                for ac in list(_GLOBAL_ADSB_CACHE.values())[:500]:
+                    hits = _adsb_detector.check_aircraft(
+                        ac, military_callsigns=forge_prefixes if forge_prefixes else None
+                    )
+                    # Attach rule metadata from matching forge rule where possible
+                    for h in hits:
+                        h["source"] = "ADSB"
+                        if h.get("type") == "emergency_squawk":
+                            rule = next((r for r in adsb_forge_rules if r.get("trigger_type") == "emergency_squawk"), None)
+                        else:
+                            rule = next((r for r in adsb_forge_rules if r.get("trigger_type") == "military_callsign"), None)
+                        if rule:
+                            h["rule_id"]   = rule.get("id")
+                            h["rule_name"] = rule.get("name")
+                            h["severity"]  = rule.get("severity", h.get("severity", "info"))
+                    new_adsb_alerts.extend(hits)
             except Exception as _ae:
                 print(f"[forge-brain] adsb error: {_ae}")
 
