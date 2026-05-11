@@ -20,6 +20,7 @@ import threading
 import json as _json
 import csv as _csv
 import io as _io
+import shutil as _shutil
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -47,7 +48,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 _socket.setdefaulttimeout(20)
 
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Request, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Depends, UploadFile, File, Form
 from fastapi.responses import Response as FastAPIResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
@@ -12270,6 +12271,361 @@ def _forge_save(filename: str, data: list):
     (_FORGE_DIR / filename).write_text(_json.dumps(data, indent=2, ensure_ascii=False))
 
 
+_FORGE_UPLOAD_DIR = _FORGE_DIR / "uploads"
+
+
+def _load_forge_rules() -> list:
+    return _forge_load("rules.json")
+
+
+def _guess_entity_type(type_str: str, has_mmsi: bool) -> str:
+    t = (type_str or "").lower()
+    if has_mmsi or "vessel" in t or "ship" in t or "tanker" in t: return "vessel"
+    if "aircraft" in t or "plane" in t or "heli" in t: return "aircraft"
+    if "port" in t: return "port"
+    if "airport" in t or "airbase" in t or "air base" in t: return "airport"
+    if "cable" in t: return "cable"
+    if "pipeline" in t or "power" in t or "energy" in t: return "facility"
+    if "military" in t or "base" in t or "camp" in t: return "facility"
+    if "person" in t or "leader" in t: return "person"
+    if "group" in t or "militia" in t or "organization" in t: return "group"
+    return "facility"
+
+
+def _add_entities_to_ontology(entities: list):
+    ontology = _forge_ontology_load()
+    changed = False
+    for entity in entities:
+        existing = next(
+            (n for n in ontology["nodes"] if n["label"].lower() == entity["label"].lower()),
+            None,
+        )
+        if existing:
+            if entity.get("lat") and not existing.get("lat"):
+                existing["lat"] = entity["lat"]
+                existing["lng"] = entity.get("lng")
+                changed = True
+            continue
+        safe_label = entity["label"][:20].replace(" ", "_").lower()
+        node_id = f"{entity['type']}_{len(ontology['nodes'])+1}_{safe_label}"
+        ontology["nodes"].append({
+            "id":          node_id,
+            "type":        entity["type"],
+            "label":       entity["label"],
+            "description": entity.get("description", ""),
+            "lat":         entity.get("lat"),
+            "lng":         entity.get("lng"),
+            "source":      "upload",
+        })
+        changed = True
+    if changed:
+        _forge_ontology_save(ontology)
+
+
+async def _process_csv_upload(filepath: str, description: str) -> dict:
+    import csv as _csv2
+    entities = []
+    try:
+        with open(filepath, newline="", encoding="utf-8-sig") as f:
+            reader = _csv2.DictReader(f)
+            headers = list(reader.fieldnames or [])
+            lat_col  = next((h for h in headers if h.lower() in ("lat", "latitude", "y")), None)
+            lng_col  = next((h for h in headers if h.lower() in ("lng", "lon", "longitude", "x")), None)
+            name_col = next((h for h in headers if h.lower() in ("name", "title", "label", "vessel_name", "facility")), None)
+            type_col = next((h for h in headers if h.lower() in ("type", "category", "kind")), None)
+            mmsi_col = next((h for h in headers if h.lower() in ("mmsi", "imo")), None)
+            has_mmsi = mmsi_col is not None
+            for row in reader:
+                try:
+                    lat = float(row[lat_col]) if lat_col and row.get(lat_col) else None
+                    lng = float(row[lng_col]) if lng_col and row.get(lng_col) else None
+                except (ValueError, TypeError):
+                    lat = lng = None
+                entities.append({
+                    "label": (row.get(name_col) or f"Entity {len(entities)+1}") if name_col else f"Entity {len(entities)+1}",
+                    "type":  _guess_entity_type(row.get(type_col, "") if type_col else "", has_mmsi),
+                    "lat":   lat,
+                    "lng":   lng,
+                })
+    except Exception as exc:
+        return {"status": "error", "entities_extracted": 0, "details": {"error": str(exc)}}
+    _add_entities_to_ontology(entities)
+    return {
+        "status": "processed",
+        "entities_extracted": len(entities),
+        "details": {"columns": headers, "rows": len(entities), "has_coordinates": lat_col is not None and lng_col is not None},
+    }
+
+
+async def _process_kml_upload(filepath: str, description: str) -> dict:
+    from xml.etree import ElementTree as ET
+    try:
+        tree = ET.parse(filepath)
+        root = tree.getroot()
+        ns   = "{http://www.opengis.net/kml/2.2}"
+        entities = []
+        for placemark in root.iter(f"{ns}Placemark"):
+            name_el = placemark.find(f"{ns}name")
+            name    = (name_el.text or "Unnamed") if name_el is not None else "Unnamed"
+            desc_el = placemark.find(f"{ns}description")
+            desc    = (desc_el.text or "") if desc_el is not None else ""
+            coords  = []
+            for coord_el in placemark.iter(f"{ns}coordinates"):
+                if coord_el.text:
+                    for c in coord_el.text.strip().split():
+                        parts = c.split(",")
+                        if len(parts) >= 2:
+                            try:
+                                coords.append((float(parts[1]), float(parts[0])))
+                            except ValueError:
+                                pass
+            if coords:
+                entities.append({
+                    "label":       name,
+                    "description": desc,
+                    "type":        "facility" if len(coords) == 1 else "route",
+                    "lat":         coords[0][0],
+                    "lng":         coords[0][1],
+                })
+        _add_entities_to_ontology(entities)
+        return {"status": "processed", "entities_extracted": len(entities), "details": {"placemarks": len(entities)}}
+    except Exception as exc:
+        return {"status": "error", "entities_extracted": 0, "details": {"error": str(exc)}}
+
+
+async def _process_geojson_upload(filepath: str, description: str) -> dict:
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            data = _json.load(f)
+        features = data.get("features", []) if data.get("type") == "FeatureCollection" else [data]
+        entities = []
+        for feat in features:
+            props = feat.get("properties") or {}
+            geom  = feat.get("geometry") or {}
+            lat = lng = None
+            gtype = geom.get("type", "")
+            coords = geom.get("coordinates", [])
+            if gtype == "Point" and len(coords) >= 2:
+                lng, lat = float(coords[0]), float(coords[1])
+            elif gtype == "LineString" and coords:
+                mid = coords[len(coords) // 2]
+                lng, lat = float(mid[0]), float(mid[1])
+            elif gtype == "Polygon" and coords:
+                ring = coords[0]
+                if ring:
+                    lat = sum(c[1] for c in ring) / len(ring)
+                    lng = sum(c[0] for c in ring) / len(ring)
+            entities.append({
+                "label": props.get("name") or props.get("NAME") or f"Feature {len(entities)+1}",
+                "type":  _guess_entity_type(props.get("type", ""), False),
+                "lat":   lat,
+                "lng":   lng,
+            })
+        _add_entities_to_ontology(entities)
+        return {"status": "processed", "entities_extracted": len(entities), "details": {"features": len(features)}}
+    except Exception as exc:
+        return {"status": "error", "entities_extracted": 0, "details": {"error": str(exc)}}
+
+
+async def _process_document_upload(filepath: str, description: str) -> dict:
+    ext  = filepath.rsplit(".", 1)[-1].lower() if "." in filepath else ""
+    text = ""
+    if ext == "pdf":
+        try:
+            import pdfplumber
+            with pdfplumber.open(filepath) as pdf:
+                for page in pdf.pages[:20]:
+                    text += page.extract_text() or ""
+        except Exception:
+            text = ""
+    if not text:
+        try:
+            with open(filepath, encoding="utf-8", errors="replace") as f:
+                text = f.read(50000)
+        except Exception:
+            pass
+    if not text.strip():
+        return {"status": "error", "entities_extracted": 0, "details": {"error": "No text extracted"}}
+    if not client:
+        return {"status": "error", "entities_extracted": 0, "details": {"error": "ANTHROPIC_API_KEY not set"}}
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": (
+                "Extract all named entities from this intelligence document. "
+                "Return ONLY a JSON array of objects, no other text.\n"
+                'Each object: {"name":"entity name","type":"person|country|organization|facility|weapon|vessel|aircraft|event","description":"brief description","lat":null,"lng":null}\n'
+                "If you know the approximate coordinates, include them. Otherwise leave null.\n\n"
+                f"Document:\n{text[:30000]}"
+            )}],
+        )
+        raw = resp.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+        entities_raw = _json.loads(raw)
+    except Exception:
+        entities_raw = []
+    entities = [
+        {"label": e.get("name", "Unknown"), "type": e.get("type", "facility"),
+         "description": e.get("description", ""), "lat": e.get("lat"), "lng": e.get("lng")}
+        for e in entities_raw
+    ]
+    _add_entities_to_ontology(entities)
+    return {
+        "status": "processed",
+        "entities_extracted": len(entities),
+        "details": {"text_length": len(text), "claude_extracted": len(entities_raw)},
+    }
+
+
+# ── Upload endpoints ──────────────────────────────────────────────────────────
+
+@app.post("/api/forge/upload")
+async def forge_upload(
+    file: UploadFile = File(...),
+    mission_id: str  = Form("mission_default"),
+    data_type: str   = Form("auto"),
+    description: str = Form(""),
+    _user=Depends(require_admin_user),
+):
+    _FORGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    ts       = int(datetime.utcnow().timestamp())
+    filename = f"{ts}_{file.filename}"
+    filepath = str(_FORGE_UPLOAD_DIR / filename)
+    with open(filepath, "wb") as fout:
+        _shutil.copyfileobj(file.file, fout)
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if data_type == "auto":
+        data_type = {
+            "kml": "kml", "kmz": "kml",
+            "csv": "csv",
+            "geojson": "geojson", "json": "geojson",
+            "pdf": "document", "txt": "document", "doc": "document", "docx": "document",
+            "png": "imagery", "jpg": "imagery", "jpeg": "imagery",
+            "tif": "imagery", "tiff": "imagery",
+        }.get(ext, "document")
+
+    if   data_type == "csv":      result = await _process_csv_upload(filepath, description)
+    elif data_type == "kml":      result = await _process_kml_upload(filepath, description)
+    elif data_type == "geojson":  result = await _process_geojson_upload(filepath, description)
+    elif data_type == "document": result = await _process_document_upload(filepath, description)
+    else:                         result = {"status": "stored", "entities_extracted": 0, "details": {}}
+
+    uploads = _forge_load("uploads.json")
+    record = {
+        "id":                 f"upload_{len(uploads)}_{ts}",
+        "filename":           file.filename,
+        "stored_as":          filename,
+        "type":               data_type,
+        "description":        description,
+        "mission_id":         mission_id,
+        "uploaded_by":        getattr(_user, "email", "admin"),
+        "uploaded_at":        datetime.utcnow().isoformat(),
+        "entities_extracted": result.get("entities_extracted", 0),
+        "rules_generated":    result.get("rules_generated", 0),
+        "status":             result.get("status", "processed"),
+        "details":            result.get("details", {}),
+    }
+    uploads.append(record)
+    _forge_save("uploads.json", uploads)
+    return record
+
+
+@app.get("/api/forge/uploads")
+def forge_get_uploads(_user=Depends(require_admin_user)):
+    uploads = _forge_load("uploads.json")
+    return list(reversed(uploads))
+
+
+# ── Auto-rule generation ──────────────────────────────────────────────────────
+
+@app.post("/api/forge/auto-generate-rules")
+async def forge_auto_generate_rules(request: Request, _user=Depends(require_admin_user)):
+    body        = await request.json()
+    mission_id  = body.get("mission_id", "mission_default")
+    ontology    = _forge_ontology_load()
+    existing    = _load_forge_rules()
+    exist_names = {r["name"] for r in existing}
+    new_rules   = []
+
+    def _next_id():
+        return f"rule_auto_{len(existing) + len(new_rules) + 1}_{int(datetime.utcnow().timestamp())}"
+
+    for cable in (n for n in ontology["nodes"] if n["type"] == "cable"):
+        name = f"Cable Loiterer — {cable['label'][:30]}"
+        if name not in exist_names:
+            new_rules.append({
+                "id": _next_id(), "name": name,
+                "description": f"Vessel stationary near {cable['label']}",
+                "source": "AIS", "trigger_type": "stationary_near_infrastructure",
+                "status": "active", "triggers": 0, "lastTrigger": "never",
+                "params": {"infra_type": "cable", "infra_name": cable["label"],
+                           "max_speed_knots": 0.5, "proximity_km": 10, "min_duration_minutes": 120},
+                "severity": "high", "auto_generated": True, "entity_id": cable.get("id"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            exist_names.add(name)
+
+    for cp in (n for n in ontology["nodes"] if n["type"] == "chokepoint"):
+        name = f"Dark Ship — {cp['label'][:30]}"
+        if name not in exist_names:
+            new_rules.append({
+                "id": _next_id(), "name": name,
+                "description": f"AIS transponder gap near {cp['label']}",
+                "source": "AIS", "trigger_type": "transponder_gap",
+                "status": "active", "triggers": 0, "lastTrigger": "never",
+                "params": {"gap_minutes": 30, "proximity_km": 100, "chokepoint": cp["label"]},
+                "severity": "high", "auto_generated": True, "entity_id": cp.get("id"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            exist_names.add(name)
+
+    fac_count = 0
+    for fac in (n for n in ontology["nodes"] if n["type"] in ("facility", "airport") and n.get("lat")):
+        if fac_count >= 10:
+            break
+        name = f"Satellite Watch — {fac['label'][:30]}"
+        if name not in exist_names:
+            new_rules.append({
+                "id": _next_id(), "name": name,
+                "description": f"Weekly satellite scan of {fac['label']}",
+                "source": "SATELLITE", "trigger_type": "change_detection",
+                "status": "active", "triggers": 0, "lastTrigger": "never",
+                "params": {"lat": fac["lat"], "lng": fac["lng"], "frequency": "weekly", "change_threshold_pct": 20},
+                "severity": "medium", "auto_generated": True, "entity_id": fac.get("id"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            exist_names.add(name)
+            fac_count += 1
+
+    nodes_by_id = {n["id"]: n for n in ontology["nodes"]}
+    for edge in ontology.get("edges", []):
+        if edge.get("type") not in ("threatens", "operates"):
+            continue
+        src = nodes_by_id.get(edge.get("source"))
+        tgt = nodes_by_id.get(edge.get("target"))
+        if src and tgt and src["type"] == "group" and tgt["type"] in ("country", "chokepoint"):
+            name = f"News Surge — {src['label']} / {tgt['label']}"
+            if name not in exist_names:
+                new_rules.append({
+                    "id": _next_id(), "name": name,
+                    "description": f"Elevated news mentioning {src['label']} and {tgt['label']}",
+                    "source": "NEWS", "trigger_type": "event_surge",
+                    "status": "active", "triggers": 0, "lastTrigger": "never",
+                    "params": {"keywords": [src["label"], tgt["label"]], "multiplier": 2, "window_days": 7},
+                    "severity": "medium", "auto_generated": True,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+                exist_names.add(name)
+
+    if new_rules:
+        _forge_save("rules.json", existing + new_rules)
+
+    return {"rules_generated": len(new_rules), "rules": new_rules}
+
+
 @app.get("/api/forge/rules")
 def forge_get_rules(_user=Depends(require_admin_user)):
     return {"rules": _forge_load("rules.json")}
@@ -12975,33 +13331,58 @@ def forge_get_correlations(_user=Depends(require_admin_user)):
 
 @app.post("/api/forge/alerts/{alert_idx}/feedback")
 async def forge_alert_feedback(alert_idx: int, request: Request, _user=Depends(require_admin_user)):
-    body = await request.json()
-    action = body.get("action")  # 'confirm' or 'false_alarm'
+    body    = await request.json()
+    action  = body.get("action")  # 'confirm' or 'false_alarm'
     if not _HAS_DETECTORS:
         raise HTTPException(status_code=503, detail="Detector engine not available")
     if alert_idx >= len(_forge_alerts):
         raise HTTPException(status_code=404, detail="Alert index out of range")
 
-    alert = _forge_alerts[alert_idx]
-    source = alert.get("source", "ais_anomaly")
+    alert   = _forge_alerts[alert_idx]
+    source  = alert.get("source", "ais_anomaly")
+    rule_id = alert.get("rule_id")
+
+    # Map alert source to threat-engine weight key
+    weight_key = (
+        "ais_anomaly"     if source == "AIS"  else
+        "adsb_anomaly"    if source == "ADSB" else
+        "news_escalation" if source == "NEWS" else
+        source
+    )
 
     if action == "confirm":
-        current = _threat_engine.weights.get(source, 0.2)
-        _threat_engine.weights[source] = min(0.5, current + 0.01)
+        current = _threat_engine.weights.get(weight_key, 0.2)
+        _threat_engine.weights[weight_key] = min(0.5, current + 0.01)
     elif action == "false_alarm":
-        current = _threat_engine.weights.get(source, 0.2)
-        _threat_engine.weights[source] = max(0.05, current - 0.01)
+        current = _threat_engine.weights.get(weight_key, 0.2)
+        _threat_engine.weights[weight_key] = max(0.05, current - 0.01)
 
-    # Normalise
     total = sum(_threat_engine.weights.values()) or 1
-    _threat_engine.weights = {k: v / total for k, v in _threat_engine.weights.items()}
+    _threat_engine.weights = {k: round(v / total, 4) for k, v in _threat_engine.weights.items()}
 
-    # Persist
+    # Adjust rule sensitivity if alert came from a named rule
+    rule_adjusted = False
+    if rule_id and action == "false_alarm":
+        rules = _load_forge_rules()
+        for rule in rules:
+            if rule.get("id") == rule_id:
+                p = rule.setdefault("params", {})
+                if "proximity_km" in p:
+                    p["proximity_km"] = max(1, p["proximity_km"] - 1)
+                if "max_speed_knots" in p:
+                    p["max_speed_knots"] = round(max(0.1, p["max_speed_knots"] - 0.1), 2)
+                if "gap_minutes" in p:
+                    p["gap_minutes"] = min(120, p["gap_minutes"] + 5)
+                rule["last_feedback"]  = action
+                rule["feedback_count"] = rule.get("feedback_count", 0) + 1
+                rule_adjusted = True
+                break
+        if rule_adjusted:
+            _forge_save("rules.json", rules)
+
     _FORGE_DIR.mkdir(parents=True, exist_ok=True)
-    (_FORGE_DIR / "forge_weights.json").write_text(
-        _json.dumps(_threat_engine.weights, indent=2)
-    )
-    return {"weights": _threat_engine.weights}
+    (_FORGE_DIR / "forge_weights.json").write_text(_json.dumps(_threat_engine.weights, indent=2))
+    return {"weights": _threat_engine.weights, "rule_adjusted": rule_id if rule_adjusted else None}
 
 
 # ── Threat scores ─────────────────────────────────────────────────────────────

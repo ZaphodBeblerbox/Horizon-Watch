@@ -573,19 +573,46 @@ function PatternRulesTab() {
     const [showCreate,  setShowCreate]  = useState(false)
     const [editingRule, setEditingRule] = useState(null)
     const [alerts,      setAlerts]      = useState([])
+    const [generating,  setGenerating]  = useState(false)
     const tok = localStorage.getItem("hw-auth-token")
     const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
-    useEffect(() => {
+    const loadRules = () => {
         fetch(`${API}/api/forge/rules`, { headers })
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d?.rules?.length) setRules(d.rules) })
             .catch(() => {})
+    }
+
+    useEffect(() => {
+        loadRules()
         fetch(`${API}/api/forge/alerts`, { headers })
             .then(r => r.ok ? r.json() : [])
             .then(setAlerts)
             .catch(() => {})
-    }, [])
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handleAutoGenerate = async () => {
+        setGenerating(true)
+        try {
+            const resp = await fetch(`${API}/api/forge/auto-generate-rules`, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body: JSON.stringify({ mission_id: "mission_default" }),
+            })
+            const result = await resp.json()
+            if (result.rules_generated > 0) {
+                loadRules()
+                alert(`Generated ${result.rules_generated} new rules from ontology analysis`)
+            } else {
+                alert("No new rules to generate — all ontology patterns already have rules.")
+            }
+        } catch {
+            alert("Auto-generate failed. Check that the backend is running.")
+        } finally {
+            setGenerating(false)
+        }
+    }
 
     const toggleStatus = (id) => {
         const rule = rules.find(r => r.id === id)
@@ -613,7 +640,17 @@ function PatternRulesTab() {
                     <h2 style={{ color: "#e2e8f0", margin: 0, fontSize: 16 }}>Pattern Rules</h2>
                     <p style={{ color: "#64748b", fontSize: 12, margin: "4px 0 0" }}>Automated triggers that fire when anomalous patterns are detected in live data.</p>
                 </div>
-                <button onClick={() => setShowCreate(true)} style={{ background: "rgba(56,189,248,0.15)", border: "1px solid #38bdf8", color: "#38bdf8", padding: "8px 16px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>+ Create Rule</button>
+                <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                        onClick={handleAutoGenerate}
+                        disabled={generating}
+                        style={{ background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.5)", color: "#22c55e", padding: "8px 14px", borderRadius: 6, cursor: generating ? "default" : "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}
+                    >
+                        <FIcoBrain w={12} h={12} />
+                        {generating ? "Analysing…" : "Auto-Generate from Ontology"}
+                    </button>
+                    <button onClick={() => setShowCreate(true)} style={{ background: "rgba(56,189,248,0.15)", border: "1px solid #38bdf8", color: "#38bdf8", padding: "8px 16px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>+ Create Rule</button>
+                </div>
             </div>
             {rules.map(rule => {
                 const sev = sevBadge(rule.severity)
@@ -1754,6 +1791,187 @@ function ModelManagementTab() {
     )
 }
 
+// ── Data Feeds & Uploads ───────────────────────────────────────────────────────
+
+const UPLOAD_TYPE_ICON = {
+    csv:      <FIcoMapGrid w={11} h={11} />,
+    kml:      <FIcoMapGrid w={11} h={11} />,
+    geojson:  <FIcoPin     w={11} h={11} />,
+    document: <FIcoPaper   w={11} h={11} />,
+    imagery:  <FIcoSatellite w={11} h={11} />,
+}
+
+const LIVE_SOURCES = [
+    { name: "AIS Vessel Tracking",   status: "active",      count: "786 vessels",      icon: <FIcoShip     w={12} h={12} /> },
+    { name: "ADS-B Aircraft",        status: "active",      count: "Live polling",      icon: <FIcoAircraft w={12} h={12} /> },
+    { name: "RSS News Feeds",        status: "active",      count: "277 feeds",         icon: <FIcoPaper    w={12} h={12} /> },
+    { name: "Copernicus Sentinel-2", status: "configured",  count: "10m resolution",    icon: <FIcoSatellite w={12} h={12} /> },
+    { name: "GDELT Events",          status: "active",      count: "Global",            icon: <FIcoGlobe    w={12} h={12} /> },
+    { name: "OpenInfraMap",          status: "active",      count: "Infrastructure",    icon: <FIcoFactory  w={12} h={12} /> },
+]
+
+function DataFeedsTab({ missionId }) {
+    const [uploads,    setUploads]    = useState([])
+    const [uploading,  setUploading]  = useState(false)
+    const [dragOver,   setDragOver]   = useState(false)
+    const [uploadMsg,  setUploadMsg]  = useState(null)
+    const fileInputRef = useRef(null)
+
+    const tok     = localStorage.getItem("hw-auth-token")
+    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+
+    useEffect(() => {
+        fetch(`${API}/api/forge/uploads`, { headers })
+            .then(r => r.ok ? r.json() : [])
+            .then(setUploads)
+            .catch(() => {})
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    async function handleUpload(file) {
+        if (!file) return
+        setUploading(true)
+        setUploadMsg(null)
+        const fd = new FormData()
+        fd.append("file",        file)
+        fd.append("mission_id",  missionId || "mission_default")
+        fd.append("data_type",   "auto")
+        fd.append("description", "")
+        try {
+            const resp   = await fetch(`${API}/api/forge/upload`, { method: "POST", headers, body: fd })
+            const result = await resp.json()
+            if (result.error) { setUploadMsg({ ok: false, text: result.error }); return }
+            setUploads(prev => [result, ...prev])
+            let msg = `Processed: ${result.entities_extracted} entities extracted`
+            if (result.entities_extracted > 0) {
+                const rr = await fetch(`${API}/api/forge/auto-generate-rules`, {
+                    method: "POST",
+                    headers: { ...headers, "Content-Type": "application/json" },
+                    body: JSON.stringify({ mission_id: missionId }),
+                })
+                const rres = await rr.json()
+                if (rres.rules_generated > 0) {
+                    msg += `, ${rres.rules_generated} rules auto-generated`
+                    setUploads(prev => prev.map(u => u.id === result.id
+                        ? { ...u, rules_generated: rres.rules_generated } : u))
+                }
+            }
+            setUploadMsg({ ok: true, text: msg })
+        } catch (e) {
+            setUploadMsg({ ok: false, text: e.message })
+        } finally {
+            setUploading(false)
+        }
+    }
+
+    return (
+        <div>
+            <h2 style={{ color: "#e2e8f0", margin: "0 0 4px", fontSize: 16 }}>Data Sources & Uploads</h2>
+            <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 18 }}>
+                Upload custom data to enrich the intelligence brain. Entities are auto-extracted and detection rules auto-generated.
+            </p>
+
+            {/* Drop zone */}
+            <div
+                onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={e => { e.preventDefault(); setDragOver(false); handleUpload(e.dataTransfer.files[0]) }}
+                onClick={() => !uploading && fileInputRef.current?.click()}
+                style={{
+                    border: `2px dashed ${dragOver ? "#38bdf8" : "rgba(56,189,248,0.25)"}`,
+                    borderRadius: 8, padding: "28px 16px", textAlign: "center",
+                    cursor: uploading ? "default" : "pointer",
+                    background: dragOver ? "rgba(56,189,248,0.06)" : "transparent",
+                    marginBottom: 20, transition: "all 0.18s",
+                }}
+            >
+                <input ref={fileInputRef} type="file" style={{ display: "none" }}
+                    accept=".csv,.kml,.kmz,.geojson,.json,.pdf,.txt,.doc,.docx,.png,.jpg,.jpeg,.tif,.tiff"
+                    onChange={e => { if (e.target.files[0]) handleUpload(e.target.files[0]); e.target.value = "" }} />
+                {uploading ? (
+                    <div style={{ color: "#38bdf8", fontSize: 13 }}>Processing upload…</div>
+                ) : (
+                    <>
+                        <div style={{ marginBottom: 8 }}>
+                            <FI w={28} h={28} style={{ color: "rgba(56,189,248,0.5)" }}>
+                                <rect x="2" y="9" width="12" height="6" rx="1"/>
+                                <path d="M14 9h4l-3-6H5L2 9"/>
+                                <path d="M8 4v5M6 6l2-2 2 2"/>
+                            </FI>
+                        </div>
+                        <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600 }}>Drop files here or click to upload</div>
+                        <div style={{ color: "#64748b", fontSize: 11, marginTop: 4 }}>
+                            KML · CSV · GeoJSON · PDF · Images
+                        </div>
+                    </>
+                )}
+                {uploadMsg && (
+                    <div style={{ marginTop: 10, fontSize: 12, color: uploadMsg.ok ? "#22c55e" : "#ef4444" }}>
+                        {uploadMsg.text}
+                    </div>
+                )}
+            </div>
+
+            {/* Live sources */}
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--akili-accent)", marginBottom: 8 }}>
+                Live Data Sources
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8, marginBottom: 24 }}>
+                {LIVE_SOURCES.map((src, i) => (
+                    <div key={i} style={{
+                        background: "rgba(15,23,42,0.8)", padding: "10px 12px", borderRadius: 6,
+                        borderLeft: `3px solid ${src.status === "active" ? "#22c55e" : "#f59e0b"}`,
+                        border: "1px solid rgba(56,189,248,0.08)",
+                    }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ color: "#e2e8f0", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                                {src.icon} {src.name}
+                            </span>
+                            <span style={{
+                                fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700,
+                                background: src.status === "active" ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.2)",
+                                color: src.status === "active" ? "#22c55e" : "#f59e0b",
+                            }}>{src.status.toUpperCase()}</span>
+                        </div>
+                        <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>{src.count}</div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Upload history */}
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--akili-accent)", marginBottom: 8 }}>
+                Upload History
+            </div>
+            {uploads.length === 0 && (
+                <div style={{ color: "#64748b", fontSize: 13, padding: 24, textAlign: "center",
+                    background: "rgba(15,23,42,0.5)", borderRadius: 8, border: "1px dashed rgba(56,189,248,0.15)" }}>
+                    No uploads yet. Upload data to start enriching your intelligence picture.
+                </div>
+            )}
+            {uploads.map((u, i) => (
+                <div key={i} style={{
+                    ...card, padding: "10px 14px", marginBottom: 6,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                    <div>
+                        <div style={{ color: "#e2e8f0", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                            {UPLOAD_TYPE_ICON[u.type] || <FIcoPaper w={11} h={11} />}
+                            {u.filename}
+                        </div>
+                        <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>
+                            {u.entities_extracted} entities · {u.rules_generated || 0} rules · {u.uploaded_at?.split("T")[0]}
+                        </div>
+                    </div>
+                    <span style={{
+                        padding: "2px 8px", borderRadius: 3, fontSize: 10, fontWeight: 700,
+                        background: u.status === "processed" ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.2)",
+                        color:      u.status === "processed" ? "#22c55e"            : "#f59e0b",
+                    }}>{u.status?.toUpperCase()}</span>
+                </div>
+            ))}
+        </div>
+    )
+}
+
 // ── Skeleton (fallback) ────────────────────────────────────────────────────────
 
 function SkeletonTab({ title, description, icon }) {
@@ -2010,7 +2228,7 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
                 {activeTab === "ais-training"  && <AISTrainingTab />}
                 {activeTab === "news-training" && <NewsTrainingTab />}
                 {activeTab === "entities"      && <EntityNetworksTab mission={activeMission} onViewOnMap={node => { onFlyTo?.(node); onClose?.() }} />}
-                {activeTab === "feeds"         && <SkeletonTab icon={<FIcoAntenna />} title="Data Feeds" description="Manage custom RSS/XML/JSON data ingestion pipelines." />}
+                {activeTab === "feeds"         && <DataFeedsTab missionId={activeMission?.id} />}
                 {activeTab === "models"        && <ModelManagementTab />}
                 {activeTab === "overlays"      && <MapOverlaysTab onAddOverlay={onAddOverlay} />}
             </div>
