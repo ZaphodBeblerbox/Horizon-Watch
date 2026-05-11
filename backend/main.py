@@ -14251,6 +14251,102 @@ async def forge_create_mission(request: Request, _forge=Depends(_require_forge))
     return mission
 
 
+# ── Pipeline persistence ───────────────────────────────────────────────────────
+
+_FORGE_PIPELINE_FILE = _FORGE_DIR / "pipeline.json"
+
+
+def _load_pipeline() -> dict:
+    try:
+        return _json.loads(_FORGE_PIPELINE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _save_pipeline(data: dict):
+    _FORGE_DIR.mkdir(parents=True, exist_ok=True)
+    _FORGE_PIPELINE_FILE.write_text(_json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@app.get("/api/forge/pipeline")
+async def forge_get_pipeline(_forge=Depends(_require_forge)):
+    data = _load_pipeline()
+    if not data:
+        raise HTTPException(status_code=404, detail="No saved pipeline")
+    return data
+
+
+@app.post("/api/forge/pipeline/save")
+async def forge_save_pipeline(request: Request, _forge=Depends(_require_forge)):
+    body = await request.json()
+    nodes = body.get("nodes", [])
+    edges = body.get("edges", [])
+    _save_pipeline({"nodes": nodes, "edges": edges, "saved_at": datetime.utcnow().isoformat()})
+    await _apply_pipeline_changes({"nodes": nodes, "edges": edges})
+    return {"saved": True}
+
+
+@app.post("/api/forge/pipeline/delete-node")
+async def forge_delete_pipeline_node(request: Request, _forge=Depends(_require_forge)):
+    body    = await request.json()
+    node_id = body.get("node_id", "")
+    if node_id.startswith("det_"):
+        src_map = {"det_ais": "AIS", "det_adsb": "ADSB", "det_news": "NEWS", "det_overwatch": "SATELLITE"}
+        source  = src_map.get(node_id)
+        if source:
+            rules = _load_forge_rules()
+            for r in rules:
+                if r.get("source") == source:
+                    r["status"] = "disabled_by_pipeline"
+            _forge_save("rules.json", rules)
+    return {"deleted": node_id}
+
+
+@app.post("/api/forge/pipeline/delete-edge")
+async def forge_delete_pipeline_edge(request: Request, _forge=Depends(_require_forge)):
+    body = await request.json()
+    print(f"[forge-pipeline] edge removed: {body.get('from')} → {body.get('to')}")
+    return {"deleted": True}
+
+
+@app.post("/api/forge/pipeline/toggle-node")
+async def forge_toggle_pipeline_node(request: Request, _forge=Depends(_require_forge)):
+    body       = await request.json()
+    node_id    = body.get("node_id", "")
+    new_status = body.get("status", "active")
+    src_map    = {"det_ais": "AIS", "det_adsb": "ADSB", "det_news": "NEWS", "det_overwatch": "SATELLITE"}
+    source     = src_map.get(node_id)
+    if source:
+        rules = _load_forge_rules()
+        for r in rules:
+            if r.get("source") == source:
+                r["status"] = "active" if new_status == "active" else "paused"
+        _forge_save("rules.json", rules)
+    print(f"[forge-pipeline] {node_id} → {new_status}")
+    return {"node_id": node_id, "status": new_status}
+
+
+async def _apply_pipeline_changes(pipeline: dict):
+    nodes  = pipeline.get("nodes", [])
+    edges  = pipeline.get("edges", [])
+    active_dets = {e["to"] for e in edges if e.get("to", "").startswith("det_")}
+    src_map = {"det_ais": "AIS", "det_adsb": "ADSB", "det_news": "NEWS", "det_overwatch": "SATELLITE"}
+    rules   = _load_forge_rules()
+    changed = False
+    for det_id, source in src_map.items():
+        det_node  = next((n for n in nodes if n.get("id") == det_id), None)
+        is_active = det_id in active_dets and det_node and det_node.get("status") == "active"
+        for r in rules:
+            if r.get("source") != source:
+                continue
+            if not is_active and r.get("status") == "active":
+                r["status"] = "paused_by_pipeline"; changed = True
+            elif is_active and r.get("status") == "paused_by_pipeline":
+                r["status"] = "active"; changed = True
+    if changed:
+        _forge_save("rules.json", rules)
+
+
 @app.put("/api/forge/missions/{mission_id}/activate")
 def forge_activate_mission(mission_id: str, _forge=Depends(_require_forge)):
     missions = _forge_load(_FORGE_MISSION_FILE)

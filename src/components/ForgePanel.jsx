@@ -1425,27 +1425,35 @@ function AlertsWorkspace() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function ForgePanel({ user, onClose }) {
-    const [brainStatus, setBrainStatus] = useState(null)
+    const [brainStatus, setBrainStatus]   = useState(null)
     const [activeWorkspace, setActiveWorkspace] = useState(null)
-    const [activeNode, setActiveNode] = useState(null)
+    const [activeNode, setActiveNode]     = useState(null)
     const [pipelineNodes, setPipelineNodes] = useState(PIPELINE_NODES)
+    const [pipelineEdges, setPipelineEdges] = useState(PIPELINE_EDGES)
 
+    // Poll brain status
     useEffect(() => {
         const load = () =>
             fetch(`${API}/api/forge/brain-status`, { headers: forgeHeaders() })
                 .then(r => r.ok ? r.json() : null)
-                .then(d => {
-                    setBrainStatus(d)
-                    if (d) setPipelineNodes(prev => prev.map(n => {
-                        if (n.id === "src_ais")    return { ...n, config: { ...n.config, vessels_tracked: d.vessels_tracked } }
-                        if (n.id === "det_ais")    return { ...n, config: { ...n.config, rules: d.rules_active } }
-                        if (n.id === "out_alerts") return { ...n, config: { ...n.config, alerts_24h: d.alerts_24h } }
-                        return n
-                    }))
-                }).catch(() => {})
+                .then(d => { if (d) setBrainStatus(d) })
+                .catch(() => {})
         load()
         const id = setInterval(load, 30_000)
         return () => clearInterval(id)
+    }, [])
+
+    // Load persisted pipeline layout
+    useEffect(() => {
+        fetch(`${API}/api/forge/pipeline`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                if (d?.nodes?.length > 0) {
+                    setPipelineNodes(d.nodes)
+                    setPipelineEdges(d.edges || [])
+                }
+            })
+            .catch(() => {})
     }, [])
 
     const openWorkspace = (nodeId, node) => {
@@ -1463,7 +1471,12 @@ export default function ForgePanel({ user, onClose }) {
             <ForgeHeader brainStatus={brainStatus} activeNode={activeNode} onBack={goBack} />
             {!activeWorkspace ? (
                 <div style={{ flex: 1, position: "relative" }}>
-                    <PipelineCanvas nodes={pipelineNodes} edges={PIPELINE_EDGES} brainStatus={brainStatus} onNodeClick={openWorkspace} />
+                    <PipelineCanvas
+                        initialNodes={pipelineNodes}
+                        initialEdges={pipelineEdges}
+                        brainStatus={brainStatus}
+                        onNodeClick={openWorkspace}
+                    />
                 </div>
             ) : (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
