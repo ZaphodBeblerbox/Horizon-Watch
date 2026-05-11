@@ -12717,36 +12717,158 @@ def forge_get_labels(_user=Depends(require_admin_user)):
 # FORGE DETECTION ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _auto_add_ontology_edge(alert: dict):
+    """Automatically wire a detection alert into the ontology graph."""
+    try:
+        ontology = _forge_ontology_load()
+        mmsi = alert.get("mmsi")
+        if not mmsi:
+            return
+        vessel_id = f"vessel_{mmsi}"
+        if not any(n["id"] == vessel_id for n in ontology["nodes"]):
+            ontology["nodes"].append({
+                "id":    vessel_id,
+                "type":  "vessel",
+                "label": alert.get("vessel") or f"MMSI:{mmsi}",
+                "lat":   alert.get("lat"),
+                "lng":   alert.get("lng"),
+            })
+        msg = (alert.get("message") or "").lower()
+        # Connect vessel to a cable node it is threatening
+        for node in ontology["nodes"]:
+            if node["type"] != "cable":
+                continue
+            if node["label"].lower() in msg:
+                edge_id = f"e_auto_{alert.get('rule_id')}_{mmsi}"
+                if not any(e["id"] == edge_id for e in ontology["edges"]):
+                    ontology["edges"].append({
+                        "id":     edge_id,
+                        "source": vessel_id,
+                        "target": node["id"],
+                        "type":   "threatens",
+                        "auto":   True,
+                    })
+                break
+        _forge_ontology_save(ontology)
+    except Exception:
+        pass
+
+
+def _prep_cables_for_detector():
+    """Extract cable coordinate lists for proximity checks, sampled to cap CPU."""
+    try:
+        raw_cables = _get_cable_data().get("cables", [])
+        result = []
+        for feat in raw_cables[:60]:
+            geom = (feat.get("geometry") or {})
+            name = ((feat.get("properties") or {}).get("name") or "cable")
+            coords: list = []
+            if geom.get("type") == "LineString":
+                coords = geom.get("coordinates", [])
+            elif geom.get("type") == "MultiLineString":
+                for seg in geom.get("coordinates", []):
+                    coords.extend(seg)
+            result.append({"name": name, "coordinates": coords[::8]})
+        return result
+    except Exception:
+        return []
+
+
 async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data."""
     global _forge_alerts
     while True:
         try:
+            # Bootstrap default rules on first run
             rules = _forge_load("rules.json")
+            if not rules:
+                try:
+                    from detectors.default_rules import DEFAULT_RULES as _DR
+                    rules = _DR
+                    _forge_save("rules.json", rules)
+                    print("[forge-detector] bootstrapped default rules")
+                except ImportError:
+                    rules = []
             _ais_detector.load_rules(rules)
+            _adsb_detector  # noqa — rules baked into adsb_detector
 
-            # AIS check
+            # Prepare cable geometry (sampled coords for proximity checks)
+            cables = _prep_cables_for_detector()
+
+            # AIS check — pass all vessels for ship-to-ship detection
             with _AIS_LOCK:
-                vessels = list(_AIS_VESSELS.values())
-            for vessel in vessels:
-                alerts = _ais_detector.check_vessel(vessel)
-                _forge_alerts.extend(alerts)
+                vessels_snap = dict(_AIS_VESSELS)
+            new_alerts: list = []
+            for vessel in vessels_snap.values():
+                new_alerts.extend(
+                    _ais_detector.check_vessel(
+                        vessel,
+                        cables=cables,
+                        chokepoints=_CHOKEPOINT_DEFS,
+                        all_vessels=vessels_snap,
+                    )
+                )
 
-            # ADS-B check
+            # ADS-B check — _GLOBAL_ADSB_CACHE is {icao: aircraft_dict}
             try:
-                adsb_snap = _GLOBAL_ADSB_CACHE.get("aircraft", []) if _GLOBAL_ADSB_CACHE else []
-                for ac in adsb_snap[:200]:
-                    alerts = _adsb_detector.check_aircraft(ac)
-                    _forge_alerts.extend(alerts)
-            except Exception:
-                pass
+                for ac in list(_GLOBAL_ADSB_CACHE.values())[:300]:
+                    adsb_rules = [r for r in rules if r.get("source") == "ADSB"]
+                    for rule in adsb_rules:
+                        if rule.get("status") != "active":
+                            continue
+                        trigger = rule.get("trigger_type", "")
+                        params  = rule.get("params", {})
+                        callsign = (ac.get("flight") or "").strip().upper()
+                        squawk   = str(ac.get("squawk") or "")
+                        if trigger == "emergency_squawk" and squawk in params.get("squawk_codes", ["7500","7600","7700"]):
+                            labels = {"7500": "HIJACK", "7600": "COMMS FAILURE", "7700": "EMERGENCY"}
+                            new_alerts.append({
+                                "rule_id":   rule["id"],
+                                "rule_name": rule["name"],
+                                "source":    "ADSB",
+                                "severity":  "critical",
+                                "aircraft":  callsign or ac.get("hex"),
+                                "lat":       ac.get("lat"),
+                                "lng":       ac.get("lon"),
+                                "message":   f"{labels.get(squawk,'EMERGENCY')}: {callsign or ac.get('hex','?')} squawking {squawk}",
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            })
+                        elif trigger == "military_callsign":
+                            prefixes = params.get("callsign_prefixes", [])
+                            if callsign and any(callsign.startswith(p) for p in prefixes):
+                                new_alerts.append({
+                                    "rule_id":   rule["id"],
+                                    "rule_name": rule["name"],
+                                    "source":    "ADSB",
+                                    "severity":  "info",
+                                    "aircraft":  callsign,
+                                    "lat":       ac.get("lat"),
+                                    "lng":       ac.get("lon"),
+                                    "message":   f"Military aircraft: {callsign} alt={ac.get('alt_baro','?')}ft",
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                })
+            except Exception as _ae:
+                print(f"[forge-detector] adsb error: {_ae}")
 
-            # Trim to last 24 h
+            # Auto-wire ontology edges for cable alerts
+            for alert in new_alerts:
+                if "cable" in (alert.get("message") or "").lower():
+                    _auto_add_ontology_edge(alert)
+
+            _forge_alerts.extend(new_alerts)
+
+            # Trim to last 24 h and deduplicate (rule+vessel per hour)
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             _forge_alerts = [a for a in _forge_alerts if a.get("timestamp", "") > cutoff]
-            # Keep max 500
-            _forge_alerts = _forge_alerts[-500:]
-            print(f"[forge-detector] cycle — {len(_forge_alerts)} active alerts, {len(vessels)} vessels checked")
+            seen: set = set()
+            deduped: list = []
+            for a in reversed(_forge_alerts):
+                key = f"{a.get('rule_id')}|{a.get('mmsi') or a.get('aircraft')}|{(a.get('timestamp',''))[:13]}"
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(a)
+            _forge_alerts = list(reversed(deduped))[:500]
+            print(f"[forge-detector] cycle — {len(_forge_alerts)} alerts, {len(vessels_snap)} vessels, {len(_GLOBAL_ADSB_CACHE)} aircraft")
         except Exception as _ex:
             print(f"[forge-detector] error: {_ex}")
         await asyncio.sleep(300)
@@ -12792,10 +12914,23 @@ async def forge_alert_feedback(alert_idx: int, request: Request, _user=Depends(r
 
 # ── Threat scores ─────────────────────────────────────────────────────────────
 
-_THREAT_REGIONS = [
-    "Persian Gulf", "Red Sea", "East Med", "Sahel",
-    "Horn of Africa", "South China Sea", "Black Sea",
-]
+_THREAT_REGION_BOUNDS = {
+    "Persian Gulf":    {"lat": [23.0, 30.0], "lng": [48.0, 60.0]},
+    "Red Sea":         {"lat": [12.0, 30.0], "lng": [32.0, 45.0]},
+    "East Med":        {"lat": [30.0, 37.0], "lng": [25.0, 37.0]},
+    "Sahel":           {"lat": [10.0, 20.0], "lng": [-15.0, 15.0]},
+    "Horn of Africa":  {"lat": [-5.0, 15.0], "lng": [35.0, 55.0]},
+    "South China Sea": {"lat": [5.0, 25.0],  "lng": [105.0, 125.0]},
+    "Black Sea":       {"lat": [40.0, 47.0], "lng": [27.0, 42.0]},
+    "Baltic":          {"lat": [53.0, 66.0], "lng": [10.0, 30.0]},
+}
+
+
+def _in_region(lat, lng, bounds):
+    if lat is None or lng is None:
+        return False
+    return (bounds["lat"][0] <= lat <= bounds["lat"][1] and
+            bounds["lng"][0] <= lng <= bounds["lng"][1])
 
 
 @app.get("/api/forge/threat-scores")
@@ -12803,32 +12938,44 @@ def forge_threat_scores(_user=Depends(require_admin_user)):
     if not _HAS_DETECTORS:
         return []
     scores = []
-    for region in _THREAT_REGIONS:
-        region_lower = region.lower()
+    for region_name, bounds in _THREAT_REGION_BOUNDS.items():
         region_alerts = [
             a for a in _forge_alerts
-            if region_lower in (a.get("message") or "").lower()
-            or region_lower in (a.get("vessel") or "").lower()
+            if _in_region(a.get("lat"), a.get("lng"), bounds)
         ]
-        ais_count  = sum(1 for a in region_alerts if a.get("source") == "ais_anomaly")
-        adsb_count = sum(1 for a in region_alerts if a.get("source") == "adsb_anomaly")
-        # Wire news escalation: count recent high-severity events in this region
+        ais_alerts  = [a for a in region_alerts if a.get("source") == "AIS"]
+        adsb_alerts = [a for a in region_alerts if a.get("source") == "ADSB"]
+
+        # Count high-severity news events in this region via event store
+        news_count = 0
         try:
-            news_hits = sum(
-                1 for e in es.get_active_events()
-                if region_lower in (e.get("region") or e.get("country") or "").lower()
-                and e.get("severity") in ("high", "critical")
-            )
+            for ev in es.get_active_events():
+                ev_lat = ev.get("lat")
+                ev_lng = ev.get("lng") or ev.get("lon")
+                if _in_region(ev_lat, ev_lng, bounds):
+                    sev = (ev.get("severity") or "").lower()
+                    if sev in ("high", "critical"):
+                        news_count += 1
         except Exception:
-            news_hits = 0
+            pass
+
         signals = {
-            "ais_anomaly":      min(ais_count * 0.25, 1.0),
-            "adsb_anomaly":     min(adsb_count * 0.25, 1.0),
-            "news_escalation":  min(news_hits * 0.15, 1.0),
+            "ais_anomaly":      min(len(ais_alerts)  * 0.15, 1.0),
+            "adsb_anomaly":     min(len(adsb_alerts) * 0.10, 1.0),
+            "news_escalation":  min(news_count        * 0.05, 1.0),
             "satellite_change": 0.0,
-            "event_density":    min((ais_count + adsb_count + news_hits) * 0.05, 1.0),
+            "event_density":    min((len(ais_alerts) + len(adsb_alerts) + news_count) * 0.03, 1.0),
         }
-        scores.append(_threat_engine.calculate_region_threat(region, signals))
+        result = _threat_engine.calculate_region_threat(region_name, signals)
+        result["alert_count"] = len(region_alerts)
+        result["signals_raw"] = {
+            "ais_alerts":  len(ais_alerts),
+            "adsb_alerts": len(adsb_alerts),
+            "news_events": news_count,
+        }
+        scores.append(result)
+
+    scores.sort(key=lambda x: x["score"], reverse=True)
     return scores
 
 
@@ -12967,6 +13114,30 @@ def forge_build_ontology(_user=Depends(require_admin_user)):
     for g, cp in group_threats.items():
         if g in group_ids and cp in chokepoint_ids:
             add_edge(group_ids[g], chokepoint_ids[cp], "threatens")
+
+    # Detection rules as nodes
+    try:
+        rules = _forge_load("rules.json")
+        if not rules:
+            from detectors.default_rules import DEFAULT_RULES as _DR
+            rules = _DR
+        rule_ids = {}
+        for rule in rules:
+            nid = add_node(
+                "rule", rule["name"],
+                f"{rule.get('trigger_type','')} — {rule.get('severity','')}",
+            )
+            rule_ids[rule["id"]] = nid
+            # Connect rule to the chokepoint it monitors
+            cp_name = (rule.get("params") or {}).get("chokepoint", "")
+            if cp_name and cp_name in chokepoint_ids:
+                add_edge(nid, chokepoint_ids[cp_name], "monitors")
+            # AIS rules that cover all regions: connect to top chokepoints
+            elif rule.get("source") == "AIS" and "all" in rule.get("regions", []):
+                for cp_id in list(chokepoint_ids.values())[:2]:
+                    add_edge(nid, cp_id, "monitors")
+    except Exception:
+        pass
 
     ontology = {
         "nodes":    nodes,

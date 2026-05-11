@@ -109,67 +109,87 @@ function FullscreenPreview({ image, detections, onClose }) {
 
 const LEVEL_COLORS = { CRITICAL: "#ef4444", HIGH: "#f59e0b", ELEVATED: "#38bdf8", LOW: "#22c55e" }
 
-function ThreatDashboard() {
+function ThreatDashboard({ setActiveTab, onFlyTo }) {
     const [scores,  setScores]  = useState([])
     const [alerts,  setAlerts]  = useState([])
     const [loading, setLoading] = useState(true)
-    const tok = localStorage.getItem("hw-auth-token")
+    const tok     = localStorage.getItem("hw-auth-token")
     const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+
+    const loadScores = () =>
+        fetch(`${API}/api/forge/threat-scores`, { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
+    const loadAlerts = () =>
+        fetch(`${API}/api/forge/alerts`, { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
 
     const refresh = () => {
         setLoading(true)
-        Promise.all([
-            fetch(`${API}/api/forge/threat-scores`, { headers }).then(r => r.ok ? r.json() : []),
-            fetch(`${API}/api/forge/alerts`,         { headers }).then(r => r.ok ? r.json() : []),
-        ]).then(([s, a]) => { setScores(s); setAlerts(a) })
-          .catch(() => {})
-          .finally(() => setLoading(false))
+        Promise.all([loadScores(), loadAlerts()])
+            .then(([s, a]) => { setScores(s); setAlerts(a) })
+            .finally(() => setLoading(false))
     }
 
-    useEffect(() => { refresh() }, [])
+    useEffect(() => {
+        refresh()
+        const id = setInterval(refresh, 60_000)
+        return () => clearInterval(id)
+    }, [])
 
     const sendFeedback = (idx, action) => {
         fetch(`${API}/api/forge/alerts/${idx}/feedback`, {
             method: "POST",
             headers: { ...headers, "Content-Type": "application/json" },
             body: JSON.stringify({ action }),
-        }).then(r => r.ok ? r.json() : null).then(d => {
-            if (d) refresh()
-        }).catch(() => {})
+        }).then(r => r.ok ? r.json() : null).then(d => { if (d) refresh() }).catch(() => {})
     }
+
+    const sevColor = sev => sev === "critical" ? "#ef4444" : sev === "high" ? "#f59e0b" : sev === "medium" ? "#38bdf8" : "#64748b"
 
     return (
         <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                <h2 style={{ color: "#e2e8f0", margin: 0, fontSize: 16 }}>Threat Assessment Matrix</h2>
+                <div>
+                    <h2 style={{ color: "#e2e8f0", margin: "0 0 3px", fontSize: 16 }}>Threat Assessment Matrix</h2>
+                    <div style={{ color: "#475569", fontSize: 11 }}>Refreshes every 60s • detection cycle every 5 min</div>
+                </div>
                 <button onClick={refresh} style={btnGhost}>{loading ? "Loading…" : "↻ Refresh"}</button>
             </div>
 
-            {/* Region scores */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px,1fr))", gap: 10, marginBottom: 28 }}>
+            {/* Region score cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px,1fr))", gap: 10, marginBottom: 28 }}>
                 {scores.length === 0 && !loading && (
-                    <div style={{ color: "#475569", fontSize: 13, gridColumn: "1/-1" }}>
+                    <div style={{ color: "#475569", fontSize: 13, gridColumn: "1/-1", padding: "20px 0" }}>
                         No threat data yet — detection cycle runs every 5 minutes.
                     </div>
                 )}
                 {scores.map(s => (
-                    <div key={s.region} style={{
-                        ...card,
-                        borderLeft: `4px solid ${LEVEL_COLORS[s.level] || "#64748b"}`,
-                        padding: "12px 14px",
-                    }}>
-                        <div style={{ color: "#94a3b8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.region}</div>
-                        <div style={{ color: LEVEL_COLORS[s.level], fontSize: 22, fontWeight: 800, margin: "2px 0" }}>{s.level}</div>
-                        <div style={{ color: "#64748b", fontSize: 11 }}>Score: {Math.round((s.score || 0) * 100)}%</div>
-                        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 3 }}>
-                            {Object.entries(s.breakdown || {}).map(([k, v]) => v > 0 && (
-                                <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2 }}>
-                                        <div style={{ height: "100%", borderRadius: 2, background: LEVEL_COLORS[s.level], width: `${Math.min(v / 0.5 * 100, 100)}%` }} />
+                    <div key={s.region} style={{ ...card, borderLeft: `4px solid ${LEVEL_COLORS[s.level] || "#64748b"}`, padding: "14px 16px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div>
+                                <div style={{ color: "#94a3b8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.region}</div>
+                                <div style={{ color: LEVEL_COLORS[s.level], fontSize: 20, fontWeight: 800, margin: "2px 0" }}>{s.level}</div>
+                            </div>
+                            <div style={{ textAlign: "right" }}>
+                                <div style={{ color: "#e2e8f0", fontSize: 22, fontWeight: 700 }}>{Math.round((s.score || 0) * 100)}%</div>
+                                <div style={{ color: "#64748b", fontSize: 10 }}>{s.alert_count ?? 0} alerts</div>
+                            </div>
+                        </div>
+                        {/* Signal breakdown bars */}
+                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                            {Object.entries(s.breakdown || {}).map(([sig, val]) => {
+                                const raw = sig === "ais_anomaly"    ? s.signals_raw?.ais_alerts
+                                          : sig === "adsb_anomaly"   ? s.signals_raw?.adsb_alerts
+                                          : sig === "news_escalation" || sig === "event_density" ? s.signals_raw?.news_events
+                                          : null
+                                return (
+                                    <div key={sig} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                        <span style={{ color: "#475569", fontSize: 9, width: 94, textAlign: "right", flexShrink: 0 }}>{sig.replace(/_/g, " ")}</span>
+                                        <div style={{ flex: 1, height: 5, background: "rgba(30,41,59,0.8)", borderRadius: 3 }}>
+                                            <div style={{ height: "100%", borderRadius: 3, transition: "width 0.5s", width: `${Math.min((s.score > 0 ? val / s.score : 0) * 100, 100)}%`, background: val > 0 ? "#38bdf8" : "#1e293b" }} />
+                                        </div>
+                                        <span style={{ color: "#94a3b8", fontSize: 9, width: 18, textAlign: "right" }}>{raw ?? ""}</span>
                                     </div>
-                                    <span style={{ color: "#475569", fontSize: 9, width: 90, textAlign: "right" }}>{k.replace(/_/g, " ")}</span>
-                                </div>
-                            ))}
+                                )
+                            })}
                         </div>
                     </div>
                 ))}
@@ -182,25 +202,37 @@ function ThreatDashboard() {
                 </h3>
             </div>
             {alerts.length === 0 && !loading && (
-                <div style={{ color: "#475569", fontSize: 13, padding: "24px 0", textAlign: "center" }}>
+                <div style={{ color: "#475569", fontSize: 13, padding: "28px 0", textAlign: "center" }}>
                     No alerts fired yet. Rules run against live AIS + ADS-B data every 5 min.
                 </div>
             )}
-            {alerts.slice(0, 30).map((a, i) => (
-                <div key={i} style={{
-                    ...card,
-                    borderLeft: `3px solid ${a.severity === "critical" ? "#ef4444" : a.severity === "high" ? "#f59e0b" : "#38bdf8"}`,
-                    padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start",
-                }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ color: "#e2e8f0", fontSize: 13, lineHeight: 1.4 }}>{a.message}</div>
-                        <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>
-                            {a.rule_name || a.type} • {a.severity?.toUpperCase()} • {(a.timestamp || "").slice(0, 19).replace("T", " ")}
-                        </div>
+            {alerts.slice(0, 40).map((a, i) => (
+                <div key={i} style={{ ...card, borderLeft: `3px solid ${sevColor(a.severity)}`, padding: "10px 14px", marginBottom: 8 }}>
+                    <div style={{ color: "#e2e8f0", fontSize: 13, lineHeight: 1.4 }}>{a.message}</div>
+                    <div style={{ color: "#475569", fontSize: 11, marginTop: 2 }}>
+                        {a.rule_name || a.type} • <span style={{ color: sevColor(a.severity) }}>{(a.severity || "").toUpperCase()}</span> • {(a.timestamp || "").slice(0, 19).replace("T", " ")} UTC
                     </div>
-                    <div style={{ display: "flex", gap: 5, flexShrink: 0, marginLeft: 10 }}>
-                        <button onClick={() => sendFeedback(i, "confirm")} title="Confirm — increase weight" style={{ ...btnGhost, fontSize: 10, padding: "3px 8px", color: "#22c55e", borderColor: "rgba(34,197,94,0.3)" }}>✓</button>
-                        <button onClick={() => sendFeedback(i, "false_alarm")} title="False alarm — decrease weight" style={{ ...btnDanger, fontSize: 10, padding: "3px 8px" }}>✗</button>
+                    <div style={{ display: "flex", gap: 6, marginTop: 7, flexWrap: "wrap" }}>
+                        {a.lat && a.lng && onFlyTo && (
+                            <button
+                                onClick={() => { onFlyTo({ lat: a.lat, lng: a.lng }); }}
+                                style={{ fontSize: 10, padding: "3px 8px", borderRadius: 3, border: "1px solid rgba(56,189,248,0.3)", background: "transparent", color: "#38bdf8", cursor: "pointer" }}
+                            >View on Map</button>
+                        )}
+                        {setActiveTab && (
+                            <button
+                                onClick={() => setActiveTab("entities")}
+                                style={{ fontSize: 10, padding: "3px 8px", borderRadius: 3, border: "1px solid rgba(56,189,248,0.3)", background: "transparent", color: "#38bdf8", cursor: "pointer" }}
+                            >View in Ontology</button>
+                        )}
+                        <button
+                            onClick={() => sendFeedback(i, "confirm")}
+                            style={{ fontSize: 10, padding: "3px 8px", borderRadius: 3, border: "1px solid rgba(34,197,94,0.3)", background: "transparent", color: "#22c55e", cursor: "pointer" }}
+                        >✓ Confirm</button>
+                        <button
+                            onClick={() => sendFeedback(i, "false_alarm")}
+                            style={{ fontSize: 10, padding: "3px 8px", borderRadius: 3, border: "1px solid rgba(239,68,68,0.3)", background: "transparent", color: "#ef4444", cursor: "pointer" }}
+                        >✕ False Alarm</button>
                     </div>
                 </div>
             ))}
@@ -1013,6 +1045,7 @@ const ENTITY_TYPES = {
     weapon:     { color: "#dc2626", icon: "🎯", label: "Weapons" },
     facility:   { color: "#14b8a6", icon: "🏭", label: "Facilities" },
     scan:       { color: "#38bdf8", icon: "🛰", label: "Scans" },
+    rule:       { color: "#f97316", icon: "⚙", label: "Detection Rules" },
 }
 
 const EDGE_TYPES = {
@@ -1353,7 +1386,7 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
 
             {/* Content */}
             <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
-                {activeTab === "dashboard"     && <ThreatDashboard />}
+                {activeTab === "dashboard"     && <ThreatDashboard setActiveTab={setActiveTab} onFlyTo={onFlyTo} />}
                 {activeTab === "rules"         && <PatternRulesTab />}
                 {activeTab === "watch"         && <WatchAreasTab />}
                 {activeTab === "recognition"   && <ObjectTrainingTab />}
