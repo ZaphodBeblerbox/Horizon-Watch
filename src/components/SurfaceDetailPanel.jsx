@@ -27,14 +27,15 @@ const EVENT_LABEL = {
     general:     "General",
 }
 
-const INFRA_ICON = {
-    airport:     "✈",
-    port:        "⚓",
-    power_plant: "⚡",
-    hospital:    "✚",
-    military:    "★",
-    pipeline:    "⛓",
-    chokepoint:  "◆",
+function InfraIcon({ type }) {
+    const s = { width: 10, height: 10, display: "block" }
+    if (type === "airport")     return <svg {...s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M8 1.5L11.5 8L8 7L4.5 8Z"/><path d="M6 7.5L4 10.5H12L10 7.5"/><line x1="8" y1="10.5" x2="8" y2="14"/><line x1="6" y1="13" x2="10" y2="13"/></svg>
+    if (type === "port")        return <svg {...s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="8" cy="4.5" r="2"/><line x1="8" y1="6.5" x2="8" y2="15"/><path d="M4 10C4 10 4 15 8 15C12 15 12 10 12 10"/><line x1="5" y1="4.5" x2="11" y2="4.5"/></svg>
+    if (type === "power_plant") return <svg {...s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><polyline points="10,1 5,9 9,9 6,15"/></svg>
+    if (type === "hospital")    return <svg {...s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
+    if (type === "military")    return <svg {...s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M8 2L16 5V9C16 13 8 16.5 8 16.5S0 13 0 9V5L8 2Z"/></svg>
+    if (type === "pipeline")    return <svg {...s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 12C2 12 4 10 5.5 12C7 14 9 10 10.5 12C12 14 14 12 14 12"/></svg>
+    return <svg {...s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="5"/></svg>
 }
 
 function colorValue(c) {
@@ -212,10 +213,9 @@ export default function SurfaceDetailPanel({
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                fontSize: 9,
                                 color: "var(--akili-accent)",
                             }}>
-                                {INFRA_ICON[n.type] || "◆"}
+                                <InfraIcon type={n.type} />
                             </div>
                             <div style={{ fontSize: 11, color: "var(--akili-text-primary)" }}>{n.name || n.type}</div>
                             <div style={{ fontSize: 10, color: "var(--akili-text-muted)" }}>

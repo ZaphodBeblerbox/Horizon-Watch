@@ -123,7 +123,14 @@ export default function MobileNewsFeed({ tab = "world" }) {
 
   if (err || articles.length === 0) return (
     <div style={{ position:"fixed", inset:0, background:"#0a1628", display:"flex", alignItems:"center", justifyContent:"center", color:"white", flexDirection:"column", gap:16, zIndex:100, padding:24, textAlign:"center" }}>
-      <div style={{ fontSize:40 }}>📡</div>
+      <div style={{ color: "rgba(0,170,255,0.6)" }}>
+        <svg width="40" height="40" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="8" y1="8" x2="8" y2="15"/>
+          <path d="M5 7C5 4.5 11 4.5 11 7"/>
+          <path d="M2.5 5.5C2.5 1.5 13.5 1.5 13.5 5.5"/>
+          <circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+        </svg>
+      </div>
       <div style={{ fontSize:16, fontWeight:600 }}>{err ? `Error: ${err}` : `No articles for "${tab}"`}</div>
       <div style={{ fontSize:11, color:"rgba(255,255,255,0.3)" }}>
         {ENDPOINTS[tab] || ENDPOINTS.world}

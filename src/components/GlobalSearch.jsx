@@ -1,14 +1,31 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 
+function GSIco({ children, color = "currentColor" }) {
+    return (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={color}
+            strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"
+            style={{ display: "inline-block", verticalAlign: "middle", flexShrink: 0 }}>
+            {children}
+        </svg>
+    )
+}
+function GSGlobe({ color })     { return <GSIco color={color}><circle cx="8" cy="8" r="6"/><path d="M8 2C6.5 5 6.5 11 8 14M8 2C9.5 5 9.5 11 8 14"/><line x1="2.5" y1="8" x2="13.5" y2="8"/></GSIco> }
+function GSAnchor({ color })    { return <GSIco color={color}><circle cx="8" cy="4.5" r="2"/><line x1="8" y1="6.5" x2="8" y2="15"/><path d="M4 10C4 10 4 15 8 15C12 15 12 10 12 10"/><line x1="5" y1="4.5" x2="11" y2="4.5"/></GSIco> }
+function GSAircraft({ color })  { return <GSIco color={color}><path d="M8 1.5L11.5 8L8 7L4.5 8Z"/><path d="M6 7.5L4 10.5H12L10 7.5"/><line x1="8" y1="10.5" x2="8" y2="14"/><line x1="6" y1="13" x2="10" y2="13"/></GSIco> }
+function GSPadlock({ color })   { return <GSIco color={color}><rect x="3" y="8" width="10" height="7" rx="1.5"/><path d="M5 8V6C5 3.8 11 3.8 11 6V8"/></GSIco> }
+function GSPerson({ color })    { return <GSIco color={color}><circle cx="8" cy="5.5" r="3"/><path d="M2.5 15C2.5 12 5 9.5 8 9.5C11 9.5 13.5 12 13.5 15"/></GSIco> }
+function GSBuilding({ color })  { return <GSIco color={color}><rect x="2" y="6" width="5" height="9"/><rect x="5" y="3" width="7" height="12"/><rect x="10" y="5" width="4" height="10"/><line x1="1" y1="15" x2="15" y2="15"/></GSIco> }
+function GSPin({ color })       { return <GSIco color={color}><circle cx="8" cy="6.5" r="3"/><path d="M8 9.5C8 9.5 3 12.5 3 9.5C3 6.5 5 2.5 8 2.5C11 2.5 13 6.5 13 9.5C13 12.5 8 9.5 8 9.5Z"/><line x1="8" y1="13" x2="8" y2="15.5"/></GSIco> }
+
 const TYPE_META = {
-    country:    { icon: "🌍", color: "#38bdf8" },
-    port:       { icon: "⚓", color: "#34d399" },
-    airport:    { icon: "✈️", color: "#a78bfa" },
-    chokepoint: { icon: "🔒", color: "#fb923c" },
-    poi:        { icon: "👤", color: "#f472b6" },
-    city:       { icon: "🏙️", color: "#e2e8f0" },
-    address:    { icon: "📍", color: "#94a3b8" },
+    country:    { icon: (c) => <GSGlobe color={c} />,    color: "#38bdf8" },
+    port:       { icon: (c) => <GSAnchor color={c} />,   color: "#34d399" },
+    airport:    { icon: (c) => <GSAircraft color={c} />, color: "#a78bfa" },
+    chokepoint: { icon: (c) => <GSPadlock color={c} />,  color: "#fb923c" },
+    poi:        { icon: (c) => <GSPerson color={c} />,   color: "#f472b6" },
+    city:       { icon: (c) => <GSBuilding color={c} />, color: "#e2e8f0" },
+    address:    { icon: (c) => <GSPin color={c} />,      color: "#94a3b8" },
 }
 
 function zoomForType(type, nominatimType) {
@@ -288,7 +305,7 @@ export default function GlobalSearch({ onResult, apiBase = API_BASE }) {
                                     transition:  "background 0.1s",
                                 }}
                             >
-                                <span style={{ fontSize: 14, flexShrink: 0 }}>{meta.icon}</span>
+                                <span style={{ flexShrink: 0 }}>{meta.icon(meta.color)}</span>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                         {r.name}

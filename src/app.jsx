@@ -628,7 +628,7 @@ export default function App() {
             <style>@keyframes hw-slide-in-r{from{transform:translateX(120px);opacity:0}to{transform:translateX(0);opacity:1}}</style>
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
                 <div style="flex:1;min-width:0;">
-                    <div style="font-size:10px;letter-spacing:2px;color:${color};text-transform:uppercase;margin-bottom:4px;">⚠ ${(alert.type || '').replace(/_/g, ' ')}</div>
+                    <div style="font-size:10px;letter-spacing:2px;color:${color};text-transform:uppercase;margin-bottom:4px;">${(alert.type || '').replace(/_/g, ' ')}</div>
                     <div style="font-size:14px;font-weight:700;color:white;margin-bottom:4px;">${alert.title || 'Anomaly'}</div>
                     ${alert.subtitle ? `<div style="font-size:12px;color:rgba(0,170,255,0.85);margin-bottom:5px;">${alert.subtitle}</div>` : ''}
                     <div style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1.45;margin-bottom:8px;">${alert.reason || alert.description || ''}</div>
@@ -636,8 +636,8 @@ export default function App() {
                 <button id="hw-an-close-${alert.id}" style="background:none;border:none;color:rgba(255,255,255,0.3);font-size:18px;cursor:pointer;padding:0 2px;line-height:1;flex-shrink:0;">×</button>
             </div>
             <div style="display:flex;gap:8px;">
-                ${alert.lat != null ? `<button id="hw-an-map-${alert.id}" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:rgba(0,170,255,0.15);border:1px solid rgba(0,170,255,0.3);color:#00aaff;">📍 Show on Map</button>` : ''}
-                <button id="hw-an-pin-${alert.id}" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:rgba(255,170,0,0.15);border:1px solid rgba(255,170,0,0.3);color:#ffaa00;">📌 Pin</button>
+                ${alert.lat != null ? `<button id="hw-an-map-${alert.id}" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:rgba(0,170,255,0.15);border:1px solid rgba(0,170,255,0.3);color:#00aaff;">Show on Map</button>` : ''}
+                <button id="hw-an-pin-${alert.id}" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:rgba(255,170,0,0.15);border:1px solid rgba(255,170,0,0.3);color:#ffaa00;">Pin</button>
                 <button id="hw-an-dismiss-${alert.id}" style="padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.4);">Dismiss</button>
             </div>`
         document.body.appendChild(el)

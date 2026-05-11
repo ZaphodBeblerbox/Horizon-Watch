@@ -83,7 +83,9 @@ export default function ChatPanel({ activeSituation, onClose }) {
             {/* Header */}
             <div style={{ padding: "12px 16px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                    <span style={{ fontSize: 14 }}>💬</span>
+                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                        <path d="M2 2h12a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5L2 14V3a1 1 0 0 1 1-1z"/>
+                    </svg>
                     <span style={{ fontWeight: 700, fontSize: 13, letterSpacing: "0.06em", textTransform: "uppercase", flex: 1 }}>Mission Chat</span>
                     {messages.length > 0 && (
                         <button
@@ -210,7 +212,14 @@ export default function ChatPanel({ activeSituation, onClose }) {
                             border: `1.5px solid ${contextual ? "#FFB300" : "rgba(255,255,255,0.25)"}`,
                             transition: "all 150ms ease",
                         }} />
-                        <span style={{ fontSize: 10, color: contextual ? "#FFB300" : "rgba(255,255,255,0.35)" }}>🧠 Context</span>
+                        <span style={{ fontSize: 10, color: contextual ? "#FFB300" : "rgba(255,255,255,0.35)", display: "flex", alignItems: "center", gap: 4 }}>
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M8 3.5C6 3.5 4.5 5 4.5 7C4.5 8.5 5.5 9 5.5 9C3.5 9.5 3 11 3 12C3 13 4 13.5 5 13.5"/>
+                                <path d="M8 3.5C10 3.5 11.5 5 11.5 7C11.5 8.5 10.5 9 10.5 9C12.5 9.5 13 11 13 12C13 13 12 13.5 11 13.5"/>
+                                <line x1="8" y1="3.5" x2="8" y2="13.5"/>
+                            </svg>
+                            Context
+                        </span>
                     </div>
                     <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)" }}>{estimatedCost}/msg</span>
                 </div>

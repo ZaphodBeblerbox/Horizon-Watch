@@ -5,17 +5,51 @@ import ForceGraph from "./forge/ForceGraph.jsx"
 
 const API = API_BASE
 
+// ── Icon primitives ────────────────────────────────────────────────────────────
+function FI({ children, w = 13, h = 13, ...rest }) {
+    return (
+        <svg width={w} height={h} viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"
+            style={{ display: "inline-block", verticalAlign: "middle", flexShrink: 0 }}
+            {...rest}>
+            {children}
+        </svg>
+    )
+}
+const FIcoTarget    = (p) => <FI {...p}><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2.5"/><line x1="8" y1="1" x2="8" y2="5"/><line x1="8" y1="11" x2="8" y2="15"/><line x1="1" y1="8" x2="5" y2="8"/><line x1="11" y1="8" x2="15" y2="8"/></FI>
+const FIcoFlash     = (p) => <FI {...p}><polyline points="10,1 5,9 9,9 6,15"/></FI>
+const FIcoSatellite = (p) => <FI {...p}><rect x="5" y="5" width="6" height="6" rx="1" transform="rotate(45 8 8)"/><line x1="11.2" y1="4.8" x2="13.5" y2="2.5"/><line x1="4.8" y1="11.2" x2="2.5" y2="13.5"/><circle cx="13.5" cy="2.5" r="1.2" fill="currentColor" stroke="none"/></FI>
+const FIcoSearch    = (p) => <FI {...p}><circle cx="6.5" cy="6.5" r="4.5"/><line x1="10" y1="10" x2="14" y2="14"/></FI>
+const FIcoShip      = (p) => <FI {...p}><path d="M3 9h10l-2 5H5Z"/><rect x="5" y="5" width="6" height="4"/><line x1="8" y1="1" x2="8" y2="5"/><line x1="5.5" y1="3" x2="10.5" y2="3"/></FI>
+const FIcoPaper     = (p) => <FI {...p}><rect x="2" y="1.5" width="12" height="13" rx="1.5"/><line x1="5" y1="6" x2="11" y2="6"/><line x1="5" y1="9" x2="11" y2="9"/><line x1="5" y1="12" x2="8" y2="12"/></FI>
+const FIcoNetwork   = (p) => <FI {...p}><circle cx="8" cy="8" r="2"/><circle cx="2.5" cy="3" r="1.4"/><circle cx="13.5" cy="3" r="1.4"/><circle cx="2.5" cy="13" r="1.4"/><circle cx="13.5" cy="13" r="1.4"/><line x1="3.5" y1="3.8" x2="6.4" y2="6.5"/><line x1="12.5" y1="3.8" x2="9.6" y2="6.5"/><line x1="3.5" y1="12.2" x2="6.4" y2="9.5"/><line x1="12.5" y1="12.2" x2="9.6" y2="9.5"/></FI>
+const FIcoAntenna   = (p) => <FI {...p}><line x1="8" y1="8" x2="8" y2="15"/><path d="M5 7C5 4.5 11 4.5 11 7"/><path d="M2.5 5.5C2.5 1.5 13.5 1.5 13.5 5.5"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></FI>
+const FIcoBrain     = (p) => <FI strokeWidth="1.3" {...p}><path d="M8 3.5C6 3.5 4.5 5 4.5 7C4.5 8.5 5.5 9 5.5 9C3.5 9.5 3 11 3 12C3 13 4 13.5 5 13.5"/><path d="M8 3.5C10 3.5 11.5 5 11.5 7C11.5 8.5 10.5 9 10.5 9C12.5 9.5 13 11 13 12C13 13 12 13.5 11 13.5"/><line x1="8" y1="3.5" x2="8" y2="13.5"/></FI>
+const FIcoMapGrid   = (p) => <FI {...p}><polygon points="1,2 6,4 6,14 1,12"/><polygon points="6,4 11,2 11,12 6,14"/><polygon points="11,2 15,4 15,14 11,12"/></FI>
+const FIcoGlobe     = (p) => <FI {...p}><circle cx="8" cy="8" r="6"/><path d="M8 2C6.5 5 6.5 11 8 14M8 2C9.5 5 9.5 11 8 14"/><line x1="2.5" y1="8" x2="13.5" y2="8"/></FI>
+const FIcoPadlock   = (p) => <FI {...p}><rect x="3" y="8" width="10" height="7" rx="1.5"/><path d="M5 8V6C5 3.8 11 3.8 11 6V8"/></FI>
+const FIcoPlug      = (p) => <FI {...p}><line x1="2" y1="14" x2="14" y2="2"/><path d="M7 9L9 7L12 10L10 12Z"/><line x1="5" y1="5.8" x2="3" y2="3.8"/><line x1="6.8" y1="4" x2="4.8" y2="2"/></FI>
+const FIcoPerson    = (p) => <FI {...p}><circle cx="8" cy="5.5" r="3"/><path d="M2.5 15C2.5 12 5 9.5 8 9.5C11 9.5 13.5 12 13.5 15"/></FI>
+const FIcoSwords    = (p) => <FI {...p}><line x1="2" y1="14" x2="9" y2="7"/><line x1="14" y1="2" x2="7" y2="9"/><line x1="5" y1="14" x2="8" y2="11"/><line x1="11" y1="2" x2="8" y2="5"/></FI>
+const FIcoFactory   = (p) => <FI {...p}><path d="M1 14V8L5.5 11V8L10 11V6L15 6V14Z"/><line x1="1" y1="14" x2="15" y2="14"/></FI>
+const FIcoPin       = (p) => <FI {...p}><circle cx="8" cy="6.5" r="3"/><path d="M8 9.5C8 9.5 3 12.5 3 9.5C3 6.5 5 2.5 8 2.5C11 2.5 13 6.5 13 9.5C13 12.5 8 9.5 8 9.5Z"/><line x1="8" y1="13" x2="8" y2="15.5"/></FI>
+const FIcoHammer    = (p) => <FI {...p}><path d="M2 14L7.5 8.5"/><rect x="6.5" y="1.5" width="5" height="5" rx="1" transform="rotate(-45 8 4)"/></FI>
+const FIcoWarning   = (p) => <FI strokeWidth="1.5" {...p}><path d="M8 2L15 14H1L8 2Z"/><line x1="8" y1="7" x2="8" y2="10.5"/><circle cx="8" cy="12.5" r="0.8" fill="currentColor" stroke="none"/></FI>
+const FIcoCog       = (p) => <FI {...p}><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M12.8 3.2L11.4 4.6M4.6 11.4L3.2 12.8"/></FI>
+const FIcoAircraft  = (p) => <FI strokeWidth="1.3" {...p}><path d="M8 1.5L11.5 8L8 7L4.5 8Z"/><path d="M6 7.5L4 10.5H12L10 7.5"/><line x1="8" y1="10.5" x2="8" y2="14"/><line x1="6" y1="13" x2="10" y2="13"/></FI>
+const FIcoAnchor    = (p) => <FI {...p}><circle cx="8" cy="4.5" r="2"/><line x1="8" y1="6.5" x2="8" y2="15"/><path d="M4 10C4 10 4 15 8 15C12 15 12 10 12 10"/><line x1="5" y1="4.5" x2="11" y2="4.5"/></FI>
+
 const FORGE_TABS = [
-    { id: "dashboard",     label: "Threat Matrix",     icon: "🎯" },
-    { id: "rules",         label: "Pattern Rules",     icon: "⚡" },
-    { id: "watch",         label: "Watch Areas",        icon: "🛰" },
-    { id: "recognition",   label: "Object Training",    icon: "🔍" },
-    { id: "ais-training",  label: "AIS Training",       icon: "🚢" },
-    { id: "news-training", label: "News Training",      icon: "📰" },
-    { id: "entities",      label: "Entity Networks",    icon: "🕸" },
-    { id: "feeds",         label: "Data Feeds",         icon: "📡" },
-    { id: "models",        label: "Model Management",   icon: "🧠" },
-    { id: "overlays",      label: "Map Overlays",       icon: "🗺" },
+    { id: "dashboard",     label: "Threat Matrix",     icon: <FIcoTarget /> },
+    { id: "rules",         label: "Pattern Rules",     icon: <FIcoFlash /> },
+    { id: "watch",         label: "Watch Areas",        icon: <FIcoSatellite /> },
+    { id: "recognition",   label: "Object Training",    icon: <FIcoSearch /> },
+    { id: "ais-training",  label: "AIS Training",       icon: <FIcoShip /> },
+    { id: "news-training", label: "News Training",      icon: <FIcoPaper /> },
+    { id: "entities",      label: "Entity Networks",    icon: <FIcoNetwork /> },
+    { id: "feeds",         label: "Data Feeds",         icon: <FIcoAntenna /> },
+    { id: "models",        label: "Model Management",   icon: <FIcoBrain /> },
+    { id: "overlays",      label: "Map Overlays",       icon: <FIcoMapGrid /> },
 ]
 
 // ── Shared styles ──────────────────────────────────────────────────────────────
@@ -871,9 +905,9 @@ function AISTrainingCard({ item, onLabel }) {
     const isHighSpeed  = (item.speed ?? 0) > 22
 
     const assessment = isStationary
-        ? { text: "⚠ Vessel stationary — possible loitering", color: "#f59e0b" }
+        ? { text: <><FIcoWarning w={11} h={11} style={{ marginRight: 4 }} />Vessel stationary — possible loitering</>, color: "#f59e0b" }
         : isHighSpeed
-        ? { text: "⚠ High speed — possible military/pursuit", color: "#ef4444" }
+        ? { text: <><FIcoWarning w={11} h={11} style={{ marginRight: 4 }} />High speed — possible military/pursuit</>, color: "#ef4444" }
         : { text: "✓ Normal transit behaviour", color: "#22c55e" }
 
     return (
@@ -943,8 +977,8 @@ function AISTrainingCard({ item, onLabel }) {
                 <button onClick={() => onLabel("normal")} style={{ flex: 1, padding: "9px 0", borderRadius: 6, border: "1px solid rgba(34,197,94,0.4)", background: "rgba(34,197,94,0.1)", color: "#22c55e", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                     ✓ Normal
                 </button>
-                <button onClick={() => setShowSubs(v => !v)} style={{ flex: 1, padding: "9px 0", borderRadius: 6, border: "1px solid rgba(239,68,68,0.4)", background: "rgba(239,68,68,0.08)", color: "#ef4444", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                    ⚠ Suspicious
+                <button onClick={() => setShowSubs(v => !v)} style={{ flex: 1, padding: "9px 0", borderRadius: 6, border: "1px solid rgba(239,68,68,0.4)", background: "rgba(239,68,68,0.08)", color: "#ef4444", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                    <FIcoWarning w={11} h={11} /> Suspicious
                 </button>
                 <button onClick={() => onLabel("skip")} style={{ padding: "9px 16px", borderRadius: 6, border: "1px solid rgba(100,116,139,0.3)", background: "transparent", color: "#64748b", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                     Skip
@@ -1173,10 +1207,19 @@ const TREE_TYPE_COLORS = {
     scan: "#38bdf8",
 }
 const TREE_TYPE_ICONS = {
-    mission: "🎯", region: "📍", chokepoint: "🔒", country: "🌍",
-    vessel: "🚢", aircraft: "✈", rule: "⚙", group: "⚔",
-    event: "⚡", cable: "🔌", source: "📡", category: "▪",
-    scan: "🛰",
+    mission:    <FIcoTarget />,
+    region:     <FIcoPin />,
+    chokepoint: <FIcoPadlock />,
+    country:    <FIcoGlobe />,
+    vessel:     <FIcoShip />,
+    aircraft:   <FIcoAircraft />,
+    rule:       <FIcoCog />,
+    group:      <FIcoSwords />,
+    event:      <FIcoFlash />,
+    cable:      <FIcoPlug />,
+    source:     <FIcoAntenna />,
+    category:   <span style={{ fontSize: 8, lineHeight: 1 }}>▪</span>,
+    scan:       <FIcoSatellite />,
 }
 
 function isInRegion(node, region) {
@@ -1298,20 +1341,20 @@ function OntologyTreeView({ nodes, edges, mission, onDeleteNode }) {
 // ── Entity Networks ────────────────────────────────────────────────────────────
 
 const ENTITY_TYPES = {
-    vessel:     { color: "#f59e0b", icon: "🚢", label: "Vessels" },
-    aircraft:   { color: "#38bdf8", icon: "✈", label: "Aircraft" },
-    port:       { color: "#06b6d4", icon: "⚓", label: "Ports" },
-    airport:    { color: "#8b5cf6", icon: "✈", label: "Airports" },
-    country:    { color: "#22c55e", icon: "🌍", label: "Countries" },
-    chokepoint: { color: "#ef4444", icon: "🔒", label: "Chokepoints" },
-    cable:      { color: "#a855f7", icon: "🔌", label: "Cables" },
-    event:      { color: "#f97316", icon: "⚡", label: "Events" },
-    person:     { color: "#ec4899", icon: "👤", label: "People" },
-    group:      { color: "#ef4444", icon: "⚔", label: "Groups" },
-    weapon:     { color: "#dc2626", icon: "🎯", label: "Weapons" },
-    facility:   { color: "#14b8a6", icon: "🏭", label: "Facilities" },
-    scan:       { color: "#38bdf8", icon: "🛰", label: "Scans" },
-    rule:       { color: "#f97316", icon: "⚙", label: "Detection Rules" },
+    vessel:     { color: "#f59e0b", icon: <FIcoShip />,      label: "Vessels" },
+    aircraft:   { color: "#38bdf8", icon: <FIcoAircraft />,  label: "Aircraft" },
+    port:       { color: "#06b6d4", icon: <FIcoAnchor />,    label: "Ports" },
+    airport:    { color: "#8b5cf6", icon: <FIcoAircraft />,  label: "Airports" },
+    country:    { color: "#22c55e", icon: <FIcoGlobe />,     label: "Countries" },
+    chokepoint: { color: "#ef4444", icon: <FIcoPadlock />,   label: "Chokepoints" },
+    cable:      { color: "#a855f7", icon: <FIcoPlug />,      label: "Cables" },
+    event:      { color: "#f97316", icon: <FIcoFlash />,     label: "Events" },
+    person:     { color: "#ec4899", icon: <FIcoPerson />,    label: "People" },
+    group:      { color: "#ef4444", icon: <FIcoSwords />,    label: "Groups" },
+    weapon:     { color: "#dc2626", icon: <FIcoTarget />,    label: "Weapons" },
+    facility:   { color: "#14b8a6", icon: <FIcoFactory />,   label: "Facilities" },
+    scan:       { color: "#38bdf8", icon: <FIcoSatellite />, label: "Scans" },
+    rule:       { color: "#f97316", icon: <FIcoCog />,       label: "Detection Rules" },
 }
 
 const EDGE_TYPES = {
@@ -1475,8 +1518,8 @@ function EntityNetworksTab({ onViewOnMap, mission }) {
                 {/* View toggle */}
                 <div style={{ display: "flex", gap: 4, padding: "8px 10px", borderBottom: "1px solid rgba(56,189,248,0.08)", flexShrink: 0 }}>
                     {["tree", "graph"].map(v => (
-                        <button key={v} onClick={() => setView(v)} style={{ padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, background: view === v ? "rgba(56,189,248,0.18)" : "transparent", color: view === v ? "#38bdf8" : "#475569" }}>
-                            {v === "tree" ? "🌳 Tree" : "🕸 Graph"}
+                        <button key={v} onClick={() => setView(v)} style={{ padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, background: view === v ? "rgba(56,189,248,0.18)" : "transparent", color: view === v ? "#38bdf8" : "#475569", display: "flex", alignItems: "center", gap: 4 }}>
+                            {v === "tree" ? <><FIcoNetwork w={11} h={11} /> Tree</> : <><FIcoNetwork w={11} h={11} /> Graph</>}
                         </button>
                     ))}
                 </div>
@@ -1739,7 +1782,7 @@ function CreateMissionWizard({ onComplete, onClose }) {
                             <div style={{ ...card, padding: 12 }}>
                                 <div style={{ color: "#64748b", fontSize: 10, marginBottom: 6 }}>SELECTED REGIONS</div>
                                 {regions.map((r, i) => (
-                                    <div key={i} style={{ color: "#94a3b8", fontSize: 12, padding: "2px 0" }}>📍 {r.name}</div>
+                                    <div key={i} style={{ color: "#94a3b8", fontSize: 12, padding: "2px 0", display: "flex", alignItems: "center", gap: 5 }}><FIcoPin w={11} h={11} /> {r.name}</div>
                                 ))}
                             </div>
                         )}
@@ -1803,7 +1846,7 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
             {/* Header */}
             <div style={{ padding: "0 24px", height: 50, flexShrink: 0, borderBottom: "1px solid rgba(56, 189, 248, 0.12)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontSize: 17, fontWeight: 800, color: "#e2e8f0", letterSpacing: "0.04em" }}>⚒ FORGE</span>
+                    <span style={{ fontSize: 17, fontWeight: 800, color: "#e2e8f0", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 7 }}><FIcoHammer w={16} h={16} /> FORGE</span>
                     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "#38bdf8", background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.25)", padding: "2px 8px", borderRadius: 4 }}>INTELLIGENCE TRAINING LAB</span>
                     <span style={{ fontSize: 11, color: "#475569" }}>{user?.email || "admin"}</span>
                 </div>
@@ -1837,7 +1880,7 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
                 {activeTab === "ais-training"  && <AISTrainingTab />}
                 {activeTab === "news-training" && <NewsTrainingTab />}
                 {activeTab === "entities"      && <EntityNetworksTab mission={activeMission} onViewOnMap={node => { onFlyTo?.(node); onClose?.() }} />}
-                {activeTab === "feeds"         && <SkeletonTab icon="📡" title="Data Feeds" description="Manage custom RSS/XML/JSON data ingestion pipelines." />}
+                {activeTab === "feeds"         && <SkeletonTab icon={<FIcoAntenna />} title="Data Feeds" description="Manage custom RSS/XML/JSON data ingestion pipelines." />}
                 {activeTab === "models"        && <ModelManagementTab />}
                 {activeTab === "overlays"      && <MapOverlaysTab onAddOverlay={onAddOverlay} />}
             </div>

@@ -43,7 +43,12 @@ function NewsIcon({ size }) {
 }
 
 function ForgeIcon({ size }) {
-    return <span style={{ fontSize: size * 0.85, lineHeight: 1 }}>⚒</span>
+    return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 14L7.5 8.5"/>
+            <rect x="6.5" y="1.5" width="5" height="5" rx="1" transform="rotate(-45 8 4)"/>
+        </svg>
+    )
 }
 
 const TYPE_ICON = { map: MapIcon, poi: POIIcon, briefing: BriefingIcon, news: NewsIcon, forge: ForgeIcon }

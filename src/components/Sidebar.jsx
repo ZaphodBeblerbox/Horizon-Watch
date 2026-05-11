@@ -501,7 +501,10 @@ export default function Sidebar({
                             flexShrink:     0,
                         }}
                     >
-                        ⚒
+                        <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M2 14L7.5 8.5"/>
+                            <rect x="6.5" y="1.5" width="5" height="5" rx="1" transform="rotate(-45 8 4)"/>
+                        </svg>
                     </button>
                 )}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}
