@@ -191,6 +191,7 @@ try:
     from detectors.ais_detector import AISAnomalyDetector as _AISAnomalyDetector
     from detectors.adsb_detector import ADSBPatternDetector as _ADSBPatternDetector
     from detectors.threat_engine import ThreatEngine as _ThreatEngine
+    from detectors.correlation_engine import CorrelationEngine as _CorrelationEngine
     _HAS_DETECTORS = True
 except ImportError as _det_err:
     print(f"[startup] detectors not available: {_det_err}")
@@ -7190,12 +7191,14 @@ _AIS_LOCK        = threading.Lock()
 
 # ── Forge detection engine instances ─────────────────────────────────────────
 if _HAS_DETECTORS:
-    _ais_detector  = _AISAnomalyDetector()
-    _adsb_detector = _ADSBPatternDetector()
-    _threat_engine = _ThreatEngine()
+    _ais_detector        = _AISAnomalyDetector()
+    _adsb_detector       = _ADSBPatternDetector()
+    _threat_engine       = _ThreatEngine()
+    _correlation_engine  = _CorrelationEngine()
 else:
-    _ais_detector = _adsb_detector = _threat_engine = None
-_forge_alerts: list = []   # in-memory rolling 24h alert buffer
+    _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
+_forge_alerts: list = []          # in-memory rolling 24h alert buffer
+_correlation_assessments: list = []  # cross-domain correlation results (24h)
 _AIS_STATUS      = {"connected": False, "error": None, "vessel_count": 0, "last_msg": None, "last_poll": None}
 _AIS_MSG_COUNTER = 0         # total messages received this connection
 _AIS_LAST_LOG_T  = 0.0      # time of last periodic log
@@ -12759,6 +12762,38 @@ def _auto_add_ontology_edge(alert: dict):
         pass
 
 
+def _auto_add_correlation_to_ontology(assessment: dict):
+    """Add a cross-domain correlation as a node in the ontology, linking related entities."""
+    try:
+        if not assessment.get("related_entities"):
+            return
+        ontology = _forge_ontology_load()
+        corr_id = f"corr_{int(datetime.now(timezone.utc).timestamp())}"
+        ontology["nodes"].append({
+            "id":          corr_id,
+            "type":        "correlation",
+            "label":       f"{assessment['severity']}: {assessment['narrative'][:60]}",
+            "description": assessment.get("recommendation", ""),
+            "lat":         assessment.get("lat"),
+            "lng":         assessment.get("lng"),
+            "severity":    assessment["severity"],
+            "confidence":  assessment.get("confidence"),
+        })
+        for entity in assessment.get("related_entities", []):
+            edge_id = f"e_{corr_id}_{entity['id']}"
+            if not any(e["id"] == edge_id for e in ontology["edges"]):
+                ontology["edges"].append({
+                    "id":     edge_id,
+                    "source": corr_id,
+                    "target": entity["id"],
+                    "type":   "correlates_with",
+                    "auto":   True,
+                })
+        _forge_ontology_save(ontology)
+    except Exception:
+        pass
+
+
 def _prep_cables_for_detector():
     """Extract cable coordinate lists for proximity checks, sampled to cap CPU."""
     try:
@@ -12780,8 +12815,8 @@ def _prep_cables_for_detector():
 
 
 async def _forge_detection_cycle():
-    """Run every 5 minutes: apply all active Forge rules to live data."""
-    global _forge_alerts
+    """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
+    global _forge_alerts, _correlation_assessments
     while True:
         try:
             # Bootstrap default rules on first run
@@ -12791,21 +12826,19 @@ async def _forge_detection_cycle():
                     from detectors.default_rules import DEFAULT_RULES as _DR
                     rules = _DR
                     _forge_save("rules.json", rules)
-                    print("[forge-detector] bootstrapped default rules")
+                    print("[forge-brain] bootstrapped default rules")
                 except ImportError:
                     rules = []
             _ais_detector.load_rules(rules)
-            _adsb_detector  # noqa — rules baked into adsb_detector
 
-            # Prepare cable geometry (sampled coords for proximity checks)
             cables = _prep_cables_for_detector()
 
-            # AIS check — pass all vessels for ship-to-ship detection
+            # Stage 1 — AIS anomaly detection
             with _AIS_LOCK:
                 vessels_snap = dict(_AIS_VESSELS)
-            new_alerts: list = []
+            new_ais_alerts: list = []
             for vessel in vessels_snap.values():
-                new_alerts.extend(
+                new_ais_alerts.extend(
                     _ais_detector.check_vessel(
                         vessel,
                         cables=cables,
@@ -12814,20 +12847,21 @@ async def _forge_detection_cycle():
                     )
                 )
 
-            # ADS-B check — _GLOBAL_ADSB_CACHE is {icao: aircraft_dict}
+            # Stage 2 — ADS-B anomaly detection
+            new_adsb_alerts: list = []
             try:
+                adsb_rules = [r for r in rules if r.get("source") in ("ADSB", "adsb")]
                 for ac in list(_GLOBAL_ADSB_CACHE.values())[:300]:
-                    adsb_rules = [r for r in rules if r.get("source") == "ADSB"]
+                    callsign = (ac.get("flight") or "").strip().upper()
+                    squawk   = str(ac.get("squawk") or "")
                     for rule in adsb_rules:
                         if rule.get("status") != "active":
                             continue
                         trigger = rule.get("trigger_type", "")
                         params  = rule.get("params", {})
-                        callsign = (ac.get("flight") or "").strip().upper()
-                        squawk   = str(ac.get("squawk") or "")
                         if trigger == "emergency_squawk" and squawk in params.get("squawk_codes", ["7500","7600","7700"]):
                             labels = {"7500": "HIJACK", "7600": "COMMS FAILURE", "7700": "EMERGENCY"}
-                            new_alerts.append({
+                            new_adsb_alerts.append({
                                 "rule_id":   rule["id"],
                                 "rule_name": rule["name"],
                                 "source":    "ADSB",
@@ -12841,7 +12875,7 @@ async def _forge_detection_cycle():
                         elif trigger == "military_callsign":
                             prefixes = params.get("callsign_prefixes", [])
                             if callsign and any(callsign.startswith(p) for p in prefixes):
-                                new_alerts.append({
+                                new_adsb_alerts.append({
                                     "rule_id":   rule["id"],
                                     "rule_name": rule["name"],
                                     "source":    "ADSB",
@@ -12853,18 +12887,56 @@ async def _forge_detection_cycle():
                                     "timestamp": datetime.now(timezone.utc).isoformat(),
                                 })
             except Exception as _ae:
-                print(f"[forge-detector] adsb error: {_ae}")
+                print(f"[forge-brain] adsb error: {_ae}")
 
-            # Auto-wire ontology edges for cable alerts
-            for alert in new_alerts:
+            # Stage 3 — Cross-domain correlation engine
+            new_assessments: list = []
+            try:
+                ontology = _forge_ontology_load()
+                recent_events: list = []
+                try:
+                    recent_events = [
+                        {"lat": e.get("lat"), "lng": e.get("lng") or e.get("lon"),
+                         "title": e.get("headline") or e.get("title") or "",
+                         "severity": e.get("severity", "medium"),
+                         "published": e.get("published_at") or e.get("published") or ""}
+                        for e in es.get_active_events()[:50]
+                        if e.get("lat") and (e.get("lng") or e.get("lon"))
+                    ]
+                except Exception:
+                    pass
+
+                new_assessments = _correlation_engine.correlate(
+                    ais_alerts=new_ais_alerts,
+                    adsb_alerts=new_adsb_alerts,
+                    news_events=recent_events,
+                    satellite_changes=[],
+                    ontology=ontology,
+                )
+
+                # Auto-wire HIGH/CRITICAL correlations into ontology
+                for a in new_assessments:
+                    if a.get("severity") in ("HIGH", "CRITICAL") and a.get("type") == "correlation":
+                        _auto_add_correlation_to_ontology(a)
+
+            except Exception as _ce:
+                print(f"[forge-brain] correlation error: {_ce}")
+
+            # Auto-wire cable-related alerts into ontology
+            for alert in new_ais_alerts:
                 if "cable" in (alert.get("message") or "").lower():
                     _auto_add_ontology_edge(alert)
 
+            new_alerts = new_ais_alerts + new_adsb_alerts
             _forge_alerts.extend(new_alerts)
+            _correlation_assessments.extend(new_assessments)
 
-            # Trim to last 24 h and deduplicate (rule+vessel per hour)
+            # Trim both buffers to 24h
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             _forge_alerts = [a for a in _forge_alerts if a.get("timestamp", "") > cutoff]
+            _correlation_assessments = [a for a in _correlation_assessments if a.get("timestamp", "") > cutoff]
+
+            # Deduplicate alerts (rule+vessel per hour bucket)
             seen: set = set()
             deduped: list = []
             for a in reversed(_forge_alerts):
@@ -12873,9 +12945,15 @@ async def _forge_detection_cycle():
                     seen.add(key)
                     deduped.append(a)
             _forge_alerts = list(reversed(deduped))[:500]
-            print(f"[forge-detector] cycle — {len(_forge_alerts)} alerts, {len(vessels_snap)} vessels, {len(_GLOBAL_ADSB_CACHE)} aircraft")
+            _correlation_assessments = _correlation_assessments[-200:]
+
+            print(
+                f"[forge-brain] cycle — {len(_forge_alerts)} alerts, "
+                f"{len(new_assessments)} correlations, "
+                f"{len(vessels_snap)} vessels, {len(_GLOBAL_ADSB_CACHE)} aircraft"
+            )
         except Exception as _ex:
-            print(f"[forge-detector] error: {_ex}")
+            print(f"[forge-brain] cycle error: {_ex}")
         await asyncio.sleep(300)
 
 
@@ -12884,6 +12962,15 @@ async def _forge_detection_cycle():
 @app.get("/api/forge/alerts")
 def forge_get_alerts(_user=Depends(require_admin_user)):
     return _forge_alerts
+
+
+@app.get("/api/forge/correlations")
+def forge_get_correlations(_user=Depends(require_admin_user)):
+    return sorted(
+        _correlation_assessments,
+        key=lambda x: (x.get("confidence", 0), x.get("signal_count", 0)),
+        reverse=True,
+    )
 
 
 @app.post("/api/forge/alerts/{alert_idx}/feedback")
@@ -12971,12 +13058,18 @@ def forge_threat_scores(_user=Depends(require_admin_user)):
             "satellite_change": 0.0,
             "event_density":    min((len(ais_alerts) + len(adsb_alerts) + news_count) * 0.03, 1.0),
         }
-        result = _threat_engine.calculate_region_threat(region_name, signals)
+        # Filter correlations for this region
+        region_corrs = [
+            c for c in _correlation_assessments
+            if _in_region(c.get("lat"), c.get("lng"), bounds)
+        ]
+        result = _threat_engine.calculate_region_threat(region_name, signals, correlations=region_corrs)
         result["alert_count"] = len(region_alerts)
         result["signals_raw"] = {
-            "ais_alerts":  len(ais_alerts),
-            "adsb_alerts": len(adsb_alerts),
-            "news_events": news_count,
+            "ais_alerts":    len(ais_alerts),
+            "adsb_alerts":   len(adsb_alerts),
+            "news_events":   news_count,
+            "correlations":  len(region_corrs),
         }
         scores.append(result)
 

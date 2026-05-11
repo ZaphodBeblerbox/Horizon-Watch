@@ -143,22 +143,136 @@ function FullscreenPreview({ image, detections, onClose }) {
 
 const LEVEL_COLORS = { CRITICAL: "#ef4444", HIGH: "#f59e0b", ELEVATED: "#38bdf8", LOW: "#22c55e" }
 
+const DOMAIN_STYLE = {
+    AIS:  { bg: "rgba(245,158,11,0.2)",  color: "#f59e0b" },
+    ADSB: { bg: "rgba(56,189,248,0.2)",  color: "#38bdf8" },
+    NEWS: { bg: "rgba(249,115,22,0.2)",  color: "#f97316" },
+    SAT:  { bg: "rgba(168,85,247,0.2)",  color: "#a855f7" },
+}
+
+function CorrelationCards({ correlations, onFlyTo, setActiveTab }) {
+    if (!correlations.length) return null
+    const sevColor = sev =>
+        sev === "CRITICAL" ? "#ef4444" : sev === "HIGH" ? "#f59e0b" : sev === "ELEVATED" ? "#38bdf8" : "#64748b"
+    const typeLabel = t =>
+        t === "correlation"         ? "Multi-Source Correlation" :
+        t === "escalation_sequence" ? "Escalation Sequence" :
+        t === "repeat_offender"     ? "Repeat Offender" :
+        t === "ontology_propagation"? "Network Effect" : t
+
+    return (
+        <div style={{ marginBottom: 24 }}>
+            <h3 style={{ color: "#e2e8f0", fontSize: 15, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
+                <FIcoBrain w={14} h={14} style={{ color: "#38bdf8" }} />
+                Intelligence Correlations ({correlations.length})
+            </h3>
+            {correlations.map((c, i) => {
+                const sc = sevColor(c.severity)
+                return (
+                    <div key={i} style={{ ...card, borderLeft: `3px solid ${sc}40`, marginBottom: 10 }}>
+                        {/* Header row */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: `${sc}22`, color: sc }}>
+                                    {c.severity}
+                                </span>
+                                <span style={{ color: "#e2e8f0", fontSize: 11 }}>{typeLabel(c.type)}</span>
+                            </div>
+                            <span style={{ color: "#64748b", fontSize: 10 }}>
+                                Confidence: {Math.round((c.confidence || 0) * 100)}%
+                            </span>
+                        </div>
+
+                        {/* Narrative */}
+                        <div style={{ color: "#e2e8f0", fontSize: 13, lineHeight: 1.45, marginBottom: 8 }}>{c.narrative}</div>
+
+                        {/* Domain badges */}
+                        {c.domains && (
+                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
+                                {c.domains.map(d => {
+                                    const ds = DOMAIN_STYLE[d] || { bg: "rgba(100,116,139,0.2)", color: "#64748b" }
+                                    return (
+                                        <span key={d} style={{ padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: ds.bg, color: ds.color }}>
+                                            {d}
+                                        </span>
+                                    )
+                                })}
+                                <span style={{ color: "#475569", fontSize: 9, alignSelf: "center" }}>
+                                    {c.signal_count} signals
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Related ontology entities */}
+                        {c.related_entities?.length > 0 && (
+                            <div style={{ marginBottom: 8 }}>
+                                <span style={{ color: "#475569", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Related: </span>
+                                {c.related_entities.map((e, j) => (
+                                    <span key={j} style={{ color: "#94a3b8", fontSize: 11 }}>
+                                        {e.label} ({e.distance_km}km){j < c.related_entities.length - 1 ? " · " : ""}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Recommendation */}
+                        {c.recommendation && (
+                            <div style={{ padding: "8px 10px", background: "rgba(56,189,248,0.05)", borderRadius: 4, borderLeft: "3px solid rgba(56,189,248,0.3)", marginBottom: 8 }}>
+                                <div style={{ color: "#475569", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Recommendation</div>
+                                <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.45 }}>{c.recommendation}</div>
+                            </div>
+                        )}
+
+                        {/* Collapsible signal list */}
+                        {c.signals?.length > 0 && (
+                            <details style={{ marginBottom: 8 }}>
+                                <summary style={{ color: "#64748b", fontSize: 11, cursor: "pointer", userSelect: "none" }}>
+                                    {c.signals.length} contributing signals
+                                </summary>
+                                <div style={{ marginTop: 6, paddingLeft: 4 }}>
+                                    {c.signals.map((s, j) => (
+                                        <div key={j} style={{ color: "#94a3b8", fontSize: 11, padding: "2px 0" }}>
+                                            <span style={{ color: "#475569" }}>[{s.source}]</span> {s.message}
+                                        </div>
+                                    ))}
+                                </div>
+                            </details>
+                        )}
+
+                        {/* Action buttons */}
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {c.lat && c.lng && onFlyTo && (
+                                <button onClick={() => onFlyTo({ lat: c.lat, lng: c.lng })} style={btnGhost}>View on Map</button>
+                            )}
+                            {setActiveTab && (
+                                <button onClick={() => setActiveTab("entities")} style={btnGhost}>View in Ontology</button>
+                            )}
+                            <button style={{ ...btnGhost, color: "#22c55e", borderColor: "rgba(34,197,94,0.3)" }}>✓ Valid</button>
+                            <button style={btnDanger}>✕ False</button>
+                        </div>
+                    </div>
+                )
+            })}
+        </div>
+    )
+}
+
 function ThreatDashboard({ setActiveTab, onFlyTo }) {
-    const [scores,  setScores]  = useState([])
-    const [alerts,  setAlerts]  = useState([])
-    const [loading, setLoading] = useState(true)
+    const [scores,       setScores]       = useState([])
+    const [alerts,       setAlerts]       = useState([])
+    const [correlations, setCorrelations] = useState([])
+    const [loading,      setLoading]      = useState(true)
     const tok     = localStorage.getItem("hw-auth-token")
     const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
-    const loadScores = () =>
-        fetch(`${API}/api/forge/threat-scores`, { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
-    const loadAlerts = () =>
-        fetch(`${API}/api/forge/alerts`, { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
+    const loadScores       = () => fetch(`${API}/api/forge/threat-scores`, { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
+    const loadAlerts       = () => fetch(`${API}/api/forge/alerts`,         { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
+    const loadCorrelations = () => fetch(`${API}/api/forge/correlations`,   { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
 
     const refresh = () => {
         setLoading(true)
-        Promise.all([loadScores(), loadAlerts()])
-            .then(([s, a]) => { setScores(s); setAlerts(a) })
+        Promise.all([loadScores(), loadAlerts(), loadCorrelations()])
+            .then(([s, a, c]) => { setScores(s); setAlerts(a); setCorrelations(c) })
             .finally(() => setLoading(false))
     }
 
@@ -224,10 +338,23 @@ function ThreatDashboard({ setActiveTab, onFlyTo }) {
                                     </div>
                                 )
                             })}
+                            {/* Correlation bonus row */}
+                            {(s.correlation_bonus > 0 || s.contributing_correlations > 0) && (
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ color: "#f97316", fontSize: 9, width: 94, textAlign: "right", flexShrink: 0 }}>correlations</span>
+                                    <div style={{ flex: 1, height: 5, background: "rgba(30,41,59,0.8)", borderRadius: 3 }}>
+                                        <div style={{ height: "100%", borderRadius: 3, transition: "width 0.5s", width: `${Math.min((s.correlation_bonus || 0) * 100, 100)}%`, background: "#f97316" }} />
+                                    </div>
+                                    <span style={{ color: "#f97316", fontSize: 9, width: 18, textAlign: "right" }}>{s.contributing_correlations ?? ""}</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}
             </div>
+
+            {/* Cross-domain correlations */}
+            <CorrelationCards correlations={correlations} onFlyTo={onFlyTo} setActiveTab={setActiveTab} />
 
             {/* Alert feed */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -1219,7 +1346,8 @@ const TREE_TYPE_ICONS = {
     cable:      <FIcoPlug />,
     source:     <FIcoAntenna />,
     category:   <span style={{ fontSize: 8, lineHeight: 1 }}>▪</span>,
-    scan:       <FIcoSatellite />,
+    scan:        <FIcoSatellite />,
+    correlation: <FIcoNetwork />,
 }
 
 function isInRegion(node, region) {
@@ -1353,8 +1481,9 @@ const ENTITY_TYPES = {
     group:      { color: "#ef4444", icon: <FIcoSwords />,    label: "Groups" },
     weapon:     { color: "#dc2626", icon: <FIcoTarget />,    label: "Weapons" },
     facility:   { color: "#14b8a6", icon: <FIcoFactory />,   label: "Facilities" },
-    scan:       { color: "#38bdf8", icon: <FIcoSatellite />, label: "Scans" },
-    rule:       { color: "#f97316", icon: <FIcoCog />,       label: "Detection Rules" },
+    scan:        { color: "#38bdf8", icon: <FIcoSatellite />, label: "Scans" },
+    rule:        { color: "#f97316", icon: <FIcoCog />,       label: "Detection Rules" },
+    correlation: { color: "#f97316", icon: <FIcoNetwork />,   label: "Correlations" },
 }
 
 const EDGE_TYPES = {
@@ -1370,7 +1499,8 @@ const EDGE_TYPES = {
     detects:       { color: "#38bdf8", label: "Detects" },
     affects:       { color: "#ef4444", label: "Affects" },
     supplies:      { color: "#22c55e", label: "Supplies" },
-    commanded_by:  { color: "#ec4899", label: "Commanded by" },
+    commanded_by:   { color: "#ec4899", label: "Commanded by" },
+    correlates_with:{ color: "#f97316", label: "Correlates with" },
 }
 
 function AddEdgeModal({ nodes, onSave, onClose }) {
