@@ -1,19 +1,21 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import API_BASE from "../apiBase.js"
 import ReviewQueue from "./forge/ReviewQueue.jsx"
+import ForceGraph from "./forge/ForceGraph.jsx"
 
 const API = API_BASE
 
 const FORGE_TABS = [
-    { id: "rules",         label: "Pattern Rules",    icon: "⚡" },
-    { id: "watch",         label: "Watch Areas",       icon: "🛰" },
-    { id: "recognition",   label: "Object Training",   icon: "🎯" },
-    { id: "ais-training",  label: "AIS Training",      icon: "🚢" },
-    { id: "news-training", label: "News Training",     icon: "📰" },
-    { id: "entities",      label: "Entity Networks",   icon: "🕸" },
-    { id: "feeds",         label: "Data Feeds",        icon: "📡" },
-    { id: "models",        label: "Model Management",  icon: "🧠" },
-    { id: "overlays",      label: "Map Overlays",      icon: "🗺" },
+    { id: "dashboard",     label: "Threat Matrix",     icon: "🎯" },
+    { id: "rules",         label: "Pattern Rules",     icon: "⚡" },
+    { id: "watch",         label: "Watch Areas",        icon: "🛰" },
+    { id: "recognition",   label: "Object Training",    icon: "🔍" },
+    { id: "ais-training",  label: "AIS Training",       icon: "🚢" },
+    { id: "news-training", label: "News Training",      icon: "📰" },
+    { id: "entities",      label: "Entity Networks",    icon: "🕸" },
+    { id: "feeds",         label: "Data Feeds",         icon: "📡" },
+    { id: "models",        label: "Model Management",   icon: "🧠" },
+    { id: "overlays",      label: "Map Overlays",       icon: "🗺" },
 ]
 
 // ── Shared styles ──────────────────────────────────────────────────────────────
@@ -99,6 +101,109 @@ function FullscreenPreview({ image, detections, onClose }) {
                     }}
                 >✕</button>
             </div>
+        </div>
+    )
+}
+
+// ── Threat Matrix Dashboard ────────────────────────────────────────────────────
+
+const LEVEL_COLORS = { CRITICAL: "#ef4444", HIGH: "#f59e0b", ELEVATED: "#38bdf8", LOW: "#22c55e" }
+
+function ThreatDashboard() {
+    const [scores,  setScores]  = useState([])
+    const [alerts,  setAlerts]  = useState([])
+    const [loading, setLoading] = useState(true)
+    const tok = localStorage.getItem("hw-auth-token")
+    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+
+    const refresh = () => {
+        setLoading(true)
+        Promise.all([
+            fetch(`${API}/api/forge/threat-scores`, { headers }).then(r => r.ok ? r.json() : []),
+            fetch(`${API}/api/forge/alerts`,         { headers }).then(r => r.ok ? r.json() : []),
+        ]).then(([s, a]) => { setScores(s); setAlerts(a) })
+          .catch(() => {})
+          .finally(() => setLoading(false))
+    }
+
+    useEffect(() => { refresh() }, [])
+
+    const sendFeedback = (idx, action) => {
+        fetch(`${API}/api/forge/alerts/${idx}/feedback`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ action }),
+        }).then(r => r.ok ? r.json() : null).then(d => {
+            if (d) refresh()
+        }).catch(() => {})
+    }
+
+    return (
+        <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <h2 style={{ color: "#e2e8f0", margin: 0, fontSize: 16 }}>Threat Assessment Matrix</h2>
+                <button onClick={refresh} style={btnGhost}>{loading ? "Loading…" : "↻ Refresh"}</button>
+            </div>
+
+            {/* Region scores */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px,1fr))", gap: 10, marginBottom: 28 }}>
+                {scores.length === 0 && !loading && (
+                    <div style={{ color: "#475569", fontSize: 13, gridColumn: "1/-1" }}>
+                        No threat data yet — detection cycle runs every 5 minutes.
+                    </div>
+                )}
+                {scores.map(s => (
+                    <div key={s.region} style={{
+                        ...card,
+                        borderLeft: `4px solid ${LEVEL_COLORS[s.level] || "#64748b"}`,
+                        padding: "12px 14px",
+                    }}>
+                        <div style={{ color: "#94a3b8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.region}</div>
+                        <div style={{ color: LEVEL_COLORS[s.level], fontSize: 22, fontWeight: 800, margin: "2px 0" }}>{s.level}</div>
+                        <div style={{ color: "#64748b", fontSize: 11 }}>Score: {Math.round((s.score || 0) * 100)}%</div>
+                        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 3 }}>
+                            {Object.entries(s.breakdown || {}).map(([k, v]) => v > 0 && (
+                                <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2 }}>
+                                        <div style={{ height: "100%", borderRadius: 2, background: LEVEL_COLORS[s.level], width: `${Math.min(v / 0.5 * 100, 100)}%` }} />
+                                    </div>
+                                    <span style={{ color: "#475569", fontSize: 9, width: 90, textAlign: "right" }}>{k.replace(/_/g, " ")}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Alert feed */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <h3 style={{ color: "#94a3b8", fontSize: 12, margin: 0, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    Active Alerts ({alerts.length})
+                </h3>
+            </div>
+            {alerts.length === 0 && !loading && (
+                <div style={{ color: "#475569", fontSize: 13, padding: "24px 0", textAlign: "center" }}>
+                    No alerts fired yet. Rules run against live AIS + ADS-B data every 5 min.
+                </div>
+            )}
+            {alerts.slice(0, 30).map((a, i) => (
+                <div key={i} style={{
+                    ...card,
+                    borderLeft: `3px solid ${a.severity === "critical" ? "#ef4444" : a.severity === "high" ? "#f59e0b" : "#38bdf8"}`,
+                    padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+                }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: "#e2e8f0", fontSize: 13, lineHeight: 1.4 }}>{a.message}</div>
+                        <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>
+                            {a.rule_name || a.type} • {a.severity?.toUpperCase()} • {(a.timestamp || "").slice(0, 19).replace("T", " ")}
+                        </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 5, flexShrink: 0, marginLeft: 10 }}>
+                        <button onClick={() => sendFeedback(i, "confirm")} title="Confirm — increase weight" style={{ ...btnGhost, fontSize: 10, padding: "3px 8px", color: "#22c55e", borderColor: "rgba(34,197,94,0.3)" }}>✓</button>
+                        <button onClick={() => sendFeedback(i, "false_alarm")} title="False alarm — decrease weight" style={{ ...btnDanger, fontSize: 10, padding: "3px 8px" }}>✗</button>
+                    </div>
+                </div>
+            ))}
         </div>
     )
 }
@@ -892,6 +997,285 @@ function NewsTrainingTab() {
 
 // ── Skeleton tabs ──────────────────────────────────────────────────────────────
 
+// ── Entity Networks ────────────────────────────────────────────────────────────
+
+const ENTITY_TYPES = {
+    vessel:     { color: "#f59e0b", icon: "🚢", label: "Vessels" },
+    aircraft:   { color: "#38bdf8", icon: "✈", label: "Aircraft" },
+    port:       { color: "#06b6d4", icon: "⚓", label: "Ports" },
+    airport:    { color: "#8b5cf6", icon: "✈", label: "Airports" },
+    country:    { color: "#22c55e", icon: "🌍", label: "Countries" },
+    chokepoint: { color: "#ef4444", icon: "🔒", label: "Chokepoints" },
+    cable:      { color: "#a855f7", icon: "🔌", label: "Cables" },
+    event:      { color: "#f97316", icon: "⚡", label: "Events" },
+    person:     { color: "#ec4899", icon: "👤", label: "People" },
+    group:      { color: "#ef4444", icon: "⚔", label: "Groups" },
+    weapon:     { color: "#dc2626", icon: "🎯", label: "Weapons" },
+    facility:   { color: "#14b8a6", icon: "🏭", label: "Facilities" },
+    scan:       { color: "#38bdf8", icon: "🛰", label: "Scans" },
+}
+
+const EDGE_TYPES = {
+    transits:      { color: "#f59e0b", label: "Transits through" },
+    docks_at:      { color: "#06b6d4", label: "Docks at" },
+    located_in:    { color: "#22c55e", label: "Located in" },
+    threatens:     { color: "#ef4444", label: "Threatens" },
+    monitors:      { color: "#38bdf8", label: "Monitors" },
+    connects:      { color: "#a855f7", label: "Connects to" },
+    operates:      { color: "#f97316", label: "Operates" },
+    involves:      { color: "#ec4899", label: "Involves" },
+    near:          { color: "#64748b", label: "Near" },
+    detects:       { color: "#38bdf8", label: "Detects" },
+    affects:       { color: "#ef4444", label: "Affects" },
+    supplies:      { color: "#22c55e", label: "Supplies" },
+    commanded_by:  { color: "#ec4899", label: "Commanded by" },
+}
+
+function AddEdgeModal({ nodes, onSave, onClose }) {
+    const [source, setSource] = useState("")
+    const [target, setTarget] = useState("")
+    const [type,   setType]   = useState("connects")
+    const sel = { width: "100%", padding: "7px 10px", marginBottom: 12, marginTop: 4, background: "rgba(30,41,59,0.8)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6, color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "rgba(10,18,40,0.98)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 12, padding: 24, width: 440 }}>
+                <h3 style={{ color: "#e2e8f0", margin: "0 0 16px", fontSize: 15 }}>Add Connection</h3>
+                <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Source Entity</div>
+                <select value={source} onChange={e => setSource(e.target.value)} style={sel}>
+                    <option value="">Select…</option>
+                    {nodes.map(n => <option key={n.id} value={n.id}>{n.label} ({n.type})</option>)}
+                </select>
+                <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Relationship</div>
+                <select value={type} onChange={e => setType(e.target.value)} style={sel}>
+                    {Object.entries(EDGE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Target Entity</div>
+                <select value={target} onChange={e => setTarget(e.target.value)} style={sel}>
+                    <option value="">Select…</option>
+                    {nodes.map(n => <option key={n.id} value={n.id}>{n.label} ({n.type})</option>)}
+                </select>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+                    <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid rgba(100,116,139,0.3)", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>Cancel</button>
+                    <button
+                        disabled={!source || !target}
+                        onClick={() => { onSave({ source, target, type }); onClose() }}
+                        style={{ padding: "8px 18px", borderRadius: 6, border: "none", background: source && target ? "#38bdf8" : "rgba(100,116,139,0.3)", color: "#0f172a", fontWeight: 700, cursor: source && target ? "pointer" : "default", fontSize: 13 }}
+                    >Create</button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function EntityNetworksTab({ onViewOnMap }) {
+    const [nodes,        setNodes]        = useState([])
+    const [edges,        setEdges]        = useState([])
+    const [selectedNode, setSelectedNode] = useState(null)
+    const [filter,       setFilter]       = useState("all")
+    const [loading,      setLoading]      = useState(false)
+    const [showAdd,      setShowAdd]      = useState(false)
+    const tok = localStorage.getItem("hw-auth-token")
+    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+
+    const load = () => {
+        fetch(`${API}/api/forge/ontology`, { headers })
+            .then(r => r.ok ? r.json() : { nodes: [], edges: [] })
+            .then(d => { setNodes(d.nodes || []); setEdges(d.edges || []) })
+            .catch(() => {})
+    }
+
+    useEffect(() => { load() }, [])
+
+    const buildFromLiveData = () => {
+        setLoading(true)
+        fetch(`${API}/api/forge/ontology/build`, { method: "POST", headers })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) { setNodes(d.nodes || []); setEdges(d.edges || []) } })
+            .catch(() => {})
+            .finally(() => setLoading(false))
+    }
+
+    const addEdge = ({ source, target, type }) => {
+        fetch(`${API}/api/forge/ontology/edge`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ source, target, type }),
+        }).then(r => r.ok ? r.json() : null).then(e => { if (e) setEdges(prev => [...prev, e]) }).catch(() => {})
+    }
+
+    const removeEdge = (edgeId) => {
+        fetch(`${API}/api/forge/ontology/edge/${edgeId}`, { method: "DELETE", headers })
+            .then(() => { setEdges(prev => prev.filter(e => e.id !== edgeId)) })
+            .catch(() => {})
+    }
+
+    const visibleNodes = filter === "all" ? nodes : nodes.filter(n => n.type === filter)
+
+    return (
+        <div style={{ display: "flex", height: "calc(100vh - 160px)", gap: 14 }}>
+            {/* Left panel */}
+            <div style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" }}>
+                {/* Filter chips */}
+                <div>
+                    <div style={{ color: "#64748b", fontSize: 10, letterSpacing: "0.08em", marginBottom: 6 }}>FILTER BY TYPE</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        <button onClick={() => setFilter("all")} style={{ padding: "3px 8px", borderRadius: 4, fontSize: 10, border: "none", cursor: "pointer", background: filter === "all" ? "#38bdf8" : "rgba(30,41,59,0.8)", color: filter === "all" ? "#0f172a" : "#94a3b8" }}>All</button>
+                        {Object.entries(ENTITY_TYPES).map(([key, val]) => (
+                            <button key={key} onClick={() => setFilter(key)} style={{ padding: "3px 8px", borderRadius: 4, fontSize: 10, border: "none", cursor: "pointer", background: filter === key ? val.color : "rgba(30,41,59,0.8)", color: filter === key ? "#0f172a" : "#94a3b8" }}>
+                                {val.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                <button onClick={() => setShowAdd(true)} style={{ ...btnGhost, fontSize: 12, padding: "7px 12px", fontWeight: 700 }}>+ Add Connection</button>
+                <button onClick={buildFromLiveData} disabled={loading} style={{ fontSize: 12, padding: "7px 12px", borderRadius: 6, border: "1px solid rgba(34,197,94,0.3)", background: "rgba(34,197,94,0.08)", color: "#22c55e", cursor: "pointer", fontWeight: 700 }}>
+                    {loading ? "Building…" : "↻ Build from Live Data"}
+                </button>
+
+                {/* Selected node detail */}
+                {selectedNode && (
+                    <div style={{ ...card, flex: 1, overflowY: "auto" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ color: ENTITY_TYPES[selectedNode.type]?.color || "#94a3b8", fontSize: 10, textTransform: "uppercase" }}>
+                                {selectedNode.type}
+                            </span>
+                            <button onClick={() => setSelectedNode(null)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 14 }}>✕</button>
+                        </div>
+                        <div style={{ color: "#e2e8f0", fontSize: 15, fontWeight: 700, margin: "4px 0 2px" }}>{selectedNode.label}</div>
+                        {selectedNode.description && <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.4 }}>{selectedNode.description}</div>}
+                        {(selectedNode.connections || []).length > 0 && (
+                            <div style={{ marginTop: 10 }}>
+                                <div style={{ color: "#475569", fontSize: 10, marginBottom: 5 }}>CONNECTIONS ({selectedNode.connections.length})</div>
+                                {selectedNode.connections.map((conn, i) => (
+                                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 8px", borderRadius: 4, marginBottom: 4, background: "rgba(30,41,59,0.6)", fontSize: 11 }}>
+                                        <div>
+                                            <span style={{ color: EDGE_TYPES[conn.type]?.color || "#64748b" }}>{conn.type}</span>
+                                            <span style={{ color: "#475569" }}> → </span>
+                                            <span style={{ color: "#e2e8f0" }}>{conn.target_label}</span>
+                                        </div>
+                                        <button onClick={() => removeEdge(conn.edge_id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12 }}>✕</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {(selectedNode.lat && selectedNode.lng) && (
+                            <button onClick={() => onViewOnMap?.(selectedNode)} style={{ ...btnGhost, fontSize: 11, width: "100%", marginTop: 10, padding: "6px" }}>View on Map</button>
+                        )}
+                    </div>
+                )}
+
+                <div style={{ ...card, padding: "10px 12px" }}>
+                    <div style={{ color: "#475569", fontSize: 10 }}>ONTOLOGY STATS</div>
+                    <div style={{ color: "#e2e8f0", fontSize: 13, marginTop: 2 }}>{nodes.length} entities • {edges.length} connections</div>
+                </div>
+            </div>
+
+            {/* Graph canvas */}
+            <div style={{ flex: 1, background: "rgba(5,9,20,0.97)", borderRadius: 8, overflow: "hidden", position: "relative" }}>
+                {nodes.length === 0 && (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 13, gap: 12 }}>
+                        <div>No ontology data. Click "Build from Live Data" to auto-generate.</div>
+                    </div>
+                )}
+                <ForceGraph
+                    nodes={visibleNodes}
+                    edges={edges}
+                    entityTypes={ENTITY_TYPES}
+                    edgeTypes={EDGE_TYPES}
+                    onNodeClick={setSelectedNode}
+                />
+            </div>
+
+            {showAdd && <AddEdgeModal nodes={nodes} onSave={addEdge} onClose={() => setShowAdd(false)} />}
+        </div>
+    )
+}
+
+// ── Model Management ───────────────────────────────────────────────────────────
+
+function ModelManagementTab() {
+    const [exportData, setExportData] = useState(null)
+    const tok = localStorage.getItem("hw-auth-token")
+    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+
+    useEffect(() => {
+        fetch(`${API}/api/forge/export-training-data`, { headers })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setExportData(d) })
+            .catch(() => {})
+    }, [])
+
+    const models = [
+        { name: "yolov8n-obb.onnx", type: "Object Detection (DOTA)", size: "12.7 MB", classes: 15, status: "active",  accuracy: "68%",  lastUpdated: "March 2026" },
+        { name: "yolov8n.onnx",     type: "Object Detection (COCO)", size: "12.1 MB", classes: 80, status: "standby", accuracy: "N/A",   lastUpdated: "March 2026" },
+    ]
+
+    const total     = exportData?.total     ?? 0
+    const confirmed = exportData?.confirmed ?? 0
+    const corrected = exportData?.corrected ?? 0
+    const ready     = exportData?.ready_for_training ?? false
+    const pct       = Math.min(total / 500 * 100, 100)
+
+    return (
+        <div>
+            <h2 style={{ color: "#e2e8f0", margin: "0 0 16px", fontSize: 16 }}>ML Model Management</h2>
+
+            {models.map((model, i) => (
+                <div key={i} style={card}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 13 }}>{model.name}</span>
+                            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: model.status === "active" ? "rgba(34,197,94,0.15)" : "rgba(100,116,139,0.2)", color: model.status === "active" ? "#22c55e" : "#64748b", fontWeight: 700 }}>
+                                {model.status.toUpperCase()}
+                            </span>
+                        </div>
+                        <span style={{ color: "#475569", fontSize: 11 }}>{model.size}</span>
+                    </div>
+                    <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 5 }}>
+                        {model.type} • {model.classes} classes • Accuracy: {model.accuracy}
+                    </div>
+                    <div style={{ color: "#475569", fontSize: 11, marginTop: 2 }}>Last updated: {model.lastUpdated}</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <button style={btnGhost}>Test</button>
+                        <button style={btnGhost}>Export Training Data</button>
+                    </div>
+                </div>
+            ))}
+
+            <h3 style={{ color: "#94a3b8", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10, marginTop: 24 }}>Training Data Collected</h3>
+            <div style={card}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div>
+                        <span style={{ color: ready ? "#22c55e" : "#38bdf8", fontSize: 26, fontWeight: 800 }}>{total}</span>
+                        <span style={{ color: "#475569", fontSize: 12, marginLeft: 6 }}>/ 500 needed to export</span>
+                    </div>
+                    <div style={{ color: "#94a3b8", fontSize: 12, textAlign: "right" }}>
+                        <div>{confirmed} confirmed</div>
+                        <div>{corrected} corrected</div>
+                    </div>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.06)", marginBottom: 12 }}>
+                    <div style={{ height: "100%", borderRadius: 3, background: "linear-gradient(90deg, #38bdf8, #818cf8)", width: `${pct}%`, transition: "width 0.4s" }} />
+                </div>
+                <button
+                    disabled={!ready}
+                    style={{ fontSize: 12, padding: "7px 16px", borderRadius: 6, border: "none", background: ready ? "#38bdf8" : "rgba(100,116,139,0.25)", color: ready ? "#0f172a" : "#64748b", cursor: ready ? "pointer" : "default", fontWeight: 700 }}
+                >
+                    {ready ? "Export Dataset" : `Export Dataset (${500 - total} more needed)`}
+                </button>
+            </div>
+
+            <h3 style={{ color: "#94a3b8", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10, marginTop: 24 }}>Upload Fine-tuned Model</h3>
+            <div style={{ border: "2px dashed rgba(56,189,248,0.2)", borderRadius: 8, padding: 28, textAlign: "center", color: "#475569", fontSize: 13, lineHeight: 1.6 }}>
+                Drag & drop a <span style={{ color: "#94a3b8" }}>.onnx</span> file here, or click to browse.<br />
+                <span style={{ fontSize: 11 }}>The new model will replace the active one after validation.</span>
+            </div>
+        </div>
+    )
+}
+
+// ── Skeleton (fallback) ────────────────────────────────────────────────────────
+
 function SkeletonTab({ title, description, icon }) {
     return (
         <div>
@@ -943,8 +1327,8 @@ function MapOverlaysTab({ onAddOverlay }) {
 
 // ── ForgePanel ─────────────────────────────────────────────────────────────────
 
-export default function ForgePanel({ user, onClose, onAddOverlay }) {
-    const [activeTab, setActiveTab] = useState("rules")
+export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
+    const [activeTab, setActiveTab] = useState("dashboard")
 
     return (
         <div style={{ position: "absolute", inset: 0, background: "rgba(5, 9, 20, 0.98)", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif", zIndex: 50 }}>
@@ -969,14 +1353,15 @@ export default function ForgePanel({ user, onClose, onAddOverlay }) {
 
             {/* Content */}
             <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+                {activeTab === "dashboard"     && <ThreatDashboard />}
                 {activeTab === "rules"         && <PatternRulesTab />}
                 {activeTab === "watch"         && <WatchAreasTab />}
                 {activeTab === "recognition"   && <ObjectTrainingTab />}
                 {activeTab === "ais-training"  && <AISTrainingTab />}
                 {activeTab === "news-training" && <NewsTrainingTab />}
-                {activeTab === "entities"      && <SkeletonTab icon="🕸" title="Entity Networks" description="Track relationships between actors, organisations, vessels, and locations." />}
+                {activeTab === "entities"      && <EntityNetworksTab onViewOnMap={node => { onFlyTo?.(node); onClose?.() }} />}
                 {activeTab === "feeds"         && <SkeletonTab icon="📡" title="Data Feeds" description="Manage custom RSS/XML/JSON data ingestion pipelines." />}
-                {activeTab === "models"        && <SkeletonTab icon="🧠" title="Model Management" description="Configure and evaluate AI models powering Director Mode and Overwatch." />}
+                {activeTab === "models"        && <ModelManagementTab />}
                 {activeTab === "overlays"      && <MapOverlaysTab onAddOverlay={onAddOverlay} />}
             </div>
         </div>

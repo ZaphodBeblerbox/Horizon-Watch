@@ -148,6 +148,7 @@ from app_shared import (
     get_optional_user,
     require_approved_user,
     require_admin_user,
+    # detectors imported below after path setup
     send_email as _send_email,
     user_dict as _user_dict,
     FRONTEND_URL as _FRONTEND_URL,
@@ -185,6 +186,15 @@ except ImportError:
     def _response_cache(*a, **kw):
         def _dec(fn): return fn
         return _dec
+
+try:
+    from detectors.ais_detector import AISAnomalyDetector as _AISAnomalyDetector
+    from detectors.adsb_detector import ADSBPatternDetector as _ADSBPatternDetector
+    from detectors.threat_engine import ThreatEngine as _ThreatEngine
+    _HAS_DETECTORS = True
+except ImportError as _det_err:
+    print(f"[startup] detectors not available: {_det_err}")
+    _HAS_DETECTORS = False
 
 _api_key = os.getenv("ANTHROPIC_API_KEY")
 if not _api_key:
@@ -7177,6 +7187,15 @@ async def _startup_warmup_tasks():
 _AISSTREAM_KEY   = os.getenv("AISSTREAM_API_KEY", "")
 _AIS_VESSELS:    dict = {}   # keyed by MMSI string
 _AIS_LOCK        = threading.Lock()
+
+# ── Forge detection engine instances ─────────────────────────────────────────
+if _HAS_DETECTORS:
+    _ais_detector  = _AISAnomalyDetector()
+    _adsb_detector = _ADSBPatternDetector()
+    _threat_engine = _ThreatEngine()
+else:
+    _ais_detector = _adsb_detector = _threat_engine = None
+_forge_alerts: list = []   # in-memory rolling 24h alert buffer
 _AIS_STATUS      = {"connected": False, "error": None, "vessel_count": 0, "last_msg": None, "last_poll": None}
 _AIS_MSG_COUNTER = 0         # total messages received this connection
 _AIS_LAST_LOG_T  = 0.0      # time of last periodic log
@@ -8687,6 +8706,16 @@ async def startup_event():
     # asyncio.create_task(_anomaly_detection_loop())  # disabled — too many false positives
     asyncio.create_task(_weekly_snapshot_loop())
     asyncio.create_task(_global_adsb_cache_loop())
+    # Forge detection engine
+    if _HAS_DETECTORS:
+        _weights_file = os.path.join(DATA_DIR, "forge", "forge_weights.json")
+        try:
+            with open(_weights_file) as _wf:
+                _threat_engine.load_weights(_json.load(_wf))
+            print(f"[forge] loaded saved weights: {_threat_engine.weights}")
+        except Exception:
+            print("[forge] using default threat weights")
+        asyncio.create_task(_forge_detection_cycle())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
 
@@ -12682,3 +12711,291 @@ async def forge_label_detection(request: Request, _user=Depends(require_admin_us
 @app.get("/api/forge/labels")
 def forge_get_labels(_user=Depends(require_admin_user)):
     return {"labels": _forge_load("forge_labels.json")}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FORGE DETECTION ENGINE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _forge_detection_cycle():
+    """Run every 5 minutes: apply all active Forge rules to live data."""
+    global _forge_alerts
+    while True:
+        try:
+            rules = _forge_load("rules.json")
+            _ais_detector.load_rules(rules)
+
+            # AIS check
+            with _AIS_LOCK:
+                vessels = list(_AIS_VESSELS.values())
+            for vessel in vessels:
+                alerts = _ais_detector.check_vessel(vessel)
+                _forge_alerts.extend(alerts)
+
+            # ADS-B check
+            try:
+                adsb_snap = _GLOBAL_ADSB_CACHE.get("aircraft", []) if _GLOBAL_ADSB_CACHE else []
+                for ac in adsb_snap[:200]:
+                    alerts = _adsb_detector.check_aircraft(ac)
+                    _forge_alerts.extend(alerts)
+            except Exception:
+                pass
+
+            # Trim to last 24 h
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            _forge_alerts = [a for a in _forge_alerts if a.get("timestamp", "") > cutoff]
+            # Keep max 500
+            _forge_alerts = _forge_alerts[-500:]
+            print(f"[forge-detector] cycle — {len(_forge_alerts)} active alerts, {len(vessels)} vessels checked")
+        except Exception as _ex:
+            print(f"[forge-detector] error: {_ex}")
+        await asyncio.sleep(300)
+
+
+# ── Forge alerts ──────────────────────────────────────────────────────────────
+
+@app.get("/api/forge/alerts")
+def forge_get_alerts(_user=Depends(require_admin_user)):
+    return _forge_alerts
+
+
+@app.post("/api/forge/alerts/{alert_idx}/feedback")
+async def forge_alert_feedback(alert_idx: int, request: Request, _user=Depends(require_admin_user)):
+    body = await request.json()
+    action = body.get("action")  # 'confirm' or 'false_alarm'
+    if not _HAS_DETECTORS:
+        raise HTTPException(status_code=503, detail="Detector engine not available")
+    if alert_idx >= len(_forge_alerts):
+        raise HTTPException(status_code=404, detail="Alert index out of range")
+
+    alert = _forge_alerts[alert_idx]
+    source = alert.get("source", "ais_anomaly")
+
+    if action == "confirm":
+        current = _threat_engine.weights.get(source, 0.2)
+        _threat_engine.weights[source] = min(0.5, current + 0.01)
+    elif action == "false_alarm":
+        current = _threat_engine.weights.get(source, 0.2)
+        _threat_engine.weights[source] = max(0.05, current - 0.01)
+
+    # Normalise
+    total = sum(_threat_engine.weights.values()) or 1
+    _threat_engine.weights = {k: v / total for k, v in _threat_engine.weights.items()}
+
+    # Persist
+    _FORGE_DIR.mkdir(parents=True, exist_ok=True)
+    (_FORGE_DIR / "forge_weights.json").write_text(
+        _json.dumps(_threat_engine.weights, indent=2)
+    )
+    return {"weights": _threat_engine.weights}
+
+
+# ── Threat scores ─────────────────────────────────────────────────────────────
+
+_THREAT_REGIONS = [
+    "Persian Gulf", "Red Sea", "East Med", "Sahel",
+    "Horn of Africa", "South China Sea", "Black Sea",
+]
+
+
+@app.get("/api/forge/threat-scores")
+def forge_threat_scores(_user=Depends(require_admin_user)):
+    if not _HAS_DETECTORS:
+        return []
+    scores = []
+    for region in _THREAT_REGIONS:
+        region_lower = region.lower()
+        region_alerts = [
+            a for a in _forge_alerts
+            if region_lower in (a.get("message") or "").lower()
+            or region_lower in (a.get("vessel") or "").lower()
+        ]
+        ais_count  = sum(1 for a in region_alerts if a.get("source") == "ais_anomaly")
+        adsb_count = sum(1 for a in region_alerts if a.get("source") == "adsb_anomaly")
+        # Wire news escalation: count recent high-severity events in this region
+        try:
+            news_hits = sum(
+                1 for e in es.get_active_events()
+                if region_lower in (e.get("region") or e.get("country") or "").lower()
+                and e.get("severity") in ("high", "critical")
+            )
+        except Exception:
+            news_hits = 0
+        signals = {
+            "ais_anomaly":      min(ais_count * 0.25, 1.0),
+            "adsb_anomaly":     min(adsb_count * 0.25, 1.0),
+            "news_escalation":  min(news_hits * 0.15, 1.0),
+            "satellite_change": 0.0,
+            "event_density":    min((ais_count + adsb_count + news_hits) * 0.05, 1.0),
+        }
+        scores.append(_threat_engine.calculate_region_threat(region, signals))
+    return scores
+
+
+# ── Training data export ──────────────────────────────────────────────────────
+
+@app.get("/api/forge/export-training-data")
+def forge_export_training_data(_user=Depends(require_admin_user)):
+    labels = _forge_load("forge_labels.json")
+    confirmed = [l for l in labels if l.get("label") == "confirmed"]
+    corrected  = [l for l in labels if l.get("label") == "corrected"]
+    return {
+        "total":               len(labels),
+        "confirmed":           len(confirmed),
+        "corrected":           len(corrected),
+        "labels":              labels,
+        "ready_for_training":  len(labels) >= 500,
+    }
+
+
+# ── Ontology ──────────────────────────────────────────────────────────────────
+
+def _forge_ontology_load():
+    path = _FORGE_DIR / "forge_ontology.json"
+    if not path.exists():
+        return {"nodes": [], "edges": []}
+    try:
+        return _json.loads(path.read_text())
+    except Exception:
+        return {"nodes": [], "edges": []}
+
+
+def _forge_ontology_save(ontology: dict):
+    _FORGE_DIR.mkdir(parents=True, exist_ok=True)
+    (_FORGE_DIR / "forge_ontology.json").write_text(
+        _json.dumps(ontology, indent=2, ensure_ascii=False)
+    )
+
+
+@app.get("/api/forge/ontology")
+def forge_get_ontology(_user=Depends(require_admin_user)):
+    return _forge_ontology_load()
+
+
+@app.post("/api/forge/ontology/build")
+def forge_build_ontology(_user=Depends(require_admin_user)):
+    nodes = []
+    edges = []
+    _nid_counter = [0]
+
+    def add_node(type_, label, description="", lat=None, lng=None):
+        _nid_counter[0] += 1
+        nid = f"{type_}_{_nid_counter[0]}"
+        nodes.append({
+            "id": nid, "type": type_, "label": label,
+            "description": description, "lat": lat, "lng": lng,
+        })
+        return nid
+
+    def add_edge(src, tgt, rel):
+        edges.append({
+            "id": f"e_{len(edges)}", "source": src, "target": tgt, "type": rel,
+        })
+
+    # Chokepoints
+    chokepoint_ids = {}
+    for cp in _CHOKEPOINT_DEFS[:15]:
+        nid = add_node("chokepoint", cp["name"],
+                       f"Threat: {cp.get('threat_level', 'unknown')}",
+                       cp.get("lat"), cp.get("lon"))
+        chokepoint_ids[cp["name"]] = nid
+
+    # Key countries
+    key_countries = [
+        "Iran", "United States", "Russia", "China", "Israel",
+        "Saudi Arabia", "Yemen", "Mali", "Sudan", "Ukraine",
+        "Turkey", "Egypt", "France", "United Kingdom", "India",
+        "Somalia", "Djibouti", "Oman", "UAE", "Qatar",
+        "Iraq", "Syria", "Libya", "Nigeria", "Chad",
+        "Niger", "Kenya", "South Korea", "North Korea", "Taiwan",
+    ]
+    country_ids = {}
+    for c in key_countries:
+        country_ids[c] = add_node("country", c)
+
+    # Chokepoint → country edges
+    cp_country_map = {
+        "Strait of Hormuz": ["Iran", "Oman", "UAE"],
+        "Bab el-Mandeb":    ["Yemen", "Djibouti"],
+        "Suez Canal":       ["Egypt"],
+        "Taiwan Strait":    ["Taiwan", "China"],
+        "Strait of Malacca": [],
+        "Bosphorus":        ["Turkey"],
+    }
+    for cp_name, countries in cp_country_map.items():
+        if cp_name in chokepoint_ids:
+            for c in countries:
+                if c in country_ids:
+                    add_edge(chokepoint_ids[cp_name], country_ids[c], "located_in")
+
+    # Active AIS vessels (top 20)
+    with _AIS_LOCK:
+        vessels_snap = list(_AIS_VESSELS.items())[:20]
+    for mmsi, v in vessels_snap:
+        add_node("vessel", v.get("name") or f"MMSI:{mmsi}",
+                 f"Type: {v.get('ship_type','Unknown')} Speed: {v.get('speed',0)}kn",
+                 v.get("lat"), v.get("lng"))
+
+    # Recent events
+    try:
+        for ev in es.get_active_events()[:15]:
+            nid = add_node("event", (ev.get("title") or "")[:50],
+                           f"Severity: {ev.get('severity','unknown')}",
+                           ev.get("lat"), ev.get("lng"))
+            country = ev.get("country")
+            if country and country in country_ids:
+                add_edge(nid, country_ids[country], "located_in")
+    except Exception:
+        pass
+
+    # Key groups
+    groups = [
+        ("IRGC",   "group", "Islamic Revolutionary Guard Corps",          "Iran"),
+        ("JNIM",   "group", "Jama'at Nasr al-Islam wal Muslimin",          "Mali"),
+        ("Houthi", "group", "Ansar Allah — Yemen",                         "Yemen"),
+        ("RSF",    "group", "Rapid Support Forces — Sudan",                "Sudan"),
+        ("Wagner", "group", "Wagner Group — PMC",                          "Russia"),
+    ]
+    group_ids = {}
+    for name, type_, desc, home in groups:
+        nid = add_node(type_, name, desc)
+        group_ids[name] = nid
+        if home in country_ids:
+            add_edge(nid, country_ids[home], "operates")
+
+    group_threats = {"IRGC": "Strait of Hormuz", "Houthi": "Bab el-Mandeb"}
+    for g, cp in group_threats.items():
+        if g in group_ids and cp in chokepoint_ids:
+            add_edge(group_ids[g], chokepoint_ids[cp], "threatens")
+
+    ontology = {
+        "nodes":    nodes,
+        "edges":    edges,
+        "built_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _forge_ontology_save(ontology)
+    return ontology
+
+
+@app.post("/api/forge/ontology/edge")
+async def forge_add_ontology_edge(request: Request, _user=Depends(require_admin_user)):
+    body = await request.json()
+    ontology = _forge_ontology_load()
+    new_edge = {
+        "id":     f"e_manual_{len(ontology['edges'])}",
+        "source": body["source"],
+        "target": body["target"],
+        "type":   body["type"],
+        "manual": True,
+    }
+    ontology["edges"].append(new_edge)
+    _forge_ontology_save(ontology)
+    return new_edge
+
+
+@app.delete("/api/forge/ontology/edge/{edge_id}")
+def forge_delete_ontology_edge(edge_id: str, _user=Depends(require_admin_user)):
+    ontology = _forge_ontology_load()
+    ontology["edges"] = [e for e in ontology["edges"] if e.get("id") != edge_id]
+    _forge_ontology_save(ontology)
+    return {"deleted": edge_id}
