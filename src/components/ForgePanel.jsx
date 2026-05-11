@@ -855,7 +855,7 @@ function DetectorWorkspace({ source }) {
                                                 <div style={{ marginTop: 8, padding: "8px 10px", background: "#0a0e1a", borderRadius: 3 }}>
                                                     {dry.error ? <span style={{ color: "#f87171", fontSize: 10 }}>{dry.error}</span> :
                                                         <span style={{ color: "#94a3b8", fontSize: 10 }}>
-                                                            Tested {dry.vessels_tested ?? dry.vessels_checked ?? "?"} vessels →{" "}
+                                                            Tested {dry.checked ?? dry.vessels_tested ?? dry.vessels_checked ?? "?"} {dry.label ?? "items"} →{" "}
                                                             <span style={{ color: (dry.hits || dry.would_trigger || 0) > 0 ? "#fbbf24" : "#4ade80", fontWeight: 700 }}>
                                                                 {dry.hits ?? dry.would_trigger ?? 0} triggers
                                                             </span>

@@ -13583,28 +13583,68 @@ def forge_test_rule(rule_id: str, _forge=Depends(_require_forge)):
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    tester = _AISAnomalyDetector()
-    tester.load_rules([rule])
-    with _AIS_LOCK:
-        vessels_snap = dict(_AIS_VESSELS)
+    source = rule.get("source", "AIS")
+    hits: list = []
+    checked = 0
 
-    cables = _prep_cables_for_detector()
-    hits = []
-    for mmsi, vessel in list(vessels_snap.items())[:500]:
-        lon_val = vessel.get("lon") or vessel.get("longitude")
-        if vessel.get("lng") is None and lon_val is not None:
-            vessel = {**vessel, "lng": lon_val}
-        if not vessel.get("name"):
-            vessel = {**vessel, "name": f"MMSI:{mmsi}"}
-        alerts = tester.check_vessel(vessel, cables=cables, chokepoints=_CHOKEPOINT_DEFS, all_vessels=vessels_snap)
-        hits.extend(alerts)
+    if source == "AIS":
+        tester = _AISAnomalyDetector()
+        tester.load_rules([{**rule, "status": "active"}])
+        cables = _prep_cables_for_detector()
+        with _AIS_LOCK:
+            vessels_snap = dict(_AIS_VESSELS)
+        normalized = {}
+        for _m, _v in vessels_snap.items():
+            _n = _normalize_vessel(_v, _m)
+            if _n:
+                normalized[_m] = _n
+        checked = min(len(normalized), 500)
+        for vessel in list(normalized.values())[:500]:
+            hits.extend(tester.check_vessel(vessel, cables=cables,
+                                            chokepoints=_CHOKEPOINT_DEFS,
+                                            all_vessels=normalized))
+        label = "vessels"
+
+    elif source == "ADSB":
+        for ac in list(_GLOBAL_ADSB_CACHE.values())[:500]:
+            checked += 1
+            hits.extend(_adsb_detector.check_aircraft(ac))
+        label = "aircraft"
+
+    elif source == "NEWS":
+        keywords = [kw.lower() for kw in rule.get("params", {}).get("keywords", [])]
+        sev_map  = {"critical": 5, "high": 4, "elevated": 3, "medium": 2, "low": 1}
+        try:
+            events = es.get_active_events()
+        except Exception:
+            events = []
+        for ev in events[:500]:
+            checked += 1
+            text = ((ev.get("headline") or ev.get("title") or "") + " " +
+                    (ev.get("summary") or ev.get("body") or "")).lower()
+            sev_raw = ev.get("severity") or ev.get("score", 0)
+            sev_num = sev_map.get(str(sev_raw).lower(), 0) if isinstance(sev_raw, str) else (sev_raw or 0)
+            matched = (any(kw in text for kw in keywords) if keywords else sev_num >= 4)
+            if matched:
+                hits.append({
+                    "message":  f"Match: '{(ev.get('headline') or ev.get('title') or '')[:60]}'",
+                    "severity": ev.get("severity", "medium"),
+                })
+        label = "news events"
+
+    else:
+        label = "items"
 
     return {
-        "rule_id":   rule_id,
-        "rule_name": rule.get("name"),
-        "vessels_tested": min(len(vessels_snap), 500),
-        "hits":      len(hits),
-        "sample":    hits[:10],
+        "rule_id":       rule_id,
+        "rule_name":     rule.get("name"),
+        "source":        source,
+        "checked":       checked,
+        "label":         label,
+        "would_trigger": len(hits),
+        "hits":          len(hits),
+        "sample_alerts": hits[:5],
+        "sample":        hits[:5],
     }
 
 
