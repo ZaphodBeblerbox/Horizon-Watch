@@ -316,51 +316,186 @@ function CreateRuleModal({ onClose, onCreate }) {
     )
 }
 
+const fieldStyle = {
+    width: "100%", padding: "7px 10px", marginBottom: 10, marginTop: 3,
+    background: "rgba(30,41,59,0.8)", border: "1px solid rgba(56,189,248,0.2)",
+    borderRadius: 6, color: "#e2e8f0", fontSize: 12, boxSizing: "border-box", outline: "none",
+}
+
+function RuleEditor({ rule, alerts, onSave, onClose }) {
+    const [r, setR] = useState({ ...rule, params: { ...(rule.params || {}) } })
+    const tok = localStorage.getItem("hw-auth-token")
+
+    const updateParam = (key, raw) => {
+        let v = raw
+        try { v = JSON.parse(raw) } catch {}
+        setR(prev => ({ ...prev, params: { ...prev.params, [key]: v } }))
+    }
+
+    const save = () => {
+        fetch(`${API}/api/forge/rules/${r.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+            body: JSON.stringify(r),
+        }).then(res => res.ok ? res.json() : null).then(d => { if (d) onSave(d) }).catch(() => {})
+        onClose()
+    }
+
+    const ruleTriggers = (alerts || []).filter(a => a.rule_id === r.id)
+
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "rgba(10,18,40,0.98)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 12, padding: 24, width: 520, maxHeight: "85vh", overflowY: "auto" }}>
+                <h3 style={{ color: "#e2e8f0", margin: "0 0 16px", fontSize: 15 }}>Edit Rule</h3>
+
+                <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Rule Name</div>
+                <input value={r.name} onChange={e => setR({ ...r, name: e.target.value })} style={fieldStyle} />
+
+                <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Description</div>
+                <input value={r.description || ""} onChange={e => setR({ ...r, description: e.target.value })} style={fieldStyle} />
+
+                <div style={{ display: "flex", gap: 10 }}>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Severity</div>
+                        <select value={r.severity || "medium"} onChange={e => setR({ ...r, severity: e.target.value })} style={fieldStyle}>
+                            {["info", "medium", "high", "critical"].map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Status</div>
+                        <select value={r.status || "active"} onChange={e => setR({ ...r, status: e.target.value })} style={fieldStyle}>
+                            <option value="active">Active</option>
+                            <option value="paused">Paused</option>
+                        </select>
+                    </div>
+                </div>
+
+                {Object.keys(r.params || {}).length > 0 && (
+                    <>
+                        <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, marginTop: 4 }}>Parameters</div>
+                        {Object.entries(r.params).map(([key, val]) => (
+                            <div key={key} style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
+                                <span style={{ color: "#64748b", fontSize: 11, width: 160, flexShrink: 0 }}>{key.replace(/_/g, " ")}</span>
+                                <input
+                                    defaultValue={typeof val === "object" ? JSON.stringify(val) : String(val)}
+                                    onBlur={e => updateParam(key, e.target.value)}
+                                    style={{ ...fieldStyle, flex: 1, marginBottom: 0 }}
+                                />
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                <div style={{ marginTop: 14, padding: "10px 12px", background: "rgba(30,41,59,0.5)", borderRadius: 6 }}>
+                    <div style={{ color: "#475569", fontSize: 10, marginBottom: 4 }}>RECENT TRIGGERS ({ruleTriggers.length})</div>
+                    {ruleTriggers.length === 0
+                        ? <div style={{ color: "#475569", fontSize: 12 }}>No triggers recorded yet.</div>
+                        : ruleTriggers.slice(0, 5).map((a, i) => (
+                            <div key={i} style={{ color: "#94a3b8", fontSize: 11, padding: "3px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                                {(a.timestamp || "").slice(0, 19).replace("T", " ")} — {a.message}
+                            </div>
+                          ))
+                    }
+                </div>
+
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+                    <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid rgba(100,116,139,0.3)", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>Cancel</button>
+                    <button onClick={save} style={{ padding: "8px 18px", borderRadius: 6, border: "none", background: "#38bdf8", color: "#0f172a", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Save Rule</button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
 function PatternRulesTab() {
-    const [rules,      setRules]      = useState(EXAMPLE_RULES)
-    const [showCreate, setShowCreate] = useState(false)
+    const [rules,       setRules]       = useState(EXAMPLE_RULES)
+    const [showCreate,  setShowCreate]  = useState(false)
+    const [editingRule, setEditingRule] = useState(null)
+    const [alerts,      setAlerts]      = useState([])
+    const tok = localStorage.getItem("hw-auth-token")
+    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
     useEffect(() => {
-        const tok = localStorage.getItem("hw-auth-token")
-        fetch(`${API}/api/forge/rules`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} })
+        fetch(`${API}/api/forge/rules`, { headers })
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d?.rules?.length) setRules(d.rules) })
             .catch(() => {})
+        fetch(`${API}/api/forge/alerts`, { headers })
+            .then(r => r.ok ? r.json() : [])
+            .then(setAlerts)
+            .catch(() => {})
     }, [])
 
-    const toggleStatus = (id) => setRules(prev => prev.map(r => r.id === id ? { ...r, status: r.status === "active" ? "paused" : "active" } : r))
+    const toggleStatus = (id) => {
+        const rule = rules.find(r => r.id === id)
+        if (!rule) return
+        const updated = { ...rule, status: rule.status === "active" ? "paused" : "active" }
+        fetch(`${API}/api/forge/rules/${id}`, {
+            method: "PUT",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify(updated),
+        }).catch(() => {})
+        setRules(prev => prev.map(r => r.id === id ? updated : r))
+    }
+
+    const sevBadge = sev => ({
+        info: { bg: "rgba(56,189,248,0.12)", color: "#38bdf8" },
+        medium: { bg: "rgba(245,158,11,0.12)", color: "#f59e0b" },
+        high: { bg: "rgba(239,68,68,0.12)", color: "#ef4444" },
+        critical: { bg: "rgba(239,68,68,0.2)", color: "#ef4444" },
+    }[sev] || { bg: "rgba(100,116,139,0.2)", color: "#64748b" })
 
     return (
         <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                 <div>
-                    <h2 style={{ color: "#e2e8f0", margin: 0, fontSize: 16 }}>Active Pattern Rules</h2>
-                    <p style={{ color: "#64748b", fontSize: 12, margin: "4px 0 0" }}>Automated triggers that fire when anomalous patterns are detected.</p>
+                    <h2 style={{ color: "#e2e8f0", margin: 0, fontSize: 16 }}>Pattern Rules</h2>
+                    <p style={{ color: "#64748b", fontSize: 12, margin: "4px 0 0" }}>Automated triggers that fire when anomalous patterns are detected in live data.</p>
                 </div>
                 <button onClick={() => setShowCreate(true)} style={{ background: "rgba(56,189,248,0.15)", border: "1px solid #38bdf8", color: "#38bdf8", padding: "8px 16px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>+ Create Rule</button>
             </div>
-            {rules.map(rule => (
-                <div key={rule.id} style={card}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ color: "#e2e8f0", fontWeight: 600, fontSize: 13 }}>{rule.name}</span>
-                            <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 7px", borderRadius: 10, background: rule.status === "active" ? "rgba(34,197,94,0.15)" : "rgba(100,116,139,0.2)", color: rule.status === "active" ? "#22c55e" : "#64748b", fontWeight: 700, letterSpacing: "0.06em" }}>{rule.status.toUpperCase()}</span>
+            {rules.map(rule => {
+                const sev = sevBadge(rule.severity)
+                const trigCount = alerts.filter(a => a.rule_id === rule.id).length
+                return (
+                    <div key={rule.id} style={card}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <span style={{ color: "#e2e8f0", fontWeight: 600, fontSize: 13 }}>{rule.name}</span>
+                                <span style={{ marginLeft: 6, fontSize: 10, padding: "2px 7px", borderRadius: 10, background: rule.status === "active" ? "rgba(34,197,94,0.15)" : "rgba(100,116,139,0.2)", color: rule.status === "active" ? "#22c55e" : "#64748b", fontWeight: 700 }}>{rule.status?.toUpperCase()}</span>
+                                {rule.severity && <span style={{ marginLeft: 4, fontSize: 10, padding: "2px 7px", borderRadius: 10, background: sev.bg, color: sev.color, fontWeight: 700 }}>{rule.severity.toUpperCase()}</span>}
+                            </div>
+                            <div style={{ display: "flex", gap: 10, flexShrink: 0, marginLeft: 12, alignItems: "center" }}>
+                                <span style={{ color: "#64748b", fontSize: 11 }}>Source: <span style={{ color: "#94a3b8" }}>{rule.source}</span></span>
+                                <span style={{ color: trigCount > 0 ? "#f59e0b" : "#64748b", fontSize: 11 }}>{trigCount} active alerts</span>
+                            </div>
                         </div>
-                        <div style={{ display: "flex", gap: 12, flexShrink: 0, marginLeft: 12 }}>
-                            <span style={{ color: "#64748b", fontSize: 11 }}>Source: <span style={{ color: "#94a3b8" }}>{rule.source}</span></span>
-                            <span style={{ color: "#64748b", fontSize: 11 }}>Triggers: <span style={{ color: "#94a3b8" }}>{rule.triggers}</span></span>
-                            <span style={{ color: "#64748b", fontSize: 11 }}>Last: <span style={{ color: "#94a3b8" }}>{rule.lastTrigger}</span></span>
+                        {rule.description && <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>{rule.description}</div>}
+                        {rule.params && Object.keys(rule.params).length > 0 && (
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                                {Object.entries(rule.params).map(([k, v]) => (
+                                    <span key={k} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, background: "rgba(30,41,59,0.8)", color: "#64748b" }}>
+                                        {k.replace(/_/g, " ")}: {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                            <button onClick={() => setEditingRule(rule)} style={btnGhost}>Edit</button>
+                            <button onClick={() => toggleStatus(rule.id)} style={btnDanger}>{rule.status === "active" ? "Pause" : "Activate"}</button>
                         </div>
                     </div>
-                    {rule.description && <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>{rule.description}</div>}
-                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                        <button style={btnGhost}>Edit</button>
-                        <button style={btnGhost}>View Triggers</button>
-                        <button onClick={() => toggleStatus(rule.id)} style={btnDanger}>{rule.status === "active" ? "Pause" : "Activate"}</button>
-                    </div>
-                </div>
-            ))}
-            {showCreate && <CreateRuleModal onClose={() => setShowCreate(false)} onCreate={(r) => setRules(prev => [r, ...prev])} />}
+                )
+            })}
+            {showCreate && <CreateRuleModal onClose={() => setShowCreate(false)} onCreate={r => setRules(prev => [r, ...prev])} />}
+            {editingRule && (
+                <RuleEditor
+                    rule={editingRule}
+                    alerts={alerts}
+                    onSave={updated => setRules(prev => prev.map(r => r.id === updated.id ? updated : r))}
+                    onClose={() => setEditingRule(null)}
+                />
+            )}
         </div>
     )
 }
@@ -1029,6 +1164,137 @@ function NewsTrainingTab() {
 
 // ── Skeleton tabs ──────────────────────────────────────────────────────────────
 
+// ── Ontology Tree ─────────────────────────────────────────────────────────────
+
+const TREE_TYPE_COLORS = {
+    mission: "#38bdf8", region: "#22c55e", chokepoint: "#ef4444", country: "#22c55e",
+    vessel: "#f59e0b", aircraft: "#38bdf8", rule: "#f97316", group: "#ef4444",
+    event: "#f97316", cable: "#a855f7", source: "#64748b", category: "#94a3b8",
+    scan: "#38bdf8",
+}
+const TREE_TYPE_ICONS = {
+    mission: "🎯", region: "📍", chokepoint: "🔒", country: "🌍",
+    vessel: "🚢", aircraft: "✈", rule: "⚙", group: "⚔",
+    event: "⚡", cable: "🔌", source: "📡", category: "▪",
+    scan: "🛰",
+}
+
+function isInRegion(node, region) {
+    if (!node?.lat || !node?.lng) return false
+    const [minLat, minLng, maxLat, maxLng] = region.bounds || []
+    if (minLat == null) return false
+    return node.lat >= minLat && node.lat <= maxLat && node.lng >= minLng && node.lng <= maxLng
+}
+
+function buildTree(ontology, mission) {
+    const nodes = ontology.nodes || []
+    const edges = ontology.edges || []
+    const regions = mission?.regions || []
+
+    const chokepoints = nodes.filter(n => n.type === "chokepoint")
+    const countries   = nodes.filter(n => n.type === "country")
+    const groups      = nodes.filter(n => n.type === "group")
+    const rules       = nodes.filter(n => n.type === "rule")
+
+    return {
+        label: mission?.name || "Global Monitoring",
+        type: "mission",
+        expanded: true,
+        children: [
+            {
+                label: "Regions",
+                type: "category",
+                expanded: true,
+                children: regions.map(r => ({
+                    label: r.name,
+                    type: "region",
+                    children: [
+                        ...chokepoints.filter(n => isInRegion(n, r)).map(n => ({
+                            label: n.label, type: "chokepoint", nodeId: n.id,
+                            children: [
+                                ...edges.filter(e => e.target === n.id && e.type === "monitors")
+                                    .map(e => { const rn = nodes.find(x => x.id === e.source); return rn ? { label: rn.label, type: "rule", nodeId: rn.id } : null })
+                                    .filter(Boolean),
+                                ...nodes.filter(v => v.type === "vessel" && edges.some(e => (e.source === v.id && e.target === n.id) || (e.target === v.id && e.source === n.id)))
+                                    .map(v => ({ label: v.label, type: "vessel", nodeId: v.id })),
+                            ],
+                        })),
+                        ...countries.filter(n => isInRegion(n, r)).map(n => ({
+                            label: n.label, type: "country", nodeId: n.id,
+                            children: edges.filter(e => e.target === n.id && e.type === "operates")
+                                .map(e => { const gn = nodes.find(x => x.id === e.source); return gn ? { label: gn.label, type: "group", nodeId: gn.id } : null })
+                                .filter(Boolean),
+                        })),
+                    ],
+                })),
+            },
+            {
+                label: "Data Sources",
+                type: "category",
+                children: [
+                    { label: `AIS Vessels (${nodes.filter(n => n.type === "vessel").length} tracked)`,   type: "source" },
+                    { label: `ADS-B Aircraft (${nodes.filter(n => n.type === "aircraft").length} tracked)`, type: "source" },
+                    { label: `News Events (${nodes.filter(n => n.type === "event").length} active)`,      type: "source" },
+                    { label: `Watch Areas (${nodes.filter(n => n.type === "scan").length} configured)`,   type: "source" },
+                ],
+            },
+            {
+                label: `Detection Rules (${rules.length})`,
+                type: "category",
+                children: rules.map(n => ({ label: n.label, type: "rule", nodeId: n.id, description: n.description })),
+            },
+            {
+                label: `Threat Groups (${groups.length})`,
+                type: "category",
+                children: groups.map(n => ({ label: n.label, type: "group", nodeId: n.id })),
+            },
+        ],
+    }
+}
+
+function TreeBranch({ node, depth, onEdit, onDelete }) {
+    const [expanded, setExpanded] = useState(node.expanded !== false && depth < 2)
+    const hasChildren = (node.children || []).length > 0
+    const col = TREE_TYPE_COLORS[node.type] || "#e2e8f0"
+    const icon = TREE_TYPE_ICONS[node.type] || "•"
+
+    return (
+        <div>
+            <div
+                onClick={() => hasChildren && setExpanded(e => !e)}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 6px", borderRadius: 4, cursor: hasChildren ? "pointer" : "default", marginLeft: depth * 18 }}
+            >
+                <span style={{ color: "#475569", fontSize: 9, width: 10, flexShrink: 0 }}>{hasChildren ? (expanded ? "▼" : "▶") : ""}</span>
+                <span style={{ fontSize: 12 }}>{icon}</span>
+                <span style={{ color: col, fontSize: 12, fontWeight: depth < 2 ? 600 : 400 }}>{node.label}</span>
+                {node.description && <span style={{ color: "#475569", fontSize: 10, marginLeft: 3 }}>— {node.description.slice(0, 60)}</span>}
+                {node.nodeId && (
+                    <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                        {onEdit && <button onClick={e => { e.stopPropagation(); onEdit(node) }} style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: 9, padding: "1px 4px", opacity: 0.6 }}>edit</button>}
+                        {onDelete && <button onClick={e => { e.stopPropagation(); onDelete(node.nodeId) }} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 9, padding: "1px 4px", opacity: 0.6 }}>✕</button>}
+                    </span>
+                )}
+            </div>
+            {expanded && hasChildren && (
+                <div style={{ borderLeft: "1px solid rgba(56,189,248,0.08)", marginLeft: depth * 18 + 16 }}>
+                    {node.children.map((child, i) => (
+                        <TreeBranch key={i} node={child} depth={depth + 1} onEdit={onEdit} onDelete={onDelete} />
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+
+function OntologyTreeView({ nodes, edges, mission, onDeleteNode }) {
+    const tree = buildTree({ nodes, edges }, mission)
+    return (
+        <div style={{ overflowY: "auto", height: "100%", padding: "4px 0" }}>
+            <TreeBranch node={tree} depth={0} onDelete={onDeleteNode} />
+        </div>
+    )
+}
+
 // ── Entity Networks ────────────────────────────────────────────────────────────
 
 const ENTITY_TYPES = {
@@ -1100,13 +1366,14 @@ function AddEdgeModal({ nodes, onSave, onClose }) {
     )
 }
 
-function EntityNetworksTab({ onViewOnMap }) {
+function EntityNetworksTab({ onViewOnMap, mission }) {
     const [nodes,        setNodes]        = useState([])
     const [edges,        setEdges]        = useState([])
     const [selectedNode, setSelectedNode] = useState(null)
     const [filter,       setFilter]       = useState("all")
     const [loading,      setLoading]      = useState(false)
     const [showAdd,      setShowAdd]      = useState(false)
+    const [view,         setView]         = useState("tree")
     const tok = localStorage.getItem("hw-auth-token")
     const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
@@ -1203,20 +1470,27 @@ function EntityNetworksTab({ onViewOnMap }) {
                 </div>
             </div>
 
-            {/* Graph canvas */}
-            <div style={{ flex: 1, background: "rgba(5,9,20,0.97)", borderRadius: 8, overflow: "hidden", position: "relative" }}>
-                {nodes.length === 0 && (
-                    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 13, gap: 12 }}>
-                        <div>No ontology data. Click "Build from Live Data" to auto-generate.</div>
-                    </div>
-                )}
-                <ForceGraph
-                    nodes={visibleNodes}
-                    edges={edges}
-                    entityTypes={ENTITY_TYPES}
-                    edgeTypes={EDGE_TYPES}
-                    onNodeClick={setSelectedNode}
-                />
+            {/* Graph / Tree canvas */}
+            <div style={{ flex: 1, background: "rgba(5,9,20,0.97)", borderRadius: 8, overflow: "hidden", position: "relative", display: "flex", flexDirection: "column" }}>
+                {/* View toggle */}
+                <div style={{ display: "flex", gap: 4, padding: "8px 10px", borderBottom: "1px solid rgba(56,189,248,0.08)", flexShrink: 0 }}>
+                    {["tree", "graph"].map(v => (
+                        <button key={v} onClick={() => setView(v)} style={{ padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, background: view === v ? "rgba(56,189,248,0.18)" : "transparent", color: view === v ? "#38bdf8" : "#475569" }}>
+                            {v === "tree" ? "🌳 Tree" : "🕸 Graph"}
+                        </button>
+                    ))}
+                </div>
+                <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+                    {nodes.length === 0 && (
+                        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 13 }}>
+                            No ontology data — click "Build from Live Data"
+                        </div>
+                    )}
+                    {view === "graph"
+                        ? <ForceGraph nodes={visibleNodes} edges={edges} entityTypes={ENTITY_TYPES} edgeTypes={EDGE_TYPES} onNodeClick={setSelectedNode} />
+                        : <OntologyTreeView nodes={visibleNodes} edges={edges} mission={mission} onDeleteNode={nodeId => { /* handled via panel */ }} />
+                    }
+                </div>
             </div>
 
             {showAdd && <AddEdgeModal nodes={nodes} onSave={addEdge} onClose={() => setShowAdd(false)} />}
@@ -1358,15 +1632,176 @@ function MapOverlaysTab({ onAddOverlay }) {
     )
 }
 
+// ── Mission System ────────────────────────────────────────────────────────────
+
+const MISSION_PRESETS = {
+    "Persian Gulf Focus": {
+        regions: [{ name: "Persian Gulf", bounds: [23, 48, 30, 60] }, { name: "Gulf of Oman", bounds: [22, 56, 27, 62] }],
+        focus_entities: ["Iran", "IRGC", "Strait of Hormuz"],
+    },
+    "Sahel Focus": {
+        regions: [{ name: "Sahel", bounds: [10, -15, 20, 15] }],
+        focus_entities: ["Mali", "JNIM", "Niger", "Burkina Faso"],
+    },
+    "Indo-Pacific": {
+        regions: [{ name: "South China Sea", bounds: [5, 105, 25, 125] }, { name: "Taiwan Strait", bounds: [22, 118, 26, 122] }],
+        focus_entities: ["China", "Taiwan", "Strait of Malacca"],
+    },
+    "East Africa Energy": {
+        regions: [{ name: "East Africa", bounds: [-12, 28, 5, 52] }],
+        focus_entities: ["Kenya", "Tanzania", "Mozambique"],
+    },
+    "Global": {
+        regions: [
+            { name: "Persian Gulf", bounds: [23, 48, 30, 60] },
+            { name: "Red Sea", bounds: [12, 32, 30, 45] },
+            { name: "Sahel", bounds: [10, -15, 20, 15] },
+            { name: "South China Sea", bounds: [5, 105, 25, 125] },
+            { name: "Black Sea", bounds: [40, 27, 47, 42] },
+        ],
+        focus_entities: [],
+    },
+}
+
+function MissionSelector({ missions, onActivate, onCreate }) {
+    return (
+        <div style={{ display: "flex", gap: 6, padding: "6px 24px", borderBottom: "1px solid rgba(56,189,248,0.08)", alignItems: "center", overflowX: "auto", flexShrink: 0 }}>
+            <span style={{ color: "#475569", fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", whiteSpace: "nowrap" }}>MISSION:</span>
+            {missions.map(m => (
+                <button key={m.id} onClick={() => onActivate(m.id)} style={{ padding: "4px 12px", borderRadius: 5, border: "none", cursor: "pointer", background: m.active ? "rgba(56,189,248,0.18)" : "rgba(30,41,59,0.6)", color: m.active ? "#38bdf8" : "#64748b", fontSize: 11, fontWeight: m.active ? 700 : 400, whiteSpace: "nowrap" }}>
+                    {m.active && "● "}{m.name}
+                </button>
+            ))}
+            <button onClick={onCreate} style={{ padding: "4px 10px", borderRadius: 5, border: "1px dashed rgba(56,189,248,0.25)", background: "transparent", color: "#475569", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>+ New Mission</button>
+        </div>
+    )
+}
+
+function CreateMissionWizard({ onComplete, onClose }) {
+    const [step,    setStep]    = useState(1)
+    const [name,    setName]    = useState("")
+    const [desc,    setDesc]    = useState("")
+    const [preset,  setPreset]  = useState(null)
+    const [regions, setRegions] = useState([])
+    const tok = localStorage.getItem("hw-auth-token")
+
+    const applyPreset = (key) => {
+        const p = MISSION_PRESETS[key]
+        setPreset(key)
+        setRegions(p.regions)
+        if (!name) setName(key)
+    }
+
+    const create = () => {
+        const p = preset ? MISSION_PRESETS[preset] : {}
+        const mission = { name, description: desc, regions, focus_entities: p.focus_entities || [], rules: "all" }
+        fetch(`${API}/api/forge/missions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+            body: JSON.stringify(mission),
+        }).then(r => r.ok ? r.json() : null).then(d => { if (d) onComplete(d) }).catch(() => {})
+        onClose()
+    }
+
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "rgba(10,18,40,0.98)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 12, padding: 28, width: 500 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                    <h3 style={{ color: "#e2e8f0", margin: 0, fontSize: 15 }}>New Mission — Step {step} of 3</h3>
+                    <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 18 }}>×</button>
+                </div>
+
+                {/* Progress bar */}
+                <div style={{ height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2, marginBottom: 24 }}>
+                    <div style={{ height: "100%", borderRadius: 2, background: "#38bdf8", width: `${(step / 3) * 100}%`, transition: "width 0.3s" }} />
+                </div>
+
+                {step === 1 && (
+                    <div>
+                        <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Mission Name</div>
+                        <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Hormuz Watch" style={{ ...fieldStyle, marginBottom: 14 }} />
+                        <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Description</div>
+                        <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="What is this mission monitoring?" style={fieldStyle} />
+                    </div>
+                )}
+
+                {step === 2 && (
+                    <div>
+                        <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 12 }}>Choose a regional preset or customise below:</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+                            {Object.keys(MISSION_PRESETS).map(key => (
+                                <button key={key} onClick={() => applyPreset(key)} style={{ padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", background: preset === key ? "#38bdf8" : "rgba(30,41,59,0.8)", color: preset === key ? "#0f172a" : "#94a3b8", fontSize: 12, fontWeight: preset === key ? 700 : 400 }}>
+                                    {key}
+                                </button>
+                            ))}
+                        </div>
+                        {regions.length > 0 && (
+                            <div style={{ ...card, padding: 12 }}>
+                                <div style={{ color: "#64748b", fontSize: 10, marginBottom: 6 }}>SELECTED REGIONS</div>
+                                {regions.map((r, i) => (
+                                    <div key={i} style={{ color: "#94a3b8", fontSize: 12, padding: "2px 0" }}>📍 {r.name}</div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {step === 3 && (
+                    <div>
+                        <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 12 }}>Mission summary — click Create to activate.</div>
+                        <div style={{ ...card, padding: 14 }}>
+                            <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 14 }}>{name || "Unnamed"}</div>
+                            <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>{desc || "No description"}</div>
+                            <div style={{ color: "#64748b", fontSize: 11, marginTop: 8 }}>{regions.length} regions • All detection rules active</div>
+                            {preset && MISSION_PRESETS[preset]?.focus_entities?.length > 0 && (
+                                <div style={{ color: "#64748b", fontSize: 11, marginTop: 4 }}>
+                                    Focus: {MISSION_PRESETS[preset].focus_entities.join(", ")}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 22 }}>
+                    {step > 1 && <button onClick={() => setStep(s => s - 1)} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid rgba(100,116,139,0.3)", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>Back</button>}
+                    <button onClick={() => step < 3 ? setStep(s => s + 1) : create()} disabled={step === 1 && !name.trim()} style={{ padding: "8px 20px", borderRadius: 6, border: "none", background: (step === 1 && !name.trim()) ? "rgba(100,116,139,0.3)" : "#38bdf8", color: "#0f172a", fontWeight: 700, cursor: (step === 1 && !name.trim()) ? "default" : "pointer", fontSize: 13 }}>
+                        {step < 3 ? "Next" : "Create Mission"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
 // ── ForgePanel ─────────────────────────────────────────────────────────────────
 
 export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
-    const [activeTab, setActiveTab] = useState("dashboard")
+    const [activeTab,    setActiveTab]    = useState("dashboard")
+    const [missions,     setMissions]     = useState([])
+    const [showWizard,   setShowWizard]   = useState(false)
+    const tok = localStorage.getItem("hw-auth-token")
+    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+
+    useEffect(() => {
+        fetch(`${API}/api/forge/missions`, { headers })
+            .then(r => r.ok ? r.json() : [])
+            .then(setMissions)
+            .catch(() => {})
+    }, [])
+
+    const activeMission = missions.find(m => m.active) || null
+
+    const activateMission = (id) => {
+        fetch(`${API}/api/forge/missions/${id}/activate`, { method: "PUT", headers })
+            .then(r => r.ok ? r.json() : null)
+            .then(() => setMissions(prev => prev.map(m => ({ ...m, active: m.id === id }))))
+            .catch(() => {})
+    }
 
     return (
         <div style={{ position: "absolute", inset: 0, background: "rgba(5, 9, 20, 0.98)", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif", zIndex: 50 }}>
             {/* Header */}
-            <div style={{ padding: "0 24px", height: 52, flexShrink: 0, borderBottom: "1px solid rgba(56, 189, 248, 0.12)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ padding: "0 24px", height: 50, flexShrink: 0, borderBottom: "1px solid rgba(56, 189, 248, 0.12)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <span style={{ fontSize: 17, fontWeight: 800, color: "#e2e8f0", letterSpacing: "0.04em" }}>⚒ FORGE</span>
                     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "#38bdf8", background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.25)", padding: "2px 8px", borderRadius: 4 }}>INTELLIGENCE TRAINING LAB</span>
@@ -1375,10 +1810,19 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
                 {onClose && <button onClick={onClose} title="Close Forge" style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "4px 8px" }}>×</button>}
             </div>
 
-            {/* Inner tab bar */}
-            <div style={{ display: "flex", gap: 2, padding: "8px 24px 0", borderBottom: "1px solid rgba(56, 189, 248, 0.08)", flexShrink: 0, overflowX: "auto" }}>
+            {/* Mission selector */}
+            {missions.length > 0 && (
+                <MissionSelector
+                    missions={missions}
+                    onActivate={activateMission}
+                    onCreate={() => setShowWizard(true)}
+                />
+            )}
+
+            {/* Tab bar */}
+            <div style={{ display: "flex", gap: 2, padding: "6px 24px 0", borderBottom: "1px solid rgba(56, 189, 248, 0.08)", flexShrink: 0, overflowX: "auto" }}>
                 {FORGE_TABS.map(tab => (
-                    <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding: "7px 14px 9px", borderRadius: "6px 6px 0 0", border: "none", borderBottom: activeTab === tab.id ? "2px solid #38bdf8" : "2px solid transparent", cursor: "pointer", background: activeTab === tab.id ? "rgba(56,189,248,0.08)" : "transparent", color: activeTab === tab.id ? "#38bdf8" : "#64748b", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", transition: "color 0.12s, background 0.12s" }}>
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding: "6px 12px 8px", borderRadius: "6px 6px 0 0", border: "none", borderBottom: activeTab === tab.id ? "2px solid #38bdf8" : "2px solid transparent", cursor: "pointer", background: activeTab === tab.id ? "rgba(56,189,248,0.08)" : "transparent", color: activeTab === tab.id ? "#38bdf8" : "#64748b", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", transition: "color 0.12s, background 0.12s" }}>
                         {tab.icon} {tab.label}
                     </button>
                 ))}
@@ -1392,11 +1836,18 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
                 {activeTab === "recognition"   && <ObjectTrainingTab />}
                 {activeTab === "ais-training"  && <AISTrainingTab />}
                 {activeTab === "news-training" && <NewsTrainingTab />}
-                {activeTab === "entities"      && <EntityNetworksTab onViewOnMap={node => { onFlyTo?.(node); onClose?.() }} />}
+                {activeTab === "entities"      && <EntityNetworksTab mission={activeMission} onViewOnMap={node => { onFlyTo?.(node); onClose?.() }} />}
                 {activeTab === "feeds"         && <SkeletonTab icon="📡" title="Data Feeds" description="Manage custom RSS/XML/JSON data ingestion pipelines." />}
                 {activeTab === "models"        && <ModelManagementTab />}
                 {activeTab === "overlays"      && <MapOverlaysTab onAddOverlay={onAddOverlay} />}
             </div>
+
+            {showWizard && (
+                <CreateMissionWizard
+                    onComplete={m => setMissions(prev => [...prev, m])}
+                    onClose={() => setShowWizard(false)}
+                />
+            )}
         </div>
     )
 }

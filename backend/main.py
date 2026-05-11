@@ -7202,15 +7202,20 @@ _AIS_LAST_LOG_T  = 0.0      # time of last periodic log
 
 _AIS_BBOXES = [
     [[15, 45], [32, 65]],     # Persian Gulf / Arabian Sea
-    [[10, 32], [30, 45]],     # Red Sea
+    [[10, 32], [30, 45]],     # Red Sea / Bab el-Mandeb
     [[30, 20], [42, 42]],     # Eastern Mediterranean
-    [[-15, 38], [12, 65]],    # East Africa / Indian Ocean
+    [[-15, 38], [12, 65]],    # East Africa / Indian Ocean / Horn
     [[-2, 98], [10, 108]],    # Strait of Malacca
     [[20, -10], [60, 40]],    # North Atlantic / Europe
     [[-10, 100], [30, 145]],  # Pacific / SE Asia
     [[-55, -80], [15, -30]],  # South America / South Atlantic
     [[15, -100], [55, -60]],  # North America coastal
     [[-35, 10], [20, 55]],    # Sub-Saharan Africa
+    [[5, 105], [25, 125]],    # South China Sea (explicit)
+    [[40, 27], [47, 42]],     # Black Sea
+    [[53, 10], [66, 30]],     # Baltic Sea
+    [[35, -6], [45, 2]],      # Gibraltar Strait
+    [[-25, 32], [-12, 48]],   # Mozambique Channel
 ]
 
 _AIS_SHIP_TYPE_MAP = {
@@ -13170,3 +13175,78 @@ def forge_delete_ontology_edge(edge_id: str, _user=Depends(require_admin_user)):
     ontology["edges"] = [e for e in ontology["edges"] if e.get("id") != edge_id]
     _forge_ontology_save(ontology)
     return {"deleted": edge_id}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FORGE MISSIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_FORGE_MISSION_FILE = "forge_missions.json"
+
+_DEFAULT_MISSION = {
+    "id": "mission_default",
+    "name": "Global Monitoring",
+    "description": "Full-spectrum global intelligence monitoring",
+    "active": True,
+    "created": "2026-01-01T00:00:00",
+    "regions": [
+        {"name": "Persian Gulf",    "bounds": [23, 48, 30, 60]},
+        {"name": "Red Sea",         "bounds": [12, 32, 30, 45]},
+        {"name": "East Med",        "bounds": [30, 25, 37, 36]},
+        {"name": "Sahel",           "bounds": [10, -15, 20, 15]},
+        {"name": "Horn of Africa",  "bounds": [-5, 35, 15, 55]},
+        {"name": "South China Sea", "bounds": [5, 105, 25, 125]},
+        {"name": "Black Sea",       "bounds": [40, 27, 47, 42]},
+        {"name": "Baltic",          "bounds": [53, 10, 66, 30]},
+    ],
+    "data_sources": {
+        "ais":       {"enabled": True,  "bboxes": "global"},
+        "adsb":      {"enabled": True,  "regions": "global"},
+        "news":      {"enabled": True,  "feeds": "all", "keywords": []},
+        "satellite": {"enabled": True,  "watch_areas": []},
+    },
+    "rules": "all",
+    "focus_entities": [],
+}
+
+
+@app.get("/api/forge/missions")
+def forge_get_missions(_user=Depends(require_admin_user)):
+    missions = _forge_load(_FORGE_MISSION_FILE)
+    if not missions:
+        missions = [_DEFAULT_MISSION]
+        _forge_save(_FORGE_MISSION_FILE, missions)
+    return missions
+
+
+@app.post("/api/forge/missions")
+async def forge_create_mission(request: Request, _user=Depends(require_admin_user)):
+    body = await request.json()
+    missions = _forge_load(_FORGE_MISSION_FILE)
+    if not missions:
+        missions = [_DEFAULT_MISSION]
+    mission = {
+        "id":             f"mission_{int(datetime.now(timezone.utc).timestamp())}",
+        "name":           body.get("name", "Untitled Mission"),
+        "description":    body.get("description", ""),
+        "active":         False,
+        "created":        datetime.now(timezone.utc).isoformat(),
+        "regions":        body.get("regions", []),
+        "data_sources":   body.get("data_sources", {}),
+        "rules":          body.get("rules", "all"),
+        "focus_entities": body.get("focus_entities", []),
+    }
+    missions.append(mission)
+    _forge_save(_FORGE_MISSION_FILE, missions)
+    return mission
+
+
+@app.put("/api/forge/missions/{mission_id}/activate")
+def forge_activate_mission(mission_id: str, _user=Depends(require_admin_user)):
+    missions = _forge_load(_FORGE_MISSION_FILE)
+    if not missions:
+        missions = [_DEFAULT_MISSION]
+    for m in missions:
+        m["active"] = (m["id"] == mission_id)
+    _forge_save(_FORGE_MISSION_FILE, missions)
+    return {"activated": mission_id}
