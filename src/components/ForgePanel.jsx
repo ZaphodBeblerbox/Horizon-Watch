@@ -5,6 +5,101 @@ import ForceGraph from "./forge/ForceGraph.jsx"
 
 const API = API_BASE
 
+// ── Auth helpers ───────────────────────────────────────────────────────────────
+function forgeHeaders(extra = {}) {
+    return {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
+        "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
+        ...extra,
+    }
+}
+
+function forgeFormHeaders() {
+    return {
+        Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
+        "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
+    }
+}
+
+// ── Passcode gate ─────────────────────────────────────────────────────────────
+export function ForgeGate({ children }) {
+    const [authenticated, setAuthenticated] = useState(
+        localStorage.getItem("forge_access") === "true"
+    )
+    const [passcode, setPasscode] = useState("")
+    const [error,    setError]    = useState("")
+    const [loading,  setLoading]  = useState(false)
+
+    async function handleSubmit() {
+        if (!passcode) return
+        setLoading(true)
+        setError("")
+        try {
+            const resp = await fetch(`${API}/api/forge/auth`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ passcode }),
+            })
+            if (resp.ok) {
+                localStorage.setItem("forge_access",   "true")
+                localStorage.setItem("forge_passcode", passcode)
+                setAuthenticated(true)
+            } else {
+                setError("Invalid passcode")
+            }
+        } catch {
+            setError("Connection failed")
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    if (authenticated) return children
+
+    return (
+        <div style={{
+            position: "absolute", inset: 0, background: "rgba(8,12,24,0.98)",
+            zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+            <div style={{
+                background: "rgba(15,23,42,0.95)", border: "1px solid rgba(56,189,248,0.2)",
+                borderRadius: 12, padding: 36, width: 340, textAlign: "center",
+            }}>
+                <FIcoHammer w={28} h={28} style={{ color: "rgba(56,189,248,0.8)", marginBottom: 10 }} />
+                <div style={{ color: "#e2e8f0", fontSize: 18, fontWeight: 700, marginBottom: 4 }}>FORGE</div>
+                <div style={{ color: "#64748b", fontSize: 12, marginBottom: 24 }}>Intelligence Training Lab</div>
+                <input
+                    type="password" value={passcode}
+                    onChange={e => { setPasscode(e.target.value); setError("") }}
+                    onKeyDown={e => e.key === "Enter" && handleSubmit()}
+                    placeholder="Enter passcode"
+                    autoFocus
+                    style={{
+                        width: "100%", padding: "10px 14px",
+                        background: "rgba(30,41,59,0.8)",
+                        border: `1px solid ${error ? "#ef4444" : "rgba(56,189,248,0.2)"}`,
+                        borderRadius: 6, color: "#e2e8f0", fontSize: 14, textAlign: "center",
+                        letterSpacing: 6, outline: "none", boxSizing: "border-box",
+                    }}
+                />
+                {error && <div style={{ color: "#ef4444", fontSize: 12, marginTop: 6 }}>{error}</div>}
+                <button
+                    onClick={handleSubmit} disabled={loading}
+                    style={{
+                        width: "100%", marginTop: 14, padding: "10px",
+                        borderRadius: 6, background: loading ? "rgba(56,189,248,0.4)" : "#38bdf8",
+                        border: "none", color: "#0f172a", fontWeight: 600,
+                        cursor: loading ? "default" : "pointer", fontSize: 14,
+                    }}
+                >
+                    {loading ? "Checking…" : "Access Forge"}
+                </button>
+            </div>
+        </div>
+    )
+}
+
 // ── Icon primitives ────────────────────────────────────────────────────────────
 function FI({ children, w = 13, h = 13, ...rest }) {
     return (
@@ -262,12 +357,10 @@ function ThreatDashboard({ setActiveTab, onFlyTo }) {
     const [alerts,       setAlerts]       = useState([])
     const [correlations, setCorrelations] = useState([])
     const [loading,      setLoading]      = useState(true)
-    const tok     = localStorage.getItem("hw-auth-token")
-    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
-    const loadScores       = () => fetch(`${API}/api/forge/threat-scores`, { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
-    const loadAlerts       = () => fetch(`${API}/api/forge/alerts`,         { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
-    const loadCorrelations = () => fetch(`${API}/api/forge/correlations`,   { headers }).then(r => r.ok ? r.json() : []).catch(() => [])
+    const loadScores       = () => fetch(`${API}/api/forge/threat-scores`, { headers: forgeHeaders() }).then(r => r.ok ? r.json() : []).catch(() => [])
+    const loadAlerts       = () => fetch(`${API}/api/forge/alerts`,         { headers: forgeHeaders() }).then(r => r.ok ? r.json() : []).catch(() => [])
+    const loadCorrelations = () => fetch(`${API}/api/forge/correlations`,   { headers: forgeHeaders() }).then(r => r.ok ? r.json() : []).catch(() => [])
 
     const refresh = () => {
         setLoading(true)
@@ -433,10 +526,9 @@ function CreateRuleModal({ onClose, onCreate }) {
 
     const handleCreate = () => {
         if (!name.trim()) return
-        const tok = localStorage.getItem("hw-auth-token")
         fetch(`${API}/api/forge/rules`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+            headers: forgeHeaders(),
             body: JSON.stringify({ name: name.trim(), source, trigger_type: trigger, description: desc, status: "active" }),
         }).then(r => r.ok ? r.json() : null).then(d => { if (d) onCreate?.(d) }).catch(() => {})
         onClose()
@@ -485,7 +577,6 @@ const fieldStyle = {
 
 function RuleEditor({ rule, alerts, onSave, onClose }) {
     const [r, setR] = useState({ ...rule, params: { ...(rule.params || {}) } })
-    const tok = localStorage.getItem("hw-auth-token")
 
     const updateParam = (key, raw) => {
         let v = raw
@@ -496,7 +587,7 @@ function RuleEditor({ rule, alerts, onSave, onClose }) {
     const save = () => {
         fetch(`${API}/api/forge/rules/${r.id}`, {
             method: "PUT",
-            headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+            headers: forgeHeaders(),
             body: JSON.stringify(r),
         }).then(res => res.ok ? res.json() : null).then(d => { if (d) onSave(d) }).catch(() => {})
         onClose()
@@ -569,24 +660,23 @@ function RuleEditor({ rule, alerts, onSave, onClose }) {
 }
 
 function PatternRulesTab() {
-    const [rules,       setRules]       = useState(EXAMPLE_RULES)
+    const [rules,       setRules]       = useState([])
+    const [loading,     setLoading]     = useState(true)
     const [showCreate,  setShowCreate]  = useState(false)
     const [editingRule, setEditingRule] = useState(null)
     const [alerts,      setAlerts]      = useState([])
     const [generating,  setGenerating]  = useState(false)
-    const tok = localStorage.getItem("hw-auth-token")
-    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
     const loadRules = () => {
-        fetch(`${API}/api/forge/rules`, { headers })
+        fetch(`${API}/api/forge/rules`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (d?.rules?.length) setRules(d.rules) })
-            .catch(() => {})
+            .then(d => { setRules(d?.rules || []); setLoading(false) })
+            .catch(() => setLoading(false))
     }
 
     useEffect(() => {
         loadRules()
-        fetch(`${API}/api/forge/alerts`, { headers })
+        fetch(`${API}/api/forge/alerts`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
             .then(setAlerts)
             .catch(() => {})
@@ -620,7 +710,7 @@ function PatternRulesTab() {
         const updated = { ...rule, status: rule.status === "active" ? "paused" : "active" }
         fetch(`${API}/api/forge/rules/${id}`, {
             method: "PUT",
-            headers: { ...headers, "Content-Type": "application/json" },
+            headers: forgeHeaders(),
             body: JSON.stringify(updated),
         }).catch(() => {})
         setRules(prev => prev.map(r => r.id === id ? updated : r))
@@ -652,6 +742,13 @@ function PatternRulesTab() {
                     <button onClick={() => setShowCreate(true)} style={{ background: "rgba(56,189,248,0.15)", border: "1px solid #38bdf8", color: "#38bdf8", padding: "8px 16px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>+ Create Rule</button>
                 </div>
             </div>
+            {loading && <div style={{ color: "#64748b", fontSize: 13, padding: 24, textAlign: "center" }}>Loading rules…</div>}
+            {!loading && rules.length === 0 && (
+                <div style={{ color: "#64748b", fontSize: 13, padding: 32, textAlign: "center",
+                    background: "rgba(15,23,42,0.5)", borderRadius: 8, border: "1px dashed rgba(56,189,248,0.15)" }}>
+                    No rules configured. Click <strong style={{ color: "#22c55e" }}>Auto-Generate from Ontology</strong> to create rules, or <strong style={{ color: "#38bdf8" }}>+ Create Rule</strong> manually.
+                </div>
+            )}
             {rules.map(rule => {
                 const sev = sevBadge(rule.severity)
                 const trigCount = alerts.filter(a => a.rule_id === rule.id).length
@@ -700,24 +797,23 @@ function PatternRulesTab() {
 
 // ── Watch Areas ────────────────────────────────────────────────────────────────
 
-const EXAMPLE_WATCH_AREAS = [
-    { id: "w1", name: "Isfahan Air Base",   coords: "32.65°N, 51.68°E", frequency: "Weekly",    lastScan: "3 days ago",  detections: 23, change: "+4 aircraft", status: "alert"  },
-    { id: "w2", name: "Bandar Abbas Naval", coords: "27.18°N, 56.28°E", frequency: "Weekly",    lastScan: "5 days ago",  detections: 12, change: "No change",   status: "normal" },
-    { id: "w3", name: "Tartus Naval Base",  coords: "34.89°N, 35.87°E", frequency: "Bi-weekly", lastScan: "12 days ago", detections: 8,  change: "−2 vessels",  status: "normal" },
-    { id: "w4", name: "Hmeimim Air Base",   coords: "35.41°N, 35.95°E", frequency: "Weekly",    lastScan: "4 days ago",  detections: 31, change: "+6 aircraft", status: "alert"  },
-    { id: "w5", name: "Latakia Port",       coords: "35.52°N, 35.77°E", frequency: "Monthly",   lastScan: "22 days ago", detections: 5,  change: "No change",   status: "normal" },
-]
-
 function WatchAreasTab() {
-    const [areas, setAreas] = useState(EXAMPLE_WATCH_AREAS)
+    const [areas,   setAreas]   = useState([])
+    const [loading, setLoading] = useState(true)
 
-    useEffect(() => {
-        const tok = localStorage.getItem("hw-auth-token")
-        fetch(`${API}/api/forge/watch-areas`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} })
+    const loadAreas = () => {
+        fetch(`${API}/api/forge/watch-areas`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (d?.areas?.length) setAreas(d.areas) })
-            .catch(() => {})
-    }, [])
+            .then(d => { setAreas(Array.isArray(d) ? d : (d?.areas || [])); setLoading(false) })
+            .catch(() => setLoading(false))
+    }
+
+    useEffect(() => { loadAreas() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const deleteArea = (id) => {
+        fetch(`${API}/api/forge/watch-areas/${id}`, { method: "DELETE", headers: forgeHeaders() }).catch(() => {})
+        setAreas(prev => prev.filter(a => a.id !== id))
+    }
 
     return (
         <div>
@@ -728,25 +824,35 @@ function WatchAreasTab() {
                 </div>
                 <button style={{ background: "rgba(56,189,248,0.15)", border: "1px solid #38bdf8", color: "#38bdf8", padding: "8px 16px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>+ Add Watch Area</button>
             </div>
-            {areas.map(area => (
-                <div key={area.id} style={{ ...card, border: `1px solid ${area.status === "alert" ? "rgba(239,68,68,0.3)" : "rgba(56,189,248,0.1)"}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ color: "#e2e8f0", fontWeight: 600, fontSize: 13 }}>{area.name}</span>
-                            {area.status === "alert" && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", fontWeight: 700, letterSpacing: "0.06em" }}>ALERT</span>}
-                        </div>
-                        <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>{area.coords} • Scan: {area.frequency}</div>
-                        <div style={{ color: area.status === "alert" ? "#ef4444" : "#94a3b8", fontSize: 12, marginTop: 4 }}>
-                            Last: {area.lastScan} • {area.detections} objects detected • {area.change}
-                        </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: 16 }}>
-                        <button style={btnGhost}>Scan Now</button>
-                        <button style={btnGhost}>History</button>
-                        <button style={btnDanger}>Remove</button>
-                    </div>
+            {loading && <div style={{ color: "#64748b", fontSize: 13, padding: 24, textAlign: "center" }}>Loading watch areas…</div>}
+            {!loading && areas.length === 0 && (
+                <div style={{ color: "#64748b", fontSize: 13, padding: 32, textAlign: "center",
+                    background: "rgba(15,23,42,0.5)", borderRadius: 8, border: "1px dashed rgba(56,189,248,0.15)" }}>
+                    No watch areas configured. Add one to schedule periodic satellite scans.
                 </div>
-            ))}
+            )}
+            {areas.map(area => {
+                const hasAlert = area.status === "alert"
+                const coords = area.lat != null ? `${Number(area.lat).toFixed(2)}°, ${Number(area.lng || area.lon || 0).toFixed(2)}°` : area.coords || "—"
+                return (
+                    <div key={area.id} style={{ ...card, border: `1px solid ${hasAlert ? "rgba(239,68,68,0.3)" : "rgba(56,189,248,0.1)"}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ color: "#e2e8f0", fontWeight: 600, fontSize: 13 }}>{area.name}</span>
+                                {hasAlert && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", fontWeight: 700, letterSpacing: "0.06em" }}>ALERT</span>}
+                            </div>
+                            <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>{coords} • Scan: {area.frequency || "weekly"}</div>
+                            <div style={{ color: hasAlert ? "#ef4444" : "#94a3b8", fontSize: 12, marginTop: 4 }}>
+                                {area.detections != null ? `${area.detections} objects detected` : "No scans yet"} • Last: {area.last_scan ? new Date(area.last_scan).toLocaleDateString() : "never"}
+                            </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: 16 }}>
+                            <button style={btnGhost}>Scan Now</button>
+                            <button onClick={() => deleteArea(area.id)} style={btnDanger}>Remove</button>
+                        </div>
+                    </div>
+                )
+            })}
         </div>
     )
 }
@@ -957,8 +1063,7 @@ function ObjectTrainingTab() {
     const [labels,  setLabels]  = useState([])
 
     useEffect(() => {
-        const tok = localStorage.getItem("hw-auth-token")
-        fetch(`${API}/api/forge/labels`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} })
+        fetch(`${API}/api/forge/labels`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d?.labels) setLabels(d.labels) })
             .catch(() => {})
@@ -968,10 +1073,9 @@ function ObjectTrainingTab() {
         setLoading(true)
         setItems([])
         try {
-            const tok = localStorage.getItem("hw-auth-token")
             const res = await fetch(`${API}/api/forge/overwatch/generate-batch`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+                headers: forgeHeaders(),
                 body: JSON.stringify({ n: 10 }),
             })
             const data = await res.json()
@@ -993,10 +1097,9 @@ function ObjectTrainingTab() {
         }))
         const newEntry = { id, label, source_type: "overwatch", labeled_at: new Date().toISOString(), ...extra }
         setLabels(prev => [newEntry, ...prev])
-        const tok = localStorage.getItem("hw-auth-token")
         fetch(`${API}/api/forge/detection/label`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+            headers: forgeHeaders(),
             body: JSON.stringify({ id, label, source_type: "overwatch", ...extra }),
         }).catch(() => {})
     }
@@ -1161,10 +1264,9 @@ function AISTrainingTab() {
         setLoading(true)
         setItems([])
         try {
-            const tok = localStorage.getItem("hw-auth-token")
             const res = await fetch(`${API}/api/forge/ais/generate-batch`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+                headers: forgeHeaders(),
                 body: JSON.stringify({ n: 20 }),
             })
             const data = await res.json()
@@ -1184,10 +1286,9 @@ function AISTrainingTab() {
             suspicious: label === "suspicious" ? prev.suspicious + 1 : prev.suspicious,
             skipped:    label === "skip"       ? prev.skipped    + 1 : prev.skipped,
         }))
-        const tok = localStorage.getItem("hw-auth-token")
         fetch(`${API}/api/forge/detection/label`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+            headers: forgeHeaders(),
             body: JSON.stringify({ id, label, source_type: "ais", ...extra }),
         }).catch(() => {})
     }
@@ -1304,10 +1405,9 @@ function NewsTrainingTab() {
         setLoading(true)
         setItems([])
         try {
-            const tok = localStorage.getItem("hw-auth-token")
             const res = await fetch(`${API}/api/forge/news/generate-batch`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+                headers: forgeHeaders(),
                 body: JSON.stringify({ n: 15 }),
             })
             const data = await res.json()
@@ -1321,10 +1421,9 @@ function NewsTrainingTab() {
 
     const handleLabel = (id, label, extra = {}) => {
         setStats(prev => ({ ...prev, total: prev.total+1, correct: label==="correct"?prev.correct+1:prev.correct, adjusted: label==="adjusted"?prev.adjusted+1:prev.adjusted, skipped: label==="skip"?prev.skipped+1:prev.skipped }))
-        const tok = localStorage.getItem("hw-auth-token")
         fetch(`${API}/api/forge/detection/label`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+            headers: forgeHeaders(),
             body: JSON.stringify({ id, label, source_type: "news", ...extra }),
         }).catch(() => {})
     }
@@ -1584,11 +1683,9 @@ function EntityNetworksTab({ onViewOnMap, mission }) {
     const [loading,      setLoading]      = useState(false)
     const [showAdd,      setShowAdd]      = useState(false)
     const [view,         setView]         = useState("tree")
-    const tok = localStorage.getItem("hw-auth-token")
-    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
     const load = () => {
-        fetch(`${API}/api/forge/ontology`, { headers })
+        fetch(`${API}/api/forge/ontology`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : { nodes: [], edges: [] })
             .then(d => { setNodes(d.nodes || []); setEdges(d.edges || []) })
             .catch(() => {})
@@ -1711,47 +1808,44 @@ function EntityNetworksTab({ onViewOnMap, mission }) {
 // ── Model Management ───────────────────────────────────────────────────────────
 
 function ModelManagementTab() {
-    const [exportData, setExportData] = useState(null)
-    const tok = localStorage.getItem("hw-auth-token")
-    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
+    const [modelData, setModelData] = useState(null)
 
     useEffect(() => {
-        fetch(`${API}/api/forge/export-training-data`, { headers })
+        fetch(`${API}/api/forge/models`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (d) setExportData(d) })
+            .then(d => { if (d) setModelData(d) })
             .catch(() => {})
     }, [])
 
-    const models = [
-        { name: "yolov8n-obb.onnx", type: "Object Detection (DOTA)", size: "12.7 MB", classes: 15, status: "active",  accuracy: "68%",  lastUpdated: "March 2026" },
-        { name: "yolov8n.onnx",     type: "Object Detection (COCO)", size: "12.1 MB", classes: 80, status: "standby", accuracy: "N/A",   lastUpdated: "March 2026" },
-    ]
-
-    const total     = exportData?.total     ?? 0
-    const confirmed = exportData?.confirmed ?? 0
-    const corrected = exportData?.corrected ?? 0
-    const ready     = exportData?.ready_for_training ?? false
-    const pct       = Math.min(total / 500 * 100, 100)
+    const models       = modelData?.models       || []
+    const trainingData = modelData?.training_data || { total: 0, confirmed: 0, corrected: 0, ready_for_training: false }
+    const total        = trainingData.total     ?? 0
+    const confirmed    = trainingData.confirmed ?? 0
+    const corrected    = trainingData.corrected ?? 0
+    const ready        = trainingData.ready_for_training ?? false
+    const pct          = Math.min(total / 500 * 100, 100)
 
     return (
         <div>
             <h2 style={{ color: "#e2e8f0", margin: "0 0 16px", fontSize: 16 }}>ML Model Management</h2>
 
+            {models.length === 0 && !modelData && (
+                <div style={{ color: "#64748b", fontSize: 13, padding: 24, textAlign: "center" }}>Loading models…</div>
+            )}
             {models.map((model, i) => (
                 <div key={i} style={card}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 13 }}>{model.name}</span>
                             <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: model.status === "active" ? "rgba(34,197,94,0.15)" : "rgba(100,116,139,0.2)", color: model.status === "active" ? "#22c55e" : "#64748b", fontWeight: 700 }}>
-                                {model.status.toUpperCase()}
+                                {model.status?.toUpperCase()}
                             </span>
                         </div>
-                        <span style={{ color: "#475569", fontSize: 11 }}>{model.size}</span>
+                        <span style={{ color: "#475569", fontSize: 11 }}>{model.size_mb ? `${model.size_mb} MB` : ""}</span>
                     </div>
                     <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 5 }}>
-                        {model.type} • {model.classes} classes • Accuracy: {model.accuracy}
+                        {model.type} • {model.classes} classes
                     </div>
-                    <div style={{ color: "#475569", fontSize: 11, marginTop: 2 }}>Last updated: {model.lastUpdated}</div>
                     <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                         <button style={btnGhost}>Test</button>
                         <button style={btnGhost}>Export Training Data</button>
@@ -1817,11 +1911,9 @@ function DataFeedsTab({ missionId }) {
     const [uploadMsg,  setUploadMsg]  = useState(null)
     const fileInputRef = useRef(null)
 
-    const tok     = localStorage.getItem("hw-auth-token")
-    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
     useEffect(() => {
-        fetch(`${API}/api/forge/uploads`, { headers })
+        fetch(`${API}/api/forge/uploads`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
             .then(setUploads)
             .catch(() => {})
@@ -2074,7 +2166,6 @@ function CreateMissionWizard({ onComplete, onClose }) {
     const [desc,    setDesc]    = useState("")
     const [preset,  setPreset]  = useState(null)
     const [regions, setRegions] = useState([])
-    const tok = localStorage.getItem("hw-auth-token")
 
     const applyPreset = (key) => {
         const p = MISSION_PRESETS[key]
@@ -2088,7 +2179,7 @@ function CreateMissionWizard({ onComplete, onClose }) {
         const mission = { name, description: desc, regions, focus_entities: p.focus_entities || [], rules: "all" }
         fetch(`${API}/api/forge/missions`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+            headers: forgeHeaders(),
             body: JSON.stringify(mission),
         }).then(r => r.ok ? r.json() : null).then(d => { if (d) onComplete(d) }).catch(() => {})
         onClose()
@@ -2170,11 +2261,9 @@ export default function ForgePanel({ user, onClose, onAddOverlay, onFlyTo }) {
     const [activeTab,    setActiveTab]    = useState("dashboard")
     const [missions,     setMissions]     = useState([])
     const [showWizard,   setShowWizard]   = useState(false)
-    const tok = localStorage.getItem("hw-auth-token")
-    const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
 
     useEffect(() => {
-        fetch(`${API}/api/forge/missions`, { headers })
+        fetch(`${API}/api/forge/missions`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
             .then(setMissions)
             .catch(() => {})

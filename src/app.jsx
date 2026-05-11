@@ -38,7 +38,7 @@ import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
 import LayersPanel from "./components/LayersPanel.jsx"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
-import ForgePanel from "./components/ForgePanel.jsx"
+import ForgePanel, { ForgeGate } from "./components/ForgePanel.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -1383,9 +1383,7 @@ export default function App() {
                                 setDirectorModalOpen(true)
                             }
                         }}
-                        onOpenForge={(currentUser?.role === "admin" || currentUser?.role === "super_admin" || currentUser?.is_super_admin)
-                            ? () => openTab("forge")
-                            : null}
+                        onOpenForge={() => openTab("forge")}
                     />
                 )}
 
@@ -1533,17 +1531,19 @@ export default function App() {
                     </div>
                 )}
 
-                {/* Forge — admin intelligence training lab */}
+                {/* Forge — passcode-gated intelligence training lab */}
                 {tabs.some(t => t.type === "forge") && (
                     <div style={{
                         flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
                         display: activeTabType === "forge" ? "block" : "none",
                         position: "relative",
                     }}>
-                        <ForgePanel
-                            user={currentUser}
-                            onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
-                        />
+                        <ForgeGate>
+                            <ForgePanel
+                                user={currentUser}
+                                onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
+                            />
+                        </ForgeGate>
                     </div>
                 )}
 
