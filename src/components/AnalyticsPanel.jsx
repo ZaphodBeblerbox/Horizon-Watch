@@ -2,11 +2,11 @@
 // Backed by /api/analytics/timeseries and /api/analytics/breakdown.
 
 import { useEffect, useState } from "react"
+import API_BASE from "../apiBase.js"
 import {
     LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, CartesianGrid,
 } from "recharts"
-import API_BASE from "../apiBase.js"
 
 const PIE_COLORS = ["#4A9EE0", "#5BC97F", "#E8B23A", "#E55757", "#9B59B6", "#9AA4B5", "#38bdf8", "#f97316"]
 
@@ -179,6 +179,11 @@ export default function AnalyticsPanel({ onClose, onExpand = null, isTabMode = f
                             </>
                         ) : !loading && <Empty>No type data</Empty>}
                     </div>
+                    {/* Threat matrix spans both columns */}
+                    <div style={{ gridColumn: "1/-1", marginTop: 8 }}>
+                        <SectionHeader>Threat Matrix</SectionHeader>
+                        <ThreatMatrix />
+                    </div>
                 </div>
             ) : (
                 /* Stacked layout in right panel mode */
@@ -229,8 +234,70 @@ export default function AnalyticsPanel({ onClose, onExpand = null, isTabMode = f
                     ) : !loading && (
                         <Empty>No type data</Empty>
                     )}
+
+                    <SectionHeader style={{ marginTop: 20 }}>Threat Matrix</SectionHeader>
+                    <ThreatMatrix compact />
                 </div>
             )}
+        </div>
+    )
+}
+
+// ── Threat Matrix ──────────────────────────────────────────────────────────────
+function forgeAuthHeaders() {
+    return {
+        Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
+        "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
+    }
+}
+
+const LEVEL_COLORS = { CRITICAL: "#ef4444", HIGH: "#f59e0b", ELEVATED: "#60a5fa", LOW: "#22c55e" }
+
+function ThreatMatrix({ compact = false }) {
+    const [scores,  setScores]  = useState([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        fetch(`${API_BASE}/api/forge/threat-scores`, { headers: forgeAuthHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(data => { setScores(Array.isArray(data) ? data : []); setLoading(false) })
+            .catch(() => setLoading(false))
+    }, [])
+
+    if (loading) return <div style={{ color: "#9AA4B5", fontSize: 10, padding: "8px 0" }}>Loading threat data…</div>
+
+    if (scores.length === 0) {
+        return (
+            <div style={{ color: "#475569", fontSize: 10, padding: "8px 0", textAlign: "center" }}>
+                No threat scores yet — Forge detection cycle runs every 5 min.
+            </div>
+        )
+    }
+
+    return (
+        <div>
+            {scores.map(s => {
+                const c = LEVEL_COLORS[s.level] || "#64748b"
+                return (
+                    <div key={s.region} style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: compact ? "5px 8px" : "7px 10px",
+                        marginBottom: 3,
+                        background: "rgba(17,24,39,0.7)",
+                        borderRadius: 5,
+                        borderLeft: `3px solid ${c}`,
+                    }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ color: "#cbd5e1", fontSize: compact ? 10 : 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.region}</div>
+                            {!compact && <div style={{ color: "#475569", fontSize: 9, marginTop: 1 }}>{s.alert_count ?? 0} alerts</div>}
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 8 }}>
+                            <div style={{ color: c, fontSize: compact ? 9 : 10, fontWeight: 700 }}>{s.level}</div>
+                            <div style={{ color: "#94a3b8", fontSize: compact ? 11 : 13, fontWeight: 700 }}>{Math.round((s.score || 0) * 100)}%</div>
+                        </div>
+                    </div>
+                )
+            })}
         </div>
     )
 }
