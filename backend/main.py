@@ -13425,6 +13425,17 @@ async def _forge_detection_cycle():
         await asyncio.sleep(300)
 
 
+# ── Forge aircraft feed (ADSB global cache) ───────────────────────────────────
+
+@app.get("/api/forge/aircraft")
+def forge_get_aircraft(_forge=Depends(_require_forge)):
+    aircraft = sorted(
+        _GLOBAL_ADSB_CACHE.values(),
+        key=lambda a: a.get("last_seen", 0), reverse=True
+    )[:500]
+    return {"aircraft": aircraft, "total": len(aircraft)}
+
+
 # ── Forge source config ───────────────────────────────────────────────────────
 
 def _get_forge_config() -> dict:
