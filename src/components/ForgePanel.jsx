@@ -111,6 +111,92 @@ function actionBtn(color) {
 }
 const ghostBtn = { fontSize: 11, padding: "5px 12px", borderRadius: 3, border: "1px solid rgba(148,163,184,0.15)", background: "transparent", color: "#94a3b8", cursor: "pointer" }
 
+// ── Alert Detail Drawer ────────────────────────────────────────────────────────
+function ProvenanceStep({ label, value, detail }) {
+    return (
+        <div style={{ background: "#111827", borderRadius: 4, padding: "8px 10px", marginBottom: 2 }}>
+            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase" }}>{label}</div>
+            <div style={{ color: "#cbd5e1", fontSize: 12, fontWeight: 600 }}>{value || "—"}</div>
+            {detail && <div style={{ color: "#475569", fontSize: 10 }}>{detail}</div>}
+        </div>
+    )
+}
+function ProvenanceArrow() {
+    return <div style={{ textAlign: "center", color: "#1e293b", fontSize: 12, margin: "2px 0" }}>↓</div>
+}
+function AlertDetail({ alert, onClose, onFeedback }) {
+    if (!alert) return null
+    const sevColor = alert.severity === "critical" ? "#f87171" : alert.severity === "high" ? "#fbbf24" : "#94a3b8"
+    const sevBg    = alert.severity === "critical" ? "rgba(248,113,113,0.12)" : alert.severity === "high" ? "rgba(251,191,36,0.12)" : "rgba(148,163,184,0.08)"
+    return (
+        <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 400, background: "#0f1219", borderLeft: "1px solid rgba(148,163,184,0.08)", zIndex: 100, display: "flex", flexDirection: "column", overflow: "auto", fontFamily: "system-ui, sans-serif" }}>
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(148,163,184,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+                <span style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600 }}>Alert Detail</span>
+                <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16 }}>✕</button>
+            </div>
+            <div style={{ padding: 16, overflow: "auto" }}>
+                <div style={{ marginBottom: 16 }}>
+                    <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 2, background: sevBg, color: sevColor }}>{(alert.severity || "medium").toUpperCase()}</span>
+                    <div style={{ color: "#e2e8f0", fontSize: 14, marginTop: 8, lineHeight: 1.4 }}>{alert.message}</div>
+                    <div style={{ color: "#334155", fontSize: 10, marginTop: 4 }}>{alert.timestamp}</div>
+                </div>
+
+                <div style={{ marginBottom: 16 }}>
+                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Provenance Chain</div>
+                    <ProvenanceStep label="Source" value={alert.provenance?.source_type || alert.source} detail={alert.provenance?.source_entity || alert.mmsi || alert.aircraft} />
+                    <ProvenanceArrow />
+                    <ProvenanceStep label="Detection Rule" value={alert.rule_name} detail={alert.provenance?.trigger_reason || alert.rule_trigger} />
+                    <ProvenanceArrow />
+                    <ProvenanceStep label="Alert" value={alert.severity} detail={alert.timestamp?.slice(11, 19)} />
+                </div>
+
+                {Object.keys(alert.provenance?.params_at_trigger || {}).length > 0 && (
+                    <div style={{ marginBottom: 16 }}>
+                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Rule Parameters</div>
+                        {Object.entries(alert.provenance.params_at_trigger).map(([k, v]) => (
+                            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                                <span style={{ color: "#475569", fontSize: 11 }}>{k.replace(/_/g, " ")}</span>
+                                <span style={{ color: "#94a3b8", fontSize: 11 }}>{typeof v === "object" ? JSON.stringify(v) : String(v)}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {alert.source === "AIS" && (
+                    <div style={{ marginBottom: 16 }}>
+                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Vessel</div>
+                        {[["Name", alert.vessel], ["MMSI", alert.mmsi], ["Position", alert.lat != null ? `${Number(alert.lat).toFixed(4)}, ${Number(alert.lng).toFixed(4)}` : null], ["Speed", alert.speed != null ? `${alert.speed} kn` : null], ["Flag", alert.flag], ["Destination", alert.destination]].filter(([, v]) => v).map(([k, v]) => (
+                            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                                <span style={{ color: "#475569", fontSize: 11 }}>{k}</span>
+                                <span style={{ color: "#94a3b8", fontSize: 11 }}>{v}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {alert.source === "ADSB" && (
+                    <div style={{ marginBottom: 16 }}>
+                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Aircraft</div>
+                        {[["Callsign", alert.aircraft], ["Hex", alert.hex], ["Position", alert.lat != null ? `${Number(alert.lat).toFixed(4)}, ${Number(alert.lng).toFixed(4)}` : null]].filter(([, v]) => v).map(([k, v]) => (
+                            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                                <span style={{ color: "#475569", fontSize: 11 }}>{k}</span>
+                                <span style={{ color: "#94a3b8", fontSize: 11 }}>{v}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {onFeedback && <>
+                        <button onClick={() => onFeedback("confirm")} style={actionBtn("#4ade80")}>✓ Confirm</button>
+                        <button onClick={() => onFeedback("false_alarm")} style={actionBtn("#f87171")}>✕ False Alarm</button>
+                    </>}
+                </div>
+            </div>
+        </div>
+    )
+}
+
 // ── Shared components ──────────────────────────────────────────────────────────
 function StatBox({ label, value, color }) {
     return (
@@ -664,6 +750,7 @@ function DetectorWorkspace({ source }) {
     const [dryResults, setDryResults] = useState({})
     const [dryRunning, setDryRunning] = useState({})
     const [showCreate, setShowCreate] = useState(false)
+    const [selectedAlert, setSelectedAlert] = useState(null)
 
     const reload = () => {
         fetch(`${API}/api/forge/rules`, { headers: forgeHeaders() })
@@ -795,19 +882,27 @@ function DetectorWorkspace({ source }) {
                     <div style={{ maxWidth: 760 }}>
                         {alerts.length === 0 && <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 40 }}>No {source} alerts in the last 24 hours.</div>}
                         {alerts.slice(0, 100).map((a, i) => (
-                            <div key={i} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 5, borderLeft: `2px solid ${a.severity === "critical" ? "#f87171" : a.severity === "high" ? "#fbbf24" : "#334155"}` }}>
+                            <div key={i} onClick={() => setSelectedAlert(a)} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 5, cursor: "pointer", borderLeft: `2px solid ${a.severity === "critical" ? "#f87171" : a.severity === "high" ? "#fbbf24" : "#334155"}` }}>
                                 <div style={{ color: "#cbd5e1", fontSize: 12 }}>{a.message}</div>
                                 <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
                                     {a.rule_name && <span style={{ color: "#334155", fontSize: 9 }}>{a.rule_name}</span>}
                                     {a.timestamp && <span style={{ color: "#334155", fontSize: 9 }}>{a.timestamp.slice(11, 19)}</span>}
                                     {a.mmsi && <span style={{ color: "#475569", fontSize: 9 }}>MMSI: {a.mmsi}</span>}
+                                    {a.aircraft && <span style={{ color: "#475569", fontSize: 9 }}>{a.aircraft}</span>}
                                 </div>
                                 <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
-                                    <button onClick={() => feedback(a, "confirm")} style={actionBtn("#4ade80")}>✓ Confirm</button>
-                                    <button onClick={() => feedback(a, "false_alarm")} style={actionBtn("#f87171")}>✕ False Alarm</button>
+                                    <button onClick={e => { e.stopPropagation(); feedback(a, "confirm") }} style={actionBtn("#4ade80")}>✓ Confirm</button>
+                                    <button onClick={e => { e.stopPropagation(); feedback(a, "false_alarm") }} style={actionBtn("#f87171")}>✕ False Alarm</button>
                                 </div>
                             </div>
                         ))}
+                        {selectedAlert && (
+                            <AlertDetail
+                                alert={selectedAlert}
+                                onClose={() => setSelectedAlert(null)}
+                                onFeedback={(action) => { feedback(selectedAlert, action); setSelectedAlert(null) }}
+                            />
+                        )}
                     </div>
                 )}
                 {tab === "training" && <TrainingWorkspace detectorSource={source} />}

@@ -86,16 +86,29 @@ class AISAnomalyDetector:
 
     def _make_alert(self, rule, vessel, message):
         return {
-            "rule_id":   rule.get("id"),
-            "rule_name": rule.get("name"),
-            "source":    "AIS",
-            "severity":  rule.get("severity", "medium"),
-            "vessel":    vessel.get("name") or str(vessel.get("mmsi", "Unknown")),
-            "mmsi":      vessel.get("mmsi"),
-            "lat":       vessel.get("lat"),
-            "lng":       vessel.get("lng"),
-            "message":   message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "id":           f"alert_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+            "rule_id":      rule.get("id"),
+            "rule_name":    rule.get("name"),
+            "rule_trigger": rule.get("trigger_type"),
+            "source":       "AIS",
+            "severity":     rule.get("severity", "medium"),
+            "vessel":       vessel.get("name") or str(vessel.get("mmsi", "Unknown")),
+            "mmsi":         vessel.get("mmsi"),
+            "lat":          vessel.get("lat"),
+            "lng":          vessel.get("lng"),
+            "speed":        vessel.get("speed"),
+            "heading":      vessel.get("heading"),
+            "flag":         vessel.get("flag"),
+            "destination":  vessel.get("destination"),
+            "message":      message,
+            "timestamp":    datetime.now(timezone.utc).isoformat(),
+            "provenance": {
+                "source_type":       "AIS",
+                "source_entity":     vessel.get("mmsi"),
+                "detection_rule":    rule.get("name"),
+                "trigger_reason":    rule.get("trigger_type"),
+                "params_at_trigger": rule.get("params", {}),
+            },
         }
 
     @staticmethod

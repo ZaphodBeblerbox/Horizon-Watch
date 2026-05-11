@@ -13247,11 +13247,39 @@ def _prep_cables_for_detector():
         return []
 
 
+def _normalize_vessel(raw, mmsi=None):
+    """Normalize AIS vessel data to consistent field names used by detectors."""
+    if not raw:
+        return None
+    try:
+        lat = float(raw.get("lat") or raw.get("latitude") or raw.get("Latitude") or 0)
+        lng = float(
+            raw.get("lng") or raw.get("lon") or raw.get("longitude") or raw.get("Longitude") or 0
+        )
+        if lat == 0 and lng == 0:
+            return None
+        return {
+            "mmsi":        str(mmsi or raw.get("mmsi") or raw.get("MMSI") or ""),
+            "name":        raw.get("name") or raw.get("shipName") or raw.get("ship_name") or raw.get("Name") or f"MMSI:{mmsi}",
+            "lat":         lat,
+            "lng":         lng,
+            "speed":       float(raw.get("speed") or raw.get("sog") or raw.get("SpeedOverGround") or 0),
+            "heading":     float(raw.get("heading") or raw.get("cog") or raw.get("CourseOverGround") or 0),
+            "ship_type":   str(raw.get("ship_type") or raw.get("type") or raw.get("Type") or raw.get("shipType") or ""),
+            "destination": str(raw.get("destination") or raw.get("Destination") or ""),
+            "flag":        str(raw.get("flag") or raw.get("country") or raw.get("Flag") or ""),
+        }
+    except (ValueError, TypeError):
+        return None
+
+
 async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
     global _forge_alerts, _correlation_assessments, _last_cycle_stats
     while True:
         try:
+            cycle_start = datetime.now(timezone.utc)
+
             # Bootstrap default rules on first run
             rules = _forge_load("rules.json")
             if not rules:
@@ -13263,31 +13291,34 @@ async def _forge_detection_cycle():
                 except ImportError:
                     rules = []
             active_rules = [r for r in rules if r.get("status") == "active"]
-            _ais_detector.load_rules(active_rules)
 
             cables = _prep_cables_for_detector()
 
             # Stage 1 — AIS anomaly detection
-            # Normalise vessel dicts: AIS stream writes "lon" but detector expects "lng"
+            _ais_detector.load_rules([r for r in active_rules if r.get("source") in ("AIS", "ais")])
             with _AIS_LOCK:
                 vessels_snap = dict(_AIS_VESSELS)
+
+            # Pre-normalize the entire snapshot so ship_to_ship lookups work
+            normalized_snap = {}
+            for _m, _v in vessels_snap.items():
+                _n = _normalize_vessel(_v, _m)
+                if _n:
+                    normalized_snap[_m] = _n
+
             new_ais_alerts: list = []
-            vessels_checked = 0
-            for mmsi, vessel in vessels_snap.items():
-                lon_val = vessel.get("lon") or vessel.get("longitude")
-                if vessel.get("lng") is None and lon_val is not None:
-                    vessel = {**vessel, "lng": lon_val}
-                if not vessel.get("name"):
-                    vessel = {**vessel, "name": f"MMSI:{mmsi}"}
-                vessels_checked += 1
-                new_ais_alerts.extend(
-                    _ais_detector.check_vessel(
+            vessels_checked = len(normalized_snap)
+            for mmsi, vessel in normalized_snap.items():
+                try:
+                    hits = _ais_detector.check_vessel(
                         vessel,
                         cables=cables,
                         chokepoints=_CHOKEPOINT_DEFS,
-                        all_vessels=vessels_snap,
+                        all_vessels=normalized_snap,
                     )
-                )
+                    new_ais_alerts.extend(hits)
+                except Exception as _ve:
+                    pass
             print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
 
             # Stage 2 — ADS-B anomaly detection
@@ -13332,7 +13363,53 @@ async def _forge_detection_cycle():
             except Exception as _ae:
                 print(f"[forge-brain] adsb error: {_ae}")
 
-            # Stage 3 — Cross-domain correlation engine
+            # Stage 3 — News event scoring
+            new_news_alerts: list = []
+            news_rules = [r for r in active_rules if r.get("source") in ("NEWS", "news")]
+            news_checked = 0
+            try:
+                raw_events = es.get_active_events()[:100]
+                news_checked = len(raw_events)
+                for ev in raw_events:
+                    sev_raw = ev.get("severity") or ev.get("score", 0)
+                    sev_map = {"critical": 5, "high": 4, "elevated": 3, "medium": 2, "low": 1}
+                    sev_num = sev_map.get(str(sev_raw).lower(), 0) if isinstance(sev_raw, str) else (sev_raw or 0)
+                    title = (ev.get("headline") or ev.get("title") or "").lower()
+                    body  = (ev.get("summary") or ev.get("body") or "").lower()
+                    text  = title + " " + body
+                    for rule in news_rules:
+                        trigger = rule.get("trigger_type", "")
+                        params  = rule.get("params", {})
+                        keywords = params.get("keywords", [])
+                        threshold = params.get("min_severity", 3)
+                        hit = False
+                        if keywords:
+                            hit = any(kw.lower() in text for kw in keywords) and sev_num >= threshold
+                        elif trigger == "event_surge" or not trigger:
+                            hit = sev_num >= max(threshold, 4)
+                        if hit:
+                            new_news_alerts.append({
+                                "rule_id":   rule.get("id"),
+                                "rule_name": rule.get("name"),
+                                "source":    "NEWS",
+                                "severity":  "high" if sev_num >= 4 else "medium",
+                                "message":   f"News match: '{(ev.get('headline') or ev.get('title') or '')[:70]}'",
+                                "lat":       ev.get("lat"),
+                                "lng":       ev.get("lng") or ev.get("lon"),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "provenance": {
+                                    "source_type": "NEWS",
+                                    "source_entity": ev.get("id") or ev.get("event_id"),
+                                    "detection_rule": rule.get("name"),
+                                    "trigger_reason": trigger,
+                                    "params_at_trigger": params,
+                                },
+                            })
+                            break  # one alert per event per cycle
+            except Exception as _ne:
+                print(f"[forge-brain] news error: {_ne}")
+
+            # Stage 4 — Cross-domain correlation engine
             new_assessments: list = []
             try:
                 ontology = _forge_ontology_load()
@@ -13357,7 +13434,6 @@ async def _forge_detection_cycle():
                     ontology=ontology,
                 )
 
-                # Auto-wire HIGH/CRITICAL correlations into ontology
                 for a in new_assessments:
                     if a.get("severity") in ("HIGH", "CRITICAL") and a.get("type") == "correlation":
                         _auto_add_correlation_to_ontology(a)
@@ -13365,60 +13441,65 @@ async def _forge_detection_cycle():
             except Exception as _ce:
                 print(f"[forge-brain] correlation error: {_ce}")
 
-            # Auto-wire cable-related alerts into ontology
+            # Auto-wire cable alerts into ontology
             for alert in new_ais_alerts:
                 if "cable" in (alert.get("message") or "").lower():
                     _auto_add_ontology_edge(alert)
 
-            new_alerts = new_ais_alerts + new_adsb_alerts
-            _forge_alerts.extend(new_alerts)
+            all_new = new_ais_alerts + new_adsb_alerts + new_news_alerts
+            _forge_alerts.extend(all_new)
             _correlation_assessments.extend(new_assessments)
 
-            # Trim both buffers to 24h
+            # Trim to 24h
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             _forge_alerts = [a for a in _forge_alerts if a.get("timestamp", "") > cutoff]
             _correlation_assessments = [a for a in _correlation_assessments if a.get("timestamp", "") > cutoff]
 
-            # Deduplicate alerts (rule+vessel per hour bucket)
+            # Deduplicate (rule+entity per hour)
             seen: set = set()
             deduped: list = []
             for a in reversed(_forge_alerts):
-                key = f"{a.get('rule_id')}|{a.get('mmsi') or a.get('aircraft')}|{(a.get('timestamp',''))[:13]}"
+                key = f"{a.get('rule_id')}|{a.get('mmsi') or a.get('aircraft') or a.get('message','')[:30]}|{(a.get('timestamp',''))[:13]}"
                 if key not in seen:
                     seen.add(key)
                     deduped.append(a)
             _forge_alerts = list(reversed(deduped))[:500]
             _correlation_assessments = _correlation_assessments[-200:]
 
+            cycle_s = (datetime.now(timezone.utc) - cycle_start).total_seconds()
             active_rule_count = len(active_rules)
             _last_cycle_stats = {
                 "last_cycle":        datetime.now(timezone.utc).isoformat(),
-                "vessels_tracked":   len(vessels_snap),
+                "vessels_tracked":   len(normalized_snap),
                 "aircraft_tracked":  len(_GLOBAL_ADSB_CACHE),
                 "rules_active":      active_rule_count,
                 "ais_alerts":        len(new_ais_alerts),
                 "adsb_alerts":       len(new_adsb_alerts),
+                "news_alerts":       len(new_news_alerts),
                 "new_correlations":  len(new_assessments),
                 "alerts_24h":        len(_forge_alerts),
                 "correlations_24h":  len(_correlation_assessments),
                 "weights":           _threat_engine.weights if _threat_engine else {},
             }
             _cycle_history.append({
-                "ts":            _last_cycle_stats["last_cycle"],
-                "vessels":       len(vessels_snap),
-                "aircraft":      len(_GLOBAL_ADSB_CACHE),
-                "rules":         active_rule_count,
-                "ais_alerts":    len(new_ais_alerts),
-                "adsb_alerts":   len(new_adsb_alerts),
-                "correlations":  len(new_assessments),
-                "alerts_24h":    len(_forge_alerts),
+                "ts":          _last_cycle_stats["last_cycle"],
+                "vessels":     len(normalized_snap),
+                "aircraft":    len(_GLOBAL_ADSB_CACHE),
+                "news":        news_checked,
+                "rules":       active_rule_count,
+                "ais_alerts":  len(new_ais_alerts),
+                "adsb_alerts": len(new_adsb_alerts),
+                "news_alerts": len(new_news_alerts),
+                "correlations": len(new_assessments),
+                "alerts_24h":  len(_forge_alerts),
             })
-            while len(_cycle_history) > 20:
+            while len(_cycle_history) > 50:
                 _cycle_history.pop(0)
             print(
-                f"[forge-brain] cycle — {len(_forge_alerts)} alerts, "
-                f"{len(new_assessments)} correlations, "
-                f"{len(vessels_snap)} vessels, {len(_GLOBAL_ADSB_CACHE)} aircraft"
+                f"[forge-brain] {cycle_s:.1f}s — "
+                f"{len(normalized_snap)}v/{len(_GLOBAL_ADSB_CACHE)}ac/{news_checked}nw → "
+                f"{len(new_ais_alerts)}+{len(new_adsb_alerts)}+{len(new_news_alerts)} alerts, "
+                f"{len(new_assessments)} correlations, {len(_forge_alerts)} total"
             )
         except Exception as _ex:
             print(f"[forge-brain] cycle error: {_ex}")
