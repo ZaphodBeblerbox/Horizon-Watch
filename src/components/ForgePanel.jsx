@@ -1486,13 +1486,14 @@ const BOX_W = 160, BOX_H = 36, GAP_X = 60, GAP_Y = 8, PAD = 30
 const TYPE_ORDER = ["country","group","person","chokepoint","facility","port","airport","cable","vessel","aircraft","event","rule","alert"]
 
 function OntologyGraph({ nodes, edges, onNodeClick }) {
-    const canvasRef  = useRef(null)
-    const posRef     = useRef({})
-    const animRef    = useRef(null)
+    const canvasRef   = useRef(null)
+    const posRef      = useRef({})
+    const animRef     = useRef(null)
     const draggingRef = useRef(null)
-    const panRef     = useRef({ x: 0, y: 0 })
-    const zoomRef    = useRef(1)
+    const panRef      = useRef({ x: 0, y: 0 })
+    const zoomRef     = useRef(1)
     const panStartRef = useRef(null)
+    const selectedRef = useRef(null)
     const [, forceRender] = useState(0)
 
     // Load saved positions once
@@ -1552,6 +1553,19 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
                 ctx.fillText(t.toUpperCase(), PAD + ci * (BOX_W + GAP_X), PAD + 10)
             })
 
+            // Build selected node's connected node set
+            const selId = selectedRef.current
+            const selConnected = new Set()
+            const selEdgeIds   = new Set()
+            if (selId) {
+                for (const e of edges) {
+                    if (e.source === selId || e.target === selId) {
+                        selConnected.add(e.source); selConnected.add(e.target)
+                        selEdgeIds.add(e.id)
+                    }
+                }
+            }
+
             // Edges
             for (const e of edges) {
                 const ap = pos[e.source], bp = pos[e.target]
@@ -1559,21 +1573,28 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
                 const fx = ap.x + BOX_W, fy = ap.y + BOX_H / 2
                 const tx = bp.x,         ty = bp.y + BOX_H / 2
                 const cpX = (fx + tx) / 2
-                const isHov = draggingRef.current === null && (/* hovered node highlights its edges */false)
+                const isLit = selId && selEdgeIds.has(e.id)
+                const color = isLit ? (GRAPH_COLORS[(nodes.find(n => n.id === e.source) || {}).type] || "#60a5fa") : null
                 ctx.beginPath()
                 ctx.moveTo(fx, fy)
                 ctx.bezierCurveTo(cpX, fy, cpX, ty, tx, ty)
-                ctx.strokeStyle = "rgba(148,163,184,0.1)"
-                ctx.lineWidth = 0.8
+                ctx.strokeStyle = isLit ? (color + "99") : "rgba(148,163,184,0.1)"
+                ctx.lineWidth = isLit ? 1.5 : 0.8
+                if (isLit) { ctx.shadowColor = color; ctx.shadowBlur = 6 }
                 ctx.stroke()
+                ctx.shadowBlur = 0
                 // Arrow tip
                 ctx.beginPath()
-                ctx.moveTo(tx, ty)
-                ctx.lineTo(tx - 5, ty - 3)
-                ctx.lineTo(tx - 5, ty + 3)
+                ctx.moveTo(tx, ty); ctx.lineTo(tx - 5, ty - 3); ctx.lineTo(tx - 5, ty + 3)
                 ctx.closePath()
-                ctx.fillStyle = "rgba(148,163,184,0.1)"
+                ctx.fillStyle = isLit ? (color + "99") : "rgba(148,163,184,0.1)"
                 ctx.fill()
+                // Edge label on lit edges
+                if (isLit && e.type) {
+                    ctx.fillStyle = "#64748b"; ctx.font = "7px system-ui"; ctx.textAlign = "center"
+                    ctx.fillText(e.type.replace(/_/g, " "), cpX, Math.min(fy, ty) - 4)
+                    ctx.textAlign = "left"
+                }
             }
 
             // Nodes
@@ -1581,31 +1602,38 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
                 const p = pos[n.id]
                 if (!p) continue
                 const color = GRAPH_COLORS[n.type] || "#475569"
-                const isHov = draggingRef.current?.id === n.id
+                const isSel = n.id === selId
+                const isConn = selId && selConnected.has(n.id) && !isSel
+                const isDrag = draggingRef.current?.id === n.id
+                const lit = isSel || isConn || isDrag
                 // Box
-                ctx.fillStyle = isHov ? "#1a2332" : "#111827"
-                ctx.strokeStyle = isHov ? color + "60" : "rgba(148,163,184,0.07)"
-                ctx.lineWidth = 1
+                ctx.fillStyle = lit ? "#1a2332" : "#111827"
+                ctx.strokeStyle = isSel ? color : isConn ? color + "55" : "rgba(148,163,184,0.07)"
+                ctx.lineWidth = isSel ? 1.5 : 1
+                if (lit) { ctx.shadowColor = color; ctx.shadowBlur = isSel ? 12 : 6 }
                 ctx.beginPath()
                 ctx.roundRect(p.x, p.y, BOX_W, BOX_H, 3)
                 ctx.fill(); ctx.stroke()
+                ctx.shadowBlur = 0
                 // Left accent bar
                 ctx.fillStyle = color
+                ctx.globalAlpha = lit ? 1 : 0.6
                 ctx.fillRect(p.x + 1, p.y + 4, 2, BOX_H - 8)
+                ctx.globalAlpha = 1
                 // Label
-                ctx.fillStyle = isHov ? "#e2e8f0" : "#94a3b8"
-                ctx.font = "10px system-ui"
+                ctx.fillStyle = lit ? "#e2e8f0" : "#94a3b8"
+                ctx.font = `${isSel ? "600 " : ""}10px system-ui`
                 ctx.textAlign = "left"
                 const lbl = (n.label || "").length > 19 ? (n.label || "").slice(0, 17) + "…" : (n.label || "")
                 ctx.fillText(lbl, p.x + 10, p.y + 15)
                 // Type badge
-                ctx.fillStyle = "#334155"
+                ctx.fillStyle = isConn || isSel ? color + "99" : "#334155"
                 ctx.font = "7px system-ui"
                 ctx.fillText(n.type, p.x + 10, p.y + 27)
                 // Ports
                 ctx.beginPath(); ctx.arc(p.x + BOX_W, p.y + BOX_H / 2, 3, 0, Math.PI * 2)
                 ctx.fillStyle = "#1e293b"; ctx.fill()
-                ctx.beginPath(); ctx.arc(p.x,          p.y + BOX_H / 2, 3, 0, Math.PI * 2)
+                ctx.beginPath(); ctx.arc(p.x, p.y + BOX_H / 2, 3, 0, Math.PI * 2)
                 ctx.fill()
             }
 
@@ -1662,7 +1690,12 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
         function onClick(e) {
             const { x, y } = toCanvas(e)
             const n = nodeAt(x, y)
-            if (n) onNodeClick(n)
+            if (n) {
+                selectedRef.current = selectedRef.current === n.id ? null : n.id
+                onNodeClick(n)
+            } else {
+                selectedRef.current = null
+            }
         }
         function onWheel(e) {
             e.preventDefault()
