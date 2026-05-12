@@ -1486,15 +1486,39 @@ const BOX_W = 160, BOX_H = 36, GAP_X = 60, GAP_Y = 8, PAD = 30
 const TYPE_ORDER = ["country","group","person","chokepoint","facility","port","airport","cable","vessel","aircraft","event","rule","alert"]
 
 function OntologyGraph({ nodes, edges, onNodeClick }) {
-    const canvasRef   = useRef(null)
-    const posRef      = useRef({})
-    const animRef     = useRef(null)
-    const draggingRef = useRef(null)
-    const panRef      = useRef({ x: 0, y: 0 })
-    const zoomRef     = useRef(1)
-    const panStartRef = useRef(null)
-    const selectedRef = useRef(null)
-    const [, forceRender] = useState(0)
+    const canvasRef    = useRef(null)
+    const posRef       = useRef({})
+    const nodesRef     = useRef(nodes)
+    const edgesRef     = useRef(edges)
+    const onClickRef   = useRef(onNodeClick)
+    const animRef      = useRef(null)
+    const draggingRef  = useRef(null)
+    const panRef       = useRef({ x: 0, y: 0 })
+    const zoomRef      = useRef(1)
+    const panStartRef  = useRef(null)
+    const selectedRef  = useRef(null)
+
+    // Keep refs live — no loop restart needed when data changes
+    useEffect(() => { onClickRef.current = onNodeClick }, [onNodeClick])
+
+    useEffect(() => {
+        edgesRef.current = edges
+    }, [edges])
+
+    useEffect(() => {
+        nodesRef.current = nodes
+        // Assign default positions for any node not yet placed
+        TYPE_ORDER.forEach((t, ci) => {
+            nodes.filter(n => n.type === t).forEach((n, ri) => {
+                if (!posRef.current[n.id])
+                    posRef.current[n.id] = { x: PAD + ci * (BOX_W + GAP_X), y: PAD + 20 + ri * (BOX_H + GAP_Y) }
+            })
+        })
+        nodes.filter(n => !TYPE_ORDER.includes(n.type)).forEach((n, i) => {
+            if (!posRef.current[n.id])
+                posRef.current[n.id] = { x: PAD + TYPE_ORDER.length * (BOX_W + GAP_X), y: PAD + 20 + i * (BOX_H + GAP_Y) }
+        })
+    }, [nodes])
 
     // Load saved positions once
     useEffect(() => {
@@ -1504,26 +1528,7 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             .catch(() => {})
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Init positions for nodes not yet placed
-    useEffect(() => {
-        TYPE_ORDER.forEach((t, ci) => {
-            nodes.filter(n => n.type === t).forEach((n, ri) => {
-                if (!posRef.current[n.id]) {
-                    posRef.current[n.id] = {
-                        x: PAD + ci * (BOX_W + GAP_X),
-                        y: PAD + 20 + ri * (BOX_H + GAP_Y),
-                    }
-                }
-            })
-        })
-        // Any unlisted type gets appended after
-        nodes.filter(n => !TYPE_ORDER.includes(n.type)).forEach((n, i) => {
-            if (!posRef.current[n.id]) {
-                posRef.current[n.id] = { x: PAD + TYPE_ORDER.length * (BOX_W + GAP_X), y: PAD + 20 + i * (BOX_H + GAP_Y) }
-            }
-        })
-    }, [nodes])
-
+    // Draw loop — starts once, reads everything from refs
     useEffect(() => {
         const canvas = canvasRef.current
         if (!canvas) return
@@ -1536,29 +1541,30 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
         ctx.scale(2, 2)
 
         function draw() {
+            const ns  = nodesRef.current
+            const es  = edgesRef.current
+            const pos = posRef.current
             const pan = panRef.current
             const zoom = zoomRef.current
+            const selId = selectedRef.current
+
             ctx.clearRect(0, 0, W, H)
             ctx.save()
             ctx.translate(pan.x, pan.y)
             ctx.scale(zoom, zoom)
-            const pos = posRef.current
 
             // Column headers
             TYPE_ORDER.forEach((t, ci) => {
-                if (!nodes.some(n => n.type === t)) return
-                ctx.fillStyle = "#334155"
-                ctx.font = "600 8px system-ui"
-                ctx.textAlign = "left"
+                if (!ns.some(n => n.type === t)) return
+                ctx.fillStyle = "#334155"; ctx.font = "600 8px system-ui"; ctx.textAlign = "left"
                 ctx.fillText(t.toUpperCase(), PAD + ci * (BOX_W + GAP_X), PAD + 10)
             })
 
-            // Build selected node's connected node set
-            const selId = selectedRef.current
+            // Build selection sets
             const selConnected = new Set()
             const selEdgeIds   = new Set()
             if (selId) {
-                for (const e of edges) {
+                for (const e of es) {
                     if (e.source === selId || e.target === selId) {
                         selConnected.add(e.source); selConnected.add(e.target)
                         selEdgeIds.add(e.id)
@@ -1567,29 +1573,26 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             }
 
             // Edges
-            for (const e of edges) {
+            for (const e of es) {
                 const ap = pos[e.source], bp = pos[e.target]
                 if (!ap || !bp) continue
                 const fx = ap.x + BOX_W, fy = ap.y + BOX_H / 2
                 const tx = bp.x,         ty = bp.y + BOX_H / 2
                 const cpX = (fx + tx) / 2
                 const isLit = selId && selEdgeIds.has(e.id)
-                const color = isLit ? (GRAPH_COLORS[(nodes.find(n => n.id === e.source) || {}).type] || "#60a5fa") : null
+                const srcNode = ns.find(n => n.id === e.source)
+                const color = isLit ? (GRAPH_COLORS[srcNode?.type] || "#60a5fa") : null
                 ctx.beginPath()
                 ctx.moveTo(fx, fy)
                 ctx.bezierCurveTo(cpX, fy, cpX, ty, tx, ty)
-                ctx.strokeStyle = isLit ? (color + "99") : "rgba(148,163,184,0.1)"
+                ctx.strokeStyle = isLit ? color + "99" : "rgba(148,163,184,0.1)"
                 ctx.lineWidth = isLit ? 1.5 : 0.8
                 if (isLit) { ctx.shadowColor = color; ctx.shadowBlur = 6 }
-                ctx.stroke()
-                ctx.shadowBlur = 0
-                // Arrow tip
+                ctx.stroke(); ctx.shadowBlur = 0
                 ctx.beginPath()
                 ctx.moveTo(tx, ty); ctx.lineTo(tx - 5, ty - 3); ctx.lineTo(tx - 5, ty + 3)
                 ctx.closePath()
-                ctx.fillStyle = isLit ? (color + "99") : "rgba(148,163,184,0.1)"
-                ctx.fill()
-                // Edge label on lit edges
+                ctx.fillStyle = isLit ? color + "99" : "rgba(148,163,184,0.1)"; ctx.fill()
                 if (isLit && e.type) {
                     ctx.fillStyle = "#64748b"; ctx.font = "7px system-ui"; ctx.textAlign = "center"
                     ctx.fillText(e.type.replace(/_/g, " "), cpX, Math.min(fy, ty) - 4)
@@ -1598,43 +1601,31 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             }
 
             // Nodes
-            for (const n of nodes) {
+            for (const n of ns) {
                 const p = pos[n.id]
                 if (!p) continue
                 const color = GRAPH_COLORS[n.type] || "#475569"
-                const isSel = n.id === selId
+                const isSel  = n.id === selId
                 const isConn = selId && selConnected.has(n.id) && !isSel
                 const isDrag = draggingRef.current?.id === n.id
                 const lit = isSel || isConn || isDrag
-                // Box
                 ctx.fillStyle = lit ? "#1a2332" : "#111827"
                 ctx.strokeStyle = isSel ? color : isConn ? color + "55" : "rgba(148,163,184,0.07)"
                 ctx.lineWidth = isSel ? 1.5 : 1
                 if (lit) { ctx.shadowColor = color; ctx.shadowBlur = isSel ? 12 : 6 }
-                ctx.beginPath()
-                ctx.roundRect(p.x, p.y, BOX_W, BOX_H, 3)
-                ctx.fill(); ctx.stroke()
+                ctx.beginPath(); ctx.roundRect(p.x, p.y, BOX_W, BOX_H, 3); ctx.fill(); ctx.stroke()
                 ctx.shadowBlur = 0
-                // Left accent bar
-                ctx.fillStyle = color
-                ctx.globalAlpha = lit ? 1 : 0.6
-                ctx.fillRect(p.x + 1, p.y + 4, 2, BOX_H - 8)
-                ctx.globalAlpha = 1
-                // Label
+                ctx.fillStyle = color; ctx.globalAlpha = lit ? 1 : 0.6
+                ctx.fillRect(p.x + 1, p.y + 4, 2, BOX_H - 8); ctx.globalAlpha = 1
                 ctx.fillStyle = lit ? "#e2e8f0" : "#94a3b8"
-                ctx.font = `${isSel ? "600 " : ""}10px system-ui`
-                ctx.textAlign = "left"
+                ctx.font = `${isSel ? "600 " : ""}10px system-ui`; ctx.textAlign = "left"
                 const lbl = (n.label || "").length > 19 ? (n.label || "").slice(0, 17) + "…" : (n.label || "")
                 ctx.fillText(lbl, p.x + 10, p.y + 15)
-                // Type badge
-                ctx.fillStyle = isConn || isSel ? color + "99" : "#334155"
-                ctx.font = "7px system-ui"
-                ctx.fillText(n.type, p.x + 10, p.y + 27)
-                // Ports
+                ctx.fillStyle = isSel || isConn ? color + "99" : "#334155"
+                ctx.font = "7px system-ui"; ctx.fillText(n.type, p.x + 10, p.y + 27)
                 ctx.beginPath(); ctx.arc(p.x + BOX_W, p.y + BOX_H / 2, 3, 0, Math.PI * 2)
                 ctx.fillStyle = "#1e293b"; ctx.fill()
-                ctx.beginPath(); ctx.arc(p.x, p.y + BOX_H / 2, 3, 0, Math.PI * 2)
-                ctx.fill()
+                ctx.beginPath(); ctx.arc(p.x, p.y + BOX_H / 2, 3, 0, Math.PI * 2); ctx.fill()
             }
 
             ctx.restore()
@@ -1644,13 +1635,11 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
 
         function toCanvas(e) {
             const r = canvas.getBoundingClientRect()
-            return {
-                x: (e.clientX - r.left - panRef.current.x) / zoomRef.current,
-                y: (e.clientY - r.top  - panRef.current.y) / zoomRef.current,
-            }
+            return { x: (e.clientX - r.left - panRef.current.x) / zoomRef.current,
+                     y: (e.clientY - r.top  - panRef.current.y) / zoomRef.current }
         }
         function nodeAt(x, y) {
-            for (const n of nodes) {
+            for (const n of nodesRef.current) {
                 const p = posRef.current[n.id]
                 if (p && x >= p.x && x <= p.x + BOX_W && y >= p.y && y <= p.y + BOX_H) return n
             }
@@ -1671,31 +1660,21 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
                 const { x, y } = toCanvas(e)
                 posRef.current[draggingRef.current.id] = { x: x - draggingRef.current.ox, y: y - draggingRef.current.oy }
             } else if (panStartRef.current) {
-                panRef.current = {
-                    x: panStartRef.current.px + e.clientX - panStartRef.current.mx,
-                    y: panStartRef.current.py + e.clientY - panStartRef.current.my,
-                }
+                panRef.current = { x: panStartRef.current.px + e.clientX - panStartRef.current.mx,
+                                   y: panStartRef.current.py + e.clientY - panStartRef.current.my }
             } else {
-                const { x, y } = toCanvas(e)
-                canvas.style.cursor = nodeAt(x, y) ? "pointer" : "grab"
+                canvas.style.cursor = nodeAt(...Object.values(toCanvas(e))) ? "pointer" : "grab"
             }
         }
         function savePos() {
             fetch(`${API}/api/forge/ontology/positions`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify(posRef.current) }).catch(() => {})
         }
-        function onUp() {
-            if (draggingRef.current) savePos()
-            draggingRef.current = null; panStartRef.current = null
-        }
+        function onUp() { if (draggingRef.current) savePos(); draggingRef.current = null; panStartRef.current = null }
         function onClick(e) {
             const { x, y } = toCanvas(e)
             const n = nodeAt(x, y)
-            if (n) {
-                selectedRef.current = selectedRef.current === n.id ? null : n.id
-                onNodeClick(n)
-            } else {
-                selectedRef.current = null
-            }
+            if (n) { selectedRef.current = selectedRef.current === n.id ? null : n.id; onClickRef.current(n) }
+            else selectedRef.current = null
         }
         function onWheel(e) {
             e.preventDefault()
@@ -1716,7 +1695,7 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             canvas.removeEventListener("click",      onClick)
             canvas.removeEventListener("wheel",      onWheel)
         }
-    }, [nodes, edges]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     if (!nodes.length) return <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>No entities to visualize.</div>
     return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
