@@ -14409,6 +14409,23 @@ def forge_delete_ontology_edge(edge_id: str, _forge=Depends(_require_forge)):
     return {"deleted": edge_id}
 
 
+_FORGE_ONTOLOGY_POS_FILE = _FORGE_DIR / "forge_ontology_positions.json"
+
+@app.post("/api/forge/ontology/positions")
+async def save_ontology_positions(request: Request, _forge=Depends(_require_forge)):
+    body = await request.json()
+    _FORGE_DIR.mkdir(parents=True, exist_ok=True)
+    _FORGE_ONTOLOGY_POS_FILE.write_text(_json.dumps(body))
+    return {"saved": True}
+
+@app.get("/api/forge/ontology/positions")
+def get_ontology_positions(_forge=Depends(_require_forge)):
+    try:
+        return _json.loads(_FORGE_ONTOLOGY_POS_FILE.read_text())
+    except Exception:
+        return {}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # FORGE MISSIONS
 # ═══════════════════════════════════════════════════════════════════════════════

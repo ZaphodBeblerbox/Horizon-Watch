@@ -1482,14 +1482,48 @@ const GRAPH_COLORS = {
     cable: "#fbbf24", port: "#fb7185", airport: "#c084fc", rule: "#94a3b8", alert: "#ef4444",
 }
 
+const BOX_W = 160, BOX_H = 36, GAP_X = 60, GAP_Y = 8, PAD = 30
+const TYPE_ORDER = ["country","group","person","chokepoint","facility","port","airport","cable","vessel","aircraft","event","rule","alert"]
+
 function OntologyGraph({ nodes, edges, onNodeClick }) {
-    const canvasRef = useRef(null)
-    const posRef    = useRef({})
-    const animRef   = useRef(null)
-    const [hovered, setHovered] = useState(null)
+    const canvasRef  = useRef(null)
+    const posRef     = useRef({})
+    const animRef    = useRef(null)
+    const draggingRef = useRef(null)
+    const panRef     = useRef({ x: 0, y: 0 })
+    const zoomRef    = useRef(1)
+    const panStartRef = useRef(null)
+    const [, forceRender] = useState(0)
+
+    // Load saved positions once
+    useEffect(() => {
+        fetch(`${API}/api/forge/ontology/positions`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : {})
+            .then(saved => { posRef.current = { ...posRef.current, ...saved } })
+            .catch(() => {})
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Init positions for nodes not yet placed
+    useEffect(() => {
+        TYPE_ORDER.forEach((t, ci) => {
+            nodes.filter(n => n.type === t).forEach((n, ri) => {
+                if (!posRef.current[n.id]) {
+                    posRef.current[n.id] = {
+                        x: PAD + ci * (BOX_W + GAP_X),
+                        y: PAD + 20 + ri * (BOX_H + GAP_Y),
+                    }
+                }
+            })
+        })
+        // Any unlisted type gets appended after
+        nodes.filter(n => !TYPE_ORDER.includes(n.type)).forEach((n, i) => {
+            if (!posRef.current[n.id]) {
+                posRef.current[n.id] = { x: PAD + TYPE_ORDER.length * (BOX_W + GAP_X), y: PAD + 20 + i * (BOX_H + GAP_Y) }
+            }
+        })
+    }, [nodes])
 
     useEffect(() => {
-        if (!nodes.length) return
         const canvas = canvasRef.current
         if (!canvas) return
         const parent = canvas.parentElement
@@ -1500,115 +1534,156 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
         const ctx = canvas.getContext("2d")
         ctx.scale(2, 2)
 
-        // Init positions for new nodes
-        nodes.forEach((n, i) => {
-            if (!posRef.current[n.id]) {
-                const angle = (i / nodes.length) * Math.PI * 2
-                const r = Math.min(W, H) * 0.34
-                posRef.current[n.id] = {
-                    x: W / 2 + Math.cos(angle) * r + (Math.random() - 0.5) * 50,
-                    y: H / 2 + Math.sin(angle) * r + (Math.random() - 0.5) * 50,
-                    vx: 0, vy: 0,
-                }
-            }
-        })
-        // Remove stale
-        const live = new Set(nodes.map(n => n.id))
-        Object.keys(posRef.current).forEach(k => { if (!live.has(k)) delete posRef.current[k] })
-
-        function tick() {
-            const pos = posRef.current
-            for (let i = 0; i < nodes.length; i++) {
-                for (let j = i + 1; j < nodes.length; j++) {
-                    const a = pos[nodes[i].id], b = pos[nodes[j].id]
-                    if (!a || !b) continue
-                    const dx = b.x - a.x, dy = b.y - a.y
-                    const d = Math.sqrt(dx * dx + dy * dy) || 1
-                    const f = 280 / (d * d)
-                    a.vx -= dx / d * f * 0.05; a.vy -= dy / d * f * 0.05
-                    b.vx += dx / d * f * 0.05; b.vy += dy / d * f * 0.05
-                }
-            }
-            for (const e of edges) {
-                const a = pos[e.source], b = pos[e.target]
-                if (!a || !b) continue
-                const dx = b.x - a.x, dy = b.y - a.y
-                const d = Math.sqrt(dx * dx + dy * dy) || 1
-                const f = (d - 90) * 0.003
-                a.vx += dx / d * f; a.vy += dy / d * f
-                b.vx -= dx / d * f; b.vy -= dy / d * f
-            }
-            for (const n of nodes) {
-                const p = pos[n.id]
-                if (!p) continue
-                p.vx += (W / 2 - p.x) * 0.0005; p.vy += (H / 2 - p.y) * 0.0005
-                p.vx *= 0.92; p.vy *= 0.92
-                p.x += p.vx; p.y += p.vy
-                p.x = Math.max(20, Math.min(W - 20, p.x))
-                p.y = Math.max(20, Math.min(H - 20, p.y))
-            }
-        }
-
         function draw() {
+            const pan = panRef.current
+            const zoom = zoomRef.current
             ctx.clearRect(0, 0, W, H)
-            const pos = posRef.current
             ctx.save()
+            ctx.translate(pan.x, pan.y)
+            ctx.scale(zoom, zoom)
+            const pos = posRef.current
+
+            // Column headers
+            TYPE_ORDER.forEach((t, ci) => {
+                if (!nodes.some(n => n.type === t)) return
+                ctx.fillStyle = "#334155"
+                ctx.font = "600 8px system-ui"
+                ctx.textAlign = "left"
+                ctx.fillText(t.toUpperCase(), PAD + ci * (BOX_W + GAP_X), PAD + 10)
+            })
+
+            // Edges
             for (const e of edges) {
-                const a = pos[e.source], b = pos[e.target]
-                if (!a || !b) continue
-                ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y)
-                ctx.strokeStyle = "rgba(148,163,184,0.1)"; ctx.lineWidth = 1; ctx.stroke()
-                if (e.type) {
-                    ctx.fillStyle = "#1e293b"; ctx.font = "7px system-ui"; ctx.textAlign = "center"
-                    ctx.fillText(e.type.replace(/_/g, " "), (a.x + b.x) / 2, (a.y + b.y) / 2 - 2)
-                }
+                const ap = pos[e.source], bp = pos[e.target]
+                if (!ap || !bp) continue
+                const fx = ap.x + BOX_W, fy = ap.y + BOX_H / 2
+                const tx = bp.x,         ty = bp.y + BOX_H / 2
+                const cpX = (fx + tx) / 2
+                const isHov = draggingRef.current === null && (/* hovered node highlights its edges */false)
+                ctx.beginPath()
+                ctx.moveTo(fx, fy)
+                ctx.bezierCurveTo(cpX, fy, cpX, ty, tx, ty)
+                ctx.strokeStyle = "rgba(148,163,184,0.1)"
+                ctx.lineWidth = 0.8
+                ctx.stroke()
+                // Arrow tip
+                ctx.beginPath()
+                ctx.moveTo(tx, ty)
+                ctx.lineTo(tx - 5, ty - 3)
+                ctx.lineTo(tx - 5, ty + 3)
+                ctx.closePath()
+                ctx.fillStyle = "rgba(148,163,184,0.1)"
+                ctx.fill()
             }
+
+            // Nodes
             for (const n of nodes) {
                 const p = pos[n.id]
                 if (!p) continue
                 const color = GRAPH_COLORS[n.type] || "#475569"
-                const isH = hovered === n.id
-                ctx.beginPath(); ctx.arc(p.x, p.y, isH ? 10 : 7, 0, Math.PI * 2)
-                ctx.fillStyle = color; ctx.globalAlpha = isH ? 1 : 0.82; ctx.fill()
-                ctx.globalAlpha = 1
-                const lbl = (n.label || n.id || "").slice(0, 20)
-                ctx.fillStyle = isH ? "#e2e8f0" : "#64748b"
-                ctx.font = `${isH ? 10 : 8}px system-ui`; ctx.textAlign = "center"
-                ctx.fillText(lbl, p.x, p.y + (isH ? 18 : 15))
+                const isHov = draggingRef.current?.id === n.id
+                // Box
+                ctx.fillStyle = isHov ? "#1a2332" : "#111827"
+                ctx.strokeStyle = isHov ? color + "60" : "rgba(148,163,184,0.07)"
+                ctx.lineWidth = 1
+                ctx.beginPath()
+                ctx.roundRect(p.x, p.y, BOX_W, BOX_H, 3)
+                ctx.fill(); ctx.stroke()
+                // Left accent bar
+                ctx.fillStyle = color
+                ctx.fillRect(p.x + 1, p.y + 4, 2, BOX_H - 8)
+                // Label
+                ctx.fillStyle = isHov ? "#e2e8f0" : "#94a3b8"
+                ctx.font = "10px system-ui"
+                ctx.textAlign = "left"
+                const lbl = (n.label || "").length > 19 ? (n.label || "").slice(0, 17) + "…" : (n.label || "")
+                ctx.fillText(lbl, p.x + 10, p.y + 15)
+                // Type badge
+                ctx.fillStyle = "#334155"
+                ctx.font = "7px system-ui"
+                ctx.fillText(n.type, p.x + 10, p.y + 27)
+                // Ports
+                ctx.beginPath(); ctx.arc(p.x + BOX_W, p.y + BOX_H / 2, 3, 0, Math.PI * 2)
+                ctx.fillStyle = "#1e293b"; ctx.fill()
+                ctx.beginPath(); ctx.arc(p.x,          p.y + BOX_H / 2, 3, 0, Math.PI * 2)
+                ctx.fill()
             }
+
             ctx.restore()
-            tick()
             animRef.current = requestAnimationFrame(draw)
         }
         draw()
 
-        function onMove(ev) {
+        function toCanvas(e) {
             const r = canvas.getBoundingClientRect()
-            const mx = ev.clientX - r.left, my = ev.clientY - r.top
-            let found = null
-            for (const n of nodes) {
-                const p = posRef.current[n.id]
-                if (p && Math.sqrt((p.x - mx) ** 2 + (p.y - my) ** 2) < 12) { found = n.id; break }
-            }
-            setHovered(found)
-            canvas.style.cursor = found ? "pointer" : "default"
-        }
-        function onClick(ev) {
-            const r = canvas.getBoundingClientRect()
-            const mx = ev.clientX - r.left, my = ev.clientY - r.top
-            for (const n of nodes) {
-                const p = posRef.current[n.id]
-                if (p && Math.sqrt((p.x - mx) ** 2 + (p.y - my) ** 2) < 12) { onNodeClick(n); return }
+            return {
+                x: (e.clientX - r.left - panRef.current.x) / zoomRef.current,
+                y: (e.clientY - r.top  - panRef.current.y) / zoomRef.current,
             }
         }
-        canvas.addEventListener("mousemove", onMove)
-        canvas.addEventListener("click", onClick)
+        function nodeAt(x, y) {
+            for (const n of nodes) {
+                const p = posRef.current[n.id]
+                if (p && x >= p.x && x <= p.x + BOX_W && y >= p.y && y <= p.y + BOX_H) return n
+            }
+            return null
+        }
+        function onDown(e) {
+            const { x, y } = toCanvas(e)
+            const n = nodeAt(x, y)
+            if (n) {
+                const p = posRef.current[n.id]
+                draggingRef.current = { id: n.id, ox: x - p.x, oy: y - p.y }
+            } else {
+                panStartRef.current = { mx: e.clientX, my: e.clientY, px: panRef.current.x, py: panRef.current.y }
+            }
+        }
+        function onMove(e) {
+            if (draggingRef.current) {
+                const { x, y } = toCanvas(e)
+                posRef.current[draggingRef.current.id] = { x: x - draggingRef.current.ox, y: y - draggingRef.current.oy }
+            } else if (panStartRef.current) {
+                panRef.current = {
+                    x: panStartRef.current.px + e.clientX - panStartRef.current.mx,
+                    y: panStartRef.current.py + e.clientY - panStartRef.current.my,
+                }
+            } else {
+                const { x, y } = toCanvas(e)
+                canvas.style.cursor = nodeAt(x, y) ? "pointer" : "grab"
+            }
+        }
+        function savePos() {
+            fetch(`${API}/api/forge/ontology/positions`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify(posRef.current) }).catch(() => {})
+        }
+        function onUp() {
+            if (draggingRef.current) savePos()
+            draggingRef.current = null; panStartRef.current = null
+        }
+        function onClick(e) {
+            const { x, y } = toCanvas(e)
+            const n = nodeAt(x, y)
+            if (n) onNodeClick(n)
+        }
+        function onWheel(e) {
+            e.preventDefault()
+            zoomRef.current = Math.max(0.2, Math.min(3, zoomRef.current * (e.deltaY > 0 ? 0.95 : 1.05)))
+        }
+        canvas.addEventListener("mousedown",  onDown)
+        canvas.addEventListener("mousemove",  onMove)
+        canvas.addEventListener("mouseup",    onUp)
+        canvas.addEventListener("mouseleave", onUp)
+        canvas.addEventListener("click",      onClick)
+        canvas.addEventListener("wheel",      onWheel, { passive: false })
         return () => {
             cancelAnimationFrame(animRef.current)
-            canvas.removeEventListener("mousemove", onMove)
-            canvas.removeEventListener("click", onClick)
+            canvas.removeEventListener("mousedown",  onDown)
+            canvas.removeEventListener("mousemove",  onMove)
+            canvas.removeEventListener("mouseup",    onUp)
+            canvas.removeEventListener("mouseleave", onUp)
+            canvas.removeEventListener("click",      onClick)
+            canvas.removeEventListener("wheel",      onWheel)
         }
-    }, [nodes, edges, hovered]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [nodes, edges]) // eslint-disable-line react-hooks/exhaustive-deps
 
     if (!nodes.length) return <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>No entities to visualize.</div>
     return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
