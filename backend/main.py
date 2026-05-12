@@ -14058,11 +14058,19 @@ def forge_get_ontology(_forge=Depends(_require_forge)):
 @app.post("/api/forge/ontology/build")
 async def forge_build_ontology(_forge=Depends(_require_forge)):
     import random as _random
-    nodes: list = []
-    edges: list = []
-    _nc = [0]
+    # Merge: keep existing nodes/edges, only add new ones by label
+    existing = _forge_ontology_load()
+    nodes: list = list(existing.get("nodes", []))
+    edges: list = list(existing.get("edges", []))
+    existing_labels: set = {n["label"].lower() for n in nodes}
+    existing_edge_keys: set = {(e.get("source"), e.get("target"), e.get("type")) for e in edges}
+    _nc = [len(nodes)]
 
     def add_node(type_, label, description="", lat=None, lng=None):
+        key = label.lower()
+        if key in existing_labels:
+            return next((n["id"] for n in nodes if n["label"].lower() == key), None)
+        existing_labels.add(key)
         _nc[0] += 1
         nid = f"{type_}_{_nc[0]}"
         nodes.append({"id": nid, "type": type_, "label": label,
@@ -14070,6 +14078,12 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
         return nid
 
     def add_edge(src, tgt, rel):
+        if not src or not tgt:
+            return
+        key = (src, tgt, rel)
+        if key in existing_edge_keys:
+            return
+        existing_edge_keys.add(key)
         edges.append({"id": f"e_{len(edges)}", "source": src, "target": tgt, "type": rel})
 
     # ── Chokepoints ──────────────────────────────────────────────────────────

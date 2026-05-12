@@ -229,8 +229,8 @@ function Toolbar({ children }) {
         </div>
     )
 }
-function WorkspaceBody({ children }) {
-    return <div style={{ flex: 1, overflow: "auto", padding: 20 }}>{children}</div>
+function WorkspaceBody({ children, style }) {
+    return <div style={{ flex: 1, overflow: "auto", padding: 20, ...style }}>{children}</div>
 }
 
 // ── Header ─────────────────────────────────────────────────────────────────────
@@ -1476,6 +1476,144 @@ function AddConnectionRow({ nodes, onAdd }) {
     )
 }
 
+const GRAPH_COLORS = {
+    country: "#4ade80", chokepoint: "#22d3ee", group: "#fb923c", person: "#e879f9",
+    vessel: "#60a5fa", aircraft: "#a78bfa", event: "#f87171", facility: "#38bdf8",
+    cable: "#fbbf24", port: "#fb7185", airport: "#c084fc", rule: "#94a3b8", alert: "#ef4444",
+}
+
+function OntologyGraph({ nodes, edges, onNodeClick }) {
+    const canvasRef = useRef(null)
+    const posRef    = useRef({})
+    const animRef   = useRef(null)
+    const [hovered, setHovered] = useState(null)
+
+    useEffect(() => {
+        if (!nodes.length) return
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const parent = canvas.parentElement
+        const W = parent.clientWidth || 800
+        const H = parent.clientHeight || 500
+        canvas.width  = W * 2; canvas.height = H * 2
+        canvas.style.width = W + "px"; canvas.style.height = H + "px"
+        const ctx = canvas.getContext("2d")
+        ctx.scale(2, 2)
+
+        // Init positions for new nodes
+        nodes.forEach((n, i) => {
+            if (!posRef.current[n.id]) {
+                const angle = (i / nodes.length) * Math.PI * 2
+                const r = Math.min(W, H) * 0.34
+                posRef.current[n.id] = {
+                    x: W / 2 + Math.cos(angle) * r + (Math.random() - 0.5) * 50,
+                    y: H / 2 + Math.sin(angle) * r + (Math.random() - 0.5) * 50,
+                    vx: 0, vy: 0,
+                }
+            }
+        })
+        // Remove stale
+        const live = new Set(nodes.map(n => n.id))
+        Object.keys(posRef.current).forEach(k => { if (!live.has(k)) delete posRef.current[k] })
+
+        function tick() {
+            const pos = posRef.current
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const a = pos[nodes[i].id], b = pos[nodes[j].id]
+                    if (!a || !b) continue
+                    const dx = b.x - a.x, dy = b.y - a.y
+                    const d = Math.sqrt(dx * dx + dy * dy) || 1
+                    const f = 280 / (d * d)
+                    a.vx -= dx / d * f * 0.05; a.vy -= dy / d * f * 0.05
+                    b.vx += dx / d * f * 0.05; b.vy += dy / d * f * 0.05
+                }
+            }
+            for (const e of edges) {
+                const a = pos[e.source], b = pos[e.target]
+                if (!a || !b) continue
+                const dx = b.x - a.x, dy = b.y - a.y
+                const d = Math.sqrt(dx * dx + dy * dy) || 1
+                const f = (d - 90) * 0.003
+                a.vx += dx / d * f; a.vy += dy / d * f
+                b.vx -= dx / d * f; b.vy -= dy / d * f
+            }
+            for (const n of nodes) {
+                const p = pos[n.id]
+                if (!p) continue
+                p.vx += (W / 2 - p.x) * 0.0005; p.vy += (H / 2 - p.y) * 0.0005
+                p.vx *= 0.92; p.vy *= 0.92
+                p.x += p.vx; p.y += p.vy
+                p.x = Math.max(20, Math.min(W - 20, p.x))
+                p.y = Math.max(20, Math.min(H - 20, p.y))
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, W, H)
+            const pos = posRef.current
+            ctx.save()
+            for (const e of edges) {
+                const a = pos[e.source], b = pos[e.target]
+                if (!a || !b) continue
+                ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y)
+                ctx.strokeStyle = "rgba(148,163,184,0.1)"; ctx.lineWidth = 1; ctx.stroke()
+                if (e.type) {
+                    ctx.fillStyle = "#1e293b"; ctx.font = "7px system-ui"; ctx.textAlign = "center"
+                    ctx.fillText(e.type.replace(/_/g, " "), (a.x + b.x) / 2, (a.y + b.y) / 2 - 2)
+                }
+            }
+            for (const n of nodes) {
+                const p = pos[n.id]
+                if (!p) continue
+                const color = GRAPH_COLORS[n.type] || "#475569"
+                const isH = hovered === n.id
+                ctx.beginPath(); ctx.arc(p.x, p.y, isH ? 10 : 7, 0, Math.PI * 2)
+                ctx.fillStyle = color; ctx.globalAlpha = isH ? 1 : 0.82; ctx.fill()
+                ctx.globalAlpha = 1
+                const lbl = (n.label || n.id || "").slice(0, 20)
+                ctx.fillStyle = isH ? "#e2e8f0" : "#64748b"
+                ctx.font = `${isH ? 10 : 8}px system-ui`; ctx.textAlign = "center"
+                ctx.fillText(lbl, p.x, p.y + (isH ? 18 : 15))
+            }
+            ctx.restore()
+            tick()
+            animRef.current = requestAnimationFrame(draw)
+        }
+        draw()
+
+        function onMove(ev) {
+            const r = canvas.getBoundingClientRect()
+            const mx = ev.clientX - r.left, my = ev.clientY - r.top
+            let found = null
+            for (const n of nodes) {
+                const p = posRef.current[n.id]
+                if (p && Math.sqrt((p.x - mx) ** 2 + (p.y - my) ** 2) < 12) { found = n.id; break }
+            }
+            setHovered(found)
+            canvas.style.cursor = found ? "pointer" : "default"
+        }
+        function onClick(ev) {
+            const r = canvas.getBoundingClientRect()
+            const mx = ev.clientX - r.left, my = ev.clientY - r.top
+            for (const n of nodes) {
+                const p = posRef.current[n.id]
+                if (p && Math.sqrt((p.x - mx) ** 2 + (p.y - my) ** 2) < 12) { onNodeClick(n); return }
+            }
+        }
+        canvas.addEventListener("mousemove", onMove)
+        canvas.addEventListener("click", onClick)
+        return () => {
+            cancelAnimationFrame(animRef.current)
+            canvas.removeEventListener("mousemove", onMove)
+            canvas.removeEventListener("click", onClick)
+        }
+    }, [nodes, edges, hovered]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (!nodes.length) return <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>No entities to visualize.</div>
+    return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
+}
+
 function OntologyWorkspace() {
     const [nodes,      setNodes]      = useState([])
     const [edges,      setEdges]      = useState([])
@@ -1487,6 +1625,7 @@ function OntologyWorkspace() {
     const [selectedNode, setSelectedNode] = useState(null)
     const [showAdd,    setShowAdd]    = useState(false)
     const [showLink,   setShowLink]   = useState(false)
+    const [view,       setView]       = useState("table")
 
     const loadOntology = () =>
         fetch(`${API}/api/forge/ontology`, { headers: forgeHeaders() })
@@ -1562,13 +1701,18 @@ function OntologyWorkspace() {
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
             <Toolbar>
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…" style={{ ...inputStyle, flex: 1, maxWidth: 220 }} />
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…" style={{ ...inputStyle, flex: 1, maxWidth: 200 }} />
+                <div style={{ display: "flex", gap: 2, background: "#0a0e1a", borderRadius: 4, padding: 2 }}>
+                    {["table", "graph"].map(v => (
+                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? "rgba(96,165,250,0.12)" : "transparent", color: view === v ? "#60a5fa" : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
+                    ))}
+                </div>
                 <button onClick={() => { setShowAdd(v => !v); setShowLink(false) }} style={{ padding: "5px 10px", borderRadius: 5, border: "none", background: showAdd ? "#60a5fa" : "#1e293b", color: showAdd ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>+ Entity</button>
                 <button onClick={() => { setShowLink(v => !v); setShowAdd(false) }} style={{ padding: "5px 10px", borderRadius: 5, border: "none", background: showLink ? "#60a5fa" : "#1e293b", color: showLink ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>+ Link</button>
                 <button onClick={buildOntology} disabled={building} style={{ padding: "5px 12px", borderRadius: 5, border: "none", background: building ? "#1e293b" : "#334155", color: building ? "#475569" : "#94a3b8", fontWeight: 600, cursor: building ? "default" : "pointer", fontSize: 10 }}>
                     {building ? "Building…" : "Build"}
                 </button>
-                <span style={{ color: "#334155", fontSize: 10 }}>{nodes.length} entities · {edges.length} connections</span>
+                <span style={{ color: "#334155", fontSize: 10 }}>{nodes.length} · {edges.length}</span>
                 {buildMsg && <span style={{ color: buildMsg.startsWith("Error") ? "#f87171" : "#4ade80", fontSize: 10 }}>{buildMsg}</span>}
             </Toolbar>
             {(showAdd || showLink) && (
@@ -1577,13 +1721,16 @@ function OntologyWorkspace() {
                     {showLink && <AddConnectionRow nodes={nodes} onAdd={(f, t, r) => addConnection(f, t, r)} />}
                 </div>
             )}
-            <div style={{ display: "flex", gap: 4, padding: "6px 12px", flexWrap: "wrap", borderBottom: "1px solid rgba(148,163,184,0.06)" }}>
-                {ONTOLOGY_TYPES.map(t => (
-                    <button key={t} onClick={() => setTypeFilter(t)} style={{ padding: "2px 8px", borderRadius: 10, border: "1px solid " + (typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") : "rgba(148,163,184,0.15)"), background: typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") + "22" : "transparent", color: typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") : "#475569", fontSize: 10, cursor: "pointer", fontWeight: typeFilter === t ? 700 : 400 }}>{t}</button>
-                ))}
-            </div>
-            <WorkspaceBody>
+            {view === "table" && (
+                <div style={{ display: "flex", gap: 4, padding: "6px 12px", flexWrap: "wrap", borderBottom: "1px solid rgba(148,163,184,0.06)" }}>
+                    {ONTOLOGY_TYPES.map(t => (
+                        <button key={t} onClick={() => setTypeFilter(t)} style={{ padding: "2px 8px", borderRadius: 10, border: "1px solid " + (typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") : "rgba(148,163,184,0.15)"), background: typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") + "22" : "transparent", color: typeFilter === t ? (ONTOLOGY_TYPE_COLORS[t] || "#60a5fa") : "#475569", fontSize: 10, cursor: "pointer", fontWeight: typeFilter === t ? 700 : 400 }}>{t}</button>
+                    ))}
+                </div>
+            )}
+            <WorkspaceBody style={view === "graph" ? { padding: 0, overflow: "hidden" } : {}}>
                 {!loaded ? <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div> :
+                view === "graph" ? <OntologyGraph nodes={nodes} edges={edges} onNodeClick={setSelectedNode} /> :
                 filtered.length === 0 ? (
                     <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>
                         {nodes.length === 0 ? "No entities yet — click Build to populate from live data, or + Entity to add manually." : `No ${typeFilter === "all" ? "" : typeFilter + " "}entities match.`}
