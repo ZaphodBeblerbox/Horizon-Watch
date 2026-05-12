@@ -14343,6 +14343,34 @@ def forge_get_models(_forge=Depends(_require_forge)):
     }
 
 
+@app.post("/api/forge/ontology/node")
+async def forge_add_ontology_node(request: Request, _forge=Depends(_require_forge)):
+    body = await request.json()
+    ontology = _forge_ontology_load()
+    nid = f"{body['type']}_{len(ontology['nodes'])+1}_{int(datetime.now(timezone.utc).timestamp())}"
+    node = {
+        "id":          nid,
+        "type":        body["type"],
+        "label":       body["label"],
+        "description": body.get("description", ""),
+        "lat":         body.get("lat"),
+        "lng":         body.get("lng"),
+        "manual":      True,
+    }
+    ontology["nodes"].append(node)
+    _forge_ontology_save(ontology)
+    return node
+
+
+@app.delete("/api/forge/ontology/node/{node_id}")
+async def forge_delete_ontology_node(node_id: str, _forge=Depends(_require_forge)):
+    ontology = _forge_ontology_load()
+    ontology["nodes"] = [n for n in ontology["nodes"] if n.get("id") != node_id]
+    ontology["edges"] = [e for e in ontology["edges"] if e.get("source") != node_id and e.get("target") != node_id]
+    _forge_ontology_save(ontology)
+    return {"deleted": node_id}
+
+
 @app.post("/api/forge/ontology/edge")
 async def forge_add_ontology_edge(request: Request, _forge=Depends(_require_forge)):
     body = await request.json()

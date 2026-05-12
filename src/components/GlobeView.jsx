@@ -146,7 +146,7 @@ export default function GlobeView({
                 if (attempts++ < 15) setTimeout(tryApply, 250)
                 return
             }
-            viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5)
+            viewer.resolutionScale = window.devicePixelRatio || 1
             viewer.scene.globe.maximumScreenSpaceError = 4
             viewer.scene.postProcessStages.fxaa.enabled = true
             viewer.scene.highDynamicRange = false
