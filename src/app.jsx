@@ -1410,6 +1410,7 @@ export default function App() {
                             chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
                             poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
+                            alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? false}
                             aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
                             adsbHeatmapEnabled={activeWorkspace?.layers?.adsbHeatmap ?? false}
                             heatmapHours={heatmapHours}

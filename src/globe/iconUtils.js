@@ -259,6 +259,57 @@ export function makeTypedEventCanvas(type, hex) {
     })
 }
 
+// ── Alert / rule-trigger icons ────────────────────────────────────────────────
+export function makeAlertCanvas(source, severity) {
+    const sevColor = (
+        severity === "critical" ? "#f87171" :
+        severity === "high"     ? "#fb923c" :
+        severity === "medium"   ? "#fbbf24" : "#60a5fa"
+    )
+    const SIZE = 38
+    return makeCanvas(SIZE, SIZE, (ctx, w, h) => {
+        const cx = w / 2, cy = h / 2
+        // Glow halo
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2)
+        grd.addColorStop(0,   sevColor + "55")
+        grd.addColorStop(0.65, sevColor + "22")
+        grd.addColorStop(1,   sevColor + "00")
+        ctx.beginPath(); ctx.arc(cx, cy, w / 2, 0, Math.PI * 2)
+        ctx.fillStyle = grd; ctx.fill()
+        // Core circle
+        ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2)
+        ctx.fillStyle = "rgba(10,14,28,0.92)"; ctx.fill()
+        ctx.strokeStyle = sevColor
+        ctx.lineWidth = severity === "critical" ? 2.5 : 1.8; ctx.stroke()
+        // Source symbol
+        ctx.save(); ctx.translate(cx, cy)
+        ctx.strokeStyle = sevColor; ctx.fillStyle = sevColor; ctx.lineWidth = 1.3
+        if (source === "AIS") {
+            // Anchor: ring + vertical + two flukes
+            ctx.beginPath(); ctx.arc(0, -4, 2.5, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath()
+            ctx.moveTo(0, -1.5); ctx.lineTo(0, 5)
+            ctx.moveTo(-3.5, 1.5); ctx.lineTo(3.5, 1.5)
+            ctx.moveTo(-3, 5); ctx.lineTo(0, 5); ctx.lineTo(3, 5)
+            ctx.stroke()
+        } else if (source === "ADSB") {
+            // Mini aircraft using existing path, scaled down
+            ctx.scale(5.5 / 24, 5.5 / 24)
+            ctx.translate(-12, -12)
+            ctx.fill(new Path2D(AC_PATH_STR))
+        } else {
+            // NEWS / default: warning triangle with exclamation
+            ctx.beginPath()
+            ctx.moveTo(0, -6); ctx.lineTo(5.5, 4); ctx.lineTo(-5.5, 4); ctx.closePath()
+            ctx.stroke()
+            ctx.font = "bold 6px system-ui"
+            ctx.textAlign = "center"; ctx.textBaseline = "middle"
+            ctx.fillText("!", 0, 1.5)
+        }
+        ctx.restore()
+    })
+}
+
 // ── Aircraft classification ───────────────────────────────────────────────────
 export function acClassify(ac) {
     if (ac.military || ac.interesting) return "military"

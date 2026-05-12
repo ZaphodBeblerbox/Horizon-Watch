@@ -129,6 +129,12 @@ function LayerRows3D({ active, onToggle }) {
 
             <SectionHeader label="Intelligence" />
             <LayerRow
+                label="Forge Alerts"
+                hint="Rule-triggered AIS · ADSB · News alerts"
+                toggled={active.forgeAlerts ?? false}
+                onToggle={() => onToggle("forgeAlerts")}
+            />
+            <LayerRow
                 label="Intelligence Events"
                 hint="Unified news & conflict events"
                 toggled={active.unifiedEvents ?? true}

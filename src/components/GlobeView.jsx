@@ -18,6 +18,7 @@ import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
 import GlobeCityLabelsLayer     from "../globe/GlobeCityLabelsLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import GlobeDirectorLayer       from "../globe/GlobeDirectorLayer.jsx"
+import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -92,6 +93,8 @@ export default function GlobeView({
     onOverwatchBounds   = null,
     // Satellite imagery overlay (Sentinel-2)
     satelliteEnabled = false,
+    // Forge alerts/rules on the globe
+    alertsEnabled = false,
     // Director Mode scene (null when inactive)
     directorScene = null,
     // Data props (optional — GlobeView fetches internally when null)
@@ -147,7 +150,7 @@ export default function GlobeView({
                 return
             }
             viewer.resolutionScale = window.devicePixelRatio
-            viewer.scene.globe.maximumScreenSpaceError = 4
+            viewer.scene.globe.maximumScreenSpaceError = 2
             viewer.scene.postProcessStages.fxaa.enabled = true
             viewer.scene.highDynamicRange = false
             viewer.scene.fog.enabled = true
@@ -324,6 +327,9 @@ export default function GlobeView({
 
                 {/* ── Overwatch draw mode: two-click rectangle selection on globe ── */}
                 <GlobeOverwatchDrawLayer active={overwatchDrawActive} onBounds={onOverwatchBounds} />
+
+                {/* ── Forge alerts layer ──────────────────────────────────────── */}
+                <GlobeAlertsLayer enabled={alertsEnabled} />
 
                 {/* ── Director Mode 3D rendering ──────────────────────────────── */}
                 <GlobeDirectorLayer scene={directorScene} />

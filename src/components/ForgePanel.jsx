@@ -1765,6 +1765,76 @@ function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode }) {
     return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
 }
 
+function EditNodeModal({ en, nodes, edges, onClose, onDeleteEntity, onDeleteConnection, onAddConnection }) {
+    const [showAdd, setShowAdd] = useState(false)
+    const [to,      setTo]      = useState("")
+    const [rel,     setRel]     = useState("relates_to")
+    const typeColor = ONTOLOGY_TYPE_COLORS[en.type] || "#475569"
+    const connEdges = edges.filter(e => e.source === en.id || e.target === en.id)
+    const otherNodes = nodes.filter(n => n.id !== en.id)
+    const submitConn = () => {
+        if (!to) return
+        onAddConnection(en.id, to, rel)
+        setTo(""); setShowAdd(false)
+    }
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={onClose}>
+            <div style={{ background: "#111827", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 10, width: 420, maxHeight: "82vh", overflow: "auto", padding: 20 }}
+                onClick={e => e.stopPropagation()}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                    <span style={{ padding: "2px 8px", borderRadius: 10, background: typeColor + "22", color: typeColor, fontSize: 10, fontWeight: 700 }}>{en.type}</span>
+                    <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700, flex: 1 }}>{en.label || en.id}</span>
+                    <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
+                </div>
+                {en.description && <div style={{ color: "#64748b", fontSize: 11, marginBottom: 14, lineHeight: 1.5 }}>{en.description}</div>}
+                {(en.lat != null || en.lng != null) && (
+                    <div style={{ color: "#475569", fontSize: 10, marginBottom: 14 }}>{en.lat?.toFixed(4)}, {en.lng?.toFixed(4)}</div>
+                )}
+
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>Connections ({connEdges.length})</div>
+                    <button onClick={() => setShowAdd(v => !v)} style={{ padding: "2px 8px", borderRadius: 3, border: "1px solid rgba(96,165,250,0.3)", background: showAdd ? "rgba(96,165,250,0.12)" : "transparent", color: "#60a5fa", fontSize: 10, cursor: "pointer" }}>
+                        {showAdd ? "Cancel" : "+ Add"}
+                    </button>
+                </div>
+
+                {showAdd && (
+                    <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center" }}>
+                        <EntitySelect nodes={otherNodes} value={to} onChange={setTo} placeholder="Connect to…" />
+                        <select value={rel} onChange={e => setRel(e.target.value)} style={{ ...selS, width: 110, flexShrink: 0 }}>
+                            {REL_TYPES.map(r => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
+                        </select>
+                        <button onClick={submitConn} disabled={!to} style={{ padding: "4px 10px", borderRadius: 3, border: "none", background: to ? "#60a5fa" : "#1e293b", color: to ? "#0a0e1a" : "#475569", fontSize: 10, cursor: to ? "pointer" : "default", fontWeight: 600, flexShrink: 0 }}>Link</button>
+                    </div>
+                )}
+
+                {connEdges.length === 0 && !showAdd && <div style={{ color: "#334155", fontSize: 11, marginBottom: 12 }}>No connections</div>}
+                {connEdges.map(e => {
+                    const otherId = e.source === en.id ? e.target : e.source
+                    const other = nodes.find(n => n.id === otherId)
+                    const dir = e.source === en.id ? "→" : "←"
+                    return (
+                        <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", borderRadius: 4, background: "#0d1422", marginBottom: 3 }}>
+                            <span style={{ color: "#64748b", fontSize: 10 }}>
+                                {dir} <span style={{ color: "#60a5fa" }}>{other?.label || otherId}</span>
+                                {e.type && <span style={{ color: "#334155" }}> · {e.type.replace(/_/g, " ")}</span>}
+                            </span>
+                            <button onClick={() => onDeleteConnection(e.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11, padding: "0 4px" }}>✕</button>
+                        </div>
+                    )
+                })}
+                <div style={{ borderTop: "1px solid rgba(148,163,184,0.08)", marginTop: 16, paddingTop: 12 }}>
+                    <button onClick={() => onDeleteEntity(en.id)}
+                        style={{ padding: "6px 14px", borderRadius: 5, border: "1px solid rgba(248,113,113,0.3)", background: "rgba(248,113,113,0.08)", color: "#f87171", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                        Delete Entity
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
 function OntologyWorkspace() {
     const [nodes,      setNodes]      = useState([])
     const [edges,      setEdges]      = useState([])
@@ -1949,50 +2019,17 @@ function OntologyWorkspace() {
                     )}
                 </div>
             )}
-            {editNode && (() => {
-                const en = nodes.find(n => n.id === editNode.id) || editNode
-                const typeColor = ONTOLOGY_TYPE_COLORS[en.type] || "#475569"
-                const connEdges = edges.filter(e => e.source === en.id || e.target === en.id)
-                return (
-                    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}
-                        onClick={() => setEditNode(null)}>
-                        <div style={{ background: "#111827", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 10, width: 400, maxHeight: "80vh", overflow: "auto", padding: 20 }}
-                            onClick={e => e.stopPropagation()}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                                <span style={{ padding: "2px 8px", borderRadius: 10, background: typeColor + "22", color: typeColor, fontSize: 10, fontWeight: 700 }}>{en.type}</span>
-                                <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700, flex: 1 }}>{en.label || en.id}</span>
-                                <button onClick={() => setEditNode(null)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
-                            </div>
-                            {en.description && <div style={{ color: "#64748b", fontSize: 11, marginBottom: 14, lineHeight: 1.5 }}>{en.description}</div>}
-                            {(en.lat != null || en.lng != null) && (
-                                <div style={{ color: "#475569", fontSize: 10, marginBottom: 14 }}>{en.lat?.toFixed(4)}, {en.lng?.toFixed(4)}</div>
-                            )}
-                            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Connections ({connEdges.length})</div>
-                            {connEdges.length === 0 && <div style={{ color: "#334155", fontSize: 11, marginBottom: 12 }}>No connections</div>}
-                            {connEdges.map(e => {
-                                const otherId = e.source === en.id ? e.target : e.source
-                                const other = nodes.find(n => n.id === otherId)
-                                const dir = e.source === en.id ? "→" : "←"
-                                return (
-                                    <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", borderRadius: 4, background: "#0d1422", marginBottom: 3 }}>
-                                        <span style={{ color: "#64748b", fontSize: 10 }}>
-                                            {dir} <span style={{ color: "#60a5fa" }}>{other?.label || otherId}</span>
-                                            {e.type && <span style={{ color: "#334155" }}> · {e.type.replace(/_/g, " ")}</span>}
-                                        </span>
-                                        <button onClick={() => deleteConnection(e.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11, padding: "0 4px" }}>✕</button>
-                                    </div>
-                                )
-                            })}
-                            <div style={{ borderTop: "1px solid rgba(148,163,184,0.08)", marginTop: 16, paddingTop: 12 }}>
-                                <button onClick={() => { deleteEntity(en.id); setEditNode(null) }}
-                                    style={{ padding: "6px 14px", borderRadius: 5, border: "1px solid rgba(248,113,113,0.3)", background: "rgba(248,113,113,0.08)", color: "#f87171", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
-                                    Delete Entity
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )
-            })()}
+            {editNode && (
+                <EditNodeModal
+                    en={nodes.find(n => n.id === editNode.id) || editNode}
+                    nodes={nodes}
+                    edges={edges}
+                    onClose={() => setEditNode(null)}
+                    onDeleteEntity={id => { deleteEntity(id); setEditNode(null) }}
+                    onDeleteConnection={deleteConnection}
+                    onAddConnection={addConnection}
+                />
+            )}
         </div>
     )
 }
