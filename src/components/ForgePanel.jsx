@@ -235,6 +235,12 @@ function WorkspaceBody({ children, style }) {
 
 // ── Header ─────────────────────────────────────────────────────────────────────
 function ForgeHeader({ brainStatus, activeNode, onBack }) {
+    const [muted, setMuted] = useState(() => localStorage.getItem("forge_notifications_muted") === "true")
+    const toggleMute = () => {
+        const next = !muted
+        setMuted(next)
+        localStorage.setItem("forge_notifications_muted", String(next))
+    }
     return (
         <div style={{ padding: "0 16px", height: 44, borderBottom: "1px solid rgba(148,163,184,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#080c14", flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -246,12 +252,17 @@ function ForgeHeader({ brainStatus, activeNode, onBack }) {
                     </>
                 )}
             </div>
-            {brainStatus && (
-                <span style={{ color: "#334155", fontSize: 10 }}>
-                    {brainStatus.last_cycle ? new Date(brainStatus.last_cycle).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
-                    {" · "}{brainStatus.vessels_tracked ?? 0} vessels · {brainStatus.alerts_24h ?? 0} alerts
-                </span>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {brainStatus && (
+                    <span style={{ color: "#334155", fontSize: 10 }}>
+                        {brainStatus.last_cycle ? new Date(brainStatus.last_cycle).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+                        {" · "}{brainStatus.vessels_tracked ?? 0} vessels · {brainStatus.alerts_24h ?? 0} alerts
+                    </span>
+                )}
+                <button onClick={toggleMute} title={muted ? "Unmute notifications" : "Mute notifications"} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, opacity: muted ? 0.4 : 0.7, padding: "2px 4px", lineHeight: 1 }}>
+                    {muted ? "🔇" : "🔔"}
+                </button>
+            </div>
         </div>
     )
 }
@@ -1452,6 +1463,59 @@ function AddEntityRow({ onAdd }) {
     )
 }
 
+function EntitySelect({ nodes, value, onChange, placeholder }) {
+    const [search,    setSearch]    = useState("")
+    const [open,      setOpen]      = useState(false)
+    const [collapsed, setCollapsed] = useState({})
+    const ref = useRef(null)
+    useEffect(() => {
+        const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+        document.addEventListener("mousedown", close)
+        return () => document.removeEventListener("mousedown", close)
+    }, [])
+    const grouped = {}
+    nodes.forEach(n => { if (!grouped[n.type]) grouped[n.type] = []; grouped[n.type].push(n) })
+    Object.values(grouped).forEach(arr => arr.sort((a, b) => (a.label || "").localeCompare(b.label || "")))
+    const selected = nodes.find(n => n.id === value)
+    const flat = search ? nodes.filter(n => (n.label || "").toLowerCase().includes(search.toLowerCase())) : null
+    return (
+        <div ref={ref} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+            <button onClick={() => setOpen(o => !o)} style={{ width: "100%", padding: "4px 8px", background: "#111827", textAlign: "left", border: "1px solid rgba(148,163,184,0.08)", borderRadius: 3, color: selected ? "#cbd5e1" : "#475569", fontSize: 10, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {selected ? `${selected.label} (${selected.type})` : placeholder || "Select…"}
+            </button>
+            {open && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 40, background: "#0f1219", border: "1px solid rgba(148,163,184,0.1)", borderRadius: 4, maxHeight: 240, overflow: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }}>
+                    <input autoFocus value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
+                        style={{ width: "100%", padding: "6px 8px", background: "#111827", border: "none", borderBottom: "1px solid rgba(148,163,184,0.06)", color: "#cbd5e1", fontSize: 10, outline: "none", boxSizing: "border-box" }} />
+                    {flat ? flat.slice(0, 40).map(n => (
+                        <button key={n.id} onClick={() => { onChange(n.id); setOpen(false); setSearch("") }}
+                            style={{ display: "block", width: "100%", padding: "4px 10px", border: "none", background: "transparent", color: "#cbd5e1", fontSize: 10, textAlign: "left", cursor: "pointer" }}
+                            onMouseEnter={e => e.currentTarget.style.background = "#1e293b"}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                            {n.label} <span style={{ color: "#475569" }}>({n.type})</span>
+                        </button>
+                    )) : Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([type, items]) => (
+                        <div key={type}>
+                            <button onClick={() => setCollapsed(p => ({ ...p, [type]: !p[type] }))}
+                                style={{ display: "block", width: "100%", padding: "3px 8px", border: "none", background: "rgba(148,163,184,0.03)", color: "#64748b", fontSize: 9, textAlign: "left", cursor: "pointer", textTransform: "uppercase", fontWeight: 600 }}>
+                                {collapsed[type] ? "▶" : "▼"} {type} ({items.length})
+                            </button>
+                            {!collapsed[type] && items.map(n => (
+                                <button key={n.id} onClick={() => { onChange(n.id); setOpen(false); setSearch("") }}
+                                    style={{ display: "block", width: "100%", padding: "3px 10px 3px 20px", border: "none", background: "transparent", color: "#94a3b8", fontSize: 10, textAlign: "left", cursor: "pointer" }}
+                                    onMouseEnter={e => e.currentTarget.style.background = "#1e293b"}
+                                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                                    {n.label}
+                                </button>
+                            ))}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+
 function AddConnectionRow({ nodes, onAdd }) {
     const [from, setFrom] = useState("")
     const [to,   setTo]   = useState("")
@@ -1459,47 +1523,43 @@ function AddConnectionRow({ nodes, onAdd }) {
     const canLink = from && to && from !== to
     const submit = () => { if (canLink) { onAdd(from, to, rel); setFrom(""); setTo("") } }
     return (
-        <div style={{ display: "flex", gap: 4, padding: "6px 0", borderBottom: "1px solid rgba(148,163,184,0.06)" }}>
-            <select value={from} onChange={e => setFrom(e.target.value)} style={{ ...selS, flex: 1 }}>
-                <option value="">From…</option>
-                {nodes.map(n => <option key={n.id} value={n.id}>{n.label || n.id} ({n.type})</option>)}
-            </select>
-            <select value={rel} onChange={e => setRel(e.target.value)} style={{ ...selS, width: 110 }}>
+        <div style={{ display: "flex", gap: 4, padding: "6px 0", borderBottom: "1px solid rgba(148,163,184,0.06)", alignItems: "center" }}>
+            <EntitySelect nodes={nodes} value={from} onChange={setFrom} placeholder="From…" />
+            <select value={rel} onChange={e => setRel(e.target.value)} style={{ ...selS, width: 110, flexShrink: 0 }}>
                 {REL_TYPES.map(r => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
             </select>
-            <select value={to} onChange={e => setTo(e.target.value)} style={{ ...selS, flex: 1 }}>
-                <option value="">To…</option>
-                {nodes.map(n => <option key={n.id} value={n.id}>{n.label || n.id} ({n.type})</option>)}
-            </select>
-            <button onClick={submit} disabled={!canLink} style={{ padding: "4px 10px", borderRadius: 3, border: "none", background: canLink ? "#60a5fa" : "#1e293b", color: canLink ? "#0a0e1a" : "#475569", fontSize: 10, cursor: canLink ? "pointer" : "default", fontWeight: 600 }}>Link</button>
+            <EntitySelect nodes={nodes} value={to} onChange={setTo} placeholder="To…" />
+            <button onClick={submit} disabled={!canLink} style={{ padding: "4px 10px", borderRadius: 3, border: "none", background: canLink ? "#60a5fa" : "#1e293b", color: canLink ? "#0a0e1a" : "#475569", fontSize: 10, cursor: canLink ? "pointer" : "default", fontWeight: 600, flexShrink: 0 }}>Link</button>
         </div>
     )
 }
 
 const GRAPH_COLORS = {
-    country: "#4ade80", chokepoint: "#22d3ee", group: "#fb923c", person: "#e879f9",
-    vessel: "#60a5fa", aircraft: "#a78bfa", event: "#f87171", facility: "#38bdf8",
-    cable: "#fbbf24", port: "#fb7185", airport: "#c084fc", rule: "#94a3b8", alert: "#ef4444",
+    country: "#16a34a", chokepoint: "#dc2626", group: "#b91c1c", person: "#be185d",
+    vessel: "#d97706", aircraft: "#2563eb", event: "#ea580c", facility: "#0d9488",
+    cable: "#7c3aed", port: "#0891b2", airport: "#6d28d9", rule: "#ea580c", alert: "#dc2626",
 }
 
 const BOX_W = 160, BOX_H = 36, GAP_X = 60, GAP_Y = 8, PAD = 30
 const TYPE_ORDER = ["country","group","person","chokepoint","facility","port","airport","cable","vessel","aircraft","event","rule","alert"]
 
-function OntologyGraph({ nodes, edges, onNodeClick }) {
-    const canvasRef    = useRef(null)
-    const posRef       = useRef({})
-    const nodesRef     = useRef(nodes)
-    const edgesRef     = useRef(edges)
-    const onClickRef   = useRef(onNodeClick)
-    const animRef      = useRef(null)
-    const draggingRef  = useRef(null)
-    const panRef       = useRef({ x: 0, y: 0 })
-    const zoomRef      = useRef(1)
-    const panStartRef  = useRef(null)
-    const selectedRef  = useRef(null)
+function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode }) {
+    const canvasRef       = useRef(null)
+    const posRef          = useRef({})
+    const nodesRef        = useRef(nodes)
+    const edgesRef        = useRef(edges)
+    const onClickRef      = useRef(onNodeClick)
+    const onDblClickRef   = useRef(onDblClickNode)
+    const animRef         = useRef(null)
+    const draggingRef     = useRef(null)
+    const panRef          = useRef({ x: 0, y: 0 })
+    const zoomRef         = useRef(1)
+    const panStartRef     = useRef(null)
+    const selectedRef     = useRef(null)
 
     // Keep refs live — no loop restart needed when data changes
-    useEffect(() => { onClickRef.current = onNodeClick }, [onNodeClick])
+    useEffect(() => { onClickRef.current = onNodeClick },       [onNodeClick])
+    useEffect(() => { onDblClickRef.current = onDblClickNode }, [onDblClickNode])
 
     useEffect(() => {
         edgesRef.current = edges
@@ -1548,7 +1608,7 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             const zoom = zoomRef.current
             const selId = selectedRef.current
 
-            ctx.clearRect(0, 0, W, H)
+            ctx.fillStyle = "#f8fafc"; ctx.fillRect(0, 0, W, H)
             ctx.save()
             ctx.translate(pan.x, pan.y)
             ctx.scale(zoom, zoom)
@@ -1556,7 +1616,7 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             // Column headers
             TYPE_ORDER.forEach((t, ci) => {
                 if (!ns.some(n => n.type === t)) return
-                ctx.fillStyle = "#334155"; ctx.font = "600 8px system-ui"; ctx.textAlign = "left"
+                ctx.fillStyle = "#9ca3af"; ctx.font = "600 8px system-ui"; ctx.textAlign = "left"
                 ctx.fillText(t.toUpperCase(), PAD + ci * (BOX_W + GAP_X), PAD + 10)
             })
 
@@ -1581,20 +1641,19 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
                 const cpX = (fx + tx) / 2
                 const isLit = selId && selEdgeIds.has(e.id)
                 const srcNode = ns.find(n => n.id === e.source)
-                const color = isLit ? (GRAPH_COLORS[srcNode?.type] || "#60a5fa") : null
+                const color = isLit ? (GRAPH_COLORS[srcNode?.type] || "#2563eb") : null
                 ctx.beginPath()
                 ctx.moveTo(fx, fy)
                 ctx.bezierCurveTo(cpX, fy, cpX, ty, tx, ty)
-                ctx.strokeStyle = isLit ? color + "99" : "rgba(148,163,184,0.1)"
-                ctx.lineWidth = isLit ? 1.5 : 0.8
-                if (isLit) { ctx.shadowColor = color; ctx.shadowBlur = 6 }
-                ctx.stroke(); ctx.shadowBlur = 0
+                ctx.strokeStyle = isLit ? color + "cc" : "rgba(0,0,0,0.08)"
+                ctx.lineWidth = isLit ? 2 : 0.8
+                ctx.stroke()
                 ctx.beginPath()
                 ctx.moveTo(tx, ty); ctx.lineTo(tx - 5, ty - 3); ctx.lineTo(tx - 5, ty + 3)
                 ctx.closePath()
-                ctx.fillStyle = isLit ? color + "99" : "rgba(148,163,184,0.1)"; ctx.fill()
+                ctx.fillStyle = isLit ? color + "cc" : "rgba(0,0,0,0.08)"; ctx.fill()
                 if (isLit && e.type) {
-                    ctx.fillStyle = "#64748b"; ctx.font = "7px system-ui"; ctx.textAlign = "center"
+                    ctx.fillStyle = "#6b7280"; ctx.font = "7px system-ui"; ctx.textAlign = "center"
                     ctx.fillText(e.type.replace(/_/g, " "), cpX, Math.min(fy, ty) - 4)
                     ctx.textAlign = "left"
                 }
@@ -1604,27 +1663,25 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             for (const n of ns) {
                 const p = pos[n.id]
                 if (!p) continue
-                const color = GRAPH_COLORS[n.type] || "#475569"
+                const color = GRAPH_COLORS[n.type] || "#6b7280"
                 const isSel  = n.id === selId
                 const isConn = selId && selConnected.has(n.id) && !isSel
                 const isDrag = draggingRef.current?.id === n.id
                 const lit = isSel || isConn || isDrag
-                ctx.fillStyle = lit ? "#1a2332" : "#111827"
-                ctx.strokeStyle = isSel ? color : isConn ? color + "55" : "rgba(148,163,184,0.07)"
-                ctx.lineWidth = isSel ? 1.5 : 1
-                if (lit) { ctx.shadowColor = color; ctx.shadowBlur = isSel ? 12 : 6 }
+                ctx.fillStyle = "#ffffff"
+                ctx.strokeStyle = isSel ? color : isConn ? color + "99" : "#d1d5db"
+                ctx.lineWidth = isSel ? 2.5 : isConn ? 1.5 : 1
                 ctx.beginPath(); ctx.roundRect(p.x, p.y, BOX_W, BOX_H, 3); ctx.fill(); ctx.stroke()
-                ctx.shadowBlur = 0
-                ctx.fillStyle = color; ctx.globalAlpha = lit ? 1 : 0.6
+                ctx.fillStyle = color; ctx.globalAlpha = lit ? 1 : 0.7
                 ctx.fillRect(p.x + 1, p.y + 4, 2, BOX_H - 8); ctx.globalAlpha = 1
-                ctx.fillStyle = lit ? "#e2e8f0" : "#94a3b8"
+                ctx.fillStyle = lit ? "#111827" : "#374151"
                 ctx.font = `${isSel ? "600 " : ""}10px system-ui`; ctx.textAlign = "left"
                 const lbl = (n.label || "").length > 19 ? (n.label || "").slice(0, 17) + "…" : (n.label || "")
                 ctx.fillText(lbl, p.x + 10, p.y + 15)
-                ctx.fillStyle = isSel || isConn ? color + "99" : "#334155"
+                ctx.fillStyle = isSel || isConn ? color : "#9ca3af"
                 ctx.font = "7px system-ui"; ctx.fillText(n.type, p.x + 10, p.y + 27)
                 ctx.beginPath(); ctx.arc(p.x + BOX_W, p.y + BOX_H / 2, 3, 0, Math.PI * 2)
-                ctx.fillStyle = "#1e293b"; ctx.fill()
+                ctx.fillStyle = "#e5e7eb"; ctx.fill()
                 ctx.beginPath(); ctx.arc(p.x, p.y + BOX_H / 2, 3, 0, Math.PI * 2); ctx.fill()
             }
 
@@ -1676,6 +1733,11 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             if (n) { selectedRef.current = selectedRef.current === n.id ? null : n.id; onClickRef.current(n) }
             else selectedRef.current = null
         }
+        function onDblClick(e) {
+            const { x, y } = toCanvas(e)
+            const n = nodeAt(x, y)
+            if (n && onDblClickRef.current) onDblClickRef.current(n)
+        }
         function onWheel(e) {
             e.preventDefault()
             zoomRef.current = Math.max(0.2, Math.min(3, zoomRef.current * (e.deltaY > 0 ? 0.95 : 1.05)))
@@ -1685,6 +1747,7 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
         canvas.addEventListener("mouseup",    onUp)
         canvas.addEventListener("mouseleave", onUp)
         canvas.addEventListener("click",      onClick)
+        canvas.addEventListener("dblclick",   onDblClick)
         canvas.addEventListener("wheel",      onWheel, { passive: false })
         return () => {
             cancelAnimationFrame(animRef.current)
@@ -1693,6 +1756,7 @@ function OntologyGraph({ nodes, edges, onNodeClick }) {
             canvas.removeEventListener("mouseup",    onUp)
             canvas.removeEventListener("mouseleave", onUp)
             canvas.removeEventListener("click",      onClick)
+            canvas.removeEventListener("dblclick",   onDblClick)
             canvas.removeEventListener("wheel",      onWheel)
         }
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1710,6 +1774,7 @@ function OntologyWorkspace() {
     const [building,   setBuilding]   = useState(false)
     const [buildMsg,   setBuildMsg]   = useState(null)
     const [selectedNode, setSelectedNode] = useState(null)
+    const [editNode,   setEditNode]   = useState(null)
     const [showAdd,    setShowAdd]    = useState(false)
     const [showLink,   setShowLink]   = useState(false)
     const [view,       setView]       = useState("table")
@@ -1749,7 +1814,7 @@ function OntologyWorkspace() {
     }
 
     const deleteEntity = async (nodeId, e) => {
-        e.stopPropagation()
+        e?.stopPropagation()
         try {
             await fetch(`${API}/api/forge/ontology/node/${nodeId}`, { method: "DELETE", headers: forgeHeaders() })
             setNodes(prev => prev.filter(n => n.id !== nodeId))
@@ -1817,7 +1882,7 @@ function OntologyWorkspace() {
             )}
             <WorkspaceBody style={view === "graph" ? { padding: 0, overflow: "hidden" } : {}}>
                 {!loaded ? <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div> :
-                view === "graph" ? <OntologyGraph nodes={nodes} edges={edges} onNodeClick={setSelectedNode} /> :
+                view === "graph" ? <OntologyGraph nodes={nodes} edges={edges} onNodeClick={setSelectedNode} onDblClickNode={n => { setEditNode(n); setSelectedNode(n) }} /> :
                 filtered.length === 0 ? (
                     <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>
                         {nodes.length === 0 ? "No entities yet — click Build to populate from live data, or + Entity to add manually." : `No ${typeFilter === "all" ? "" : typeFilter + " "}entities match.`}
@@ -1884,6 +1949,50 @@ function OntologyWorkspace() {
                     )}
                 </div>
             )}
+            {editNode && (() => {
+                const en = nodes.find(n => n.id === editNode.id) || editNode
+                const typeColor = ONTOLOGY_TYPE_COLORS[en.type] || "#475569"
+                const connEdges = edges.filter(e => e.source === en.id || e.target === en.id)
+                return (
+                    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}
+                        onClick={() => setEditNode(null)}>
+                        <div style={{ background: "#111827", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 10, width: 400, maxHeight: "80vh", overflow: "auto", padding: 20 }}
+                            onClick={e => e.stopPropagation()}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                                <span style={{ padding: "2px 8px", borderRadius: 10, background: typeColor + "22", color: typeColor, fontSize: 10, fontWeight: 700 }}>{en.type}</span>
+                                <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700, flex: 1 }}>{en.label || en.id}</span>
+                                <button onClick={() => setEditNode(null)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
+                            </div>
+                            {en.description && <div style={{ color: "#64748b", fontSize: 11, marginBottom: 14, lineHeight: 1.5 }}>{en.description}</div>}
+                            {(en.lat != null || en.lng != null) && (
+                                <div style={{ color: "#475569", fontSize: 10, marginBottom: 14 }}>{en.lat?.toFixed(4)}, {en.lng?.toFixed(4)}</div>
+                            )}
+                            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Connections ({connEdges.length})</div>
+                            {connEdges.length === 0 && <div style={{ color: "#334155", fontSize: 11, marginBottom: 12 }}>No connections</div>}
+                            {connEdges.map(e => {
+                                const otherId = e.source === en.id ? e.target : e.source
+                                const other = nodes.find(n => n.id === otherId)
+                                const dir = e.source === en.id ? "→" : "←"
+                                return (
+                                    <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", borderRadius: 4, background: "#0d1422", marginBottom: 3 }}>
+                                        <span style={{ color: "#64748b", fontSize: 10 }}>
+                                            {dir} <span style={{ color: "#60a5fa" }}>{other?.label || otherId}</span>
+                                            {e.type && <span style={{ color: "#334155" }}> · {e.type.replace(/_/g, " ")}</span>}
+                                        </span>
+                                        <button onClick={() => deleteConnection(e.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11, padding: "0 4px" }}>✕</button>
+                                    </div>
+                                )
+                            })}
+                            <div style={{ borderTop: "1px solid rgba(148,163,184,0.08)", marginTop: 16, paddingTop: 12 }}>
+                                <button onClick={() => { deleteEntity(en.id); setEditNode(null) }}
+                                    style={{ padding: "6px 14px", borderRadius: 5, border: "1px solid rgba(248,113,113,0.3)", background: "rgba(248,113,113,0.08)", color: "#f87171", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                                    Delete Entity
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            })()}
         </div>
     )
 }
