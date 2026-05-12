@@ -150,17 +150,17 @@ export default function GlobeView({
                 return
             }
             viewer.resolutionScale = window.devicePixelRatio
-            viewer.scene.globe.maximumScreenSpaceError = 2
+            viewer.scene.globe.maximumScreenSpaceError = 1
             viewer.scene.postProcessStages.fxaa.enabled = true
             viewer.scene.highDynamicRange = false
             viewer.scene.fog.enabled = true
             viewer.scene.fog.density = 0.0003
             viewer.scene.globe.showGroundAtmosphere = true
             if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
-            viewer.scene.globe.tileCacheSize = 500
+            viewer.scene.globe.tileCacheSize = 1000
             viewer.targetFrameRate = 60
             viewer.scene.requestRenderMode = true
-            viewer.scene.maximumRenderTimeChange = 0.1
+            viewer.scene.maximumRenderTimeChange = 0.05
             CesiumTerrainProvider.fromIonAssetId(1).then(tp => { viewer.terrainProvider = tp }).catch(() => {})
             // Listen for WebGL context loss on the Cesium canvas
             canvas = viewer.canvas
