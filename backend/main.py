@@ -138,6 +138,27 @@ app.add_middleware(
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+# ── Static response cache (ETag + Cache-Control for heavy GeoJSON endpoints) ──
+import hashlib as _hashlib
+_static_resp_cache: dict = {}
+
+def _cached_json_response(key: str, data_func, max_age: int = 3600):
+    import time as _time_mod
+    now = _time_mod.time()
+    entry = _static_resp_cache.get(key)
+    if entry is None or entry["expires"] < now:
+        import json as _json_mod
+        data = data_func()
+        body = _json_mod.dumps(data)
+        etag = _hashlib.md5(body.encode()).hexdigest()[:16]
+        entry = {"body": body, "etag": etag, "expires": now + max_age}
+        _static_resp_cache[key] = entry
+    return FastAPIResponse(
+        content=entry["body"],
+        media_type="application/json",
+        headers={"Cache-Control": f"public, max-age={max_age}", "ETag": entry["etag"]},
+    )
+
 # ── Auth utilities (imported from app_shared to keep main.py lean) ────────────
 from app_shared import (
     HAS_AUTH as _HAS_AUTH,
@@ -6736,8 +6757,11 @@ async def _geo_refresh_loop() -> None:
 async def geo_countries_endpoint():
     if not _GEO_COUNTRIES_FILE.exists():
         raise HTTPException(503, "Countries GeoJSON not yet cached — try again in a moment")
-    data = _json.loads(_GEO_COUNTRIES_FILE.read_text(encoding="utf-8"))
-    return data
+    return _cached_json_response(
+        "geo_countries",
+        lambda: _json.loads(_GEO_COUNTRIES_FILE.read_text(encoding="utf-8")),
+        max_age=3600,
+    )
 
 
 # ── Land-shape cache for route validation ────────────────────────────────────
@@ -6827,9 +6851,11 @@ def _ensure_eez_cache():
 @app.get("/geo/eez")
 async def geo_eez_endpoint():
     _ensure_eez_cache()
-    if _EEZ_CACHE:
-        return _EEZ_CACHE
-    return {"type": "FeatureCollection", "features": []}
+    return _cached_json_response(
+        "geo_eez",
+        lambda: _EEZ_CACHE if _EEZ_CACHE else {"type": "FeatureCollection", "features": []},
+        max_age=3600,
+    )
 
 
 async def _fetch_wiki_eez(name: str) -> str:
@@ -12012,6 +12038,7 @@ def api_shipping_routes(
 
 @app.get("/api/infrastructure/cables")
 def api_cables(
+    response: FastAPIResponse,
     name:     str   = Query(None, description="Fuzzy name search"),
     country:  str   = Query(None, description="Filter cables landing in country (name substring)"),
     near_lat: float = Query(None),
@@ -12019,6 +12046,8 @@ def api_cables(
     radius:   float = Query(200, description="Search radius in km for landing points"),
 ):
     """Query submarine cables by name, country, or proximity of landing points."""
+    if not name and not country and near_lat is None:
+        response.headers["Cache-Control"] = "public, max-age=3600"
     cd = _get_cable_data()
     cables   = cd["cables"]
     landings = cd["landings"]

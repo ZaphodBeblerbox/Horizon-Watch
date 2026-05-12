@@ -1,7 +1,7 @@
 import "../cesiumConfig.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
-import { Viewer, CameraFlyTo, ImageryLayer, Cesium3DTileset } from "resium"
-import { Cartesian3, IonResource, Math as CesiumMath, UrlTemplateImageryProvider, Credit } from "cesium"
+import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
+import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
 import { esriSatelliteProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
@@ -146,17 +146,19 @@ export default function GlobeView({
                 if (attempts++ < 15) setTimeout(tryApply, 250)
                 return
             }
-            viewer.resolutionScale = window.devicePixelRatio || 2.0
-            viewer.scene.globe.maximumScreenSpaceError = 1.0
+            viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5)
+            viewer.scene.globe.maximumScreenSpaceError = 4
             viewer.scene.postProcessStages.fxaa.enabled = true
             viewer.scene.highDynamicRange = false
             viewer.scene.fog.enabled = true
-            viewer.scene.fog.density = 0.0002
+            viewer.scene.fog.density = 0.0003
             viewer.scene.globe.showGroundAtmosphere = true
             if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
-            viewer.scene.globe.tileCacheSize = 1000
+            viewer.scene.globe.tileCacheSize = 500
             viewer.targetFrameRate = 60
-            viewer.scene.requestRenderMode = false
+            viewer.scene.requestRenderMode = true
+            viewer.scene.maximumRenderTimeChange = 0.1
+            CesiumTerrainProvider.fromIonAssetId(1).then(tp => { viewer.terrainProvider = tp }).catch(() => {})
             // Listen for WebGL context loss on the Cesium canvas
             canvas = viewer.canvas
             canvas.addEventListener("webglcontextlost",     onLost)
@@ -286,24 +288,7 @@ export default function GlobeView({
                 scene3DOnly={true}
             >
                 {/* ── Base layer ─────────────────────────────────────────────── */}
-                {!overlayActive ? (
-                    <Cesium3DTileset
-                        url={IonResource.fromAssetId(2275207)}
-                        showCreditsOnScreen={true}
-                        maximumScreenSpaceError={4}
-                        maximumMemoryUsage={2048}
-                        preloadWhenHidden={false}
-                        skipLevelOfDetail={false}
-                        dynamicScreenSpaceError={true}
-                        dynamicScreenSpaceErrorDensity={0.00278}
-                        dynamicScreenSpaceErrorFactor={4.0}
-                        preferLeaves={true}
-                        onReady={ts  => console.log("[GlobeView] tileset ready, tiles:", ts.tilesLoaded)}
-                        onError={err => console.error("[GlobeView] tileset error:", err)}
-                    />
-                ) : (
-                    <ImageryLayer imageryProvider={esriSatelliteProvider} maximumTerrainLevel={20} />
-                )}
+                <ImageryLayer imageryProvider={esriSatelliteProvider} maximumTerrainLevel={20} />
 
                 {/* Raster overlays — rendered on top of ESRI base when active */}
                 {satelliteEnabled && sentinelProvider && (
@@ -331,8 +316,8 @@ export default function GlobeView({
                 <GlobeHeatmapLayer enabled={aisHeatmapEnabled}  domain="ais"  hours={heatmapHours} bounds={viewBounds} />
                 <GlobeHeatmapLayer enabled={adsbHeatmapEnabled} domain="adsb" hours={heatmapHours} bounds={viewBounds} />
 
-                {aisEnabled  && <GlobeAISLayer  vessels={aisData}  />}
-                {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} />}
+                {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} />}
+                {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} />}
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} />

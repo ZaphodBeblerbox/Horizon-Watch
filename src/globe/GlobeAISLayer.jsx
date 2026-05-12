@@ -9,17 +9,30 @@ import { vesselShipType, VESSEL_COLORS } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
 
-export default function GlobeAISLayer({ vessels }) {
-    // On mobile, cap vessel count to prevent crashes; prefer larger/cargo types.
+const DESKTOP_AIS_CAP = 200
+
+export default function GlobeAISLayer({ vessels, viewBounds }) {
     const filtered = useMemo(() => {
         if (!vessels?.length) return []
-        if (!isMobile) return vessels
-        const priority = (v) => {
-            const t = vesselShipType(v)
-            return t === "cargo" || t === "tanker" ? 0 : t === "passenger" ? 1 : 2
+        if (isMobile) {
+            const priority = (v) => {
+                const t = vesselShipType(v)
+                return t === "cargo" || t === "tanker" ? 0 : t === "passenger" ? 1 : 2
+            }
+            return [...vessels].sort((a, b) => priority(a) - priority(b)).slice(0, AIS_CAP)
         }
-        return [...vessels].sort((a, b) => priority(a) - priority(b)).slice(0, AIS_CAP)
-    }, [vessels])
+        const valid = vessels.filter(v => v.lat != null && (v.lon ?? v.lng) != null)
+        if (valid.length <= DESKTOP_AIS_CAP) return valid
+        const centerLat = viewBounds ? (viewBounds.south + viewBounds.north) / 2 : 0
+        const centerLng = viewBounds ? (viewBounds.west  + viewBounds.east)  / 2 : 0
+        return [...valid]
+            .sort((a, b) => {
+                const da = Math.abs(a.lat - centerLat) + Math.abs((a.lon ?? a.lng) - centerLng)
+                const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.lng) - centerLng)
+                return da - db
+            })
+            .slice(0, DESKTOP_AIS_CAP)
+    }, [vessels, viewBounds])
 
     useEffect(() => {
         if (!filtered.length) return

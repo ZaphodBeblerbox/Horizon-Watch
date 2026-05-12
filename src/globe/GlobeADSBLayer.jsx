@@ -20,7 +20,9 @@ function drCalc(lat, lon, track, gs, dt) {
     return [φ2 * 180 / Math.PI, λ2 * 180 / Math.PI]
 }
 
-export default function GlobeADSBLayer({ aircraft }) {
+const DESKTOP_ADSB_CAP = 150
+
+export default function GlobeADSBLayer({ aircraft, viewBounds }) {
     const drBaseRef = useRef({})
     const rawRef    = useRef([])
     const [smooth, setSmooth] = useState([])
@@ -57,15 +59,26 @@ export default function GlobeADSBLayer({ aircraft }) {
         return () => clearInterval(iv)
     }, [])
 
-    // On mobile, prefer high-altitude (commercial) aircraft and cap count to prevent OOM/crash.
     const filtered = useMemo(() => {
         if (!smooth?.length) return []
-        if (!isMobile) return smooth
-        return [...smooth]
-            .filter(ac => (ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0) > 5000)
-            .sort((a, b) => (b.alt_baro ?? b.altitude ?? 0) - (a.alt_baro ?? a.altitude ?? 0))
-            .slice(0, ADSB_CAP)
-    }, [smooth])
+        if (isMobile) {
+            return [...smooth]
+                .filter(ac => (ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0) > 5000)
+                .sort((a, b) => (b.alt_baro ?? b.altitude ?? 0) - (a.alt_baro ?? a.altitude ?? 0))
+                .slice(0, ADSB_CAP)
+        }
+        const valid = smooth.filter(ac => ac.lat != null && (ac.lon ?? ac.longitude) != null)
+        if (valid.length <= DESKTOP_ADSB_CAP) return valid
+        const centerLat = viewBounds ? (viewBounds.south + viewBounds.north) / 2 : 0
+        const centerLng = viewBounds ? (viewBounds.west  + viewBounds.east)  / 2 : 0
+        return [...valid]
+            .sort((a, b) => {
+                const da = Math.abs(a.lat - centerLat) + Math.abs((a.lon ?? a.longitude ?? 0) - centerLng)
+                const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.longitude ?? 0) - centerLng)
+                return da - db
+            })
+            .slice(0, DESKTOP_ADSB_CAP)
+    }, [smooth, viewBounds])
 
     useEffect(() => {
         if (!filtered.length) return
