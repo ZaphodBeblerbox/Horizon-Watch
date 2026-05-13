@@ -97,20 +97,32 @@ if onto["entities"]:
     sample = onto["entities"][0]
     print(f"  Sample: {sample['system_id']} | {sample['name']} | region={sample['region_id']}")
 
-# ── 5. GET /api/rules — initially empty (or existing) ────────────────────────
-print("\n5. GET /api/rules")
+# ── 5. GET /api/cables/regions ───────────────────────────────────────────────
+print("\n5. GET /api/cables/regions")
+regions_data = get("/api/cables/regions")
+assert "regions" in regions_data, "Missing 'regions' key"
+assert regions_data["total"] == 11, f"Expected 11 regions, got {regions_data['total']}"
+print(f"  {regions_data['total']} regions:")
+for r in regions_data["regions"]:
+    print(f"    {r['region_id']:<15} {r['region_name']}")
+
+# ── 7. GET /api/rules — initially empty (or existing) ────────────────────────
+print("\n7. GET /api/rules")
 rules_before = get("/api/rules")
 print(f"  {rules_before['total']} existing rules")
 
-# ── 6. POST /api/rules — create loitering rule ───────────────────────────────
-print("\n6. POST /api/rules — create AIS_LOITERING_NEAR_CABLE")
+# ── 8. POST /api/rules — create AIS_LOITERING_NEAR_INFRA rule ────────────────
+print("\n8. POST /api/rules — create AIS_LOITERING_NEAR_INFRA")
 new_rule = post("/api/rules", {
-    "rule_name": "AIS_LOITERING_NEAR_CABLE",
+    "rule_name": "AIS_LOITERING_NEAR_INFRA",
     "params": {
-        "target":           "REG-MED",
-        "distance_metres":  500,
-        "duration_minutes": 30,
-        "max_speed_knots":  2.0,
+        "infra_type":           "Submarine Cable",
+        "target":               "REG-MED",
+        "proximity_km":         0.5,
+        "distance_metres":      500,
+        "duration_minutes":     30,
+        "min_duration_minutes": 30,
+        "max_speed_knots":      2.0,
     },
     "enabled": True,
 })
@@ -119,59 +131,65 @@ rule_id = new_rule["id"]
 print(f"  Created rule id={rule_id} — OK")
 print(f"  Params: {new_rule['params']}")
 
-# ── 7. PUT /api/rules/{id} — disable it ──────────────────────────────────────
-print("\n7. PUT /api/rules/{id} — disable rule")
+# ── 9. PUT /api/rules/{id} — disable it ──────────────────────────────────────
+print("\n9. PUT /api/rules/{id} — disable rule")
 updated = put(f"/api/rules/{rule_id}", {"enabled": False})
 assert updated["enabled"] == False
 print(f"  Rule {rule_id} disabled — OK")
 
-# ── 8. PUT /api/rules/{id} — re-enable and change target ─────────────────────
-print("\n8. PUT /api/rules/{id} — re-enable, change target to ALL")
+# ── 10. PUT /api/rules/{id} — re-enable and change target ────────────────────
+print("\n10. PUT /api/rules/{id} — re-enable, change target to ALL")
 updated2 = put(f"/api/rules/{rule_id}", {
     "enabled": True,
     "params": {
-        "target":           "ALL",
-        "distance_metres":  500,
-        "duration_minutes": 30,
-        "max_speed_knots":  2.0,
+        "infra_type":           "Submarine Cable",
+        "target":               "ALL",
+        "proximity_km":         0.5,
+        "distance_metres":      500,
+        "duration_minutes":     30,
+        "min_duration_minutes": 30,
+        "max_speed_knots":      2.0,
     },
 })
 assert updated2["enabled"] == True
 assert updated2["params"]["target"] == "ALL"
 print(f"  Rule {rule_id} re-enabled, target=ALL — OK")
 
-# ── 9. GET /api/rules — confirm our rule is in the list ──────────────────────
-print("\n9. GET /api/rules — verify list")
+# ── 11. GET /api/rules — confirm our rule is in the list ─────────────────────
+print("\n11. GET /api/rules — verify list")
 rules_after = get("/api/rules")
 ids = [r["id"] for r in rules_after["rules"]]
 assert rule_id in ids, f"Rule {rule_id} missing from list"
 print(f"  {rules_after['total']} rules, our rule id={rule_id} present — OK")
 
-# ── 10. DELETE /api/rules/{id} ───────────────────────────────────────────────
-print("\n10. DELETE /api/rules/{id}")
+# ── 12. DELETE /api/rules/{id} ───────────────────────────────────────────────
+print("\n12. DELETE /api/rules/{id}")
 deleted = delete(f"/api/rules/{rule_id}")
 assert deleted.get("deleted") == rule_id
 rules_final = get("/api/rules")
 assert rule_id not in [r["id"] for r in rules_final["rules"]]
 print(f"  Rule {rule_id} deleted — OK")
 
-# ── 11. Re-create REG-MED rule for the project ───────────────────────────────
-print("\n11. Re-create REG-MED loitering rule (persistent)")
+# ── 13. Re-create REG-MED rule for the project ───────────────────────────────
+print("\n13. Re-create REG-MED loitering rule (persistent)")
 final_rule = post("/api/rules", {
-    "rule_name": "AIS_LOITERING_NEAR_CABLE",
+    "rule_name": "AIS_LOITERING_NEAR_INFRA",
     "params": {
-        "target":           "REG-MED",
-        "distance_metres":  500,
-        "duration_minutes": 30,
-        "max_speed_knots":  2.0,
+        "infra_type":           "Submarine Cable",
+        "target":               "REG-MED",
+        "proximity_km":         0.5,
+        "distance_metres":      500,
+        "duration_minutes":     30,
+        "min_duration_minutes": 30,
+        "max_speed_knots":      2.0,
     },
     "enabled": True,
 })
 print(f"  Created persistent rule id={final_rule['id']}")
 
 print()
-print("=== ALL TESTS PASSED ===")
+print("=== ALL TESTS PASSED (13 tests) ===")
 print(f"  Cables in DB           : {total}")
 print(f"  Landing points in DB   : {lp_count}")
 print(f"  Ontology entities      : {onto['total']}")
-print(f"  Active loitering rules : 1 (REG-MED, 500m, 30min, ≤2kn)")
+print(f"  Active loitering rules : 1 (AIS_LOITERING_NEAR_INFRA / REG-MED / Submarine Cable / 500m / 30min / ≤2kn)")

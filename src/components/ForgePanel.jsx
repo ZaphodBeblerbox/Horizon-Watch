@@ -677,12 +677,47 @@ const TRIGGER_TYPES = {
     ],
 }
 
+const INFRA_TYPES = ["Submarine Cable"]
+
+const REGION_LABELS = {
+    "REG-ARCTIC":  "Arctic",
+    "REG-NORSEA":  "North Sea / Baltic",
+    "REG-MED":     "Mediterranean",
+    "REG-REDSEA":  "Red Sea / Gulf",
+    "REG-SEASIA":  "Southeast Asia",
+    "REG-CARIB":   "Caribbean",
+    "REG-ATL-N":   "North Atlantic",
+    "REG-ATL-S":   "South Atlantic",
+    "REG-IND":     "Indian Ocean",
+    "REG-PAC-N":   "North Pacific",
+    "REG-PAC-S":   "South Pacific",
+}
+
 function CreateRuleModal({ source, onClose, onCreated }) {
-    const [name, setName] = useState("")
+    const [name, setName]               = useState("")
     const [triggerType, setTriggerType] = useState("")
-    const [severity, setSeverity] = useState("high")
-    const [params, setParams] = useState({})
-    const [saving, setSaving] = useState(false)
+    const [severity, setSeverity]       = useState("high")
+    const [params, setParams]           = useState({})
+    const [saving, setSaving]           = useState(false)
+    const [toast, setToast]             = useState("")
+
+    // Infra-targeting state (AIS stationary_near_infrastructure)
+    const [infraType, setInfraType]     = useState("Submarine Cable")
+    const [scopeMode, setScopeMode]     = useState("ALL")       // ALL | REGION | SINGLE
+    const [scopeRegion, setScopeRegion] = useState("")
+    const [scopeSingle, setScopeSingle] = useState("")
+    const [regions, setRegions]         = useState([])
+
+    const isInfraRule = source === "AIS" && triggerType === "stationary_near_infrastructure"
+
+    useEffect(() => {
+        if (isInfraRule && regions.length === 0) {
+            fetch(`${API}/api/cables/regions`)
+                .then(r => r.ok ? r.json() : { regions: [] })
+                .then(d => setRegions(d.regions || []))
+                .catch(() => {})
+        }
+    }, [isInfraRule])
 
     const triggers = TRIGGER_TYPES[source] || []
 
@@ -690,58 +725,157 @@ function CreateRuleModal({ source, onClose, onCreated }) {
         setTriggerType(val)
         const t = triggers.find(t => t.value === val)
         setParams(t?.params ? JSON.parse(JSON.stringify(t.params)) : {})
+        setScopeMode("ALL"); setScopeRegion(""); setScopeSingle("")
     }
 
     const save = async () => {
         if (!name || !triggerType) return
         setSaving(true)
         try {
-            const res = await fetch(`${API}/api/forge/rules`, {
-                method: "POST", headers: forgeHeaders(),
-                body: JSON.stringify({ name, source, trigger_type: triggerType, severity, params, status: "active", description: triggers.find(t => t.value === triggerType)?.label || triggerType }),
-            })
-            const d = await res.json()
-            if (res.ok) onCreated(d.id ? d : { id: crypto.randomUUID(), name, source, trigger_type: triggerType, severity, params, status: "active" })
+            if (isInfraRule) {
+                // DB-backed rule via /api/rules
+                let target = "ALL"
+                if (scopeMode === "REGION" && scopeRegion) target = scopeRegion
+                else if (scopeMode === "SINGLE" && scopeSingle) target = scopeSingle.trim().toUpperCase()
+                const body = {
+                    rule_name: name,
+                    trigger_type: "AIS_LOITERING_NEAR_INFRA",
+                    severity,
+                    params: {
+                        infra_type:           infraType,
+                        target,
+                        proximity_km:         parseFloat(params.proximity_km ?? 0.5),
+                        max_speed_knots:      parseFloat(params.max_speed_knots ?? 2.0),
+                        min_duration_minutes: parseFloat(params.min_duration_minutes ?? 30),
+                        distance_metres:      Math.round((parseFloat(params.proximity_km ?? 0.5)) * 1000),
+                        duration_minutes:     parseFloat(params.min_duration_minutes ?? 30),
+                    },
+                }
+                const res = await fetch(`${API}/api/rules`, {
+                    method: "POST", headers: forgeHeaders(), body: JSON.stringify(body),
+                })
+                const d = await res.json()
+                if (res.ok) {
+                    setToast("Rule created")
+                    setTimeout(() => { setToast(""); onCreated({ ...d, _db: true }) }, 1000)
+                }
+            } else {
+                // Forge JSON-file-backed rule
+                const res = await fetch(`${API}/api/forge/rules`, {
+                    method: "POST", headers: forgeHeaders(),
+                    body: JSON.stringify({ name, source, trigger_type: triggerType, severity, params, status: "active", description: triggers.find(t => t.value === triggerType)?.label || triggerType }),
+                })
+                const d = await res.json()
+                if (res.ok) onCreated(d.id ? d : { id: crypto.randomUUID(), name, source, trigger_type: triggerType, severity, params, status: "active" })
+            }
         } catch { }
         finally { setSaving(false) }
     }
 
+    const fld = (label, ctrl) => (
+        <div style={{ marginBottom: 12 }}>
+            <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
+            {ctrl}
+        </div>
+    )
+
     return (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-            <div style={{ background: "#0f1219", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 6, padding: 24, width: 460, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: "#0f1219", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 6, padding: 24, width: 500, maxHeight: "88vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
                 <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Create {source} Rule</div>
-                {[
-                    ["Rule Name", <input value={name} onChange={e => setName(e.target.value)} placeholder={`e.g., Dark ship — Hormuz`} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />],
-                    ["Trigger Type", (
-                        <select value={triggerType} onChange={e => selectTrigger(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
-                            <option value="">Select trigger…</option>
-                            {triggers.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                        </select>
-                    )],
-                    ["Severity", (
-                        <select value={severity} onChange={e => setSeverity(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
-                            {["info", "medium", "high", "critical"].map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                    )],
-                ].map(([label, ctrl]) => (
-                    <div key={label} style={{ marginBottom: 12 }}>
-                        <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
-                        {ctrl}
-                    </div>
+
+                {toast && <div style={{ marginBottom: 12, padding: "6px 10px", background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.25)", borderRadius: 3, color: "#4ade80", fontSize: 11 }}>{toast}</div>}
+
+                {fld("Rule Name", <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Med cable watch" style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />)}
+                {fld("Trigger Type", (
+                    <select value={triggerType} onChange={e => selectTrigger(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                        <option value="">Select trigger…</option>
+                        {triggers.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
                 ))}
-                {triggerType && Object.keys(params).length > 0 && (
-                    <div style={{ marginBottom: 12 }}>
-                        <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 6 }}>Parameters</label>
-                        {Object.entries(params).map(([key, value]) => (
-                            <div key={key} style={{ display: "flex", gap: 8, marginBottom: 5, alignItems: "center" }}>
-                                <span style={{ color: "#475569", fontSize: 10, width: 140, flexShrink: 0 }}>{key.replace(/_/g, " ")}</span>
-                                <input value={typeof value === "object" ? JSON.stringify(value) : String(value)}
-                                    onChange={e => { let v = e.target.value; try { v = JSON.parse(v) } catch {} setParams(p => ({ ...p, [key]: v })) }}
-                                    style={{ flex: 1, padding: "3px 6px", background: "#111827", border: "1px solid rgba(148,163,184,0.08)", borderRadius: 2, color: "#cbd5e1", fontSize: 10, outline: "none" }} />
-                            </div>
+                {fld("Severity", (
+                    <select value={severity} onChange={e => setSeverity(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                        {["info", "medium", "high", "critical"].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                ))}
+
+                {isInfraRule ? (
+                    <>
+                        {fld("Infrastructure Type", (
+                            <select value={infraType} onChange={e => setInfraType(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                {INFRA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
                         ))}
-                    </div>
+
+                        <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                            {[
+                                ["proximity_km", "Proximity (km)", params.proximity_km ?? 0.5],
+                                ["max_speed_knots", "Max speed (kn)", params.max_speed_knots ?? 2.0],
+                                ["min_duration_minutes", "Duration (min)", params.min_duration_minutes ?? 30],
+                            ].map(([key, label, def]) => (
+                                <div key={key}>
+                                    <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
+                                    <input type="number" step="any"
+                                        value={params[key] ?? def}
+                                        onChange={e => setParams(p => ({ ...p, [key]: e.target.value }))}
+                                        style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                                </div>
+                            ))}
+                        </div>
+
+                        {fld("Target Scope", (
+                            <select value={scopeMode} onChange={e => setScopeMode(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                <option value="ALL">All cables globally</option>
+                                <option value="REGION">By region</option>
+                                <option value="SINGLE">Single cable ID</option>
+                            </select>
+                        ))}
+
+                        {scopeMode === "REGION" && (
+                            <>
+                                {fld("Region", (
+                                    <select value={scopeRegion} onChange={e => setScopeRegion(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                        <option value="">Select region…</option>
+                                        {regions.map(r => <option key={r.region_id} value={r.region_id}>{r.region_name}</option>)}
+                                    </select>
+                                ))}
+                                {regions.length > 0 && (
+                                    <div style={{ marginBottom: 12, padding: "8px 10px", background: "#111827", borderRadius: 3, border: "1px solid rgba(148,163,184,0.06)" }}>
+                                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Region legend</div>
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px" }}>
+                                            {regions.map(r => (
+                                                <div key={r.region_id} style={{ display: "flex", gap: 6, alignItems: "baseline", cursor: "pointer" }}
+                                                    onClick={() => setScopeRegion(r.region_id)}>
+                                                    <span style={{ fontFamily: "monospace", fontSize: 9, color: scopeRegion === r.region_id ? "#60a5fa" : "#334155", flexShrink: 0 }}>{r.region_id}</span>
+                                                    <span style={{ fontSize: 9, color: scopeRegion === r.region_id ? "#94a3b8" : "#475569" }}>{r.region_name}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {scopeMode === "SINGLE" && fld("Cable System ID (e.g. CABLE-042)", (
+                            <input value={scopeSingle} onChange={e => setScopeSingle(e.target.value)} placeholder="CABLE-NNN" style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                        ))}
+                    </>
+                ) : (
+                    triggerType && Object.keys(params).length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                            <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 6 }}>Parameters</label>
+                            {Object.entries(params).map(([key, value]) => (
+                                <div key={key} style={{ display: "flex", gap: 8, marginBottom: 5, alignItems: "center" }}>
+                                    <span style={{ color: "#475569", fontSize: 10, width: 140, flexShrink: 0 }}>{key.replace(/_/g, " ")}</span>
+                                    <input value={typeof value === "object" ? JSON.stringify(value) : String(value)}
+                                        onChange={e => { let v = e.target.value; try { v = JSON.parse(v) } catch {} setParams(p => ({ ...p, [key]: v })) }}
+                                        style={{ flex: 1, padding: "3px 6px", background: "#111827", border: "1px solid rgba(148,163,184,0.08)", borderRadius: 2, color: "#cbd5e1", fontSize: 10, outline: "none" }} />
+                                </div>
+                            ))}
+                        </div>
+                    )
                 )}
+
                 <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 16 }}>
                     <button onClick={onClose} style={ghostBtn}>Cancel</button>
                     <button onClick={save} disabled={!name || !triggerType || saving} style={{ padding: "6px 16px", borderRadius: 3, border: "none", background: (name && triggerType && !saving) ? "#60a5fa" : "#1e293b", color: (name && triggerType && !saving) ? "#0a0e1a" : "#475569", cursor: (name && triggerType && !saving) ? "pointer" : "default", fontSize: 11, fontWeight: 600 }}>
@@ -755,6 +889,8 @@ function CreateRuleModal({ source, onClose, onCreated }) {
 
 function DetectorWorkspace({ source }) {
     const [rules, setRules] = useState([])
+    const [dbRules, setDbRules] = useState([])          // DB-backed loitering rules
+    const [alertCounts, setAlertCounts] = useState({})  // rule_name -> count
     const [alerts, setAlerts] = useState([])
     const [tab, setTab] = useState("rules")
     const [expandedRule, setExpandedRule] = useState(null)
@@ -770,6 +906,21 @@ function DetectorWorkspace({ source }) {
                 const list = Array.isArray(d) ? d : (d.rules || [])
                 setRules(list.filter(r => r.source === source || r.source === source?.toLowerCase()))
             }).catch(() => {})
+        if (source === "AIS") {
+            fetch(`${API}/api/rules`, { headers: forgeHeaders() })
+                .then(r => r.ok ? r.json() : {})
+                .then(d => setDbRules(d.rules || []))
+                .catch(() => {})
+            // Fetch alert counts for loitering rules
+            fetch(`${API}/api/alerts/recent?rule_name=AIS_LOITERING_NEAR_INFRA&hours=24`, { headers: forgeHeaders() })
+                .then(r => r.ok ? r.json() : { count: 0 })
+                .then(d => setAlertCounts(c => ({ ...c, AIS_LOITERING_NEAR_INFRA: d.count || 0 })))
+                .catch(() => {})
+            fetch(`${API}/api/alerts/recent?rule_name=AIS_LOITERING_NEAR_CABLE&hours=24`, { headers: forgeHeaders() })
+                .then(r => r.ok ? r.json() : { count: 0 })
+                .then(d => setAlertCounts(c => ({ ...c, AIS_LOITERING_NEAR_CABLE: d.count || 0 })))
+                .catch(() => {})
+        }
         fetch(`${API}/api/forge/alerts`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
             .then(d => {
@@ -817,7 +968,7 @@ function DetectorWorkspace({ source }) {
             <Toolbar>
                 {["rules", "alerts", "training"].map(t => (
                     <button key={t} onClick={() => setTab(t)} style={tabBtn(tab === t)}>
-                        {t.charAt(0).toUpperCase() + t.slice(1)}{t === "rules" ? ` (${rules.length})` : t === "alerts" ? ` (${alerts.length})` : ""}
+                        {t.charAt(0).toUpperCase() + t.slice(1)}{t === "rules" ? ` (${rules.length + dbRules.length})` : t === "alerts" ? ` (${alerts.length})` : ""}
                     </button>
                 ))}
                 <div style={{ flex: 1 }} />
@@ -828,7 +979,68 @@ function DetectorWorkspace({ source }) {
             <WorkspaceBody>
                 {tab === "rules" && (
                     <div style={{ maxWidth: 760 }}>
-                        {rules.length === 0 && <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 40 }}>No rules for {source}. Create one above or auto-generate from your uploaded data.</div>}
+                        {rules.length === 0 && dbRules.length === 0 && <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 40 }}>No rules for {source}. Create one above or auto-generate from your uploaded data.</div>}
+
+                        {/* DB-backed loitering rules (shown first for AIS) */}
+                        {dbRules.length > 0 && (
+                            <>
+                                <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Infrastructure monitoring rules</div>
+                                {dbRules.map(rule => {
+                                    const isEnabled = rule.enabled !== false
+                                    const expanded = expandedRule === `db-${rule.id}`
+                                    const ruleAlerts = alertCounts[rule.rule_name] || 0
+                                    const p = rule.params || {}
+                                    return (
+                                        <div key={`db-${rule.id}`} style={{ background: "#111827", borderRadius: 4, marginBottom: 6, overflow: "hidden", borderLeft: `2px solid ${isEnabled ? "#60a5fa" : "#334155"}` }}>
+                                            <div style={{ padding: "10px 12px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                                                onClick={() => setExpandedRule(expanded ? null : `db-${rule.id}`)}>
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{rule.rule_name}</span>
+                                                    <span style={{ color: "#334155", fontSize: 10, marginLeft: 8 }}>{p.target || "ALL"}</span>
+                                                </div>
+                                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                                    {ruleAlerts > 0 && (
+                                                        <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 10, background: "rgba(251,191,36,0.15)", color: "#fbbf24", fontWeight: 700 }}>{ruleAlerts} alert{ruleAlerts !== 1 ? "s" : ""}</span>
+                                                    )}
+                                                    <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 2, background: "rgba(96,165,250,0.08)", color: "#60a5fa" }}>loitering</span>
+                                                    <span style={{ color: "#334155", fontSize: 11 }}>{expanded ? "▲" : "▼"}</span>
+                                                </div>
+                                            </div>
+                                            {expanded && (
+                                                <div style={{ padding: "0 12px 12px", borderTop: "1px solid rgba(148,163,184,0.04)" }}>
+                                                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, marginTop: 8 }}>Parameters</div>
+                                                    {[
+                                                        ["infra type", p.infra_type || "—"],
+                                                        ["target", p.target || "ALL"],
+                                                        ["proximity", `${p.proximity_km ?? (p.distance_metres ? (p.distance_metres / 1000) : "—")} km`],
+                                                        ["max speed", `${p.max_speed_knots ?? "—"} kn`],
+                                                        ["duration", `${p.min_duration_minutes ?? p.duration_minutes ?? "—"} min`],
+                                                    ].map(([k, v]) => (
+                                                        <div key={k} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
+                                                            <span style={{ color: "#475569", fontSize: 10, width: 130, flexShrink: 0 }}>{k}</span>
+                                                            <span style={{ color: "#94a3b8", fontSize: 10 }}>{v}</span>
+                                                        </div>
+                                                    ))}
+                                                    <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+                                                        <button onClick={async () => {
+                                                            await fetch(`${API}/api/rules/${rule.id}`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify({ enabled: !isEnabled }) })
+                                                            reload()
+                                                        }} style={actionBtn(isEnabled ? "#f87171" : "#4ade80")}>{isEnabled ? "⏸ Disable" : "▶ Enable"}</button>
+                                                        <button onClick={async () => {
+                                                            if (!confirm("Delete this rule?")) return
+                                                            await fetch(`${API}/api/rules/${rule.id}`, { method: "DELETE", headers: forgeHeaders() })
+                                                            reload()
+                                                        }} style={actionBtn("#f87171")}>Delete</button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })}
+                                {rules.length > 0 && <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, marginTop: 10 }}>Forge rules</div>}
+                            </>
+                        )}
+
                         {rules.map(rule => {
                             const isActive = rule.status === "active"
                             const expanded = expandedRule === rule.id
@@ -918,7 +1130,7 @@ function DetectorWorkspace({ source }) {
                 )}
                 {tab === "training" && <TrainingWorkspace detectorSource={source} />}
             </WorkspaceBody>
-            {showCreate && <CreateRuleModal source={source} onClose={() => setShowCreate(false)} onCreated={rule => { setRules(prev => [rule, ...prev]); setShowCreate(false) }} />}
+            {showCreate && <CreateRuleModal source={source} onClose={() => setShowCreate(false)} onCreated={rule => { if (rule._db) { reload() } else { setRules(prev => [rule, ...prev]) } setShowCreate(false) }} />}
         </div>
     )
 }

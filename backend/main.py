@@ -7998,9 +7998,24 @@ async def get_anomaly_alerts(user=Depends(get_optional_user)):
 
 
 @app.get("/api/alerts/recent")
-async def get_recent_alerts(user=Depends(get_optional_user)):
-    cutoff = (datetime.utcnow() - timedelta(hours=6)).isoformat()
+async def get_recent_alerts(
+    rule_name: str = Query(None, description="Filter by rule_name (checks both _ANOMALY_ALERTS and _forge_alerts)"),
+    hours: int = Query(6, description="Lookback window in hours"),
+    user=Depends(get_optional_user),
+):
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
     recent = [a for a in _ANOMALY_ALERTS if a.get('timestamp', '') > cutoff and not a.get('dismissed')]
+    if rule_name:
+        # Also search the forge alert buffer (contains AIS/ADSB/NEWS/loitering alerts)
+        forge_recent = [
+            a for a in _forge_alerts
+            if a.get('timestamp', '') > cutoff
+            and (a.get('rule_name') == rule_name or a.get('rule_trigger') == rule_name)
+        ]
+        if forge_recent:
+            return {"count": len(forge_recent), "alerts": forge_recent[-50:], "threat_level": "normal"}
+        filtered = [a for a in recent if a.get('rule_name') == rule_name]
+        return {"count": len(filtered), "alerts": filtered, "threat_level": "normal"}
     return {
         "count": len(recent),
         "alerts": recent,
@@ -12197,6 +12212,22 @@ def api_cables_by_country(country_name: str, response: FastAPIResponse):
     return {"type": "FeatureCollection", "features": features, "total": len(features)}
 
 
+@app.get("/api/cables/regions")
+def api_cables_regions(response: FastAPIResponse):
+    """Return all region definitions (id, name, description)."""
+    from database import RegionDefinition, get_db
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    with get_db() as db:
+        rows = db.query(RegionDefinition).order_by(RegionDefinition.region_id).all()
+    return {
+        "regions": [
+            {"region_id": r.region_id, "region_name": r.region_name, "description": r.description}
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
 @app.get("/api/cables/{cable_id}")
 def api_cable_by_id(cable_id: str):
     """Return a single submarine cable by cable_id as a GeoJSON Feature (DB-backed)."""
@@ -12345,8 +12376,8 @@ def api_rules_test(body: dict):
         rule_row = db.query(RuleConfig).filter(RuleConfig.id == rule_id).first()
         if not rule_row:
             raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
-        if rule_row.rule_name != "AIS_LOITERING_NEAR_CABLE":
-            raise HTTPException(status_code=422, detail="Only AIS_LOITERING_NEAR_CABLE rules supported")
+        if rule_row.rule_name not in ("AIS_LOITERING_NEAR_CABLE", "AIS_LOITERING_NEAR_INFRA"):
+            raise HTTPException(status_code=422, detail="Only loitering rules supported")
 
         cutoff   = datetime.now(timezone.utc) - timedelta(minutes=60)
         history  = (
@@ -13719,7 +13750,7 @@ async def _forge_detection_cycle():
                         all_vessels=normalized_snap,
                     )
                     new_ais_alerts.extend(hits)
-                except Exception as _ve:
+                except Exception:
                     pass
             print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
 
@@ -13729,7 +13760,7 @@ async def _forge_detection_cycle():
                 import json as _json_lc
                 with get_db() as _ldb:
                     loiter_rule_rows = _ldb.query(RuleConfig).filter(
-                        RuleConfig.rule_name == "AIS_LOITERING_NEAR_CABLE",
+                        RuleConfig.rule_name.in_(["AIS_LOITERING_NEAR_CABLE", "AIS_LOITERING_NEAR_INFRA"]),
                         RuleConfig.enabled == True,
                     ).all()
                 loiter_rules = [
@@ -13740,17 +13771,28 @@ async def _forge_detection_cycle():
                 if loiter_rules:
                     cables_db = _prep_cables_from_db()
                     cycle_now = datetime.now(timezone.utc)
+                    loiter_hits: list = []
                     for _mmsi, _vessel in normalized_snap.items():
                         try:
                             hits = _ais_detector.check_loitering(
                                 _vessel, cables_db, loiter_rules, cycle_now
                             )
-                            new_ais_alerts.extend(hits)
+                            loiter_hits.extend(hits)
                         except Exception:
                             pass
                     _ais_detector.purge_stale_loiter(cycle_now)
-                    if loiter_rules:
-                        print(f"[forge-brain] Stage1b loitering: {len(loiter_rules)} rule(s) active")
+                    # Alert pipeline: push notification for each new loiter hit
+                    for _lhit in loiter_hits:
+                        try:
+                            _broadcast_push(
+                                title=f"Loitering detected — {_lhit.get('cable_name', 'submarine cable')}",
+                                body=_lhit.get("message", "AIS loitering near infrastructure"),
+                                data={"type": "loitering_alert", "lat": _lhit.get("lat"), "lng": _lhit.get("lng")},
+                            )
+                        except Exception:
+                            pass
+                    new_ais_alerts.extend(loiter_hits)
+                    print(f"[forge-brain] Stage1b loitering: {len(loiter_rules)} rule(s), {len(loiter_hits)} alert(s)")
             except Exception as _le:
                 print(f"[forge-brain] loitering check error: {_le}")
 
