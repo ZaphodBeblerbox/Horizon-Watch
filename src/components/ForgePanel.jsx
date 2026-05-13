@@ -1091,11 +1091,13 @@ function CreateRuleModal({ source, onClose, onCreated }) {
 
 function DetectorWorkspace({ source }) {
     const [rules, setRules] = useState([])
-    const [dbRules, setDbRules] = useState([])          // DB-backed loitering rules
+    const [dbRules, setDbRules] = useState([])          // DB-backed rules via /api/rules
+    const [chains, setChains] = useState([])            // escalation chains
     const [alertCounts, setAlertCounts] = useState({})  // rule_name -> count
     const [alerts, setAlerts] = useState([])
     const [tab, setTab] = useState("rules")
     const [expandedRule, setExpandedRule] = useState(null)
+    const [expandedChain, setExpandedChain] = useState(null)
     const [dryResults, setDryResults] = useState({})
     const [dryRunning, setDryRunning] = useState({})
     const [showCreate, setShowCreate] = useState(false)
@@ -1108,19 +1110,16 @@ function DetectorWorkspace({ source }) {
                 const list = Array.isArray(d) ? d : (d.rules || [])
                 setRules(list.filter(r => r.source === source || r.source === source?.toLowerCase()))
             }).catch(() => {})
+        // Always fetch DB rules (filtered by source prefix in render)
+        fetch(`${API}/api/rules`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : {})
+            .then(d => setDbRules(d.rules || []))
+            .catch(() => {})
+        // Escalation chains (AIS only)
         if (source === "AIS") {
-            fetch(`${API}/api/rules`, { headers: forgeHeaders() })
-                .then(r => r.ok ? r.json() : {})
-                .then(d => setDbRules(d.rules || []))
-                .catch(() => {})
-            // Fetch alert counts for loitering rules
-            fetch(`${API}/api/alerts/recent?rule_name=AIS_LOITERING_NEAR_INFRA&hours=24`, { headers: forgeHeaders() })
-                .then(r => r.ok ? r.json() : { count: 0 })
-                .then(d => setAlertCounts(c => ({ ...c, AIS_LOITERING_NEAR_INFRA: d.count || 0 })))
-                .catch(() => {})
-            fetch(`${API}/api/alerts/recent?rule_name=AIS_LOITERING_NEAR_CABLE&hours=24`, { headers: forgeHeaders() })
-                .then(r => r.ok ? r.json() : { count: 0 })
-                .then(d => setAlertCounts(c => ({ ...c, AIS_LOITERING_NEAR_CABLE: d.count || 0 })))
+            fetch(`${API}/api/escalation-chains`, { headers: forgeHeaders() })
+                .then(r => r.ok ? r.json() : [])
+                .then(d => setChains(Array.isArray(d) ? d : []))
                 .catch(() => {})
         }
         fetch(`${API}/api/forge/alerts`, { headers: forgeHeaders() })
@@ -1170,7 +1169,7 @@ function DetectorWorkspace({ source }) {
             <Toolbar>
                 {["rules", "alerts", "training"].map(t => (
                     <button key={t} onClick={() => setTab(t)} style={tabBtn(tab === t)}>
-                        {t.charAt(0).toUpperCase() + t.slice(1)}{t === "rules" ? ` (${rules.length + dbRules.length})` : t === "alerts" ? ` (${alerts.length})` : ""}
+                        {t.charAt(0).toUpperCase() + t.slice(1)}{t === "rules" ? ` (${rules.length + dbRules.filter(r => (r.trigger_type||r.rule_name||"").startsWith(source === "ADSB" ? "ADSB_" : "AIS_")).length})` : t === "alerts" ? ` (${alerts.length})` : ""}
                     </button>
                 ))}
                 <div style={{ flex: 1 }} />
@@ -1183,65 +1182,131 @@ function DetectorWorkspace({ source }) {
                     <div style={{ maxWidth: 760 }}>
                         {rules.length === 0 && dbRules.length === 0 && <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 40 }}>No rules for {source}. Create one above or auto-generate from your uploaded data.</div>}
 
-                        {/* DB-backed loitering rules (shown first for AIS) */}
-                        {dbRules.length > 0 && (
-                            <>
-                                <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Infrastructure monitoring rules</div>
-                                {dbRules.map(rule => {
-                                    const isEnabled = rule.enabled !== false
-                                    const expanded = expandedRule === `db-${rule.id}`
-                                    const ruleAlerts = alertCounts[rule.rule_name] || 0
-                                    const p = rule.params || {}
-                                    return (
-                                        <div key={`db-${rule.id}`} style={{ background: "#111827", borderRadius: 4, marginBottom: 6, overflow: "hidden", borderLeft: `2px solid ${isEnabled ? "#60a5fa" : "#334155"}` }}>
-                                            <div style={{ padding: "10px 12px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                                                onClick={() => setExpandedRule(expanded ? null : `db-${rule.id}`)}>
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{rule.rule_name}</span>
-                                                    <span style={{ color: "#334155", fontSize: 10, marginLeft: 8 }}>{p.target || "ALL"}</span>
-                                                </div>
-                                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                                    {ruleAlerts > 0 && (
-                                                        <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 10, background: "rgba(251,191,36,0.15)", color: "#fbbf24", fontWeight: 700 }}>{ruleAlerts} alert{ruleAlerts !== 1 ? "s" : ""}</span>
-                                                    )}
-                                                    <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 2, background: "rgba(96,165,250,0.08)", color: "#60a5fa" }}>loitering</span>
-                                                    <span style={{ color: "#334155", fontSize: 11 }}>{expanded ? "▲" : "▼"}</span>
-                                                </div>
-                                            </div>
-                                            {expanded && (
-                                                <div style={{ padding: "0 12px 12px", borderTop: "1px solid rgba(148,163,184,0.04)" }}>
-                                                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, marginTop: 8 }}>Parameters</div>
-                                                    {[
-                                                        ["infra type", p.infra_type || "—"],
-                                                        ["target", p.target || "ALL"],
-                                                        ["proximity", `${p.proximity_km ?? (p.distance_metres ? (p.distance_metres / 1000) : "—")} km`],
-                                                        ["max speed", `${p.max_speed_knots ?? "—"} kn`],
-                                                        ["duration", `${p.min_duration_minutes ?? p.duration_minutes ?? "—"} min`],
-                                                    ].map(([k, v]) => (
-                                                        <div key={k} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
-                                                            <span style={{ color: "#475569", fontSize: 10, width: 130, flexShrink: 0 }}>{k}</span>
-                                                            <span style={{ color: "#94a3b8", fontSize: 10 }}>{v}</span>
-                                                        </div>
-                                                    ))}
-                                                    <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
-                                                        <button onClick={async () => {
-                                                            await fetch(`${API}/api/rules/${rule.id}`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify({ enabled: !isEnabled }) })
-                                                            reload()
-                                                        }} style={actionBtn(isEnabled ? "#f87171" : "#4ade80")}>{isEnabled ? "⏸ Disable" : "▶ Enable"}</button>
-                                                        <button onClick={async () => {
-                                                            if (!confirm("Delete this rule?")) return
-                                                            await fetch(`${API}/api/rules/${rule.id}`, { method: "DELETE", headers: forgeHeaders() })
-                                                            reload()
-                                                        }} style={actionBtn("#f87171")}>Delete</button>
+                        {/* ── DB-backed surveillance rules ─────────────────── */}
+                        {(() => {
+                            const prefix = source === "ADSB" ? "ADSB_" : "AIS_"
+                            const visible = dbRules.filter(r => (r.trigger_type || r.rule_name || "").startsWith(prefix))
+                            if (!visible.length) return null
+                            const SEV_COLOR = { critical: "#f87171", high: "#fbbf24", medium: "#94a3b8", low: "#64748b", info: "#475569" }
+                            return (
+                                <>
+                                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                                        Surveillance rules ({visible.length})
+                                    </div>
+                                    {visible.map(rule => {
+                                        const isEnabled = rule.enabled !== false
+                                        const expanded  = expandedRule === `db-${rule.id}`
+                                        const p         = rule.params || {}
+                                        const sevColor  = SEV_COLOR[rule.severity] || "#94a3b8"
+                                        return (
+                                            <div key={`db-${rule.id}`} style={{ background: "#111827", borderRadius: 4, marginBottom: 5, overflow: "hidden", borderLeft: `2px solid ${isEnabled ? sevColor : "#334155"}` }}>
+                                                <div style={{ padding: "9px 12px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                                                    onClick={() => setExpandedRule(expanded ? null : `db-${rule.id}`)}>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{rule.name || rule.rule_name}</span>
+                                                        <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{rule.trigger_type || rule.rule_name}</span>
+                                                    </div>
+                                                    <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                                                        {rule.severity && (
+                                                            <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 2, background: sevColor + "18", color: sevColor, fontWeight: 600 }}>{rule.severity}</span>
+                                                        )}
+                                                        {rule.icon_type && (
+                                                            <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 2, background: "rgba(148,163,184,0.08)", color: "#64748b" }}>{rule.icon_type}</span>
+                                                        )}
+                                                        {!isEnabled && <span style={{ fontSize: 9, color: "#334155" }}>disabled</span>}
+                                                        <span style={{ color: "#334155", fontSize: 10 }}>{expanded ? "▲" : "▼"}</span>
                                                     </div>
                                                 </div>
-                                            )}
+                                                {expanded && (
+                                                    <div style={{ padding: "0 12px 12px", borderTop: "1px solid rgba(148,163,184,0.04)" }}>
+                                                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", margin: "8px 0 5px" }}>Parameters</div>
+                                                        {[
+                                                            ["system id",   rule.system_id],
+                                                            ["trigger",     rule.trigger_type || rule.rule_name],
+                                                            ["target",      p.target || "ALL"],
+                                                            ["infra type",  p.infra_type],
+                                                            ["proximity",   p.proximity_km != null ? `${p.proximity_km} km` : p.distance_metres != null ? `${p.distance_metres} m` : null],
+                                                            ["max speed",   p.max_speed_knots != null ? `${p.max_speed_knots} kn` : null],
+                                                            ["duration",    p.min_duration_minutes != null ? `${p.min_duration_minutes} min` : null],
+                                                            ["min gap",     p.min_gap_minutes != null ? `${p.min_gap_minutes} min` : null],
+                                                            ["squawk codes", p.squawk_codes ? p.squawk_codes.join(", ") : null],
+                                                        ].filter(([, v]) => v != null).map(([k, v]) => (
+                                                            <div key={k} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
+                                                                <span style={{ color: "#475569", fontSize: 10, width: 110, flexShrink: 0 }}>{k}</span>
+                                                                <span style={{ color: "#94a3b8", fontSize: 10 }}>{v}</span>
+                                                            </div>
+                                                        ))}
+                                                        <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+                                                            <button onClick={async () => {
+                                                                await fetch(`${API}/api/rules/${rule.id}`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify({ enabled: !isEnabled }) })
+                                                                reload()
+                                                            }} style={actionBtn(isEnabled ? "#f87171" : "#4ade80")}>{isEnabled ? "⏸ Disable" : "▶ Enable"}</button>
+                                                            <button onClick={async () => {
+                                                                if (!confirm("Delete this rule?")) return
+                                                                await fetch(`${API}/api/rules/${rule.id}`, { method: "DELETE", headers: forgeHeaders() })
+                                                                reload()
+                                                            }} style={actionBtn("#f87171")}>Delete</button>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+
+                                    {/* ── Escalation Chains (AIS tab only) ──────── */}
+                                    {source === "AIS" && chains.length > 0 && (
+                                        <div style={{ marginTop: 16 }}>
+                                            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                                                Escalation chains ({chains.length})
+                                            </div>
+                                            {chains.map(ch => {
+                                                const exp = expandedChain === ch.id
+                                                const SEV = SEV_COLOR[ch.escalated_severity] || "#f97316"
+                                                return (
+                                                    <div key={ch.id} style={{ background: "#111827", borderRadius: 4, marginBottom: 5, overflow: "hidden", borderLeft: `2px solid ${SEV}` }}>
+                                                        <div style={{ padding: "9px 12px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                                                            onClick={() => setExpandedChain(exp ? null : ch.id)}>
+                                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                                <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{ch.chain_name}</span>
+                                                            </div>
+                                                            <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                                                                <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 2, background: SEV + "18", color: SEV, fontWeight: 600 }}>{ch.escalated_severity}</span>
+                                                                <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 2, background: "rgba(249,115,22,0.08)", color: "#f97316" }}>{ch.escalated_icon_type}</span>
+                                                                <span style={{ color: "#334155", fontSize: 10 }}>{exp ? "▲" : "▼"}</span>
+                                                            </div>
+                                                        </div>
+                                                        {exp && (
+                                                            <div style={{ padding: "0 12px 12px", borderTop: "1px solid rgba(148,163,184,0.04)" }}>
+                                                                <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", margin: "8px 0 5px" }}>Chain details</div>
+                                                                {[
+                                                                    ["system id",    ch.system_id],
+                                                                    ["window",       `${ch.time_window_minutes} min`],
+                                                                    ["escalates to", `${ch.escalated_severity} / ${ch.escalated_icon_type}`],
+                                                                    ["rules",        (ch.rule_names || ch.rule_ids || []).join(" · ")],
+                                                                ].map(([k, v]) => (
+                                                                    <div key={k} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
+                                                                        <span style={{ color: "#475569", fontSize: 10, width: 110, flexShrink: 0 }}>{k}</span>
+                                                                        <span style={{ color: "#94a3b8", fontSize: 10 }}>{v}</span>
+                                                                    </div>
+                                                                ))}
+                                                                <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+                                                                    <button onClick={async () => {
+                                                                        if (!confirm("Delete this chain?")) return
+                                                                        await fetch(`${API}/api/escalation-chains/${ch.id}`, { method: "DELETE", headers: forgeHeaders() })
+                                                                        reload()
+                                                                    }} style={actionBtn("#f87171")}>Delete</button>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )
+                                            })}
                                         </div>
-                                    )
-                                })}
-                                {rules.length > 0 && <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, marginTop: 10 }}>Forge rules</div>}
-                            </>
-                        )}
+                                    )}
+                                    {rules.length > 0 && <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, marginTop: 16 }}>Forge rules</div>}
+                                </>
+                            )
+                        })()}
 
                         {rules.map(rule => {
                             const isActive = rule.status === "active"

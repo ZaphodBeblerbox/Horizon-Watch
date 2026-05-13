@@ -11153,6 +11153,41 @@ def _compute_chokepoint_status(cp: dict) -> dict:
     }
 
 
+@app.get("/api/chokepoints")
+def api_chokepoints_geojson():
+    """Return all chokepoints as a GeoJSON FeatureCollection with Polygon geometry."""
+    features = []
+    for cp in _CHOKEPOINT_DEFS:
+        poly = cp.get("polygon")
+        if not poly or len(poly) < 3:
+            # fall back to bbox rectangle from polygon_bounds
+            pb = cp.get("polygon_bounds")
+            if pb and len(pb) == 4:
+                s, w, n, e = pb
+                poly = [[w, s], [e, s], [e, n], [w, n], [w, s]]
+        if poly:
+            # _CHOKEPOINT_DEFS stores [lat, lon]; GeoJSON requires [lon, lat]
+            coords = [[c[1], c[0]] for c in poly]
+            if coords[0] != coords[-1]:
+                coords = coords + [coords[0]]
+            geometry = {"type": "Polygon", "coordinates": [coords]}
+        else:
+            geometry = None
+        features.append({
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": {
+                "name":                    cp.get("name"),
+                "lat":                     cp.get("lat"),
+                "lon":                     cp.get("lon"),
+                "strategic_description":   cp.get("strategic_description", ""),
+                "monitored_keywords":      cp.get("monitored_keywords", []),
+                "threat_level":            cp.get("threat_level", "standard"),
+            },
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
 @app.get("/api/infrastructure/chokepoints")
 async def api_infrastructure_chokepoints():
     """Return 12 global strategic chokepoints with computed current status and any auto-briefs."""
@@ -12595,13 +12630,19 @@ def api_ontology_entities(
 
 def _rule_row_to_dict(row) -> dict:
     import json as _jr
+    params = _jr.loads(row.params) if isinstance(row.params, str) else (row.params or {})
     return {
-        "id":         row.id,
-        "rule_name":  row.rule_name,
-        "enabled":    row.enabled,
-        "params":     _jr.loads(row.params) if isinstance(row.params, str) else row.params,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "id":           row.id,
+        "system_id":    f"RULE-{row.id}",
+        "name":         row.name or row.rule_name,
+        "rule_name":    row.rule_name,
+        "trigger_type": row.trigger_type or row.rule_name,
+        "severity":     row.severity or params.get("severity", "medium"),
+        "icon_type":    row.icon_type or params.get("icon_type"),
+        "enabled":      row.enabled,
+        "params":       params,
+        "created_at":   row.created_at.isoformat() if row.created_at else None,
+        "updated_at":   row.updated_at.isoformat() if row.updated_at else None,
     }
 
 
@@ -12616,40 +12657,52 @@ def api_rules_list():
 
 @app.post("/api/rules")
 def api_rules_create(body: dict):
-    """Create a new rule config. Body: {rule_name, params, enabled?}"""
+    """
+    Create a rule config.
+    Body: { name?, rule_name/trigger_type, severity?, icon_type?, params?, enabled? }
+    trigger_type and rule_name are treated as the same field (trigger_type wins).
+    """
     import json as _jc
     from database import RuleConfig, OntologyEntity, get_db
     import datetime as _dt
-    rule_name    = body.get("rule_name")
-    params       = body.get("params", {})
-    enabled      = bool(body.get("enabled", True))
-    trigger_type = body.get("trigger_type", "")
-    if not rule_name:
-        raise HTTPException(status_code=422, detail="rule_name is required")
+    trigger_type = body.get("trigger_type") or body.get("rule_name")
+    if not trigger_type:
+        raise HTTPException(status_code=422, detail="trigger_type (or rule_name) is required")
+    name      = body.get("name") or trigger_type
+    severity  = body.get("severity", "medium")
+    icon_type = body.get("icon_type") or body.get("params", {}).get("icon_type")
+    params    = body.get("params", {})
+    enabled   = bool(body.get("enabled", True))
     params_str = _jc.dumps(params, ensure_ascii=False)
     now = _dt.datetime.utcnow()
     with get_db() as db:
         row = RuleConfig(
-            rule_name=rule_name, enabled=enabled, params=params_str,
+            name=name, rule_name=trigger_type, trigger_type=trigger_type,
+            severity=severity, icon_type=icon_type,
+            enabled=enabled, params=params_str,
             created_at=now, updated_at=now,
         )
         db.add(row)
         db.commit()
         db.refresh(row)
-        # Register in OntologyEntity
+        # Upsert OntologyEntity
         onto_id  = f"RULE-{row.id}"
         onto_meta = _jc.dumps({
-            "rule_name": rule_name, "trigger_type": trigger_type, "params": params
+            "rule_name":    trigger_type,
+            "trigger_type": trigger_type,
+            "severity":     severity,
+            "icon_type":    icon_type,
+            "params":       params,
         }, ensure_ascii=False)
         existing = db.query(OntologyEntity).filter(OntologyEntity.system_id == onto_id).first()
         if existing:
-            existing.name = rule_name
-            existing.infra_type = trigger_type or rule_name
+            existing.name            = name
+            existing.infra_type      = trigger_type
             existing.entity_metadata = onto_meta
         else:
             db.add(OntologyEntity(
                 system_id=onto_id, entity_type="Rule",
-                name=rule_name, infra_type=trigger_type or rule_name,
+                name=name, infra_type=trigger_type,
                 entity_metadata=onto_meta,
             ))
         db.commit()
@@ -12693,6 +12746,106 @@ def api_rules_delete(rule_id: int):
             db.delete(onto)
         db.commit()
     return {"deleted": rule_id}
+
+
+# ── Escalation Chains ────────────────────────────────────────────────────────
+
+def _chain_row_to_dict(row, rule_map: dict = None) -> dict:
+    import json as _jch
+    ids = [int(x) for x in row.rule_ids.split(",") if x.strip().isdigit()]
+    rule_names = [rule_map.get(i, f"RULE-{i}") for i in ids] if rule_map else []
+    return {
+        "id":                  row.id,
+        "system_id":           f"CHAIN-{row.id}",
+        "chain_name":          row.chain_name,
+        "rule_ids":            ids,
+        "rule_names":          rule_names,
+        "escalated_severity":  row.escalated_severity,
+        "escalated_icon_type": row.escalated_icon_type,
+        "time_window_minutes": row.time_window_minutes,
+    }
+
+
+@app.get("/api/escalation-chains")
+def api_chains_list():
+    """Return all escalation chains with resolved rule names."""
+    from database import EscalationChain, RuleConfig, get_db
+    with get_db() as db:
+        rows  = db.query(EscalationChain).order_by(EscalationChain.id).all()
+        rules = db.query(RuleConfig).all()
+    rule_map = {r.id: (r.name or r.rule_name) for r in rules}
+    return [_chain_row_to_dict(r, rule_map) for r in rows]
+
+
+@app.post("/api/escalation-chains")
+def api_chains_create(body: dict):
+    """
+    Create an escalation chain.
+    Body: { chain_name, rule_ids (list[int]), escalated_severity,
+            escalated_icon_type, time_window_minutes? }
+    """
+    import json as _jchc
+    from database import EscalationChain, RuleConfig, OntologyEntity, get_db
+    import datetime as _dt
+    chain_name    = body.get("chain_name")
+    rule_ids_raw  = body.get("rule_ids", [])
+    esc_severity  = body.get("escalated_severity", "critical")
+    esc_icon      = body.get("escalated_icon_type", "ESCALATED_DUAL")
+    window_min    = int(body.get("time_window_minutes", 30))
+    if not chain_name:
+        raise HTTPException(status_code=422, detail="chain_name is required")
+    if not rule_ids_raw:
+        raise HTTPException(status_code=422, detail="rule_ids must be a non-empty list")
+    ids_str = ",".join(str(i) for i in rule_ids_raw)
+    now = _dt.datetime.utcnow()
+    with get_db() as db:
+        row = EscalationChain(
+            chain_name=chain_name, rule_ids=ids_str,
+            escalated_severity=esc_severity, escalated_icon_type=esc_icon,
+            time_window_minutes=window_min,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        # Resolve rule names for ontology metadata
+        rules = db.query(RuleConfig).filter(RuleConfig.id.in_(rule_ids_raw)).all()
+        rule_map = {r.id: (r.name or r.rule_name) for r in rules}
+        rule_names = [rule_map.get(i, f"RULE-{i}") for i in rule_ids_raw]
+        onto_id  = f"CHAIN-{row.id}"
+        onto_meta = _jchc.dumps({
+            "escalated_severity":  esc_severity,
+            "escalated_icon_type": esc_icon,
+            "time_window_minutes": window_min,
+            "rule_ids":            list(rule_ids_raw),
+            "rule_names":          rule_names,
+        }, ensure_ascii=False)
+        existing = db.query(OntologyEntity).filter(OntologyEntity.system_id == onto_id).first()
+        if existing:
+            existing.name            = chain_name
+            existing.entity_metadata = onto_meta
+        else:
+            db.add(OntologyEntity(
+                system_id=onto_id, entity_type="Escalation Chain",
+                name=chain_name, entity_metadata=onto_meta,
+            ))
+        db.commit()
+        return _chain_row_to_dict(row, rule_map)
+
+
+@app.delete("/api/escalation-chains/{chain_id}")
+def api_chains_delete(chain_id: int):
+    """Delete an escalation chain."""
+    from database import EscalationChain, OntologyEntity, get_db
+    with get_db() as db:
+        row = db.query(EscalationChain).filter(EscalationChain.id == chain_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Chain {chain_id} not found")
+        db.delete(row)
+        onto = db.query(OntologyEntity).filter(OntologyEntity.system_id == f"CHAIN-{chain_id}").first()
+        if onto:
+            db.delete(onto)
+        db.commit()
+    return {"deleted": chain_id}
 
 
 @app.post("/api/rules/test")

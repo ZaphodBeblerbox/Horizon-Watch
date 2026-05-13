@@ -1,223 +1,193 @@
 """
-Seed the 8 canonical surveillance rules + 4 escalation chains.
-Run once after wiping the DB:
-    python3 seed_rules.py
+Seed the 8 canonical surveillance rules + 4 escalation chains via the live API.
+The backend must be running before executing this script.
+
+Usage:
+    python3 seed_rules.py [--base http://localhost:8000]
 """
-import json, sys, os
-sys.path.insert(0, os.path.dirname(__file__))
+import sys, json, argparse
 
-from database import SessionLocal, RuleConfig, OntologyEntity, EscalationChain, Base, engine
+try:
+    import httpx
+except ImportError:
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx", "-q"])
+    import httpx
 
-Base.metadata.create_all(bind=engine)
+parser = argparse.ArgumentParser()
+parser.add_argument("--base", default="http://localhost:8000")
+args = parser.parse_args()
+BASE = args.base.rstrip("/")
 
 RULES = [
-    # ── Cable Loitering ──────────────────────────────────────────────────────
     {
-        "rule_name": "AIS_LOITERING_NEAR_INFRA",
-        "severity":  "high",
+        "name":         "Cable Loitering — Global",
+        "trigger_type": "AIS_LOITERING_NEAR_INFRA",
+        "severity":     "high",
+        "icon_type":    "LOITERING_CABLE",
         "params": {
-            "infra_type":        "Submarine Cable",
-            "target":            "ALL",
-            "distance_metres":   500,
-            "max_speed_knots":   0.5,
-            "duration_minutes":  120,
-            "icon_type":         "LOITERING_CABLE",
+            "infra_type":          "Submarine Cable",
+            "target":              "ALL",
+            "proximity_km":        0.5,
+            "distance_metres":     500,
+            "max_speed_knots":     0.5,
+            "min_duration_minutes": 120,
         },
-        "label": "Cable Loitering — Global",
     },
     {
-        "rule_name": "AIS_LOITERING_NEAR_INFRA",
-        "severity":  "critical",
+        "name":         "Cable Loitering — Baltic",
+        "trigger_type": "AIS_LOITERING_NEAR_INFRA",
+        "severity":     "critical",
+        "icon_type":    "LOITERING_CABLE",
         "params": {
-            "infra_type":        "Submarine Cable",
-            "target":            "REG-NORSEA",
-            "distance_metres":   500,
-            "max_speed_knots":   0.5,
-            "duration_minutes":  60,
-            "icon_type":         "LOITERING_CABLE",
+            "infra_type":          "Submarine Cable",
+            "target":              "REG-NORSEA",
+            "proximity_km":        0.5,
+            "distance_metres":     500,
+            "max_speed_knots":     0.5,
+            "min_duration_minutes": 60,
         },
-        "label": "Cable Loitering — Baltic / North Sea",
     },
     {
-        "rule_name": "AIS_LOITERING_NEAR_INFRA",
-        "severity":  "critical",
+        "name":         "Cable Loitering — Hormuz",
+        "trigger_type": "AIS_LOITERING_NEAR_INFRA",
+        "severity":     "critical",
+        "icon_type":    "LOITERING_CABLE",
         "params": {
-            "infra_type":        "Submarine Cable",
-            "target":            "REG-REDSEA",
-            "distance_metres":   500,
-            "max_speed_knots":   0.5,
-            "duration_minutes":  60,
-            "icon_type":         "LOITERING_CABLE",
+            "infra_type":          "Submarine Cable",
+            "target":              "REG-REDSEA",
+            "proximity_km":        0.5,
+            "distance_metres":     500,
+            "max_speed_knots":     0.5,
+            "min_duration_minutes": 60,
         },
-        "label": "Cable Loitering — Red Sea / Hormuz",
     },
-    # ── STS Transfer ─────────────────────────────────────────────────────────
     {
-        "rule_name": "AIS_STS_PROXIMITY",
-        "severity":  "high",
+        "name":         "Ship-to-Ship Proximity",
+        "trigger_type": "AIS_STS_PROXIMITY",
+        "severity":     "high",
+        "icon_type":    "STS_TRANSFER",
         "params": {
             "target":                  "ALL",
             "proximity_metres":        500,
             "min_duration_minutes":    20,
             "max_speed_knots":         1.5,
-            "icon_type":               "STS_TRANSFER",
         },
-        "label": "Ship-to-Ship Proximity — Global",
     },
-    # ── Strategic Port Loitering ──────────────────────────────────────────────
     {
-        "rule_name": "AIS_LOITERING_NEAR_INFRA",
-        "severity":  "high",
+        "name":         "Loitering — Strategic Ports",
+        "trigger_type": "AIS_LOITERING_NEAR_INFRA",
+        "severity":     "high",
+        "icon_type":    "LOITERING_PORT",
         "params": {
-            "infra_type":        "Port",
-            "target":            "PORTS:STRATEGIC",
-            "proximity_metres":  2000,
-            "max_speed_knots":   1.0,
-            "duration_minutes":  90,
-            "icon_type":         "LOITERING_PORT",
+            "infra_type":          "Port",
+            "target":              "PORTS:STRATEGIC",
+            "proximity_km":        2.0,
+            "proximity_metres":    2000,
+            "max_speed_knots":     1.0,
+            "min_duration_minutes": 90,
         },
-        "label": "Loitering — Strategic Ports",
     },
-    # ── Dark Ship ────────────────────────────────────────────────────────────
     {
-        "rule_name": "AIS_DARK_SHIP",
-        "severity":  "medium",
+        "name":         "Dark Ship — Global",
+        "trigger_type": "AIS_DARK_SHIP",
+        "severity":     "medium",
+        "icon_type":    "DARK_SHIP",
         "params": {
-            "target":                "ALL",
-            "min_gap_minutes":       60,
-            "last_known_region":     "ALL",
-            "min_speed_before_gap":  3.0,
-            "icon_type":             "DARK_SHIP",
+            "target":               "ALL",
+            "min_gap_minutes":      60,
+            "last_known_region":    "ALL",
+            "min_speed_before_gap": 3.0,
         },
-        "label": "Dark Ship — Global",
     },
-    # ── ADS-B ────────────────────────────────────────────────────────────────
     {
-        "rule_name": "ADSB_SQUAWK_MILITARY",
-        "severity":  "medium",
+        "name":         "Military Squawk Code",
+        "trigger_type": "ADSB_SQUAWK_MILITARY",
+        "severity":     "medium",
+        "icon_type":    "UNKNOWN_CONTACT",
         "params": {
-            "squawk_codes":  ["7700", "7600", "7500", "7777", "6100", "6400"],
-            "icon_type":     "UNKNOWN_CONTACT",
+            "target":       "ALL",
+            "squawk_codes": ["7700", "7600", "7500", "7777", "6100", "6400"],
         },
-        "label": "Military / Emergency Squawk Code",
     },
     {
-        "rule_name": "ADSB_TRANSPONDER_ANOMALY",
-        "severity":  "medium",
+        "name":         "Transponder Anomaly",
+        "trigger_type": "ADSB_TRANSPONDER_ANOMALY",
+        "severity":     "medium",
+        "icon_type":    "DARK_SHIP",
         "params": {
-            "no_callsign":      True,
-            "no_squawk":        True,
-            "min_altitude_ft":  1000,
-            "icon_type":        "DARK_SHIP",
+            "target":          "ALL",
+            "no_callsign":     True,
+            "no_squawk":       True,
+            "min_altitude_ft": 1000,
         },
-        "label": "Transponder Anomaly",
-    },
-]
-
-CHAINS = [
-    {
-        "chain_name":          "Cable Loiter + Dark Ship",
-        "rule_name_triggers":  ["AIS_LOITERING_NEAR_INFRA", "AIS_DARK_SHIP"],
-        "escalated_severity":  "critical",
-        "escalated_icon_type": "DARK_SHIP_CABLE",
-        "time_window_minutes": 30,
-    },
-    {
-        "chain_name":          "Cable Loiter + STS Transfer",
-        "rule_name_triggers":  ["AIS_LOITERING_NEAR_INFRA", "AIS_STS_PROXIMITY"],
-        "escalated_severity":  "critical",
-        "escalated_icon_type": "STS_TRANSFER_DARK",
-        "time_window_minutes": 30,
-    },
-    {
-        "chain_name":          "Port Loiter + STS Transfer",
-        "rule_name_triggers":  ["AIS_LOITERING_NEAR_INFRA", "AIS_STS_PROXIMITY"],
-        "escalated_severity":  "critical",
-        "escalated_icon_type": "STS_TRANSFER",
-        "time_window_minutes": 45,
-    },
-    {
-        "chain_name":          "Dark Ship + STS Transfer",
-        "rule_name_triggers":  ["AIS_DARK_SHIP", "AIS_STS_PROXIMITY"],
-        "escalated_severity":  "critical",
-        "escalated_icon_type": "ESCALATED_DUAL",
-        "time_window_minutes": 60,
     },
 ]
 
 
 def seed():
-    db = SessionLocal()
-    try:
-        inserted_rules = []
-        for spec in RULES:
-            row = RuleConfig(
-                rule_name=spec["rule_name"],
-                enabled=True,
-                params=json.dumps(spec["params"]),
-            )
-            db.add(row)
-            db.flush()  # get row.id
+    print(f"Connecting to {BASE} …\n")
 
-            # Ontology entry
-            db.add(OntologyEntity(
-                system_id=f"RULE-{row.id}",
-                entity_type="Rule",
-                name=spec["label"],
-                infra_type=spec["params"].get("infra_type"),
-                region_id=None,
-                entity_metadata=json.dumps({
-                    "rule_name": spec["rule_name"],
-                    "severity":  spec["severity"],
-                    "params":    spec["params"],
-                }),
-            ))
-            inserted_rules.append((row.id, spec))
-            print(f"  RULE-{row.id}: {spec['label']} [{spec['rule_name']}]")
+    # ── Rules ────────────────────────────────────────────────────────────────
+    rule_ids = {}   # name → id
+    print("Creating rules:")
+    for spec in RULES:
+        r = httpx.post(f"{BASE}/api/rules", json=spec, timeout=10)
+        if r.status_code not in (200, 201):
+            print(f"  ERROR {r.status_code}: {r.text[:200]}")
+            sys.exit(1)
+        d = r.json()
+        rule_ids[spec["name"]] = d["id"]
+        print(f"  {d['system_id']} | {d['trigger_type']} | {d['name']}")
 
-        db.commit()
+    # ── Escalation Chains ────────────────────────────────────────────────────
+    chains = [
+        {
+            "chain_name":          "Cable Loitering + Dark Ship",
+            "rule_ids":            [rule_ids["Cable Loitering — Global"],
+                                    rule_ids["Dark Ship — Global"]],
+            "escalated_severity":  "critical",
+            "escalated_icon_type": "DARK_SHIP_CABLE",
+            "time_window_minutes": 30,
+        },
+        {
+            "chain_name":          "STS Transfer + Dark Ship",
+            "rule_ids":            [rule_ids["Ship-to-Ship Proximity"],
+                                    rule_ids["Dark Ship — Global"]],
+            "escalated_severity":  "critical",
+            "escalated_icon_type": "STS_TRANSFER_DARK",
+            "time_window_minutes": 30,
+        },
+        {
+            "chain_name":          "Cable Loitering + STS + Dark Ship",
+            "rule_ids":            [rule_ids["Cable Loitering — Global"],
+                                    rule_ids["Ship-to-Ship Proximity"],
+                                    rule_ids["Dark Ship — Global"]],
+            "escalated_severity":  "critical",
+            "escalated_icon_type": "ESCALATED_TRIPLE",
+            "time_window_minutes": 30,
+        },
+        {
+            "chain_name":          "Strategic Port Loitering + Dark Ship",
+            "rule_ids":            [rule_ids["Loitering — Strategic Ports"],
+                                    rule_ids["Dark Ship — Global"]],
+            "escalated_severity":  "critical",
+            "escalated_icon_type": "ESCALATED_DUAL",
+            "time_window_minutes": 30,
+        },
+    ]
 
-        # Build chain rule_ids by matching rule_name_triggers to inserted rule ids
-        print("\nSeeding escalation chains:")
-        for chain_spec in CHAINS:
-            triggers = chain_spec["rule_name_triggers"]
-            # Match inserted rules whose rule_name is in the trigger list
-            matched_ids = [
-                str(rid)
-                for rid, spec in inserted_rules
-                if spec["rule_name"] in triggers
-            ]
-            row = EscalationChain(
-                chain_name=chain_spec["chain_name"],
-                rule_ids=",".join(matched_ids),
-                escalated_severity=chain_spec["escalated_severity"],
-                escalated_icon_type=chain_spec["escalated_icon_type"],
-                time_window_minutes=chain_spec["time_window_minutes"],
-            )
-            db.add(row)
-            db.flush()
+    print("\nCreating escalation chains:")
+    for spec in chains:
+        r = httpx.post(f"{BASE}/api/escalation-chains", json=spec, timeout=10)
+        if r.status_code not in (200, 201):
+            print(f"  ERROR {r.status_code}: {r.text[:200]}")
+            sys.exit(1)
+        d = r.json()
+        print(f"  {d['system_id']} | {d['chain_name']} | rules={d['rule_ids']} → {d['escalated_severity']}/{d['escalated_icon_type']}")
 
-            db.add(OntologyEntity(
-                system_id=f"CHAIN-{row.id}",
-                entity_type="Escalation Chain",
-                name=chain_spec["chain_name"],
-                infra_type=None,
-                region_id=None,
-                entity_metadata=json.dumps({
-                    "escalated_severity":  chain_spec["escalated_severity"],
-                    "escalated_icon_type": chain_spec["escalated_icon_type"],
-                    "time_window_minutes": chain_spec["time_window_minutes"],
-                    "rule_ids":            matched_ids,
-                }),
-            ))
-            db.commit()
-            print(f"  CHAIN-{row.id}: {chain_spec['chain_name']} → rules [{','.join(matched_ids)}]")
-
-    finally:
-        db.close()
+    print("\nDone.")
 
 
 if __name__ == "__main__":
-    print("Seeding rules...")
     seed()
-    print("\nDone.")

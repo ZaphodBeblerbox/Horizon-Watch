@@ -196,13 +196,17 @@ class OntologyEntity(Base):
 class RuleConfig(Base):
     __tablename__ = "rule_configs"
 
-    id         = Column(Integer, primary_key=True)
-    rule_name  = Column(String, nullable=False, index=True)
-    enabled    = Column(Boolean, default=True)
-    params     = Column(Text, nullable=False)   # JSON string
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow,
-                        onupdate=datetime.datetime.utcnow)
+    id           = Column(Integer, primary_key=True)
+    name         = Column(String, nullable=True)                    # human-readable label
+    rule_name    = Column(String, nullable=False, index=True)       # trigger_type key used by detectors
+    trigger_type = Column(String, nullable=True, index=True)        # explicit alias, mirrors rule_name
+    severity     = Column(String, nullable=True, default="medium")
+    icon_type    = Column(String, nullable=True)
+    enabled      = Column(Boolean, default=True)
+    params       = Column(Text, nullable=False, default="{}")       # JSON string
+    created_at   = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at   = Column(DateTime, default=datetime.datetime.utcnow,
+                          onupdate=datetime.datetime.utcnow)
 
 
 class EscalationChain(Base):
@@ -282,6 +286,20 @@ def migrate_db():
             if col not in cs_existing:
                 cur.execute(f'ALTER TABLE cable_segments ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] cable_segments: added column {col}')
+
+    # rule_configs new columns
+    rule_cols = [
+        ('name',         'TEXT'),
+        ('trigger_type', 'TEXT'),
+        ('severity',     'TEXT DEFAULT "medium"'),
+        ('icon_type',    'TEXT'),
+    ]
+    if 'rule_configs' in tables:
+        rc_existing = [row[1] for row in cur.execute('PRAGMA table_info(rule_configs)').fetchall()]
+        for col, typ in rule_cols:
+            if col not in rc_existing:
+                cur.execute(f'ALTER TABLE rule_configs ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] rule_configs: added column {col}')
 
     conn.commit()
     conn.close()
