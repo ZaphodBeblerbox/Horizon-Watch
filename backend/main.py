@@ -12115,6 +12115,9 @@ def _cable_feature(row) -> dict:
         "properties": {
             "cable_id":          row.cable_id,
             "cable_name":        row.cable_name,
+            "system_id":         row.system_id,
+            "infra_type":        row.infra_type,
+            "region_id":         row.region_id,
             "owners":            row.owners,
             "rfs_year":          row.rfs_year,
             "length_km":         row.length_km,
@@ -12203,6 +12206,226 @@ def api_cable_by_id(cable_id: str):
     if not row:
         raise HTTPException(status_code=404, detail=f"Cable '{cable_id}' not found")
     return _cable_feature(row)
+
+
+# ── Endpoints: Ontology entities (DB-backed) ──────────────────────────────────
+
+@app.get("/api/ontology/entities")
+def api_ontology_entities(
+    response: FastAPIResponse,
+    type: str = Query(None, description="Filter by entity_type (e.g. 'Submarine Cable')"),
+    region_id: str = Query(None, description="Filter by region_id"),
+):
+    """Return ontology entities from the DB, optionally filtered by type or region."""
+    import json as _json_ont
+    from database import OntologyEntity, get_db
+    response.headers["Cache-Control"] = "public, max-age=300"
+    with get_db() as db:
+        q = db.query(OntologyEntity)
+        if type:
+            q = q.filter(OntologyEntity.entity_type == type)
+        if region_id:
+            q = q.filter(OntologyEntity.region_id == region_id)
+        rows = q.all()
+    return {
+        "entities": [
+            {
+                "system_id":   r.system_id,
+                "entity_type": r.entity_type,
+                "name":        r.name,
+                "infra_type":  r.infra_type,
+                "region_id":   r.region_id,
+                "metadata":    _json_ont.loads(r.entity_metadata) if r.entity_metadata else {},
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+# ── Endpoints: Rule configs (DB-backed) ───────────────────────────────────────
+
+def _rule_row_to_dict(row) -> dict:
+    import json as _jr
+    return {
+        "id":         row.id,
+        "rule_name":  row.rule_name,
+        "enabled":    row.enabled,
+        "params":     _jr.loads(row.params) if isinstance(row.params, str) else row.params,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.get("/api/rules")
+def api_rules_list():
+    """Return all rule configs."""
+    from database import RuleConfig, get_db
+    with get_db() as db:
+        rows = db.query(RuleConfig).order_by(RuleConfig.id).all()
+    return {"rules": [_rule_row_to_dict(r) for r in rows], "total": len(rows)}
+
+
+@app.post("/api/rules")
+def api_rules_create(body: dict):
+    """Create a new rule config. Body: {rule_name, params, enabled?}"""
+    import json as _jc
+    from database import RuleConfig, get_db
+    import datetime as _dt
+    rule_name = body.get("rule_name")
+    params    = body.get("params", {})
+    enabled   = bool(body.get("enabled", True))
+    if not rule_name:
+        raise HTTPException(status_code=422, detail="rule_name is required")
+    params_str = _jc.dumps(params, ensure_ascii=False)
+    now = _dt.datetime.utcnow()
+    with get_db() as db:
+        row = RuleConfig(
+            rule_name=rule_name, enabled=enabled, params=params_str,
+            created_at=now, updated_at=now,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _rule_row_to_dict(row)
+
+
+@app.put("/api/rules/{rule_id}")
+def api_rules_update(rule_id: int, body: dict):
+    """Update a rule config. Accepts: enabled, params (partial ok)."""
+    import json as _ju
+    import datetime as _dt
+    from database import RuleConfig, get_db
+    with get_db() as db:
+        row = db.query(RuleConfig).filter(RuleConfig.id == rule_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+        if "enabled" in body:
+            row.enabled = bool(body["enabled"])
+        if "params" in body:
+            row.params = _ju.dumps(body["params"], ensure_ascii=False)
+        if "rule_name" in body:
+            row.rule_name = body["rule_name"]
+        row.updated_at = _dt.datetime.utcnow()
+        db.commit()
+        db.refresh(row)
+        return _rule_row_to_dict(row)
+
+
+@app.delete("/api/rules/{rule_id}")
+def api_rules_delete(rule_id: int):
+    """Delete a rule config by id."""
+    from database import RuleConfig, get_db
+    with get_db() as db:
+        row = db.query(RuleConfig).filter(RuleConfig.id == rule_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+        db.delete(row)
+        db.commit()
+    return {"deleted": rule_id}
+
+
+@app.post("/api/rules/test")
+def api_rules_test(body: dict):
+    """
+    Replay a loitering rule against the last 60 min of position history for a vessel.
+    Body: { rule_id: int, vessel_mmsi: str }
+    """
+    import json as _jt
+    from database import RuleConfig, VesselHistory, CableSegment, get_db
+    from datetime import timedelta
+    from detectors.ais_detector import AISAnomalyDetector as _AIS
+
+    rule_id     = body.get("rule_id")
+    vessel_mmsi = str(body.get("vessel_mmsi", ""))
+    if not rule_id or not vessel_mmsi:
+        raise HTTPException(status_code=422, detail="rule_id and vessel_mmsi required")
+
+    with get_db() as db:
+        rule_row = db.query(RuleConfig).filter(RuleConfig.id == rule_id).first()
+        if not rule_row:
+            raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+        if rule_row.rule_name != "AIS_LOITERING_NEAR_CABLE":
+            raise HTTPException(status_code=422, detail="Only AIS_LOITERING_NEAR_CABLE rules supported")
+
+        cutoff   = datetime.now(timezone.utc) - timedelta(minutes=60)
+        history  = (
+            db.query(VesselHistory)
+            .filter(VesselHistory.mmsi == vessel_mmsi,
+                    VesselHistory.timestamp >= cutoff)
+            .order_by(VesselHistory.timestamp)
+            .all()
+        )
+
+        params_v = _jt.loads(rule_row.params) if isinstance(rule_row.params, str) else rule_row.params
+        target   = str(params_v.get("target", "ALL")).upper()
+
+        cables_all = db.query(CableSegment).all()
+        if target == "ALL":
+            cables_scope = cables_all
+        elif target.startswith("REG-"):
+            cables_scope = [c for c in cables_all if (c.region_id or "") == target]
+        else:
+            cables_scope = [c for c in cables_all if (c.system_id or "") == target]
+
+        cables_for_detector = [
+            {
+                "system_id": c.system_id,
+                "cable_id":  c.cable_id,
+                "name":      c.cable_name,
+                "region_id": c.region_id,
+                "geometry":  c.geometry,
+            }
+            for c in cables_scope
+        ]
+
+    if not history:
+        return {
+            "would_fire": False,
+            "reason": "No position history for this vessel in the last 60 minutes",
+            "matched_cables": [],
+            "positions_checked": 0,
+        }
+
+    rule_dict = {
+        "id":        rule_row.id,
+        "rule_name": rule_row.rule_name,
+        "enabled":   rule_row.enabled,
+        "params":    params_v,
+    }
+
+    # Simulate the rule over the history using a fresh detector instance
+    tester = _AIS()
+    all_alerts: list = []
+    for pos in history:
+        vessel = {
+            "mmsi":  vessel_mmsi,
+            "name":  pos.name or vessel_mmsi,
+            "lat":   pos.lat,
+            "lng":   pos.lon,
+            "speed": pos.speed or 0,
+            "flag":  pos.flag,
+        }
+        ts = pos.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        hits = tester.check_loitering(vessel, cables_for_detector, [rule_dict], ts)
+        all_alerts.extend(hits)
+
+    matched_cables = list({a["cable_system_id"] for a in all_alerts})
+    would_fire     = len(all_alerts) > 0
+
+    return {
+        "would_fire":         would_fire,
+        "reason":             (
+            f"Rule would fire: loitering detected near {matched_cables}"
+            if would_fire else "No loitering detected in last 60 min history"
+        ),
+        "matched_cables":     matched_cables,
+        "alert_count":        len(all_alerts),
+        "positions_checked":  len(history),
+        "alerts":             all_alerts[:5],
+    }
 
 
 # ── Debug: news pipeline status ───────────────────────────────────────────────
@@ -13375,6 +13598,49 @@ def _prep_cables_for_detector():
         return []
 
 
+_CABLES_DB_CACHE: list = []
+_CABLES_DB_CACHE_TS: float = 0.0
+_CABLES_DB_CACHE_TTL: float = 300.0   # refresh every 5 min
+
+
+def _prep_cables_from_db() -> list:
+    """Load cable data from DB for loitering detection. Cached."""
+    global _CABLES_DB_CACHE, _CABLES_DB_CACHE_TS
+    import time as _time
+    now = _time.time()
+    if _CABLES_DB_CACHE and (now - _CABLES_DB_CACHE_TS) < _CABLES_DB_CACHE_TTL:
+        return _CABLES_DB_CACHE
+    try:
+        from database import CableSegment, get_db
+        with get_db() as _db:
+            rows = _db.query(CableSegment).all()
+        result = []
+        for row in rows:
+            geom = row.geometry or {}
+            # Sample coords to cap CPU (every 8th point per segment)
+            coords: list = []
+            for seg in geom.get("coordinates", []):
+                coords.extend(seg[::8])
+            sampled_geom = {
+                "type": geom.get("type", "MultiLineString"),
+                "coordinates": [seg[::8] for seg in geom.get("coordinates", []) if seg],
+            }
+            result.append({
+                "system_id": row.system_id,
+                "cable_id":  row.cable_id,
+                "name":      row.cable_name,
+                "region_id": row.region_id,
+                "geometry":  sampled_geom,
+                "coordinates": coords,
+            })
+        _CABLES_DB_CACHE = result
+        _CABLES_DB_CACHE_TS = now
+        return result
+    except Exception as _e:
+        print(f"[cables-db] load error: {_e}")
+        return _CABLES_DB_CACHE   # return stale cache on error
+
+
 def _normalize_vessel(raw, mmsi=None):
     """Normalize AIS vessel data to consistent field names used by detectors."""
     if not raw:
@@ -13456,6 +13722,37 @@ async def _forge_detection_cycle():
                 except Exception as _ve:
                     pass
             print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
+
+            # Stage 1b — Loitering near cable (DB-backed configurable rules)
+            try:
+                from database import RuleConfig, get_db
+                import json as _json_lc
+                with get_db() as _ldb:
+                    loiter_rule_rows = _ldb.query(RuleConfig).filter(
+                        RuleConfig.rule_name == "AIS_LOITERING_NEAR_CABLE",
+                        RuleConfig.enabled == True,
+                    ).all()
+                loiter_rules = [
+                    {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
+                     "params": _json_lc.loads(r.params) if isinstance(r.params, str) else r.params}
+                    for r in loiter_rule_rows
+                ]
+                if loiter_rules:
+                    cables_db = _prep_cables_from_db()
+                    cycle_now = datetime.now(timezone.utc)
+                    for _mmsi, _vessel in normalized_snap.items():
+                        try:
+                            hits = _ais_detector.check_loitering(
+                                _vessel, cables_db, loiter_rules, cycle_now
+                            )
+                            new_ais_alerts.extend(hits)
+                        except Exception:
+                            pass
+                    _ais_detector.purge_stale_loiter(cycle_now)
+                    if loiter_rules:
+                        print(f"[forge-brain] Stage1b loitering: {len(loiter_rules)} rule(s) active")
+            except Exception as _le:
+                print(f"[forge-brain] loitering check error: {_le}")
 
             # Stage 2 — ADS-B anomaly detection via _adsb_detector
             new_adsb_alerts: list = []

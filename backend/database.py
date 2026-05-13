@@ -118,6 +118,9 @@ class CableSegment(Base):
     country_b          = Column(String, nullable=True)   # last landing country
     all_countries      = Column(String, nullable=True)   # comma-separated sorted unique
     landing_point_ids  = Column(String, nullable=True)   # comma-separated LP ids
+    system_id          = Column(String, unique=True, nullable=True, index=True)  # CABLE-001 …
+    infra_type         = Column(String, nullable=True, default="Submarine Cable")
+    region_id          = Column(String, nullable=True, index=True)
 
 
 class LandingPoint(Base):
@@ -130,6 +133,37 @@ class LandingPoint(Base):
     latitude          = Column(Float, nullable=False)
     longitude         = Column(Float, nullable=False)
     cable_ids         = Column(String, nullable=True)   # comma-separated cable ids
+
+
+class RegionDefinition(Base):
+    __tablename__ = "region_definitions"
+
+    region_id   = Column(String, primary_key=True)
+    region_name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+
+
+class OntologyEntity(Base):
+    __tablename__ = "ontology_entities"
+
+    system_id         = Column(String, primary_key=True)
+    entity_type       = Column(String, nullable=False, index=True)
+    name              = Column(String, nullable=False)
+    infra_type        = Column(String, nullable=True)
+    region_id         = Column(String, nullable=True, index=True)
+    entity_metadata   = Column(Text, nullable=True)   # JSON string
+
+
+class RuleConfig(Base):
+    __tablename__ = "rule_configs"
+
+    id         = Column(Integer, primary_key=True)
+    rule_name  = Column(String, nullable=False, index=True)
+    enabled    = Column(Boolean, default=True)
+    params     = Column(Text, nullable=False)   # JSON string
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow,
+                        onupdate=datetime.datetime.utcnow)
 
 
 class WeeklySnapshot(Base):
@@ -187,6 +221,9 @@ def migrate_db():
         ('country_b',         'TEXT'),
         ('all_countries',     'TEXT'),
         ('landing_point_ids', 'TEXT'),
+        ('system_id',         'TEXT'),
+        ('infra_type',        'TEXT'),
+        ('region_id',         'TEXT'),
     ]
     tables = [row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     if 'cable_segments' in tables:
