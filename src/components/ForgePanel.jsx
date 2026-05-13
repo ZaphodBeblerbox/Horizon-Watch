@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import API_BASE from "../apiBase.js"
 import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.jsx"
+import { ALERT_ICONS } from "../constants/alertIcons.js"
 
 const API = API_BASE
 
@@ -660,6 +661,8 @@ function OsintWorkspace() {
 const TRIGGER_TYPES = {
     AIS: [
         { value: "stationary_near_infrastructure", label: "Stationary near infrastructure", params: { infra_type: "cable", max_speed_knots: 0.5, proximity_km: 10, min_duration_minutes: 120 } },
+        { value: "AIS_STS_PROXIMITY",              label: "Ship-to-Ship Proximity (outside port)", params: { proximity_metres: 500, min_duration_minutes: 15, max_speed_knots: 2.0 } },
+        { value: "AIS_DARK_SHIP",                  label: "AIS Dark Ship (gap detection)", params: { min_gap_minutes: 60, min_speed_before_gap: 2.0 } },
         { value: "speed_anomaly", label: "Speed anomaly", params: { max_speed_knots: 25 } },
         { value: "transponder_gap", label: "Dark ship (AIS gap)", params: { gap_minutes: 30, proximity_km: 100 } },
         { value: "ship_to_ship", label: "Ship-to-ship proximity", params: { proximity_meters: 500, max_speed_knots: 2 } },
@@ -677,7 +680,7 @@ const TRIGGER_TYPES = {
     ],
 }
 
-const INFRA_TYPES = ["Submarine Cable"]
+const INFRA_TYPES = ["Submarine Cable", "Port"]
 
 const REGION_LABELS = {
     "REG-ARCTIC":  "Arctic",
@@ -708,16 +711,23 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const [scopeSingle, setScopeSingle] = useState("")
     const [regions, setRegions]         = useState([])
 
+    // STS / Dark ship state
+    const [darkRegion, setDarkRegion]   = useState("")   // last_known_region for dark ship
+    const [iconType, setIconType]       = useState("")   // optional ALERT_ICONS key override
+
     const isInfraRule = source === "AIS" && triggerType === "stationary_near_infrastructure"
+    const isStsRule   = source === "AIS" && triggerType === "AIS_STS_PROXIMITY"
+    const isDarkRule  = source === "AIS" && triggerType === "AIS_DARK_SHIP"
+    const isDbRule    = isInfraRule || isStsRule || isDarkRule
 
     useEffect(() => {
-        if (isInfraRule && regions.length === 0) {
+        if ((isInfraRule || isDarkRule) && regions.length === 0) {
             fetch(`${API}/api/cables/regions`)
                 .then(r => r.ok ? r.json() : { regions: [] })
                 .then(d => setRegions(d.regions || []))
                 .catch(() => {})
         }
-    }, [isInfraRule])
+    }, [isInfraRule, isDarkRule])
 
     const triggers = TRIGGER_TYPES[source] || []
 
@@ -726,33 +736,62 @@ function CreateRuleModal({ source, onClose, onCreated }) {
         const t = triggers.find(t => t.value === val)
         setParams(t?.params ? JSON.parse(JSON.stringify(t.params)) : {})
         setScopeMode("ALL"); setScopeRegion(""); setScopeSingle("")
+        setDarkRegion(""); setIconType("")
     }
 
     const save = async () => {
         if (!name || !triggerType) return
         setSaving(true)
         try {
-            if (isInfraRule) {
+            if (isDbRule) {
                 // DB-backed rule via /api/rules
-                let target = "ALL"
-                if (scopeMode === "REGION" && scopeRegion) target = scopeRegion
-                else if (scopeMode === "SINGLE" && scopeSingle) target = scopeSingle.trim().toUpperCase()
-                const body = {
-                    rule_name: name,
-                    trigger_type: "AIS_LOITERING_NEAR_INFRA",
-                    severity,
-                    params: {
-                        infra_type:           infraType,
-                        target,
-                        proximity_km:         parseFloat(params.proximity_km ?? 0.5),
-                        max_speed_knots:      parseFloat(params.max_speed_knots ?? 2.0),
-                        min_duration_minutes: parseFloat(params.min_duration_minutes ?? 30),
-                        distance_metres:      Math.round((parseFloat(params.proximity_km ?? 0.5)) * 1000),
-                        duration_minutes:     parseFloat(params.min_duration_minutes ?? 30),
-                    },
+                let ruleBody = null
+                if (isInfraRule) {
+                    let target = "ALL"
+                    if (scopeMode === "REGION" && scopeRegion) target = scopeRegion
+                    else if (scopeMode === "SINGLE" && scopeSingle) target = scopeSingle.trim().toUpperCase()
+                    ruleBody = {
+                        rule_name: name,
+                        trigger_type: "AIS_LOITERING_NEAR_INFRA",
+                        severity,
+                        params: {
+                            infra_type:           infraType,
+                            target,
+                            proximity_km:         parseFloat(params.proximity_km ?? 0.5),
+                            max_speed_knots:      parseFloat(params.max_speed_knots ?? 2.0),
+                            min_duration_minutes: parseFloat(params.min_duration_minutes ?? 30),
+                            distance_metres:      Math.round((parseFloat(params.proximity_km ?? 0.5)) * 1000),
+                            duration_minutes:     parseFloat(params.min_duration_minutes ?? 30),
+                            ...(iconType ? { icon_type: iconType } : {}),
+                        },
+                    }
+                } else if (isStsRule) {
+                    ruleBody = {
+                        rule_name: name,
+                        trigger_type: "AIS_STS_PROXIMITY",
+                        severity,
+                        params: {
+                            proximity_metres:     parseFloat(params.proximity_metres ?? 500),
+                            min_duration_minutes: parseFloat(params.min_duration_minutes ?? 15),
+                            max_speed_knots:      parseFloat(params.max_speed_knots ?? 2.0),
+                            ...(iconType ? { icon_type: iconType } : {}),
+                        },
+                    }
+                } else if (isDarkRule) {
+                    ruleBody = {
+                        rule_name: name,
+                        trigger_type: "AIS_DARK_SHIP",
+                        severity,
+                        params: {
+                            min_gap_minutes:      parseFloat(params.min_gap_minutes ?? 60),
+                            min_speed_before_gap: parseFloat(params.min_speed_before_gap ?? 2.0),
+                            ...(darkRegion ? { last_known_region: darkRegion } : {}),
+                            ...(iconType ? { icon_type: iconType } : {}),
+                        },
+                    }
                 }
                 const res = await fetch(`${API}/api/rules`, {
-                    method: "POST", headers: forgeHeaders(), body: JSON.stringify(body),
+                    method: "POST", headers: forgeHeaders(), body: JSON.stringify(ruleBody),
                 })
                 const d = await res.json()
                 if (res.ok) {
@@ -860,6 +899,50 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                             <input value={scopeSingle} onChange={e => setScopeSingle(e.target.value)} placeholder="CABLE-NNN" style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
                         ))}
                     </>
+                ) : isStsRule ? (
+                    <>
+                        <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                            {[
+                                ["proximity_metres",     "Proximity (m)",   params.proximity_metres ?? 500],
+                                ["min_duration_minutes", "Duration (min)",  params.min_duration_minutes ?? 15],
+                                ["max_speed_knots",      "Max speed (kn)",  params.max_speed_knots ?? 2.0],
+                            ].map(([key, label, def]) => (
+                                <div key={key}>
+                                    <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
+                                    <input type="number" step="any"
+                                        value={params[key] ?? def}
+                                        onChange={e => setParams(p => ({ ...p, [key]: e.target.value }))}
+                                        style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                                </div>
+                            ))}
+                        </div>
+                        <div style={{ marginBottom: 10, padding: "7px 10px", background: "rgba(96,165,250,0.06)", borderRadius: 3, border: "1px solid rgba(96,165,250,0.12)", color: "#475569", fontSize: 10 }}>
+                            Fires when two vessels are within proximity for the set duration, <em>outside</em> any port boundary.
+                        </div>
+                    </>
+                ) : isDarkRule ? (
+                    <>
+                        <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                            {[
+                                ["min_gap_minutes",      "AIS gap (min)",       params.min_gap_minutes ?? 60],
+                                ["min_speed_before_gap", "Min speed before (kn)", params.min_speed_before_gap ?? 2.0],
+                            ].map(([key, label, def]) => (
+                                <div key={key}>
+                                    <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
+                                    <input type="number" step="any"
+                                        value={params[key] ?? def}
+                                        onChange={e => setParams(p => ({ ...p, [key]: e.target.value }))}
+                                        style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                                </div>
+                            ))}
+                        </div>
+                        {fld("Last known region (optional filter)", (
+                            <select value={darkRegion} onChange={e => setDarkRegion(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                <option value="">Any region</option>
+                                {regions.map(r => <option key={r.region_id} value={r.region_id}>{r.region_name} ({r.region_id})</option>)}
+                            </select>
+                        ))}
+                    </>
                 ) : (
                     triggerType && Object.keys(params).length > 0 && (
                         <div style={{ marginBottom: 12 }}>
@@ -875,6 +958,15 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                         </div>
                     )
                 )}
+
+                {isDbRule && fld("Alert Icon (optional)", (
+                    <select value={iconType} onChange={e => setIconType(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                        <option value="">Default for rule type</option>
+                        {Object.entries(ALERT_ICONS).map(([key, def]) => (
+                            <option key={key} value={key}>{def.label}</option>
+                        ))}
+                    </select>
+                ))}
 
                 <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 16 }}>
                     <button onClick={onClose} style={ghostBtn}>Cancel</button>
