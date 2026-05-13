@@ -135,6 +135,24 @@ class LandingPoint(Base):
     cable_ids         = Column(String, nullable=True)   # comma-separated cable ids
 
 
+class PortBoundary(Base):
+    __tablename__ = "port_boundaries"
+
+    id                      = Column(Integer, primary_key=True)
+    system_id               = Column(String, unique=True, index=True, nullable=False)  # PORT-0001 …
+    port_name               = Column(String, nullable=False)
+    country                 = Column(String, nullable=True)   # ISO-2 e.g. NL
+    locode                  = Column(String, nullable=True)   # e.g. NLRTM
+    region_id               = Column(String, nullable=True, index=True)
+    latitude                = Column(Float, nullable=False)
+    longitude               = Column(Float, nullable=False)
+    port_size               = Column(String, nullable=True)   # Small/Medium/Large/Very Large
+    shelter                 = Column(String, nullable=True)
+    boundary_radius_metres  = Column(Integer, default=2000)
+    infra_type              = Column(String, nullable=True, default="Port")
+    port_metadata           = Column(Text, nullable=True)     # JSON string
+
+
 class RegionDefinition(Base):
     __tablename__ = "region_definitions"
 

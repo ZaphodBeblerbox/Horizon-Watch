@@ -12239,6 +12239,129 @@ def api_cable_by_id(cable_id: str):
     return _cable_feature(row)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PORTS — PortBoundary endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _port_feature(row) -> dict:
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [row.longitude, row.latitude]},
+        "properties": {
+            "system_id":              row.system_id,
+            "port_name":              row.port_name,
+            "country":                row.country,
+            "locode":                 row.locode,
+            "region_id":              row.region_id,
+            "port_size":              row.port_size,
+            "boundary_radius_metres": row.boundary_radius_metres,
+            "infra_type":             row.infra_type,
+        },
+    }
+
+
+import math as _math_ports
+
+def _haversine_m(lat1, lon1, lat2, lon2) -> float:
+    R = 6_371_000
+    dlat = _math_ports.radians(lat2 - lat1)
+    dlon = _math_ports.radians(lon2 - lon1)
+    a = (_math_ports.sin(dlat / 2) ** 2
+         + _math_ports.cos(_math_ports.radians(lat1))
+         * _math_ports.cos(_math_ports.radians(lat2))
+         * _math_ports.sin(dlon / 2) ** 2)
+    return R * 2 * _math_ports.asin(_math_ports.sqrt(min(a, 1.0)))
+
+
+@app.get("/api/ports")
+def api_ports(response: FastAPIResponse):
+    """All ports as GeoJSON FeatureCollection."""
+    from database import PortBoundary, get_db
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    with get_db() as db:
+        rows = db.query(PortBoundary).all()
+    return {"type": "FeatureCollection", "features": [_port_feature(r) for r in rows], "total": len(rows)}
+
+
+@app.get("/api/ports/near")
+def api_ports_near(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    radius_km: float = Query(50.0),
+):
+    """Return all ports within radius_km of (lat, lon)."""
+    from database import PortBoundary, get_db
+    radius_m = radius_km * 1000
+    # Rough bounding box filter first, then precise haversine
+    dlat = radius_km / 111.0
+    dlon = radius_km / (111.0 * _math_ports.cos(_math_ports.radians(lat)) + 0.0001)
+    with get_db() as db:
+        candidates = db.query(PortBoundary).filter(
+            PortBoundary.latitude.between(lat - dlat, lat + dlat),
+            PortBoundary.longitude.between(lon - dlon, lon + dlon),
+        ).all()
+    nearby = [r for r in candidates if _haversine_m(lat, lon, r.latitude, r.longitude) <= radius_m]
+    return {"type": "FeatureCollection", "features": [_port_feature(r) for r in nearby], "total": len(nearby)}
+
+
+@app.post("/api/ports/check-in-boundary")
+async def api_ports_check_in_boundary(request: Request):
+    """
+    Check if a position falls within any port's boundary_radius_metres.
+    Body: { lat, lon }
+    Returns: { in_port: bool, port: null | {system_id, port_name, country, boundary_radius_metres} }
+    """
+    from database import PortBoundary, get_db
+    body = await request.json()
+    lat  = float(body.get("lat", 0))
+    lon  = float(body.get("lon", 0))
+
+    # Coarse bbox: max boundary = 15 km → ~0.135 deg lat
+    dlat = 0.14
+    dlon = 0.20
+    with get_db() as db:
+        candidates = db.query(PortBoundary).filter(
+            PortBoundary.latitude.between(lat - dlat, lat + dlat),
+            PortBoundary.longitude.between(lon - dlon, lon + dlon),
+        ).all()
+
+    for port in candidates:
+        dist_m = _haversine_m(lat, lon, port.latitude, port.longitude)
+        if dist_m <= port.boundary_radius_metres:
+            return {
+                "in_port": True,
+                "port": {
+                    "system_id":              port.system_id,
+                    "port_name":              port.port_name,
+                    "country":                port.country,
+                    "boundary_radius_metres": port.boundary_radius_metres,
+                    "distance_metres":        round(dist_m),
+                },
+            }
+    return {"in_port": False, "port": None}
+
+
+@app.get("/api/ports/by-region/{region_id}")
+def api_ports_by_region(region_id: str, response: FastAPIResponse):
+    """All ports in a given region."""
+    from database import PortBoundary, get_db
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    with get_db() as db:
+        rows = db.query(PortBoundary).filter(PortBoundary.region_id == region_id).all()
+    return {"type": "FeatureCollection", "features": [_port_feature(r) for r in rows], "total": len(rows)}
+
+
+@app.get("/api/ports/{system_id}")
+def api_port_by_system_id(system_id: str):
+    """Single port by system_id."""
+    from database import PortBoundary, get_db
+    with get_db() as db:
+        row = db.query(PortBoundary).filter(PortBoundary.system_id == system_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Port '{system_id}' not found")
+    return _port_feature(row)
+
+
 # ── Endpoints: Ontology entities (DB-backed) ──────────────────────────────────
 
 @app.get("/api/ontology/entities")

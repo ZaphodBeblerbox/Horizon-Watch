@@ -1,10 +1,393 @@
 """
 Cross-domain intelligence correlation engine.
 Takes signals from all detectors and produces correlated assessments.
-"""
-from datetime import datetime, timezone
-import math
 
+Also contains:
+- EscalationEngine  — per-vessel multi-rule chaining (dual / triple escalation)
+- STSDetector       — ship-to-ship proximity outside port boundaries
+- DarkShipDetector  — AIS gap / dark-ship detection
+"""
+from datetime import datetime, timezone, timedelta
+import math
+import uuid
+
+
+# ── Severity helpers ──────────────────────────────────────────────────────────
+
+SEV_SCORES = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+SEV_NAMES  = {4: "critical", 3: "high", 2: "medium", 1: "low", 0: "info"}
+
+def _escalate_severity(sev: str) -> str:
+    score = SEV_SCORES.get(sev.lower(), 1)
+    return SEV_NAMES.get(min(score + 1, 4), "critical")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ESCALATION ENGINE
+# ══════════════════════════════════════════════════════════════════════════════
+
+class EscalationEngine:
+    """
+    Per-vessel multi-rule chaining.
+    When 2+ distinct rules fire on the same vessel within 30 minutes,
+    suppress individual alerts and emit one escalated combined alert.
+    """
+
+    WINDOW_MINUTES = 30
+
+    def __init__(self):
+        # mmsi → list of {rule_name, icon_type, severity, fired_at, alert_id}
+        self._active: dict = {}
+
+    def process(self, alerts: list, now: datetime) -> list:
+        """
+        Process a batch of new alerts through the escalation logic.
+        Returns the final list of alerts to emit (individual or escalated).
+        """
+        if not alerts:
+            return []
+
+        cutoff = now - timedelta(minutes=self.WINDOW_MINUTES)
+
+        # Purge stale entries
+        for mmsi in list(self._active.keys()):
+            self._active[mmsi] = [
+                e for e in self._active[mmsi] if e["fired_at"] >= cutoff
+            ]
+            if not self._active[mmsi]:
+                del self._active[mmsi]
+
+        # Group incoming alerts by mmsi
+        by_mmsi: dict = {}
+        for a in alerts:
+            mmsi = a.get("mmsi") or a.get("vessel")
+            if not mmsi:
+                continue
+            by_mmsi.setdefault(str(mmsi), []).append(a)
+
+        final_alerts: list = []
+        suppressed_ids: set = set()
+
+        for mmsi, vessel_alerts in by_mmsi.items():
+            for a in vessel_alerts:
+                rule_name = a.get("rule_name") or a.get("rule_trigger") or "unknown"
+                icon_type = a.get("icon_type", "UNKNOWN_CONTACT")
+                severity  = a.get("severity", "medium")
+                alert_id  = a.get("id", str(uuid.uuid4()))
+                self._active.setdefault(mmsi, []).append({
+                    "rule_name": rule_name,
+                    "icon_type": icon_type,
+                    "severity":  severity,
+                    "fired_at":  now,
+                    "alert_id":  alert_id,
+                })
+
+            # Distinct rules active for this vessel in the window
+            active = self._active.get(mmsi, [])
+            distinct_rules = list({e["rule_name"]: e for e in active}.values())
+            count = len(distinct_rules)
+
+            if count == 1:
+                # No escalation — pass through
+                final_alerts.extend(vessel_alerts)
+            elif count == 2:
+                # Dual escalation
+                for a in vessel_alerts:
+                    suppressed_ids.add(a.get("id", ""))
+                r1, r2     = distinct_rules[0], distinct_rules[1]
+                max_sev    = max(SEV_SCORES.get(r["severity"], 1) for r in distinct_rules)
+                new_sev    = _escalate_severity(SEV_NAMES.get(max_sev, "medium"))
+                sample     = vessel_alerts[0]
+                final_alerts.append(self._make_escalated(
+                    "ESCALATED_DUAL",
+                    f"{sample.get('vessel', mmsi)} — dual anomaly: {r1['rule_name']} + {r2['rule_name']}",
+                    f"Two simultaneous detection rules fired within {self.WINDOW_MINUTES} min: "
+                    f"{r1['rule_name']} and {r2['rule_name']}",
+                    new_sev, sample, now,
+                ))
+            elif count >= 3:
+                # Triple escalation
+                for a in vessel_alerts:
+                    suppressed_ids.add(a.get("id", ""))
+                rule_names = " + ".join(r["rule_name"] for r in distinct_rules[:3])
+                max_sev    = max(SEV_SCORES.get(r["severity"], 1) for r in distinct_rules)
+                sample     = vessel_alerts[0]
+                final_alerts.append(self._make_escalated(
+                    "ESCALATED_TRIPLE",
+                    f"{sample.get('vessel', mmsi)} — triple anomaly: {rule_names}",
+                    f"{count} simultaneous detection rules fired within {self.WINDOW_MINUTES} min: {rule_names}",
+                    "critical", sample, now,
+                ))
+
+        # Also pass alerts with no mmsi through unchanged
+        for a in alerts:
+            if not (a.get("mmsi") or a.get("vessel")):
+                final_alerts.append(a)
+
+        # Strip individually suppressed alerts that were rolled into escalations
+        return [a for a in final_alerts if a.get("id", "") not in suppressed_ids]
+
+    @staticmethod
+    def _make_escalated(icon_type: str, title: str, body: str, severity: str, sample: dict, now: datetime) -> dict:
+        return {
+            "id":           f"esc_{int(now.timestamp()*1000)}",
+            "rule_name":    icon_type,
+            "rule_trigger": icon_type,
+            "source":       "AIS",
+            "severity":     severity,
+            "icon_type":    icon_type,
+            "vessel":       sample.get("vessel") or str(sample.get("mmsi", "?")),
+            "mmsi":         sample.get("mmsi"),
+            "lat":          sample.get("lat"),
+            "lng":          sample.get("lng"),
+            "message":      body,
+            "title":        title,
+            "timestamp":    now.isoformat(),
+            "provenance": {
+                "source_type":    "AIS",
+                "detection_rule": icon_type,
+                "trigger_reason": icon_type,
+            },
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STS DETECTOR — ship-to-ship proximity outside port boundaries
+# ══════════════════════════════════════════════════════════════════════════════
+
+class STSDetector:
+    """
+    Detects ship-to-ship (STS) transfers: two vessels within proximity_metres
+    of each other for >= min_duration_minutes, both outside any port boundary,
+    both speed <= max_speed_knots.
+    """
+
+    def __init__(self):
+        # (mmsi_a, mmsi_b) → {first_seen, alerted}
+        self._tracking: dict = {}
+        # mmsi → last known position {lat, lon, speed}
+        self._positions: dict = {}
+
+    def update_positions(self, vessels: dict) -> None:
+        """Update last-known positions from the live AIS snapshot."""
+        for mmsi, v in vessels.items():
+            if v.get("lat") and v.get("lng"):
+                self._positions[str(mmsi)] = {
+                    "lat":   v["lat"],
+                    "lng":   v["lng"],
+                    "speed": float(v.get("speed") or 0),
+                    "name":  v.get("name") or str(mmsi),
+                }
+
+    def check(self, vessels: dict, rules: list, now: datetime, port_check_fn=None) -> list:
+        """
+        vessels: dict of mmsi → normalized vessel dict (must have lat, lng, speed, name)
+        rules:   list of STS rule dicts with params
+        port_check_fn: callable(lat, lon) → bool — True if inside a port
+        """
+        alerts: list = []
+        vessel_list = [
+            (str(mmsi), v) for mmsi, v in vessels.items()
+            if v.get("lat") and v.get("lng")
+        ]
+        if len(vessel_list) < 2:
+            return alerts
+
+        for rule in rules:
+            if not rule.get("enabled", True):
+                continue
+            params            = rule.get("params", {})
+            proximity_m       = float(params.get("proximity_metres", 500))
+            min_dur_min       = float(params.get("min_duration_minutes", 30))
+            max_speed         = float(params.get("max_speed_knots", 2.0))
+
+            for i in range(len(vessel_list)):
+                mmsi_a, v_a = vessel_list[i]
+                if float(v_a.get("speed") or 0) > max_speed:
+                    continue
+                for j in range(i + 1, len(vessel_list)):
+                    mmsi_b, v_b = vessel_list[j]
+                    if float(v_b.get("speed") or 0) > max_speed:
+                        continue
+
+                    dist_m = _haversine_m(v_a["lat"], v_a["lng"], v_b["lat"], v_b["lng"])
+                    if dist_m > proximity_m:
+                        # Clear stale STS state
+                        key = tuple(sorted([mmsi_a, mmsi_b]))
+                        self._tracking.pop(key, None)
+                        continue
+
+                    # Check port boundaries
+                    if port_check_fn:
+                        if port_check_fn(v_a["lat"], v_a["lng"]) or port_check_fn(v_b["lat"], v_b["lng"]):
+                            continue  # Normal port activity — skip
+
+                    key = tuple(sorted([mmsi_a, mmsi_b]))
+                    state = self._tracking.get(key)
+                    if state is None:
+                        self._tracking[key] = {"first_seen": now, "alerted": False}
+                        continue
+
+                    if state["alerted"]:
+                        continue
+
+                    elapsed_min = (now - state["first_seen"]).total_seconds() / 60.0
+                    if elapsed_min >= min_dur_min:
+                        state["alerted"] = True
+                        mid_lat = (v_a["lat"] + v_b["lat"]) / 2
+                        mid_lng = (v_a["lng"] + v_b["lng"]) / 2
+                        name_a  = v_a.get("name", mmsi_a)
+                        name_b  = v_b.get("name", mmsi_b)
+                        alerts.append({
+                            "id":           f"sts_{int(now.timestamp()*1000)}_{mmsi_a}",
+                            "rule_id":      rule.get("id"),
+                            "rule_name":    "AIS_STS_PROXIMITY",
+                            "rule_trigger": "AIS_STS_PROXIMITY",
+                            "source":       "AIS",
+                            "severity":     "high",
+                            "icon_type":    "STS_TRANSFER",
+                            "vessel":       f"{name_a} + {name_b}",
+                            "mmsi":         mmsi_a,
+                            "mmsi_b":       mmsi_b,
+                            "lat":          mid_lat,
+                            "lng":          mid_lng,
+                            "speed":        float(v_a.get("speed") or 0),
+                            "message": (
+                                f"Possible STS transfer: {name_a} + {name_b} "
+                                f"within {dist_m:.0f}m for {elapsed_min:.0f} min, "
+                                f"both outside port boundaries, speed ≤ {max_speed} kn"
+                            ),
+                            "timestamp": now.isoformat(),
+                            "provenance": {
+                                "source_type":    "AIS",
+                                "detection_rule": "AIS_STS_PROXIMITY",
+                                "trigger_reason": "AIS_STS_PROXIMITY",
+                            },
+                        })
+
+        # Purge stale STS pairs (> 60 min)
+        cutoff = now - timedelta(minutes=60)
+        self._tracking = {k: v for k, v in self._tracking.items() if v["first_seen"] >= cutoff}
+
+        return alerts
+
+    def purge_stale(self, now: datetime, max_gap_minutes: float = 60.0) -> None:
+        cutoff = now - timedelta(minutes=max_gap_minutes)
+        self._tracking = {k: v for k, v in self._tracking.items() if v["first_seen"] >= cutoff}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DARK SHIP DETECTOR — AIS gap detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DarkShipDetector:
+    """
+    Detects vessels that disappear from AIS while underway (transponder gap).
+
+    Maintains last_seen[mmsi] = {timestamp, lat, lon, speed, name, region_id}
+    Scans every cycle for vessels not updated in >= min_gap_minutes.
+    """
+
+    def __init__(self):
+        # mmsi → {timestamp, lat, lon, speed, name, region_id, alerted_at}
+        self._last_seen: dict = {}
+
+    def update(self, vessels: dict, now: datetime, region_fn=None) -> None:
+        """Update last-seen from current AIS snapshot."""
+        for mmsi, v in vessels.items():
+            if not (v.get("lat") and v.get("lng")):
+                continue
+            lat = v["lat"]
+            lon = v.get("lng") or v.get("lon", 0)
+            region_id = region_fn(lat, lon) if region_fn else None
+            self._last_seen[str(mmsi)] = {
+                "timestamp": now,
+                "lat":       lat,
+                "lon":       lon,
+                "speed":     float(v.get("speed") or 0),
+                "name":      v.get("name") or str(mmsi),
+                "region_id": region_id,
+                "alerted_at": self._last_seen.get(str(mmsi), {}).get("alerted_at"),
+            }
+
+    def scan(self, rules: list, now: datetime, active_mmsis: set) -> list:
+        """
+        Scan for vessels absent from the live feed for >= min_gap_minutes.
+        active_mmsis: set of mmsi strings currently visible in AIS feed.
+        """
+        alerts: list = []
+
+        for rule in rules:
+            if not rule.get("enabled", True):
+                continue
+            params          = rule.get("params", {})
+            min_gap_min     = float(params.get("min_gap_minutes", 60))
+            min_speed_before = float(params.get("min_speed_before_gap", 1.0))
+            target_region   = str(params.get("last_known_region", "ALL")).upper()
+
+            for mmsi, state in list(self._last_seen.items()):
+                if mmsi in active_mmsis:
+                    continue  # Still visible — not dark
+
+                last_ts = state["timestamp"]
+                gap_min = (now - last_ts).total_seconds() / 60.0
+
+                if gap_min < min_gap_min:
+                    continue
+
+                # Filter: must have been moving before going dark
+                if state["speed"] < min_speed_before:
+                    continue
+
+                # Filter: region scope
+                if target_region != "ALL":
+                    if (state.get("region_id") or "").upper() != target_region:
+                        continue
+
+                # Don't re-alert the same vessel for the same gap event
+                alerted_at = state.get("alerted_at")
+                if alerted_at and (now - alerted_at).total_seconds() / 60.0 < min_gap_min * 2:
+                    continue
+
+                self._last_seen[mmsi]["alerted_at"] = now
+                alerts.append({
+                    "id":           f"dark_{int(now.timestamp()*1000)}_{mmsi}",
+                    "rule_id":      rule.get("id"),
+                    "rule_name":    "AIS_DARK_SHIP",
+                    "rule_trigger": "AIS_DARK_SHIP",
+                    "source":       "AIS",
+                    "severity":     "high",
+                    "icon_type":    "DARK_SHIP",
+                    "vessel":       state["name"],
+                    "mmsi":         mmsi,
+                    "lat":          state["lat"],
+                    "lng":          state["lon"],
+                    "speed":        state["speed"],
+                    "message": (
+                        f"Dark ship: {state['name']} — no AIS signal for {gap_min:.0f} min. "
+                        f"Last position: {state['lat']:.3f}, {state['lon']:.3f} "
+                        f"(region {state.get('region_id', '?')}). "
+                        f"Last speed: {state['speed']:.1f} kn."
+                    ),
+                    "timestamp":    now.isoformat(),
+                    "gap_minutes":  round(gap_min, 1),
+                    "provenance": {
+                        "source_type":    "AIS",
+                        "detection_rule": "AIS_DARK_SHIP",
+                        "trigger_reason": "AIS_DARK_SHIP",
+                    },
+                })
+
+        return alerts
+
+    def purge_stale(self, now: datetime, max_age_hours: float = 48.0) -> None:
+        cutoff = now - timedelta(hours=max_age_hours)
+        self._last_seen = {k: v for k, v in self._last_seen.items() if v["timestamp"] >= cutoff}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CORRELATION ENGINE (unchanged public interface)
+# ══════════════════════════════════════════════════════════════════════════════
 
 class CorrelationEngine:
 
@@ -20,13 +403,8 @@ class CorrelationEngine:
     # ── Public entry point ────────────────────────────────────────────────────
 
     def correlate(self, ais_alerts, adsb_alerts, news_events, satellite_changes, ontology):
-        """
-        Main loop. Takes all current signals and produces cross-domain assessments.
-        Returns list of assessment dicts.
-        """
         assessments = []
 
-        # Normalise signals into a flat list with domain tags
         all_signals = []
         for a in ais_alerts:
             all_signals.append({**a, "domain": "maritime", "source": "AIS"})
@@ -48,7 +426,6 @@ class CorrelationEngine:
         for s in satellite_changes:
             all_signals.append({**s, "domain": "satellite", "source": "SAT"})
 
-        # 1. Geographic clustering
         clusters = self._cluster_by_proximity(all_signals, radius_km=100)
         for cluster in clusters:
             if len(cluster) < 2:
@@ -59,13 +436,8 @@ class CorrelationEngine:
                 if assessment:
                     assessments.append(assessment)
 
-        # 2. Temporal escalation sequences
         assessments.extend(self._detect_temporal_sequences(all_signals))
-
-        # 3. Repeat-offender entity tracking
         assessments.extend(self._check_entity_reputation(ais_alerts))
-
-        # 4. Ontology-link propagation
         assessments.extend(self._propagate_escalation(all_signals, ontology))
 
         return assessments
@@ -97,14 +469,11 @@ class CorrelationEngine:
         elif n >= 3: confidence = self.confidence_weights["triple"]
         else:        confidence = self.confidence_weights["dual"]
 
-        sev_scores = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
         severities = [s.get("severity", "low") for s in cluster]
-        avg_sev = sum(sev_scores.get(sv, 1) for sv in severities) / len(severities)
+        avg_sev = sum(SEV_SCORES.get(sv, 1) for sv in severities) / len(severities)
 
-        if "AIS" in domains and "ADSB" in domains:
-            avg_sev += 1.0
-        if "NEWS" in domains and avg_sev >= 2:
-            avg_sev += 0.5
+        if "AIS" in domains and "ADSB" in domains:   avg_sev += 1.0
+        if "NEWS" in domains and avg_sev >= 2:        avg_sev += 0.5
 
         if avg_sev >= 3.5:   final_severity = "CRITICAL"
         elif avg_sev >= 2.5: final_severity = "HIGH"
@@ -121,14 +490,10 @@ class CorrelationEngine:
         parts = []
         for domain in sorted(domains):
             dsigs = [s for s in cluster if s["source"] == domain]
-            if domain == "AIS":
-                parts.append(f"Maritime: {len(dsigs)} vessel anomalies")
-            elif domain == "ADSB":
-                parts.append(f"Aviation: {len(dsigs)} aircraft activities")
-            elif domain == "NEWS":
-                parts.append(f"OSINT: {len(dsigs)} news events")
-            elif domain == "SAT":
-                parts.append(f"Satellite: {len(dsigs)} imagery changes")
+            if domain == "AIS":    parts.append(f"Maritime: {len(dsigs)} vessel anomalies")
+            elif domain == "ADSB": parts.append(f"Aviation: {len(dsigs)} aircraft activities")
+            elif domain == "NEWS": parts.append(f"OSINT: {len(dsigs)} news events")
+            elif domain == "SAT":  parts.append(f"Satellite: {len(dsigs)} imagery changes")
 
         return {
             "type":             "correlation",
@@ -156,12 +521,11 @@ class CorrelationEngine:
             key = (round(s["lat"]), round(s["lng"]))
             grid.setdefault(key, []).append(s)
 
-        sev_scores = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
         for key, region_signals in grid.items():
             if len(region_signals) < 3:
                 continue
             sorted_sigs = sorted(region_signals, key=lambda x: x.get("timestamp", ""))
-            scores = [sev_scores.get(s.get("severity", "low"), 1) for s in sorted_sigs]
+            scores = [SEV_SCORES.get(s.get("severity", "low"), 1) for s in sorted_sigs]
             trend = sum(scores[i+1] - scores[i] for i in range(len(scores)-1)) / (len(scores)-1)
             if trend > 0.5:
                 assessments.append({
@@ -193,7 +557,6 @@ class CorrelationEngine:
             prev = self.entity_history.get(mmsi, {"total": 0})
             new_total = prev["total"] + data["count"]
             self.entity_history[mmsi] = {"total": new_total, "last_seen": datetime.now(timezone.utc).isoformat()}
-
             if new_total >= 3:
                 last = data["alerts"][-1]
                 assessments.append({
@@ -282,9 +645,9 @@ class CorrelationEngine:
             )
         if severity == "HIGH":
             recs = ["Increase surveillance frequency for affected area."]
-            if "AIS" in domains:   recs.append("Task maritime patrol asset for close monitoring.")
-            if "ADSB" in domains:  recs.append("Alert air defense coordination centre.")
-            if "NEWS" in domains:  recs.append("Monitor open-source media for escalation indicators.")
+            if "AIS" in domains:  recs.append("Task maritime patrol asset for close monitoring.")
+            if "ADSB" in domains: recs.append("Alert air defense coordination centre.")
+            if "NEWS" in domains: recs.append("Monitor open-source media for escalation indicators.")
             return " ".join(recs)
         if severity == "ELEVATED":
             return "Continue monitoring. Multiple signals suggest developing situation. Re-assess in 6 hours."
@@ -299,3 +662,16 @@ class CorrelationEngine:
              + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
              * math.sin(dlon / 2) ** 2)
         return R * 2 * math.asin(math.sqrt(min(a, 1.0)))
+
+
+# ── Module-level haversine (metres) used by STS/Dark detectors ───────────────
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6_371_000.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1))
+         * math.cos(math.radians(lat2))
+         * math.sin(dlon / 2) ** 2)
+    return R * 2 * math.asin(math.sqrt(min(a, 1.0)))
