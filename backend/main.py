@@ -12301,11 +12301,12 @@ def api_rules_list():
 def api_rules_create(body: dict):
     """Create a new rule config. Body: {rule_name, params, enabled?}"""
     import json as _jc
-    from database import RuleConfig, get_db
+    from database import RuleConfig, OntologyEntity, get_db
     import datetime as _dt
-    rule_name = body.get("rule_name")
-    params    = body.get("params", {})
-    enabled   = bool(body.get("enabled", True))
+    rule_name    = body.get("rule_name")
+    params       = body.get("params", {})
+    enabled      = bool(body.get("enabled", True))
+    trigger_type = body.get("trigger_type", "")
     if not rule_name:
         raise HTTPException(status_code=422, detail="rule_name is required")
     params_str = _jc.dumps(params, ensure_ascii=False)
@@ -12318,6 +12319,23 @@ def api_rules_create(body: dict):
         db.add(row)
         db.commit()
         db.refresh(row)
+        # Register in OntologyEntity
+        onto_id  = f"RULE-{row.id}"
+        onto_meta = _jc.dumps({
+            "rule_name": rule_name, "trigger_type": trigger_type, "params": params
+        }, ensure_ascii=False)
+        existing = db.query(OntologyEntity).filter(OntologyEntity.system_id == onto_id).first()
+        if existing:
+            existing.name = rule_name
+            existing.infra_type = trigger_type or rule_name
+            existing.entity_metadata = onto_meta
+        else:
+            db.add(OntologyEntity(
+                system_id=onto_id, entity_type="Rule",
+                name=rule_name, infra_type=trigger_type or rule_name,
+                entity_metadata=onto_meta,
+            ))
+        db.commit()
         return _rule_row_to_dict(row)
 
 
@@ -12346,12 +12364,16 @@ def api_rules_update(rule_id: int, body: dict):
 @app.delete("/api/rules/{rule_id}")
 def api_rules_delete(rule_id: int):
     """Delete a rule config by id."""
-    from database import RuleConfig, get_db
+    from database import RuleConfig, OntologyEntity, get_db
     with get_db() as db:
         row = db.query(RuleConfig).filter(RuleConfig.id == rule_id).first()
         if not row:
             raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
         db.delete(row)
+        # Remove matching OntologyEntity
+        onto = db.query(OntologyEntity).filter(OntologyEntity.system_id == f"RULE-{rule_id}").first()
+        if onto:
+            db.delete(onto)
         db.commit()
     return {"deleted": rule_id}
 
@@ -14716,16 +14738,27 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
     except Exception as _e:
         print(f"[ontology] events failed: {_e}")
 
-    # ── Cables (15) ──────────────────────────────────────────────────────────
+    # ── Cables (all from DB OntologyEntity) ──────────────────────────────────
     try:
-        cables = _prep_cables_for_detector()
-        for cable in cables[:15]:
-            add_node("cable", cable.get("name", "cable"), "Submarine cable")
-        print(f"[ontology] {min(15, len(cables))} cables")
+        import json as _jcbl
+        from database import OntologyEntity as _OE, get_db as _gcbl
+        with _gcbl() as _cdb:
+            cable_ents = _cdb.query(_OE).filter(_OE.entity_type == "Submarine Cable").all()
+        for ce in cable_ents:
+            meta = {}
+            try:
+                meta = _jcbl.loads(ce.entity_metadata) if ce.entity_metadata else {}
+            except Exception:
+                pass
+            desc = f"{ce.system_id} | {ce.region_id or '—'}"
+            if meta.get("owners"):
+                desc += f" | {str(meta['owners'])[:40]}"
+            add_node("cable", ce.name, desc)
+        print(f"[ontology] {len(cable_ents)} cables")
     except Exception as _e:
         print(f"[ontology] cables failed: {_e}")
 
-    # ── Active detection rules ───────────────────────────────────────────────
+    # ── Active detection rules (forge file + DB RuleConfig) ──────────────────
     try:
         rules = _forge_load("rules.json")
         if not rules:
@@ -14738,7 +14771,22 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
             cp_name = (rule.get("params") or {}).get("chokepoint", "")
             if cp_name and cp_name in chokepoint_ids:
                 add_edge(nid, chokepoint_ids[cp_name], "monitors")
-        print(f"[ontology] {len(active_rules)} rules")
+        # Also add DB-backed RuleConfig rules
+        db_rule_count = 0
+        try:
+            import json as _jrdb
+            from database import RuleConfig as _RC, get_db as _grdb
+            with _grdb() as _rdb:
+                db_rules = _rdb.query(_RC).all()
+            for r in db_rules:
+                p = _jrdb.loads(r.params) if isinstance(r.params, str) else (r.params or {})
+                status = "enabled" if r.enabled else "disabled"
+                desc = f"DB | {status} | target={p.get('target','ALL')} | {p.get('infra_type','')}"
+                add_node("rule", f"RULE-{r.id}: {r.rule_name}", desc)
+                db_rule_count += 1
+        except Exception as _rde:
+            print(f"[ontology] db rules failed: {_rde}")
+        print(f"[ontology] {len(active_rules)} forge rules, {db_rule_count} db rules")
     except Exception as _e:
         print(f"[ontology] rules failed: {_e}")
 

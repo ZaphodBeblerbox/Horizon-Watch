@@ -2132,6 +2132,18 @@ function OntologyWorkspace() {
         return true
     })
 
+    // Group filtered nodes by type for the "all" view; prioritise cable/rule at top
+    const TYPE_PRIORITY = { cable: 0, rule: 1, chokepoint: 2, country: 3, group: 4, person: 5, vessel: 6, aircraft: 7, event: 8, alert: 9 }
+    const groupedFiltered = (() => {
+        if (typeFilter !== "all") return null
+        const groups = {}
+        for (const n of filtered) {
+            if (!groups[n.type]) groups[n.type] = []
+            groups[n.type].push(n)
+        }
+        return Object.entries(groups).sort(([a], [b]) => (TYPE_PRIORITY[a] ?? 99) - (TYPE_PRIORITY[b] ?? 99))
+    })()
+
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
             <Toolbar>
@@ -2169,8 +2181,32 @@ function OntologyWorkspace() {
                     <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>
                         {nodes.length === 0 ? "No entities yet — click Build to populate from live data, or + Entity to add manually." : `No ${typeFilter === "all" ? "" : typeFilter + " "}entities match.`}
                     </div>
-                ) : (
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                ) : (() => {
+                    const NodeRow = ({ n }) => {
+                        const typeColor = ONTOLOGY_TYPE_COLORS[n.type] || "#475569"
+                        const connCount = edgeCounts[n.id] || 0
+                        const isSelected = selectedNode?.id === n.id
+                        return (
+                            <tr key={n.id}
+                                onClick={() => setSelectedNode(isSelected ? null : n)}
+                                style={{ borderBottom: "1px solid rgba(148,163,184,0.03)", cursor: "pointer", background: isSelected ? "#0d1422" : "transparent" }}
+                                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#0a0f1a" }}
+                                onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent" }}>
+                                <td style={cellStyle}>
+                                    <span style={{ padding: "1px 6px", borderRadius: 8, background: typeColor + "22", color: typeColor, fontSize: 9, fontWeight: 600 }}>{n.type || "—"}</span>
+                                </td>
+                                <td style={{ ...cellStyle, color: "#cbd5e1", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.label || n.id || "—"}</td>
+                                <td style={{ ...cellStyle, color: "#475569", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.description || "—"}</td>
+                                <td style={cellStyle}>{n.lat != null ? n.lat.toFixed(2) : "—"}</td>
+                                <td style={cellStyle}>{n.lng != null ? n.lng.toFixed(2) : "—"}</td>
+                                <td style={{ ...cellStyle, color: connCount > 0 ? "#60a5fa" : "#334155" }}>{connCount || "—"}</td>
+                                <td style={cellStyle}>
+                                    <button onClick={e => deleteEntity(n.id, e)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 11, padding: "0 4px", lineHeight: 1 }} title="Delete entity">✕</button>
+                                </td>
+                            </tr>
+                        )
+                    }
+                    const thead = (
                         <thead>
                             <tr style={{ borderBottom: "1px solid rgba(148,163,184,0.08)" }}>
                                 {["Type", "Name", "Description", "Lat", "Lng", "Conn", ""].map(h => (
@@ -2178,34 +2214,38 @@ function OntologyWorkspace() {
                                 ))}
                             </tr>
                         </thead>
-                        <tbody>
-                            {filtered.slice(0, 300).map((n, i) => {
-                                const typeColor = ONTOLOGY_TYPE_COLORS[n.type] || "#475569"
-                                const connCount = edgeCounts[n.id] || 0
-                                const isSelected = selectedNode?.id === n.id
-                                return (
-                                    <tr key={n.id || i}
-                                        onClick={() => setSelectedNode(isSelected ? null : n)}
-                                        style={{ borderBottom: "1px solid rgba(148,163,184,0.03)", cursor: "pointer", background: isSelected ? "#0d1422" : "transparent" }}
-                                        onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#0a0f1a" }}
-                                        onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent" }}>
-                                        <td style={cellStyle}>
-                                            <span style={{ padding: "1px 6px", borderRadius: 8, background: typeColor + "22", color: typeColor, fontSize: 9, fontWeight: 600 }}>{n.type || "—"}</span>
-                                        </td>
-                                        <td style={{ ...cellStyle, color: "#cbd5e1", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.label || n.id || "—"}</td>
-                                        <td style={{ ...cellStyle, color: "#475569", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.description || "—"}</td>
-                                        <td style={cellStyle}>{n.lat != null ? n.lat.toFixed(2) : "—"}</td>
-                                        <td style={cellStyle}>{n.lng != null ? n.lng.toFixed(2) : "—"}</td>
-                                        <td style={{ ...cellStyle, color: connCount > 0 ? "#60a5fa" : "#334155" }}>{connCount || "—"}</td>
-                                        <td style={cellStyle}>
-                                            <button onClick={e => deleteEntity(n.id, e)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 11, padding: "0 4px", lineHeight: 1 }} title="Delete entity">✕</button>
-                                        </td>
-                                    </tr>
-                                )
-                            })}
-                        </tbody>
-                    </table>
-                )}
+                    )
+                    if (groupedFiltered) {
+                        // Grouped view: one section per entity type
+                        return (
+                            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                {thead}
+                                <tbody>
+                                    {groupedFiltered.map(([type, items]) => {
+                                        const typeColor = ONTOLOGY_TYPE_COLORS[type] || "#475569"
+                                        return [
+                                            <tr key={`hdr-${type}`}>
+                                                <td colSpan={7} style={{ padding: "8px 8px 4px", borderTop: "1px solid rgba(148,163,184,0.08)" }}>
+                                                    <span style={{ padding: "2px 8px", borderRadius: 8, background: typeColor + "22", color: typeColor, fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>{type}</span>
+                                                    <span style={{ color: "#334155", fontSize: 9, marginLeft: 6 }}>{items.length} {items.length === 1 ? "entry" : "entries"}</span>
+                                                </td>
+                                            </tr>,
+                                            ...items.slice(0, 300).map(n => <NodeRow key={n.id} n={n} />),
+                                        ]
+                                    })}
+                                </tbody>
+                            </table>
+                        )
+                    }
+                    return (
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                            {thead}
+                            <tbody>
+                                {filtered.slice(0, 300).map(n => <NodeRow key={n.id} n={n} />)}
+                            </tbody>
+                        </table>
+                    )
+                })()}
             </WorkspaceBody>
             {selectedNode && (
                 <div style={{ borderTop: "1px solid rgba(148,163,184,0.08)", padding: "10px 14px", background: "#080c16", maxHeight: 180, overflowY: "auto" }}>
