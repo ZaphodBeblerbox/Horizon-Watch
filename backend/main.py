@@ -8606,6 +8606,138 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
         "enhanced":   bool(enhance),
     }
 
+
+# ── _convert_overwatch_detections ─────────────────────────────────────────────
+
+def _convert_overwatch_detections(raw_dets: list, band_type: str = "TRUE_COLOR") -> list:
+    """Convert _run_overwatch_inference output to SentinelDetection schema dicts."""
+    import json as _j, math as _m
+
+    _DOTA_TO_TYPE = {
+        "ship": "vessel", "large-vehicle": "vessel", "small-vehicle": "vehicle",
+        "plane": "aircraft", "helicopter": "aircraft",
+        "storage-tank": "infrastructure_change", "swimming-pool": "infrastructure_change",
+        "harbor": "infrastructure_change", "bridge": "infrastructure_change",
+        "ground-track-field": "infrastructure_change", "basketball-court": "infrastructure_change",
+        "soccer-ball-field": "infrastructure_change", "roundabout": "infrastructure_change",
+        "tennis-court": "infrastructure_change", "baseball-diamond": "infrastructure_change",
+    }
+
+    def _hav(lat1, lon1, lat2, lon2):
+        R = 6_371_000
+        dl = _m.radians(lat2 - lat1); dg = _m.radians(lon2 - lon1)
+        a = _m.sin(dl/2)**2 + _m.cos(_m.radians(lat1)) * _m.cos(_m.radians(lat2)) * _m.sin(dg/2)**2
+        return R * 2 * _m.asin(_m.sqrt(a))
+
+    results = []
+    for d in raw_dets:
+        center  = d.get("center", [0, 0])   # [lat, lon]
+        corners = d.get("corners", [])
+        cls     = d.get("class", "unknown")
+        conf    = float(d.get("confidence", 0.0))
+        obj_type = _DOTA_TO_TYPE.get(cls, cls.replace("-", "_").lower())
+
+        geo_geometry = est_length_m = est_width_m = area_m2 = None
+        if corners:
+            lats = [c[0] for c in corners]; lons = [c[1] for c in corners]
+            ring = [[min(lons), min(lats)], [max(lons), min(lats)],
+                    [max(lons), max(lats)], [min(lons), max(lats)], [min(lons), min(lats)]]
+            geo_geometry = _j.dumps({"type": "Polygon", "coordinates": [ring]})
+            lat_m = _hav(min(lats), min(lons), max(lats), min(lons))
+            lon_m = _hav(min(lats), min(lons), min(lats), max(lons))
+            area_m2      = round(lat_m * lon_m, 1)
+            est_length_m = round(max(lat_m, lon_m), 1)
+            est_width_m  = round(min(lat_m, lon_m), 1)
+
+        sev        = "high"      if conf > 0.7 else ("medium" if conf > 0.4 else "info")
+        alert_tier = "immediate" if conf > 0.7 and obj_type == "vessel" else (
+                     "digest"    if conf > 0.35 else "silent")
+
+        results.append({
+            "object_type":   obj_type,
+            "confidence":    round(conf, 3),
+            "centroid_lat":  round(float(center[0]), 6),
+            "centroid_lon":  round(float(center[1]), 6),
+            "geo_geometry":  geo_geometry,
+            "area_m2":       area_m2,
+            "severity":      sev,
+            "alert_tier":    alert_tier,
+            "matched_to_ais": False,
+            "attributes":    _j.dumps({
+                "class":             cls,
+                "category":          d.get("category", "Object"),
+                "subcategory":       d.get("subcategory", ""),
+                "estimated_length_m": est_length_m,
+                "estimated_width_m":  est_width_m,
+                "band_type":         band_type,
+            }),
+        })
+    return results
+
+
+# ── _run_overwatch_detection_sync ─────────────────────────────────────────────
+
+def _run_overwatch_detection_sync(bbox: dict, band_type: str = "TRUE_COLOR",
+                                   confidence: float = 0.15) -> list:
+    """
+    Unified blocking detection function for surveillance zone scanning.
+
+    band_type:
+      TRUE_COLOR → fetch ESRI satellite tiles → DOTA OBB YOLO (vessel/object detection)
+      SWIR       → fetch Sentinel-2 SWIR → fire pixel analysis (sentinel_ml.run_fire_detection)
+      FALSE_COLOR→ fetch Sentinel-2 SWIR + true-colour → smoke pixel analysis
+
+    Returns list of dicts conforming to SentinelDetection schema.
+    """
+    west  = float(bbox["min_lon"])
+    south = float(bbox["min_lat"])
+    east  = float(bbox["max_lon"])
+    north = float(bbox["max_lat"])
+    bounds = {"north": north, "south": south, "east": east, "west": west}
+
+    if band_type == "TRUE_COLOR":
+        result = _run_overwatch_inference(bounds, zoom=17, confidence=confidence,
+                                          enhance=False, model_key="dota")
+        if result.get("error"):
+            print(f"[overwatch_detection] ESRI error: {result['error']}")
+            return []
+        return _convert_overwatch_detections(result.get("detections", []), "TRUE_COLOR")
+
+    # Sentinel-2 paths — lazy import to avoid circular dependency
+    from sentinel_scanner import _fetch_sentinel_image, _bytes_to_pil as _s_b2p
+    img_w = min(2048, max(512, int(abs(east - west) * 11100)))
+    img_h = min(2048, max(512, int(abs(north - south) * 11100)))
+
+    if band_type == "SWIR":
+        from sentinel_ml import run_fire_detection
+        swir_b = _fetch_sentinel_image(west, south, east, north, "swir",
+                                        max_cloud=30, width=img_w, height=img_h)
+        swir_pil = _s_b2p(swir_b)
+        if swir_pil is None:
+            print("[overwatch_detection] Sentinel SWIR fetch failed")
+            return []
+        nir_b   = _fetch_sentinel_image(west, south, east, north, "false-colour",
+                                         max_cloud=30, width=img_w, height=img_h)
+        nir_pil = _s_b2p(nir_b)
+        return run_fire_detection({"swir": swir_pil, "nir": nir_pil}, bbox)
+
+    elif band_type == "FALSE_COLOR":
+        from sentinel_ml import run_smoke_plume_detection
+        swir_b = _fetch_sentinel_image(west, south, east, north, "swir",
+                                        max_cloud=30, width=img_w, height=img_h)
+        swir_pil = _s_b2p(swir_b)
+        if swir_pil is None:
+            print("[overwatch_detection] Sentinel SWIR fetch failed (smoke)")
+            return []
+        tc_b   = _fetch_sentinel_image(west, south, east, north, "true-colour",
+                                        max_cloud=30, width=img_w, height=img_h)
+        tc_pil = _s_b2p(tc_b)
+        return run_smoke_plume_detection({"swir": swir_pil, "true_colour": tc_pil}, bbox)
+
+    print(f"[overwatch_detection] unknown band_type={band_type}")
+    return []
+
+
 @app.post("/api/overwatch/detect")
 async def overwatch_detect(request: Request):
     """Fetch Esri satellite tiles, run ONNX YOLOv8 (DOTA OBB default), return geo detections."""

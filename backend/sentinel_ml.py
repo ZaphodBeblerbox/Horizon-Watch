@@ -842,9 +842,9 @@ def run_vessel_without_ais(ship_detections: list, ais_vessels: list,
 
 TASK_REGISTRY: dict = {
     "ship_detection": {
-        "requires":           ["true_colour"],
+        "requires":           [],   # imagery fetched by _run_overwatch_detection_sync (ESRI tiles)
         "alert_tier_default": "silent",
-        "description":        "Detect vessels using YOLOv8 sliding window",
+        "description":        "Detect vessels using YOLOv8 OBB (DOTA) on ESRI satellite tiles",
     },
     "vessel_cluster_detection": {
         "requires":           ["true_colour"],
@@ -853,12 +853,12 @@ TASK_REGISTRY: dict = {
         "depends_on":         "ship_detection",
     },
     "smoke_plume_detection": {
-        "requires":           ["swir"],
+        "requires":           [],   # imagery fetched by _run_overwatch_detection_sync (Sentinel SWIR)
         "alert_tier_default": "immediate",
         "description":        "Detect smoke plumes via SWIR thresholding",
     },
     "fire_detection": {
-        "requires":           ["swir", "nir"],
+        "requires":           [],   # imagery fetched by _run_overwatch_detection_sync (Sentinel SWIR+NIR)
         "alert_tier_default": "immediate",
         "description":        "Detect active fire pixels via SWIR-2 thresholding",
     },

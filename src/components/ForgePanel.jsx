@@ -1775,6 +1775,8 @@ function CreateZoneModal({ onClose, onCreated }) {
 
 function ScanDetailPanel({ zone, scan, onClose }) {
     const [dets, setDets] = useState([])
+    const [bboxFeatures, setBboxFeatures] = useState([])
+    const [imgUrl, setImgUrl] = useState(null)
     const [selectedDet, setSelectedDet] = useState(null)
     const [loading, setLoading] = useState(true)
 
@@ -1784,13 +1786,31 @@ function ScanDetailPanel({ zone, scan, onClose }) {
         fetch(`${API}/api/watch-zones/${zone.system_id}/scans/${scan.scan_id}/detections`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : { features: [] })
             .then(d => {
-                // Extract centroid features only for table
                 const centroids = (d.features || []).filter(f => f.properties?.feature_role === "centroid")
+                const bboxes    = (d.features || []).filter(f => f.properties?.feature_role === "bbox")
                 setDets(centroids)
+                setBboxFeatures(bboxes)
                 setLoading(false)
             })
             .catch(() => setLoading(false))
     }, [scan?.scan_id])
+
+    useEffect(() => {
+        const b = zone?.bbox
+        if (!b) return
+        setImgUrl(null)
+        fetch(`${API}/api/sentinel/imagery`, {
+            method: "POST",
+            headers: { ...forgeHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({
+                bounds: { west: b.min_lon, south: b.min_lat, east: b.max_lon, north: b.max_lat },
+                image_type: "true-colour", max_cloud: 30, days_back: 90,
+            }),
+        })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d?.image) setImgUrl(`data:image/png;base64,${d.image}`) })
+            .catch(() => {})
+    }, [zone?.system_id])
 
     if (!scan) return null
     const summary = scan.result_summary || {}
@@ -1834,13 +1854,52 @@ function ScanDetailPanel({ zone, scan, onClose }) {
                 </span>
             </div>
 
-            {/* Detection bbox map (colour-coded squares on a dark canvas) */}
+            {/* Detection map — satellite image background + SVG bbox overlays */}
             {dets.length > 0 && (
                 <div style={{ marginBottom: 8 }}>
                     <div style={{ color: "#475569", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Detection map</div>
                     <div style={{ position: "relative", background: "#060a14", border: "1px solid rgba(148,163,184,0.06)", borderRadius: 3, height: 180, overflow: "hidden" }}>
+                        {/* Satellite image background */}
+                        {imgUrl && (
+                            <img src={imgUrl} alt="zone imagery"
+                                style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "fill", opacity: 0.85 }} />
+                        )}
+
+                        {/* SVG overlay — bounding box rectangles */}
+                        <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+                            {bboxFeatures.map((f, i) => {
+                                const ring = f.geometry?.coordinates?.[0]
+                                if (!ring || ring.length < 4) return null
+                                const b = zone.bbox
+                                if (!b) return null
+                                const lons = ring.map(c => c[0])
+                                const lats = ring.map(c => c[1])
+                                const x1 = (Math.min(...lons) - b.min_lon) / (b.max_lon - b.min_lon) * 100
+                                const x2 = (Math.max(...lons) - b.min_lon) / (b.max_lon - b.min_lon) * 100
+                                const y1 = (1 - (Math.max(...lats) - b.min_lat) / (b.max_lat - b.min_lat)) * 100
+                                const y2 = (1 - (Math.min(...lats) - b.min_lat) / (b.max_lat - b.min_lat)) * 100
+                                const col = DET_COLORS[f.properties?.object_type] || "#ffffff"
+                                const pid = f.properties?.parent_detection_id
+                                const selIdx = dets.findIndex(d => d.properties?.detection_id === pid)
+                                return (
+                                    <rect key={i}
+                                        x={`${Math.max(0, x1)}%`} y={`${Math.max(0, y1)}%`}
+                                        width={`${Math.max(0.3, x2 - x1)}%`} height={`${Math.max(0.3, y2 - y1)}%`}
+                                        fill="none" stroke={col}
+                                        strokeWidth={selIdx === selectedDet ? 2 : 1}
+                                        opacity={selIdx === selectedDet ? 1 : 0.75}
+                                        style={{ pointerEvents: "all", cursor: "pointer" }}
+                                        onClick={() => setSelectedDet(selIdx === selectedDet ? null : selIdx)}
+                                    />
+                                )
+                            })}
+                        </svg>
+
+                        {/* Centroid dots — fallback if no bbox polygon */}
                         {dets.map((f, i) => {
                             const p = f.properties
+                            const hasBbox = bboxFeatures.some(b => b.properties?.parent_detection_id === p?.detection_id)
+                            if (hasBbox) return null
                             const bbox = zone.bbox
                             if (!bbox) return null
                             const xPct = ((p.centroid_lon || 0) - bbox.min_lon) / (bbox.max_lon - bbox.min_lon) * 100
@@ -1854,21 +1913,22 @@ function ScanDetailPanel({ zone, scan, onClose }) {
                                         position: "absolute",
                                         left: `${Math.max(0, Math.min(96, xPct))}%`,
                                         top:  `${Math.max(0, Math.min(96, yPct))}%`,
-                                        width: 8, height: 8,
-                                        background: col, opacity: isSelected ? 1 : 0.7,
+                                        width: 6, height: 6,
+                                        background: col, opacity: isSelected ? 1 : 0.8,
                                         border: isSelected ? `2px solid #fff` : `1px solid ${col}`,
-                                        borderRadius: 2, cursor: "pointer", transform: "translate(-50%,-50%)",
+                                        borderRadius: 1, cursor: "pointer", transform: "translate(-50%,-50%)",
                                     }}
                                 />
                             )
                         })}
+
                         {selectedDet != null && dets[selectedDet] && (() => {
                             const p = dets[selectedDet].properties
                             const attrs = typeof p.attributes === "object" ? p.attributes : {}
                             return (
                                 <div style={{
                                     position: "absolute", bottom: 4, left: 4, right: 4,
-                                    background: "rgba(0,0,0,0.8)", borderRadius: 3, padding: "5px 8px",
+                                    background: "rgba(0,0,0,0.85)", borderRadius: 3, padding: "5px 8px",
                                     fontSize: 10, color: "#e2e8f0",
                                 }}>
                                     <span style={{ color: DET_COLORS[p.object_type] || "#fff", fontWeight: 600 }}>{p.object_type?.replace(/_/g, " ")}</span>

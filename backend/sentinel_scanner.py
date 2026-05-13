@@ -220,11 +220,13 @@ class SentinelScanner:
         from database import WatchZone, SentinelScan, SentinelDetection, get_db
         from sentinel_ml import (
             TASK_REGISTRY, BAND_REQUIREMENTS,
-            run_ship_detection, run_vessel_cluster_detection,
-            run_smoke_plume_detection, run_fire_detection,
+            run_vessel_cluster_detection,
             run_burn_scar_detection, run_oil_slick_detection,
             run_infrastructure_change_detection, run_vessel_without_ais,
         )
+        import main as _main_mod
+        def _run_ow_det(b, btype, conf=0.15):
+            return _main_mod._run_overwatch_detection_sync(b, btype, conf)
 
         now = datetime.datetime.utcnow()
 
@@ -410,7 +412,8 @@ class SentinelScanner:
 
             try:
                 if task_name == "ship_detection":
-                    dets = run_ship_detection(images, bbox, zone_baseline=vessel_baseline)
+                    # Uses ESRI satellite tiles + DOTA OBB YOLO via overwatch pipeline
+                    dets = _run_ow_det(bbox, "TRUE_COLOR", 0.15)
                     ship_detections = dets
                     all_detections.extend(dets)
 
@@ -419,11 +422,13 @@ class SentinelScanner:
                     all_detections.extend(dets)
 
                 elif task_name == "smoke_plume_detection":
-                    dets = run_smoke_plume_detection(images, bbox)
+                    # Uses Sentinel-2 SWIR + true-colour via overwatch pipeline
+                    dets = _run_ow_det(bbox, "FALSE_COLOR", 0.15)
                     all_detections.extend(dets)
 
                 elif task_name == "fire_detection":
-                    dets = run_fire_detection(images, bbox)
+                    # Uses Sentinel-2 SWIR + NIR via overwatch pipeline
+                    dets = _run_ow_det(bbox, "SWIR", 0.15)
                     all_detections.extend(dets)
 
                 elif task_name == "burn_scar_detection":
