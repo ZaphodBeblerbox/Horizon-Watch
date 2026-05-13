@@ -19,6 +19,8 @@ import GlobeCityLabelsLayer     from "../globe/GlobeCityLabelsLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import GlobeDirectorLayer       from "../globe/GlobeDirectorLayer.jsx"
 import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
+import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
+import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -93,6 +95,9 @@ export default function GlobeView({
     onOverwatchBounds   = null,
     // Satellite imagery overlay (Sentinel-2)
     satelliteEnabled = false,
+    // Infrastructure layers
+    airportsEnabled = false,
+    portsEnabled    = false,
     // Forge alerts/rules on the globe
     alertsEnabled = false,
     // Director Mode scene (null when inactive)
@@ -327,6 +332,10 @@ export default function GlobeView({
 
                 {/* ── Overwatch draw mode: two-click rectangle selection on globe ── */}
                 <GlobeOverwatchDrawLayer active={overwatchDrawActive} onBounds={onOverwatchBounds} />
+
+                {/* ── Infrastructure layers (viewport-culled) ─────────────────── */}
+                <GlobeAirportLayer enabled={airportsEnabled} viewBounds={viewBounds} />
+                <GlobePortLayer    enabled={portsEnabled}    viewBounds={viewBounds} />
 
                 {/* ── Forge alerts layer ──────────────────────────────────────── */}
                 <GlobeAlertsLayer enabled={alertsEnabled} />

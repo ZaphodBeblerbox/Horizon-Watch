@@ -310,6 +310,101 @@ export function makeAlertCanvas(source, severity) {
     })
 }
 
+// ── Airport ───────────────────────────────────────────────────────────────────
+// Colour tiers matching airport type importance
+const AIRPORT_COLORS = {
+    large_airport:  "#38bdf8",   // sky blue
+    medium_airport: "#60a5fa",   // blue
+    small_airport:  "#475569",   // slate
+    seaplane_base:  "#06b6d4",   // cyan
+}
+
+export function makeAirportCanvas(airportType = "large_airport") {
+    const color = AIRPORT_COLORS[airportType] || AIRPORT_COLORS.large_airport
+    const SIZE  = 34
+    const CORE  = 20
+    return makeCanvas(SIZE, SIZE, (ctx, w, h) => {
+        const cx = w / 2, cy = h / 2
+        const [r, g, b] = _hexToRgb(color)
+
+        // Glow halo
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2)
+        grd.addColorStop(0,   `rgba(${r},${g},${b},0.35)`)
+        grd.addColorStop(0.6, `rgba(${r},${g},${b},0.12)`)
+        grd.addColorStop(1,   `rgba(${r},${g},${b},0)`)
+        ctx.beginPath(); ctx.arc(cx, cy, w / 2, 0, Math.PI * 2)
+        ctx.fillStyle = grd; ctx.fill()
+
+        // Core circle
+        ctx.beginPath(); ctx.arc(cx, cy, CORE / 2, 0, Math.PI * 2)
+        ctx.fillStyle = "rgba(15,23,42,0.88)"; ctx.fill()
+        ctx.strokeStyle = `rgba(${r},${g},${b},0.85)`
+        ctx.lineWidth = 1.5; ctx.stroke()
+
+        // Plane symbol (simplified — fuselage + wings)
+        ctx.save(); ctx.translate(cx, cy); ctx.fillStyle = color; ctx.strokeStyle = color
+        const s = CORE * 0.28
+        // Fuselage (vertical line)
+        ctx.lineWidth = 1.6
+        ctx.beginPath(); ctx.moveTo(0, -s * 1.2); ctx.lineTo(0, s * 1.2); ctx.stroke()
+        // Wings (horizontal)
+        ctx.beginPath(); ctx.moveTo(-s * 1.4, 0); ctx.lineTo(s * 1.4, 0); ctx.stroke()
+        // Tailplane (shorter)
+        ctx.beginPath(); ctx.moveTo(-s * 0.7, s * 0.9); ctx.lineTo(s * 0.7, s * 0.9); ctx.stroke()
+        ctx.restore()
+    })
+}
+
+// ── Port ──────────────────────────────────────────────────────────────────────
+const PORT_COLORS = {
+    "Very Large": "#f59e0b",
+    "Large":      "#fb923c",
+    "Medium":     "#60a5fa",
+    "Small":      "#475569",
+}
+
+export function makePortCanvas(portSize = "Medium") {
+    const color = PORT_COLORS[portSize] || PORT_COLORS["Medium"]
+    const SIZE  = 30
+    const CORE  = 18
+    return makeCanvas(SIZE, SIZE, (ctx, w, h) => {
+        const cx = w / 2, cy = h / 2
+        const [r, g, b] = _hexToRgb(color)
+
+        // Glow halo
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2)
+        grd.addColorStop(0,   `rgba(${r},${g},${b},0.30)`)
+        grd.addColorStop(0.6, `rgba(${r},${g},${b},0.10)`)
+        grd.addColorStop(1,   `rgba(${r},${g},${b},0)`)
+        ctx.beginPath(); ctx.arc(cx, cy, w / 2, 0, Math.PI * 2)
+        ctx.fillStyle = grd; ctx.fill()
+
+        // Core circle
+        ctx.beginPath(); ctx.arc(cx, cy, CORE / 2, 0, Math.PI * 2)
+        ctx.fillStyle = "rgba(15,23,42,0.88)"; ctx.fill()
+        ctx.strokeStyle = `rgba(${r},${g},${b},0.85)`
+        ctx.lineWidth = 1.5; ctx.stroke()
+
+        // Anchor symbol
+        ctx.save(); ctx.translate(cx, cy)
+        ctx.strokeStyle = color; ctx.lineWidth = 1.4
+        const s = CORE * 0.28
+        // Ring at top
+        ctx.beginPath(); ctx.arc(0, -s * 1.1, s * 0.5, 0, Math.PI * 2); ctx.stroke()
+        // Shaft
+        ctx.beginPath(); ctx.moveTo(0, -s * 0.6); ctx.lineTo(0, s * 1.1); ctx.stroke()
+        // Crossbar
+        ctx.beginPath(); ctx.moveTo(-s * 1.1, -s * 0.2); ctx.lineTo(s * 1.1, -s * 0.2); ctx.stroke()
+        // Flukes (curved ends of stock)
+        ctx.beginPath()
+        ctx.moveTo(-s * 1.0, s * 1.1)
+        ctx.quadraticCurveTo(-s * 1.2, s * 0.7, 0, s * 1.1)
+        ctx.quadraticCurveTo(s * 1.2, s * 0.7, s * 1.0, s * 1.1)
+        ctx.stroke()
+        ctx.restore()
+    })
+}
+
 // ── Aircraft classification ───────────────────────────────────────────────────
 export function acClassify(ac) {
     if (ac.military || ac.interesting) return "military"

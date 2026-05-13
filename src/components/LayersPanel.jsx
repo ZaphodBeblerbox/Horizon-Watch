@@ -142,7 +142,7 @@ function LayerRows3D({ active, onToggle }) {
             />
             <LayerRow
                 label="Points of Interest"
-                hint="Airports, ports, power plants"
+                hint="User-created markers"
                 toggled={active.poi}
                 onToggle={() => onToggle("poi")}
             />
@@ -157,6 +157,20 @@ function LayerRows3D({ active, onToggle }) {
                 hint="Global undersea fibre routes"
                 toggled={active.cables}
                 onToggle={() => onToggle("cables")}
+            />
+
+            <SectionHeader label="Infrastructure" />
+            <LayerRow
+                label="Airports"
+                hint="49 k airports — viewport-culled, large first"
+                toggled={active.airports ?? false}
+                onToggle={() => onToggle("airports")}
+            />
+            <LayerRow
+                label="Ports"
+                hint="11 k maritime ports — viewport-culled"
+                toggled={active.ports ?? false}
+                onToggle={() => onToggle("ports")}
             />
 
             <SectionHeader label="Heatmaps" />

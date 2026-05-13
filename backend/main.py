@@ -12362,6 +12362,39 @@ def api_ports_by_region(region_id: str, response: FastAPIResponse):
     return {"type": "FeatureCollection", "features": [_port_feature(r) for r in rows], "total": len(rows)}
 
 
+@app.get("/api/ports/in-viewport")
+def api_ports_in_viewport(
+    min_lat: float = Query(...),
+    max_lat: float = Query(...),
+    min_lon: float = Query(...),
+    max_lon: float = Query(...),
+    response: FastAPIResponse = None,
+):
+    """Ports within a viewport bounding box — max 200, very-large first."""
+    from database import PortBoundary, get_db
+    from sqlalchemy import case
+    if response:
+        response.headers["Cache-Control"] = "public, max-age=30"
+    size_order = case(
+        (PortBoundary.port_size == "Very Large", 0),
+        (PortBoundary.port_size == "Large",      1),
+        (PortBoundary.port_size == "Medium",      2),
+        else_=3,
+    )
+    with get_db() as db:
+        rows = (
+            db.query(PortBoundary)
+            .filter(
+                PortBoundary.latitude .between(min_lat, max_lat),
+                PortBoundary.longitude.between(min_lon, max_lon),
+            )
+            .order_by(size_order)
+            .limit(200)
+            .all()
+        )
+    return {"type": "FeatureCollection", "features": [_port_feature(r) for r in rows]}
+
+
 @app.get("/api/ports/{system_id}")
 def api_port_by_system_id(system_id: str):
     """Single port by system_id."""
@@ -12473,6 +12506,39 @@ def api_airports_by_region(region_id: str, response: FastAPIResponse):
     response.headers["Cache-Control"] = "public, max-age=300"
     with get_db() as db:
         rows = db.query(Airport).filter(Airport.region_id == region_id).all()
+    return {"type": "FeatureCollection", "features": [_airport_feature(r) for r in rows]}
+
+
+@app.get("/api/airports/in-viewport")
+def api_airports_in_viewport(
+    min_lat: float = Query(...),
+    max_lat: float = Query(...),
+    min_lon: float = Query(...),
+    max_lon: float = Query(...),
+    response: FastAPIResponse = None,
+):
+    """Airports within a viewport bounding box — max 200, large airports first."""
+    from database import Airport, get_db
+    from sqlalchemy import case
+    if response:
+        response.headers["Cache-Control"] = "public, max-age=30"
+    type_order = case(
+        (Airport.airport_type == "large_airport",  0),
+        (Airport.airport_type == "medium_airport", 1),
+        (Airport.airport_type == "seaplane_base",  2),
+        else_=3,
+    )
+    with get_db() as db:
+        rows = (
+            db.query(Airport)
+            .filter(
+                Airport.latitude .between(min_lat, max_lat),
+                Airport.longitude.between(min_lon, max_lon),
+            )
+            .order_by(type_order)
+            .limit(200)
+            .all()
+        )
     return {"type": "FeatureCollection", "features": [_airport_feature(r) for r in rows]}
 
 

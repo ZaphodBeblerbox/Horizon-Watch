@@ -1411,6 +1411,8 @@ export default function App() {
                             poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                             alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? false}
+                            airportsEnabled={activeWorkspace?.layers?.airports ?? false}
+                            portsEnabled={activeWorkspace?.layers?.ports ?? false}
                             aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
                             adsbHeatmapEnabled={activeWorkspace?.layers?.adsbHeatmap ?? false}
                             heatmapHours={heatmapHours}
