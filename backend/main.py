@@ -14093,9 +14093,9 @@ async def _forge_detection_cycle():
                     pass
             print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
 
-            # Stage 1b — Loitering near cable (DB-backed configurable rules)
+            # Stage 1b — Loitering near infrastructure (cables + ports)
             try:
-                from database import RuleConfig, get_db
+                from database import RuleConfig, PortBoundary as _PB1b, get_db
                 import json as _json_lc
                 with get_db() as _ldb:
                     loiter_rule_rows = _ldb.query(RuleConfig).filter(
@@ -14108,30 +14108,64 @@ async def _forge_detection_cycle():
                     for r in loiter_rule_rows
                 ]
                 if loiter_rules:
-                    cables_db = _prep_cables_from_db()
+                    # Split rules: cable rules vs port rules
+                    cable_loiter_rules = [
+                        r for r in loiter_rules
+                        if (r["params"].get("infra_type") or "").lower() != "port"
+                        and str(r["params"].get("target", "")).upper() != "PORTS:STRATEGIC"
+                    ]
+                    port_loiter_rules = [
+                        r for r in loiter_rules
+                        if (r["params"].get("infra_type") or "").lower() == "port"
+                        or str(r["params"].get("target", "")).upper() == "PORTS:STRATEGIC"
+                    ]
+
+                    cables_db = _prep_cables_from_db() if cable_loiter_rules else []
+                    # Load all ports for port loitering rules
+                    ports_db: list = []
+                    if port_loiter_rules:
+                        with get_db() as _pdb:
+                            _pb_rows = _pdb.query(_PB1b).all()
+                        ports_db = [
+                            {
+                                "system_id": p.system_id,
+                                "port_name": p.port_name,
+                                "latitude":  p.latitude,
+                                "longitude": p.longitude,
+                                "region_id": p.region_id,
+                                "boundary_radius_metres": p.boundary_radius_metres,
+                            }
+                            for p in _pb_rows
+                        ]
+
                     cycle_now = datetime.now(timezone.utc)
                     loiter_hits: list = []
                     for _mmsi, _vessel in normalized_snap.items():
                         try:
-                            hits = _ais_detector.check_loitering(
-                                _vessel, cables_db, loiter_rules, cycle_now
-                            )
-                            loiter_hits.extend(hits)
+                            if cable_loiter_rules:
+                                hits = _ais_detector.check_loitering(
+                                    _vessel, cables_db, cable_loiter_rules, cycle_now
+                                )
+                                loiter_hits.extend(hits)
+                            if port_loiter_rules and ports_db:
+                                hits = _ais_detector.check_port_loitering(
+                                    _vessel, ports_db, port_loiter_rules, cycle_now
+                                )
+                                loiter_hits.extend(hits)
                         except Exception:
                             pass
                     _ais_detector.purge_stale_loiter(cycle_now)
-                    # Alert pipeline: push notification for each new loiter hit
                     for _lhit in loiter_hits:
                         try:
                             _broadcast_push(
-                                title=f"Loitering detected — {_lhit.get('cable_name', 'submarine cable')}",
+                                title=f"Loitering — {_lhit.get('port_name') or _lhit.get('cable_name', 'infrastructure')}",
                                 body=_lhit.get("message", "AIS loitering near infrastructure"),
                                 data={"type": "loitering_alert", "lat": _lhit.get("lat"), "lng": _lhit.get("lng")},
                             )
                         except Exception:
                             pass
                     new_ais_alerts.extend(loiter_hits)
-                    print(f"[forge-brain] Stage1b loitering: {len(loiter_rules)} rule(s), {len(loiter_hits)} alert(s)")
+                    print(f"[forge-brain] Stage1b loitering: {len(cable_loiter_rules)} cable / {len(port_loiter_rules)} port rules → {len(loiter_hits)} alert(s)")
             except Exception as _le:
                 print(f"[forge-brain] loitering check error: {_le}")
 
@@ -14375,9 +14409,26 @@ async def _forge_detection_cycle():
                 if "cable" in (alert.get("message") or "").lower():
                     _auto_add_ontology_edge(alert)
 
-            # Escalation chaining — promote multi-rule vessels to ESCALATED_DUAL/TRIPLE
+            # Escalation chaining — promote multi-rule vessels to chain-defined escalations
             try:
                 if _escalation_engine is not None:
+                    # Reload chains from DB on each cycle so UI edits take effect
+                    try:
+                        from database import EscalationChain as _EC, get_db
+                        with get_db() as _ecdb:
+                            _chain_rows = _ecdb.query(_EC).all()
+                        _escalation_engine.reload_chains([
+                            {
+                                "chain_name":          c.chain_name,
+                                "rule_ids":            c.rule_ids,
+                                "escalated_severity":  c.escalated_severity,
+                                "escalated_icon_type": c.escalated_icon_type,
+                                "time_window_minutes": c.time_window_minutes,
+                            }
+                            for c in _chain_rows
+                        ])
+                    except Exception:
+                        pass
                     new_ais_alerts = _escalation_engine.process(
                         new_ais_alerts, datetime.now(timezone.utc)
                     )
@@ -15242,6 +15293,23 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
         except Exception as _rde:
             print(f"[ontology] db rules failed: {_rde}")
         print(f"[ontology] {len(active_rules)} forge rules, {db_rule_count} db rules")
+
+        # Escalation chains
+        chain_count = 0
+        try:
+            from database import EscalationChain as _ECb, get_db as _gecb
+            with _gecb() as _ecbdb:
+                _chains_b = _ecbdb.query(_ECb).all()
+            for ch in _chains_b:
+                desc = (
+                    f"Escalates to {ch.escalated_severity} ({ch.escalated_icon_type})"
+                    f" within {ch.time_window_minutes} min | rules {ch.rule_ids}"
+                )
+                add_node("escalation chain", ch.chain_name, desc)
+                chain_count += 1
+        except Exception as _ece:
+            print(f"[ontology] escalation chains failed: {_ece}")
+        print(f"[ontology] {chain_count} escalation chains")
     except Exception as _e:
         print(f"[ontology] rules failed: {_e}")
 

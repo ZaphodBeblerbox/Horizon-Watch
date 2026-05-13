@@ -30,15 +30,43 @@ def _escalate_severity(sev: str) -> str:
 class EscalationEngine:
     """
     Per-vessel multi-rule chaining.
-    When 2+ distinct rules fire on the same vessel within 30 minutes,
-    suppress individual alerts and emit one escalated combined alert.
+    When 2+ distinct rules fire on the same vessel within a time window,
+    emit one escalated combined alert.
+
+    Chains loaded from EscalationChain DB table define specific escalation
+    profiles (icon_type, severity, window).  Falls back to generic
+    ESCALATED_DUAL / ESCALATED_TRIPLE when no chain matches.
     """
 
-    WINDOW_MINUTES = 30
+    DEFAULT_WINDOW_MINUTES = 30
 
     def __init__(self):
-        # mmsi → list of {rule_name, icon_type, severity, fired_at, alert_id}
+        # mmsi → list of {rule_id, rule_name, icon_type, severity, fired_at, alert_id}
         self._active: dict = {}
+        # List of chain dicts: {rule_id_set, escalated_severity, escalated_icon_type, window_min}
+        self._chains: list = []
+
+    def reload_chains(self, chains: list) -> None:
+        """
+        Replace the active chain list.
+        Each chain dict must have: rule_ids (comma-str or list), escalated_severity,
+        escalated_icon_type, time_window_minutes.
+        """
+        parsed = []
+        for c in chains:
+            rid_raw = c.get("rule_ids", "")
+            if isinstance(rid_raw, str):
+                rid_set = {r.strip() for r in rid_raw.split(",") if r.strip()}
+            else:
+                rid_set = {str(r) for r in rid_raw}
+            parsed.append({
+                "rule_id_set":          rid_set,
+                "name":                 c.get("chain_name", ""),
+                "escalated_severity":   c.get("escalated_severity", "critical"),
+                "escalated_icon_type":  c.get("escalated_icon_type", "ESCALATED_DUAL"),
+                "window_min":           int(c.get("time_window_minutes") or self.DEFAULT_WINDOW_MINUTES),
+            })
+        self._chains = parsed
 
     def process(self, alerts: list, now: datetime) -> list:
         """
@@ -48,7 +76,11 @@ class EscalationEngine:
         if not alerts:
             return []
 
-        cutoff = now - timedelta(minutes=self.WINDOW_MINUTES)
+        # Determine window: use minimum chain window if chains loaded
+        window_min = self.DEFAULT_WINDOW_MINUTES
+        if self._chains:
+            window_min = min(c["window_min"] for c in self._chains)
+        cutoff = now - timedelta(minutes=window_min)
 
         # Purge stale entries
         for mmsi in list(self._active.keys()):
@@ -75,7 +107,9 @@ class EscalationEngine:
                 icon_type = a.get("icon_type", "UNKNOWN_CONTACT")
                 severity  = a.get("severity", "medium")
                 alert_id  = a.get("id", str(uuid.uuid4()))
+                rule_id   = str(a.get("rule_id") or "")
                 self._active.setdefault(mmsi, []).append({
+                    "rule_id":   rule_id,
                     "rule_name": rule_name,
                     "icon_type": icon_type,
                     "severity":  severity,
@@ -88,45 +122,73 @@ class EscalationEngine:
             distinct_rules = list({e["rule_name"]: e for e in active}.values())
             count = len(distinct_rules)
 
-            if count == 1:
-                # No escalation — pass through
+            if count < 2:
                 final_alerts.extend(vessel_alerts)
+                continue
+
+            # Try to find a matching chain
+            active_rule_ids = {e["rule_id"] for e in active if e["rule_id"]}
+            matched_chain = self._best_chain(active_rule_ids, now)
+
+            for a in vessel_alerts:
+                suppressed_ids.add(a.get("id", ""))
+
+            rule_names_str = " + ".join(r["rule_name"] for r in distinct_rules[:3])
+            sample = vessel_alerts[0]
+
+            if matched_chain:
+                icon_type = matched_chain["escalated_icon_type"]
+                severity  = matched_chain["escalated_severity"]
+                chain_name = matched_chain["name"]
+                title = (
+                    f"{sample.get('vessel', mmsi)} — {chain_name}: "
+                    f"{rule_names_str}"
+                )
+                body = (
+                    f"Escalation chain '{chain_name}' triggered within "
+                    f"{matched_chain['window_min']} min: {rule_names_str}"
+                )
             elif count == 2:
-                # Dual escalation
-                for a in vessel_alerts:
-                    suppressed_ids.add(a.get("id", ""))
-                r1, r2     = distinct_rules[0], distinct_rules[1]
-                max_sev    = max(SEV_SCORES.get(r["severity"], 1) for r in distinct_rules)
-                new_sev    = _escalate_severity(SEV_NAMES.get(max_sev, "medium"))
-                sample     = vessel_alerts[0]
-                final_alerts.append(self._make_escalated(
-                    "ESCALATED_DUAL",
-                    f"{sample.get('vessel', mmsi)} — dual anomaly: {r1['rule_name']} + {r2['rule_name']}",
-                    f"Two simultaneous detection rules fired within {self.WINDOW_MINUTES} min: "
-                    f"{r1['rule_name']} and {r2['rule_name']}",
-                    new_sev, sample, now,
-                ))
-            elif count >= 3:
-                # Triple escalation
-                for a in vessel_alerts:
-                    suppressed_ids.add(a.get("id", ""))
-                rule_names = " + ".join(r["rule_name"] for r in distinct_rules[:3])
-                max_sev    = max(SEV_SCORES.get(r["severity"], 1) for r in distinct_rules)
-                sample     = vessel_alerts[0]
-                final_alerts.append(self._make_escalated(
-                    "ESCALATED_TRIPLE",
-                    f"{sample.get('vessel', mmsi)} — triple anomaly: {rule_names}",
-                    f"{count} simultaneous detection rules fired within {self.WINDOW_MINUTES} min: {rule_names}",
-                    "critical", sample, now,
-                ))
+                icon_type = "ESCALATED_DUAL"
+                r1, r2   = distinct_rules[0], distinct_rules[1]
+                max_sev  = max(SEV_SCORES.get(r["severity"], 1) for r in distinct_rules)
+                severity = _escalate_severity(SEV_NAMES.get(max_sev, "medium"))
+                title = f"{sample.get('vessel', mmsi)} — dual anomaly: {r1['rule_name']} + {r2['rule_name']}"
+                body  = (
+                    f"Two simultaneous detection rules fired within {window_min} min: "
+                    f"{r1['rule_name']} and {r2['rule_name']}"
+                )
+            else:
+                icon_type = "ESCALATED_TRIPLE"
+                severity  = "critical"
+                title = f"{sample.get('vessel', mmsi)} — triple anomaly: {rule_names_str}"
+                body  = (
+                    f"{count} simultaneous detection rules fired within {window_min} min: "
+                    f"{rule_names_str}"
+                )
+
+            final_alerts.append(self._make_escalated(icon_type, title, body, severity, sample, now))
 
         # Also pass alerts with no mmsi through unchanged
         for a in alerts:
             if not (a.get("mmsi") or a.get("vessel")):
                 final_alerts.append(a)
 
-        # Strip individually suppressed alerts that were rolled into escalations
         return [a for a in final_alerts if a.get("id", "") not in suppressed_ids]
+
+    def _best_chain(self, active_rule_ids: set, now: datetime):
+        """Return the chain with the most overlapping rule_ids, or None."""
+        if not self._chains or not active_rule_ids:
+            return None
+        best = None
+        best_overlap = 0
+        for c in self._chains:
+            overlap = len(c["rule_id_set"] & active_rule_ids)
+            # Chain triggers only when ≥2 of its rules are represented
+            if overlap >= 2 and overlap > best_overlap:
+                best_overlap = overlap
+                best = c
+        return best
 
     @staticmethod
     def _make_escalated(icon_type: str, title: str, body: str, severity: str, sample: dict, now: datetime) -> dict:

@@ -205,6 +205,17 @@ class RuleConfig(Base):
                         onupdate=datetime.datetime.utcnow)
 
 
+class EscalationChain(Base):
+    __tablename__ = "escalation_chains"
+
+    id                  = Column(Integer, primary_key=True)
+    chain_name          = Column(String, nullable=False)
+    rule_ids            = Column(String, nullable=False)   # comma-separated RuleConfig ids
+    escalated_severity  = Column(String, nullable=False)
+    escalated_icon_type = Column(String, nullable=False)
+    time_window_minutes = Column(Integer, default=30)
+
+
 class WeeklySnapshot(Base):
     __tablename__ = 'weekly_snapshots'
 

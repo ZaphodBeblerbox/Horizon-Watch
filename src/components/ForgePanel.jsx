@@ -1843,9 +1843,9 @@ const ONTOLOGY_TYPE_COLORS = {
     vessel: "#60a5fa", aircraft: "#a78bfa", country: "#34d399", group: "#fb923c",
     event: "#f87171", cable: "#fbbf24", rule: "#94a3b8", alert: "#ef4444",
     person: "#e879f9", chokepoint: "#22d3ee", facility: "#38bdf8", port: "#fb7185",
-    airport: "#c084fc",
+    airport: "#c084fc", "escalation chain": "#f97316",
 }
-const ONTOLOGY_TYPES = ["all", "vessel", "aircraft", "country", "group", "event", "cable", "rule", "alert", "person", "chokepoint", "facility", "port", "airport"]
+const ONTOLOGY_TYPES = ["all", "vessel", "aircraft", "country", "group", "event", "cable", "rule", "escalation chain", "alert", "person", "chokepoint", "facility", "port", "airport"]
 const ENTITY_TYPES   = ["country","chokepoint","group","person","vessel","aircraft","event","facility","cable","port","airport","rule","alert"]
 const REL_TYPES      = ["operates_in","threatens","located_in","ally","adversary","monitors","connects","leads","sponsors","supports","rivals","relates_to"]
 
@@ -1952,10 +1952,11 @@ const GRAPH_COLORS = {
     country: "#16a34a", chokepoint: "#dc2626", group: "#b91c1c", person: "#be185d",
     vessel: "#d97706", aircraft: "#2563eb", event: "#ea580c", facility: "#0d9488",
     cable: "#7c3aed", port: "#0891b2", airport: "#6d28d9", rule: "#ea580c", alert: "#dc2626",
+    "escalation chain": "#f97316",
 }
 
 const BOX_W = 160, BOX_H = 36, GAP_X = 60, GAP_Y = 8, PAD = 30
-const TYPE_ORDER = ["country","group","person","chokepoint","facility","port","airport","cable","vessel","aircraft","event","rule","alert"]
+const TYPE_ORDER = ["country","group","person","chokepoint","facility","port","airport","cable","vessel","aircraft","event","rule","escalation chain","alert"]
 
 function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode }) {
     const canvasRef       = useRef(null)
@@ -2335,7 +2336,7 @@ function OntologyWorkspace() {
     })
 
     // Group filtered nodes by type for the "all" view; prioritise cable/rule at top
-    const TYPE_PRIORITY = { cable: 0, rule: 1, chokepoint: 2, country: 3, group: 4, person: 5, vessel: 6, aircraft: 7, event: 8, alert: 9 }
+    const TYPE_PRIORITY = { cable: 0, rule: 1, "escalation chain": 2, chokepoint: 3, country: 4, group: 5, person: 6, vessel: 7, aircraft: 8, event: 9, alert: 10 }
     const groupedFiltered = (() => {
         if (typeFilter !== "all") return null
         const groups = {}
