@@ -3,9 +3,10 @@ Cross-domain intelligence correlation engine.
 Takes signals from all detectors and produces correlated assessments.
 
 Also contains:
-- EscalationEngine  — per-vessel multi-rule chaining (dual / triple escalation)
-- STSDetector       — ship-to-ship proximity outside port boundaries
-- DarkShipDetector  — AIS gap / dark-ship detection
+- EscalationEngine      — per-vessel multi-rule chaining (dual / triple escalation)
+- STSDetector           — ship-to-ship proximity outside port boundaries
+- DarkShipDetector      — AIS gap / dark-ship detection
+- ADSBLoiterDetector    — ADS-B aircraft loitering near airport
 """
 from datetime import datetime, timezone, timedelta
 import math
@@ -675,3 +676,146 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
          * math.cos(math.radians(lat2))
          * math.sin(dlon / 2) ** 2)
     return R * 2 * math.asin(math.sqrt(min(a, 1.0)))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADSB LOITER DETECTOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ADSBLoiterDetector:
+    """
+    Detects ADS-B aircraft loitering near airports.
+
+    Rule trigger_type: "ADSB_LOITERING_NEAR_AIRPORT"
+    Rule params:
+        target            str   "ALL" | "REGION:<region_id>" | "ID:<system_id>"
+        airport_types     list  e.g. ["large_airport", "medium_airport"]
+        proximity_km      float aircraft must be within this distance
+        min_duration_minutes int  must be continuously tracked this long
+        max_speed_knots   float  aircraft must be slow (circling)
+    """
+
+    def __init__(self):
+        # (icao24, airport_system_id) → {first_within, last_within, alerted_at}
+        self._tracking: dict = {}
+
+    def check(
+        self,
+        aircraft: dict,           # {icao24: {lat, lon, speed (kts), callsign, …}}
+        rules: list,
+        now: datetime,
+        airports_fn=None,         # callable(region_id=None, types=None) → list of airport dicts
+    ) -> list:
+        alerts = []
+        if not rules or airports_fn is None:
+            return alerts
+
+        for rule in rules:
+            params       = rule.get("params", {})
+            target       = params.get("target", "ALL")
+            apt_types    = params.get("airport_types") or []
+            prox_km      = float(params.get("proximity_km", 5.0))
+            min_dur_min  = float(params.get("min_duration_minutes", 20))
+            max_spd      = float(params.get("max_speed_knots", 200))
+
+            # Resolve region / single-ID scope
+            region_filter = None
+            single_id     = None
+            if target.startswith("REGION:"):
+                region_filter = target.split(":", 1)[1]
+            elif target.startswith("ID:"):
+                single_id = target.split(":", 1)[1]
+
+            airports = airports_fn(region_id=region_filter, types=apt_types or None)
+            if single_id:
+                airports = [a for a in airports if a.get("system_id") == single_id
+                            or a.get("ident") == single_id or a.get("icao_code") == single_id]
+
+            for icao24, ac in aircraft.items():
+                try:
+                    ac_lat   = float(ac.get("lat") or ac.get("latitude") or 0)
+                    ac_lon   = float(ac.get("lon") or ac.get("longitude") or ac.get("lng") or 0)
+                    ac_spd   = float(ac.get("speed") or ac.get("velocity") or 0)
+                    callsign = (ac.get("callsign") or icao24).strip()
+                except (TypeError, ValueError):
+                    continue
+
+                if ac_spd > max_spd:
+                    continue
+
+                for apt in airports:
+                    apt_lat = float(apt.get("lat") or apt.get("latitude") or 0)
+                    apt_lon = float(apt.get("lon") or apt.get("longitude") or 0)
+                    dist_km = _haversine_m(ac_lat, ac_lon, apt_lat, apt_lon) / 1000.0
+
+                    if dist_km > prox_km:
+                        # Outside proximity — remove tracking entry
+                        self._tracking.pop((icao24, apt["system_id"]), None)
+                        continue
+
+                    key = (icao24, apt["system_id"])
+                    state = self._tracking.get(key)
+                    if state is None:
+                        self._tracking[key] = {
+                            "first_within": now,
+                            "last_within":  now,
+                            "alerted_at":   None,
+                        }
+                        continue
+
+                    state["last_within"] = now
+                    duration_min = (now - state["first_within"]).total_seconds() / 60.0
+
+                    if duration_min < min_dur_min:
+                        continue
+
+                    # Re-alert suppression: once per 2× min_duration window
+                    if state["alerted_at"] is not None:
+                        since_alert = (now - state["alerted_at"]).total_seconds() / 60.0
+                        if since_alert < min_dur_min * 2:
+                            continue
+
+                    state["alerted_at"] = now
+                    apt_name = apt.get("airport_name") or apt.get("name") or apt["system_id"]
+                    icao_code = apt.get("icao_code") or apt.get("ident") or ""
+                    alerts.append({
+                        "id":           str(uuid.uuid4()),
+                        "rule_id":      rule.get("id"),
+                        "rule_name":    rule.get("rule_name", "ADSB_LOITERING_NEAR_AIRPORT"),
+                        "source":       "ADSB",
+                        "icon_type":    params.get("icon_type", "LOITERING_INFRA"),
+                        "trigger_type": "ADSB_LOITERING_NEAR_AIRPORT",
+                        "severity":     rule.get("severity", "high"),
+                        "title":        f"{callsign} loitering near {apt_name}",
+                        "message": (
+                            f"Aircraft {icao24} within {dist_km:.1f}km of "
+                            f"{apt_name} ({icao_code}) for "
+                            f"{duration_min:.0f} min at {ac_spd:.0f} kts"
+                        ),
+                        "mmsi":         None,
+                        "icao24":       icao24,
+                        "callsign":     callsign,
+                        "lat":          ac_lat,
+                        "lng":          ac_lon,
+                        "airport_system_id": apt["system_id"],
+                        "airport_name":      apt_name,
+                        "airport_icao":      icao_code,
+                        "distance_km":       round(dist_km, 2),
+                        "duration_minutes":  round(duration_min, 1),
+                        "timestamp":    now.isoformat(),
+                        "provenance": {
+                            "source_type":      "ADSB",
+                            "source_entity":    icao24,
+                            "detection_rule":   rule.get("rule_name"),
+                            "trigger_reason":   "ADSB_LOITERING_NEAR_AIRPORT",
+                            "params_at_trigger": params,
+                        },
+                    })
+
+        return alerts
+
+    def purge_stale(self, now: datetime, max_gap_minutes: float = 30.0) -> None:
+        cutoff = now - timedelta(minutes=max_gap_minutes)
+        stale = [k for k, v in self._tracking.items() if v["last_within"] < cutoff]
+        for k in stale:
+            del self._tracking[k]

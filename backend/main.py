@@ -218,6 +218,7 @@ try:
         EscalationEngine as _EscalationEngine,
         STSDetector as _STSDetector,
         DarkShipDetector as _DarkShipDetector,
+        ADSBLoiterDetector as _ADSBLoiterDetector,
     )
     _HAS_DETECTORS = True
 except ImportError as _det_err:
@@ -7230,9 +7231,10 @@ if _HAS_DETECTORS:
     _escalation_engine   = _EscalationEngine()
     _sts_detector        = _STSDetector()
     _dark_ship_detector  = _DarkShipDetector()
+    _adsb_loiter_detector = _ADSBLoiterDetector()
 else:
     _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
-    _escalation_engine = _sts_detector = _dark_ship_detector = None
+    _escalation_engine = _sts_detector = _dark_ship_detector = _adsb_loiter_detector = None
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
 _correlation_assessments: list = []  # cross-domain correlation results (24h)
 _last_cycle_stats: dict = {}         # stats from the most-recent detection cycle
@@ -12371,6 +12373,123 @@ def api_port_by_system_id(system_id: str):
     return _port_feature(row)
 
 
+# ── Endpoints: Airports ───────────────────────────────────────────────────────
+
+def _airport_feature(row) -> dict:
+    import json as _json_apt
+    meta = {}
+    try:
+        meta = _json_apt.loads(row.airport_metadata) if row.airport_metadata else {}
+    except Exception:
+        pass
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [row.longitude, row.latitude]},
+        "properties": {
+            "system_id":    row.system_id,
+            "ident":        row.ident,
+            "icao_code":    row.icao_code,
+            "iata_code":    row.iata_code,
+            "airport_name": row.airport_name,
+            "airport_type": row.airport_type,
+            "country_code": row.country_code,
+            "country_name": row.country_name,
+            "region_id":    row.region_id,
+            "municipality": row.municipality,
+            "elevation_ft": row.elevation_ft,
+            "infra_type":   row.infra_type,
+            **{k: v for k, v in meta.items() if k not in ("lat", "lon")},
+        },
+    }
+
+
+@app.get("/api/airports")
+def api_airports(
+    response: FastAPIResponse,
+    type:         str = Query(None, description="Filter by airport_type"),
+    region_id:    str = Query(None, description="Filter by region_id"),
+    country_code: str = Query(None, description="Filter by ISO-2 country code"),
+):
+    """All airports as GeoJSON FeatureCollection, with optional filters."""
+    from database import Airport, get_db
+    response.headers["Cache-Control"] = "public, max-age=300"
+    with get_db() as db:
+        q = db.query(Airport)
+        if type:
+            q = q.filter(Airport.airport_type == type)
+        if region_id:
+            q = q.filter(Airport.region_id == region_id)
+        if country_code:
+            q = q.filter(Airport.country_code == country_code.upper())
+        rows = q.all()
+    return {"type": "FeatureCollection", "features": [_airport_feature(r) for r in rows]}
+
+
+@app.get("/api/airports/search")
+def api_airports_search(q: str = Query(..., description="Name, ICAO, IATA, or municipality")):
+    """Search airports by name, ICAO, IATA, or municipality — top 20 matches."""
+    from database import Airport, get_db
+    from sqlalchemy import or_
+    term = f"%{q.strip()}%"
+    with get_db() as db:
+        rows = (
+            db.query(Airport)
+            .filter(or_(
+                Airport.airport_name.ilike(term),
+                Airport.icao_code.ilike(term),
+                Airport.iata_code.ilike(term),
+                Airport.municipality.ilike(term),
+                Airport.ident.ilike(term),
+            ))
+            .limit(20)
+            .all()
+        )
+    return {"type": "FeatureCollection", "features": [_airport_feature(r) for r in rows]}
+
+
+@app.get("/api/airports/near")
+def api_airports_near(
+    lat:       float = Query(...),
+    lon:       float = Query(...),
+    radius_km: float = Query(50.0),
+):
+    """All airports within radius_km of a point."""
+    from database import Airport, get_db
+    deg_lat = radius_km / 111.0
+    deg_lon = radius_km / (111.0 * abs(__import__("math").cos(__import__("math").radians(lat))) + 1e-9)
+    with get_db() as db:
+        candidates = db.query(Airport).filter(
+            Airport.latitude .between(lat - deg_lat, lat + deg_lat),
+            Airport.longitude.between(lon - deg_lon, lon + deg_lon),
+        ).all()
+    results = [r for r in candidates if _haversine_m(lat, lon, r.latitude, r.longitude) <= radius_km * 1000]
+    return {"type": "FeatureCollection", "features": [_airport_feature(r) for r in results]}
+
+
+@app.get("/api/airports/by-region/{region_id}")
+def api_airports_by_region(region_id: str, response: FastAPIResponse):
+    """All airports in a region."""
+    from database import Airport, get_db
+    response.headers["Cache-Control"] = "public, max-age=300"
+    with get_db() as db:
+        rows = db.query(Airport).filter(Airport.region_id == region_id).all()
+    return {"type": "FeatureCollection", "features": [_airport_feature(r) for r in rows]}
+
+
+@app.get("/api/airports/{system_id}")
+def api_airport_by_system_id(system_id: str):
+    """Single airport by system_id or ICAO ident."""
+    from database import Airport, get_db
+    from sqlalchemy import or_
+    with get_db() as db:
+        row = db.query(Airport).filter(
+            or_(Airport.system_id == system_id, Airport.ident == system_id.upper())
+        ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Airport '{system_id}' not found")
+    return _airport_feature(row)
+
+
 # ── Endpoints: Ontology entities (DB-backed) ──────────────────────────────────
 
 @app.get("/api/ontology/entities")
@@ -14048,6 +14167,64 @@ async def _forge_detection_cycle():
                     new_adsb_alerts.extend(hits)
             except Exception as _ae:
                 print(f"[forge-brain] adsb error: {_ae}")
+
+            # Stage 2b — ADSB loitering near airport (DB-backed rules)
+            new_adsb_loiter_alerts: list = []
+            try:
+                from database import RuleConfig, Airport, get_db
+                import json as _json_al
+                with get_db() as _aldb:
+                    al_rule_rows = _aldb.query(RuleConfig).filter(
+                        RuleConfig.rule_name == "ADSB_LOITERING_NEAR_AIRPORT",
+                        RuleConfig.enabled == True,
+                    ).all()
+                al_rules = [
+                    {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
+                     "params": _json_al.loads(r.params) if isinstance(r.params, str) else r.params}
+                    for r in al_rule_rows
+                ]
+                if al_rules and _adsb_loiter_detector is not None:
+                    cycle_now = datetime.now(timezone.utc)
+
+                    def _airports_fn(region_id=None, types=None):
+                        try:
+                            with get_db() as _apdb:
+                                q = _apdb.query(Airport)
+                                if region_id:
+                                    q = q.filter(Airport.region_id == region_id)
+                                if types:
+                                    from sqlalchemy import or_ as _or
+                                    q = q.filter(_or(*[Airport.airport_type == t for t in types]))
+                                rows = q.all()
+                            return [
+                                {"system_id": r.system_id, "ident": r.ident,
+                                 "icao_code": r.icao_code, "airport_name": r.airport_name,
+                                 "lat": r.latitude, "lon": r.longitude,
+                                 "airport_type": r.airport_type}
+                                for r in rows
+                            ]
+                        except Exception:
+                            return []
+
+                    ac_snap = {k: v for k, v in _GLOBAL_ADSB_CACHE.items()}
+                    new_adsb_loiter_alerts = _adsb_loiter_detector.check(
+                        ac_snap, al_rules, cycle_now, airports_fn=_airports_fn
+                    )
+                    _adsb_loiter_detector.purge_stale(cycle_now)
+                    for _alrt in new_adsb_loiter_alerts:
+                        try:
+                            _broadcast_push(
+                                title=_alrt.get("title", "Aircraft loitering near airport"),
+                                body=_alrt.get("message", ""),
+                                data={"type": "adsb_loiter_alert",
+                                      "lat": _alrt.get("lat"), "lng": _alrt.get("lng")},
+                            )
+                        except Exception:
+                            pass
+                    new_adsb_alerts.extend(new_adsb_loiter_alerts)
+                    print(f"[forge-brain] Stage2b ADSB loiter: {len(al_rules)} rule(s), {len(new_adsb_loiter_alerts)} alert(s)")
+            except Exception as _ale:
+                print(f"[forge-brain] ADSB loiter check error: {_ale}")
 
             # Stage 3 — News event scoring
             new_news_alerts: list = []

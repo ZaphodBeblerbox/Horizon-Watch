@@ -670,6 +670,7 @@ const TRIGGER_TYPES = {
         { value: "chokepoint_loitering", label: "Chokepoint loitering", params: { chokepoint: "Hormuz", max_speed_knots: 1.0, min_minutes: 60 } },
     ],
     ADSB: [
+        { value: "ADSB_LOITERING_NEAR_AIRPORT", label: "ADSB Loitering near airport", params: { airport_types: ["large_airport", "medium_airport"], proximity_km: 5, min_duration_minutes: 20, max_speed_knots: 200 } },
         { value: "military_callsign", label: "Military callsign", params: { callsign_prefixes: ["RCH", "NAVY", "RRR", "DUKE"] } },
         { value: "emergency_squawk", label: "Emergency squawk", params: { squawk_codes: ["7500", "7600", "7700"] } },
         { value: "restricted_airspace", label: "Restricted airspace entry", params: { zone_ids: [] } },
@@ -680,7 +681,14 @@ const TRIGGER_TYPES = {
     ],
 }
 
-const INFRA_TYPES = ["Submarine Cable", "Port"]
+const INFRA_TYPES = ["Submarine Cable", "Port", "Airport"]
+
+const AIRPORT_TYPE_LABELS = {
+    large_airport:   "Large airports",
+    medium_airport:  "Medium airports",
+    small_airport:   "Small airports",
+    seaplane_base:   "Seaplane bases",
+}
 
 const REGION_LABELS = {
     "REG-ARCTIC":  "Arctic",
@@ -715,19 +723,25 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const [darkRegion, setDarkRegion]   = useState("")   // last_known_region for dark ship
     const [iconType, setIconType]       = useState("")   // optional ALERT_ICONS key override
 
-    const isInfraRule = source === "AIS" && triggerType === "stationary_near_infrastructure"
-    const isStsRule   = source === "AIS" && triggerType === "AIS_STS_PROXIMITY"
-    const isDarkRule  = source === "AIS" && triggerType === "AIS_DARK_SHIP"
-    const isDbRule    = isInfraRule || isStsRule || isDarkRule
+    // ADSB loiter state
+    const [loiterScopeMode, setLoiterScopeMode]     = useState("ALL")
+    const [loiterScopeRegion, setLoiterScopeRegion] = useState("")
+    const [loiterScopeSingle, setLoiterScopeSingle] = useState("")
+
+    const isInfraRule   = source === "AIS"  && triggerType === "stationary_near_infrastructure"
+    const isStsRule     = source === "AIS"  && triggerType === "AIS_STS_PROXIMITY"
+    const isDarkRule    = source === "AIS"  && triggerType === "AIS_DARK_SHIP"
+    const isLoiterRule  = source === "ADSB" && triggerType === "ADSB_LOITERING_NEAR_AIRPORT"
+    const isDbRule      = isInfraRule || isStsRule || isDarkRule || isLoiterRule
 
     useEffect(() => {
-        if ((isInfraRule || isDarkRule) && regions.length === 0) {
+        if ((isInfraRule || isDarkRule || isLoiterRule) && regions.length === 0) {
             fetch(`${API}/api/cables/regions`)
                 .then(r => r.ok ? r.json() : { regions: [] })
                 .then(d => setRegions(d.regions || []))
                 .catch(() => {})
         }
-    }, [isInfraRule, isDarkRule])
+    }, [isInfraRule, isDarkRule, isLoiterRule])
 
     const triggers = TRIGGER_TYPES[source] || []
 
@@ -737,6 +751,7 @@ function CreateRuleModal({ source, onClose, onCreated }) {
         setParams(t?.params ? JSON.parse(JSON.stringify(t.params)) : {})
         setScopeMode("ALL"); setScopeRegion(""); setScopeSingle("")
         setDarkRegion(""); setIconType("")
+        setLoiterScopeMode("ALL"); setLoiterScopeRegion(""); setLoiterScopeSingle("")
     }
 
     const save = async () => {
@@ -786,6 +801,23 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                             min_gap_minutes:      parseFloat(params.min_gap_minutes ?? 60),
                             min_speed_before_gap: parseFloat(params.min_speed_before_gap ?? 2.0),
                             ...(darkRegion ? { last_known_region: darkRegion } : {}),
+                            ...(iconType ? { icon_type: iconType } : {}),
+                        },
+                    }
+                } else if (isLoiterRule) {
+                    let target = "ALL"
+                    if (loiterScopeMode === "REGION" && loiterScopeRegion) target = `REGION:${loiterScopeRegion}`
+                    else if (loiterScopeMode === "SINGLE" && loiterScopeSingle) target = `ID:${loiterScopeSingle.trim()}`
+                    ruleBody = {
+                        rule_name: name,
+                        trigger_type: "ADSB_LOITERING_NEAR_AIRPORT",
+                        severity,
+                        params: {
+                            target,
+                            airport_types:        (params.airport_types || []).filter(Boolean),
+                            proximity_km:         parseFloat(params.proximity_km ?? 5),
+                            min_duration_minutes: parseFloat(params.min_duration_minutes ?? 20),
+                            max_speed_knots:      parseFloat(params.max_speed_knots ?? 200),
                             ...(iconType ? { icon_type: iconType } : {}),
                         },
                     }
@@ -941,6 +973,84 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                                 <option value="">Any region</option>
                                 {regions.map(r => <option key={r.region_id} value={r.region_id}>{r.region_name} ({r.region_id})</option>)}
                             </select>
+                        ))}
+                    </>
+                ) : isLoiterRule ? (
+                    <>
+                        <div style={{ marginBottom: 10 }}>
+                            <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 6 }}>Airport Types to Monitor</label>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px" }}>
+                                {Object.entries(AIRPORT_TYPE_LABELS).map(([val, label]) => (
+                                    <label key={val} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#94a3b8", fontSize: 10 }}>
+                                        <input type="checkbox"
+                                            checked={(params.airport_types || []).includes(val)}
+                                            onChange={e => setParams(p => ({
+                                                ...p,
+                                                airport_types: e.target.checked
+                                                    ? [...(p.airport_types || []), val]
+                                                    : (p.airport_types || []).filter(t => t !== val)
+                                            }))}
+                                            style={{ accentColor: "#60a5fa" }}
+                                        />
+                                        {label}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                            {[
+                                ["proximity_km",         "Proximity (km)",    params.proximity_km ?? 5],
+                                ["min_duration_minutes", "Duration (min)",    params.min_duration_minutes ?? 20],
+                                ["max_speed_knots",      "Max speed (kts)",   params.max_speed_knots ?? 200],
+                            ].map(([key, label, def]) => (
+                                <div key={key}>
+                                    <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
+                                    <input type="number" step="any"
+                                        value={params[key] ?? def}
+                                        onChange={e => setParams(p => ({ ...p, [key]: e.target.value }))}
+                                        style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                                </div>
+                            ))}
+                        </div>
+
+                        {fld("ID Scope", (
+                            <select value={loiterScopeMode} onChange={e => setLoiterScopeMode(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                <option value="ALL">All airports globally</option>
+                                <option value="REGION">By region</option>
+                                <option value="SINGLE">Single ID (ARPT-XXXXX or ICAO)</option>
+                            </select>
+                        ))}
+
+                        {loiterScopeMode === "REGION" && (
+                            <>
+                                {fld("Region", (
+                                    <select value={loiterScopeRegion} onChange={e => setLoiterScopeRegion(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                        <option value="">Select region…</option>
+                                        {regions.map(r => <option key={r.region_id} value={r.region_id}>{r.region_name} ({r.region_id})</option>)}
+                                    </select>
+                                ))}
+                                {regions.length > 0 && (
+                                    <div style={{ marginBottom: 12, padding: "8px 10px", background: "#111827", borderRadius: 3, border: "1px solid rgba(148,163,184,0.06)" }}>
+                                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Region legend</div>
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px" }}>
+                                            {regions.map(r => (
+                                                <div key={r.region_id} style={{ display: "flex", gap: 6, alignItems: "baseline", cursor: "pointer" }}
+                                                    onClick={() => setLoiterScopeRegion(r.region_id)}>
+                                                    <span style={{ fontFamily: "monospace", fontSize: 9, color: loiterScopeRegion === r.region_id ? "#60a5fa" : "#334155", flexShrink: 0 }}>{r.region_id}</span>
+                                                    <span style={{ fontSize: 9, color: loiterScopeRegion === r.region_id ? "#94a3b8" : "#475569" }}>{r.region_name}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {loiterScopeMode === "SINGLE" && fld("Airport ID or ICAO code", (
+                            <input value={loiterScopeSingle} onChange={e => setLoiterScopeSingle(e.target.value)}
+                                placeholder="ARPT-00001 or EGLL"
+                                style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
                         ))}
                     </>
                 ) : (

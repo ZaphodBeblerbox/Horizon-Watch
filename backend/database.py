@@ -153,6 +153,27 @@ class PortBoundary(Base):
     port_metadata           = Column(Text, nullable=True)     # JSON string
 
 
+class Airport(Base):
+    __tablename__ = "airports"
+
+    id            = Column(Integer, primary_key=True)
+    system_id     = Column(String, unique=True, index=True, nullable=False)  # ARPT-00001 …
+    ident         = Column(String, unique=True, index=True, nullable=True)   # OurAirports ident (reliable unique key)
+    icao_code     = Column(String, nullable=True, index=True)                # 4-letter ICAO (may be empty)
+    iata_code     = Column(String, nullable=True)                            # 3-letter IATA
+    airport_name  = Column(String, nullable=False)
+    airport_type  = Column(String, nullable=False)                           # large_airport | medium_airport | …
+    country_code  = Column(String, nullable=True)                            # ISO-2
+    country_name  = Column(String, nullable=True)
+    region_id     = Column(String, nullable=True, index=True)
+    latitude      = Column(Float, nullable=False)
+    longitude     = Column(Float, nullable=False)
+    elevation_ft  = Column(Integer, nullable=True)
+    municipality  = Column(String, nullable=True)
+    infra_type    = Column(String, nullable=True, default="Airport")
+    airport_metadata = Column(Text, nullable=True)                          # JSON string
+
+
 class RegionDefinition(Base):
     __tablename__ = "region_definitions"
 
