@@ -660,26 +660,15 @@ function OsintWorkspace() {
 
 const TRIGGER_TYPES = {
     AIS: [
-        { value: "stationary_near_infrastructure", label: "Stationary near infrastructure", params: { infra_type: "cable", max_speed_knots: 0.5, proximity_km: 10, min_duration_minutes: 120 } },
+        { value: "stationary_near_infrastructure", label: "Loitering near infrastructure (cable / port)", params: { infra_type: "cable", max_speed_knots: 0.5, proximity_km: 10, min_duration_minutes: 120 } },
         { value: "AIS_STS_PROXIMITY",              label: "Ship-to-Ship Proximity (outside port)", params: { proximity_metres: 500, min_duration_minutes: 15, max_speed_knots: 2.0 } },
         { value: "AIS_DARK_SHIP",                  label: "AIS Dark Ship (gap detection)", params: { min_gap_minutes: 60, min_speed_before_gap: 2.0 } },
-        { value: "speed_anomaly", label: "Speed anomaly", params: { max_speed_knots: 25 } },
-        { value: "transponder_gap", label: "Dark ship (AIS gap)", params: { gap_minutes: 30, proximity_km: 100 } },
-        { value: "ship_to_ship", label: "Ship-to-ship proximity", params: { proximity_meters: 500, max_speed_knots: 2 } },
-        { value: "route_deviation", label: "Route deviation", params: { chokepoints: [] } },
-        { value: "chokepoint_loitering", label: "Chokepoint loitering", params: { chokepoint: "Hormuz", max_speed_knots: 1.0, min_minutes: 60 } },
-        { value: "AIS_CHOKEPOINT_ACTIVITY", label: "AIS Chokepoint Activity (transit / loitering)", params: { target: "ALL", monitor_transit: true, monitor_loitering: false, min_loiter_duration_minutes: 45, max_loiter_speed_knots: 1.0 } },
+        { value: "AIS_CHOKEPOINT_ACTIVITY",        label: "AIS Chokepoint Activity (transit / loitering)", params: { target: "ALL", monitor_transit: true, monitor_loitering: false, min_loiter_duration_minutes: 45, max_loiter_speed_knots: 1.0 } },
     ],
     ADSB: [
         { value: "ADSB_LOITERING_NEAR_AIRPORT", label: "ADSB Loitering near airport", params: { airport_types: ["large_airport", "medium_airport"], proximity_km: 5, min_duration_minutes: 20, max_speed_knots: 200 } },
-        { value: "military_callsign", label: "Military callsign", params: { callsign_prefixes: ["RCH", "NAVY", "RRR", "DUKE"] } },
-        { value: "emergency_squawk", label: "Emergency squawk", params: { squawk_codes: ["7500", "7600", "7700"] } },
-        { value: "restricted_airspace", label: "Restricted airspace entry", params: { zone_ids: [] } },
     ],
-    NEWS: [
-        { value: "event_surge", label: "Event frequency surge", params: { multiplier: 3, window_days: 7, keywords: [] } },
-        { value: "severity_threshold", label: "High-severity event", params: { min_severity: "high", keywords: [] } },
-    ],
+    NEWS: [],
 }
 
 const INFRA_TYPES = ["Submarine Cable", "Port", "Airport"]
@@ -867,6 +856,7 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                         },
                     }
                 }
+                if (!ruleBody) return
                 const res = await fetch(`${API}/api/rules`, {
                     method: "POST", headers: forgeHeaders(), body: JSON.stringify(ruleBody),
                 })
@@ -874,16 +864,10 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                 if (res.ok) {
                     setToast("Rule created")
                     setTimeout(() => { setToast(""); onCreated({ ...d, _db: true }) }, 1000)
+                } else {
+                    setToast(`Error: ${d.detail || "Failed to create rule"}`)
+                    setTimeout(() => setToast(""), 3000)
                 }
-            } else {
-                // Forge JSON-file-backed rule
-                const res = await fetch(`${API}/api/forge/rules`, {
-                    method: "POST", headers: forgeHeaders(),
-                    body: JSON.stringify({ name, source, trigger_type: triggerType, severity, params, status: "active", description: triggers.find(t => t.value === triggerType)?.label || triggerType }),
-                })
-                const d = await res.json()
-                if (res.ok) onCreated(d.id ? d : { id: crypto.randomUUID(), name, source, trigger_type: triggerType, severity, params, status: "active" })
-            }
         } catch { }
         finally { setSaving(false) }
     }
@@ -1206,32 +1190,20 @@ function CreateRuleModal({ source, onClose, onCreated }) {
 }
 
 function DetectorWorkspace({ source }) {
-    const [rules, setRules] = useState([])
-    const [dbRules, setDbRules] = useState([])          // DB-backed rules via /api/rules
-    const [chains, setChains] = useState([])            // escalation chains
-    const [alertCounts, setAlertCounts] = useState({})  // rule_name -> count
+    const [dbRules, setDbRules] = useState([])
+    const [chains, setChains] = useState([])
     const [alerts, setAlerts] = useState([])
     const [tab, setTab] = useState("rules")
     const [expandedRule, setExpandedRule] = useState(null)
     const [expandedChain, setExpandedChain] = useState(null)
-    const [dryResults, setDryResults] = useState({})
-    const [dryRunning, setDryRunning] = useState({})
     const [showCreate, setShowCreate] = useState(false)
     const [selectedAlert, setSelectedAlert] = useState(null)
 
     const reload = () => {
-        fetch(`${API}/api/forge/rules`, { headers: forgeHeaders() })
-            .then(r => r.ok ? r.json() : {})
-            .then(d => {
-                const list = Array.isArray(d) ? d : (d.rules || [])
-                setRules(list.filter(r => r.source === source || r.source === source?.toLowerCase()))
-            }).catch(() => {})
-        // Always fetch DB rules (filtered by source prefix in render)
         fetch(`${API}/api/rules`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : {})
             .then(d => setDbRules(d.rules || []))
             .catch(() => {})
-        // Escalation chains (AIS only)
         if (source === "AIS") {
             fetch(`${API}/api/escalation-chains`, { headers: forgeHeaders() })
                 .then(r => r.ok ? r.json() : [])
@@ -1249,31 +1221,6 @@ function DetectorWorkspace({ source }) {
     }
     useEffect(() => { reload() }, [source])
 
-    const saveParam = async (rule, key, raw) => {
-        let val = raw; try { val = JSON.parse(raw) } catch {}
-        const updated = { ...rule, params: { ...rule.params, [key]: val } }
-        await fetch(`${API}/api/forge/rules/${rule.id}`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify(updated) })
-        setRules(prev => prev.map(r => r.id === rule.id ? updated : r))
-    }
-    const toggle = async (rule) => {
-        const updated = { ...rule, status: rule.status === "active" ? "paused" : "active" }
-        await fetch(`${API}/api/forge/rules/${rule.id}`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify(updated) })
-        setRules(prev => prev.map(r => r.id === rule.id ? updated : r))
-    }
-    const del = async (ruleId) => {
-        if (!confirm("Delete this rule?")) return
-        await fetch(`${API}/api/forge/rules/${ruleId}`, { method: "DELETE", headers: forgeHeaders() })
-        setRules(prev => prev.filter(r => r.id !== ruleId))
-    }
-    const dryRun = async (ruleId) => {
-        setDryRunning(p => ({ ...p, [ruleId]: true }))
-        try {
-            const res = await fetch(`${API}/api/forge/rules/${ruleId}/test`, { method: "POST", headers: forgeHeaders() })
-            const data = await res.json()
-            setDryResults(p => ({ ...p, [ruleId]: data }))
-        } catch { setDryResults(p => ({ ...p, [ruleId]: { error: "Request failed" } })) }
-        finally { setDryRunning(p => ({ ...p, [ruleId]: false })) }
-    }
     const feedback = async (alert, action) => {
         if (alert._idx == null) return
         await fetch(`${API}/api/forge/alerts/${alert._idx}/feedback`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify({ action }) })
@@ -1285,7 +1232,7 @@ function DetectorWorkspace({ source }) {
             <Toolbar>
                 {["rules", "alerts", "training"].map(t => (
                     <button key={t} onClick={() => setTab(t)} style={tabBtn(tab === t)}>
-                        {t.charAt(0).toUpperCase() + t.slice(1)}{t === "rules" ? ` (${rules.length + dbRules.filter(r => (r.trigger_type||r.rule_name||"").startsWith(source === "ADSB" ? "ADSB_" : "AIS_")).length})` : t === "alerts" ? ` (${alerts.length})` : ""}
+                        {t.charAt(0).toUpperCase() + t.slice(1)}{t === "rules" ? ` (${dbRules.filter(r => (r.trigger_type||r.rule_name||"").startsWith(source === "ADSB" ? "ADSB_" : "AIS_")).length})` : t === "alerts" ? ` (${alerts.length})` : ""}
                     </button>
                 ))}
                 <div style={{ flex: 1 }} />
@@ -1296,7 +1243,7 @@ function DetectorWorkspace({ source }) {
             <WorkspaceBody>
                 {tab === "rules" && (
                     <div style={{ maxWidth: 760 }}>
-                        {rules.length === 0 && dbRules.length === 0 && <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 40 }}>No rules for {source}. Create one above or auto-generate from your uploaded data.</div>}
+                        {dbRules.filter(r => (r.trigger_type||r.rule_name||"").startsWith(source === "ADSB" ? "ADSB_" : "AIS_")).length === 0 && <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 40 }}>No rules configured.</div>}
 
                         {/* ── DB-backed surveillance rules ─────────────────── */}
                         {(() => {
@@ -1419,69 +1366,9 @@ function DetectorWorkspace({ source }) {
                                             })}
                                         </div>
                                     )}
-                                    {rules.length > 0 && <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, marginTop: 16 }}>Forge rules</div>}
                                 </>
                             )
                         })()}
-
-                        {rules.map(rule => {
-                            const isActive = rule.status === "active"
-                            const expanded = expandedRule === rule.id
-                            const dry = dryResults[rule.id]
-                            return (
-                                <div key={rule.id} style={{ background: "#111827", borderRadius: 4, marginBottom: 6, overflow: "hidden", borderLeft: `2px solid ${isActive ? "#4ade80" : "#334155"}` }}>
-                                    <div style={{ padding: "10px 12px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                                        onClick={() => setExpandedRule(expanded ? null : rule.id)}>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{rule.name}</span>
-                                            <span style={{ color: "#334155", fontSize: 10, marginLeft: 10 }}>{rule.trigger_type}</span>
-                                        </div>
-                                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                            <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 2, background: rule.severity === "critical" ? "rgba(248,113,113,0.12)" : rule.severity === "high" ? "rgba(251,191,36,0.12)" : "rgba(148,163,184,0.08)", color: rule.severity === "critical" ? "#f87171" : rule.severity === "high" ? "#fbbf24" : "#94a3b8" }}>{rule.severity}</span>
-                                            <span style={{ color: "#334155", fontSize: 11 }}>{expanded ? "▲" : "▼"}</span>
-                                        </div>
-                                    </div>
-                                    {expanded && (
-                                        <div style={{ padding: "0 12px 12px", borderTop: "1px solid rgba(148,163,184,0.04)" }}>
-                                            {rule.description && <div style={{ color: "#475569", fontSize: 11, marginTop: 8, marginBottom: 8 }}>{rule.description}</div>}
-                                            {Object.keys(rule.params || {}).length > 0 && (
-                                                <>
-                                                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, marginTop: 4 }}>Parameters</div>
-                                                    {Object.entries(rule.params || {}).map(([key, val]) => (
-                                                        <div key={key} style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "center" }}>
-                                                            <span style={{ color: "#475569", fontSize: 10, width: 150, flexShrink: 0 }}>{key.replace(/_/g, " ")}</span>
-                                                            <input defaultValue={typeof val === "object" ? JSON.stringify(val) : String(val)}
-                                                                onBlur={e => saveParam(rule, key, e.target.value)}
-                                                                style={{ flex: 1, padding: "3px 6px", background: "#0a0e1a", border: "1px solid rgba(148,163,184,0.08)", borderRadius: 2, color: "#cbd5e1", fontSize: 10, outline: "none" }} />
-                                                        </div>
-                                                    ))}
-                                                </>
-                                            )}
-                                            {dry && (
-                                                <div style={{ marginTop: 8, padding: "8px 10px", background: "#0a0e1a", borderRadius: 3 }}>
-                                                    {dry.error ? <span style={{ color: "#f87171", fontSize: 10 }}>{dry.error}</span> :
-                                                        <span style={{ color: "#94a3b8", fontSize: 10 }}>
-                                                            Tested {dry.checked ?? dry.vessels_tested ?? dry.vessels_checked ?? "?"} {dry.label ?? "items"} →{" "}
-                                                            <span style={{ color: (dry.hits || dry.would_trigger || 0) > 0 ? "#fbbf24" : "#4ade80", fontWeight: 700 }}>
-                                                                {dry.hits ?? dry.would_trigger ?? 0} triggers
-                                                            </span>
-                                                        </span>
-                                                    }
-                                                    {(dry.sample || dry.sample_alerts || []).slice(0, 3).map((a, i) => (
-                                                        <div key={i} style={{ color: "#475569", fontSize: 10, marginTop: 3 }}>· {a.message || JSON.stringify(a)}</div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                            <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
-                                                <button onClick={() => dryRun(rule.id)} disabled={dryRunning[rule.id]} style={actionBtn("#60a5fa")}>{dryRunning[rule.id] ? "Running…" : "▶ Dry Run"}</button>
-                                                <button onClick={() => toggle(rule)} style={actionBtn(isActive ? "#f87171" : "#4ade80")}>{isActive ? "⏸ Pause" : "▶ Activate"}</button>
-                                                <button onClick={() => del(rule.id)} style={actionBtn("#f87171")}>Delete</button>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )
-                        })}
                     </div>
                 )}
                 {tab === "alerts" && (
@@ -1513,7 +1400,7 @@ function DetectorWorkspace({ source }) {
                 )}
                 {tab === "training" && <TrainingWorkspace detectorSource={source} />}
             </WorkspaceBody>
-            {showCreate && <CreateRuleModal source={source} onClose={() => setShowCreate(false)} onCreated={rule => { if (rule._db) { reload() } else { setRules(prev => [rule, ...prev]) } setShowCreate(false) }} />}
+            {showCreate && <CreateRuleModal source={source} onClose={() => setShowCreate(false)} onCreated={() => { reload(); setShowCreate(false) }} />}
         </div>
     )
 }
