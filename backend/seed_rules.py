@@ -189,5 +189,71 @@ def seed():
     print("\nDone.")
 
 
+CHOKEPOINT_RULES = [
+    {
+        "name":         "Chokepoint Loitering — Global",
+        "trigger_type": "AIS_CHOKEPOINT_ACTIVITY",
+        "severity":     "high",
+        "icon_type":    "CHOKEPOINT_LOITER",
+        "params": {
+            "target":                        "ALL",
+            "monitor_transit":               False,
+            "monitor_loitering":             True,
+            "min_loiter_duration_minutes":   45,
+            "max_loiter_speed_knots":        1.0,
+        },
+    },
+    {
+        "name":         "Chokepoint Transit — Hormuz",
+        "trigger_type": "AIS_CHOKEPOINT_ACTIVITY",
+        "severity":     "medium",
+        "icon_type":    "CHOKEPOINT_TRANSIT",
+        "params": {
+            "target":            "ID:CHOKE-001",
+            "monitor_transit":   True,
+            "monitor_loitering": False,
+            "vessel_types":      ["Tanker", "Unknown", "Military"],
+        },
+    },
+]
+
+
+def seed_chokepoint_rules():
+    print(f"\nConnecting to {BASE} for chokepoint rules…\n")
+    ids = {}
+    for spec in CHOKEPOINT_RULES:
+        r = httpx.post(f"{BASE}/api/rules", json=spec, timeout=10)
+        if r.status_code not in (200, 201):
+            print(f"  ERROR {r.status_code}: {r.text[:200]}")
+            return
+        d = r.json()
+        ids[spec["name"]] = d["id"]
+        print(f"  {d['system_id']} | {d['trigger_type']} | {d['name']}")
+
+    # Connect RULE-9 (Chokepoint Loitering Global) + RULE-6 (Dark Ship) → ESCALATION
+    # First look up the Dark Ship rule id
+    rules_resp = httpx.get(f"{BASE}/api/rules", timeout=10)
+    all_rules = rules_resp.json().get("rules", []) if rules_resp.is_success else []
+    dark_ship_id = next((r["id"] for r in all_rules if r.get("trigger_type") == "AIS_DARK_SHIP"), None)
+    choke_loiter_id = ids.get("Chokepoint Loitering — Global")
+    if dark_ship_id and choke_loiter_id:
+        conn_body = {
+            "connection_name":   "Chokepoint Loitering + Dark Ship",
+            "rule_id_a":         choke_loiter_id,
+            "rule_id_b":         dark_ship_id,
+            "relationship_type": "ESCALATION",
+            "escalated_severity":  "critical",
+            "escalated_icon_type": "DARK_SHIP_CABLE",
+            "time_window_minutes": 30,
+        }
+        rc = httpx.post(f"{BASE}/api/rule-connections", json=conn_body, timeout=10)
+        if rc.status_code in (200, 201):
+            print(f"  Created rule connection: {rc.json().get('system_id')} Chokepoint Loitering + Dark Ship → ESCALATION")
+        else:
+            print(f"  Rule connection ERROR {rc.status_code}: {rc.text[:200]}")
+    print("\nChokepoint seed done.")
+
+
 if __name__ == "__main__":
     seed()
+    seed_chokepoint_rules()

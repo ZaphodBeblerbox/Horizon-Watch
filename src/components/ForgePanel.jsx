@@ -668,6 +668,7 @@ const TRIGGER_TYPES = {
         { value: "ship_to_ship", label: "Ship-to-ship proximity", params: { proximity_meters: 500, max_speed_knots: 2 } },
         { value: "route_deviation", label: "Route deviation", params: { chokepoints: [] } },
         { value: "chokepoint_loitering", label: "Chokepoint loitering", params: { chokepoint: "Hormuz", max_speed_knots: 1.0, min_minutes: 60 } },
+        { value: "AIS_CHOKEPOINT_ACTIVITY", label: "AIS Chokepoint Activity (transit / loitering)", params: { target: "ALL", monitor_transit: true, monitor_loitering: false, min_loiter_duration_minutes: 45, max_loiter_speed_knots: 1.0 } },
     ],
     ADSB: [
         { value: "ADSB_LOITERING_NEAR_AIRPORT", label: "ADSB Loitering near airport", params: { airport_types: ["large_airport", "medium_airport"], proximity_km: 5, min_duration_minutes: 20, max_speed_knots: 200 } },
@@ -728,11 +729,21 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const [loiterScopeRegion, setLoiterScopeRegion] = useState("")
     const [loiterScopeSingle, setLoiterScopeSingle] = useState("")
 
+    // Chokepoint activity state
+    const [chokepoints, setChokepoints]           = useState([])    // [{system_id, name}]
+    const [chokeTarget, setChokeTarget]           = useState("ALL") // ALL | IDs...
+    const [chokeSelected, setChokeSelected]       = useState([])    // selected choke system_ids
+    const [monitorTransit, setMonitorTransit]     = useState(true)
+    const [monitorLoitering, setMonitorLoitering] = useState(false)
+    const [vesselTypes, setVesselTypes]           = useState([])
+    const [flagStates, setFlagStates]             = useState("")
+
     const isInfraRule   = source === "AIS"  && triggerType === "stationary_near_infrastructure"
     const isStsRule     = source === "AIS"  && triggerType === "AIS_STS_PROXIMITY"
     const isDarkRule    = source === "AIS"  && triggerType === "AIS_DARK_SHIP"
     const isLoiterRule  = source === "ADSB" && triggerType === "ADSB_LOITERING_NEAR_AIRPORT"
-    const isDbRule      = isInfraRule || isStsRule || isDarkRule || isLoiterRule
+    const isChokeRule   = source === "AIS"  && triggerType === "AIS_CHOKEPOINT_ACTIVITY"
+    const isDbRule      = isInfraRule || isStsRule || isDarkRule || isLoiterRule || isChokeRule
 
     useEffect(() => {
         if ((isInfraRule || isDarkRule || isLoiterRule) && regions.length === 0) {
@@ -743,6 +754,18 @@ function CreateRuleModal({ source, onClose, onCreated }) {
         }
     }, [isInfraRule, isDarkRule, isLoiterRule])
 
+    useEffect(() => {
+        if (isChokeRule && chokepoints.length === 0) {
+            fetch(`${API}/api/chokepoints`)
+                .then(r => r.ok ? r.json() : { features: [] })
+                .then(d => setChokepoints((d.features || []).map(f => ({
+                    system_id: f.properties?.system_id,
+                    name:      f.properties?.name,
+                })).filter(c => c.system_id)))
+                .catch(() => {})
+        }
+    }, [isChokeRule])
+
     const triggers = TRIGGER_TYPES[source] || []
 
     const selectTrigger = (val) => {
@@ -752,6 +775,8 @@ function CreateRuleModal({ source, onClose, onCreated }) {
         setScopeMode("ALL"); setScopeRegion(""); setScopeSingle("")
         setDarkRegion(""); setIconType("")
         setLoiterScopeMode("ALL"); setLoiterScopeRegion(""); setLoiterScopeSingle("")
+        setChokeTarget("ALL"); setChokeSelected([]); setMonitorTransit(true)
+        setMonitorLoitering(false); setVesselTypes([]); setFlagStates("")
     }
 
     const save = async () => {
@@ -818,6 +843,26 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                             proximity_km:         parseFloat(params.proximity_km ?? 5),
                             min_duration_minutes: parseFloat(params.min_duration_minutes ?? 20),
                             max_speed_knots:      parseFloat(params.max_speed_knots ?? 200),
+                            ...(iconType ? { icon_type: iconType } : {}),
+                        },
+                    }
+                } else if (isChokeRule) {
+                    const target = chokeTarget === "ALL" || chokeSelected.length === 0
+                        ? "ALL"
+                        : chokeSelected.map(id => `ID:${id}`).join(",")
+                    ruleBody = {
+                        rule_name: name,
+                        trigger_type: "AIS_CHOKEPOINT_ACTIVITY",
+                        severity,
+                        icon_type: monitorLoitering ? "CHOKEPOINT_LOITER" : "CHOKEPOINT_TRANSIT",
+                        params: {
+                            target,
+                            monitor_transit:              monitorTransit,
+                            monitor_loitering:            monitorLoitering,
+                            min_loiter_duration_minutes:  parseFloat(params.min_loiter_duration_minutes ?? 45),
+                            max_loiter_speed_knots:       parseFloat(params.max_loiter_speed_knots ?? 1.0),
+                            ...(vesselTypes.length > 0 ? { vessel_types: vesselTypes } : {}),
+                            ...(flagStates.trim() ? { flag_states: flagStates.split(",").map(s => s.trim()).filter(Boolean) } : {}),
                             ...(iconType ? { icon_type: iconType } : {}),
                         },
                     }
@@ -1050,6 +1095,77 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                         {loiterScopeMode === "SINGLE" && fld("Airport ID or ICAO code", (
                             <input value={loiterScopeSingle} onChange={e => setLoiterScopeSingle(e.target.value)}
                                 placeholder="ARPT-00001 or EGLL"
+                                style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                        ))}
+                    </>
+                ) : isChokeRule ? (
+                    <>
+                        {fld("Chokepoint Scope", (
+                            <select value={chokeTarget} onChange={e => { setChokeTarget(e.target.value); setChokeSelected([]) }} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                <option value="ALL">All strategic chokepoints</option>
+                                <option value="SPECIFIC">Specific chokepoints</option>
+                            </select>
+                        ))}
+                        {chokeTarget === "SPECIFIC" && chokepoints.length > 0 && (
+                            <div style={{ marginBottom: 12 }}>
+                                <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 6 }}>Select Chokepoints</label>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px", maxHeight: 140, overflowY: "auto", padding: "4px 0" }}>
+                                    {chokepoints.map(cp => (
+                                        <label key={cp.system_id} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#94a3b8", fontSize: 10 }}>
+                                            <input type="checkbox"
+                                                checked={chokeSelected.includes(cp.system_id)}
+                                                onChange={e => setChokeSelected(prev => e.target.checked ? [...prev, cp.system_id] : prev.filter(id => id !== cp.system_id))}
+                                                style={{ accentColor: "#60a5fa" }} />
+                                            <span style={{ fontFamily: "monospace", fontSize: 9, color: "#475569" }}>{cp.system_id}</span>
+                                            {cp.name}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        <div style={{ marginBottom: 12, display: "flex", gap: 16 }}>
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#94a3b8", fontSize: 11 }}>
+                                <input type="checkbox" checked={monitorTransit} onChange={e => setMonitorTransit(e.target.checked)} style={{ accentColor: "#60a5fa" }} />
+                                Monitor Transit (fire on entry)
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#94a3b8", fontSize: 11 }}>
+                                <input type="checkbox" checked={monitorLoitering} onChange={e => setMonitorLoitering(e.target.checked)} style={{ accentColor: "#f97316" }} />
+                                Monitor Loitering
+                            </label>
+                        </div>
+                        {monitorLoitering && (
+                            <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                                {[
+                                    ["min_loiter_duration_minutes", "Min loiter duration (min)", params.min_loiter_duration_minutes ?? 45],
+                                    ["max_loiter_speed_knots",      "Max loiter speed (kn)",     params.max_loiter_speed_knots ?? 1.0],
+                                ].map(([key, label, def]) => (
+                                    <div key={key}>
+                                        <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
+                                        <input type="number" step="any"
+                                            value={params[key] ?? def}
+                                            onChange={e => setParams(p => ({ ...p, [key]: e.target.value }))}
+                                            style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        <div style={{ marginBottom: 12 }}>
+                            <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 6 }}>Vessel Types to Monitor</label>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "4px 12px" }}>
+                                {["Tanker", "Cargo", "Military", "Fishing", "Unknown"].map(vt => (
+                                    <label key={vt} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#94a3b8", fontSize: 10 }}>
+                                        <input type="checkbox"
+                                            checked={vesselTypes.includes(vt)}
+                                            onChange={e => setVesselTypes(prev => e.target.checked ? [...prev, vt] : prev.filter(t => t !== vt))}
+                                            style={{ accentColor: "#60a5fa" }} />
+                                        {vt}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                        {fld("Flag states filter (comma-sep ISO-2, leave blank for all)", (
+                            <input value={flagStates} onChange={e => setFlagStates(e.target.value)}
+                                placeholder="e.g. IR,RU,CN"
                                 style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
                         ))}
                     </>
@@ -1908,9 +2024,9 @@ const ONTOLOGY_TYPE_COLORS = {
     vessel: "#60a5fa", aircraft: "#a78bfa", country: "#34d399", group: "#fb923c",
     event: "#f87171", cable: "#fbbf24", rule: "#94a3b8", alert: "#ef4444",
     person: "#e879f9", chokepoint: "#22d3ee", facility: "#38bdf8", port: "#fb7185",
-    airport: "#c084fc", "escalation chain": "#f97316",
+    airport: "#c084fc", "escalation chain": "#f97316", "rule connection": "#5856D6",
 }
-const ONTOLOGY_TYPES = ["all", "vessel", "aircraft", "country", "group", "event", "cable", "rule", "escalation chain", "alert", "person", "chokepoint", "facility", "port", "airport"]
+const ONTOLOGY_TYPES = ["all", "vessel", "aircraft", "country", "group", "event", "cable", "rule", "escalation chain", "rule connection", "alert", "person", "chokepoint", "facility", "port", "airport"]
 const ENTITY_TYPES   = ["country","chokepoint","group","person","vessel","aircraft","event","facility","cable","port","airport","rule","alert"]
 const REL_TYPES      = ["operates_in","threatens","located_in","ally","adversary","monitors","connects","leads","sponsors","supports","rivals","relates_to"]
 
@@ -2017,29 +2133,41 @@ const GRAPH_COLORS = {
     country: "#16a34a", chokepoint: "#dc2626", group: "#b91c1c", person: "#be185d",
     vessel: "#d97706", aircraft: "#2563eb", event: "#ea580c", facility: "#0d9488",
     cable: "#7c3aed", port: "#0891b2", airport: "#6d28d9", rule: "#ea580c", alert: "#dc2626",
-    "escalation chain": "#f97316",
+    "escalation chain": "#f97316", "rule connection": "#5856D6",
+}
+
+const RULE_CONN_COLORS = {
+    ESCALATION:  "#FF3B30",
+    CORRELATION: "#34AADC",
+    SEQUENCE:    "#FFCC00",
+    SUPPRESSION: "#8E8E93",
 }
 
 const BOX_W = 160, BOX_H = 36, GAP_X = 60, GAP_Y = 8, PAD = 30
-const TYPE_ORDER = ["country","group","person","chokepoint","facility","port","airport","cable","vessel","aircraft","event","rule","escalation chain","alert"]
+const TYPE_ORDER = ["country","group","person","chokepoint","facility","port","airport","cable","vessel","aircraft","event","rule","escalation chain","rule connection","alert"]
 
-function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode }) {
-    const canvasRef       = useRef(null)
-    const posRef          = useRef({})
-    const nodesRef        = useRef(nodes)
-    const edgesRef        = useRef(edges)
-    const onClickRef      = useRef(onNodeClick)
-    const onDblClickRef   = useRef(onDblClickNode)
-    const animRef         = useRef(null)
-    const draggingRef     = useRef(null)
-    const panRef          = useRef({ x: 0, y: 0 })
-    const zoomRef         = useRef(1)
-    const panStartRef     = useRef(null)
-    const selectedRef     = useRef(null)
+function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode, onRuleConnectRequest, onEdgeClick }) {
+    const canvasRef          = useRef(null)
+    const posRef             = useRef({})
+    const nodesRef           = useRef(nodes)
+    const edgesRef           = useRef(edges)
+    const onClickRef         = useRef(onNodeClick)
+    const onDblClickRef      = useRef(onDblClickNode)
+    const onRuleConnectRef   = useRef(onRuleConnectRequest)
+    const onEdgeClickRef     = useRef(onEdgeClick)
+    const animRef            = useRef(null)
+    const draggingRef        = useRef(null)
+    const connectingRef      = useRef(null)   // {sourceNode, curX, curY} when drawing a live rule connection
+    const panRef             = useRef({ x: 0, y: 0 })
+    const zoomRef            = useRef(1)
+    const panStartRef        = useRef(null)
+    const selectedRef        = useRef(null)
 
     // Keep refs live — no loop restart needed when data changes
-    useEffect(() => { onClickRef.current = onNodeClick },       [onNodeClick])
-    useEffect(() => { onDblClickRef.current = onDblClickNode }, [onDblClickNode])
+    useEffect(() => { onClickRef.current = onNodeClick },                 [onNodeClick])
+    useEffect(() => { onDblClickRef.current = onDblClickNode },           [onDblClickNode])
+    useEffect(() => { onRuleConnectRef.current = onRuleConnectRequest },  [onRuleConnectRequest])
+    useEffect(() => { onEdgeClickRef.current = onEdgeClick },             [onEdgeClick])
 
     useEffect(() => {
         edgesRef.current = edges
@@ -2119,23 +2247,42 @@ function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode }) {
                 const fx = ap.x + BOX_W, fy = ap.y + BOX_H / 2
                 const tx = bp.x,         ty = bp.y + BOX_H / 2
                 const cpX = (fx + tx) / 2
-                const isLit = selId && selEdgeIds.has(e.id)
-                const srcNode = ns.find(n => n.id === e.source)
-                const color = isLit ? (GRAPH_COLORS[srcNode?.type] || "#2563eb") : null
+                const isLit     = selId && selEdgeIds.has(e.id)
+                const isRuleConn = !!e.isRuleConn
+                const rcColor   = isRuleConn ? (RULE_CONN_COLORS[e.relationship_type] || "#5856D6") : null
+                const srcNode   = ns.find(n => n.id === e.source)
+                const color     = rcColor || (isLit ? (GRAPH_COLORS[srcNode?.type] || "#2563eb") : null)
                 ctx.beginPath()
                 ctx.moveTo(fx, fy)
                 ctx.bezierCurveTo(cpX, fy, cpX, ty, tx, ty)
-                ctx.strokeStyle = isLit ? color + "cc" : "rgba(0,0,0,0.08)"
-                ctx.lineWidth = isLit ? 2 : 0.8
+                ctx.strokeStyle = isRuleConn ? rcColor + "cc" : (isLit ? color + "cc" : "rgba(0,0,0,0.08)")
+                ctx.lineWidth   = isRuleConn ? 2 : (isLit ? 2 : 0.8)
                 ctx.stroke()
                 ctx.beginPath()
                 ctx.moveTo(tx, ty); ctx.lineTo(tx - 5, ty - 3); ctx.lineTo(tx - 5, ty + 3)
                 ctx.closePath()
-                ctx.fillStyle = isLit ? color + "cc" : "rgba(0,0,0,0.08)"; ctx.fill()
-                if (isLit && e.type) {
-                    ctx.fillStyle = "#6b7280"; ctx.font = "7px system-ui"; ctx.textAlign = "center"
-                    ctx.fillText(e.type.replace(/_/g, " "), cpX, Math.min(fy, ty) - 4)
+                ctx.fillStyle = isRuleConn ? rcColor + "cc" : (isLit ? color + "cc" : "rgba(0,0,0,0.08)"); ctx.fill()
+                if (isRuleConn || (isLit && e.type)) {
+                    const label = isRuleConn ? (e.relationship_type || "") : e.type.replace(/_/g, " ")
+                    ctx.fillStyle = rcColor || "#6b7280"; ctx.font = "7px system-ui"; ctx.textAlign = "center"
+                    ctx.fillText(label, cpX, Math.min(fy, ty) - 4)
                     ctx.textAlign = "left"
+                }
+            }
+
+            // Live connection line (shift-drag mode)
+            const conn = connectingRef.current
+            if (conn) {
+                const sp = pos[conn.sourceNode.id]
+                if (sp) {
+                    ctx.beginPath()
+                    ctx.moveTo(sp.x + BOX_W, sp.y + BOX_H / 2)
+                    ctx.lineTo(conn.curX, conn.curY)
+                    ctx.strokeStyle = "#60a5fa"
+                    ctx.lineWidth = 1.5
+                    ctx.setLineDash([4, 3])
+                    ctx.stroke()
+                    ctx.setLineDash([])
                 }
             }
 
@@ -2182,10 +2329,29 @@ function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode }) {
             }
             return null
         }
+        function edgeAt(x, y) {
+            for (const e of edgesRef.current) {
+                if (!e.isRuleConn) continue
+                const ap = posRef.current[e.source], bp = posRef.current[e.target]
+                if (!ap || !bp) continue
+                const fx = ap.x + BOX_W, fy = ap.y + BOX_H / 2
+                const tx = bp.x,         ty = bp.y + BOX_H / 2
+                const cpX = (fx + tx) / 2
+                for (let t2 = 0; t2 <= 1; t2 += 0.08) {
+                    const bx = Math.pow(1-t2,3)*fx + 3*Math.pow(1-t2,2)*t2*cpX + 3*(1-t2)*Math.pow(t2,2)*cpX + Math.pow(t2,3)*tx
+                    const by = Math.pow(1-t2,3)*fy + 3*Math.pow(1-t2,2)*t2*fy  + 3*(1-t2)*Math.pow(t2,2)*ty  + Math.pow(t2,3)*ty
+                    if (Math.hypot(bx - x, by - y) < 8) return e
+                }
+            }
+            return null
+        }
         function onDown(e) {
             const { x, y } = toCanvas(e)
             const n = nodeAt(x, y)
-            if (n) {
+            if (n && e.shiftKey && n.type === "rule") {
+                connectingRef.current = { sourceNode: n, curX: x, curY: y }
+                canvas.style.cursor = "crosshair"
+            } else if (n) {
                 const p = posRef.current[n.id]
                 draggingRef.current = { id: n.id, ox: x - p.x, oy: y - p.y }
             } else {
@@ -2193,6 +2359,13 @@ function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode }) {
             }
         }
         function onMove(e) {
+            if (connectingRef.current) {
+                const { x, y } = toCanvas(e)
+                connectingRef.current.curX = x; connectingRef.current.curY = y
+                const t = nodeAt(x, y)
+                canvas.style.cursor = (t && t.type === "rule" && t.id !== connectingRef.current.sourceNode.id) ? "cell" : "crosshair"
+                return
+            }
             if (draggingRef.current) {
                 const { x, y } = toCanvas(e)
                 posRef.current[draggingRef.current.id] = { x: x - draggingRef.current.ox, y: y - draggingRef.current.oy }
@@ -2206,43 +2379,165 @@ function OntologyGraph({ nodes, edges, onNodeClick, onDblClickNode }) {
         function savePos() {
             fetch(`${API}/api/forge/ontology/positions`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify(posRef.current) }).catch(() => {})
         }
-        function onUp() { if (draggingRef.current) savePos(); draggingRef.current = null; panStartRef.current = null }
+        function onUp(e) {
+            if (connectingRef.current) {
+                const { x, y } = toCanvas(e)
+                const target = nodeAt(x, y)
+                if (target && target.type === "rule" && target.id !== connectingRef.current.sourceNode.id) {
+                    if (onRuleConnectRef.current) onRuleConnectRef.current(connectingRef.current.sourceNode, target)
+                }
+                connectingRef.current = null
+                canvas.style.cursor = "grab"
+                return
+            }
+            if (draggingRef.current) savePos()
+            draggingRef.current = null; panStartRef.current = null
+        }
         function onClick(e) {
+            if (connectingRef.current) return
             const { x, y } = toCanvas(e)
             const n = nodeAt(x, y)
             if (n) { selectedRef.current = selectedRef.current === n.id ? null : n.id; onClickRef.current(n) }
-            else selectedRef.current = null
+            else {
+                const edge = edgeAt(x, y)
+                if (edge && onEdgeClickRef.current) { onEdgeClickRef.current(edge, false) }
+                else selectedRef.current = null
+            }
         }
         function onDblClick(e) {
             const { x, y } = toCanvas(e)
             const n = nodeAt(x, y)
             if (n && onDblClickRef.current) onDblClickRef.current(n)
         }
+        function onContextMenu(e) {
+            const { x, y } = toCanvas(e)
+            const edge = edgeAt(x, y)
+            if (edge && onEdgeClickRef.current) {
+                e.preventDefault()
+                onEdgeClickRef.current(edge, true)  // true = right-click (delete intent)
+            }
+        }
         function onWheel(e) {
             e.preventDefault()
             zoomRef.current = Math.max(0.2, Math.min(3, zoomRef.current * (e.deltaY > 0 ? 0.95 : 1.05)))
         }
-        canvas.addEventListener("mousedown",  onDown)
-        canvas.addEventListener("mousemove",  onMove)
-        canvas.addEventListener("mouseup",    onUp)
-        canvas.addEventListener("mouseleave", onUp)
-        canvas.addEventListener("click",      onClick)
-        canvas.addEventListener("dblclick",   onDblClick)
-        canvas.addEventListener("wheel",      onWheel, { passive: false })
+        canvas.addEventListener("mousedown",     onDown)
+        canvas.addEventListener("mousemove",     onMove)
+        canvas.addEventListener("mouseup",       onUp)
+        canvas.addEventListener("mouseleave",    onUp)
+        canvas.addEventListener("click",         onClick)
+        canvas.addEventListener("dblclick",      onDblClick)
+        canvas.addEventListener("wheel",         onWheel, { passive: false })
+        canvas.addEventListener("contextmenu",   onContextMenu)
         return () => {
             cancelAnimationFrame(animRef.current)
-            canvas.removeEventListener("mousedown",  onDown)
-            canvas.removeEventListener("mousemove",  onMove)
-            canvas.removeEventListener("mouseup",    onUp)
-            canvas.removeEventListener("mouseleave", onUp)
-            canvas.removeEventListener("click",      onClick)
-            canvas.removeEventListener("dblclick",   onDblClick)
-            canvas.removeEventListener("wheel",      onWheel)
+            canvas.removeEventListener("mousedown",     onDown)
+            canvas.removeEventListener("mousemove",     onMove)
+            canvas.removeEventListener("mouseup",       onUp)
+            canvas.removeEventListener("mouseleave",    onUp)
+            canvas.removeEventListener("click",         onClick)
+            canvas.removeEventListener("dblclick",      onDblClick)
+            canvas.removeEventListener("wheel",         onWheel)
+            canvas.removeEventListener("contextmenu",   onContextMenu)
         }
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     if (!nodes.length) return <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>No entities to visualize.</div>
     return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
+}
+
+function DefineConnectionModal({ nodeA, nodeB, existing, onClose, onSave }) {
+    const [connName,    setConnName]    = useState(existing?.connection_name || `${nodeA?.label || "?"} ↔ ${nodeB?.label || "?"}`)
+    const [relType,     setRelType]     = useState(existing?.relationship_type || "ESCALATION")
+    const [escSev,      setEscSev]      = useState(existing?.escalated_severity || "critical")
+    const [escIcon,     setEscIcon]     = useState(existing?.escalated_icon_type || "ESCALATED_DUAL")
+    const [seqWin,      setSeqWin]      = useState(existing?.sequence_window_minutes ?? 30)
+    const [suppWin,     setSuppWin]     = useState(existing?.suppression_window_minutes ?? 30)
+    const [timeWin,     setTimeWin]     = useState(existing?.time_window_minutes ?? 30)
+    const [notes,       setNotes]       = useState(existing?.notes || "")
+    const [saving,      setSaving]      = useState(false)
+
+    const relColors = { ESCALATION: "#FF3B30", CORRELATION: "#34AADC", SEQUENCE: "#FFCC00", SUPPRESSION: "#8E8E93" }
+
+    const save = async () => {
+        setSaving(true)
+        try {
+            const body = {
+                connection_name: connName,
+                rule_id_a: existing ? existing.rule_id_a : parseInt(nodeA.id.replace(/\D/g, "") || 0),
+                rule_id_b: existing ? existing.rule_id_b : parseInt(nodeB.id.replace(/\D/g, "") || 0),
+                relationship_type: relType,
+                time_window_minutes: parseInt(timeWin) || 30,
+                notes,
+                ...(relType === "ESCALATION"  ? { escalated_severity: escSev, escalated_icon_type: escIcon } : {}),
+                ...(relType === "SEQUENCE"    ? { sequence_window_minutes: parseInt(seqWin) || 30 } : {}),
+                ...(relType === "SUPPRESSION" ? { suppression_window_minutes: parseInt(suppWin) || 30 } : {}),
+            }
+            const url    = existing ? `${API}/api/rule-connections/${existing.id}` : `${API}/api/rule-connections`
+            const method = existing ? "PUT" : "POST"
+            const res    = await fetch(url, { method, headers: forgeHeaders(), body: JSON.stringify(body) })
+            const d = await res.json()
+            if (res.ok) onSave(d)
+        } catch {}
+        finally { setSaving(false) }
+    }
+
+    const relColor = relColors[relType] || "#5856D6"
+    const fld = (label, ctrl) => (
+        <div style={{ marginBottom: 10 }}>
+            <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 3 }}>{label}</label>
+            {ctrl}
+        </div>
+    )
+
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+            <div style={{ background: "#0f1219", border: `1px solid ${relColor}44`, borderRadius: 6, padding: 22, width: 440, maxHeight: "84vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+                <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 700, marginBottom: 14 }}>
+                    {existing ? "Edit" : "Define"} Rule Connection
+                    {nodeA && nodeB && <span style={{ fontSize: 11, color: "#475569", fontWeight: 400, marginLeft: 8 }}>{nodeA.label} → {nodeB.label}</span>}
+                </div>
+                {fld("Connection Name", <input value={connName} onChange={e => setConnName(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />)}
+                {fld("Relationship Type", (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {["ESCALATION","CORRELATION","SEQUENCE","SUPPRESSION"].map(rt => (
+                            <button key={rt} onClick={() => setRelType(rt)} style={{ padding: "4px 10px", borderRadius: 3, border: `1px solid ${relColors[rt]}66`, background: relType === rt ? relColors[rt] + "22" : "transparent", color: relType === rt ? relColors[rt] : "#475569", fontSize: 10, cursor: "pointer", fontWeight: relType === rt ? 700 : 400 }}>{rt}</button>
+                        ))}
+                    </div>
+                ))}
+                <div style={{ marginBottom: 10, padding: "6px 10px", background: "rgba(148,163,184,0.05)", borderRadius: 3, border: `1px solid ${relColor}33`, color: "#64748b", fontSize: 10 }}>
+                    {relType === "ESCALATION"  && "Both rules fire on same vessel within time window → emit one escalated alert."}
+                    {relType === "CORRELATION" && "Both rules fire on same vessel → tag both alerts as correlated (no suppression)."}
+                    {relType === "SEQUENCE"    && "Suppress rule B if rule A hasn't fired on the same vessel within the window."}
+                    {relType === "SUPPRESSION" && "Suppress rule B whenever rule A fires on the same vessel."}
+                </div>
+                {fld("Time Window (minutes)", <input type="number" value={timeWin} onChange={e => setTimeWin(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />)}
+                {relType === "ESCALATION" && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                        <div>
+                            <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 3 }}>Escalated Severity</label>
+                            <select value={escSev} onChange={e => setEscSev(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                {["medium","high","critical"].map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 3 }}>Icon Type</label>
+                            <input value={escIcon} onChange={e => setEscIcon(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                        </div>
+                    </div>
+                )}
+                {relType === "SEQUENCE" && fld("Sequence Window (minutes)", <input type="number" value={seqWin} onChange={e => setSeqWin(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />)}
+                {relType === "SUPPRESSION" && fld("Suppression Window (minutes)", <input type="number" value={suppWin} onChange={e => setSuppWin(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />)}
+                {fld("Notes (optional)", <input value={notes} onChange={e => setNotes(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />)}
+                <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 14 }}>
+                    <button onClick={onClose} style={ghostBtn}>Cancel</button>
+                    <button onClick={save} disabled={!connName || saving} style={{ padding: "6px 16px", borderRadius: 3, border: "none", background: connName && !saving ? relColor : "#1e293b", color: connName && !saving ? "#fff" : "#475569", cursor: connName && !saving ? "pointer" : "default", fontSize: 11, fontWeight: 600 }}>
+                        {saving ? "Saving…" : existing ? "Update" : "Create"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
 }
 
 function EditNodeModal({ en, nodes, edges, onClose, onDeleteEntity, onDeleteConnection, onAddConnection }) {
@@ -2316,18 +2611,22 @@ function EditNodeModal({ en, nodes, edges, onClose, onDeleteEntity, onDeleteConn
 }
 
 function OntologyWorkspace() {
-    const [nodes,      setNodes]      = useState([])
-    const [edges,      setEdges]      = useState([])
-    const [loaded,     setLoaded]     = useState(false)
-    const [search,     setSearch]     = useState("")
-    const [typeFilter, setTypeFilter] = useState("all")
-    const [building,   setBuilding]   = useState(false)
-    const [buildMsg,   setBuildMsg]   = useState(null)
+    const [nodes,        setNodes]        = useState([])
+    const [edges,        setEdges]        = useState([])
+    const [ruleConns,    setRuleConns]    = useState([])   // RuleConnection rows from /api/rule-connections
+    const [loaded,       setLoaded]       = useState(false)
+    const [search,       setSearch]       = useState("")
+    const [typeFilter,   setTypeFilter]   = useState("all")
+    const [building,     setBuilding]     = useState(false)
+    const [buildMsg,     setBuildMsg]     = useState(null)
     const [selectedNode, setSelectedNode] = useState(null)
-    const [editNode,   setEditNode]   = useState(null)
-    const [showAdd,    setShowAdd]    = useState(false)
-    const [showLink,   setShowLink]   = useState(false)
-    const [view,       setView]       = useState("table")
+    const [editNode,     setEditNode]     = useState(null)
+    const [showAdd,      setShowAdd]      = useState(false)
+    const [showLink,     setShowLink]     = useState(false)
+    const [view,         setView]         = useState("table")
+    // Drag-to-connect state
+    const [pendingConnect, setPendingConnect] = useState(null)  // {nodeA, nodeB}
+    const [editConn,       setEditConn]       = useState(null)  // RuleConnection being edited
 
     const loadOntology = () =>
         fetch(`${API}/api/forge/ontology`, { headers: forgeHeaders() })
@@ -2335,7 +2634,28 @@ function OntologyWorkspace() {
             .then(d => { setNodes(d.nodes || []); setEdges(d.edges || []); setLoaded(true) })
             .catch(() => { setLoaded(true) })
 
-    useEffect(() => { loadOntology() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    const loadRuleConns = () =>
+        fetch(`${API}/api/rule-connections`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setRuleConns(Array.isArray(d) ? d : []))
+            .catch(() => {})
+
+    useEffect(() => { loadOntology(); loadRuleConns() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Merge rule connections into the edges array for OntologyGraph rendering
+    const allEdges = [
+        ...edges,
+        ...ruleConns.map(rc => ({
+            id:                `ruleconn-${rc.id}`,
+            source:            `RULE-${rc.rule_id_a}`,
+            target:            `RULE-${rc.rule_id_b}`,
+            type:              rc.relationship_type,
+            isRuleConn:        true,
+            ruleConnId:        rc.id,
+            relationship_type: rc.relationship_type,
+            connection_name:   rc.connection_name,
+        })),
+    ]
 
     const buildOntology = async () => {
         setBuilding(true); setBuildMsg(null)
@@ -2401,7 +2721,7 @@ function OntologyWorkspace() {
     })
 
     // Group filtered nodes by type for the "all" view; prioritise cable/rule at top
-    const TYPE_PRIORITY = { cable: 0, rule: 1, "escalation chain": 2, chokepoint: 3, country: 4, group: 5, person: 6, vessel: 7, aircraft: 8, event: 9, alert: 10 }
+    const TYPE_PRIORITY = { cable: 0, rule: 1, "escalation chain": 2, "rule connection": 3, chokepoint: 4, country: 5, group: 6, person: 7, vessel: 8, aircraft: 9, event: 10, alert: 11 }
     const groupedFiltered = (() => {
         if (typeFilter !== "all") return null
         const groups = {}
@@ -2444,7 +2764,34 @@ function OntologyWorkspace() {
             )}
             <WorkspaceBody style={view === "graph" ? { padding: 0, overflow: "hidden" } : {}}>
                 {!loaded ? <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div> :
-                view === "graph" ? <OntologyGraph nodes={nodes} edges={edges} onNodeClick={setSelectedNode} onDblClickNode={n => { setEditNode(n); setSelectedNode(n) }} /> :
+                view === "graph" ? <OntologyGraph
+                    nodes={nodes} edges={allEdges}
+                    onNodeClick={setSelectedNode}
+                    onDblClickNode={n => { setEditNode(n); setSelectedNode(n) }}
+                    onRuleConnectRequest={(nA, nB) => {
+                        // Resolve rule_id from node id (format "RULE-N")
+                        const getNumericId = n => {
+                            const m = (n.id || "").match(/(\d+)$/)
+                            return m ? parseInt(m[1]) : null
+                        }
+                        const ridA = getNumericId(nA), ridB = getNumericId(nB)
+                        if (ridA && ridB) setPendingConnect({ nodeA: { ...nA, _rid: ridA }, nodeB: { ...nB, _rid: ridB } })
+                    }}
+                    onEdgeClick={(edge, isRightClick) => {
+                        if (!edge.isRuleConn) return
+                        const rc = ruleConns.find(r => r.id === edge.ruleConnId)
+                        if (!rc) return
+                        if (isRightClick) {
+                            if (confirm(`Delete rule connection "${rc.connection_name}"?`)) {
+                                fetch(`${API}/api/rule-connections/${rc.id}`, { method: "DELETE", headers: forgeHeaders() })
+                                    .then(() => loadRuleConns())
+                                    .catch(() => {})
+                            }
+                        } else {
+                            setEditConn(rc)
+                        }
+                    }}
+                /> :
                 filtered.length === 0 ? (
                     <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>
                         {nodes.length === 0 ? "No entities yet — click Build to populate from live data, or + Entity to add manually." : `No ${typeFilter === "all" ? "" : typeFilter + " "}entities match.`}
@@ -2548,6 +2895,24 @@ function OntologyWorkspace() {
                     onDeleteEntity={id => { deleteEntity(id); setEditNode(null) }}
                     onDeleteConnection={deleteConnection}
                     onAddConnection={addConnection}
+                />
+            )}
+            {pendingConnect && (
+                <DefineConnectionModal
+                    nodeA={pendingConnect.nodeA}
+                    nodeB={pendingConnect.nodeB}
+                    existing={null}
+                    onClose={() => setPendingConnect(null)}
+                    onSave={d => { loadRuleConns(); setPendingConnect(null) }}
+                />
+            )}
+            {editConn && (
+                <DefineConnectionModal
+                    nodeA={null}
+                    nodeB={null}
+                    existing={editConn}
+                    onClose={() => setEditConn(null)}
+                    onSave={d => { loadRuleConns(); setEditConn(null) }}
                 />
             )}
         </div>

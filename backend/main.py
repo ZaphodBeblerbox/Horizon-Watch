@@ -219,6 +219,7 @@ try:
         STSDetector as _STSDetector,
         DarkShipDetector as _DarkShipDetector,
         ADSBLoiterDetector as _ADSBLoiterDetector,
+        ChokepointActivityDetector as _ChokepointActivityDetector,
     )
     _HAS_DETECTORS = True
 except ImportError as _det_err:
@@ -7232,9 +7233,11 @@ if _HAS_DETECTORS:
     _sts_detector        = _STSDetector()
     _dark_ship_detector  = _DarkShipDetector()
     _adsb_loiter_detector = _ADSBLoiterDetector()
+    _chokepoint_detector  = _ChokepointActivityDetector()
 else:
     _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
     _escalation_engine = _sts_detector = _dark_ship_detector = _adsb_loiter_detector = None
+    _chokepoint_detector = None
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
 _correlation_assessments: list = []  # cross-domain correlation results (24h)
 _last_cycle_stats: dict = {}         # stats from the most-recent detection cycle
@@ -10635,6 +10638,7 @@ async def api_infrastructure_ports(
 
 _CHOKEPOINT_DEFS = [
     {
+        "system_id": "CHOKE-001",
         "name": "Strait of Hormuz",
         "lat": 26.5, "lon": 56.4,
         "polygon_bounds": [25.5, 54.5, 27.5, 58.0],
@@ -10667,6 +10671,7 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Strait of Hormuz", "Hormuz", "Persian Gulf shipping"],
     },
     {
+        "system_id": "CHOKE-002",
         "name": "Suez Canal",
         "lat": 30.5, "lon": 32.4,
         "polygon_bounds": [29.9, 32.2, 31.3, 32.7],
@@ -10718,6 +10723,7 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Suez Canal", "Suez", "Suez blockage"],
     },
     {
+        "system_id": "CHOKE-003",
         "name": "Bab el-Mandeb",
         "lat": 12.6, "lon": 43.4,
         "polygon_bounds": [11.5, 42.5, 13.5, 44.5],
@@ -10737,6 +10743,7 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Bab el-Mandeb", "Bab-el-Mandeb", "Red Sea strait", "Houthi shipping"],
     },
     {
+        "system_id": "CHOKE-004",
         "name": "Strait of Malacca",
         "lat": 3.0, "lon": 103.5,
         "polygon_bounds": [1.0, 99.0, 6.0, 105.0],
@@ -10773,6 +10780,7 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Strait of Malacca", "Malacca", "Malacca Strait", "South China Sea"],
     },
     {
+        "system_id": "CHOKE-005",
         "name": "Strait of Gibraltar",
         "lat": 35.9, "lon": -5.6,
         "polygon_bounds": [35.7, -6.2, 36.2, -5.0],
@@ -10836,6 +10844,7 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Strait of Gibraltar", "Gibraltar", "Mediterranean gateway"],
     },
     {
+        "system_id": "CHOKE-006",
         "name": "Turkish Straits / Bosphorus",
         "lat": 41.1, "lon": 29.0,
         "polygon_bounds": [40.9, 28.5, 41.6, 29.5],
@@ -10892,6 +10901,7 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Bosphorus", "Turkish Straits", "Dardanelles", "Black Sea access"],
     },
     {
+        "system_id": "CHOKE-007",
         "name": "Danish Straits",
         "lat": 56.0, "lon": 10.5,
         "polygon_bounds": [55.0, 9.0, 58.0, 12.5],
@@ -10912,13 +10922,19 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Danish Straits", "Øresund", "Sound", "Kattegat", "Baltic access"],
     },
     {
+        "system_id": "CHOKE-008",
         "name": "Strait of Lombok",
         "lat": -8.7, "lon": 115.7,
         "polygon_bounds": [-9.0, 115.3, -8.0, 116.2],
+        "polygon": [
+            [-8.0, 115.5], [-8.0, 116.0], [-8.5, 116.2],
+            [-9.0, 116.2], [-9.0, 115.4], [-8.5, 115.3], [-8.0, 115.5],
+        ],
         "strategic_description": "Indonesian alternative to Malacca for deep-draft vessels.",
         "monitored_keywords": ["Strait of Lombok", "Lombok Strait", "Indonesian straits"],
     },
     {
+        "system_id": "CHOKE-009",
         "name": "Mozambique Channel",
         "lat": -17.0, "lon": 40.5,
         "polygon_bounds": [-26.0, 35.0, -10.0, 47.0],
@@ -10951,6 +10967,7 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Mozambique Channel", "Mozambique", "Mozambique shipping"],
     },
     {
+        "system_id": "CHOKE-010",
         "name": "Cape of Good Hope",
         "lat": -34.4, "lon": 18.5,
         "polygon_bounds": [-35.5, 17.5, -33.5, 20.0],
@@ -10977,6 +10994,7 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Cape of Good Hope", "Cape Route", "South Africa shipping"],
     },
     {
+        "system_id": "CHOKE-011",
         "name": "Panama Canal",
         "lat": 9.0, "lon": -79.7,
         "polygon_bounds": [8.7, -80.2, 9.5, -79.2],
@@ -11101,9 +11119,14 @@ _CHOKEPOINT_DEFS = [
         "monitored_keywords": ["Panama Canal", "Panama", "Panama Canal restrictions"],
     },
     {
+        "system_id": "CHOKE-012",
         "name": "Luzon Strait",
         "lat": 20.5, "lon": 121.5,
         "polygon_bounds": [19.0, 119.5, 22.0, 122.5],
+        "polygon": [
+            [19.5, 120.0], [19.5, 122.0], [20.5, 122.5],
+            [22.0, 122.0], [22.0, 120.5], [21.0, 119.5], [19.5, 120.0],
+        ],
         "strategic_description": "Deep-water passage between South China Sea and Pacific. Critical US Navy route.",
         "monitored_keywords": ["Luzon Strait", "Luzon", "South China Sea passage", "PLAN"],
     },
@@ -12848,6 +12871,151 @@ def api_chains_delete(chain_id: int):
     return {"deleted": chain_id}
 
 
+def _conn_row_to_dict(row, rule_map: dict) -> dict:
+    return {
+        "id":                         row.id,
+        "system_id":                  f"CONN-{row.id}",
+        "connection_name":            row.connection_name,
+        "rule_id_a":                  row.rule_id_a,
+        "rule_id_b":                  row.rule_id_b,
+        "rule_name_a":                rule_map.get(row.rule_id_a, f"RULE-{row.rule_id_a}"),
+        "rule_name_b":                rule_map.get(row.rule_id_b, f"RULE-{row.rule_id_b}"),
+        "relationship_type":          row.relationship_type,
+        "escalated_severity":         row.escalated_severity,
+        "escalated_icon_type":        row.escalated_icon_type,
+        "sequence_window_minutes":    row.sequence_window_minutes,
+        "suppression_window_minutes": row.suppression_window_minutes,
+        "time_window_minutes":        row.time_window_minutes,
+        "notes":                      row.notes,
+        "created_at":                 row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@app.get("/api/rule-connections")
+def api_rule_connections_list():
+    """Return all rule connections with resolved rule names."""
+    from database import RuleConnection, RuleConfig, get_db
+    with get_db() as db:
+        rows  = db.query(RuleConnection).order_by(RuleConnection.id).all()
+        rules = db.query(RuleConfig).all()
+    rule_map = {r.id: (r.name or r.rule_name) for r in rules}
+    return [_conn_row_to_dict(r, rule_map) for r in rows]
+
+
+@app.post("/api/rule-connections")
+def api_rule_connections_create(body: dict):
+    """
+    Create a rule connection.
+    Body: { connection_name, rule_id_a, rule_id_b, relationship_type,
+            escalated_severity?, escalated_icon_type?,
+            sequence_window_minutes?, suppression_window_minutes?,
+            time_window_minutes?, notes? }
+    """
+    import json as _jrc
+    import datetime as _dt
+    from database import RuleConnection, RuleConfig, OntologyEntity, get_db
+    conn_name = body.get("connection_name") or ""
+    rule_id_a = body.get("rule_id_a")
+    rule_id_b = body.get("rule_id_b")
+    rel_type  = body.get("relationship_type", "ESCALATION").upper()
+    if not rule_id_a or not rule_id_b:
+        raise HTTPException(status_code=422, detail="rule_id_a and rule_id_b are required")
+    if rel_type not in ("ESCALATION", "CORRELATION", "SEQUENCE", "SUPPRESSION"):
+        raise HTTPException(status_code=422, detail=f"Invalid relationship_type: {rel_type}")
+    with get_db() as db:
+        row = RuleConnection(
+            connection_name=conn_name or f"{rel_type} Connection",
+            rule_id_a=int(rule_id_a),
+            rule_id_b=int(rule_id_b),
+            relationship_type=rel_type,
+            escalated_severity=body.get("escalated_severity"),
+            escalated_icon_type=body.get("escalated_icon_type"),
+            sequence_window_minutes=body.get("sequence_window_minutes"),
+            suppression_window_minutes=body.get("suppression_window_minutes"),
+            time_window_minutes=int(body.get("time_window_minutes") or 30),
+            notes=body.get("notes"),
+            created_at=_dt.datetime.utcnow(),
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        rules = db.query(RuleConfig).filter(RuleConfig.id.in_([row.rule_id_a, row.rule_id_b])).all()
+        rule_map = {r.id: (r.name or r.rule_name) for r in rules}
+        onto_id  = f"CONN-{row.id}"
+        onto_meta = _jrc.dumps({
+            "relationship_type": rel_type,
+            "rule_id_a": row.rule_id_a,
+            "rule_id_b": row.rule_id_b,
+            "rule_name_a": rule_map.get(row.rule_id_a, ""),
+            "rule_name_b": rule_map.get(row.rule_id_b, ""),
+        }, ensure_ascii=False)
+        existing = db.query(OntologyEntity).filter(OntologyEntity.system_id == onto_id).first()
+        if existing:
+            existing.name            = row.connection_name
+            existing.entity_metadata = onto_meta
+        else:
+            db.add(OntologyEntity(
+                system_id=onto_id, entity_type="Rule Connection",
+                name=row.connection_name, entity_metadata=onto_meta,
+            ))
+        db.commit()
+        return _conn_row_to_dict(row, rule_map)
+
+
+@app.put("/api/rule-connections/{conn_id}")
+def api_rule_connections_update(conn_id: int, body: dict):
+    """Update an existing rule connection."""
+    import json as _jrcu
+    from database import RuleConnection, RuleConfig, OntologyEntity, get_db
+    with get_db() as db:
+        row = db.query(RuleConnection).filter(RuleConnection.id == conn_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Connection {conn_id} not found")
+        if "connection_name" in body:
+            row.connection_name = body["connection_name"]
+        if "relationship_type" in body:
+            rel = body["relationship_type"].upper()
+            if rel not in ("ESCALATION", "CORRELATION", "SEQUENCE", "SUPPRESSION"):
+                raise HTTPException(status_code=422, detail=f"Invalid relationship_type: {rel}")
+            row.relationship_type = rel
+        for field in ("escalated_severity", "escalated_icon_type", "notes"):
+            if field in body:
+                setattr(row, field, body[field])
+        for int_field in ("sequence_window_minutes", "suppression_window_minutes", "time_window_minutes"):
+            if int_field in body and body[int_field] is not None:
+                setattr(row, int_field, int(body[int_field]))
+        rules = db.query(RuleConfig).filter(RuleConfig.id.in_([row.rule_id_a, row.rule_id_b])).all()
+        rule_map = {r.id: (r.name or r.rule_name) for r in rules}
+        onto = db.query(OntologyEntity).filter(OntologyEntity.system_id == f"CONN-{conn_id}").first()
+        if onto:
+            onto.name = row.connection_name
+            onto.entity_metadata = _jrcu.dumps({
+                "relationship_type": row.relationship_type,
+                "rule_id_a": row.rule_id_a,
+                "rule_id_b": row.rule_id_b,
+                "rule_name_a": rule_map.get(row.rule_id_a, ""),
+                "rule_name_b": rule_map.get(row.rule_id_b, ""),
+            }, ensure_ascii=False)
+        db.commit()
+        return _conn_row_to_dict(row, rule_map)
+
+
+@app.delete("/api/rule-connections/{conn_id}")
+def api_rule_connections_delete(conn_id: int):
+    """Delete a rule connection."""
+    from database import RuleConnection, OntologyEntity, get_db
+    with get_db() as db:
+        row = db.query(RuleConnection).filter(RuleConnection.id == conn_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Connection {conn_id} not found")
+        db.delete(row)
+        onto = db.query(OntologyEntity).filter(OntologyEntity.system_id == f"CONN-{conn_id}").first()
+        if onto:
+            db.delete(onto)
+        db.commit()
+    return {"deleted": conn_id}
+
+
 @app.post("/api/rules/test")
 def api_rules_test(body: dict):
     """
@@ -14391,6 +14559,33 @@ async def _forge_detection_cycle():
             except Exception as _de:
                 print(f"[forge-brain] dark-ship check error: {_de}")
 
+            # Stage 1e — Chokepoint activity (transit + loitering inside strategic polygons)
+            new_choke_alerts: list = []
+            try:
+                from database import RuleConfig, get_db
+                import json as _json_ck
+                with get_db() as _ckdb:
+                    ck_rule_rows = _ckdb.query(RuleConfig).filter(
+                        RuleConfig.rule_name == "AIS_CHOKEPOINT_ACTIVITY",
+                        RuleConfig.enabled == True,
+                    ).all()
+                ck_rules = [
+                    {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
+                     "severity": r.severity or "medium",
+                     "params": _json_ck.loads(r.params) if isinstance(r.params, str) else r.params}
+                    for r in ck_rule_rows
+                ]
+                if ck_rules and _chokepoint_detector is not None:
+                    cycle_now = datetime.now(timezone.utc)
+                    new_choke_alerts = _chokepoint_detector.check(
+                        normalized_snap, ck_rules, _CHOKEPOINT_DEFS, cycle_now
+                    )
+                    _chokepoint_detector.purge_stale(cycle_now)
+                    new_ais_alerts.extend(new_choke_alerts)
+                    print(f"[forge-brain] Stage1e chokepoint: {len(ck_rules)} rule(s), {len(new_choke_alerts)} alert(s)")
+            except Exception as _cke:
+                print(f"[forge-brain] chokepoint check error: {_cke}")
+
             # Stage 2 — ADS-B anomaly detection via _adsb_detector
             new_adsb_alerts: list = []
             adsb_forge_rules = [r for r in active_rules if r.get("source") in ("ADSB", "adsb")]
@@ -14562,15 +14757,17 @@ async def _forge_detection_cycle():
                 if "cable" in (alert.get("message") or "").lower():
                     _auto_add_ontology_edge(alert)
 
-            # Escalation chaining — promote multi-rule vessels to chain-defined escalations
+            # Escalation + Rule-Connection chaining
             try:
                 if _escalation_engine is not None:
-                    # Reload chains from DB on each cycle so UI edits take effect
                     try:
-                        from database import EscalationChain as _EC, get_db
+                        from database import EscalationChain as _EC, RuleConnection as _RC, get_db
+                        import json as _jec
                         with get_db() as _ecdb:
                             _chain_rows = _ecdb.query(_EC).all()
-                        _escalation_engine.reload_chains([
+                            _conn_rows  = _ecdb.query(_RC).all()
+                        # Merge EscalationChain + ESCALATION RuleConnection rows into chains list
+                        _chains_input = [
                             {
                                 "chain_name":          c.chain_name,
                                 "rule_ids":            c.rule_ids,
@@ -14579,12 +14776,54 @@ async def _forge_detection_cycle():
                                 "time_window_minutes": c.time_window_minutes,
                             }
                             for c in _chain_rows
-                        ])
+                        ] + [
+                            {
+                                "chain_name":          rc.connection_name,
+                                "rule_ids":            f"{rc.rule_id_a},{rc.rule_id_b}",
+                                "escalated_severity":  rc.escalated_severity or "critical",
+                                "escalated_icon_type": rc.escalated_icon_type or "ESCALATED_DUAL",
+                                "time_window_minutes": rc.time_window_minutes or 30,
+                            }
+                            for rc in _conn_rows if rc.relationship_type == "ESCALATION"
+                        ]
+                        _escalation_engine.reload_chains(_chains_input)
+                        # Index non-ESCALATION connections for post-processing
+                        _seq_conns  = [rc for rc in _conn_rows if rc.relationship_type == "SEQUENCE"]
+                        _supp_conns = [rc for rc in _conn_rows if rc.relationship_type == "SUPPRESSION"]
+                        _corr_conns = [rc for rc in _conn_rows if rc.relationship_type == "CORRELATION"]
                     except Exception:
-                        pass
-                    new_ais_alerts = _escalation_engine.process(
-                        new_ais_alerts, datetime.now(timezone.utc)
-                    )
+                        _seq_conns = _supp_conns = _corr_conns = []
+
+                    _cycle_now_esc = datetime.now(timezone.utc)
+                    new_ais_alerts = _escalation_engine.process(new_ais_alerts, _cycle_now_esc)
+
+                    # Apply SEQUENCE, SUPPRESSION, CORRELATION post-escalation
+                    if _seq_conns or _supp_conns or _corr_conns:
+                        # Build per-vessel fired-rule-id index from escalation engine state
+                        _fired: dict = {}  # mmsi → set of rule_id strings
+                        for _mmsi_k, _entries in _escalation_engine._active.items():
+                            _fired[_mmsi_k] = {e["rule_id"] for e in _entries if e["rule_id"]}
+                        _suppressed_ids: set = set()
+                        for _a in new_ais_alerts:
+                            _a_mmsi    = str(_a.get("mmsi") or "")
+                            _a_rule_id = str(_a.get("rule_id") or "")
+                            fired_for_vessel = _fired.get(_a_mmsi, set())
+                            # SEQUENCE: suppress rule_b if rule_a has not fired on same vessel
+                            for _sc in _seq_conns:
+                                if _a_rule_id == str(_sc.rule_id_b):
+                                    if str(_sc.rule_id_a) not in fired_for_vessel:
+                                        _suppressed_ids.add(_a.get("id", ""))
+                            # SUPPRESSION: suppress rule_b when rule_a fires on same vessel
+                            for _sp in _supp_conns:
+                                if _a_rule_id == str(_sp.rule_id_b):
+                                    if str(_sp.rule_id_a) in fired_for_vessel:
+                                        _suppressed_ids.add(_a.get("id", ""))
+                            # CORRELATION: tag both alerts
+                            for _cr in _corr_conns:
+                                if _a_rule_id in (str(_cr.rule_id_a), str(_cr.rule_id_b)):
+                                    _a.setdefault("correlations", []).append(_cr.connection_name)
+                        if _suppressed_ids:
+                            new_ais_alerts = [_a for _a in new_ais_alerts if _a.get("id", "") not in _suppressed_ids]
             except Exception as _ee:
                 print(f"[forge-brain] escalation error: {_ee}")
 

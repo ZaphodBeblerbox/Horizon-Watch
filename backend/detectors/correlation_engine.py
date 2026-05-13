@@ -881,3 +881,197 @@ class ADSBLoiterDetector:
         stale = [k for k, v in self._tracking.items() if v["last_within"] < cutoff]
         for k in stale:
             del self._tracking[k]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CHOKEPOINT ACTIVITY DETECTOR — transit and loitering inside strategic polygons
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ChokepointActivityDetector:
+    """
+    Detects vessels transiting or loitering inside strategic chokepoint polygons.
+
+    Rule trigger_type: AIS_CHOKEPOINT_ACTIVITY
+    Rule params:
+        target                       "ALL" | "ID:CHOKE-001" | comma-sep IDs
+        monitor_transit              bool  — fire once on polygon entry
+        monitor_loitering            bool  — fire when slow inside polygon long enough
+        min_loiter_duration_minutes  int
+        max_loiter_speed_knots       float
+        vessel_types                 list|null  e.g. ["Tanker", "Unknown"]
+        flag_states                  list|str|null  ISO-2 codes
+    """
+
+    def __init__(self):
+        # (mmsi, choke_system_id) → {first_seen, last_seen, transit_alerted, loiter_alerted_at}
+        self._inside: dict = {}
+
+    def check(
+        self,
+        vessels: dict,      # {mmsi: normalized vessel dict}
+        rules: list,
+        chokepoints: list,  # _CHOKEPOINT_DEFS entries
+        now: datetime,
+    ) -> list:
+        try:
+            from shapely.geometry import Point, Polygon as _Polygon
+        except ImportError:
+            return []
+
+        alerts: list = []
+        if not rules or not chokepoints:
+            return alerts
+
+        # Build shapely polygon cache {system_id: Polygon}
+        poly_cache: dict = {}
+        for cp in chokepoints:
+            sid      = cp.get("system_id")
+            raw_poly = cp.get("polygon")
+            if not sid or not raw_poly or len(raw_poly) < 3:
+                continue
+            try:
+                # _CHOKEPOINT_DEFS polygon is [[lat, lon], ...] — shapely wants (lon, lat)
+                poly_cache[sid] = _Polygon([(c[1], c[0]) for c in raw_poly])
+            except Exception:
+                pass
+
+        for rule in rules:
+            if not rule.get("enabled", True):
+                continue
+            params            = rule.get("params", {})
+            target            = str(params.get("target", "ALL"))
+            monitor_transit   = bool(params.get("monitor_transit", True))
+            monitor_loitering = bool(params.get("monitor_loitering", False))
+            min_loiter_min    = float(params.get("min_loiter_duration_minutes", 45))
+            max_loiter_spd    = float(params.get("max_loiter_speed_knots", 1.0))
+            vessel_types      = params.get("vessel_types") or None
+            flag_filter       = params.get("flag_states") or None
+            if isinstance(flag_filter, str):
+                flag_filter = [f.strip() for f in flag_filter.split(",") if f.strip()]
+            rule_severity = rule.get("severity", "medium")
+            rule_id       = rule.get("id")
+
+            in_scope = self._resolve_scope(target, list(poly_cache.keys()))
+
+            for mmsi, vessel in vessels.items():
+                try:
+                    v_lat   = float(vessel.get("lat") or 0)
+                    v_lon   = float(vessel.get("lng") or vessel.get("lon") or 0)
+                    v_speed = float(vessel.get("speed") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if not v_lat or not v_lon:
+                    continue
+
+                v_type = (vessel.get("ship_type_text") or vessel.get("type") or "").strip()
+                v_flag = (vessel.get("flag") or "").strip().upper()
+                v_name = vessel.get("name") or str(mmsi)
+
+                if vessel_types and not any(vt.lower() in v_type.lower() for vt in vessel_types):
+                    continue
+                if flag_filter and v_flag not in [f.upper() for f in flag_filter]:
+                    continue
+
+                pt = Point(v_lon, v_lat)
+
+                for sid in in_scope:
+                    poly = poly_cache.get(sid)
+                    if poly is None:
+                        continue
+
+                    inside = poly.contains(pt)
+                    key    = (str(mmsi), sid)
+
+                    if not inside:
+                        self._inside.pop(key, None)
+                        continue
+
+                    state = self._inside.get(key)
+                    if state is None:
+                        state = {
+                            "first_seen":      now,
+                            "last_seen":       now,
+                            "transit_alerted": False,
+                            "loiter_alerted_at": None,
+                        }
+                        self._inside[key] = state
+                    state["last_seen"] = now
+
+                    cp = next((c for c in chokepoints if c.get("system_id") == sid), {})
+
+                    if monitor_transit and not state["transit_alerted"]:
+                        state["transit_alerted"] = True
+                        alerts.append(self._make_alert(
+                            "CHOKEPOINT_TRANSIT", rule_id, rule_severity,
+                            mmsi, v_name, v_lat, v_lon, v_speed, cp, now,
+                            f"{v_name} entered {cp.get('name', sid)} "
+                            f"({v_type or 'vessel'}, {v_speed:.1f} kn)",
+                        ))
+
+                    if monitor_loitering and v_speed <= max_loiter_spd:
+                        dur_min    = (now - state["first_seen"]).total_seconds() / 60.0
+                        alerted_at = state.get("loiter_alerted_at")
+                        if dur_min >= min_loiter_min and (
+                            alerted_at is None
+                            or (now - alerted_at).total_seconds() / 60.0 >= min_loiter_min * 2
+                        ):
+                            state["loiter_alerted_at"] = now
+                            alerts.append(self._make_alert(
+                                "CHOKEPOINT_LOITER", rule_id, rule_severity,
+                                mmsi, v_name, v_lat, v_lon, v_speed, cp, now,
+                                f"{v_name} loitering in {cp.get('name', sid)}: "
+                                f"{dur_min:.0f} min at {v_speed:.1f} kn",
+                            ))
+
+        return alerts
+
+    def purge_stale(self, now: datetime, max_gap_minutes: float = 120.0) -> None:
+        cutoff = now - timedelta(minutes=max_gap_minutes)
+        stale  = [k for k, v in self._inside.items() if v["last_seen"] < cutoff]
+        for k in stale:
+            del self._inside[k]
+
+    @staticmethod
+    def _resolve_scope(target: str, all_ids: list) -> list:
+        if target.strip().upper() == "ALL":
+            return all_ids
+        resolved = []
+        for part in target.split(","):
+            part = part.strip()
+            if part.upper().startswith("ID:"):
+                resolved.append(part[3:].strip())
+            else:
+                resolved.append(part)
+        return [sid for sid in resolved if sid in all_ids]
+
+    @staticmethod
+    def _make_alert(
+        icon_type: str, rule_id, severity: str,
+        mmsi, vessel_name: str, lat: float, lon: float, speed: float,
+        cp: dict, now: datetime, message: str,
+    ) -> dict:
+        label = "Transit" if icon_type == "CHOKEPOINT_TRANSIT" else "Loitering"
+        return {
+            "id":           f"choke_{icon_type.lower()}_{int(now.timestamp()*1000)}_{mmsi}",
+            "rule_id":      rule_id,
+            "rule_name":    "AIS_CHOKEPOINT_ACTIVITY",
+            "rule_trigger": "AIS_CHOKEPOINT_ACTIVITY",
+            "source":       "AIS",
+            "icon_type":    icon_type,
+            "severity":     severity,
+            "vessel":       vessel_name,
+            "mmsi":         mmsi,
+            "lat":          lat,
+            "lng":          lon,
+            "speed":        speed,
+            "chokepoint_system_id": cp.get("system_id"),
+            "chokepoint_name":      cp.get("name"),
+            "message":      message,
+            "title":        f"Chokepoint {label} — {cp.get('name', '')}",
+            "timestamp":    now.isoformat(),
+            "provenance": {
+                "source_type":    "AIS",
+                "detection_rule": "AIS_CHOKEPOINT_ACTIVITY",
+                "trigger_reason": icon_type,
+            },
+        }

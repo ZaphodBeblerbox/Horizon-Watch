@@ -220,6 +220,23 @@ class EscalationChain(Base):
     time_window_minutes = Column(Integer, default=30)
 
 
+class RuleConnection(Base):
+    __tablename__ = "rule_connections"
+
+    id                         = Column(Integer, primary_key=True)
+    connection_name            = Column(String, nullable=False)
+    rule_id_a                  = Column(Integer, nullable=False, index=True)
+    rule_id_b                  = Column(Integer, nullable=False, index=True)
+    relationship_type          = Column(String, nullable=False)  # ESCALATION | CORRELATION | SEQUENCE | SUPPRESSION
+    escalated_severity         = Column(String, nullable=True)   # ESCALATION only
+    escalated_icon_type        = Column(String, nullable=True)   # ESCALATION only
+    sequence_window_minutes    = Column(Integer, nullable=True)  # SEQUENCE only
+    suppression_window_minutes = Column(Integer, nullable=True)  # SUPPRESSION only
+    time_window_minutes        = Column(Integer, default=30)     # ESCALATION + CORRELATION
+    notes                      = Column(String, nullable=True)
+    created_at                 = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class WeeklySnapshot(Base):
     __tablename__ = 'weekly_snapshots'
 
@@ -303,7 +320,7 @@ def migrate_db():
 
     conn.commit()
     conn.close()
-    # Create new tables via SQLAlchemy (idempotent)
+    # Create new tables via SQLAlchemy (idempotent) — also creates rule_connections
     Base.metadata.create_all(bind=engine)
 
 def init_db():
