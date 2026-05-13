@@ -8758,6 +8758,161 @@ async def _sentinel_zone_scheduler_loop():
             await _asyncio_sched.sleep(60)
 
 
+def _auto_ingest() -> None:
+    """
+    Checks each reference table and runs ingestion/seeding if empty.
+    Runs in a thread executor — safe to block.
+    """
+    import sys as _sys
+    _be_dir = os.path.dirname(__file__)
+    if _be_dir not in _sys.path:
+        _sys.path.insert(0, _be_dir)
+
+    from database import (
+        CableSegment, LandingPoint, PortBoundary, Airport,
+        RegionDefinition, RuleConfig, OntologyEntity, SessionLocal as _SL,
+    )
+
+    def _count(model):
+        with _SL() as _db:
+            return _db.query(model).count()
+
+    # 1. Regions
+    if _count(RegionDefinition) == 0:
+        print("[auto-ingest] Regions: seeding …")
+        try:
+            from ingest_cables import populate_regions, REGION_DEFS
+            with _SL() as _db:
+                populate_regions(_db)
+            print(f"[auto-ingest] Regions: {len(REGION_DEFS)} seeded")
+        except Exception as _e:
+            print(f"[auto-ingest] Regions seed failed: {_e}")
+    else:
+        print(f"[auto-ingest] Regions: {_count(RegionDefinition)} present, skipping")
+
+    # 2 & 3. Cables + Landing Points
+    cable_count = _count(CableSegment)
+    if cable_count == 0:
+        print("[auto-ingest] Cables: ingesting from TeleGeography…")
+        try:
+            from ingest_cables import run_ingest as _ingest_cables
+            stats = _ingest_cables()
+            print(f"[auto-ingest] Cables: {stats}")
+        except Exception as _e:
+            print(f"[auto-ingest] Cables ingest failed: {_e}")
+    else:
+        print(f"[auto-ingest] Cables: {cable_count} present, skipping")
+
+    # 4. Ports
+    port_count = _count(PortBoundary)
+    if port_count == 0:
+        print("[auto-ingest] Ports: ingesting from UN LOCODE…")
+        try:
+            from ingest_ports import run_ingest as _ingest_ports
+            stats = _ingest_ports()
+            print(f"[auto-ingest] Ports: {stats}")
+        except Exception as _e:
+            print(f"[auto-ingest] Ports ingest failed: {_e}")
+    else:
+        print(f"[auto-ingest] Ports: {port_count} present, skipping")
+
+    # 5. Airports
+    arpt_count = _count(Airport)
+    if arpt_count == 0:
+        print("[auto-ingest] Airports: ingesting from OurAirports…")
+        try:
+            from ingest_airports import run_ingest as _ingest_airports
+            stats = _ingest_airports()
+            print(f"[auto-ingest] Airports: {stats}")
+        except Exception as _e:
+            print(f"[auto-ingest] Airports ingest failed: {_e}")
+    else:
+        print(f"[auto-ingest] Airports: {arpt_count} present, skipping")
+
+    # 6. Rules
+    rule_count = _count(RuleConfig)
+    if rule_count == 0:
+        print("[auto-ingest] Rules: seeding canonical rule set…")
+        try:
+            from seed_rules import seed_db as _seed_rules
+            stats = _seed_rules()
+            print(f"[auto-ingest] Rules: {stats}")
+        except Exception as _e:
+            print(f"[auto-ingest] Rules seed failed: {_e}")
+    else:
+        print(f"[auto-ingest] Rules: {rule_count} present, skipping")
+
+    # 7. OntologyEntity minimum check
+    onto_count = _count(OntologyEntity)
+    expected_min = 100
+    if onto_count < expected_min:
+        print(f"[auto-ingest] OntologyEntity: {onto_count} < {expected_min} expected — re-running ontology registration …")
+        try:
+            from ingest_cables import register_ontology_entities as _reg_cables
+            from ingest_ports import register_ontology_entities as _reg_ports
+            from ingest_airports import register_ontology_entities as _reg_airports
+            with _SL() as _db:
+                n_c = _reg_cables(_db)
+                n_p = _reg_ports(_db)
+                n_a = _reg_airports(_db)
+            print(f"[auto-ingest] Ontology re-registered: cables={n_c} ports={n_p} airports={n_a}")
+        except Exception as _e:
+            print(f"[auto-ingest] Ontology re-registration failed: {_e}")
+    else:
+        print(f"[auto-ingest] OntologyEntity: {onto_count} present, ok")
+
+    # 8. Chokepoints in OntologyEntity
+    try:
+        with _SL() as _db:
+            choke_in_onto = _db.query(OntologyEntity).filter(
+                OntologyEntity.entity_type == "Chokepoint"
+            ).count()
+        if choke_in_onto < len(_CHOKEPOINT_DEFS):
+            print(f"[auto-ingest] Chokepoints: {choke_in_onto}/{len(_CHOKEPOINT_DEFS)} — seeding …")
+            with _SL() as _db:
+                for cp in _CHOKEPOINT_DEFS:
+                    sid = cp["system_id"]
+                    existing = _db.query(OntologyEntity).filter(
+                        OntologyEntity.system_id == sid
+                    ).first()
+                    poly_coords = cp.get("polygon", [])
+                    meta = _json.dumps({
+                        "lat": cp.get("lat") or cp.get("center_lat"),
+                        "lon": cp.get("lon") or cp.get("center_lng"),
+                        "polygon": poly_coords,
+                        "polygon_bounds": cp.get("polygon_bounds"),
+                        "threat_level": cp.get("threat_level", "standard"),
+                    })
+                    if existing:
+                        existing.entity_metadata = meta
+                    else:
+                        _db.add(OntologyEntity(
+                            system_id       = sid,
+                            entity_type     = "Chokepoint",
+                            name            = cp["name"],
+                            infra_type      = "Chokepoint",
+                            entity_metadata = meta,
+                        ))
+                _db.commit()
+            print(f"[auto-ingest] Chokepoints: seeded {len(_CHOKEPOINT_DEFS)} entries")
+        else:
+            print(f"[auto-ingest] Chokepoints: {choke_in_onto} present, ok")
+    except Exception as _e:
+        print(f"[auto-ingest] Chokepoints seed failed: {_e}")
+
+    print("[auto-ingest] ✓ complete")
+
+
+async def _auto_ingest_task():
+    """Wraps _auto_ingest() to run in executor after a short startup delay."""
+    await asyncio.sleep(3)  # let server fully initialise first
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(_executor, _auto_ingest)
+    except Exception as _e:
+        print(f"[auto-ingest] task error: {_e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
@@ -8830,6 +8985,7 @@ async def startup_event():
             print("[forge] using default threat weights")
         asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
+    asyncio.create_task(_auto_ingest_task())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
 

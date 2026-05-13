@@ -431,39 +431,53 @@ def run_vessel_cluster_detection(ship_detections: list, bbox: dict) -> list:
 def run_smoke_plume_detection(images: dict, bbox: dict) -> list:
     """
     TASK: smoke_plume_detection
-    Band: SWIR (B12/B11/B04). Smoke = bright pixels in SWIR over water/land.
-    Threshold: SWIR composite mean > 0.6, area > 1000 m².
+    Multi-condition: SWIR B12 in smoke range (0.15–0.45), visible bands darkened,
+    area > 5000 m², elongated shape (major axis > 3x minor axis).
     """
     swir = images.get("swir")
-    nir  = images.get("nir")
+    tc   = images.get("true_colour")
     if swir is None:
         return []
 
     img_w, img_h = swir.size
     res_m = _pixel_resolution_m(bbox, img_w, img_h)
-    arr   = np.array(swir.convert("RGB"), dtype=np.float32) / 255.0
+    arr_swir = np.array(swir.convert("RGB"), dtype=np.float32) / 255.0
 
-    # Bright in SWIR: B12 (R) + B11 (G) both > 0.55
-    smoke_mask = (arr[:, :, 0] > 0.55) & (arr[:, :, 1] > 0.50)
-    min_pixels = max(10, int(1000 / (res_m ** 2 + 1e-6)))
+    # Condition 1: SWIR B12 elevated but not extreme (smoke range)
+    smoke_mask = (arr_swir[:, :, 0] > 0.15) & (arr_swir[:, :, 0] < 0.45)
+
+    # Condition 2: visible bands reduced reflectance (smoke darkens visible)
+    if tc is not None:
+        tc_resized = tc.resize((img_w, img_h), Image.BILINEAR) if tc.size != (img_w, img_h) else tc
+        arr_tc = np.array(tc_resized.convert("RGB"), dtype=np.float32) / 255.0
+        vis_mean = arr_tc.mean(axis=2)
+        smoke_mask = smoke_mask & (vis_mean > 0.05) & (vis_mean < 0.55)
+
+    # Condition 3: area > 5000 m²
+    min_pixels = max(10, int(5000 / (res_m ** 2 + 1e-6)))
     blobs = _find_blobs(smoke_mask, min_pixels=min_pixels)
 
     detections = []
     for rows, cols in blobs:
-        cy_px  = float(rows.mean()); cx_px = float(cols.mean())
         area_m2 = len(rows) * (res_m ** 2)
-        lon, lat = _affine(cx_px, cy_px, img_w, img_h, bbox)
-        r1, c1, r2, c2 = rows.min(), cols.min(), rows.max(), cols.max()
-        geo_poly = _px_to_geo_polygon(float(c1), float(r1), float(c2), float(r2), img_w, img_h, bbox)
 
-        # Wind direction proxy — major axis angle of plume
+        # Condition 4: shape must be elongated — major axis variance > 9x minor axis variance
         if len(rows) > 5:
             cov = np.cov(np.stack([cols.astype(float), rows.astype(float)]))
             eigvals, eigvecs = np.linalg.eigh(cov)
-            major  = eigvecs[:, eigvals.argmax()]
+            min_eigval = max(float(eigvals.min()), 1e-6)
+            axis_ratio = float(eigvals.max()) / min_eigval
+            if axis_ratio < 9.0:  # sqrt(9)=3 → major std > 3x minor std
+                continue
+            major    = eigvecs[:, eigvals.argmax()]
             angle_deg = round(math.degrees(math.atan2(float(major[1]), float(major[0]))) % 360, 1)
         else:
             angle_deg = None
+
+        cy_px = float(rows.mean()); cx_px = float(cols.mean())
+        lon, lat = _affine(cx_px, cy_px, img_w, img_h, bbox)
+        r1, c1, r2, c2 = rows.min(), cols.min(), rows.max(), cols.max()
+        geo_poly = _px_to_geo_polygon(float(c1), float(r1), float(c2), float(r2), img_w, img_h, bbox)
 
         detections.append({
             "detection_id":   _next_det_id(),
@@ -488,37 +502,61 @@ def run_smoke_plume_detection(images: dict, bbox: dict) -> list:
 def run_fire_detection(images: dict, bbox: dict) -> list:
     """
     TASK: fire_detection
-    Band: SWIR (B12/B11/B04). Active fire = B12 > 0.5 reflectance over land.
-    Alert tier: immediate always.
+    Multi-condition filter to eliminate sun glint, clouds, and ocean false positives.
+    All conditions must be true: B12>0.5, B11>0.3, B08<0.3 (cloud), B02<0.2 (glint),
+    NDWI<=0 (not water), min cluster 9 pixels.
+    Sanity cap: >50 detections → flag result unreliable.
     """
     swir = images.get("swir")
     nir  = images.get("nir")
+    tc   = images.get("true_colour")
     if swir is None:
         return []
 
     img_w, img_h = swir.size
     res_m = _pixel_resolution_m(bbox, img_w, img_h)
-    arr   = np.array(swir.convert("RGB"), dtype=np.float32) / 255.0
+    arr_swir = np.array(swir.convert("RGB"), dtype=np.float32) / 255.0
 
-    # Fire pixels: B12 (R) very high, B11 (G) high → orange/red glow
-    fire_mask = (arr[:, :, 0] > 0.65) & (arr[:, :, 1] > 0.45)
+    # Condition 1 & 2: B12 > 0.5 (SWIR-2 R) and B11 > 0.3 (SWIR-1 G)
+    fire_mask = (arr_swir[:, :, 0] > 0.5) & (arr_swir[:, :, 1] > 0.3)
 
-    # Exclude water pixels (fires don't burn on water)
-    water = _water_mask(nir, img_w, img_h)
-    fire_mask = fire_mask & ~water
+    if nir is not None:
+        nir_resized = nir.resize((img_w, img_h), Image.BILINEAR) if nir.size != (img_w, img_h) else nir
+        arr_nir = np.array(nir_resized.convert("RGB"), dtype=np.float32) / 255.0
+        b08 = arr_nir[:, :, 0]  # R=B08
+        b03 = arr_nir[:, :, 2]  # B=B03
+        # Condition 3: B08 < 0.3 — eliminates clouds (clouds are bright NIR)
+        fire_mask = fire_mask & (b08 < 0.3)
+        # Condition 5: NDWI = (B03 - B08) / (B03 + B08); NDWI > 0 = water → skip
+        ndwi_denom = b03 + b08 + 1e-6
+        ndwi = (b03 - b08) / ndwi_denom
+        fire_mask = fire_mask & (ndwi <= 0.0)
+    else:
+        # Fallback water mask
+        water = _water_mask(None, img_w, img_h)
+        fire_mask = fire_mask & ~water
 
-    min_pixels = max(5, int(500 / (res_m ** 2 + 1e-6)))
+    if tc is not None:
+        tc_resized = tc.resize((img_w, img_h), Image.BILINEAR) if tc.size != (img_w, img_h) else tc
+        arr_tc = np.array(tc_resized.convert("RGB"), dtype=np.float32) / 255.0
+        # Condition 4: B02 < 0.2 — eliminates sun glint (glint is bright blue)
+        fire_mask = fire_mask & (arr_tc[:, :, 2] < 0.2)
+
+    # Condition 6: minimum 9 connected pixels (900 m² at 10m res)
+    min_pixels = max(9, int(900 / (res_m ** 2 + 1e-6)))
     blobs = _find_blobs(fire_mask, min_pixels=min_pixels)
 
+    HIGH_FP_THRESHOLD = 50
     detections = []
     for rows, cols in blobs:
-        cy_px  = float(rows.mean()); cx_px = float(cols.mean())
+        cy_px   = float(rows.mean()); cx_px = float(cols.mean())
         area_m2 = len(rows) * (res_m ** 2)
         lon, lat = _affine(cx_px, cy_px, img_w, img_h, bbox)
         r1, c1, r2, c2 = rows.min(), cols.min(), rows.max(), cols.max()
         geo_poly = _px_to_geo_polygon(float(c1), float(r1), float(c2), float(r2), img_w, img_h, bbox)
 
         severity = "critical" if area_m2 > 100_000 else "high"
+        b12_vals = arr_swir[:, :, 0][rows, cols]
         detections.append({
             "detection_id":   _next_det_id(),
             "object_type":    "fire",
@@ -533,9 +571,17 @@ def run_fire_detection(images: dict, bbox: dict) -> list:
             "attributes":     json.dumps({
                 "fire_area_m2": round(area_m2, 1),
                 "pixel_count":  int(len(rows)),
-                "b12_max":      round(float(arr[:, :, 0][rows, cols].max()), 3),
+                "b12_max":      round(float(b12_vals.max()), 3),
+                "b12_mean":     round(float(b12_vals.mean()), 3),
             }),
         })
+
+    if len(detections) > HIGH_FP_THRESHOLD:
+        for d in detections:
+            attrs = json.loads(d.get("attributes") or "{}")
+            attrs["high_false_positive_risk"] = True
+            d["attributes"] = json.dumps(attrs)
+
     return detections
 
 

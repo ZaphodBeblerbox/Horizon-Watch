@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import API_BASE from "../apiBase.js"
 import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.jsx"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
+import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 
 const API = API_BASE
 
@@ -1437,6 +1438,182 @@ function _fmtCountdown(nextScanAt) {
     return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
+// ── Embedded Cesium polygon draw for zone creation ────────────────────────────
+function DrawZoneGlobe({ onPolygon }) {
+    const containerRef   = useRef(null)
+    const viewerRef      = useRef(null)
+    const verticesRef    = useRef([])      // [[lon, lat], ...]
+    const markerEntRef   = useRef([])      // point entity objects
+    const polyEntRef     = useRef(null)    // filled polygon entity
+    const lineEntRef     = useRef(null)    // preview polyline entity
+    const isClosedRef    = useRef(false)
+    const [uiState, setUiState] = useState({ count: 0, area: null, closed: false, err: null })
+
+    function _calcAreaKm2(verts) {
+        if (verts.length < 3) return 0
+        let area = 0
+        const n = verts.length
+        for (let i = 0; i < n; i++) {
+            const j = (i + 1) % n
+            area += verts[i][0] * verts[j][1]
+            area -= verts[j][0] * verts[i][1]
+        }
+        const degArea = Math.abs(area) / 2
+        const cosLat  = Math.cos(verts[0][1] * Math.PI / 180)
+        return Math.round(degArea * 111 * 111 * cosLat)
+    }
+
+    useEffect(() => {
+        if (!containerRef.current) return
+        let viewer = null
+        let handler = null
+
+        import("cesium").then(C => {
+            if (!containerRef.current) return  // unmounted
+            const {
+                Viewer: CV, ScreenSpaceEventHandler: SEH, ScreenSpaceEventType: SET,
+                Cartographic, Math: CM, Color, Cartesian3, PolygonHierarchy,
+            } = C
+
+            try {
+                viewer = new CV(containerRef.current, {
+                    animation: false, timeline: false, baseLayerPicker: false,
+                    navigationHelpButton: false, homeButton: false,
+                    sceneModePicker: false, geocoder: false,
+                    fullscreenButton: false, selectionIndicator: false,
+                    infoBox: false, shadows: false,
+                    creditContainer: document.createElement("div"),
+                    shouldAnimate: false,
+                })
+            } catch (_e) {
+                setUiState(s => ({ ...s, err: "Globe init failed" }))
+                return
+            }
+            viewerRef.current = viewer
+            viewer.imageryLayers.removeAll()
+            viewer.imageryLayers.addImageryProvider(esriSatelliteProvider)
+            viewer.camera.setView({ destination: Cartesian3.fromDegrees(0, 20, 15_000_000) })
+
+            handler = new SEH(viewer.scene.canvas)
+
+            function _pickLonLat(pos) {
+                const cart = viewer.camera.pickEllipsoid(pos)
+                if (!cart) return null
+                const carto = Cartographic.fromCartesian(cart)
+                return [CM.toDegrees(carto.longitude), CM.toDegrees(carto.latitude)]
+            }
+
+            function _refreshLine() {
+                if (lineEntRef.current) { try { viewer.entities.remove(lineEntRef.current) } catch (_e) {} lineEntRef.current = null }
+                const verts = verticesRef.current
+                if (verts.length < 2) return
+                const positions = [...verts.map(([ln, lt]) => Cartesian3.fromDegrees(ln, lt)), Cartesian3.fromDegrees(verts[0][0], verts[0][1])]
+                lineEntRef.current = viewer.entities.add({
+                    polyline: { positions, width: 1.5, material: Color.fromCssColorString("#60a5fa").withAlpha(0.6), clampToGround: true },
+                })
+            }
+
+            handler.setInputAction((evt) => {
+                if (isClosedRef.current) return
+                const pt = _pickLonLat(evt.position)
+                if (!pt) return
+                verticesRef.current = [...verticesRef.current, pt]
+                const ent = viewer.entities.add({
+                    position: Cartesian3.fromDegrees(pt[0], pt[1]),
+                    point: { pixelSize: 7, color: Color.fromCssColorString("#60a5fa"), outlineColor: Color.WHITE, outlineWidth: 1.5, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+                })
+                markerEntRef.current = [...markerEntRef.current, ent]
+                _refreshLine()
+                setUiState(s => ({ ...s, count: verticesRef.current.length }))
+            }, SET.LEFT_CLICK)
+
+            handler.setInputAction((_evt) => {
+                if (isClosedRef.current) return
+                // Double-click fires after two LEFT_CLICKs — undo the extra vertex from the 2nd click
+                if (verticesRef.current.length > 0) {
+                    const lastM = markerEntRef.current[markerEntRef.current.length - 1]
+                    if (lastM) { try { viewer.entities.remove(lastM) } catch (_e) {} }
+                    markerEntRef.current = markerEntRef.current.slice(0, -1)
+                    verticesRef.current = verticesRef.current.slice(0, -1)
+                }
+                const verts = verticesRef.current
+                if (verts.length < 3) return
+                isClosedRef.current = true
+                markerEntRef.current.forEach(e => { try { viewer.entities.remove(e) } catch (_e) {} })
+                markerEntRef.current = []
+                if (lineEntRef.current) { try { viewer.entities.remove(lineEntRef.current) } catch (_e) {} lineEntRef.current = null }
+                const positions = verts.map(([ln, lt]) => Cartesian3.fromDegrees(ln, lt))
+                if (polyEntRef.current) { try { viewer.entities.remove(polyEntRef.current) } catch (_e) {} }
+                polyEntRef.current = viewer.entities.add({
+                    polygon: {
+                        hierarchy: new PolygonHierarchy(positions),
+                        material: Color.fromCssColorString("#3b82f6").withAlpha(0.35),
+                        outline: true, outlineColor: Color.fromCssColorString("#60a5fa"), outlineWidth: 2, heightReference: 1,
+                    },
+                })
+                setUiState({ count: verts.length, area: _calcAreaKm2(verts), closed: true, err: null })
+            }, SET.LEFT_DOUBLE_CLICK)
+        }).catch(_e => setUiState(s => ({ ...s, err: "Cesium load failed" })))
+
+        return () => {
+            if (handler) { try { handler.destroy() } catch (_e) {} }
+            if (viewerRef.current && !viewerRef.current.isDestroyed()) {
+                viewerRef.current.destroy()
+                viewerRef.current = null
+            }
+        }
+    }, [])
+
+    function handleClear() {
+        const viewer = viewerRef.current
+        if (!viewer || viewer.isDestroyed()) return
+        markerEntRef.current.forEach(e => { try { viewer.entities.remove(e) } catch (_e) {} })
+        markerEntRef.current = []
+        if (polyEntRef.current) { try { viewer.entities.remove(polyEntRef.current) } catch (_e) {} polyEntRef.current = null }
+        if (lineEntRef.current) { try { viewer.entities.remove(lineEntRef.current) } catch (_e) {} lineEntRef.current = null }
+        verticesRef.current = []
+        isClosedRef.current = false
+        setUiState({ count: 0, area: null, closed: false, err: null })
+    }
+
+    function handleContinue() {
+        const verts = verticesRef.current
+        if (verts.length < 3) return
+        const ring = [...verts, verts[0]]
+        onPolygon({ type: "Polygon", coordinates: [ring] })
+    }
+
+    const { count, area, closed, err } = uiState
+
+    return (
+        <div>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 8 }}>
+                Fly to your area of interest and draw a polygon. Click to place points, double-click to close.
+            </div>
+            {err
+                ? <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{err}</div>
+                : <div ref={containerRef} style={{ width: "100%", height: 400, borderRadius: 4, overflow: "hidden", background: "#0a0e14" }} />
+            }
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                <span style={{ color: "#64748b", fontSize: 11 }}>
+                    {count} {count === 1 ? "vertex" : "vertices"}{area !== null ? ` · ~${area.toLocaleString()} km²` : ""}
+                    {!closed && count > 0 ? " — double-click to close" : ""}
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={handleClear} style={ghostBtn}>Clear</button>
+                    <button
+                        onClick={handleContinue}
+                        disabled={!closed}
+                        style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.3)", opacity: closed ? 1 : 0.35 }}
+                    >
+                        Continue →
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
 function CreateZoneModal({ onClose, onCreated }) {
     const [step, setStep] = useState(1)
     const [polygon, setPolygon] = useState(null)  // GeoJSON Polygon
@@ -1450,20 +1627,12 @@ function CreateZoneModal({ onClose, onCreated }) {
     const [saving, setSaving] = useState(false)
     const [toast, setToast] = useState("")
 
-    // Step 1: manual bbox entry (no embedded globe required)
-    const [manualBbox, setManualBbox] = useState({ minLon: "", minLat: "", maxLon: "", maxLat: "" })
-
-    const handleBboxNext = () => {
-        const { minLon, minLat, maxLon, maxLat } = manualBbox
-        const vals = [minLon, minLat, maxLon, maxLat].map(Number)
-        if (vals.some(isNaN)) { setToast("Enter valid coordinates"); return }
-        const [w, s, e, n] = vals
-        if (e <= w || n <= s) { setToast("Max must be greater than Min"); setTimeout(() => setToast(""), 2000); return }
-        const poly = {
-            type: "Polygon",
-            coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]]
-        }
+    const handleBboxNext = (poly) => {
         setPolygon(poly)
+        const coords = poly.coordinates[0]
+        const lons = coords.map(c => c[0]), lats = coords.map(c => c[1])
+        const [w, e] = [Math.min(...lons), Math.max(...lons)]
+        const [s, n] = [Math.min(...lats), Math.max(...lats)]
         setBboxStr(`${s.toFixed(3)}°N – ${n.toFixed(3)}°N, ${w.toFixed(3)}°E – ${e.toFixed(3)}°E`)
         setStep(2)
     }
@@ -1496,7 +1665,7 @@ function CreateZoneModal({ onClose, onCreated }) {
     }
     const modalStyle = {
         background: "#0d1117", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 8,
-        padding: 24, width: 520, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto",
+        padding: 24, width: step === 1 ? 640 : 520, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto",
     }
     const row = { display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }
     const lbl = { color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }
@@ -1508,7 +1677,7 @@ function CreateZoneModal({ onClose, onCreated }) {
             <div style={modalStyle}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                     <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>
-                        {step === 1 ? "Step 1 — Define zone area" : step === 2 ? "Step 2 — Configure" : "Step 3 — Confirm"}
+                        {step === 1 ? "Step 1 — Draw surveillance zone" : step === 2 ? "Step 2 — Configure" : "Step 3 — Confirm"}
                     </span>
                     <button onClick={onClose} style={{ ...ghostBtn, padding: "2px 8px" }}>✕</button>
                 </div>
@@ -1516,29 +1685,7 @@ function CreateZoneModal({ onClose, onCreated }) {
                 {toast && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{toast}</div>}
 
                 {step === 1 && (
-                    <div>
-                        <div style={{ color: "#475569", fontSize: 12, marginBottom: 12 }}>
-                            Enter the bounding box coordinates for the surveillance zone.
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                            {[
-                                ["Min Lon (West)", "minLon"], ["Min Lat (South)", "minLat"],
-                                ["Max Lon (East)", "maxLon"], ["Max Lat (North)", "maxLat"],
-                            ].map(([label, key]) => (
-                                <div key={key} style={row}>
-                                    <span style={lbl}>{label}</span>
-                                    <input style={inp} type="number" step="0.001"
-                                        value={manualBbox[key]}
-                                        onChange={e => setManualBbox(prev => ({ ...prev, [key]: e.target.value }))}
-                                        placeholder="e.g. 55.5"
-                                    />
-                                </div>
-                            ))}
-                        </div>
-                        <button onClick={handleBboxNext} style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.3)", marginTop: 8 }}>
-                            Continue →
-                        </button>
-                    </div>
+                    <DrawZoneGlobe onPolygon={handleBboxNext} />
                 )}
 
                 {step === 2 && (

@@ -403,5 +403,42 @@ def ingest():
         print(f"    {region_id:<15} {count}")
 
 
+def run_ingest(db=None) -> dict:
+    """
+    Programmatic entry point — callable from main.py startup.
+    If db is None, creates its own session.
+    Returns stats dict.
+    """
+    from database import SessionLocal as _SL
+    _own = db is None
+    if _own:
+        db = _SL()
+    try:
+        populate_regions(db)
+
+        geo_data = fetch_json(GEO_URL)
+        if not geo_data:
+            return {"error": "Failed to fetch cable-geo.json"}
+        cable_map   = build_cable_geometry_map(geo_data)
+        all_details = fetch_all(list(cable_map.keys()), CABLE_DETAIL, "cable_id")
+
+        lp_geo = fetch_json(LP_GEO_URL)
+        lp_features  = lp_geo["features"] if lp_geo else []
+        lp_cable_map = build_lp_cable_map(all_details)
+
+        c_inserted, c_enriched = upsert_cables(cable_map, all_details, db)
+        lp_inserted, lp_skipped = insert_landing_points(lp_features, lp_cable_map, db)
+        onto_count = register_ontology_entities(db)
+
+        return {
+            "cables_inserted": c_inserted, "cables_enriched": c_enriched,
+            "lps_inserted": lp_inserted, "lps_skipped": lp_skipped,
+            "ontology_upserted": onto_count,
+        }
+    finally:
+        if _own:
+            db.close()
+
+
 if __name__ == "__main__":
     ingest()

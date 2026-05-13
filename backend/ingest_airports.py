@@ -261,5 +261,22 @@ def ingest():
         print(f"    {region_id:<15} {count:,}")
 
 
+def run_ingest(db=None) -> dict:
+    """Programmatic entry point for startup auto-ingest."""
+    from database import SessionLocal as _SL
+    _own = db is None
+    if _own:
+        db = _SL()
+    try:
+        country_names = fetch_country_names()
+        airports = fetch_airports()
+        inserted, skipped = upsert_airports(airports, country_names, db)
+        onto_count = register_ontology_entities(db)
+        return {"airports_inserted": inserted, "airports_skipped": skipped, "ontology_upserted": onto_count}
+    finally:
+        if _own:
+            db.close()
+
+
 if __name__ == "__main__":
     ingest()

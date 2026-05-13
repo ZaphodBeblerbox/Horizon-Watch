@@ -254,6 +254,122 @@ def seed_chokepoint_rules():
     print("\nChokepoint seed done.")
 
 
+def seed_db(db=None) -> dict:
+    """
+    Seed rules and escalation chains directly into the database.
+    Does NOT require the backend to be running.
+    Returns stats dict.
+    """
+    import json as _json
+    from database import (
+        RuleConfig, EscalationChain, RuleConnection, OntologyEntity, SessionLocal as _SL
+    )
+
+    _own = db is None
+    if _own:
+        db = _SL()
+    try:
+        # ── Rules ────────────────────────────────────────────────────────────────
+        all_rules_to_seed = RULES + CHOKEPOINT_RULES
+        rule_ids: dict = {}  # name → RuleConfig.id
+
+        for spec in all_rules_to_seed:
+            existing = db.query(RuleConfig).filter(
+                RuleConfig.rule_name == spec.get("trigger_type", spec.get("name"))
+            ).first()
+            # Deduplicate by name
+            existing_by_name = db.query(RuleConfig).filter(RuleConfig.name == spec["name"]).first()
+            if existing_by_name:
+                rule_ids[spec["name"]] = existing_by_name.id
+                continue
+
+            row = RuleConfig(
+                name         = spec["name"],
+                rule_name    = spec.get("trigger_type", spec["name"]),
+                trigger_type = spec.get("trigger_type"),
+                severity     = spec.get("severity", "medium"),
+                icon_type    = spec.get("icon_type"),
+                params       = _json.dumps(spec.get("params", {})),
+            )
+            db.add(row)
+            db.flush()  # assign id
+
+            # Upsert OntologyEntity
+            onto_id = f"RULE-{row.id}"
+            existing_onto = db.query(OntologyEntity).filter(OntologyEntity.system_id == onto_id).first()
+            if not existing_onto:
+                db.add(OntologyEntity(
+                    system_id    = onto_id,
+                    entity_type  = "Rule",
+                    name         = spec["name"],
+                    infra_type   = spec.get("trigger_type"),
+                    entity_metadata = _json.dumps({"trigger_type": spec.get("trigger_type"), "severity": spec.get("severity")}),
+                ))
+            rule_ids[spec["name"]] = row.id
+
+        db.commit()
+
+        # ── Escalation Chains ────────────────────────────────────────────────────
+        chains_to_seed = [
+            {
+                "chain_name":          "Cable Loitering + Dark Ship",
+                "rule_names":          ["Cable Loitering — Global", "Dark Ship — Global"],
+                "escalated_severity":  "critical",
+                "escalated_icon_type": "DARK_SHIP_CABLE",
+                "time_window_minutes": 30,
+            },
+            {
+                "chain_name":          "STS Transfer + Dark Ship",
+                "rule_names":          ["Ship-to-Ship Proximity", "Dark Ship — Global"],
+                "escalated_severity":  "critical",
+                "escalated_icon_type": "STS_TRANSFER_DARK",
+                "time_window_minutes": 30,
+            },
+            {
+                "chain_name":          "Cable Loitering + STS + Dark Ship",
+                "rule_names":          ["Cable Loitering — Global", "Ship-to-Ship Proximity", "Dark Ship — Global"],
+                "escalated_severity":  "critical",
+                "escalated_icon_type": "ESCALATED_TRIPLE",
+                "time_window_minutes": 30,
+            },
+            {
+                "chain_name":          "Strategic Port Loitering + Dark Ship",
+                "rule_names":          ["Loitering — Strategic Ports", "Dark Ship — Global"],
+                "escalated_severity":  "critical",
+                "escalated_icon_type": "ESCALATED_DUAL",
+                "time_window_minutes": 30,
+            },
+        ]
+
+        chains_inserted = 0
+        for spec in chains_to_seed:
+            existing = db.query(EscalationChain).filter(
+                EscalationChain.chain_name == spec["chain_name"]
+            ).first()
+            if existing:
+                continue
+            ids = [rule_ids[n] for n in spec["rule_names"] if n in rule_ids]
+            if len(ids) < 2:
+                continue
+            db.add(EscalationChain(
+                chain_name          = spec["chain_name"],
+                rule_ids            = ",".join(str(i) for i in ids),
+                escalated_severity  = spec["escalated_severity"],
+                escalated_icon_type = spec["escalated_icon_type"],
+                time_window_minutes = spec["time_window_minutes"],
+            ))
+            chains_inserted += 1
+
+        db.commit()
+        return {
+            "rules_seeded": len(rule_ids),
+            "chains_inserted": chains_inserted,
+        }
+    finally:
+        if _own:
+            db.close()
+
+
 if __name__ == "__main__":
     seed()
     seed_chokepoint_rules()
