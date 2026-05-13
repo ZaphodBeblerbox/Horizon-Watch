@@ -12106,6 +12106,105 @@ def api_cables(
     return {"cables": [summarise(f) for f in cables[:100]], "total": len(cables)}
 
 
+# ── Endpoints: Cables (database-backed) ───────────────────────────────────────
+
+def _cable_feature(row) -> dict:
+    return {
+        "type": "Feature",
+        "geometry": row.geometry,
+        "properties": {
+            "cable_id":          row.cable_id,
+            "cable_name":        row.cable_name,
+            "owners":            row.owners,
+            "rfs_year":          row.rfs_year,
+            "length_km":         row.length_km,
+            "country_a":         row.country_a,
+            "country_b":         row.country_b,
+            "all_countries":     row.all_countries,
+            "landing_point_ids": row.landing_point_ids,
+        },
+    }
+
+
+@app.get("/api/cables")
+def api_cables_db(response: FastAPIResponse):
+    """Return all submarine cables as a GeoJSON FeatureCollection (DB-backed)."""
+    from database import CableSegment, get_db
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    with get_db() as db:
+        rows = db.query(CableSegment).all()
+    features = [_cable_feature(r) for r in rows]
+    return {"type": "FeatureCollection", "features": features, "total": len(features)}
+
+
+@app.get("/api/cables/landing-points")
+def api_landing_points(response: FastAPIResponse):
+    """Return all cable landing points as a GeoJSON FeatureCollection (DB-backed)."""
+    from database import LandingPoint, get_db
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    with get_db() as db:
+        rows = db.query(LandingPoint).all()
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [row.longitude, row.latitude]},
+            "properties": {
+                "landing_point_id": row.landing_point_id,
+                "name":             row.name,
+                "country":          row.country,
+                "cable_ids":        [c.strip() for c in row.cable_ids.split(",")] if row.cable_ids else [],
+            },
+        }
+        for row in rows
+    ]
+    return {"type": "FeatureCollection", "features": features, "total": len(features)}
+
+
+@app.get("/api/cables/landing-points/{landing_point_id:path}")
+def api_landing_point_by_id(landing_point_id: str):
+    """Return a single landing point by landing_point_id."""
+    from database import LandingPoint, get_db
+    with get_db() as db:
+        row = db.query(LandingPoint).filter(LandingPoint.landing_point_id == landing_point_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Landing point '{landing_point_id}' not found")
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [row.longitude, row.latitude]},
+        "properties": {
+            "landing_point_id": row.landing_point_id,
+            "name":             row.name,
+            "country":          row.country,
+            "cable_ids":        [c.strip() for c in row.cable_ids.split(",")] if row.cable_ids else [],
+        },
+    }
+
+
+@app.get("/api/cables/by-country/{country_name}")
+def api_cables_by_country(country_name: str, response: FastAPIResponse):
+    """Return all cables touching the given country as a GeoJSON FeatureCollection."""
+    from database import CableSegment, get_db
+    response.headers["Cache-Control"] = "public, max-age=600"
+    search = country_name.lower()
+    with get_db() as db:
+        rows = db.query(CableSegment).filter(
+            CableSegment.all_countries.ilike(f"%{search}%")
+        ).all()
+    features = [_cable_feature(r) for r in rows]
+    return {"type": "FeatureCollection", "features": features, "total": len(features)}
+
+
+@app.get("/api/cables/{cable_id}")
+def api_cable_by_id(cable_id: str):
+    """Return a single submarine cable by cable_id as a GeoJSON Feature (DB-backed)."""
+    from database import CableSegment, get_db
+    with get_db() as db:
+        row = db.query(CableSegment).filter(CableSegment.cable_id == cable_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Cable '{cable_id}' not found")
+    return _cable_feature(row)
+
+
 # ── Debug: news pipeline status ───────────────────────────────────────────────
 
 @app.get("/api/debug/news-status")

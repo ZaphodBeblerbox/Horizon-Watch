@@ -104,6 +104,34 @@ class TrackDensity(Base):
     )
 
 
+class CableSegment(Base):
+    __tablename__ = "cable_segments"
+
+    id                 = Column(Integer, primary_key=True)
+    cable_id           = Column(String, unique=True, index=True, nullable=False)
+    cable_name         = Column(String, nullable=False)
+    owners             = Column(String, nullable=True)   # comma-separated
+    rfs_year           = Column(Integer, nullable=True)
+    length_km          = Column(Integer, nullable=True)
+    geometry           = Column(JSON, nullable=False)    # raw GeoJSON geometry object
+    country_a          = Column(String, nullable=True)   # first landing country
+    country_b          = Column(String, nullable=True)   # last landing country
+    all_countries      = Column(String, nullable=True)   # comma-separated sorted unique
+    landing_point_ids  = Column(String, nullable=True)   # comma-separated LP ids
+
+
+class LandingPoint(Base):
+    __tablename__ = "landing_points"
+
+    id                = Column(Integer, primary_key=True)
+    landing_point_id  = Column(String, unique=True, index=True, nullable=False)
+    name              = Column(String, nullable=False)
+    country           = Column(String, nullable=True)
+    latitude          = Column(Float, nullable=False)
+    longitude         = Column(Float, nullable=False)
+    cable_ids         = Column(String, nullable=True)   # comma-separated cable ids
+
+
 class WeeklySnapshot(Base):
     __tablename__ = 'weekly_snapshots'
 
@@ -152,6 +180,22 @@ def migrate_db():
         if col not in existing:
             cur.execute(f'ALTER TABLE users ADD COLUMN {col} {typ}')
             print(f'[db-migrate] added column: {col}')
+
+    # cable_segments enrichment columns
+    cable_cols = [
+        ('country_a',         'TEXT'),
+        ('country_b',         'TEXT'),
+        ('all_countries',     'TEXT'),
+        ('landing_point_ids', 'TEXT'),
+    ]
+    tables = [row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if 'cable_segments' in tables:
+        cs_existing = [row[1] for row in cur.execute('PRAGMA table_info(cable_segments)').fetchall()]
+        for col, typ in cable_cols:
+            if col not in cs_existing:
+                cur.execute(f'ALTER TABLE cable_segments ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] cable_segments: added column {col}')
+
     conn.commit()
     conn.close()
     # Create new tables via SQLAlchemy (idempotent)
