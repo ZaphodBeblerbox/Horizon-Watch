@@ -32,7 +32,7 @@ export function ForgeGate({ children }) {
             const d = await res.json()
             if (d.access) { localStorage.setItem("forge_access", "true"); localStorage.setItem("forge_passcode", code); setOk(true) }
             else setErr("Invalid passcode")
-        } catch { setErr("Connection failed") }
+        } catch (_e) { setErr("Connection failed") }
         finally { setBusy(false) }
     }
     if (ok) return children
@@ -61,6 +61,7 @@ export const PIPELINE_NODES = [
     { id: 'det_adsb',        label: 'ADSB Pattern Detector', column: 1, type: 'detector',     status: 'active',     config: {} },
     { id: 'det_news',        label: 'News Scorer',           column: 1, type: 'detector',     status: 'active',     config: {} },
     { id: 'det_overwatch',   label: 'Overwatch ML',          column: 1, type: 'detector',     status: 'active',     config: { model: 'yolov8n-obb.onnx' } },
+    { id: 'det_sentinel',   label: 'Surveillance Zones',     column: 1, type: 'detector',     status: 'active',     config: {} },
     { id: 'enr_correlation', label: 'Correlation Engine',    column: 2, type: 'enrichment',   status: 'active',     config: {} },
     { id: 'enr_ontology',    label: 'Entity Ontology',       column: 2, type: 'enrichment',   status: 'active',     config: {} },
     { id: 'enr_geocode',     label: 'Geocoder',              column: 2, type: 'enrichment',   status: 'active',     config: {} },
@@ -74,7 +75,7 @@ export const PIPELINE_NODES = [
 
 export const PIPELINE_EDGES = [
     { from: 'src_ais', to: 'det_ais' }, { from: 'src_adsb', to: 'det_adsb' },
-    { from: 'src_news', to: 'det_news' }, { from: 'src_satellite', to: 'det_overwatch' },
+    { from: 'src_news', to: 'det_news' }, { from: 'src_satellite', to: 'det_overwatch' }, { from: 'src_satellite', to: 'det_sentinel' },
     { from: 'src_uploads', to: 'enr_ontology' }, { from: 'src_osint', to: 'det_news' },
     { from: 'det_ais', to: 'enr_correlation' }, { from: 'det_adsb', to: 'enr_correlation' },
     { from: 'det_news', to: 'enr_correlation' }, { from: 'det_overwatch', to: 'enr_correlation' },
@@ -90,7 +91,7 @@ export const PIPELINE_EDGES = [
 const WS_MAP = {
     src_ais: 'ais-source', src_adsb: 'adsb-source', src_news: 'news-source',
     src_satellite: 'satellite-source', src_uploads: 'uploads-source', src_osint: 'osint-source',
-    det_ais: 'ais-detector', det_adsb: 'adsb-detector', det_news: 'news-detector', det_overwatch: 'ml-detector',
+    det_ais: 'ais-detector', det_adsb: 'adsb-detector', det_news: 'news-detector', det_overwatch: 'ml-detector', det_sentinel: 'surveillance-zones',
     enr_correlation: 'brain', enr_ontology: 'ontology', enr_geocode: 'geocoder',
     int_threat: 'brain', int_patterns: 'brain', int_escalation: 'brain',
     out_alerts: 'alerts', out_briefings: 'briefings', out_reports: 'reports',
@@ -281,6 +282,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "adsb-detector":   return <DetectorWorkspace source="ADSB" />
         case "news-detector":   return <DetectorWorkspace source="NEWS" />
         case "ml-detector":     return <MLDetectorWorkspace />
+        case "surveillance-zones": return <SurveillanceZonesWorkspace />
         case "brain":           return <BrainWorkspace brainStatus={brainStatus} />
         case "ontology":        return <OntologyWorkspace />
         case "alerts":          return <AlertsWorkspace />
@@ -559,7 +561,7 @@ function SatelliteSourceWorkspace() {
         try {
             const res = await fetch(`${API}/api/forge/source/src_satellite/config`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify({ sentinel_token: token }) })
             if (res.ok) { setMsg("Saved"); setTimeout(() => setMsg(""), 2000) }
-        } catch { setMsg("Failed") }
+        } catch (_e) { setMsg("Failed") }
         finally { setSaving(false) }
     }
 
@@ -605,7 +607,7 @@ function UploadsWorkspace() {
             const d = await res.json()
             setMsg(res.ok ? `Uploaded: ${d.original_name || file.name}` : d.detail || "Failed")
             if (res.ok) reload()
-        } catch { setMsg("Upload failed") }
+        } catch (_e) { setMsg("Upload failed") }
         finally { setUploading(false); if (fileRef.current) fileRef.current.value = "" }
     }
 
@@ -868,7 +870,8 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                     setToast(`Error: ${d.detail || "Failed to create rule"}`)
                     setTimeout(() => setToast(""), 3000)
                 }
-        } catch { }
+            }
+        } catch (_e) { }
         finally { setSaving(false) }
     }
 
@@ -1161,7 +1164,7 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                                 <div key={key} style={{ display: "flex", gap: 8, marginBottom: 5, alignItems: "center" }}>
                                     <span style={{ color: "#475569", fontSize: 10, width: 140, flexShrink: 0 }}>{key.replace(/_/g, " ")}</span>
                                     <input value={typeof value === "object" ? JSON.stringify(value) : String(value)}
-                                        onChange={e => { let v = e.target.value; try { v = JSON.parse(v) } catch {} setParams(p => ({ ...p, [key]: v })) }}
+                                        onChange={e => { let v = e.target.value; try { v = JSON.parse(v) } catch (_e) {} setParams(p => ({ ...p, [key]: v })) }}
                                         style={{ flex: 1, padding: "3px 6px", background: "#111827", border: "1px solid rgba(148,163,184,0.08)", borderRadius: 2, color: "#cbd5e1", fontSize: 10, outline: "none" }} />
                                 </div>
                             ))}
@@ -1405,6 +1408,652 @@ function DetectorWorkspace({ source }) {
     )
 }
 
+// ── Surveillance Zones ─────────────────────────────────────────────────────────
+
+const PRIORITY_COLORS = { critical: "#f87171", high: "#fbbf24", medium: "#94a3b8", low: "#64748b" }
+const ML_TASK_LABELS = {
+    ship_detection:                 "Ship detection",
+    vessel_cluster_detection:       "Vessel cluster detection",
+    smoke_plume_detection:          "Smoke plume detection",
+    fire_detection:                 "Fire detection",
+    burn_scar_detection:            "Burn scar detection",
+    oil_slick_detection:            "Oil slick detection",
+    infrastructure_change_detection:"Infrastructure change detection",
+    vessel_without_ais_detection:   "Vessel without AIS detection",
+}
+const DET_COLORS = {
+    vessel: "#f97316", fire: "#ef4444", smoke_plume: "#94a3b8",
+    oil_slick: "#1d4ed8", vessel_cluster: "#eab308",
+    infrastructure_change: "#a855f7", vessel_without_ais: "#dc2626",
+    burn_scar: "#78350f",
+}
+
+function _fmtCountdown(nextScanAt) {
+    if (!nextScanAt) return null
+    const diff = new Date(nextScanAt) - Date.now()
+    if (diff <= 0) return "due now"
+    const h = Math.floor(diff / 3_600_000)
+    const m = Math.floor((diff % 3_600_000) / 60_000)
+    return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
+function CreateZoneModal({ onClose, onCreated }) {
+    const [step, setStep] = useState(1)
+    const [polygon, setPolygon] = useState(null)  // GeoJSON Polygon
+    const [bboxStr, setBboxStr] = useState("")    // human-readable bbox
+    const [name, setName] = useState("")
+    const [desc, setDesc] = useState("")
+    const [priority, setPriority] = useState("high")
+    const [interval, setInterval] = useState(24)
+    const [threshold, setThreshold] = useState("both")
+    const [mlTasks, setMlTasks] = useState(["ship_detection", "fire_detection"])
+    const [saving, setSaving] = useState(false)
+    const [toast, setToast] = useState("")
+
+    // Step 1: manual bbox entry (no embedded globe required)
+    const [manualBbox, setManualBbox] = useState({ minLon: "", minLat: "", maxLon: "", maxLat: "" })
+
+    const handleBboxNext = () => {
+        const { minLon, minLat, maxLon, maxLat } = manualBbox
+        const vals = [minLon, minLat, maxLon, maxLat].map(Number)
+        if (vals.some(isNaN)) { setToast("Enter valid coordinates"); return }
+        const [w, s, e, n] = vals
+        if (e <= w || n <= s) { setToast("Max must be greater than Min"); setTimeout(() => setToast(""), 2000); return }
+        const poly = {
+            type: "Polygon",
+            coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]]
+        }
+        setPolygon(poly)
+        setBboxStr(`${s.toFixed(3)}°N – ${n.toFixed(3)}°N, ${w.toFixed(3)}°E – ${e.toFixed(3)}°E`)
+        setStep(2)
+    }
+
+    const toggleTask = (t) => setMlTasks(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
+
+    const save = async () => {
+        if (!name.trim()) { setToast("Zone name required"); return }
+        if (!polygon) { setToast("No polygon defined"); return }
+        setSaving(true)
+        try {
+            const res = await fetch(`${API}/api/watch-zones`, {
+                method: "POST", headers: forgeHeaders(),
+                body: JSON.stringify({
+                    name: name.trim(), description: desc || null,
+                    polygon_geojson: polygon,
+                    priority, scan_interval_hours: Number(interval),
+                    ml_tasks: mlTasks, alert_threshold: threshold,
+                }),
+            })
+            const d = await res.json()
+            if (res.ok) { setToast("Zone created"); setTimeout(() => onCreated(d), 800) }
+            else { setToast(d.detail || "Failed to create zone"); setSaving(false) }
+        } catch (e) { setToast("Network error"); setSaving(false) }
+    }
+
+    const overlayStyle = {
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9000,
+    }
+    const modalStyle = {
+        background: "#0d1117", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 8,
+        padding: 24, width: 520, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto",
+    }
+    const row = { display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }
+    const lbl = { color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }
+    const inp = { ...inputStyle, width: "100%", boxSizing: "border-box" }
+    const sel = { ...inp, background: "#111827" }
+
+    return (
+        <div style={overlayStyle} onClick={e => e.target === e.currentTarget && onClose()}>
+            <div style={modalStyle}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                    <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>
+                        {step === 1 ? "Step 1 — Define zone area" : step === 2 ? "Step 2 — Configure" : "Step 3 — Confirm"}
+                    </span>
+                    <button onClick={onClose} style={{ ...ghostBtn, padding: "2px 8px" }}>✕</button>
+                </div>
+
+                {toast && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{toast}</div>}
+
+                {step === 1 && (
+                    <div>
+                        <div style={{ color: "#475569", fontSize: 12, marginBottom: 12 }}>
+                            Enter the bounding box coordinates for the surveillance zone.
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                            {[
+                                ["Min Lon (West)", "minLon"], ["Min Lat (South)", "minLat"],
+                                ["Max Lon (East)", "maxLon"], ["Max Lat (North)", "maxLat"],
+                            ].map(([label, key]) => (
+                                <div key={key} style={row}>
+                                    <span style={lbl}>{label}</span>
+                                    <input style={inp} type="number" step="0.001"
+                                        value={manualBbox[key]}
+                                        onChange={e => setManualBbox(prev => ({ ...prev, [key]: e.target.value }))}
+                                        placeholder="e.g. 55.5"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                        <button onClick={handleBboxNext} style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.3)", marginTop: 8 }}>
+                            Continue →
+                        </button>
+                    </div>
+                )}
+
+                {step === 2 && (
+                    <div>
+                        <div style={row}>
+                            <span style={lbl}>Zone name *</span>
+                            <input style={inp} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Strait of Hormuz — Critical Zone" />
+                        </div>
+                        <div style={row}>
+                            <span style={lbl}>Description</span>
+                            <textarea style={{ ...inp, height: 52, resize: "vertical" }} value={desc} onChange={e => setDesc(e.target.value)} placeholder="Optional" />
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                            <div style={row}>
+                                <span style={lbl}>Priority</span>
+                                <select style={sel} value={priority} onChange={e => setPriority(e.target.value)}>
+                                    {["critical","high","medium","low"].map(p => <option key={p}>{p}</option>)}
+                                </select>
+                            </div>
+                            <div style={row}>
+                                <span style={lbl}>Scan interval</span>
+                                <select style={sel} value={interval} onChange={e => setInterval(e.target.value)}>
+                                    <option value={6}>Every 6h</option>
+                                    <option value={12}>Every 12h</option>
+                                    <option value={24}>Every 24h</option>
+                                </select>
+                            </div>
+                            <div style={row}>
+                                <span style={lbl}>Alert threshold</span>
+                                <select style={sel} value={threshold} onChange={e => setThreshold(e.target.value)}>
+                                    <option value="digest">Digest only</option>
+                                    <option value="immediate">Immediate only</option>
+                                    <option value="both">Both</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style={{ ...row, marginTop: 4 }}>
+                            <span style={lbl}>ML tasks</span>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                                {Object.entries(ML_TASK_LABELS).map(([k, v]) => (
+                                    <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#94a3b8", fontSize: 11, padding: "3px 0" }}>
+                                        <input type="checkbox" checked={mlTasks.includes(k)} onChange={() => toggleTask(k)}
+                                            style={{ accentColor: "#60a5fa" }} />
+                                        {v}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+                            <button onClick={() => setStep(1)} style={{ ...ghostBtn }}>← Back</button>
+                            <button onClick={() => setStep(3)} style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.3)" }}>
+                                Review →
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {step === 3 && (
+                    <div>
+                        <div style={{ background: "#111827", borderRadius: 4, padding: 12, marginBottom: 12 }}>
+                            <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{name || "(unnamed)"}</div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                                {[
+                                    ["Area", bboxStr], ["Priority", priority],
+                                    ["Scan interval", `Every ${interval}h`], ["Alerts", threshold],
+                                    ["ML tasks", mlTasks.length + " selected"],
+                                ].map(([k, v]) => (
+                                    <div key={k} style={{ display: "flex", gap: 8 }}>
+                                        <span style={{ color: "#475569", fontSize: 10, width: 90, flexShrink: 0 }}>{k}</span>
+                                        <span style={{ color: "#94a3b8", fontSize: 10 }}>{v}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                            <button onClick={() => setStep(2)} style={{ ...ghostBtn }}>← Back</button>
+                            <button onClick={save} disabled={saving} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>
+                                {saving ? "Creating…" : "Create Zone"}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+function ScanDetailPanel({ zone, scan, onClose }) {
+    const [dets, setDets] = useState([])
+    const [selectedDet, setSelectedDet] = useState(null)
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        if (!scan?.scan_id) return
+        setLoading(true)
+        fetch(`${API}/api/watch-zones/${zone.system_id}/scans/${scan.scan_id}/detections`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : { features: [] })
+            .then(d => {
+                // Extract centroid features only for table
+                const centroids = (d.features || []).filter(f => f.properties?.feature_role === "centroid")
+                setDets(centroids)
+                setLoading(false)
+            })
+            .catch(() => setLoading(false))
+    }, [scan?.scan_id])
+
+    if (!scan) return null
+    const summary = scan.result_summary || {}
+
+    const panelStyle = {
+        background: "#0d1117", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 6,
+        marginTop: 8, padding: 12,
+    }
+    const thStyle = { color: "#475569", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", padding: "4px 8px", textAlign: "left" }
+    const tdStyle = { color: "#94a3b8", fontSize: 10, padding: "4px 8px", borderTop: "1px solid rgba(148,163,184,0.04)" }
+
+    const det_by_type = summary.by_type || {}
+
+    return (
+        <div style={panelStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{scan.scan_id}</span>
+                <button onClick={onClose} style={{ ...ghostBtn, padding: "1px 6px", fontSize: 10 }}>✕</button>
+            </div>
+
+            {/* Image info bar */}
+            <div style={{ display: "flex", gap: 16, marginBottom: 8, flexWrap: "wrap" }}>
+                {[
+                    ["Scene", scan.image_id || "—"],
+                    ["Time", scan.image_timestamp_utc ? scan.image_timestamp_utc.slice(0, 16).replace("T", " ") + " UTC" : "—"],
+                    ["Cloud", scan.cloud_cover_percent != null ? `${scan.cloud_cover_percent.toFixed(0)}%` : "—"],
+                    ["Image age", scan.image_age_hours != null ? `${scan.image_age_hours.toFixed(1)}h` : "—"],
+                ].map(([k, v]) => (
+                    <div key={k} style={{ display: "flex", gap: 4 }}>
+                        <span style={{ color: "#475569", fontSize: 10 }}>{k}:</span>
+                        <span style={{ color: "#94a3b8", fontSize: 10 }}>{v}</span>
+                    </div>
+                ))}
+            </div>
+
+            {/* Detection summary */}
+            <div style={{ marginBottom: 8 }}>
+                <span style={{ color: "#e2e8f0", fontSize: 11 }}>Total: {summary.total_detections ?? 0}</span>
+                <span style={{ color: "#475569", fontSize: 10, marginLeft: 10 }}>
+                    {Object.entries(det_by_type).map(([t, n]) => `${t.replace(/_/g, " ")}: ${n}`).join(" | ")}
+                </span>
+            </div>
+
+            {/* Detection bbox map (colour-coded squares on a dark canvas) */}
+            {dets.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                    <div style={{ color: "#475569", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Detection map</div>
+                    <div style={{ position: "relative", background: "#060a14", border: "1px solid rgba(148,163,184,0.06)", borderRadius: 3, height: 180, overflow: "hidden" }}>
+                        {dets.map((f, i) => {
+                            const p = f.properties
+                            const bbox = zone.bbox
+                            if (!bbox) return null
+                            const xPct = ((p.centroid_lon || 0) - bbox.min_lon) / (bbox.max_lon - bbox.min_lon) * 100
+                            const yPct = (1 - ((p.centroid_lat || 0) - bbox.min_lat) / (bbox.max_lat - bbox.min_lat)) * 100
+                            const col = DET_COLORS[p.object_type] || "#ffffff"
+                            const isSelected = selectedDet === i
+                            return (
+                                <div key={i} onClick={() => setSelectedDet(isSelected ? null : i)}
+                                    title={`${p.object_type} (${(p.confidence * 100).toFixed(0)}%)`}
+                                    style={{
+                                        position: "absolute",
+                                        left: `${Math.max(0, Math.min(96, xPct))}%`,
+                                        top:  `${Math.max(0, Math.min(96, yPct))}%`,
+                                        width: 8, height: 8,
+                                        background: col, opacity: isSelected ? 1 : 0.7,
+                                        border: isSelected ? `2px solid #fff` : `1px solid ${col}`,
+                                        borderRadius: 2, cursor: "pointer", transform: "translate(-50%,-50%)",
+                                    }}
+                                />
+                            )
+                        })}
+                        {selectedDet != null && dets[selectedDet] && (() => {
+                            const p = dets[selectedDet].properties
+                            const attrs = typeof p.attributes === "object" ? p.attributes : {}
+                            return (
+                                <div style={{
+                                    position: "absolute", bottom: 4, left: 4, right: 4,
+                                    background: "rgba(0,0,0,0.8)", borderRadius: 3, padding: "5px 8px",
+                                    fontSize: 10, color: "#e2e8f0",
+                                }}>
+                                    <span style={{ color: DET_COLORS[p.object_type] || "#fff", fontWeight: 600 }}>{p.object_type?.replace(/_/g, " ")}</span>
+                                    {" "}{(p.confidence * 100).toFixed(0)}% conf
+                                    {attrs.estimated_length_m ? ` · ${attrs.estimated_length_m}×${attrs.estimated_width_m}m` : ""}
+                                    {p.centroid_lat ? ` · ${Number(p.centroid_lat).toFixed(4)}°N, ${Number(p.centroid_lon).toFixed(4)}°E` : ""}
+                                    {" · AIS: "}{p.matched_to_ais ? "yes" : "no"}
+                                </div>
+                            )
+                        })()}
+                    </div>
+                    {/* Legend */}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                        {Object.entries(DET_COLORS).map(([k, c]) => (
+                            <div key={k} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                                <div style={{ width: 8, height: 8, background: c, borderRadius: 1 }} />
+                                <span style={{ color: "#475569", fontSize: 9 }}>{k.replace(/_/g, " ")}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Detection table */}
+            {loading ? <div style={{ color: "#475569", fontSize: 11, padding: 8 }}>Loading detections…</div> :
+             dets.length === 0 ? <div style={{ color: "#475569", fontSize: 11, padding: 8 }}>No detections in this scan.</div> :
+            (
+                <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+                        <thead>
+                            <tr>
+                                {["Type","Conf","Length m","Width m","Lat","Lon","AIS"].map(h => (
+                                    <th key={h} style={thStyle}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {dets.map((f, i) => {
+                                const p = f.properties
+                                const attrs = typeof p.attributes === "object" ? p.attributes :
+                                    (p.attributes ? (() => { try { return JSON.parse(p.attributes) } catch (_e) { return {} } })() : {})
+                                const isSelected = selectedDet === i
+                                return (
+                                    <tr key={i} onClick={() => setSelectedDet(isSelected ? null : i)}
+                                        style={{ cursor: "pointer", background: isSelected ? "rgba(96,165,250,0.08)" : "transparent" }}>
+                                        <td style={{ ...tdStyle, color: DET_COLORS[p.object_type] || "#94a3b8" }}>{p.object_type?.replace(/_/g, " ")}</td>
+                                        <td style={tdStyle}>{(p.confidence * 100).toFixed(0)}%</td>
+                                        <td style={tdStyle}>{attrs.estimated_length_m ?? "—"}</td>
+                                        <td style={tdStyle}>{attrs.estimated_width_m ?? "—"}</td>
+                                        <td style={tdStyle}>{Number(p.centroid_lat).toFixed(4)}</td>
+                                        <td style={tdStyle}>{Number(p.centroid_lon).toFixed(4)}</td>
+                                        <td style={tdStyle}>{p.matched_to_ais ? "✓" : "—"}</td>
+                                    </tr>
+                                )
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    )
+}
+
+function SurveillanceZonesWorkspace() {
+    const [zones, setZones] = useState([])
+    const [showCreate, setShowCreate] = useState(false)
+    const [expandedZone, setExpandedZone] = useState(null)
+    const [zoneScans, setZoneScans] = useState({})   // system_id → scans[]
+    const [selectedScan, setSelectedScan] = useState({})  // system_id → scan
+    const [analytics, setAnalytics] = useState({})  // system_id → analytics
+    const [showAnalytics, setShowAnalytics] = useState(null)
+    const [toast, setToast] = useState("")
+
+    const reload = () =>
+        fetch(`${API}/api/watch-zones`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setZones(Array.isArray(d) ? d : []))
+            .catch(() => {})
+
+    useEffect(() => { reload() }, [])
+
+    const loadScans = (zone) => {
+        fetch(`${API}/api/watch-zones/${zone.system_id}/scans`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setZoneScans(prev => ({ ...prev, [zone.system_id]: Array.isArray(d) ? d : [] })))
+            .catch(() => {})
+    }
+
+    const loadAnalytics = (zone) => {
+        fetch(`${API}/api/watch-zones/${zone.system_id}/analytics`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setAnalytics(prev => ({ ...prev, [zone.system_id]: d })) })
+            .catch(() => {})
+    }
+
+    const scanNow = async (zone) => {
+        const r = await fetch(`${API}/api/watch-zones/${zone.system_id}/scan-now`, {
+            method: "POST", headers: forgeHeaders(),
+        })
+        const d = await r.json()
+        setToast(`Scan triggered: ${d.scan_id || d.message || "pending"}`)
+        setTimeout(() => setToast(""), 3000)
+        setTimeout(() => loadScans(zone), 2000)
+    }
+
+    const toggleEnabled = async (zone) => {
+        await fetch(`${API}/api/watch-zones/${zone.system_id}`, {
+            method: "PUT", headers: forgeHeaders(),
+            body: JSON.stringify({ enabled: !zone.enabled }),
+        })
+        reload()
+    }
+
+    const deleteZone = async (zone) => {
+        if (!confirm(`Disable zone "${zone.name}"? Scan history will be preserved.`)) return
+        await fetch(`${API}/api/watch-zones/${zone.system_id}`, {
+            method: "DELETE", headers: forgeHeaders(),
+        })
+        reload()
+    }
+
+    const toggleExpand = (zone) => {
+        if (expandedZone === zone.system_id) {
+            setExpandedZone(null)
+        } else {
+            setExpandedZone(zone.system_id)
+            loadScans(zone)
+            loadAnalytics(zone)
+        }
+    }
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <Toolbar>
+                <span style={{ color: "#475569", fontSize: 11 }}>Surveillance Zones ({zones.length})</span>
+                <div style={{ flex: 1 }} />
+                {toast && <span style={{ color: "#4ade80", fontSize: 10 }}>{toast}</span>}
+                <button onClick={() => setShowCreate(true)} style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.25)" }}>
+                    + Create Zone
+                </button>
+            </Toolbar>
+            <WorkspaceBody>
+                <div style={{ maxWidth: 760 }}>
+                    {zones.length === 0 && (
+                        <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 40 }}>
+                            No surveillance zones configured. Create one to start scheduled Sentinel-2 scanning.
+                        </div>
+                    )}
+
+                    {zones.map(zone => {
+                        const priColor = PRIORITY_COLORS[zone.priority] || "#94a3b8"
+                        const isExpanded = expandedZone === zone.system_id
+                        const scans = zoneScans[zone.system_id] || []
+                        const latestScan = scans[0]
+                        const ana = analytics[zone.system_id]
+                        const detSummary = latestScan?.result_summary?.by_type || {}
+
+                        return (
+                            <div key={zone.system_id} style={{
+                                background: "#111827", borderRadius: 5, marginBottom: 6,
+                                overflow: "hidden", borderLeft: `2px solid ${zone.enabled ? priColor : "#334155"}`,
+                                opacity: zone.enabled ? 1 : 0.6,
+                            }}>
+                                {/* Header row */}
+                                <div style={{ padding: "10px 12px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                                    onClick={() => toggleExpand(zone)}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{zone.name}</span>
+                                        <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{zone.system_id}</span>
+                                        {!zone.enabled && <span style={{ color: "#334155", fontSize: 9, marginLeft: 6 }}>disabled</span>}
+                                    </div>
+                                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                        <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 2, background: priColor + "18", color: priColor, fontWeight: 600 }}>
+                                            {zone.priority}
+                                        </span>
+                                        <span style={{ color: "#475569", fontSize: 9 }}>every {zone.scan_interval_hours}h</span>
+                                        {zone.next_scan_at && (
+                                            <span style={{ color: "#334155", fontSize: 9 }}>
+                                                next: {_fmtCountdown(zone.next_scan_at)}
+                                            </span>
+                                        )}
+                                        {zone.last_scanned_at && (
+                                            <span style={{ color: "#334155", fontSize: 9 }}>
+                                                last: {new Date(zone.last_scanned_at).toLocaleString("en-GB", { hour12: false, dateStyle: "short", timeStyle: "short" })}
+                                            </span>
+                                        )}
+                                        {/* Latest scan findings */}
+                                        {Object.entries(detSummary).slice(0, 3).map(([t, n]) => (
+                                            <span key={t} style={{ fontSize: 9, padding: "1px 5px", borderRadius: 2, background: (DET_COLORS[t] || "#475569") + "22", color: DET_COLORS[t] || "#475569" }}>
+                                                {t.replace(/_/g, " ")}: {n}
+                                            </span>
+                                        ))}
+                                        <span style={{ color: "#334155", fontSize: 10 }}>{isExpanded ? "▲" : "▼"}</span>
+                                    </div>
+                                </div>
+
+                                {/* Expanded detail */}
+                                {isExpanded && (
+                                    <div style={{ padding: "0 12px 12px", borderTop: "1px solid rgba(148,163,184,0.04)" }}>
+                                        {/* Actions */}
+                                        <div style={{ display: "flex", gap: 4, marginTop: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                                            <button onClick={() => scanNow(zone)} style={actionBtn("#60a5fa")}>▶ Scan Now</button>
+                                            <button onClick={() => toggleEnabled(zone)} style={actionBtn(zone.enabled ? "#f87171" : "#4ade80")}>
+                                                {zone.enabled ? "⏸ Disable" : "▶ Enable"}
+                                            </button>
+                                            <button onClick={() => deleteZone(zone)} style={actionBtn("#f87171")}>Delete</button>
+                                        </div>
+
+                                        {/* Zone info */}
+                                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Zone details</div>
+                                        {zone.bbox && (
+                                            <div style={{ display: "flex", gap: 8, marginBottom: 3 }}>
+                                                <span style={{ color: "#475569", fontSize: 10, width: 100 }}>bbox</span>
+                                                <span style={{ color: "#64748b", fontSize: 10 }}>
+                                                    {zone.bbox.min_lat.toFixed(2)}°–{zone.bbox.max_lat.toFixed(2)}°N,{" "}
+                                                    {zone.bbox.min_lon.toFixed(2)}°–{zone.bbox.max_lon.toFixed(2)}°E
+                                                </span>
+                                            </div>
+                                        )}
+                                        {[
+                                            ["ml tasks", (zone.ml_tasks || []).map(t => ML_TASK_LABELS[t] || t).join(", ") || "none"],
+                                            ["alert threshold", zone.alert_threshold],
+                                        ].map(([k, v]) => (
+                                            <div key={k} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
+                                                <span style={{ color: "#475569", fontSize: 10, width: 100, flexShrink: 0 }}>{k}</span>
+                                                <span style={{ color: "#64748b", fontSize: 10 }}>{v}</span>
+                                            </div>
+                                        ))}
+
+                                        {/* Analytics summary */}
+                                        {ana && (
+                                            <div style={{ marginTop: 10 }}>
+                                                <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Analytics</div>
+                                                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                                                    {[
+                                                        ["Total scans", ana.scans_total],
+                                                        ["Last 30d scans", ana.scans_last_30_days],
+                                                        ["Vessel trend", ana.vessel_activity_trend],
+                                                        ["vs baseline", ana.change_vs_baseline_pct != null ? `${ana.change_vs_baseline_pct > 0 ? "+" : ""}${ana.change_vs_baseline_pct}%` : "—"],
+                                                        ["Last fire", ana.last_fire_detected ? ana.last_fire_detected.slice(0, 10) : "none"],
+                                                        ["Last smoke", ana.last_smoke_detected ? ana.last_smoke_detected.slice(0, 10) : "none"],
+                                                    ].map(([k, v]) => (
+                                                        <div key={k} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                                                            <span style={{ color: "#334155", fontSize: 9 }}>{k}</span>
+                                                            <span style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>{v}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Scan history */}
+                                        {scans.length > 0 && (
+                                            <div style={{ marginTop: 12 }}>
+                                                <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>
+                                                    Scan history ({scans.length})
+                                                </div>
+                                                {scans.slice(0, 10).map(scan => {
+                                                    const rs = scan.result_summary || {}
+                                                    const statusColor = scan.status === "complete" ? "#4ade80" : scan.status === "failed" ? "#f87171" : "#fbbf24"
+                                                    const isSelScan = selectedScan[zone.system_id]?.scan_id === scan.scan_id
+                                                    return (
+                                                        <div key={scan.scan_id}>
+                                                            <div
+                                                                onClick={() => setSelectedScan(prev => ({
+                                                                    ...prev,
+                                                                    [zone.system_id]: isSelScan ? null : scan,
+                                                                }))}
+                                                                style={{
+                                                                    display: "flex", gap: 8, alignItems: "center",
+                                                                    padding: "5px 8px", borderRadius: 3, cursor: "pointer", marginBottom: 2,
+                                                                    background: isSelScan ? "rgba(96,165,250,0.06)" : "rgba(148,163,184,0.03)",
+                                                                }}>
+                                                                <span style={{ color: statusColor, fontSize: 9, fontWeight: 600, width: 55 }}>{scan.status}</span>
+                                                                <span style={{ color: "#475569", fontSize: 9, width: 70 }}>{scan.scan_id}</span>
+                                                                <span style={{ color: "#334155", fontSize: 9 }}>
+                                                                    {scan.created_at ? new Date(scan.created_at).toLocaleString("en-GB", { hour12: false, dateStyle: "short", timeStyle: "short" }) : "—"}
+                                                                </span>
+                                                                <span style={{ color: "#475569", fontSize: 9 }}>
+                                                                    {scan.triggered_by}
+                                                                </span>
+                                                                {rs.total_detections != null && (
+                                                                    <span style={{ color: "#64748b", fontSize: 9 }}>{rs.total_detections} det.</span>
+                                                                )}
+                                                                {scan.cloud_cover_percent != null && (
+                                                                    <span style={{ color: "#334155", fontSize: 9 }}>{scan.cloud_cover_percent.toFixed(0)}% cloud</span>
+                                                                )}
+                                                            </div>
+                                                            {isSelScan && (
+                                                                <ScanDetailPanel
+                                                                    zone={zone}
+                                                                    scan={scan}
+                                                                    onClose={() => setSelectedScan(prev => ({ ...prev, [zone.system_id]: null }))}
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        )}
+
+                                        {/* Detections from latest scan */}
+                                        {latestScan?.result_summary?.total_detections > 0 && (
+                                            <div style={{ marginTop: 8 }}>
+                                                <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                                                    Latest scan detections
+                                                </div>
+                                                {Object.entries(latestScan.result_summary.by_type || {}).map(([t, n]) => (
+                                                    <span key={t} style={{ display: "inline-block", marginRight: 8, fontSize: 10 }}>
+                                                        <span style={{ color: DET_COLORS[t] || "#94a3b8" }}>●</span>
+                                                        <span style={{ color: "#64748b", marginLeft: 3 }}>{t.replace(/_/g, " ")}: {n}</span>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+            </WorkspaceBody>
+            {showCreate && (
+                <CreateZoneModal
+                    onClose={() => setShowCreate(false)}
+                    onCreated={() => { reload(); setShowCreate(false); setToast("Surveillance zone created. First scan scheduled."); setTimeout(() => setToast(""), 4000) }}
+                />
+            )}
+        </div>
+    )
+}
+
 function MLDetectorWorkspace() {
     const [tab, setTab] = useState("training")
     const [models, setModels] = useState([])
@@ -1609,7 +2258,7 @@ function TrainingWorkspace({ detectorSource }) {
             const d = await res.json()
             const items = d.vessels || d.articles || d.detections || []
             setBatch(items.map(i => ({ ...i, _id: i.id || i.review_id || crypto.randomUUID() })))
-        } catch {}
+        } catch (_e) {}
         finally { setGenerating(false) }
     }
 
@@ -1755,7 +2404,7 @@ function ModelUploadZone() {
             const res = await fetch(`${API}/api/forge/models/upload`, { method: "POST", headers: forgeFormHeaders(), body: fd })
             const d = await res.json()
             setMsg(res.ok ? `Uploaded: ${d.name || file.name}` : d.detail || "Failed")
-        } catch { setMsg("Upload failed") }
+        } catch (_e) { setMsg("Upload failed") }
         finally { setUploading(false); if (fileRef.current) fileRef.current.value = "" }
     }
     return (
@@ -2365,7 +3014,7 @@ function DefineConnectionModal({ nodeA, nodeB, existing, onClose, onSave }) {
             const res    = await fetch(url, { method, headers: forgeHeaders(), body: JSON.stringify(body) })
             const d = await res.json()
             if (res.ok) onSave(d)
-        } catch {}
+        } catch (_e) {}
         finally { setSaving(false) }
     }
 
@@ -2567,7 +3216,7 @@ function OntologyWorkspace() {
             const res = await fetch(`${API}/api/forge/ontology/node`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify(entity) })
             const node = await res.json()
             setNodes(prev => [...prev, node])
-        } catch {}
+        } catch (_e) {}
     }
 
     const deleteEntity = async (nodeId, e) => {
@@ -2577,7 +3226,7 @@ function OntologyWorkspace() {
             setNodes(prev => prev.filter(n => n.id !== nodeId))
             setEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId))
             if (selectedNode?.id === nodeId) setSelectedNode(null)
-        } catch {}
+        } catch (_e) {}
     }
 
     const addConnection = async (fromId, toId, type) => {
@@ -2585,14 +3234,14 @@ function OntologyWorkspace() {
             const res = await fetch(`${API}/api/forge/ontology/edge`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify({ source: fromId, target: toId, type }) })
             const edge = await res.json()
             setEdges(prev => [...prev, edge])
-        } catch {}
+        } catch (_e) {}
     }
 
     const deleteConnection = async (edgeId) => {
         try {
             await fetch(`${API}/api/forge/ontology/edge/${edgeId}`, { method: "DELETE", headers: forgeHeaders() })
             setEdges(prev => prev.filter(e => e.id !== edgeId))
-        } catch {}
+        } catch (_e) {}
     }
 
     const edgeCounts = {}

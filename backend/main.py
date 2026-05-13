@@ -8711,6 +8711,53 @@ Write in intelligence briefing style — 3–4 paragraphs maximum."""
         return JSONResponse({"error": str(e)})
 
 
+async def _sentinel_zone_scheduler_loop():
+    """Background loop: every 15 minutes, trigger scans for due WatchZones."""
+    import asyncio as _asyncio_sched
+    _sched_interval = 15 * 60  # 15 minutes
+
+    while True:
+        try:
+            await _asyncio_sched.sleep(_sched_interval)
+            from database import WatchZone, get_db as _gdb
+            now_sched = datetime.now(timezone.utc).replace(tzinfo=None)
+            with _gdb() as _db:
+                due_zones = (
+                    _db.query(WatchZone)
+                    .filter(
+                        WatchZone.enabled == True,
+                        WatchZone.next_scan_at <= now_sched,
+                    )
+                    .all()
+                )
+                zone_data = [
+                    {
+                        "id": z.id, "system_id": z.system_id, "name": z.name,
+                        "bbox_min_lon": z.bbox_min_lon, "bbox_min_lat": z.bbox_min_lat,
+                        "bbox_max_lon": z.bbox_max_lon, "bbox_max_lat": z.bbox_max_lat,
+                        "ml_tasks": z.ml_tasks, "scan_interval_hours": z.scan_interval_hours,
+                        "alert_threshold": z.alert_threshold,
+                    }
+                    for z in due_zones
+                ]
+
+            for zd in zone_data:
+                print(f"[sentinel-scheduler] Scan triggered for zone {zd['system_id']} ({zd['name']})")
+                async def _run_zone(zone_dict=zd):
+                    try:
+                        from sentinel_scanner import SentinelScanner as _Sc
+                        await _asyncio_sched.get_event_loop().run_in_executor(
+                            None, lambda: _Sc().run_scan(zone_dict, triggered_by="schedule")
+                        )
+                    except Exception as _e:
+                        print(f"[sentinel-scheduler] scan error for {zone_dict['system_id']}: {_e}")
+                _asyncio_sched.ensure_future(_run_zone())
+
+        except Exception as _sched_e:
+            print(f"[sentinel-scheduler] loop error: {_sched_e}")
+            await _asyncio_sched.sleep(60)
+
+
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
@@ -8782,6 +8829,7 @@ async def startup_event():
         except Exception:
             print("[forge] using default threat weights")
         asyncio.create_task(_forge_detection_cycle())
+    asyncio.create_task(_sentinel_zone_scheduler_loop())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
 
@@ -13117,6 +13165,509 @@ def api_rules_test(body: dict):
         "positions_checked":  len(history),
         "alerts":             all_alerts[:5],
     }
+
+
+# ── Endpoints: Watch Zones (Sentinel surveillance) ────────────────────────────
+
+import json as _json_wz
+import math as _math_wz
+
+
+def _zone_row_to_dict(row) -> dict:
+    return {
+        "id":                   row.id,
+        "system_id":            row.system_id,
+        "name":                 row.name,
+        "description":          row.description,
+        "polygon_geojson":      _json_wz.loads(row.polygon_geojson) if isinstance(row.polygon_geojson, str) else row.polygon_geojson,
+        "bbox":                 {"min_lon": row.bbox_min_lon, "min_lat": row.bbox_min_lat,
+                                 "max_lon": row.bbox_max_lon, "max_lat": row.bbox_max_lat},
+        "priority":             row.priority,
+        "scan_interval_hours":  row.scan_interval_hours,
+        "enabled":              row.enabled,
+        "created_by":           row.created_by,
+        "created_at":           row.created_at.isoformat() if row.created_at else None,
+        "last_scanned_at":      row.last_scanned_at.isoformat() if row.last_scanned_at else None,
+        "next_scan_at":         row.next_scan_at.isoformat() if row.next_scan_at else None,
+        "ml_tasks":             _json_wz.loads(row.ml_tasks) if isinstance(row.ml_tasks, str) else (row.ml_tasks or []),
+        "alert_threshold":      row.alert_threshold,
+        "metadata":             _json_wz.loads(row.zone_metadata) if row.zone_metadata else {},
+    }
+
+
+def _derive_bbox(polygon_geojson: dict) -> tuple:
+    """Return (min_lon, min_lat, max_lon, max_lat) from a GeoJSON Polygon."""
+    coords = polygon_geojson.get("coordinates", [[]])[0]
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+def _next_zone_system_id(db) -> str:
+    from database import WatchZone
+    count = db.query(WatchZone).count()
+    return f"ZONE-{(count + 1):03d}"
+
+
+def _next_scan_system_id(db) -> str:
+    from database import SentinelScan
+    count = db.query(SentinelScan).count()
+    return f"SCAN-{(count + 1):04d}"
+
+
+def _scan_row_to_dict(row) -> dict:
+    summary = None
+    if row.result_summary:
+        try:
+            summary = _json_wz.loads(row.result_summary)
+        except Exception:
+            summary = row.result_summary
+    return {
+        "id":                   row.id,
+        "scan_id":              row.scan_id,
+        "zone_id":              row.zone_id,
+        "triggered_by":         row.triggered_by,
+        "status":               row.status,
+        "created_at":           row.created_at.isoformat() if row.created_at else None,
+        "completed_at":         row.completed_at.isoformat() if row.completed_at else None,
+        "image_id":             row.image_id,
+        "image_timestamp_utc":  row.image_timestamp_utc.isoformat() if row.image_timestamp_utc else None,
+        "cloud_cover_percent":  row.cloud_cover_percent,
+        "image_age_hours":      row.image_age_hours,
+        "result_summary":       summary,
+        "alert_fired":          row.alert_fired,
+        "error_message":        row.error_message,
+    }
+
+
+def _detection_row_to_dict(row) -> dict:
+    attrs = None
+    if row.attributes:
+        try:
+            attrs = _json_wz.loads(row.attributes)
+        except Exception:
+            attrs = row.attributes
+    geo = None
+    if row.geo_geometry:
+        try:
+            geo = _json_wz.loads(row.geo_geometry)
+        except Exception:
+            geo = row.geo_geometry
+    return {
+        "id":                      row.id,
+        "detection_id":            row.detection_id,
+        "scan_id":                 row.scan_id,
+        "zone_id":                 row.zone_id,
+        "object_type":             row.object_type,
+        "confidence":              row.confidence,
+        "centroid_lat":            row.centroid_lat,
+        "centroid_lon":            row.centroid_lon,
+        "geo_geometry":            geo,
+        "area_m2":                 row.area_m2,
+        "severity":                row.severity,
+        "alert_tier":              row.alert_tier,
+        "attributes":              attrs,
+        "image_crop_url":          row.image_crop_url,
+        "overlay_url":             row.overlay_url,
+        "matched_to_ais":          row.matched_to_ais,
+        "nearest_port":            row.nearest_port,
+        "nearest_infrastructure":  row.nearest_infrastructure,
+        "nearest_chokepoint":      row.nearest_chokepoint,
+        "created_at":              row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@app.post("/api/watch-zones")
+def api_watch_zones_create(body: dict):
+    from database import WatchZone, OntologyEntity, get_db
+    import datetime as _dt_wz
+
+    name            = (body.get("name") or "").strip()
+    polygon_raw     = body.get("polygon_geojson")
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    if not polygon_raw:
+        raise HTTPException(status_code=422, detail="polygon_geojson is required")
+
+    poly = polygon_raw if isinstance(polygon_raw, dict) else _json_wz.loads(polygon_raw)
+    min_lon, min_lat, max_lon, max_lat = _derive_bbox(poly)
+
+    scan_interval = int(body.get("scan_interval_hours", 24))
+    ml_tasks      = body.get("ml_tasks", [])
+    now           = _dt_wz.datetime.utcnow()
+    next_scan     = now + _dt_wz.timedelta(hours=scan_interval)
+
+    with get_db() as db:
+        system_id = _next_zone_system_id(db)
+        zone = WatchZone(
+            system_id           = system_id,
+            name                = name,
+            description         = body.get("description"),
+            polygon_geojson     = _json_wz.dumps(poly),
+            bbox_min_lon        = min_lon,
+            bbox_min_lat        = min_lat,
+            bbox_max_lon        = max_lon,
+            bbox_max_lat        = max_lat,
+            priority            = body.get("priority", "medium"),
+            scan_interval_hours = scan_interval,
+            enabled             = True,
+            created_by          = body.get("created_by"),
+            created_at          = now,
+            next_scan_at        = next_scan,
+            ml_tasks            = _json_wz.dumps(ml_tasks),
+            alert_threshold     = body.get("alert_threshold", "both"),
+            zone_metadata       = _json_wz.dumps(body.get("metadata", {})),
+        )
+        db.add(zone)
+        db.flush()
+
+        onto_meta = _json_wz.dumps({
+            "priority":            zone.priority,
+            "scan_interval_hours": zone.scan_interval_hours,
+            "bbox": {"min_lon": min_lon, "min_lat": min_lat,
+                     "max_lon": max_lon, "max_lat": max_lat},
+        }, ensure_ascii=False)
+        existing_onto = db.query(OntologyEntity).filter(
+            OntologyEntity.system_id == system_id
+        ).first()
+        if existing_onto:
+            existing_onto.name            = name
+            existing_onto.entity_metadata = onto_meta
+        else:
+            db.add(OntologyEntity(
+                system_id       = system_id,
+                entity_type     = "Watch Zone",
+                name            = name,
+                infra_type      = "SENTINEL_ZONE",
+                entity_metadata = onto_meta,
+            ))
+        db.commit()
+        db.refresh(zone)
+        return _zone_row_to_dict(zone)
+
+
+@app.get("/api/watch-zones")
+def api_watch_zones_list():
+    from database import WatchZone, get_db
+    with get_db() as db:
+        zones = db.query(WatchZone).order_by(WatchZone.id).all()
+        return [_zone_row_to_dict(z) for z in zones]
+
+
+@app.get("/api/watch-zones/{system_id}")
+def api_watch_zone_get(system_id: str):
+    from database import WatchZone, get_db
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+        return _zone_row_to_dict(zone)
+
+
+@app.put("/api/watch-zones/{system_id}")
+def api_watch_zone_update(system_id: str, body: dict):
+    from database import WatchZone, OntologyEntity, get_db
+    import datetime as _dt_wz
+
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+
+        interval_changed = False
+        if "name" in body:
+            zone.name = body["name"]
+        if "description" in body:
+            zone.description = body["description"]
+        if "polygon_geojson" in body:
+            poly = body["polygon_geojson"] if isinstance(body["polygon_geojson"], dict) else _json_wz.loads(body["polygon_geojson"])
+            zone.polygon_geojson = _json_wz.dumps(poly)
+            zone.bbox_min_lon, zone.bbox_min_lat, zone.bbox_max_lon, zone.bbox_max_lat = _derive_bbox(poly)
+        if "priority" in body:
+            zone.priority = body["priority"]
+        if "scan_interval_hours" in body:
+            zone.scan_interval_hours = int(body["scan_interval_hours"])
+            interval_changed = True
+        if "enabled" in body:
+            zone.enabled = bool(body["enabled"])
+        if "ml_tasks" in body:
+            zone.ml_tasks = _json_wz.dumps(body["ml_tasks"])
+        if "alert_threshold" in body:
+            zone.alert_threshold = body["alert_threshold"]
+        if "metadata" in body:
+            zone.zone_metadata = _json_wz.dumps(body["metadata"])
+
+        if interval_changed:
+            zone.next_scan_at = _dt_wz.datetime.utcnow() + _dt_wz.timedelta(hours=zone.scan_interval_hours)
+
+        onto = db.query(OntologyEntity).filter(OntologyEntity.system_id == system_id).first()
+        if onto:
+            onto.name = zone.name
+            onto.entity_metadata = _json_wz.dumps({
+                "priority":            zone.priority,
+                "scan_interval_hours": zone.scan_interval_hours,
+                "bbox": {"min_lon": zone.bbox_min_lon, "min_lat": zone.bbox_min_lat,
+                         "max_lon": zone.bbox_max_lon, "max_lat": zone.bbox_max_lat},
+            }, ensure_ascii=False)
+
+        db.commit()
+        db.refresh(zone)
+        return _zone_row_to_dict(zone)
+
+
+@app.delete("/api/watch-zones/{system_id}")
+def api_watch_zone_delete(system_id: str):
+    """Soft delete — sets enabled=false, preserves scan history."""
+    from database import WatchZone, get_db
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+        zone.enabled = False
+        db.commit()
+        return {"deleted": system_id, "note": "soft delete — scan history preserved"}
+
+
+@app.get("/api/watch-zones/{system_id}/scans")
+def api_watch_zone_scans(system_id: str):
+    from database import WatchZone, SentinelScan, get_db
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+        scans = (
+            db.query(SentinelScan)
+            .filter(SentinelScan.zone_id == zone.id)
+            .order_by(SentinelScan.created_at.desc())
+            .all()
+        )
+        return [_scan_row_to_dict(s) for s in scans]
+
+
+@app.get("/api/watch-zones/{system_id}/detections")
+def api_watch_zone_detections(
+    system_id: str,
+    object_type: str = None,
+    min_confidence: float = None,
+    since: str = None,
+):
+    from database import WatchZone, SentinelDetection, get_db
+    import datetime as _dt_wz
+
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+
+        q = db.query(SentinelDetection).filter(SentinelDetection.zone_id == zone.id)
+        if object_type:
+            q = q.filter(SentinelDetection.object_type == object_type)
+        if min_confidence is not None:
+            q = q.filter(SentinelDetection.confidence >= min_confidence)
+        if since:
+            try:
+                since_dt = _dt_wz.datetime.fromisoformat(since.replace("Z", "+00:00")).replace(tzinfo=None)
+                q = q.filter(SentinelDetection.created_at >= since_dt)
+            except Exception:
+                pass
+        detections = q.order_by(SentinelDetection.created_at.desc()).all()
+        return [_detection_row_to_dict(d) for d in detections]
+
+
+@app.get("/api/watch-zones/{system_id}/analytics")
+def api_watch_zone_analytics(system_id: str):
+    from database import WatchZone, SentinelScan, SentinelDetection, get_db
+    import datetime as _dt_wz
+    from collections import defaultdict
+
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+
+        all_scans = db.query(SentinelScan).filter(SentinelScan.zone_id == zone.id).all()
+        all_detections = db.query(SentinelDetection).filter(SentinelDetection.zone_id == zone.id).all()
+
+        now = _dt_wz.datetime.utcnow()
+        cutoff_30 = now - _dt_wz.timedelta(days=30)
+
+        scans_30 = [s for s in all_scans if s.created_at and s.created_at >= cutoff_30]
+
+        det_by_type: dict = defaultdict(int)
+        for d in all_detections:
+            det_by_type[d.object_type] += 1
+
+        # Detections over time — group by date
+        det_by_date: dict = defaultdict(lambda: defaultdict(int))
+        for d in all_detections:
+            if d.created_at:
+                day = d.created_at.strftime("%Y-%m-%d")
+                det_by_date[day][d.object_type] += 1
+
+        detections_over_time = []
+        for day in sorted(det_by_date.keys()):
+            entry = {"date": day, "count": sum(det_by_date[day].values()), "types": dict(det_by_date[day])}
+            detections_over_time.append(entry)
+
+        # Vessel trend — compare first half vs second half of 30-day window
+        vessel_dets = [d for d in all_detections if d.object_type == "vessel" and d.created_at and d.created_at >= cutoff_30]
+        mid = cutoff_30 + _dt_wz.timedelta(days=15)
+        first_half = [d for d in vessel_dets if d.created_at < mid]
+        second_half = [d for d in vessel_dets if d.created_at >= mid]
+        if len(first_half) == 0:
+            trend = "stable"
+        elif len(second_half) > len(first_half) * 1.2:
+            trend = "increasing"
+        elif len(second_half) < len(first_half) * 0.8:
+            trend = "decreasing"
+        else:
+            trend = "stable"
+
+        # Vessel baseline: avg vessels per scan over all scans
+        vessel_counts_per_scan = []
+        for scan in all_scans:
+            if scan.result_summary:
+                try:
+                    s = _json_wz.loads(scan.result_summary) if isinstance(scan.result_summary, str) else scan.result_summary
+                    vc = (s.get("by_type") or {}).get("vessel", 0)
+                    vessel_counts_per_scan.append(vc)
+                except Exception:
+                    pass
+        baseline = sum(vessel_counts_per_scan) / len(vessel_counts_per_scan) if vessel_counts_per_scan else 0
+        current = vessel_counts_per_scan[-1] if vessel_counts_per_scan else 0
+        change_pct = ((current - baseline) / baseline * 100) if baseline > 0 else 0.0
+
+        # Last fire / smoke detections
+        fires = [d for d in all_detections if d.object_type == "fire" and d.created_at]
+        smokes = [d for d in all_detections if d.object_type == "smoke_plume" and d.created_at]
+        last_fire = max((d.created_at for d in fires), default=None)
+        last_smoke = max((d.created_at for d in smokes), default=None)
+
+        return {
+            "zone_id":                   zone.system_id,
+            "zone_name":                 zone.name,
+            "scans_total":               len(all_scans),
+            "scans_last_30_days":        len(scans_30),
+            "detections_by_type":        dict(det_by_type),
+            "detections_over_time":      detections_over_time,
+            "vessel_activity_trend":     trend,
+            "last_fire_detected":        last_fire.isoformat() if last_fire else None,
+            "last_smoke_detected":       last_smoke.isoformat() if last_smoke else None,
+            "baseline_vessel_count":     round(baseline, 2),
+            "current_vessel_count":      float(current),
+            "change_vs_baseline_pct":    round(change_pct, 1),
+        }
+
+
+@app.post("/api/watch-zones/{system_id}/scan-now")
+async def api_watch_zone_scan_now(system_id: str):
+    from database import WatchZone, SentinelScan, get_db
+    import asyncio as _asyncio_wz, datetime as _dt_wz
+
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+        zone_dict = {
+            "id": zone.id, "system_id": zone.system_id, "name": zone.name,
+            "bbox_min_lon": zone.bbox_min_lon, "bbox_min_lat": zone.bbox_min_lat,
+            "bbox_max_lon": zone.bbox_max_lon, "bbox_max_lat": zone.bbox_max_lat,
+            "ml_tasks": zone.ml_tasks, "scan_interval_hours": zone.scan_interval_hours,
+            "alert_threshold": zone.alert_threshold,
+        }
+
+    # Launch scan as background task — scanner creates its own scan record
+    async def _run():
+        try:
+            from sentinel_scanner import SentinelScanner as _Sc
+            await _asyncio_wz.get_event_loop().run_in_executor(
+                None, lambda: _Sc().run_scan(zone_dict, triggered_by="manual")
+            )
+        except Exception as _e:
+            print(f"[scan-now] scan error for {system_id}: {_e}")
+    _asyncio_wz.ensure_future(_run())
+
+    # Return a lightweight immediate response (scan_id assigned by scanner async)
+    with get_db() as db:
+        # Check if scanner already created the row (very fast start)
+        latest = (db.query(SentinelScan)
+                  .filter(SentinelScan.zone_id == zone_dict["id"],
+                          SentinelScan.triggered_by == "manual")
+                  .order_by(SentinelScan.id.desc()).first())
+        if latest:
+            return _scan_row_to_dict(latest)
+    return {"scan_id": "pending", "status": "pending", "zone_id": system_id,
+            "message": "Scan launched — check GET /api/watch-zones/{id}/scans for status"}
+
+
+@app.get("/api/watch-zones/{zone_id}/scans/{scan_id}/detections")
+def api_scan_detections(zone_id: str, scan_id: str):
+    """Return all detections for a specific scan as a GeoJSON FeatureCollection."""
+    from database import WatchZone, SentinelDetection, get_db
+
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == zone_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Watch zone {zone_id} not found")
+
+        dets = (
+            db.query(SentinelDetection)
+            .filter(
+                SentinelDetection.zone_id == zone.id,
+                SentinelDetection.scan_id == scan_id,
+            )
+            .order_by(SentinelDetection.id)
+            .all()
+        )
+
+        features = []
+        for d in dets:
+            props = {
+                "detection_id":   d.detection_id,
+                "object_type":    d.object_type,
+                "confidence":     d.confidence,
+                "severity":       d.severity,
+                "alert_tier":     d.alert_tier,
+                "matched_to_ais": d.matched_to_ais,
+                "area_m2":        d.area_m2,
+                "scan_id":        d.scan_id,
+                "zone_id":        zone_id,
+                "created_at":     d.created_at.isoformat() if d.created_at else None,
+            }
+            attrs = {}
+            if d.attributes:
+                try:
+                    attrs = _json_wz.loads(d.attributes)
+                except Exception:
+                    pass
+            props.update(attrs)
+
+            # Point feature — centroid
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [d.centroid_lon, d.centroid_lat]},
+                "properties": {**props, "feature_role": "centroid"},
+            })
+
+            # Polygon feature — geo_bbox if present
+            if d.geo_geometry:
+                try:
+                    geo = _json_wz.loads(d.geo_geometry) if isinstance(d.geo_geometry, str) else d.geo_geometry
+                    features.append({
+                        "type": "Feature",
+                        "geometry": geo,
+                        "properties": {**props, "feature_role": "bbox", "parent_detection_id": d.detection_id},
+                    })
+                except Exception:
+                    pass
+
+        return {
+            "type": "FeatureCollection",
+            "features": features,
+            "scan_id": scan_id,
+            "zone_id": zone_id,
+            "total_detections": len(dets),
+        }
 
 
 # ── Debug: news pipeline status ───────────────────────────────────────────────

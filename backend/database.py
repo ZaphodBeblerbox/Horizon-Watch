@@ -237,6 +237,75 @@ class RuleConnection(Base):
     created_at                 = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class WatchZone(Base):
+    __tablename__ = "watch_zones"
+
+    id                  = Column(Integer, primary_key=True)
+    system_id           = Column(String, unique=True, index=True, nullable=False)
+    name                = Column(String, nullable=False)
+    description         = Column(String, nullable=True)
+    polygon_geojson     = Column(Text, nullable=False)
+    bbox_min_lon        = Column(Float, nullable=False)
+    bbox_min_lat        = Column(Float, nullable=False)
+    bbox_max_lon        = Column(Float, nullable=False)
+    bbox_max_lat        = Column(Float, nullable=False)
+    priority            = Column(String, nullable=False, default="medium")
+    scan_interval_hours = Column(Integer, nullable=False, default=24)
+    enabled             = Column(Boolean, default=True)
+    created_by          = Column(String, nullable=True)
+    created_at          = Column(DateTime, default=datetime.datetime.utcnow)
+    last_scanned_at     = Column(DateTime, nullable=True)
+    next_scan_at        = Column(DateTime, nullable=True)
+    ml_tasks            = Column(Text, nullable=False, default="[]")
+    alert_threshold     = Column(String, nullable=False, default="both")
+    zone_metadata       = Column(Text, nullable=True)
+
+
+class SentinelScan(Base):
+    __tablename__ = "sentinel_scans"
+
+    id                    = Column(Integer, primary_key=True)
+    scan_id               = Column(String, unique=True, index=True, nullable=False)
+    zone_id               = Column(Integer, ForeignKey("watch_zones.id"), nullable=False, index=True)
+    triggered_by          = Column(String, nullable=False, default="schedule")
+    status                = Column(String, nullable=False, default="pending")
+    created_at            = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at          = Column(DateTime, nullable=True)
+    image_id              = Column(String, nullable=True)
+    image_timestamp_utc   = Column(DateTime, nullable=True)
+    cloud_cover_percent   = Column(Float, nullable=True)
+    image_age_hours       = Column(Float, nullable=True)
+    result_summary        = Column(Text, nullable=True)
+    raw_result_json       = Column(Text, nullable=True)
+    alert_fired           = Column(Boolean, default=False)
+    error_message         = Column(String, nullable=True)
+
+
+class SentinelDetection(Base):
+    __tablename__ = "sentinel_detections"
+
+    id                       = Column(Integer, primary_key=True)
+    detection_id             = Column(String, unique=True, index=True, nullable=False)
+    scan_id                  = Column(String, ForeignKey("sentinel_scans.scan_id"), nullable=False, index=True)
+    zone_id                  = Column(Integer, ForeignKey("watch_zones.id"), nullable=False, index=True)
+    object_type              = Column(String, nullable=False)
+    confidence               = Column(Float, nullable=False)
+    centroid_lat             = Column(Float, nullable=False)
+    centroid_lon             = Column(Float, nullable=False)
+    geo_geometry             = Column(Text, nullable=True)
+    area_m2                  = Column(Float, nullable=True)
+    severity                 = Column(String, nullable=False, default="info")
+    alert_tier               = Column(String, nullable=False, default="silent")
+    attributes               = Column(Text, nullable=True)
+    image_crop_url           = Column(String, nullable=True)
+    overlay_url              = Column(String, nullable=True)
+    matched_to_ais           = Column(Boolean, default=False)
+    nearest_port             = Column(String, nullable=True)
+    nearest_infrastructure   = Column(String, nullable=True)
+    nearest_chokepoint       = Column(String, nullable=True)
+    created_at               = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class WeeklySnapshot(Base):
     __tablename__ = 'weekly_snapshots'
 
@@ -320,7 +389,8 @@ def migrate_db():
 
     conn.commit()
     conn.close()
-    # Create new tables via SQLAlchemy (idempotent) — also creates rule_connections
+    # Create new tables via SQLAlchemy (idempotent) — includes watch_zones,
+    # sentinel_scans, sentinel_detections, rule_connections
     Base.metadata.create_all(bind=engine)
 
 def init_db():
