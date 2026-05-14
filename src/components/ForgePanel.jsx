@@ -1442,12 +1442,16 @@ function _fmtCountdown(nextScanAt) {
 function DrawZoneGlobe({ onPolygon }) {
     const containerRef   = useRef(null)
     const viewerRef      = useRef(null)
-    const verticesRef    = useRef([])      // [[lon, lat], ...]
-    const markerEntRef   = useRef([])      // point entity objects
-    const polyEntRef     = useRef(null)    // filled polygon entity
-    const lineEntRef     = useRef(null)    // preview polyline entity
+    const verticesRef    = useRef([])
+    const markerEntRef   = useRef([])
+    const polyEntRef     = useRef(null)
+    const lineEntRef     = useRef(null)
     const isClosedRef    = useRef(false)
     const [uiState, setUiState] = useState({ count: 0, area: null, closed: false, err: null })
+    const [searchQuery,  setSearchQuery]  = useState("")
+    const [suggestions,  setSuggestions]  = useState([])
+    const [searching,    setSearching]    = useState(false)
+    const searchDebounce = useRef(null)
 
     function _calcAreaKm2(verts) {
         if (verts.length < 3) return 0
@@ -1493,6 +1497,27 @@ function DrawZoneGlobe({ onPolygon }) {
             viewer.imageryLayers.removeAll()
             viewer.imageryLayers.addImageryProvider(esriSatelliteProvider)
             viewer.camera.setView({ destination: Cartesian3.fromDegrees(0, 20, 15_000_000) })
+
+            // Country borders always-on
+            fetch(`${API}/geo/countries`)
+                .then(r => r.ok ? r.json() : null)
+                .then(geo => {
+                    if (!geo || !viewer || viewer.isDestroyed()) return
+                    const { GeoJsonDataSource: GDS, Color: CC } = C
+                    const features = []
+                    for (const f of (geo.features || [])) {
+                        const geom = f.geometry
+                        if (!geom) continue
+                        const rings = []
+                        if (geom.type === "Polygon") rings.push(...geom.coordinates)
+                        else if (geom.type === "MultiPolygon") for (const p of geom.coordinates) rings.push(...p)
+                        else { features.push(f); continue }
+                        for (const ring of rings) features.push({ type: "Feature", geometry: { type: "LineString", coordinates: ring }, properties: f.properties })
+                    }
+                    return GDS.load({ type: "FeatureCollection", features }, { stroke: CC.fromCssColorString("rgba(0,255,136,0.40)"), strokeWidth: 1, clampToGround: true })
+                })
+                .then(ds => { if (ds && viewer && !viewer.isDestroyed()) viewer.dataSources.add(ds) })
+                .catch(() => {})
 
             handler = new SEH(viewer.scene.canvas)
 
@@ -1583,12 +1608,79 @@ function DrawZoneGlobe({ onPolygon }) {
         onPolygon({ type: "Polygon", coordinates: [ring] })
     }
 
+    function handleSearchChange(val) {
+        setSearchQuery(val)
+        clearTimeout(searchDebounce.current)
+        if (!val.trim() || val.length < 2) { setSuggestions([]); return }
+        setSearching(true)
+        searchDebounce.current = setTimeout(() => {
+            fetch(`${API}/geocode?q=${encodeURIComponent(val)}&limit=5`)
+                .then(r => r.ok ? r.json() : null)
+                .then(d => { setSuggestions(Array.isArray(d) ? d : (d?.results ?? [])); setSearching(false) })
+                .catch(() => setSearching(false))
+        }, 350)
+    }
+
+    function handleFlyTo(result) {
+        const viewer = viewerRef.current
+        if (!viewer || viewer.isDestroyed()) return
+        const lon = result.lon ?? result.lng ?? result.longitude
+        const lat = result.lat ?? result.latitude
+        if (lon == null || lat == null) return
+        import("cesium").then(({ Cartesian3 }) => {
+            viewer.camera.flyTo({
+                destination: Cartesian3.fromDegrees(lon, lat, 500_000),
+                duration: 1.5,
+            })
+        }).catch(() => {})
+        setSuggestions([])
+        setSearchQuery(result.display_name || result.name || "")
+    }
+
     const { count, area, closed, err } = uiState
 
     return (
         <div>
             <div style={{ color: "#475569", fontSize: 11, marginBottom: 8 }}>
                 Fly to your area of interest and draw a polygon. Click to place points, double-click to close.
+            </div>
+            {/* Location search */}
+            <div style={{ position: "relative", marginBottom: 8 }}>
+                <input
+                    type="text"
+                    placeholder="Search location…"
+                    value={searchQuery}
+                    onChange={e => handleSearchChange(e.target.value)}
+                    style={{
+                        width: "100%", boxSizing: "border-box",
+                        background: "#0F1721", border: "1px solid #1e293b",
+                        borderRadius: 5, color: "#94a3b8", fontSize: 11,
+                        padding: "5px 8px", outline: "none",
+                    }}
+                />
+                {searching && <span style={{ position: "absolute", right: 8, top: 5, color: "#475569", fontSize: 10 }}>…</span>}
+                {suggestions.length > 0 && (
+                    <div style={{
+                        position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200,
+                        background: "#0F1721", border: "1px solid #1e293b", borderRadius: 5,
+                        maxHeight: 160, overflowY: "auto",
+                    }}>
+                        {suggestions.map((r, i) => (
+                            <div
+                                key={i}
+                                onClick={() => handleFlyTo(r)}
+                                style={{
+                                    padding: "6px 10px", fontSize: 11, color: "#94a3b8",
+                                    cursor: "pointer", borderBottom: "1px solid #0f1721",
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = "#1e293b"}
+                                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                            >
+                                {r.display_name || r.name || JSON.stringify(r)}
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
             {err
                 ? <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{err}</div>
@@ -1835,7 +1927,8 @@ function ScanDetailPanel({ zone, scan, onClose }) {
             <div style={{ display: "flex", gap: 16, marginBottom: 8, flexWrap: "wrap" }}>
                 {[
                     ["Scene", scan.image_id || "—"],
-                    ["Time", scan.image_timestamp_utc ? scan.image_timestamp_utc.slice(0, 16).replace("T", " ") + " UTC" : "—"],
+                    ["Image captured", scan.image_timestamp_utc ? scan.image_timestamp_utc.slice(0, 16).replace("T", " ") + " UTC" : "—"],
+                    ["Scanned", scan.created_at ? new Date(scan.created_at).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "—"],
                     ["Cloud", scan.cloud_cover_percent != null ? `${scan.cloud_cover_percent.toFixed(0)}%` : "—"],
                     ["Image age", scan.image_age_hours != null ? `${scan.image_age_hours.toFixed(1)}h` : "—"],
                 ].map(([k, v]) => (
@@ -2204,9 +2297,14 @@ function SurveillanceZonesWorkspace() {
                                                                 }}>
                                                                 <span style={{ color: statusColor, fontSize: 9, fontWeight: 600, width: 55 }}>{scan.status}</span>
                                                                 <span style={{ color: "#475569", fontSize: 9, width: 70 }}>{scan.scan_id}</span>
-                                                                <span style={{ color: "#334155", fontSize: 9 }}>
+                                                                <span style={{ color: "#334155", fontSize: 9, flex: 1 }}>
                                                                     {scan.created_at ? new Date(scan.created_at).toLocaleString("en-GB", { hour12: false, dateStyle: "short", timeStyle: "short" }) : "—"}
                                                                 </span>
+                                                                {scan.image_timestamp_utc && (
+                                                                    <span style={{ color: "#1e3a5f", fontSize: 9 }} title="Image capture date">
+                                                                        img {scan.image_timestamp_utc.slice(0, 10)}
+                                                                    </span>
+                                                                )}
                                                                 <span style={{ color: "#475569", fontSize: 9 }}>
                                                                     {scan.triggered_by}
                                                                 </span>
@@ -3721,7 +3819,101 @@ function AlertsWorkspace() {
 // MAIN PANEL
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export default function ForgePanel({ user, onClose }) {
+function ForgeMobileView({ onClose }) {
+    const [tab,     setTab]     = useState("alerts")
+    const [rules,   setRules]   = useState([])
+    const [alerts,  setAlerts]  = useState([])
+    const [zones,   setZones]   = useState([])
+
+    useEffect(() => {
+        fetch(`${API}/api/rules`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => setRules(d?.rules ?? []))
+            .catch(() => {})
+        fetch(`${API}/api/forge/alerts`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => setAlerts(Array.isArray(d) ? d : (d?.alerts ?? [])))
+            .catch(() => {})
+        fetch(`${API}/api/watch-zones`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => setZones(Array.isArray(d) ? d : (d?.zones ?? [])))
+            .catch(() => {})
+    }, [])
+
+    const TAB_STYLE = (active) => ({
+        flex: 1, padding: "10px 0", fontSize: 13, fontWeight: 600,
+        background: "transparent", border: "none",
+        borderBottom: active ? "2px solid #4A9EE0" : "2px solid transparent",
+        color: active ? "#4A9EE0" : "#475569", cursor: "pointer",
+        textAlign: "center",
+    })
+
+    return (
+        <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", zIndex: 50, display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif" }}>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #1e293b" }}>
+                <span style={{ color: "#4A9EE0", fontWeight: 700, fontSize: 14, letterSpacing: "0.08em" }}>FORGE</span>
+                <button onClick={onClose} style={{ background: "transparent", border: "none", color: "#475569", fontSize: 18, cursor: "pointer", padding: "0 4px" }}>✕</button>
+            </div>
+            {/* Tab bar */}
+            <div style={{ display: "flex", borderBottom: "1px solid #1e293b" }}>
+                {["alerts", "rules", "zones"].map(t => (
+                    <button key={t} style={TAB_STYLE(tab === t)} onClick={() => setTab(t)}>
+                        {t.charAt(0).toUpperCase() + t.slice(1)}
+                    </button>
+                ))}
+            </div>
+            {/* Content */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "10px 14px" }}>
+                {tab === "alerts" && (
+                    alerts.length === 0
+                        ? <div style={{ color: "#475569", fontSize: 12, padding: 16, textAlign: "center" }}>No recent alerts</div>
+                        : alerts.slice(0, 50).map((a, i) => {
+                            const sev = (a.severity || "info").toLowerCase()
+                            const sevColor = sev === "critical" ? "#ef4444" : sev === "high" ? "#f59e0b" : sev === "medium" ? "#60a5fa" : "#22c55e"
+                            return (
+                                <div key={a._idx ?? i} style={{ background: "rgba(17,24,39,0.7)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${sevColor}` }}>
+                                    <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{a.type || a.rule_name || "Alert"}</div>
+                                    <div style={{ color: "#64748b", fontSize: 10 }}>{a.summary || a.message || "—"}</div>
+                                    <div style={{ color: "#334155", fontSize: 9, marginTop: 3 }}>{a.timestamp ? new Date(a.timestamp).toLocaleString("en-GB", { hour12: false, dateStyle: "short", timeStyle: "short" }) : ""}</div>
+                                </div>
+                            )
+                        })
+                )}
+                {tab === "rules" && (
+                    rules.length === 0
+                        ? <div style={{ color: "#475569", fontSize: 12, padding: 16, textAlign: "center" }}>No rules configured</div>
+                        : rules.map(r => (
+                            <div key={r.id} style={{ background: "rgba(17,24,39,0.7)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${r.enabled ? "#4A9EE0" : "#1e293b"}` }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{r.name}</span>
+                                    <span style={{ color: r.enabled ? "#22c55e" : "#475569", fontSize: 9 }}>{r.enabled ? "ON" : "OFF"}</span>
+                                </div>
+                                <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{r.condition_type} · {r.source_type}</div>
+                            </div>
+                        ))
+                )}
+                {tab === "zones" && (
+                    zones.length === 0
+                        ? <div style={{ color: "#475569", fontSize: 12, padding: 16, textAlign: "center" }}>No surveillance zones</div>
+                        : zones.map(z => (
+                            <div key={z.system_id} style={{ background: "rgba(17,24,39,0.7)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${z.is_active ? "#4A9EE0" : "#1e293b"}` }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{z.name}</span>
+                                    <span style={{ color: z.is_active ? "#22c55e" : "#475569", fontSize: 9 }}>{z.is_active ? "ACTIVE" : "PAUSED"}</span>
+                                </div>
+                                <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>
+                                    {z.last_scanned_at ? `Last scan: ${new Date(z.last_scanned_at).toLocaleString("en-GB", { hour12: false, dateStyle: "short", timeStyle: "short" })}` : "Not yet scanned"}
+                                </div>
+                            </div>
+                        ))
+                )}
+            </div>
+        </div>
+    )
+}
+
+export default function ForgePanel({ user, isMobile = false, onClose }) {
     const [brainStatus, setBrainStatus]   = useState(null)
     const [activeWorkspace, setActiveWorkspace] = useState(null)
     const [activeNode, setActiveNode]     = useState(null)
@@ -3762,6 +3954,8 @@ export default function ForgePanel({ user, onClose }) {
         setActiveWorkspace(null)
         setActiveNode(null)
     }
+
+    if (isMobile) return <ForgeMobileView onClose={onClose} />
 
     return (
         <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", zIndex: 50, display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif" }}>

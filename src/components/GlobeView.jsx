@@ -19,6 +19,7 @@ import GlobeCityLabelsLayer     from "../globe/GlobeCityLabelsLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import GlobeDirectorLayer       from "../globe/GlobeDirectorLayer.jsx"
 import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
+import GlobeThreatHeatmapLayer  from "../globe/GlobeThreatHeatmapLayer.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import API_BASE from "../apiBase.js"
@@ -100,6 +101,7 @@ export default function GlobeView({
     portsEnabled    = false,
     // Forge alerts/rules on the globe
     alertsEnabled = false,
+    threatHeatmapEnabled = false,
     // Director Mode scene (null when inactive)
     directorScene = null,
     // Data props (optional — GlobeView fetches internally when null)
@@ -339,6 +341,9 @@ export default function GlobeView({
 
                 {/* ── Forge alerts layer ──────────────────────────────────────── */}
                 <GlobeAlertsLayer enabled={alertsEnabled} />
+
+                {/* ── Threat heatmap layer ─────────────────────────────────────── */}
+                <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />
 
                 {/* ── Director Mode 3D rendering ──────────────────────────────── */}
                 <GlobeDirectorLayer scene={directorScene} />

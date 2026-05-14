@@ -1411,6 +1411,7 @@ export default function App() {
                             poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                             alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? false}
+                            threatHeatmapEnabled={activeWorkspace?.layers?.threatHeatmap ?? false}
                             airportsEnabled={activeWorkspace?.layers?.airports ?? false}
                             portsEnabled={activeWorkspace?.layers?.ports ?? false}
                             aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
@@ -1544,6 +1545,7 @@ export default function App() {
                         <ForgeGate>
                             <ForgePanel
                                 user={currentUser}
+                                isMobile={isMobile}
                                 onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
                             />
                         </ForgeGate>

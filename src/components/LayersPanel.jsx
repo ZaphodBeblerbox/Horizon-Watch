@@ -158,6 +158,12 @@ function LayerRows3D({ active, onToggle }) {
                 toggled={active.cables}
                 onToggle={() => onToggle("cables")}
             />
+            <LayerRow
+                label="Threat Heatmap"
+                hint="Regional threat levels — refreshed hourly"
+                toggled={active.threatHeatmap ?? false}
+                onToggle={() => onToggle("threatHeatmap")}
+            />
 
             <SectionHeader label="Infrastructure" />
             <LayerRow

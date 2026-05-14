@@ -85,6 +85,7 @@ import usage_tracker
 from classifier import classify_event
 import event_store as es
 import event_bridge
+import threat_matrix
 
 try:
     from langdetect import detect as _langdetect_detect
@@ -9045,6 +9046,31 @@ async def _auto_ingest_task():
         print(f"[auto-ingest] task error: {_e}")
 
 
+async def _threat_matrix_loop():
+    """Hourly threat-matrix cache refresh + midnight daily snapshot."""
+    await asyncio.sleep(10)
+    while True:
+        try:
+            from database import get_db as _gdb_tm
+            active_events = []
+            try:
+                active_events = es.get_active_events()
+            except Exception:
+                pass
+            db = next(_gdb_tm())
+            try:
+                threat_matrix.refresh_cache(db, list(_forge_alerts), active_events)
+                now_utc = datetime.utcnow()
+                if now_utc.hour == 0 and now_utc.minute < 5:
+                    threat_matrix.save_daily_snapshot(db, list(_forge_alerts), active_events)
+                    print("[threat-matrix] daily snapshot saved")
+            finally:
+                db.close()
+        except Exception as _tm_e:
+            print(f"[threat-matrix] loop error: {_tm_e}")
+        await asyncio.sleep(3600)
+
+
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
@@ -9118,6 +9144,7 @@ async def startup_event():
         asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
+    asyncio.create_task(_threat_matrix_loop())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
 
@@ -16210,6 +16237,60 @@ def forge_threat_scores(_forge=Depends(_require_forge)):
 
     scores.sort(key=lambda x: x["score"], reverse=True)
     return scores
+
+
+@app.get("/api/analytics/threat-matrix")
+def analytics_threat_matrix():
+    """Current threat scores for all regions — from hourly in-memory cache."""
+    cached = threat_matrix.get_cached_scores()
+    if cached:
+        return cached
+    # Cache cold (first startup) — compute live
+    active_events = []
+    try:
+        active_events = es.get_active_events()
+    except Exception:
+        pass
+    from database import get_db as _gdb_tm2
+    db = next(_gdb_tm2())
+    try:
+        return threat_matrix.refresh_cache(db, list(_forge_alerts), active_events)
+    finally:
+        db.close()
+
+
+@app.get("/api/analytics/threat-matrix/history")
+def analytics_threat_matrix_history(
+    region_name: str = Query(None),
+    days: int = Query(30, ge=1, le=365),
+):
+    """Historical threat snapshots for a region (or all regions)."""
+    from database import ThreatMatrixSnapshot, get_db as _gdb_tm3
+    import json as _j
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    db = next(_gdb_tm3())
+    try:
+        q = db.query(ThreatMatrixSnapshot).filter(ThreatMatrixSnapshot.snapshot_date >= cutoff)
+        if region_name:
+            q = q.filter(ThreatMatrixSnapshot.region_name == region_name)
+        rows = q.order_by(ThreatMatrixSnapshot.snapshot_date).all()
+        return [
+            {
+                "snapshot_date":             r.snapshot_date,
+                "region_name":               r.region_name,
+                "region_id":                 r.region_id,
+                "threat_score":              r.threat_score,
+                "threat_level":              r.threat_level,
+                "alert_count":               r.alert_count,
+                "forge_alert_count":         r.forge_alert_count,
+                "sentinel_detection_count":  r.sentinel_detection_count,
+                "news_event_count":          r.news_event_count,
+                "contributing_signals":      _j.loads(r.contributing_signals or "[]"),
+            }
+            for r in rows
+        ]
+    finally:
+        db.close()
 
 
 # ── Training data export ──────────────────────────────────────────────────────

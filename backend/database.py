@@ -306,6 +306,25 @@ class SentinelDetection(Base):
     created_at               = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class ThreatMatrixSnapshot(Base):
+    __tablename__ = "threat_matrix_snapshots"
+
+    id                        = Column(Integer, primary_key=True)
+    snapshot_date             = Column(String, nullable=False, index=True)  # YYYY-MM-DD
+    region_name               = Column(String, nullable=False, index=True)
+    region_id                 = Column(String, nullable=True)
+    alert_count               = Column(Integer, default=0)
+    forge_alert_count         = Column(Integer, default=0)
+    sentinel_detection_count  = Column(Integer, default=0)
+    news_event_count          = Column(Integer, default=0)
+    threat_score              = Column(Float, default=0.0)
+    threat_level              = Column(String, default="LOW")
+    contributing_signals      = Column(Text, nullable=True)  # JSON array
+    created_at                = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("snapshot_date", "region_id", name="uq_tm_date_region"),)
+
+
 class WeeklySnapshot(Base):
     __tablename__ = 'weekly_snapshots'
 
