@@ -1,4 +1,5 @@
-// BottomNav — fixed mobile bottom tab bar (< 768px)
+// BottomNav — swipable mobile bottom tab bar (< 768px)
+// Horizontally scrollable so all items fit; scroll-snap keeps taps precise.
 
 const BOTTOM_NAV_STYLES = `
 @keyframes director-nav-pulse {
@@ -9,18 +10,27 @@ const BOTTOM_NAV_STYLES = `
   animation: director-nav-pulse 1.6s ease-in-out infinite;
   color: #f59e0b !important;
 }
+.bottom-nav-scroll::-webkit-scrollbar { display: none; }
+.bottom-nav-scroll { -ms-overflow-style: none; scrollbar-width: none; }
 `
+
+const ITEM_W = 64  // px per nav item
 
 export default function BottomNav({
     activeTabType,
+    rightPanel,
     onSwitchToMap,
     onSwitchToNews,
+    onOpenBriefings,
+    onOpenAnalytics,
     notifUnread,
     onToggleNotif,
     onOpenMenu,
     overwatchActive,
     onToggleOverwatch,
     onOpenPoi,
+    onOpenForge,
+    onOpenLayers,
     directorActive = false,
     onDirectorTap = null,
 }) {
@@ -53,6 +63,32 @@ export default function BottomNav({
             active: activeTabType === "news",
         },
         {
+            id:    "briefings",
+            label: "Briefs",
+            icon:  (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="2" width="16" height="16" rx="2" fill="none"/>
+                    <line x1="6" y1="7"  x2="14" y2="7"/>
+                    <line x1="6" y1="10" x2="11" y2="10"/>
+                    <path d="M13 13 L16 10 L14 8 L11 11 L11 13 Z" strokeWidth="1.2"/>
+                </svg>
+            ),
+            onClick: onOpenBriefings,
+            active: activeTabType === "briefing",
+        },
+        {
+            id:    "analytics",
+            label: "Analytics",
+            icon:  (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="2,15 6,9 10,12 14,5 18,8"/>
+                    <line x1="2" y1="18" x2="18" y2="18"/>
+                </svg>
+            ),
+            onClick: onOpenAnalytics,
+            active: activeTabType === "analytics",
+        },
+        {
             id:    "poi",
             label: "POI",
             icon:  (
@@ -64,6 +100,31 @@ export default function BottomNav({
             ),
             onClick: onOpenPoi,
             active: activeTabType === "poi",
+        },
+        {
+            id:    "forge",
+            label: "Forge",
+            icon:  (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="10,2 13,7 18,7 14.5,11 16,16 10,13 4,16 5.5,11 2,7 7,7"/>
+                </svg>
+            ),
+            onClick: onOpenForge,
+            active: activeTabType === "forge",
+            activeColor: "#4A9EE0",
+        },
+        {
+            id:    "layers",
+            label: "Layers",
+            icon:  (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="10,2 18,6 10,10 2,6"/>
+                    <polyline points="2,10 10,14 18,10"/>
+                    <polyline points="2,14 10,18 18,14"/>
+                </svg>
+            ),
+            onClick: onOpenLayers,
+            active: rightPanel === "layers",
         },
         {
             id:          "director",
@@ -124,40 +185,61 @@ export default function BottomNav({
             backdropFilter: "blur(16px)",
             WebkitBackdropFilter: "blur(16px)",
             borderTop:      "1px solid rgba(255,255,255,0.08)",
-            display:        "flex",
-            alignItems:     "stretch",
             zIndex:         1200,
             fontFamily:     "Inter, -apple-system, sans-serif",
         }}>
-            {items.map(item => (
-                <button
-                    key={item.id}
-                    onClick={item.onClick}
-                    style={{
-                        flex:           1,
-                        display:        "flex",
-                        flexDirection:  "column",
-                        alignItems:     "center",
-                        justifyContent: "center",
-                        gap:            3,
-                        background:     "none",
-                        border:         "none",
-                        cursor:         "pointer",
-                        color:          item.active ? (item.activeColor || "var(--accent-bright, #2d8fe8)") : "rgba(255,255,255,0.35)",
-                        fontSize:       9,
-                        fontWeight:     item.active ? 700 : 400,
-                        letterSpacing:  "0.06em",
-                        textTransform:  "uppercase",
-                        padding:        "6px 0 2px",
-                        transition:     "color 0.15s",
-                        minHeight:      56,
-                        WebkitTapHighlightColor: "transparent",
-                    }}
-                >
-                    {item.icon}
-                    {item.label}
-                </button>
-            ))}
+            {/* Scrollable row — hidden scrollbar, scroll-snap */}
+            <div
+                className="bottom-nav-scroll"
+                style={{
+                    display:            "flex",
+                    alignItems:         "stretch",
+                    height:             56,
+                    overflowX:          "auto",
+                    overflowY:          "hidden",
+                    scrollSnapType:     "x mandatory",
+                    WebkitOverflowScrolling: "touch",
+                    /* fade-out hint on the right edge so user knows it scrolls */
+                    maskImage:          "linear-gradient(to right, black 80%, transparent 100%)",
+                    WebkitMaskImage:    "linear-gradient(to right, black 80%, transparent 100%)",
+                }}
+            >
+                {items.map(item => (
+                    <button
+                        key={item.id}
+                        onClick={item.onClick}
+                        style={{
+                            flexShrink:     0,
+                            width:          ITEM_W,
+                            display:        "flex",
+                            flexDirection:  "column",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            gap:            3,
+                            background:     "none",
+                            border:         "none",
+                            cursor:         "pointer",
+                            color:          item.active ? (item.activeColor || "#2d8fe8") : "rgba(255,255,255,0.35)",
+                            fontSize:       8.5,
+                            fontWeight:     item.active ? 700 : 400,
+                            letterSpacing:  "0.06em",
+                            textTransform:  "uppercase",
+                            padding:        "6px 0 2px",
+                            transition:     "color 0.15s",
+                            minHeight:      56,
+                            scrollSnapAlign: "start",
+                            WebkitTapHighlightColor: "transparent",
+                            /* active indicator dot above icon */
+                            borderTop: item.active ? `2px solid ${item.activeColor || "#2d8fe8"}` : "2px solid transparent",
+                        }}
+                    >
+                        {item.icon}
+                        {item.label}
+                    </button>
+                ))}
+                {/* Spacer so last item doesn't sit behind the fade mask */}
+                <div style={{ flexShrink: 0, width: 20 }} />
+            </div>
         </nav>
         </>
     )

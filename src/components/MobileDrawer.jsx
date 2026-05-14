@@ -62,6 +62,7 @@ export default function MobileDrawer({
     onRightPanel,
     activeTabType,
     onOpenTab,
+    onOpenForge,
     profile,
     currentUser,
     alertCount,
@@ -208,6 +209,16 @@ export default function MobileDrawer({
                         label={`Briefings${briefingUnread > 0 ? ` (${briefingUnread})` : ""}`}
                         active={activeTabType === "briefing"}
                         onClick={() => { onOpenTab("briefing"); onClose() }}
+                    />
+                    <Row
+                        label="Analytics"
+                        active={activeTabType === "analytics"}
+                        onClick={() => { onOpenTab("analytics"); onClose() }}
+                    />
+                    <Row
+                        label="Forge"
+                        active={activeTabType === "forge"}
+                        onClick={() => { onOpenTab("forge"); onClose() }}
                     />
                     <Row
                         label="POI"

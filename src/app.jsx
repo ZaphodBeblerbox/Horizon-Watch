@@ -1911,14 +1911,19 @@ export default function App() {
             {isMobile && (
                 <BottomNav
                     activeTabType={activeTabType}
+                    rightPanel={rightPanel}
                     onSwitchToMap={() => openTab("map")}
                     onSwitchToNews={() => openTab("news")}
+                    onOpenBriefings={() => openTab("briefing")}
+                    onOpenAnalytics={() => openTab("analytics")}
+                    onOpenPoi={() => openTab("poi")}
+                    onOpenForge={() => openTab("forge")}
+                    onOpenLayers={() => openRightPanel("layers")}
                     notifUnread={unreadCount}
                     onToggleNotif={() => setNotifOpen(v => !v)}
                     onOpenMenu={() => setMobileDrawerOpen(true)}
                     overwatchActive={overwatchActive}
                     onToggleOverwatch={() => setOverwatchActive(v => !v)}
-                    onOpenPoi={() => openTab("poi")}
                     directorActive={directorVisible}
                     onDirectorTap={() => directorVisible ? handleDirectorClose() : setDirectorModalOpen(true)}
                 />
