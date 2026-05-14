@@ -92,6 +92,12 @@ def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn):
                 event_type=bridge_event_type,
                 significance_score=int(article.get('relevance_score') or 50),
                 location_confidence=article.get('location_confidence') or '',
+                extracted_location=article.get('extracted_location') or '',
+                extraction_confidence=article.get('extraction_confidence') or '',
+                article_type=article.get('article_type') or '',
+                relevance_score=float(article.get('llm_relevance_score') or 0) or None,
+                relevance_tier=article.get('relevance_tier') or '',
+                llm_extracted=bool(article.get('llm_extracted')),
             )
             if result:
                 ingested += 1

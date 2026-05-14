@@ -6,6 +6,7 @@ import { makeTypedEventCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, EVENTS_CAP } from "./isMobile.js"
 
+// Colours for legacy event_type classifier (keyword-based)
 const TYPE_HEX = {
     missile:      "#ef4444",
     airstrike:    "#ef4444",
@@ -23,6 +24,20 @@ const TYPE_HEX = {
 }
 const DEFAULT_HEX = "#64748b"
 
+// Colours for LLM-extracted article_type
+const ARTICLE_TYPE_HEX = {
+    conflict:       "#FF3B30",
+    maritime:       "#34AADC",
+    aviation:       "#5856D6",
+    infrastructure: "#FF9500",
+    energy:         "#FFCC00",
+    political:      "#8E8E93",
+    economic:       "#30D158",
+    cyber:          "#FF2D55",
+    disaster:       "#FF6B35",
+    other:          "#8E8E93",
+}
+
 const TYPE_MAP = {
     missile:      "missile",
     airstrike:    "explosion",
@@ -39,6 +54,9 @@ const TYPE_MAP = {
 }
 
 function hexForEvent(ev) {
+    // Prefer LLM article_type colour if available
+    const at = (ev.article_type || "").toLowerCase()
+    if (at && ARTICLE_TYPE_HEX[at]) return ARTICLE_TYPE_HEX[at]
     const t = (ev.event_type || ev.type || "").toLowerCase()
     return TYPE_HEX[t] || DEFAULT_HEX
 }
@@ -55,7 +73,21 @@ function getIcon(type, hex) {
     return ICON_CACHE[key]
 }
 
-export default function GlobeEventsLayer({ enabled, bounds = null }) {
+// Muted hex for low-relevance events (desaturate toward grey)
+function mutedHex(hex) {
+    try {
+        const r = parseInt(hex.slice(1, 3), 16)
+        const g = parseInt(hex.slice(3, 5), 16)
+        const b = parseInt(hex.slice(5, 7), 16)
+        const grey = Math.round(r * 0.3 + g * 0.59 + b * 0.11)
+        const mr = Math.round(r * 0.5 + grey * 0.5)
+        const mg = Math.round(g * 0.5 + grey * 0.5)
+        const mb = Math.round(b * 0.5 + grey * 0.5)
+        return `#${mr.toString(16).padStart(2, "0")}${mg.toString(16).padStart(2, "0")}${mb.toString(16).padStart(2, "0")}`
+    } catch (_) { return hex }
+}
+
+export default function GlobeEventsLayer({ enabled, bounds = null, minRelevance = 4 }) {
     const [events, setEvents] = useState([])
 
     useEffect(() => {
@@ -90,22 +122,38 @@ export default function GlobeEventsLayer({ enabled, bounds = null }) {
 
     if (!enabled || !events.length) return null
 
-    // Mobile: cap rendered events to prevent crash. Backend already returns
-    // most-recent-first so .slice() preserves the freshest events.
-    const visible = isMobile ? events.slice(0, EVENTS_CAP) : events
+    // Filter by relevance (default Medium+ = 4). Events without LLM score default to 5.
+    const filtered = events.filter(e => (e.relevance_score ?? 5) >= minRelevance)
+
+    // Mobile: cap rendered events to prevent crash.
+    const visible = isMobile ? filtered.slice(0, EVENTS_CAP) : filtered
 
     return (
         <>
             {visible.map(ev => {
                 if (!ev.lat || !ev.lon || !isFinite(ev.lat) || !isFinite(ev.lon)) return null
-                const hex   = hexForEvent(ev)
+
+                const tier = (ev.relevance_tier || "medium").toLowerCase()
+                const baseHex = hexForEvent(ev)
+                const hex   = tier === "low" ? mutedHex(baseHex) : baseHex
                 const type  = typeForEvent(ev)
                 const icon  = getIcon(type, hex)
                 if (!icon || icon.width === 0 || icon.height === 0) return null
-                // Approximate position (geocoded to city/region centroid) — smaller icon
+
+                // Base icon size from location confidence
                 const approxConf = ev.location_confidence || ""
                 const isApprox = approxConf === "fallback_region" || approxConf === "relaxed" || approxConf === "fallback_country"
-                const iconSize = isApprox ? 32 : 44
+                const baseSize = isApprox ? 32 : 44
+
+                // Scale and alpha by relevance tier
+                let iconSize = baseSize
+                let alpha    = 1.0
+                if (tier === "medium") { iconSize = Math.round(baseSize * 0.7); alpha = 0.75 }
+                if (tier === "low")    { iconSize = Math.round(baseSize * 0.5); alpha = 0.45 }
+
+                const cesiumColor = (isApprox || tier !== "high")
+                    ? Color.fromAlpha(Color.WHITE, Math.min(alpha, isApprox ? 0.6 : 1.0) * alpha)
+                    : undefined
 
                 return (
                     <Entity
@@ -116,7 +164,7 @@ export default function GlobeEventsLayer({ enabled, bounds = null }) {
                             image:      icon,
                             width:      iconSize,
                             height:     iconSize,
-                            color:      isApprox ? Color.fromAlpha(Color.WHITE, 0.6) : undefined,
+                            color:      cesiumColor,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
                             scaleByDistance:          new NearFarScalar(1000, 1.0, 8_000_000, 0.25),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),

@@ -72,7 +72,37 @@ function SectionHeader({ label }) {
     )
 }
 
-function LayerRows3D({ active, onToggle }) {
+function RelevanceFilter({ value = 4, onChange }) {
+    const opts = [
+        { label: "All",     val: 0 },
+        { label: "Med+",    val: 4 },
+        { label: "High",    val: 7 },
+    ]
+    return (
+        <div style={{ display: "flex", gap: 4, marginTop: 4, marginBottom: 6 }}>
+            {opts.map(o => (
+                <button
+                    key={o.val}
+                    onClick={() => onChange(o.val)}
+                    style={{
+                        flex:          1,
+                        padding:       "3px 0",
+                        fontSize:      10,
+                        fontWeight:    value === o.val ? 700 : 400,
+                        background:    value === o.val ? "rgba(45,143,232,0.22)" : "rgba(255,255,255,0.04)",
+                        border:        `1px solid ${value === o.val ? "rgba(45,143,232,0.5)" : "rgba(255,255,255,0.08)"}`,
+                        borderRadius:  4,
+                        color:         value === o.val ? "#4A9EE0" : "rgba(232,237,242,0.5)",
+                        cursor:        "pointer",
+                        transition:    "background 0.15s, color 0.15s",
+                    }}
+                >{o.label}</button>
+            ))}
+        </div>
+    )
+}
+
+function LayerRows3D({ active, onToggle, onLayerSet }) {
     return (
         <>
             <SectionHeader label="Imagery" />
@@ -140,6 +170,12 @@ function LayerRows3D({ active, onToggle }) {
                 toggled={active.unifiedEvents ?? true}
                 onToggle={() => onToggle("unifiedEvents")}
             />
+            {(active.unifiedEvents ?? true) && onLayerSet && (
+                <RelevanceFilter
+                    value={active.eventsMinRelevance ?? 4}
+                    onChange={v => onLayerSet("eventsMinRelevance", v)}
+                />
+            )}
             <LayerRow
                 label="Points of Interest"
                 hint="User-created markers"
@@ -229,6 +265,7 @@ function AutoModeSection({ enabled, onToggle }) {
 export default function LayersPanel({
     active,
     onToggle,
+    onLayerSet = null,
     onClose,
     autoModeEnabled = false,
     onAutoMode = null,
@@ -244,7 +281,7 @@ export default function LayersPanel({
         <AutoModeSection enabled={autoModeEnabled} onToggle={onAutoMode} />
     ) : null
 
-    const rows = <LayerRows3D active={active} onToggle={onToggle} />
+    const rows = <LayerRows3D active={active} onToggle={onToggle} onLayerSet={onLayerSet} />
 
     const header = (
         <div style={{

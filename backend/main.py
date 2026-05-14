@@ -81,6 +81,7 @@ from location_extract import (
     country_name_from_code,
 )
 from article_extract import get_article_preview
+from article_intelligence import extract_article_intelligence
 import usage_tracker
 from classifier import classify_event
 import event_store as es
@@ -5371,7 +5372,9 @@ def _run_news_conflict_extraction_sync():
     global _NEWS_CONFLICT_MARKERS, _PROCESSED_URLS, _FIRST_EXTRACTION_DONE
 
     MAX_NOM_CALLS = 100       # hard cap per cycle (only counts uncached HTTP calls)
+    MAX_LLM_CALLS = 20        # cap LLM calls per feed cycle to avoid rate-limit spikes
     nom_calls = 0
+    llm_calls_this_cycle = 0
     new_markers = []
     feeds_loaded = 0
     articles_fetched = 0
@@ -5602,6 +5605,46 @@ def _run_news_conflict_extraction_sync():
                 "image_url": entry_image_url,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
+
+            # ── LLM intelligence extraction (Claude Haiku) ────────────────────
+            existing_stored = _NEWS_ARTICLE_STORE.get(url, {})
+            if existing_stored.get("llm_extracted"):
+                # Carry over already-extracted fields so _upsert doesn't wipe them
+                for _f in ("extracted_location", "extraction_confidence", "article_type",
+                           "llm_relevance_score", "relevance_reasoning", "relevance_tier",
+                           "llm_extracted"):
+                    if _f in existing_stored:
+                        article_record[_f] = existing_stored[_f]
+            elif client and llm_calls_this_cycle < MAX_LLM_CALLS:
+                try:
+                    intel = extract_article_intelligence(title, summary, source_name)
+                    article_record.update({
+                        "extracted_location":   intel.get("location") or "",
+                        "extraction_confidence": intel.get("location_confidence") or "none",
+                        "article_type":          intel.get("article_type") or "other",
+                        "llm_relevance_score":   intel.get("relevance_score"),
+                        "relevance_reasoning":   intel.get("relevance_reasoning") or "",
+                        "relevance_tier":        intel.get("relevance_tier") or "medium",
+                        "llm_extracted":         True,
+                    })
+                    llm_calls_this_cycle += 1
+                    time.sleep(0.1)
+                    # If LLM found a location the geocoder missed, try to improve coords
+                    llm_loc = intel.get("location")
+                    if llm_loc and llm_loc != winning_candidate:
+                        _lgeos = geocode_place(llm_loc)
+                        if _lgeos:
+                            _lg = _lgeos[0]
+                            _llat = float(_lg.get("lat", 0))
+                            _llon = float(_lg.get("lon", 0))
+                            if _llat != 0.0 and _llon != 0.0:
+                                article_record["lat"] = _llat
+                                article_record["lon"] = _llon
+                                article_record["location_name"] = _lg.get("display_name")
+                                article_record["location_confidence"] = "llm_geocoded"
+                except Exception as _llm_err:
+                    print(f"[article-intelligence] skipped for '{title[:50]}': {_llm_err}")
+
             _upsert_news_article(article_record)
             marker = _make_news_marker(article_record)
             if marker:
@@ -9807,6 +9850,70 @@ def debug_news_conflicts():
         report["feeds"].append(feed_report)
 
     return report
+
+
+# ── /api/admin/backfill-article-intelligence ──────────────────────────────────
+
+@app.post("/api/admin/backfill-article-intelligence")
+async def backfill_article_intelligence():
+    """
+    One-time backfill: process all articles in _NEWS_ARTICLE_STORE that
+    haven't been LLM-extracted yet. Run after deploy to backfill existing data.
+    """
+    if not client:
+        return {"error": "ANTHROPIC_API_KEY not set"}
+
+    loop = asyncio.get_event_loop()
+
+    def _run():
+        with _NEWS_STORE_LOCK:
+            pending = [
+                (url, dict(a)) for url, a in _NEWS_ARTICLE_STORE.items()
+                if not a.get("llm_extracted")
+            ]
+        total = len(pending)
+        processed = 0
+        for url, article in pending:
+            title   = article.get("title") or ""
+            summary = article.get("summary") or ""
+            source  = article.get("source") or ""
+            if not title:
+                continue
+            try:
+                intel = extract_article_intelligence(title, summary, source)
+                updates = {
+                    "extracted_location":    intel.get("location") or "",
+                    "extraction_confidence": intel.get("location_confidence") or "none",
+                    "article_type":          intel.get("article_type") or "other",
+                    "llm_relevance_score":   intel.get("relevance_score"),
+                    "relevance_reasoning":   intel.get("relevance_reasoning") or "",
+                    "relevance_tier":        intel.get("relevance_tier") or "medium",
+                    "llm_extracted":         True,
+                }
+                # If LLM found a location and article has no coords, try geocoding
+                llm_loc = intel.get("location")
+                if llm_loc and not article.get("lat"):
+                    _lgeos = geocode_place(llm_loc)
+                    if _lgeos:
+                        _lg = _lgeos[0]
+                        _llat = float(_lg.get("lat", 0))
+                        _llon = float(_lg.get("lon", 0))
+                        if _llat != 0.0 and _llon != 0.0:
+                            updates["lat"] = _llat
+                            updates["lon"] = _llon
+                            updates["location_name"] = _lg.get("display_name")
+                            updates["location_confidence"] = "llm_geocoded"
+                with _NEWS_STORE_LOCK:
+                    if url in _NEWS_ARTICLE_STORE:
+                        _NEWS_ARTICLE_STORE[url].update(updates)
+                processed += 1
+            except Exception as _err:
+                print(f"[backfill-intel] error on '{title[:50]}': {_err}")
+            time.sleep(0.1)
+        return {"total": total, "processed": processed, "remaining": total - processed}
+
+    result = await loop.run_in_executor(_executor, _run)
+    return result
 
 
 # ── /satellite/search ─────────────────────────────────────────────────────────

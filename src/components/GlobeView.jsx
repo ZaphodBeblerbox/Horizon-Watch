@@ -103,6 +103,7 @@ export default function GlobeView({
     // Forge alerts/rules on the globe
     alertsEnabled = false,
     threatHeatmapEnabled = false,
+    eventsMinRelevance = 4,
     autoModeEnabled = false,
     // Director Mode scene (null when inactive)
     directorScene = null,
@@ -321,7 +322,7 @@ export default function GlobeView({
                 {/* ── Point / entity layers ───────────────────────────────────── */}
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
                 <GlobePOILayer          enabled={poiEnabled} />
-                <GlobeEventsLayer       enabled={eventsEnabled} bounds={viewBounds} />
+                <GlobeEventsLayer       enabled={eventsEnabled} bounds={viewBounds} minRelevance={eventsMinRelevance} />
                 <GlobeCityLabelsLayer   enabled={cityLabelsEnabled} />
 
                 {/* ── Heatmap overlays (rectangle entities, clamped to ground) ─ */}

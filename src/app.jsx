@@ -1411,6 +1411,7 @@ export default function App() {
                             chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
                             poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
+                            eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 4}
                             alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? false}
                             threatHeatmapEnabled={activeWorkspace?.layers?.threatHeatmap ?? false}
                             airportsEnabled={activeWorkspace?.layers?.airports ?? false}
@@ -1433,6 +1434,10 @@ export default function App() {
                             onToggle={(key) => handleLayersChange({
                                 ...(activeWorkspace?.layers ?? {}),
                                 [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
+                            })}
+                            onLayerSet={(key, val) => handleLayersChange({
+                                ...(activeWorkspace?.layers ?? {}),
+                                [key]: val,
                             })}
                             onClose={() => setRightPanel(null)}
                             autoModeEnabled={showAutoMode}
