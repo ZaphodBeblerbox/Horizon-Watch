@@ -132,9 +132,10 @@ export default function GlobeAutoMode({ enabled, isMobile = false }) {
 
                     // 1. Fly
                     rotateRef.current = false
+                    const currentAlt = viewer.camera.positionCartographic?.height ?? 8_000_000
                     await new Promise(res => {
                         viewer.camera.flyTo({
-                            destination:    Cartesian3.fromDegrees(lon, lat, isMobile ? 1_200_000 : 800_000),
+                            destination:    Cartesian3.fromDegrees(lon, lat, currentAlt),
                             duration:       4.0,
                             easingFunction: EasingFunction.SINUSOIDAL_IN_OUT,
                             complete: res, cancel: res,
