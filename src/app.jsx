@@ -221,6 +221,7 @@ export default function App() {
     const [directorScanProgress,  setDirectorScanProgress]  = useState(null)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+    const [showAutoMode, setShowAutoMode] = useState(false)
     const [heatmapHours, setHeatmapHours] = useState(24)
     const [overwatchDetections, setOverwatchDetections] = useState([])
 
@@ -1325,7 +1326,7 @@ export default function App() {
                 </div>
             )}
             {/* ── Topbar — 40px, full width ─────────────────────────────────── */}
-            <TopBar
+            {!showAutoMode && <TopBar
                 tabs={tabs}
                 activeTabId={activeTabId}
                 onTabSwitch={switchTab}
@@ -1338,7 +1339,7 @@ export default function App() {
                 searchApiBase={API}
                 showSignIn={authChecked && !currentUser && !showLoginModal}
                 onSignIn={() => setShowLoginModal(true)}
-            />
+            />}
 
             {/* ── Notification toasts — new event alerts ─────────────────────── */}
             <NotificationBar onEventClick={(n) => {
@@ -1349,10 +1350,10 @@ export default function App() {
             }} />
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
-            <div style={{ flex: 1, display: "flex", minHeight: 0, paddingBottom: isMobile ? 56 : 0 }}>
+            <div style={{ flex: 1, display: "flex", minHeight: 0, paddingBottom: (isMobile && !showAutoMode) ? 56 : 0 }}>
 
                 {/* Sidebar — 48px, desktop only */}
-                {!isMobile && (
+                {!isMobile && !showAutoMode && (
                     <Sidebar
                         rightPanel={rightPanel}
                         onRightPanel={openRightPanel}
@@ -1423,6 +1424,7 @@ export default function App() {
                             onOverwatchBounds={handleOverwatchBounds}
                             satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
                             directorScene={directorScene}
+                            autoModeEnabled={showAutoMode}
                         />
                     </Suspense>
                     {rightPanel === "layers" && (
@@ -1433,6 +1435,11 @@ export default function App() {
                                 [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
                             })}
                             onClose={() => setRightPanel(null)}
+                            autoModeEnabled={showAutoMode}
+                            onAutoMode={(v) => {
+                                setShowAutoMode(v)
+                                if (v) setRightPanel(null)
+                            }}
                         />
                     )}
                     {(activeWorkspace?.layers?.aisHeatmap || activeWorkspace?.layers?.adsbHeatmap) && (
@@ -1907,8 +1914,38 @@ export default function App() {
                 toastDuration={appSettings.toastDuration}
             />
 
+            {/* Auto mode exit button — visible on all screen sizes */}
+            {showAutoMode && (
+                <button
+                    onClick={() => setShowAutoMode(false)}
+                    style={{
+                        position:       "fixed",
+                        top:            12,
+                        right:          12,
+                        zIndex:         2100,
+                        background:     "rgba(8,12,22,0.88)",
+                        border:         "1px solid rgba(255,255,255,0.15)",
+                        borderRadius:   6,
+                        color:          "rgba(232,237,242,0.8)",
+                        fontSize:       11,
+                        fontWeight:     600,
+                        letterSpacing:  "0.06em",
+                        padding:        "6px 12px",
+                        cursor:         "pointer",
+                        backdropFilter: "blur(10px)",
+                        WebkitBackdropFilter: "blur(10px)",
+                        boxShadow:      "0 2px 12px rgba(0,0,0,0.4)",
+                        display:        "flex",
+                        alignItems:     "center",
+                        gap:            6,
+                    }}
+                >
+                    <span style={{ fontSize: 14, lineHeight: 1 }}>×</span> Exit Auto
+                </button>
+            )}
+
             {/* Mobile bottom nav */}
-            {isMobile && (
+            {isMobile && !showAutoMode && (
                 <BottomNav
                     activeTabType={activeTabType}
                     rightPanel={rightPanel}
@@ -1930,7 +1967,7 @@ export default function App() {
             )}
 
             {/* Mobile drawer overlay */}
-            {isMobile && (
+            {isMobile && !showAutoMode && (
                 <MobileDrawer
                     open={mobileDrawerOpen}
                     onClose={() => setMobileDrawerOpen(false)}

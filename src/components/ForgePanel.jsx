@@ -69,6 +69,7 @@ export const PIPELINE_NODES = [
     { id: 'int_threat',      label: 'Threat Scoring',        column: 3, type: 'intelligence', status: 'active',     config: {} },
     { id: 'int_patterns',    label: 'Pattern Recognition',   column: 3, type: 'intelligence', status: 'active',     config: {} },
     { id: 'int_escalation',  label: 'Escalation Detector',   column: 3, type: 'intelligence', status: 'active',     config: {} },
+    { id: 'int_rule_logic',  label: 'Rule Logic',            column: 3, type: 'intelligence', status: 'active',     config: {} },
     { id: 'out_alerts',      label: 'Alert System',          column: 4, type: 'output',       status: 'active',     config: {} },
     { id: 'out_briefings',   label: 'Director Briefings',    column: 4, type: 'output',       status: 'active',     config: {} },
     { id: 'out_reports',     label: 'Reports',               column: 4, type: 'output',       status: 'active',     config: {} },
@@ -94,7 +95,7 @@ const WS_MAP = {
     src_satellite: 'satellite-source', src_uploads: 'uploads-source', src_osint: 'osint-source',
     det_ais: 'ais-detector', det_adsb: 'adsb-detector', det_news: 'news-detector', det_overwatch: 'ml-detector', det_sentinel: 'surveillance-zones',
     enr_correlation: 'brain', enr_ontology: 'ontology', enr_geocode: 'geocoder',
-    int_threat: 'brain', int_patterns: 'brain', int_escalation: 'brain',
+    int_threat: 'brain', int_patterns: 'brain', int_escalation: 'brain', int_rule_logic: 'rule-logic',
     out_alerts: 'alerts', out_briefings: 'briefings', out_reports: 'reports',
 }
 
@@ -271,6 +272,678 @@ function ForgeHeader({ brainStatus, activeNode, onBack }) {
 }
 
 // ── Workspace router ───────────────────────────────────────────────────────────
+// ── Rule Logic Canvas ──────────────────────────────────────────────────────────
+
+const DOMAIN_COLORS = {
+    ais:        "#34AADC",
+    adsb:       "#5856D6",
+    sentinel:   "#30D158",
+    news:       "#FF9500",
+    chokepoint: "#FFCC00",
+}
+
+const EDGE_COLORS = {
+    ESCALATION:  "#FF3B30",
+    CORRELATION: "#34AADC",
+    SEQUENCE:    "#FFCC00",
+    SUPPRESSION: "#8E8E93",
+}
+
+const NODE_W = 164
+const NODE_H = 88
+const COL_X  = [40, 240, 440, 640, 840]
+const STORAGE_KEY = "forge-rule-logic-positions"
+
+const DOMAIN_ORDER = ["ais", "adsb", "sentinel", "news", "chokepoint"]
+
+function getDomain(rule) {
+    const s = ((rule.rule_name || "") + " " + (rule.trigger_type || "") + " " + (rule.name || "")).toLowerCase()
+    if (s.includes("adsb") || s.includes("aircraft") || s.includes("squawk")) return "adsb"
+    if (s.includes("sentinel") || s.includes("satellite") || s.includes("overwatch") || s.includes("ml")) return "sentinel"
+    if (s.includes("news") || s.includes("keyword") || s.includes("rss") || s.includes("article")) return "news"
+    if (s.includes("chokepoint") || s.includes("strait")) return "chokepoint"
+    return "ais"
+}
+
+function defaultPositions(rules) {
+    const cols = Object.fromEntries(DOMAIN_ORDER.map(d => [d, []]))
+    rules.forEach(r => cols[getDomain(r)].push(r))
+    const pos = {}
+    DOMAIN_ORDER.forEach((dom, ci) => {
+        cols[dom].forEach((r, ri) => {
+            pos[r.id] = { x: COL_X[ci], y: 50 + ri * (NODE_H + 28) }
+        })
+    })
+    return pos
+}
+
+function loadPositions() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") } catch (_) { return {} }
+}
+
+function savePositions(pos) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(pos)) } catch (_) {}
+}
+
+function edgePlainEnglish(conn) {
+    const a = conn.rule_name_a || `Rule ${conn.rule_id_a}`
+    const b = conn.rule_name_b || `Rule ${conn.rule_id_b}`
+    const tw = conn.time_window_minutes ?? 30
+    const sw = conn.sequence_window_minutes ?? 30
+    const supW = conn.suppression_window_minutes ?? 30
+    switch (conn.relationship_type) {
+        case "ESCALATION":
+            return `When both rules fire on the same vessel within ${tw}min, individual alerts are suppressed and a single combined ${conn.escalated_severity || "high"} alert fires instead.`
+        case "CORRELATION":
+            return `When both rules fire on the same vessel within ${tw}min, the alerts are flagged as correlated. No new alert fires but both are linked.`
+        case "SEQUENCE":
+            return `Rule B (${b}) will only fire if Rule A (${a}) has already fired for the same vessel within the past ${sw}min.`
+        case "SUPPRESSION":
+            return `When ${a} fires, ${b} is silenced for ${supW}min to prevent duplicate noise.`
+        default:
+            return ""
+    }
+}
+
+function ConnModal({ rules, editConn, defaultFrom, defaultTo, onClose, onSaved }) {
+    const [name,      setName]      = useState(editConn?.connection_name ?? "")
+    const [ruleA,     setRuleA]     = useState(editConn?.rule_id_a ?? defaultFrom ?? "")
+    const [ruleB,     setRuleB]     = useState(editConn?.rule_id_b ?? defaultTo ?? "")
+    const [relType,   setRelType]   = useState(editConn?.relationship_type ?? "ESCALATION")
+    const [twMin,     setTwMin]     = useState(editConn?.time_window_minutes ?? 30)
+    const [seqMin,    setSeqMin]    = useState(editConn?.sequence_window_minutes ?? 30)
+    const [supMin,    setSupMin]    = useState(editConn?.suppression_window_minutes ?? 30)
+    const [escSev,    setEscSev]    = useState(editConn?.escalated_severity ?? "critical")
+    const [escIcon,   setEscIcon]   = useState(editConn?.escalated_icon_type ?? "")
+    const [notes,     setNotes]     = useState(editConn?.notes ?? "")
+    const [saving,    setSaving]    = useState(false)
+
+    const ruleNameA = rules.find(r => r.id === Number(ruleA))
+    const ruleNameB = rules.find(r => r.id === Number(ruleB))
+    const autoName  = ruleNameA && ruleNameB
+        ? `${ruleNameA.name || ruleNameA.rule_name} → ${ruleNameB.name || ruleNameB.rule_name}`
+        : ""
+
+    async function handleSave() {
+        if (!ruleA || !ruleB || ruleA === ruleB) return
+        setSaving(true)
+        const body = {
+            connection_name:            name || autoName || "Connection",
+            rule_id_a:                  Number(ruleA),
+            rule_id_b:                  Number(ruleB),
+            relationship_type:          relType,
+            time_window_minutes:        Number(twMin),
+            sequence_window_minutes:    relType === "SEQUENCE"    ? Number(seqMin)  : null,
+            suppression_window_minutes: relType === "SUPPRESSION" ? Number(supMin)  : null,
+            escalated_severity:         relType === "ESCALATION"  ? escSev          : null,
+            escalated_icon_type:        relType === "ESCALATION"  ? (escIcon || null) : null,
+            notes: notes || null,
+        }
+        const url = editConn
+            ? `${API}/api/rule-connections/${editConn.id}`
+            : `${API}/api/rule-connections`
+        const method = editConn ? "PUT" : "POST"
+        try {
+            const r = await fetch(url, { method, headers: { ...forgeHeaders(), "Content-Type": "application/json" }, body: JSON.stringify(body) })
+            if (r.ok) { const d = await r.json(); onSaved(d) }
+        } catch (_) {}
+        setSaving(false)
+    }
+
+    const inp = { ...inputStyle, width: "100%", boxSizing: "border-box", marginBottom: 8 }
+    const lbl = { color: "#475569", fontSize: 10, marginBottom: 3, display: "block" }
+
+    return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)" }} />
+            <div style={{ position: "relative", background: "#0d1425", border: "1px solid rgba(148,163,184,0.1)", borderRadius: 10, padding: "20px 22px", width: 380, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto", zIndex: 1 }}>
+                <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
+                    {editConn ? "Edit Connection" : "Define Connection"}
+                </div>
+
+                <label style={lbl}>Connection name</label>
+                <input style={inp} value={name} placeholder={autoName || "e.g. Dark Ship + Chokepoint"} onChange={e => setName(e.target.value)} />
+
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <div style={{ flex: 1 }}>
+                        <label style={lbl}>Rule A (source)</label>
+                        <select style={{ ...inp, marginBottom: 0 }} value={ruleA} onChange={e => setRuleA(e.target.value)}>
+                            <option value="">Select…</option>
+                            {rules.map(r => <option key={r.id} value={r.id}>{r.name || r.rule_name}</option>)}
+                        </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                        <label style={lbl}>Rule B (target)</label>
+                        <select style={{ ...inp, marginBottom: 0 }} value={ruleB} onChange={e => setRuleB(e.target.value)}>
+                            <option value="">Select…</option>
+                            {rules.map(r => <option key={r.id} value={r.id}>{r.name || r.rule_name}</option>)}
+                        </select>
+                    </div>
+                </div>
+
+                <label style={lbl}>Relationship type</label>
+                <select style={inp} value={relType} onChange={e => setRelType(e.target.value)}>
+                    <option value="ESCALATION">Escalation — both fire → combined alert</option>
+                    <option value="CORRELATION">Correlation — both fire → flagged as related</option>
+                    <option value="SEQUENCE">Sequence — B only fires if A fired first</option>
+                    <option value="SUPPRESSION">Suppression — A fires → B silenced</option>
+                </select>
+
+                {(relType === "ESCALATION" || relType === "CORRELATION") && (
+                    <>
+                        <label style={lbl}>Time window (minutes)</label>
+                        <input type="number" style={inp} value={twMin} min={1} onChange={e => setTwMin(e.target.value)} />
+                    </>
+                )}
+                {relType === "SEQUENCE" && (
+                    <>
+                        <label style={lbl}>Sequence window (minutes)</label>
+                        <input type="number" style={inp} value={seqMin} min={1} onChange={e => setSeqMin(e.target.value)} />
+                    </>
+                )}
+                {relType === "SUPPRESSION" && (
+                    <>
+                        <label style={lbl}>Suppression window (minutes)</label>
+                        <input type="number" style={inp} value={supMin} min={1} onChange={e => setSupMin(e.target.value)} />
+                    </>
+                )}
+                {relType === "ESCALATION" && (
+                    <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                        <div style={{ flex: 1 }}>
+                            <label style={lbl}>Escalated severity</label>
+                            <select style={{ ...inp, marginBottom: 0 }} value={escSev} onChange={e => setEscSev(e.target.value)}>
+                                {["info", "low", "medium", "high", "critical"].map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label style={lbl}>Escalated icon</label>
+                            <select style={{ ...inp, marginBottom: 0 }} value={escIcon} onChange={e => setEscIcon(e.target.value)}>
+                                <option value="">Default</option>
+                                {Object.keys(ALERT_ICONS).map(k => <option key={k} value={k}>{ALERT_ICONS[k].label}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                )}
+
+                <label style={lbl}>Notes (optional)</label>
+                <textarea
+                    style={{ ...inp, minHeight: 60, resize: "vertical" }}
+                    value={notes}
+                    placeholder="Explain why these rules are connected and what the combined firing means operationally"
+                    onChange={e => setNotes(e.target.value)}
+                />
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+                    <button onClick={onClose} style={ghostBtn}>Cancel</button>
+                    <button
+                        onClick={handleSave}
+                        disabled={saving || !ruleA || !ruleB || ruleA === ruleB}
+                        style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.3)", opacity: (saving || !ruleA || !ruleB) ? 0.5 : 1 }}
+                    >
+                        {saving ? "Saving…" : editConn ? "Update" : "Create"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function RuleNode({ rule, pos, onDragStart, onConnectStart, onConnectOver, onConnectUp, isConnectTarget, isMobile }) {
+    const domain = getDomain(rule)
+    const color  = DOMAIN_COLORS[domain]
+    const label  = rule.name || rule.rule_name || "Rule"
+    const sev    = rule.severity || "medium"
+    const sevColor = sev === "critical" ? "#FF3B30" : sev === "high" ? "#FF9500" : sev === "medium" ? "#FFCC00" : "#8E8E93"
+
+    return (
+        <div
+            onMouseDown={isMobile ? undefined : (e) => onDragStart(e, rule.id)}
+            onMouseEnter={() => onConnectOver(rule.id)}
+            onMouseUp={() => onConnectUp(rule.id)}
+            style={{
+                position:    "absolute",
+                left:        pos.x,
+                top:         pos.y,
+                width:       NODE_W,
+                height:      NODE_H,
+                background:  "#0d1425",
+                border:      `1px solid ${isConnectTarget ? "#60a5fa" : "rgba(148,163,184,0.12)"}`,
+                borderLeft:  `3px solid ${color}`,
+                borderRadius: 7,
+                padding:     "8px 10px",
+                cursor:      isMobile ? "default" : "grab",
+                userSelect:  "none",
+                boxSizing:   "border-box",
+                boxShadow:   isConnectTarget ? `0 0 0 2px #60a5fa44` : "0 2px 8px rgba(0,0,0,0.4)",
+                zIndex:      10,
+            }}
+        >
+            <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", marginBottom: 4 }}>
+                {label}
+            </div>
+            <div style={{ color: "#475569", fontSize: 9, marginBottom: 4 }}>
+                {rule.trigger_type || rule.rule_name}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ background: `${sevColor}22`, color: sevColor, fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3 }}>{sev}</span>
+                <span style={{ fontSize: 8, color: color, fontWeight: 600, letterSpacing: "0.05em" }}>{domain.toUpperCase()}</span>
+            </div>
+            {/* Connect port — right edge */}
+            {!isMobile && (
+                <div
+                    title="Drag to connect"
+                    onMouseDown={e => { e.stopPropagation(); onConnectStart(e, rule.id) }}
+                    style={{
+                        position:     "absolute",
+                        right:        -6,
+                        top:          "50%",
+                        transform:    "translateY(-50%)",
+                        width:        12,
+                        height:       12,
+                        borderRadius: "50%",
+                        background:   color,
+                        border:       "2px solid #0d1425",
+                        cursor:       "crosshair",
+                        zIndex:       20,
+                    }}
+                />
+            )}
+        </div>
+    )
+}
+
+function RuleLogicWorkspace({ isMobile = false }) {
+    const [rules,       setRules]       = useState([])
+    const [conns,       setConns]       = useState([])
+    const [nodePosMap,  setNodePosMap]  = useState({})
+    const [loading,     setLoading]     = useState(true)
+    // connection drawing
+    const [drawFrom,    setDrawFrom]    = useState(null)
+    const [drawPos,     setDrawPos]     = useState({ x: 0, y: 0 })
+    const [connectOver, setConnectOver] = useState(null)
+    // modal
+    const [modal,       setModal]       = useState(null)  // null | { editConn?, defaultFrom?, defaultTo? }
+    // hover card
+    const [hoverConn,   setHoverConn]   = useState(null)  // { conn, x, y }
+    const hoverTimerRef  = useRef(null)
+    // context menu
+    const [ctxMenu,     setCtxMenu]     = useState(null)  // { conn, x, y }
+    // toast
+    const [toast,       setToast]       = useState("")
+    // add rule
+    const [showAddRule, setShowAddRule] = useState(false)
+    // mobile bottom sheet
+    const [mobileSheet, setMobileSheet] = useState(null) // { type: "node"|"edge", data }
+    // canvas container ref (for coordinate offset)
+    const canvasRef = useRef(null)
+    const draggingRef = useRef(null)  // { ruleId, startX, startY, origX, origY }
+
+    function showToast(msg) {
+        setToast(msg)
+        setTimeout(() => setToast(""), 3000)
+    }
+
+    async function reload() {
+        setLoading(true)
+        const [rRes, cRes] = await Promise.all([
+            fetch(`${API}/api/rules`, { headers: forgeHeaders() }),
+            fetch(`${API}/api/rule-connections`, { headers: forgeHeaders() }),
+        ])
+        const rData = rRes.ok ? await rRes.json() : {}
+        const cData = cRes.ok ? await cRes.json() : []
+        const ruleList = rData.rules ?? []
+        setRules(ruleList)
+        setConns(Array.isArray(cData) ? cData : [])
+        // Merge saved positions with defaults for new rules
+        const saved = loadPositions()
+        const defaults = defaultPositions(ruleList)
+        const merged = { ...defaults }
+        Object.entries(saved).forEach(([k, v]) => {
+            if (defaults[k] !== undefined) merged[k] = v  // only keep if rule still exists
+        })
+        setNodePosMap(merged)
+        setLoading(false)
+    }
+
+    useEffect(() => { reload() }, [])
+
+    // Dismiss context menu on click elsewhere
+    useEffect(() => {
+        if (!ctxMenu) return
+        const h = () => setCtxMenu(null)
+        window.addEventListener("click", h)
+        return () => window.removeEventListener("click", h)
+    }, [ctxMenu])
+
+    // ── Node drag ───────────────────────────────────────────────────────────
+    function handleDragStart(e, ruleId) {
+        if (e.button !== 0) return
+        e.preventDefault()
+        const pos = nodePosMap[ruleId] || { x: 0, y: 0 }
+        draggingRef.current = { ruleId, startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y }
+
+        const onMove = (ev) => {
+            const { ruleId, startX, startY, origX, origY } = draggingRef.current
+            setNodePosMap(prev => ({
+                ...prev,
+                [ruleId]: { x: origX + ev.clientX - startX, y: origY + ev.clientY - startY },
+            }))
+        }
+        const onUp = () => {
+            document.removeEventListener("mousemove", onMove)
+            document.removeEventListener("mouseup", onUp)
+            // Persist
+            setNodePosMap(prev => {
+                savePositions(prev)
+                return prev
+            })
+            draggingRef.current = null
+        }
+        document.addEventListener("mousemove", onMove)
+        document.addEventListener("mouseup", onUp)
+    }
+
+    // ── Connection drawing ─────────────────────────────────────────────────
+    function handleConnectStart(e, ruleId) {
+        if (e.button !== 0) return
+        e.preventDefault()
+        const rect = canvasRef.current?.getBoundingClientRect() ?? { left: 0, top: 0 }
+        setDrawFrom(ruleId)
+        setDrawPos({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+        setConnectOver(null)
+
+        const onMove = (ev) => {
+            setDrawPos({ x: ev.clientX - rect.left, y: ev.clientY - rect.top })
+        }
+        const onUp = () => {
+            document.removeEventListener("mousemove", onMove)
+            document.removeEventListener("mouseup", onUp)
+            setDrawFrom(from => {
+                setConnectOver(to => {
+                    if (from && to && from !== to) {
+                        setModal({ defaultFrom: from, defaultTo: to })
+                    }
+                    return null
+                })
+                return null
+            })
+        }
+        document.addEventListener("mousemove", onMove)
+        document.addEventListener("mouseup", onUp)
+    }
+
+    // ── Canvas dimensions ──────────────────────────────────────────────────
+    const maxX = Object.values(nodePosMap).reduce((m, p) => Math.max(m, p.x + NODE_W + 40), 600)
+    const maxY = Object.values(nodePosMap).reduce((m, p) => Math.max(m, p.y + NODE_H + 40), 400)
+
+    // ── Edge path helper ───────────────────────────────────────────────────
+    function edgePath(conn) {
+        const posA = nodePosMap[conn.rule_id_a]
+        const posB = nodePosMap[conn.rule_id_b]
+        if (!posA || !posB) return null
+        const x1 = posA.x + NODE_W
+        const y1 = posA.y + NODE_H / 2
+        const x2 = posB.x
+        const y2 = posB.y + NODE_H / 2
+        const cx = (x1 + x2) / 2
+        const cy = Math.min(y1, y2) - 50
+        return { path: `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`, mx: cx, my: cy + 25, x1, y1, x2, y2 }
+    }
+
+    async function handleDeleteConn(conn) {
+        setCtxMenu(null)
+        const r = await fetch(`${API}/api/rule-connections/${conn.id}`, {
+            method: "DELETE", headers: forgeHeaders(),
+        })
+        if (r.ok) {
+            setConns(prev => prev.filter(c => c.id !== conn.id))
+            showToast("Connection removed")
+        }
+    }
+
+    function handleEdgeHoverStart(e, conn) {
+        clearTimeout(hoverTimerRef.current)
+        hoverTimerRef.current = setTimeout(() => {
+            setHoverConn({ conn, x: e.clientX, y: e.clientY })
+        }, 500)
+    }
+    function handleEdgeHoverEnd() {
+        clearTimeout(hoverTimerRef.current)
+        setHoverConn(null)
+    }
+
+    if (loading) return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 12 }}>Loading rules and connections…</div>
+        </WorkspaceBody>
+    )
+
+    // ── Mobile read-only view ─────────────────────────────────────────────
+    if (isMobile) {
+        return (
+            <WorkspaceBody style={{ padding: 0, flexDirection: "column" }}>
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)", color: "#e2e8f0", fontSize: 13, fontWeight: 600 }}>
+                    Rule Logic
+                    <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{rules.length} rules · {conns.length} connections</span>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", padding: "8px 14px" }}>
+                    {conns.length === 0 && <div style={{ color: "#475569", fontSize: 11, padding: "16px 0" }}>No connections yet. Use the desktop view to create rule connections.</div>}
+                    {conns.map(c => {
+                        const col = EDGE_COLORS[c.relationship_type] || "#8E8E93"
+                        return (
+                            <div key={c.id} onClick={() => setMobileSheet({ type: "edge", data: c })}
+                                style={{ background: "#0d1425", border: "1px solid rgba(255,255,255,0.06)", borderLeft: `3px solid ${col}`, borderRadius: 6, padding: "8px 10px", marginBottom: 6, cursor: "pointer" }}>
+                                <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600 }}>{c.connection_name}</div>
+                                <div style={{ color: "#475569", fontSize: 9, marginTop: 2 }}>{c.rule_name_a} → {c.rule_name_b}</div>
+                                <div style={{ color: col, fontSize: 8, marginTop: 3, fontWeight: 700 }}>{c.relationship_type}</div>
+                            </div>
+                        )
+                    })}
+                </div>
+                {mobileSheet?.type === "edge" && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 3000, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                        <div onClick={() => setMobileSheet(null)} style={{ flex: 1, background: "rgba(0,0,0,0.5)" }} />
+                        <div style={{ background: "#0d1425", borderRadius: "12px 12px 0 0", padding: "16px 16px 32px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                            <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{mobileSheet.data.connection_name}</div>
+                            <div style={{ color: "#64748b", fontSize: 11, lineHeight: 1.6 }}>{edgePlainEnglish(mobileSheet.data)}</div>
+                            {mobileSheet.data.notes && <div style={{ color: "#475569", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>{mobileSheet.data.notes}</div>}
+                            <button onClick={() => setMobileSheet(null)} style={{ ...ghostBtn, marginTop: 12, width: "100%", textAlign: "center" }}>Close</button>
+                        </div>
+                    </div>
+                )}
+            </WorkspaceBody>
+        )
+    }
+
+    // ── Desktop canvas view ───────────────────────────────────────────────
+    return (
+        <WorkspaceBody style={{ flexDirection: "column", padding: 0 }}>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+                <div>
+                    <span style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600 }}>Rule Logic</span>
+                    <span style={{ color: "#475569", fontSize: 10, marginLeft: 10 }}>{rules.length} rules · {conns.length} connections</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {/* Domain legend */}
+                    {Object.entries(DOMAIN_COLORS).map(([d, c]) => (
+                        <span key={d} style={{ fontSize: 9, color: c, fontWeight: 700 }}>
+                            <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: c, marginRight: 3 }} />
+                            {d.charAt(0).toUpperCase() + d.slice(1)}
+                        </span>
+                    ))}
+                    <button
+                        onClick={() => setShowAddRule(true)}
+                        style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.25)", marginLeft: 8 }}>
+                        + Add Rule
+                    </button>
+                </div>
+            </div>
+
+            {/* Canvas */}
+            <div ref={canvasRef} style={{ flex: 1, overflow: "auto", position: "relative", cursor: drawFrom ? "crosshair" : "default" }}>
+                <div style={{ position: "relative", width: maxX, height: maxY, minWidth: "100%", minHeight: "100%" }}>
+                    {/* SVG edge layer */}
+                    <svg
+                        style={{ position: "absolute", inset: 0, width: maxX, height: maxY, overflow: "visible", zIndex: 5 }}
+                        pointerEvents="none"
+                    >
+                        <defs>
+                            {Object.entries(EDGE_COLORS).map(([type, color]) => (
+                                <marker key={type} id={`arrow-${type}`} markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+                                    <path d="M0,0 L0,6 L8,3 Z" fill={color} />
+                                </marker>
+                            ))}
+                        </defs>
+
+                        {/* Permanent edges */}
+                        {conns.map(conn => {
+                            const ep = edgePath(conn)
+                            if (!ep) return null
+                            const color = EDGE_COLORS[conn.relationship_type] || "#8E8E93"
+                            return (
+                                <g key={conn.id}>
+                                    {/* Hit-area (wide transparent path) */}
+                                    <path
+                                        d={ep.path}
+                                        stroke="transparent"
+                                        strokeWidth={14}
+                                        fill="none"
+                                        style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                                        onMouseEnter={e => handleEdgeHoverStart(e, conn)}
+                                        onMouseLeave={handleEdgeHoverEnd}
+                                        onClick={e => { e.stopPropagation(); setModal({ editConn: conn }) }}
+                                        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ conn, x: e.clientX, y: e.clientY }) }}
+                                    />
+                                    {/* Visible path */}
+                                    <path
+                                        d={ep.path}
+                                        stroke={color}
+                                        strokeWidth={2}
+                                        fill="none"
+                                        markerEnd={`url(#arrow-${conn.relationship_type})`}
+                                        style={{ pointerEvents: "none" }}
+                                    />
+                                    {/* Midpoint label */}
+                                    <rect x={ep.mx - 28} y={ep.my - 8} width={56} height={16} rx={8} fill="#0d1425" style={{ pointerEvents: "none" }} />
+                                    <text x={ep.mx} y={ep.my + 4} textAnchor="middle" style={{ fontSize: 7, fill: color, fontWeight: 700, letterSpacing: "0.05em", pointerEvents: "none" }}>
+                                        {conn.relationship_type}
+                                    </text>
+                                </g>
+                            )
+                        })}
+
+                        {/* Live drawing line */}
+                        {drawFrom && nodePosMap[drawFrom] && (() => {
+                            const pos = nodePosMap[drawFrom]
+                            const x1 = pos.x + NODE_W
+                            const y1 = pos.y + NODE_H / 2
+                            return (
+                                <line
+                                    x1={x1} y1={y1}
+                                    x2={drawPos.x} y2={drawPos.y}
+                                    stroke="#60a5fa" strokeWidth={2}
+                                    strokeDasharray="6 3"
+                                    style={{ pointerEvents: "none" }}
+                                />
+                            )
+                        })()}
+                    </svg>
+
+                    {/* Rule nodes */}
+                    {rules.map(rule => {
+                        const pos = nodePosMap[rule.id] ?? { x: 40, y: 40 }
+                        return (
+                            <RuleNode
+                                key={rule.id}
+                                rule={rule}
+                                pos={pos}
+                                onDragStart={handleDragStart}
+                                onConnectStart={handleConnectStart}
+                                onConnectOver={id => drawFrom && setConnectOver(id)}
+                                onConnectUp={id => drawFrom && id !== drawFrom && setConnectOver(id)}
+                                isConnectTarget={connectOver === rule.id}
+                                isMobile={false}
+                            />
+                        )
+                    })}
+                </div>
+            </div>
+
+            {/* Toast */}
+            {toast && (
+                <div style={{ position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)", background: "#0d1425", border: "1px solid rgba(96,165,250,0.3)", borderRadius: 6, padding: "8px 16px", color: "#60a5fa", fontSize: 11, zIndex: 4000 }}>
+                    {toast}
+                </div>
+            )}
+
+            {/* Context menu */}
+            {ctxMenu && (
+                <div style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, background: "#0d1425", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "4px 0", zIndex: 4000, minWidth: 160 }}>
+                    <button onClick={() => { setModal({ editConn: ctxMenu.conn }); setCtxMenu(null) }}
+                        style={{ ...ghostBtn, width: "100%", textAlign: "left", padding: "8px 12px", borderRadius: 0, border: "none" }}>
+                        Edit connection
+                    </button>
+                    <button onClick={() => handleDeleteConn(ctxMenu.conn)}
+                        style={{ ...ghostBtn, width: "100%", textAlign: "left", padding: "8px 12px", borderRadius: 0, border: "none", color: "#ef4444", borderColor: "transparent" }}>
+                        Delete connection
+                    </button>
+                </div>
+            )}
+
+            {/* Hover explanation card */}
+            {hoverConn && (
+                <div
+                    onMouseEnter={() => clearTimeout(hoverTimerRef.current)}
+                    onMouseLeave={handleEdgeHoverEnd}
+                    style={{
+                        position: "fixed", left: hoverConn.x + 12, top: hoverConn.y - 20,
+                        maxWidth: 280, background: "#0d1425",
+                        border: `1px solid ${EDGE_COLORS[hoverConn.conn.relationship_type] || "#8E8E93"}44`,
+                        borderRadius: 7, padding: "10px 12px", zIndex: 3500,
+                        boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
+                    }}
+                >
+                    <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{hoverConn.conn.connection_name}</div>
+                    <div style={{ color: "#64748b", fontSize: 10, lineHeight: 1.6 }}>{edgePlainEnglish(hoverConn.conn)}</div>
+                    {hoverConn.conn.notes && <div style={{ color: "#475569", fontSize: 9, marginTop: 6, fontStyle: "italic" }}>{hoverConn.conn.notes}</div>}
+                    <button onClick={() => { setModal({ editConn: hoverConn.conn }); setHoverConn(null) }}
+                        style={{ ...ghostBtn, marginTop: 8, fontSize: 9 }}>Edit</button>
+                </div>
+            )}
+
+            {/* Connection modal */}
+            {modal && (
+                <ConnModal
+                    rules={rules}
+                    editConn={modal.editConn}
+                    defaultFrom={modal.defaultFrom}
+                    defaultTo={modal.defaultTo}
+                    onClose={() => setModal(null)}
+                    onSaved={conn => {
+                        setConns(prev => {
+                            const idx = prev.findIndex(c => c.id === conn.id)
+                            if (idx >= 0) { const next = [...prev]; next[idx] = conn; return next }
+                            return [...prev, conn]
+                        })
+                        setModal(null)
+                        showToast(modal.editConn ? "Connection updated" : "Connection created")
+                    }}
+                />
+            )}
+
+            {/* Add Rule shortcut */}
+            {showAddRule && (
+                <CreateRuleModal
+                    source="AIS"
+                    onClose={() => setShowAddRule(false)}
+                    onCreated={() => { reload(); setShowAddRule(false) }}
+                />
+            )}
+        </WorkspaceBody>
+    )
+}
+
 function WorkspaceRouter({ workspace, node, brainStatus }) {
     switch (workspace) {
         case "ais-source":      return <AISSourceWorkspace />
@@ -285,6 +958,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "ml-detector":     return <MLDetectorWorkspace />
         case "surveillance-zones": return <SurveillanceZonesWorkspace />
         case "brain":           return <BrainWorkspace brainStatus={brainStatus} />
+        case "rule-logic":      return <RuleLogicWorkspace isMobile={false} />
         case "ontology":        return <OntologyWorkspace />
         case "alerts":          return <AlertsWorkspace />
         case "geocoder":        return <SimpleInfo title="Geocoder" body="Provides lat/lng resolution for news events and uploaded entity data. Feeds the threat scoring engine." />

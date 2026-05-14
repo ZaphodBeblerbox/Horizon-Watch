@@ -196,10 +196,42 @@ function LayerRows3D({ active, onToggle }) {
     )
 }
 
+function AutoModeSection({ enabled, onToggle }) {
+    return (
+        <div style={{
+            marginBottom: 12,
+            background:   enabled ? "rgba(45,143,232,0.08)" : "rgba(255,255,255,0.03)",
+            border:       `1px solid ${enabled ? "rgba(45,143,232,0.35)" : "rgba(255,255,255,0.07)"}`,
+            borderRadius: 8,
+            padding:      "10px 12px",
+            transition:   "background 0.2s, border-color 0.2s",
+        }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: enabled ? "#4A9EE0" : "#e8edf2", letterSpacing: "0.06em" }}>
+                        Auto Mode
+                    </div>
+                    <div style={{ fontSize: 10, color: "rgba(232,237,242,0.4)", marginTop: 2 }}>
+                        Passive globe — flies to live events
+                    </div>
+                </div>
+                <Toggle value={!!enabled} onChange={onToggle} />
+            </div>
+            {enabled && (
+                <div style={{ marginTop: 8, fontSize: 9, color: "#475569", lineHeight: 1.5 }}>
+                    Cycling through active intelligence events. Press <strong style={{ color: "#64748b" }}>Exit Auto</strong> to return.
+                </div>
+            )}
+        </div>
+    )
+}
+
 export default function LayersPanel({
     active,
     onToggle,
     onClose,
+    autoModeEnabled = false,
+    onAutoMode = null,
 }) {
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
     useEffect(() => {
@@ -207,6 +239,10 @@ export default function LayersPanel({
         window.addEventListener("resize", h)
         return () => window.removeEventListener("resize", h)
     }, [])
+
+    const autoSection = onAutoMode ? (
+        <AutoModeSection enabled={autoModeEnabled} onToggle={onAutoMode} />
+    ) : null
 
     const rows = <LayerRows3D active={active} onToggle={onToggle} />
 
@@ -250,6 +286,7 @@ export default function LayersPanel({
         return (
             <BottomSheet isOpen title="Layers" onClose={onClose} height="full">
                 <div style={{ padding: "16px 12px 24px" }}>
+                    {autoSection}
                     {rows}
                 </div>
             </BottomSheet>
@@ -274,6 +311,7 @@ export default function LayersPanel({
         }}>
             {header}
             <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 16px" }}>
+                {autoSection}
                 {rows}
             </div>
         </div>
