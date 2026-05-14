@@ -113,7 +113,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds }) {
                 const color   = Color.fromCssColorString(hexCol)
                 const position = Cartesian3.fromDegrees(lon, lat, altM)
 
-                const hpr         = new HeadingPitchRoll(CesiumMath.toRadians(track - 90), 0, 0)
+                const hpr         = new HeadingPitchRoll(CesiumMath.toRadians(track + 90), 0, 0)
                 const orientation = Transforms.headingPitchRollQuaternion(position, hpr)
 
                 return (
