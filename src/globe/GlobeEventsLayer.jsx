@@ -87,11 +87,32 @@ function mutedHex(hex) {
     } catch (_) { return hex }
 }
 
-export default function GlobeEventsLayer({ enabled, bounds = null, minRelevance = 4 }) {
+// Precision criteria: event_type or article_type matches conflict/maritime/aviation,
+// or relevance_score >= 8.0
+const PRECISION_EVENT_TYPES = new Set([
+    "airstrike", "missile", "armed_clash", "explosion", "maritime",
+    "chemical", "assassination",
+])
+const PRECISION_ARTICLE_TYPES = new Set(["conflict", "maritime", "aviation"])
+
+function isPrecision(ev) {
+    const et = (ev.event_type || ev.type || "").toLowerCase()
+    const at = (ev.article_type || "").toLowerCase()
+    const rs = ev.relevance_score ?? 0
+    return PRECISION_EVENT_TYPES.has(et) || PRECISION_ARTICLE_TYPES.has(at) || rs >= 8.0
+}
+
+export default function GlobeEventsLayer({
+    enabled = true,
+    precisionEnabled = true,
+    bounds = null,
+    minRelevance = 4,
+}) {
     const [events, setEvents] = useState([])
+    const anyEnabled = enabled || precisionEnabled
 
     useEffect(() => {
-        if (!enabled) { setEvents([]); return }
+        if (!anyEnabled) { setEvents([]); return }
         let cancelled = false
         const load = () => {
             let url = `${API_BASE}/api/v2/events?mode=threads&max_age_hours=72&limit=500`
@@ -106,7 +127,7 @@ export default function GlobeEventsLayer({ enabled, bounds = null, minRelevance 
         load()
         const iv = setInterval(load, 30_000)
         return () => { cancelled = true; clearInterval(iv) }
-    }, [enabled, bounds?.south, bounds?.north, bounds?.west, bounds?.east]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [anyEnabled, bounds?.south, bounds?.north, bounds?.west, bounds?.east]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Register in entityStore so GlobePopup can render GlobeEventPopup
     useEffect(() => {
@@ -120,10 +141,17 @@ export default function GlobeEventsLayer({ enabled, bounds = null, minRelevance 
         return () => ids.forEach(deleteEntity)
     }, [events])
 
-    if (!enabled || !events.length) return null
+    if (!anyEnabled || !events.length) return null
 
-    // Filter by relevance (default Medium+ = 4). Events without LLM score default to 5.
-    const filtered = events.filter(e => (e.relevance_score ?? 5) >= minRelevance)
+    // Determine which events to show:
+    // - precisionEnabled only → precision events at full opacity, no relevance filter
+    // - enabled only (or both) → apply minRelevance filter; precision events always pass
+    const filtered = events.filter(ev => {
+        const prec = isPrecision(ev)
+        if (precisionEnabled && prec) return true      // always show precision events
+        if (!enabled) return false                      // general layer off
+        return (ev.relevance_score ?? 5) >= minRelevance
+    })
 
     // Mobile: cap rendered events to prevent crash.
     const visible = isMobile ? filtered.slice(0, EVENTS_CAP) : filtered
@@ -134,8 +162,9 @@ export default function GlobeEventsLayer({ enabled, bounds = null, minRelevance 
                 if (!ev.lat || !ev.lon || !isFinite(ev.lat) || !isFinite(ev.lon)) return null
 
                 const tier = (ev.relevance_tier || "medium").toLowerCase()
+                const prec    = isPrecision(ev)
                 const baseHex = hexForEvent(ev)
-                const hex   = tier === "low" ? mutedHex(baseHex) : baseHex
+                const hex   = (!prec && tier === "low") ? mutedHex(baseHex) : baseHex
                 const type  = typeForEvent(ev)
                 const icon  = getIcon(type, hex)
                 if (!icon || icon.width === 0 || icon.height === 0) return null
@@ -145,13 +174,15 @@ export default function GlobeEventsLayer({ enabled, bounds = null, minRelevance 
                 const isApprox = approxConf === "fallback_region" || approxConf === "relaxed" || approxConf === "fallback_country"
                 const baseSize = isApprox ? 32 : 44
 
-                // Scale and alpha by relevance tier
+                // Precision events always render at full size/opacity
                 let iconSize = baseSize
                 let alpha    = 1.0
-                if (tier === "medium") { iconSize = Math.round(baseSize * 0.7); alpha = 0.75 }
-                if (tier === "low")    { iconSize = Math.round(baseSize * 0.5); alpha = 0.45 }
+                if (!prec) {
+                    if (tier === "medium") { iconSize = Math.round(baseSize * 0.7); alpha = 0.75 }
+                    if (tier === "low")    { iconSize = Math.round(baseSize * 0.5); alpha = 0.45 }
+                }
 
-                const cesiumColor = (isApprox || tier !== "high")
+                const cesiumColor = (isApprox || (tier !== "high" && !prec))
                     ? Color.fromAlpha(Color.WHITE, Math.min(alpha, isApprox ? 0.6 : 1.0) * alpha)
                     : undefined
 

@@ -5479,6 +5479,16 @@ def _run_news_conflict_extraction_sync():
             except Exception:
                 pass
 
+            # ── Language filter: only process EN / FR / DE ──────────────────────
+            if _HAS_LANGDETECT:
+                try:
+                    _art_lang = _langdetect_detect(f"{title} {summary[:200]}")
+                except Exception:
+                    _art_lang = "unknown"
+                if _art_lang not in ("en", "fr", "de"):
+                    print(f"[feed] Skipped article (lang={_art_lang}): {title[:60]}")
+                    continue
+
             # Mark as processed only AFTER freshness check (so stale articles don't
             # permanently clog the dedup cache if the filter threshold changes)
             _PROCESSED_URLS[url] = time.time()
@@ -5526,27 +5536,78 @@ def _run_news_conflict_extraction_sync():
             f_locations += len(candidates[:5])
 
             if not geo:
-                articles_without_coords += 1
-                rejected_no_geo += 1
-                _upsert_news_article({
-                    "url": url,
-                    "title": title,
-                    "source": source_name,
-                    "feed_region": feed_region,
-                    "summary": summary[:400],
-                    "published": published_iso,
-                    "expires_at": expires_iso,
-                    "location_name": None,
-                    "lat": None,
-                    "lon": None,
-                    "confidence": "low",
-                    "location_confidence": meta.get("location_confidence", "none"),
-                    "resolved_country_code": meta.get("resolved_country_code"),
-                    "resolved_display_name": meta.get("resolved_display_name"),
-                    "geocode_candidate": winning_candidate,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                })
-                continue
+                # Attempt LLM extraction before giving up — it may find a location
+                # the regex geocoder missed entirely
+                _llm_rescued = False
+                _existing_stored_nogeo = _NEWS_ARTICLE_STORE.get(url, {})
+                if (client
+                        and not _existing_stored_nogeo.get("llm_extracted")
+                        and llm_calls_this_cycle < MAX_LLM_CALLS):
+                    try:
+                        _intel_ng = extract_article_intelligence(title, summary, source_name)
+                        llm_calls_this_cycle += 1
+                        time.sleep(0.1)
+                        _loc_ng   = _intel_ng.get("location")
+                        _conf_ng  = _intel_ng.get("location_confidence", "none")
+                        if _loc_ng and _conf_ng in ("city", "region", "country"):
+                            _lgeos_ng = geocode_place(_loc_ng)
+                            if _lgeos_ng:
+                                _lg_ng   = _lgeos_ng[0]
+                                _llat_ng = float(_lg_ng.get("lat", 0))
+                                _llon_ng = float(_lg_ng.get("lon", 0))
+                                _ltype_ng = str(_lg_ng.get("type") or "").lower()
+                                _lclass_ng = str(_lg_ng.get("class") or "").lower()
+                                _REJECT = {"amenity", "office", "building", "shop"}
+                                if (_llat_ng != 0.0 and _llon_ng != 0.0
+                                        and _ltype_ng not in _REJECT
+                                        and _lclass_ng not in _REJECT):
+                                    geo = {
+                                        "lat": _llat_ng, "lon": _llon_ng,
+                                        "display_name": _lg_ng.get("display_name"),
+                                        "type": _lg_ng.get("type"),
+                                    }
+                                    meta = {
+                                        "location_confidence": "llm_geocoded",
+                                        "resolved_country_code": (_lg_ng.get("address") or {}).get("country_code"),
+                                        "resolved_display_name": _lg_ng.get("display_name"),
+                                    }
+                                    winning_candidate = _loc_ng
+                                    _llm_rescued = True
+                                    # Store LLM fields so they aren't re-extracted below
+                                    _existing_stored_nogeo = {
+                                        "llm_extracted": True,
+                                        "extracted_location": _loc_ng,
+                                        "extraction_confidence": _conf_ng,
+                                        "article_type": _intel_ng.get("article_type") or "other",
+                                        "llm_relevance_score": _intel_ng.get("relevance_score"),
+                                        "relevance_reasoning": _intel_ng.get("relevance_reasoning") or "",
+                                        "relevance_tier": _intel_ng.get("relevance_tier") or "medium",
+                                    }
+                    except Exception as _ng_err:
+                        print(f"[article-intelligence] no-geo rescue failed for '{title[:50]}': {_ng_err}")
+
+                if not geo:
+                    articles_without_coords += 1
+                    rejected_no_geo += 1
+                    _upsert_news_article({
+                        "url": url,
+                        "title": title,
+                        "source": source_name,
+                        "feed_region": feed_region,
+                        "summary": summary[:400],
+                        "published": published_iso,
+                        "expires_at": expires_iso,
+                        "location_name": None,
+                        "lat": None,
+                        "lon": None,
+                        "confidence": "low",
+                        "location_confidence": meta.get("location_confidence", "none"),
+                        "resolved_country_code": meta.get("resolved_country_code"),
+                        "resolved_display_name": meta.get("resolved_display_name"),
+                        "geocode_candidate": winning_candidate,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    continue
 
             articles_with_coords += 1
             f_geocoded += 1
@@ -5607,7 +5668,14 @@ def _run_news_conflict_extraction_sync():
             }
 
             # ── LLM intelligence extraction (Claude Haiku) ────────────────────
-            existing_stored = _NEWS_ARTICLE_STORE.get(url, {})
+            # If this article was rescued from no-geo by LLM above, _existing_stored_nogeo
+            # contains the pre-filled LLM fields; otherwise look up the article store.
+            existing_stored = locals().get("_existing_stored_nogeo") or _NEWS_ARTICLE_STORE.get(url, {})
+            # Reset the rescue var so it doesn't bleed into the next iteration
+            _existing_stored_nogeo = {}
+
+            _LLM_REJECT_TYPES = {"amenity", "office", "building", "shop"}
+
             if existing_stored.get("llm_extracted"):
                 # Carry over already-extracted fields so _upsert doesn't wipe them
                 for _f in ("extracted_location", "extraction_confidence", "article_type",
@@ -5619,7 +5687,7 @@ def _run_news_conflict_extraction_sync():
                 try:
                     intel = extract_article_intelligence(title, summary, source_name)
                     article_record.update({
-                        "extracted_location":   intel.get("location") or "",
+                        "extracted_location":    intel.get("location") or "",
                         "extraction_confidence": intel.get("location_confidence") or "none",
                         "article_type":          intel.get("article_type") or "other",
                         "llm_relevance_score":   intel.get("relevance_score"),
@@ -5629,15 +5697,48 @@ def _run_news_conflict_extraction_sync():
                     })
                     llm_calls_this_cycle += 1
                     time.sleep(0.1)
-                    # If LLM found a location the geocoder missed, try to improve coords
-                    llm_loc = intel.get("location")
-                    if llm_loc and llm_loc != winning_candidate:
+
+                    llm_loc   = intel.get("location")
+                    llm_conf  = intel.get("location_confidence", "none")
+                    llm_score = float(intel.get("relevance_score") or 0)
+
+                    # ── City feed: attempt street-level geocoding ─────────────
+                    if _city_meta and llm_loc and llm_conf == "city":
+                        _city_country_name, _city_name_lc, _city_lat_lc, _city_lon_lc = _city_meta
+                        _sl_query = f"{llm_loc}, {_city_name_lc}, {_city_country_name}"
+                        _sl_geos  = geocode_place(_sl_query)
+                        if _sl_geos:
+                            _sl       = _sl_geos[0]
+                            _sl_type  = str(_sl.get("type") or "").lower()
+                            _sl_class = str(_sl.get("class") or "").lower()
+                            _sl_lat   = float(_sl.get("lat", 0))
+                            _sl_lon   = float(_sl.get("lon", 0))
+                            _SL_GOOD  = {"highway", "place", "suburb", "neighbourhood", "quarter"}
+                            if (_sl_type in _SL_GOOD or _sl_class in _SL_GOOD) and _sl_lat != 0.0:
+                                article_record["lat"] = _sl_lat
+                                article_record["lon"] = _sl_lon
+                                article_record["location_name"] = _sl.get("display_name")
+                                article_record["location_confidence"] = "llm_street"
+
+                    # ── Non-city feed: confidence-weighted coordinate overwrite ─
+                    elif (
+                        llm_loc
+                        and llm_loc != winning_candidate
+                        and llm_conf in ("city", "region")
+                        and llm_score >= 5.0
+                    ):
                         _lgeos = geocode_place(llm_loc)
                         if _lgeos:
-                            _lg = _lgeos[0]
-                            _llat = float(_lg.get("lat", 0))
-                            _llon = float(_lg.get("lon", 0))
-                            if _llat != 0.0 and _llon != 0.0:
+                            _lg    = _lgeos[0]
+                            _ltype = str(_lg.get("type") or "").lower()
+                            _lcls  = str(_lg.get("class") or "").lower()
+                            _llat  = float(_lg.get("lat", 0))
+                            _llon  = float(_lg.get("lon", 0))
+                            if (
+                                _llat != 0.0 and _llon != 0.0
+                                and _ltype not in _LLM_REJECT_TYPES
+                                and _lcls  not in _LLM_REJECT_TYPES
+                            ):
                                 article_record["lat"] = _llat
                                 article_record["lon"] = _llon
                                 article_record["location_name"] = _lg.get("display_name")

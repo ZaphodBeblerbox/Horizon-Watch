@@ -122,6 +122,24 @@ LOCAL_CITY_FEEDS = [
     ("Berliner Zeitung", "https://www.berliner-zeitung.de/feed.xml", "Germany", "Berlin", 52.5200, 13.4050),
     ("Berliner Morgenpost", "https://www.morgenpost.de/berlin/rss", "Germany", "Berlin", 52.5200, 13.4050),
     ("RBB24 Berlin", "https://www.rbb24.de/politik/feed.xml", "Germany", "Berlin", 52.5200, 13.4050),
+
+    # Tel Aviv
+    ("Times of Israel", "https://www.timesofisrael.com/feed/", "Israel", "Tel Aviv", 32.0853, 34.7818),
+    ("Haaretz", "https://www.haaretz.com/cmlink/1.4466931", "Israel", "Tel Aviv", 32.0853, 34.7818),
+    ("Ynet News", "https://www.ynetnews.com/home/0,7340,L-3083,00.html", "Israel", "Tel Aviv", 32.0853, 34.7818),
+
+    # Nairobi
+    ("Nation Africa Nairobi", "https://nation.africa/kenya/nairobi/rss", "Kenya", "Nairobi", -1.2921, 36.8219),
+    ("Standard Media Nairobi", "https://www.standardmedia.co.ke/rss/nairobi", "Kenya", "Nairobi", -1.2921, 36.8219),
+    ("Nairobi News", "https://nairobinews.nation.africa/feed", "Kenya", "Nairobi", -1.2921, 36.8219),
+
+    # Poitiers
+    ("Centre Presse Vienne", "https://www.centre-presse.fr/feed/", "France", "Poitiers", 46.5802, 0.3404),
+    ("La Nouvelle République Vienne", "https://www.lanouvellerepublique.fr/vienne/rss.xml", "France", "Poitiers", 46.5802, 0.3404),
+
+    # Bordeaux
+    ("Sud Ouest Bordeaux", "https://www.sudouest.fr/gironde/bordeaux/rss.xml", "France", "Bordeaux", 44.8378, -0.5792),
+    ("20 Minutes Bordeaux", "https://www.20minutes.fr/feeds/rss/bordeaux.xml", "France", "Bordeaux", 44.8378, -0.5792),
 ]
 
 _BASE_FEEDS = list(ADDITIONAL_SCAN_FEEDS)
@@ -439,6 +457,8 @@ CITY_FEEDS = {
             {"url": "https://whatson.ae/feed/",                                                      "tier": "local",    "lang": "en", "name": "What's On Dubai"},
             {"url": "https://www.timeoutdubai.com/feed",                                             "tier": "local",    "lang": "en", "name": "Time Out Dubai"},
             {"url": "https://www.emirates247.com/rss",                                               "tier": "local",    "lang": "en", "name": "Emirates 24/7"},
+            {"url": "https://www.thenationalnews.com/rss/uae.xml",                                     "tier": "local",    "lang": "en", "name": "The National UAE (RSS)"},
+            {"url": "https://www.khaleejtimes.com/rss/uae",                                          "tier": "local",    "lang": "en", "name": "Khaleej Times UAE (RSS)"},
             {"url": "https://www.arabianbusiness.com/rss",                                           "tier": "regional", "lang": "en", "name": "Arabian Business"},
             {"url": "https://gulfbusiness.com/feed/",                                                "tier": "regional", "lang": "en", "name": "Gulf Business"},
             {"url": "https://www.constructionweekonline.com/feed",                                   "tier": "local",    "lang": "en", "name": "Construction Week"},
@@ -478,6 +498,36 @@ CITY_FEEDS = {
             {"url": "https://www.generalanzeiger-magdeburg.de/feed/",                                "tier": "local",    "lang": "de", "name": "General-Anzeiger"},
             {"url": "https://www.tag24.de/magdeburg/feed",                                           "tier": "local",    "lang": "de", "name": "TAG24 Magdeburg"},
             {"url": "https://www.t-online.de/region/magdeburg/feed.rss",                             "tier": "local",    "lang": "de", "name": "t-online Magdeburg"},
+        ],
+    },
+    "Tel Aviv": {
+        "country": "Israel", "lat": 32.0853, "lon": 34.7818, "language": "en",
+        "feeds": [
+            {"url": "https://www.timesofisrael.com/feed/",                                           "tier": "local",    "lang": "en", "name": "Times of Israel"},
+            {"url": "https://www.haaretz.com/cmlink/1.4466931",                                      "tier": "local",    "lang": "en", "name": "Haaretz"},
+            {"url": "https://www.ynetnews.com/home/0,7340,L-3083,00.html",                           "tier": "local",    "lang": "en", "name": "Ynet News"},
+        ],
+    },
+    "Nairobi": {
+        "country": "Kenya", "lat": -1.2921, "lon": 36.8219, "language": "en",
+        "feeds": [
+            {"url": "https://nation.africa/kenya/nairobi/rss",                                       "tier": "local",    "lang": "en", "name": "Nation Africa Nairobi"},
+            {"url": "https://www.standardmedia.co.ke/rss/nairobi",                                   "tier": "local",    "lang": "en", "name": "Standard Media Nairobi"},
+            {"url": "https://nairobinews.nation.africa/feed",                                        "tier": "local",    "lang": "en", "name": "Nairobi News"},
+        ],
+    },
+    "Poitiers": {
+        "country": "France", "lat": 46.5802, "lon": 0.3404, "language": "fr",
+        "feeds": [
+            {"url": "https://www.centre-presse.fr/feed/",                                            "tier": "local",    "lang": "fr", "name": "Centre Presse Vienne"},
+            {"url": "https://www.lanouvellerepublique.fr/vienne/rss.xml",                            "tier": "local",    "lang": "fr", "name": "La Nouvelle République Vienne"},
+        ],
+    },
+    "Bordeaux": {
+        "country": "France", "lat": 44.8378, "lon": -0.5792, "language": "fr",
+        "feeds": [
+            {"url": "https://www.sudouest.fr/gironde/bordeaux/rss.xml",                              "tier": "local",    "lang": "fr", "name": "Sud Ouest Bordeaux"},
+            {"url": "https://www.20minutes.fr/feeds/rss/bordeaux.xml",                               "tier": "local",    "lang": "fr", "name": "20 Minutes Bordeaux"},
         ],
     },
 }

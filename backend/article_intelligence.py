@@ -24,21 +24,29 @@ _USER_TMPL = (
     "Article body (may be truncated): {body}\n\n"
     "Return a JSON object with exactly these fields:\n"
     '{{\n'
-    '  "location": "the specific city, region, or country where this event is '
-    "PHYSICALLY OCCURRING — not where it is being reported from, not the "
-    "nationality of the reporter. If a conflict is happening in Gaza, return Gaza. "
-    "If sanctions are being imposed on Iran, return Iran. If a ship sank in the "
-    "Red Sea, return Red Sea. If truly no geographic location applies, return null.\",\n"
+    '  "location": "The SPECIFIC PHYSICAL PLACE where this event is HAPPENING ON THE GROUND RIGHT NOW. Rules: '
+    "Return the city, port, strait, region, or country where the physical event occurs — a bombing, a ship "
+    "incident, a fire, a protest, a clash. "
+    "If the article is about a COMPANY decision (layoffs, stock price, earnings, merger, product launch) → return null. Companies are not locations. "
+    "If the article is about a PERSON's statement, speech, or travel with no physical incident → return null. "
+    "If the article is about FINANCIAL MARKETS, CURRENCIES, COMMODITIES with no physical location → return null. "
+    "If the article mentions a city only because a company is HQ'd there or an official spoke there → return null, that is not where the event is occurring. "
+    "If the article is about DIPLOMACY or NEGOTIATIONS, return the country the negotiations are ABOUT, not where the talks are held. "
+    "If genuinely uncertain, return null. A wrong location is worse than no location.\",\n"
     '  "location_confidence": "city OR region OR country OR none",\n'
     '  "article_type": "one of: conflict / maritime / aviation / infrastructure / '
     'energy / political / economic / cyber / disaster / other",\n'
-    '  "relevance_score": a float 0.0-10.0 where: '
-    "9-10 = direct military/maritime/infrastructure threat or incident, "
-    "7-8 = significant geopolitical event with operational implications, "
-    "5-6 = relevant background intelligence (sanctions, diplomacy, tensions), "
-    "3-4 = tangentially related (economics, politics without direct impact), "
-    "1-2 = mostly irrelevant to maritime/geospatial intelligence, "
-    "0 = completely irrelevant (sports, entertainment, lifestyle),\n"
+    '  "relevance_score": a float 0.0-10.0. Rules: '
+    "9-10 = direct military/maritime/infrastructure threat or incident. "
+    "7-8 = significant geopolitical event with operational implications. "
+    "5-6 = relevant background intelligence (sanctions, diplomacy, tensions). "
+    "3-4 = tangentially related (economics, politics without direct impact). "
+    "1-2 = mostly irrelevant to maritime/geospatial intelligence. "
+    "0 = completely irrelevant (sports, entertainment, lifestyle). "
+    "STRICT RULES: Any article about company finances, stock prices, earnings, layoffs unrelated to military/strategic industry → maximum 2.0. "
+    "Sports, entertainment, lifestyle, celebrity → 0.0. "
+    "Technology product launches with no defence/surveillance angle → 1.0. "
+    "Only score >= 6.0 if there is a clear physical security, military, maritime, infrastructure, or conflict dimension.,\n"
     '  "relevance_reasoning": "one sentence explaining the score"\n'
     "}}"
 )

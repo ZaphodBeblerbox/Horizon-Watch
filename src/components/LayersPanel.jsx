@@ -165,8 +165,14 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
                 onToggle={() => onToggle("forgeAlerts")}
             />
             <LayerRow
+                label="Precision Intelligence"
+                hint="Conflict · maritime · aviation · score ≥ 8 — always full opacity"
+                toggled={active.precisionEvents ?? true}
+                onToggle={() => onToggle("precisionEvents")}
+            />
+            <LayerRow
                 label="Intelligence Events"
-                hint="Unified news & conflict events"
+                hint="All news & city events"
                 toggled={active.unifiedEvents ?? true}
                 onToggle={() => onToggle("unifiedEvents")}
             />

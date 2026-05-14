@@ -1411,6 +1411,7 @@ export default function App() {
                             chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
                             poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
+                            precisionEventsEnabled={activeWorkspace?.layers?.precisionEvents ?? true}
                             eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 4}
                             alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? false}
                             threatHeatmapEnabled={activeWorkspace?.layers?.threatHeatmap ?? false}
