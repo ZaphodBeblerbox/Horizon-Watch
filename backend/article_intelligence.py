@@ -34,6 +34,8 @@ _USER_TMPL = (
     "If the article is about DIPLOMACY or NEGOTIATIONS, return the country the negotiations are ABOUT, not where the talks are held. "
     "If genuinely uncertain, return null. A wrong location is worse than no location.\",\n"
     '  "location_confidence": "city OR region OR country OR none",\n'
+    '  "location_country": "ISO 2-letter country code (lowercase) of the country where the physical event is occurring. '
+    'International waters / straits → null. If the location spans multiple countries → null. If uncertain → null.",\n'
     '  "article_type": "one of: conflict / maritime / aviation / infrastructure / '
     'energy / political / economic / cyber / disaster / other",\n'
     '  "relevance_score": a float 0.0-10.0. Rules: '
@@ -54,6 +56,7 @@ _USER_TMPL = (
 _FALLBACK: dict = {
     "location": None,
     "location_confidence": "none",
+    "location_country": None,
     "article_type": "other",
     "relevance_score": 5.0,
     "relevance_reasoning": "extraction failed",
@@ -87,7 +90,7 @@ def extract_article_intelligence(
         )
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=150,
+            max_tokens=180,
             temperature=0,
             system=_SYSTEM,
             messages=[{"role": "user", "content": user}],
@@ -105,6 +108,12 @@ def extract_article_intelligence(
         if location in (None, "null", "", "None"):
             location = None
 
+        loc_country = data.get("location_country")
+        if loc_country in (None, "null", "", "None", "unknown"):
+            loc_country = None
+        elif isinstance(loc_country, str):
+            loc_country = loc_country.lower().strip()[:2] or None
+
         try:
             score = float(data.get("relevance_score", 5.0))
             score = max(0.0, min(10.0, score))
@@ -114,6 +123,7 @@ def extract_article_intelligence(
         return {
             "location":             location,
             "location_confidence":  str(data.get("location_confidence", "none")).lower(),
+            "location_country":     loc_country,
             "article_type":         str(data.get("article_type", "other")).lower(),
             "relevance_score":      score,
             "relevance_reasoning":  str(data.get("relevance_reasoning", "")),

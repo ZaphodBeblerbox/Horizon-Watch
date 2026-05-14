@@ -5363,6 +5363,17 @@ def _gate1_filter_markers(markers: list[dict]) -> None:
     print(f"[gate1] scored {len(batch)} articles — removed {len(to_remove)}")
 
 
+def _geocode_result_matches_country(geocode_result: dict, expected_iso) -> bool:
+    """Return True if Nominatim result country matches the LLM-expected ISO2.
+    If expected_iso is None/unknown, or Nominatim didn't return a country, always accept."""
+    if not expected_iso:
+        return True
+    result_cc = (geocode_result.get("address") or {}).get("country_code", "").lower().strip()
+    if not result_cc:
+        return True
+    return result_cc == str(expected_iso).lower().strip()
+
+
 def _run_news_conflict_extraction_sync():
     """
     Synchronous extraction pass — runs in ThreadPoolExecutor so blocking I/O
@@ -5558,9 +5569,11 @@ def _run_news_conflict_extraction_sync():
                                 _ltype_ng = str(_lg_ng.get("type") or "").lower()
                                 _lclass_ng = str(_lg_ng.get("class") or "").lower()
                                 _REJECT = {"amenity", "office", "building", "shop"}
+                                _exp_cc_ng = _intel_ng.get("location_country")
                                 if (_llat_ng != 0.0 and _llon_ng != 0.0
                                         and _ltype_ng not in _REJECT
-                                        and _lclass_ng not in _REJECT):
+                                        and _lclass_ng not in _REJECT
+                                        and _geocode_result_matches_country(_lg_ng, _exp_cc_ng)):
                                     geo = {
                                         "lat": _llat_ng, "lon": _llon_ng,
                                         "display_name": _lg_ng.get("display_name"),
@@ -5738,6 +5751,7 @@ def _run_news_conflict_extraction_sync():
                                 _llat != 0.0 and _llon != 0.0
                                 and _ltype not in _LLM_REJECT_TYPES
                                 and _lcls  not in _LLM_REJECT_TYPES
+                                and _geocode_result_matches_country(_lg, intel.get("location_country"))
                             ):
                                 article_record["lat"] = _llat
                                 article_record["lon"] = _llon
@@ -9215,6 +9229,27 @@ async def _threat_matrix_loop():
         await asyncio.sleep(3600)
 
 
+def _reset_recent_llm_extractions(days: int = 7) -> int:
+    """Clear llm_extracted flag for recent articles so they are re-run with the
+    current prompt (e.g. after a prompt change that adds location_country).
+    Returns the count of articles reset."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    reset_count = 0
+    with _NEWS_STORE_LOCK:
+        for art in _NEWS_ARTICLE_STORE.values():
+            if not art.get("llm_extracted"):
+                continue
+            pub = art.get("published") or art.get("updated_at") or ""
+            try:
+                pub_dt = datetime.fromisoformat(pub.replace("Z", "+00:00")) if pub else None
+            except (ValueError, AttributeError):
+                pub_dt = None
+            if pub_dt and pub_dt >= cutoff:
+                art["llm_extracted"] = False
+                reset_count += 1
+    return reset_count
+
+
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
@@ -9260,6 +9295,9 @@ async def startup_event():
     except Exception as _e:
         print(f"[startup] briefing store load error: {_e}")
     print(f"[startup] loaded {len(_BRIEFING_STORE)} briefing(s) from disk")
+
+    _reset_count = _reset_recent_llm_extractions(days=7)
+    print(f"[startup] reset llm_extracted for {_reset_count} recent articles (prompt update)")
 
     asyncio.create_task(_extract_news_conflicts_loop())
     asyncio.create_task(_background_news_geocode_loop())
@@ -9999,7 +10037,8 @@ async def backfill_article_intelligence():
                         _lg = _lgeos[0]
                         _llat = float(_lg.get("lat", 0))
                         _llon = float(_lg.get("lon", 0))
-                        if _llat != 0.0 and _llon != 0.0:
+                        if (_llat != 0.0 and _llon != 0.0
+                                and _geocode_result_matches_country(_lg, intel.get("location_country"))):
                             updates["lat"] = _llat
                             updates["lon"] = _llon
                             updates["location_name"] = _lg.get("display_name")
