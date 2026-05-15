@@ -427,6 +427,77 @@ export function altColorHex(alt) {
 }
 
 
+// ── Intelligence Fusion marker (larger diamond + double pulse, #BF5AF2) ────────
+export function makeFusionCanvas(severity) {
+    const SIZE = 56
+    const hex  = "#BF5AF2"
+    return makeCanvas(SIZE, SIZE, (ctx, w, h) => {
+        const cx = w / 2, cy = h / 2
+
+        // Outer double-pulse ring for critical, single for high
+        if (severity === "critical") {
+            ctx.beginPath()
+            ctx.arc(cx, cy, 26, 0, Math.PI * 2)
+            ctx.strokeStyle = hex + "33"
+            ctx.lineWidth   = 1
+            ctx.stroke()
+            ctx.beginPath()
+            ctx.arc(cx, cy, 22, 0, Math.PI * 2)
+            ctx.strokeStyle = hex + "55"
+            ctx.lineWidth   = 1.2
+            ctx.stroke()
+        } else if (severity === "high") {
+            ctx.beginPath()
+            ctx.arc(cx, cy, 22, 0, Math.PI * 2)
+            ctx.strokeStyle = hex + "44"
+            ctx.lineWidth   = 1
+            ctx.stroke()
+        }
+
+        // Radial glow
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, w * 0.45)
+        grd.addColorStop(0,    hex + "66")
+        grd.addColorStop(0.55, hex + "28")
+        grd.addColorStop(1,    hex + "00")
+        ctx.beginPath()
+        ctx.arc(cx, cy, w * 0.45, 0, Math.PI * 2)
+        ctx.fillStyle = grd
+        ctx.fill()
+
+        // Diamond (rotated square)
+        const r = severity === "critical" ? 14 : severity === "high" ? 12 : 10.5
+        ctx.save()
+        ctx.translate(cx, cy)
+        ctx.rotate(Math.PI / 4)
+        ctx.beginPath()
+        ctx.rect(-r / 2, -r / 2, r, r)
+        ctx.fillStyle = "rgba(8,12,24,0.92)"
+        ctx.fill()
+        ctx.strokeStyle = hex
+        ctx.lineWidth   = severity === "critical" ? 2.5 : 2.0
+        ctx.stroke()
+        ctx.restore()
+
+        // Inner "⚡" substitute: small cross/spark in centre
+        ctx.save()
+        ctx.translate(cx, cy)
+        ctx.strokeStyle = hex
+        ctx.lineWidth   = 1.5
+        const sp = 3.5
+        ctx.beginPath()
+        ctx.moveTo(0, -sp); ctx.lineTo(0, sp)
+        ctx.moveTo(-sp, 0); ctx.lineTo(sp, 0)
+        ctx.stroke()
+        ctx.restore()
+
+        // Centre dot
+        ctx.beginPath()
+        ctx.arc(cx, cy, 2, 0, Math.PI * 2)
+        ctx.fillStyle = hex
+        ctx.fill()
+    })
+}
+
 // ── News Assessment marker (diamond shape, coloured by icon_type) ─────────────
 // Each NEWS_PATTERN type gets a distinctive colour; shape is a rotated square
 // (diamond) so it differs visually from circular event markers.

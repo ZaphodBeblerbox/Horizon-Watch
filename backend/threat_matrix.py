@@ -71,7 +71,8 @@ def _threat_level(score: float) -> str:
 
 
 def compute_threat_score(region_name: str, db, forge_alerts: list = None,
-                          news_events: list = None) -> dict:
+                          news_events: list = None,
+                          fusion_events: list = None) -> dict:
     """
     Compute a 0-100 composite threat score for a region.
     Queries SentinelDetection from the last 24h.
@@ -122,18 +123,27 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
         if _in_bbox(ev.get("lat"), ev.get("lng") or ev.get("lon"), bbox)
     )
 
+    # ── Active fusion events in region ───────────────────────────────────────
+    fusions_all  = fusion_events or []
+    fusion_count = sum(
+        1 for fe in fusions_all
+        if _in_bbox(fe.get("lat"), fe.get("lon"), bbox)
+    )
+
     # ── Composite score ───────────────────────────────────────────────────────
     base             = min(alert_count       * 3,  40)
     forge_bonus      = min(forge_alert_count * 5,  25)
     sentinel_bonus   = min(sentinel_weighted,       20)
     news_bonus       = min(news_count        * 2,  15)
-    score = min(base + forge_bonus + sentinel_bonus + news_bonus, 100.0)
+    fusion_bonus     = min(fusion_count      * 15, 30)
+    score = min(base + forge_bonus + sentinel_bonus + news_bonus + fusion_bonus, 100.0)
 
     signals = []
     if alert_count       > 0: signals.append("forge_alerts")
     if forge_alert_count > 0: signals.append("rule_triggers")
     if sentinel_count    > 0: signals.append("satellite_detections")
     if news_count        > 0: signals.append("news_events")
+    if fusion_count      > 0: signals.append("fusion_events")
 
     return {
         "region_name":               region_name,
@@ -144,6 +154,7 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
         "forge_alert_count":         forge_alert_count,
         "sentinel_detection_count":  sentinel_count,
         "news_event_count":          news_count,
+        "fusion_count":              fusion_count,
         "contributing_signals":      signals,
     }
 
@@ -195,12 +206,13 @@ def get_cached_scores() -> list:
     return list(_THREAT_CACHE)
 
 
-def refresh_cache(db, forge_alerts: list = None, news_events: list = None):
+def refresh_cache(db, forge_alerts: list = None, news_events: list = None,
+                   fusion_events: list = None):
     global _THREAT_CACHE, _THREAT_CACHE_TS
     import time
     scores = []
     for region_name in REGIONS:
-        scores.append(compute_threat_score(region_name, db, forge_alerts, news_events))
+        scores.append(compute_threat_score(region_name, db, forge_alerts, news_events, fusion_events))
     scores.sort(key=lambda x: x["threat_score"], reverse=True)
     _THREAT_CACHE    = scores
     _THREAT_CACHE_TS = time.time()

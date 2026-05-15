@@ -104,6 +104,7 @@ def build_snapshot(
     active_profile: dict | None,
     static_airports: list | None = None,
     static_ports: list | None = None,
+    fusion_events: list | None = None,
 ) -> dict:
     """Build a raw intelligence snapshot for the Director prompt.
 
@@ -379,7 +380,52 @@ def build_snapshot(
     except Exception as _we:
         logger.debug("[DIRECTOR] weekly baseline unavailable: %s", _we)
 
+    # ── Intelligence fusion events (PRIMARY context source) ──────────────────
+    active_fusions: list[dict] = []
+    if fusion_events:
+        for fe in fusion_events[:20]:
+            active_fusions.append({
+                "fusion_id":   fe.get("fusion_id", ""),
+                "title":       (fe.get("title") or "")[:120],
+                "subtitle":    (fe.get("subtitle") or "")[:120],
+                "narrative":   (fe.get("narrative") or "")[:300],
+                "severity":    fe.get("severity") or "medium",
+                "confidence":  round(float(fe.get("confidence") or 0), 2),
+                "domains":     fe.get("domains") or [],
+                "location":    fe.get("location_name") or fe.get("location_country") or "",
+                "lat":         fe.get("lat"),
+                "lon":         fe.get("lon"),
+                "key_signals": (fe.get("key_signals") or [])[:5],
+            })
+    else:
+        # Attempt to load live from DB if not provided
+        try:
+            from database import FusionEvent as _FEds, get_db as _gdb_ds
+            import json as _j_ds
+            with _gdb_ds() as _db_ds:
+                rows = (_db_ds.query(_FEds)
+                        .filter(_FEds.status == "active", _FEds.marker_visible == True)
+                        .order_by(_FEds.created_at.desc())
+                        .limit(20).all())
+                for r in rows:
+                    active_fusions.append({
+                        "fusion_id":   r.fusion_id,
+                        "title":       (r.title or "")[:120],
+                        "subtitle":    (r.subtitle or "")[:120],
+                        "narrative":   (r.narrative or "")[:300],
+                        "severity":    r.severity,
+                        "confidence":  round(float(r.confidence or 0), 2),
+                        "domains":     _j_ds.loads(r.domains or "[]"),
+                        "location":    r.location_name or r.location_country or "",
+                        "lat":         r.lat,
+                        "lon":         r.lon,
+                        "key_signals": _j_ds.loads(r.key_signals or "[]")[:5],
+                    })
+        except Exception:
+            pass
+
     snapshot = {
+        "active_fusions":      active_fusions,
         "mission_profile":     profile_summary,
         "raw_intelligence":    raw_intel,
         "vessels":             vessel_list,
@@ -1176,7 +1222,7 @@ Mission profile:
 Intelligence snapshot (raw, unfiltered):
 {snapshot}
 
-You are the analyst. Read raw_intelligence, decide what is geopolitically significant, and geocode events yourself using place_event. Use vessels/aircraft/chokepoints/infrastructure for tracked live assets. Build a cinematic briefing. Start with clear_all. End with summary.
+You are the analyst. PRIORITY ORDER for context: 1. active_fusions (multi-domain correlated events — treat these as confirmed intelligence), 2. raw_intelligence (headlines — assess relevance yourself), 3. vessels/aircraft/chokepoints/infrastructure (live tracked assets). If active_fusions is non-empty, lead the briefing with those events, geocoding to their lat/lon. Geocode raw_intelligence yourself using geographic knowledge. Build a cinematic briefing. Start with clear_all. End with summary.
 Respond ONLY with the JSON array — no preamble, no markdown fences.
 
 ═══════════════════════════════════════════════════════

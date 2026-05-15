@@ -40,6 +40,7 @@ export const ALERT_ICONS = {
   IDENTITY_CHANGE:    { label: "Identity Change",         icon: "UserX",          color: "#FF2D55", description: "Vessel MMSI or name changed while at sea" },
   CONVOY:             { label: "Convoy Movement",         icon: "Truck",          color: "#34AADC", description: "Multiple vessels moving in convoy pattern" },
   UNKNOWN_CONTACT:    { label: "Unknown Contact",         icon: "HelpCircle",     color: "#8E8E93", description: "Unidentified vessel contact requiring investigation" },
+  FUSION_EVENT:       { label: "Intelligence Fusion Event", icon: "Layers",       color: "#BF5AF2", description: "Multi-domain correlated intelligence event" },
 }
 
 export const NEWS_PATTERN_ICON_KEYS = new Set([

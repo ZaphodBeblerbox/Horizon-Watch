@@ -230,6 +230,14 @@ except ImportError as _det_err:
     print(f"[startup] detectors not available: {_det_err}")
     _HAS_DETECTORS = False
 
+try:
+    from fusion_engine import fusion_engine as _fusion_engine
+    _HAS_FUSION = True
+except ImportError as _fe_err:
+    print(f"[startup] fusion engine not available: {_fe_err}")
+    _fusion_engine = None
+    _HAS_FUSION = False
+
 _api_key = os.getenv("ANTHROPIC_API_KEY")
 if not _api_key:
     print("[startup] WARNING: ANTHROPIC_API_KEY is not set — /analyse will return an error until a key is provided.")
@@ -7557,6 +7565,28 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
     _forge_alerts.append(_alert)
     print(f"[news-pattern] fired {pattern_type} for {location.upper()} ({count} articles, conf={confidence:.2f})")
 
+    # Feed fusion engine
+    if _fusion_engine:
+        try:
+            _fusion_engine.on_signal({
+                "signal_id":    f"NEWS-{assess_id}",
+                "domain":       "NEWS",
+                "severity":     pdef.get("severity", "medium"),
+                "lat":          lat,
+                "lon":          lon,
+                "location_name": location.upper(),
+                "region_id":    None,
+                "country":      location if len(location) == 2 else None,
+                "timestamp":    datetime.utcnow(),
+                "alert_id":     None,
+                "assessment_id": assess_id,
+                "rule_id":      rule.get("id"),
+                "rule_name":    rule.get("name") or rule.get("rule_name"),
+                "summary":      headline,
+            })
+        except Exception as _fe_err:
+            print(f"[fusion] news signal error: {_fe_err}")
+
 
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
 _correlation_assessments: list = []  # cross-domain correlation results (24h)
@@ -9365,6 +9395,18 @@ async def _auto_ingest_task():
         print(f"[auto-ingest] task error: {_e}")
 
 
+async def _fusion_expire_loop():
+    """Prune stale fusion signals every 15 minutes."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            if _fusion_engine:
+                _fusion_engine.expire_old_signals()
+        except Exception as _fxe:
+            print(f"[fusion] expire loop error: {_fxe}")
+        await asyncio.sleep(900)   # 15 minutes
+
+
 async def _threat_matrix_loop():
     """Hourly threat-matrix cache refresh + midnight daily snapshot."""
     await asyncio.sleep(10)
@@ -9378,7 +9420,21 @@ async def _threat_matrix_loop():
                 pass
             db = next(_gdb_tm())
             try:
-                threat_matrix.refresh_cache(db, list(_forge_alerts), active_events)
+                _fusions_for_tm = []
+                try:
+                    if _fusion_engine:
+                        from database import FusionEvent as _FE_tm, get_db as _gdb_fe
+                        import json as _json_tm
+                        with _gdb_fe() as _dbtm:
+                            _fusions_for_tm = [
+                                {"lat": r.lat, "lon": r.lon, "severity": r.severity}
+                                for r in _dbtm.query(_FE_tm).filter(
+                                    _FE_tm.status == "active", _FE_tm.marker_visible == True
+                                ).all()
+                            ]
+                except Exception:
+                    pass
+                threat_matrix.refresh_cache(db, list(_forge_alerts), active_events, _fusions_for_tm)
                 now_utc = datetime.utcnow()
                 if now_utc.hour == 0 and now_utc.minute < 5:
                     threat_matrix.save_daily_snapshot(db, list(_forge_alerts), active_events)
@@ -9464,6 +9520,39 @@ async def startup_event():
     if _news_pattern_engine:
         _news_pattern_engine.set_fire_callback(_news_assessment_fire)
         print("[startup] NewsPatternEngine fire callback registered")
+
+    # Wire FusionEngine fire callback
+    if _fusion_engine:
+        def _fusion_fire_callback(fusion_dict: dict, suppressed_alert_ids: list):
+            """Append fusion event as a forge alert and suppress individual markers."""
+            _forge_alert = {
+                "id":           fusion_dict["fusion_id"],
+                "fusion_id":    fusion_dict["fusion_id"],
+                "rule_name":    "INTELLIGENCE_FUSION",
+                "source":       "FUSION",
+                "severity":     fusion_dict.get("severity", "high"),
+                "icon_type":    "FUSION_EVENT",
+                "lat":          fusion_dict.get("lat"),
+                "lng":          fusion_dict.get("lon"),
+                "title":        fusion_dict.get("title"),
+                "message":      fusion_dict.get("narrative", ""),
+                "subtitle":     fusion_dict.get("subtitle"),
+                "domains":      fusion_dict.get("domains", []),
+                "signal_count": fusion_dict.get("signal_count", 0),
+                "confidence":   fusion_dict.get("confidence", 0.5),
+                "key_signals":  fusion_dict.get("key_signals", []),
+                "threat_indicators": fusion_dict.get("threat_indicators", []),
+                "timestamp":    datetime.utcnow().isoformat(),
+                "provenance": {"source_type": "FUSION", "detection_rule": "INTELLIGENCE_FUSION"},
+            }
+            _forge_alerts.append(_forge_alert)
+            # Remove suppressed individual alert markers
+            global _forge_alerts
+            _forge_alerts = [a for a in _forge_alerts if a.get("id") not in suppressed_alert_ids]
+
+        _fusion_engine.set_fire_callback(_fusion_fire_callback)
+        print("[startup] FusionEngine fire callback registered")
+        asyncio.create_task(_fusion_expire_loop())
 
     asyncio.create_task(_extract_news_conflicts_loop())
     asyncio.create_task(_background_news_geocode_loop())
@@ -16068,6 +16157,47 @@ async def _forge_detection_cycle():
             _forge_alerts.extend(all_new)
             _correlation_assessments.extend(new_assessments)
 
+            # Feed AIS and ADSB alerts into fusion engine
+            if _fusion_engine:
+                try:
+                    _fn_now = datetime.now(timezone.utc).replace(tzinfo=None)
+                    for _fa in new_ais_alerts:
+                        _fusion_engine.on_signal({
+                            "signal_id":    f"AIS-{_fa.get('id', '')}",
+                            "domain":       "AIS",
+                            "severity":     _fa.get("severity", "medium"),
+                            "lat":          _fa.get("lat"),
+                            "lon":          _fa.get("lng") or _fa.get("lon"),
+                            "location_name": _fa.get("location_name") or _fa.get("vessel") or "",
+                            "region_id":    _fa.get("region_id"),
+                            "country":      _fa.get("country"),
+                            "timestamp":    _fn_now,
+                            "alert_id":     _fa.get("id"),
+                            "assessment_id": None,
+                            "rule_id":      _fa.get("rule_id"),
+                            "rule_name":    _fa.get("rule_name") or _fa.get("rule_trigger"),
+                            "summary":      _fa.get("title") or _fa.get("message", "")[:120],
+                        })
+                    for _fa in new_adsb_alerts:
+                        _fusion_engine.on_signal({
+                            "signal_id":    f"ADSB-{_fa.get('id', '')}",
+                            "domain":       "ADSB",
+                            "severity":     _fa.get("severity", "medium"),
+                            "lat":          _fa.get("lat"),
+                            "lon":          _fa.get("lng") or _fa.get("lon"),
+                            "location_name": _fa.get("location_name") or _fa.get("aircraft") or "",
+                            "region_id":    _fa.get("region_id"),
+                            "country":      _fa.get("country"),
+                            "timestamp":    _fn_now,
+                            "alert_id":     _fa.get("id"),
+                            "assessment_id": None,
+                            "rule_id":      _fa.get("rule_id"),
+                            "rule_name":    _fa.get("rule_name") or _fa.get("rule_trigger"),
+                            "summary":      _fa.get("title") or _fa.get("message", "")[:120],
+                        })
+                except Exception as _fe_err2:
+                    print(f"[fusion] forge-brain signal error: {_fe_err2}")
+
             # Trim to 24h
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             _forge_alerts = [a for a in _forge_alerts if a.get("timestamp", "") > cutoff]
@@ -16586,6 +16716,261 @@ def api_assessments_delete(assessment_id: str):
     return {"deleted": assessment_id}
 
 
+# ── Intelligence Fusion endpoints ─────────────────────────────────────────────
+
+@app.get("/api/fusions")
+def api_fusions_list(
+    status: str = "active",
+    severity: str = None,
+    since: str = None,
+    limit: int = 100,
+):
+    try:
+        from database import get_db as _gdb_f, FusionEvent as _FE
+        import json as _json
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Fusion engine not available")
+    with _gdb_f() as _db:
+        q = _db.query(_FE)
+        if status and status != "all":
+            q = q.filter(_FE.status == status)
+        if severity:
+            q = q.filter(_FE.severity == severity)
+        if since:
+            try:
+                _since_dt = datetime.fromisoformat(since)
+                q = q.filter(_FE.created_at >= _since_dt)
+            except ValueError:
+                pass
+        rows = q.order_by(_FE.created_at.desc()).limit(limit).all()
+        result = []
+        for r in rows:
+            result.append({
+                "fusion_id": r.fusion_id,
+                "title": r.title,
+                "subtitle": r.subtitle,
+                "narrative": r.narrative,
+                "severity": r.severity,
+                "confidence": r.confidence,
+                "domain_count": r.domain_count,
+                "domains": _json.loads(r.domains or "[]"),
+                "fusion_type": r.fusion_type,
+                "location_name": r.location_name,
+                "location_country": r.location_country,
+                "region_id": r.region_id,
+                "lat": r.lat,
+                "lon": r.lon,
+                "radius_km": r.radius_km,
+                "signal_count": r.signal_count,
+                "key_signals": _json.loads(r.key_signals or "[]"),
+                "threat_indicators": _json.loads(r.threat_indicators or "[]"),
+                "recommended_actions": _json.loads(r.recommended_actions or "[]"),
+                "contributing_assessments": _json.loads(r.contributing_assessments or "[]"),
+                "contributing_alert_ids": _json.loads(r.contributing_alert_ids or "[]"),
+                "contributing_rule_ids": _json.loads(r.contributing_rule_ids or "[]"),
+                "marker_type": r.marker_type,
+                "marker_visible": r.marker_visible,
+                "status": r.status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+                "analyst_notes": r.analyst_notes,
+            })
+        return result
+
+
+@app.get("/api/fusions/for-claude")
+def api_fusions_for_claude(limit: int = 20):
+    """Stripped fusion records for Director context injection."""
+    try:
+        from database import get_db as _gdb_f, FusionEvent as _FE
+        import json as _json
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Fusion engine not available")
+    with _gdb_f() as _db:
+        rows = (
+            _db.query(_FE)
+            .filter(_FE.status == "active", _FE.marker_visible == True)
+            .order_by(_FE.severity.desc(), _FE.confidence.desc())
+            .limit(limit)
+            .all()
+        )
+        result = []
+        for r in rows:
+            result.append({
+                "fusion_id": r.fusion_id,
+                "title": r.title,
+                "subtitle": r.subtitle,
+                "narrative": r.narrative,
+                "severity": r.severity,
+                "confidence": round(r.confidence, 2),
+                "domains": _json.loads(r.domains or "[]"),
+                "location_name": r.location_name,
+                "location_country": r.location_country,
+                "signal_count": r.signal_count,
+                "key_signals": _json.loads(r.key_signals or "[]"),
+                "threat_indicators": _json.loads(r.threat_indicators or "[]"),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
+        return result
+
+
+@app.get("/api/fusions/{fusion_id}")
+def api_fusions_get(fusion_id: str):
+    try:
+        from database import get_db as _gdb_f, FusionEvent as _FE
+        import json as _json
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Fusion engine not available")
+    with _gdb_f() as _db:
+        r = _db.query(_FE).filter(_FE.fusion_id == fusion_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail=f"Fusion {fusion_id} not found")
+        signals = []
+        if _fusion_engine:
+            for sig in _fusion_engine.get_recent_signals():
+                if sig.get("signal_id") in _json.loads(r.contributing_alert_ids or "[]"):
+                    signals.append(sig)
+        return {
+            "fusion_id": r.fusion_id,
+            "title": r.title,
+            "subtitle": r.subtitle,
+            "narrative": r.narrative,
+            "severity": r.severity,
+            "confidence": r.confidence,
+            "domain_count": r.domain_count,
+            "domains": _json.loads(r.domains or "[]"),
+            "fusion_type": r.fusion_type,
+            "location_name": r.location_name,
+            "location_country": r.location_country,
+            "region_id": r.region_id,
+            "lat": r.lat,
+            "lon": r.lon,
+            "radius_km": r.radius_km,
+            "signal_count": r.signal_count,
+            "key_signals": _json.loads(r.key_signals or "[]"),
+            "threat_indicators": _json.loads(r.threat_indicators or "[]"),
+            "recommended_actions": _json.loads(r.recommended_actions or "[]"),
+            "contributing_assessments": _json.loads(r.contributing_assessments or "[]"),
+            "contributing_alert_ids": _json.loads(r.contributing_alert_ids or "[]"),
+            "contributing_rule_ids": _json.loads(r.contributing_rule_ids or "[]"),
+            "marker_type": r.marker_type,
+            "marker_visible": r.marker_visible,
+            "status": r.status,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+            "analyst_notes": r.analyst_notes,
+            "resolved_signals": signals,
+        }
+
+
+@app.get("/api/fusions/{fusion_id}/signals")
+def api_fusions_signals(fusion_id: str):
+    try:
+        from database import get_db as _gdb_f, FusionEvent as _FE
+        import json as _json
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Fusion engine not available")
+    with _gdb_f() as _db:
+        r = _db.query(_FE).filter(_FE.fusion_id == fusion_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail=f"Fusion {fusion_id} not found")
+        alert_ids = set(_json.loads(r.contributing_alert_ids or "[]"))
+    signals = []
+    if _fusion_engine:
+        for sig in _fusion_engine.get_recent_signals():
+            if sig.get("signal_id") in alert_ids:
+                ts = sig.get("timestamp")
+                signals.append({
+                    **sig,
+                    "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                })
+    return {"fusion_id": fusion_id, "signals": signals}
+
+
+@app.put("/api/fusions/{fusion_id}")
+async def api_fusions_update(fusion_id: str, request: Request):
+    try:
+        from database import get_db as _gdb_f, FusionEvent as _FE
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Fusion engine not available")
+    body = await request.json()
+    allowed = {"analyst_notes", "status", "marker_visible"}
+    with _gdb_f() as _db:
+        r = _db.query(_FE).filter(_FE.fusion_id == fusion_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail=f"Fusion {fusion_id} not found")
+        for field in allowed:
+            if field in body:
+                setattr(r, field, body[field])
+        r.updated_at = datetime.utcnow()
+        _db.commit()
+    return {"updated": fusion_id}
+
+
+@app.delete("/api/fusions/{fusion_id}")
+def api_fusions_delete(fusion_id: str):
+    try:
+        from database import get_db as _gdb_f, FusionEvent as _FE
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Fusion engine not available")
+    with _gdb_f() as _db:
+        r = _db.query(_FE).filter(_FE.fusion_id == fusion_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail=f"Fusion {fusion_id} not found")
+        r.status = "resolved"
+        r.marker_visible = False
+        r.resolved_at = datetime.utcnow()
+        r.updated_at = datetime.utcnow()
+        _db.commit()
+    return {"resolved": fusion_id}
+
+
+@app.get("/api/signals/recent")
+def api_signals_recent(limit: int = 50):
+    if not _fusion_engine:
+        return []
+    sigs = _fusion_engine.get_recent_signals()
+    result = []
+    for sig in sigs[-limit:]:
+        ts = sig.get("timestamp")
+        result.append({
+            **sig,
+            "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+        })
+    return list(reversed(result))
+
+
+_fusion_settings: dict = {
+    "fusion_window_hours": 2,
+    "min_domains": 2,
+    "min_signals": 2,
+}
+
+
+@app.get("/api/fusion-settings")
+def api_fusion_settings_get():
+    return _fusion_settings
+
+
+@app.put("/api/fusion-settings")
+async def api_fusion_settings_put(request: Request):
+    body = await request.json()
+    allowed = {"fusion_window_hours", "min_domains", "min_signals"}
+    for key in allowed:
+        if key in body:
+            _fusion_settings[key] = body[key]
+            if _fusion_engine:
+                if key == "fusion_window_hours":
+                    _fusion_engine.window_hours = float(body[key])
+                elif key == "min_domains":
+                    _fusion_engine.min_domains = int(body[key])
+                elif key == "min_signals":
+                    _fusion_engine.min_signals = int(body[key])
+    return _fusion_settings
+
+
 # ── Forge alerts ──────────────────────────────────────────────────────────────
 
 @app.get("/api/forge/alerts")
@@ -16774,10 +17159,23 @@ def analytics_threat_matrix():
         active_events = es.get_active_events()
     except Exception:
         pass
+    _fusions_live = []
+    try:
+        if _fusion_engine:
+            from database import FusionEvent as _FE_live, get_db as _gdb_fev
+            with _gdb_fev() as _dbfev:
+                _fusions_live = [
+                    {"lat": r.lat, "lon": r.lon, "severity": r.severity}
+                    for r in _dbfev.query(_FE_live).filter(
+                        _FE_live.status == "active", _FE_live.marker_visible == True
+                    ).all()
+                ]
+    except Exception:
+        pass
     from database import get_db as _gdb_tm2
     db = next(_gdb_tm2())
     try:
-        return threat_matrix.refresh_cache(db, list(_forge_alerts), active_events)
+        return threat_matrix.refresh_cache(db, list(_forge_alerts), active_events, _fusions_live)
     finally:
         db.close()
 

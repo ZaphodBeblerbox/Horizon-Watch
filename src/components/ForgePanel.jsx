@@ -94,7 +94,7 @@ const WS_MAP = {
     src_ais: 'ais-source', src_adsb: 'adsb-source', src_news: 'news-source',
     src_satellite: 'satellite-source', src_uploads: 'uploads-source', src_osint: 'osint-source',
     det_ais: 'ais-detector', det_adsb: 'adsb-detector', det_news: 'news-detector', det_overwatch: 'ml-detector', det_sentinel: 'surveillance-zones',
-    enr_correlation: 'brain', enr_ontology: 'ontology', enr_geocode: 'geocoder',
+    enr_correlation: 'correlation-engine', enr_ontology: 'ontology', enr_geocode: 'geocoder',
     int_threat: 'brain', int_patterns: 'brain', int_escalation: 'brain', int_rule_logic: 'rule-logic',
     out_alerts: 'alerts', out_briefings: 'briefings', out_reports: 'reports',
 }
@@ -944,6 +944,399 @@ function RuleLogicWorkspace({ isMobile = false }) {
     )
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CORRELATION ENGINE WORKSPACE  (Intelligence Fusion Engine UI)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const DOMAIN_COLOR_CE = {
+    AIS: "#34AADC", NEWS: "#FF9500", SENTINEL: "#30D158", ADSB: "#5856D6", FUSION: "#BF5AF2",
+}
+const SEV_COLOR_CE = { critical: "#f87171", high: "#fb923c", medium: "#fbbf24", info: "#60a5fa" }
+
+function CorrelationEngineWorkspace() {
+    const [signals,       setSignals]       = useState([])
+    const [fusions,       setFusions]       = useState([])
+    const [settings,      setSettings]      = useState({ fusion_window_hours: 2, min_domains: 2, min_signals: 2 })
+    const [settingsDraft, setSettingsDraft] = useState(null)
+    const [filter,        setFilter]        = useState("ALL")
+    const [detail,        setDetail]        = useState(null)
+    const [detailLoading, setDetailLoading] = useState(false)
+    const [noteText,      setNoteText]      = useState("")
+    const [noteSaving,    setNoteSaving]    = useState(false)
+    const signalListRef = useRef(null)
+
+    const reload = () => {
+        fetch(`${API}/api/signals/recent?limit=50`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setSignals(Array.isArray(d) ? d : []); setTimeout(() => { if (signalListRef.current) signalListRef.current.scrollTop = 0 }, 50) })
+            .catch(() => {})
+        fetch(`${API}/api/fusions?status=active&limit=50`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setFusions(Array.isArray(d) ? d : []))
+            .catch(() => {})
+        fetch(`${API}/api/fusion-settings`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setSettings(d) })
+            .catch(() => {})
+    }
+
+    useEffect(() => {
+        reload()
+        const iv = setInterval(reload, 30_000)
+        return () => clearInterval(iv)
+    }, [])
+
+    const openDetail = async (f) => {
+        setDetailLoading(true)
+        setDetail({ ...f, resolved_signals: [] })
+        setNoteText(f.analyst_notes || "")
+        try {
+            const r = await fetch(`${API}/api/fusions/${f.fusion_id}`, { headers: forgeHeaders() })
+            if (r.ok) {
+                const d = await r.json()
+                setDetail(d)
+                setNoteText(d.analyst_notes || "")
+            }
+        } catch { /* silent */ }
+        setDetailLoading(false)
+    }
+
+    const saveNote = async () => {
+        if (!detail) return
+        setNoteSaving(true)
+        try {
+            await fetch(`${API}/api/fusions/${detail.fusion_id}`, {
+                method: "PUT", headers: forgeHeaders(),
+                body: JSON.stringify({ analyst_notes: noteText }),
+            })
+        } catch { /* silent */ }
+        setNoteSaving(false)
+    }
+
+    const resolveFusion = async () => {
+        if (!detail) return
+        try {
+            await fetch(`${API}/api/fusions/${detail.fusion_id}`, { method: "DELETE", headers: forgeHeaders() })
+            setDetail(d => d ? { ...d, status: "resolved" } : d)
+            reload()
+        } catch { /* silent */ }
+    }
+
+    const saveSettings = async () => {
+        const draft = settingsDraft || settings
+        try {
+            const r = await fetch(`${API}/api/fusion-settings`, {
+                method: "PUT", headers: forgeHeaders(), body: JSON.stringify(draft),
+            })
+            if (r.ok) setSettings(await r.json())
+        } catch { /* silent */ }
+        setSettingsDraft(null)
+    }
+
+    const filtered = fusions.filter(f => filter === "ALL" || f.severity === filter.toLowerCase())
+
+    return (
+        <div style={{ flex: 1, display: "flex", overflow: "hidden", gap: 0 }}>
+
+            {/* ── LEFT: Signal Monitor ── */}
+            <div style={{
+                width: 280, flexShrink: 0, borderRight: "1px solid #1e293b",
+                display: "flex", flexDirection: "column", overflow: "hidden",
+            }}>
+                <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid #1e293b" }}>
+                    <div style={{ color: "#4A9EE0", fontSize: 11, fontWeight: 700, letterSpacing: "0.07em" }}>
+                        SIGNAL MONITOR
+                    </div>
+                    <div style={{ color: "#334155", fontSize: 9, marginTop: 2 }}>
+                        Live fusion input · last {signals.length} signals
+                    </div>
+                </div>
+                <div ref={signalListRef} style={{ flex: 1, overflowY: "auto", padding: "6px 10px" }}>
+                    {signals.length === 0 ? (
+                        <div style={{ color: "#334155", fontSize: 11, padding: 12, textAlign: "center" }}>No recent signals</div>
+                    ) : signals.map((s, i) => {
+                        const dc = DOMAIN_COLOR_CE[s.domain] || "#64748b"
+                        return (
+                            <div key={i} style={{
+                                padding: "5px 0", borderBottom: "1px solid rgba(148,163,184,0.05)",
+                                display: "flex", gap: 7, alignItems: "flex-start",
+                            }}>
+                                <span style={{
+                                    fontSize: 8, padding: "2px 5px", borderRadius: 2,
+                                    background: dc + "22", color: dc, fontWeight: 700,
+                                    flexShrink: 0, marginTop: 1,
+                                }}>{s.domain || "?"}</span>
+                                <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: 10, color: "#94a3b8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                        {s.rule_name || s.signal_id}
+                                    </div>
+                                    {s.summary && (
+                                        <div style={{ fontSize: 9, color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.summary}</div>
+                                    )}
+                                    <div style={{ fontSize: 8, color: "#1e293b", marginTop: 1 }}>
+                                        {s.location_name || (s.lat != null ? `${Number(s.lat).toFixed(2)}, ${Number(s.lon ?? 0).toFixed(2)}` : "")}
+                                        {s.timestamp && ` · ${new Date(s.timestamp).toLocaleTimeString("en-GB", { hour12: false, hour: "2-digit", minute: "2-digit" })}`}
+                                    </div>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+            </div>
+
+            {/* ── CENTRE: Active Fusions ── */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderRight: "1px solid #1e293b" }}>
+                {/* Filter pills */}
+                <div style={{ padding: "10px 14px 6px", borderBottom: "1px solid #1e293b", display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ color: "#4A9EE0", fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", marginRight: 4 }}>ACTIVE FUSIONS</span>
+                    {["ALL", "CRITICAL", "HIGH", "MEDIUM"].map(f => {
+                        const fc = f === "ALL" ? "#4A9EE0" : SEV_COLOR_CE[f.toLowerCase()] || "#64748b"
+                        return (
+                            <button key={f} onClick={() => setFilter(f)} style={{
+                                padding: "2px 8px", fontSize: 9, fontWeight: 700, borderRadius: 3,
+                                background: filter === f ? fc + "33" : "rgba(255,255,255,0.03)",
+                                border: `1px solid ${filter === f ? fc + "66" : "rgba(255,255,255,0.06)"}`,
+                                color: filter === f ? fc : "#334155", cursor: "pointer",
+                            }}>{f}</button>
+                        )
+                    })}
+                    <button onClick={reload} style={{
+                        marginLeft: "auto", padding: "2px 8px", fontSize: 9, fontWeight: 600,
+                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                        borderRadius: 3, color: "#334155", cursor: "pointer",
+                    }}>↻ Refresh</button>
+                </div>
+
+                {/* Fusion cards */}
+                <div style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}>
+                    {filtered.length === 0 ? (
+                        <div style={{ color: "#334155", fontSize: 11, padding: 16, textAlign: "center" }}>
+                            {fusions.length === 0 ? "No active fusion events" : "No events at this severity"}
+                        </div>
+                    ) : filtered.map(f => {
+                        const sc = SEV_COLOR_CE[f.severity] || "#60a5fa"
+                        const pct = Math.round((f.confidence || 0) * 100)
+                        const isSelected = detail?.fusion_id === f.fusion_id
+                        return (
+                            <div key={f.fusion_id} style={{
+                                background: isSelected ? "rgba(191,90,242,0.07)" : "rgba(17,24,39,0.7)",
+                                border: `1px solid ${isSelected ? "#BF5AF244" : "rgba(255,255,255,0.04)"}`,
+                                borderRadius: 6, padding: "8px 10px", marginBottom: 6,
+                                borderLeft: `3px solid ${sc}`,
+                            }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, lineHeight: 1.3, marginBottom: 2 }}>
+                                            {f.title || "Fusion Event"}
+                                        </div>
+                                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                            <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 2, background: sc + "22", color: sc, fontWeight: 700 }}>
+                                                {(f.severity || "?").toUpperCase()}
+                                            </span>
+                                            {(f.domains || []).map(d => (
+                                                <span key={d} style={{ fontSize: 8, padding: "1px 5px", borderRadius: 2, background: (DOMAIN_COLOR_CE[d] || "#64748b") + "22", color: DOMAIN_COLOR_CE[d] || "#64748b" }}>{d}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <button onClick={() => openDetail(f)} style={{
+                                        padding: "3px 8px", fontSize: 9, fontWeight: 600, flexShrink: 0, marginLeft: 6,
+                                        background: "rgba(191,90,242,0.12)", border: "1px solid rgba(191,90,242,0.25)",
+                                        borderRadius: 3, color: "#BF5AF2", cursor: "pointer",
+                                    }}>View</button>
+                                </div>
+                                {/* Confidence bar */}
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <div style={{ flex: 1, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                                        <div style={{ width: `${pct}%`, height: "100%", background: "#BF5AF2", borderRadius: 2 }} />
+                                    </div>
+                                    <span style={{ fontSize: 8, color: "#BF5AF2", minWidth: 24, textAlign: "right" }}>{pct}%</span>
+                                    <span style={{ fontSize: 8, color: "#334155" }}>{f.signal_count || 0}sig</span>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+
+                {/* Fusion Settings */}
+                <div style={{ borderTop: "1px solid #1e293b", padding: "10px 14px" }}>
+                    <div style={{ color: "#334155", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", marginBottom: 8 }}>FUSION SETTINGS</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {[
+                            { key: "fusion_window_hours", label: "Window (h)", step: 0.5, min: 0.5, max: 24 },
+                            { key: "min_domains",         label: "Min Domains", step: 1,   min: 2,   max: 5 },
+                            { key: "min_signals",         label: "Min Signals", step: 1,   min: 2,   max: 10 },
+                        ].map(({ key, label, step, min, max }) => {
+                            const val = (settingsDraft || settings)[key]
+                            return (
+                                <div key={key} style={{ flex: "1 1 80px" }}>
+                                    <div style={{ fontSize: 8, color: "#475569", marginBottom: 2 }}>{label}</div>
+                                    <input
+                                        type="number" step={step} min={min} max={max}
+                                        value={val}
+                                        onChange={e => setSettingsDraft(prev => ({ ...(prev || settings), [key]: Number(e.target.value) }))}
+                                        style={{
+                                            width: "100%", padding: "3px 6px", fontSize: 11,
+                                            background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+                                            borderRadius: 4, color: "#e2e8f0", outline: "none", boxSizing: "border-box",
+                                        }}
+                                    />
+                                </div>
+                            )
+                        })}
+                        <button onClick={saveSettings} style={{
+                            alignSelf: "flex-end", padding: "4px 10px", fontSize: 9, fontWeight: 600,
+                            background: "rgba(74,158,224,0.15)", border: "1px solid rgba(74,158,224,0.3)",
+                            borderRadius: 4, color: "#4A9EE0", cursor: "pointer",
+                        }}>Save</button>
+                    </div>
+                </div>
+            </div>
+
+            {/* ── RIGHT: Fusion Detail ── */}
+            <div style={{ width: 320, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                {!detail ? (
+                    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <div style={{ color: "#1e293b", fontSize: 12, textAlign: "center" }}>
+                            Select a fusion<br />to view details
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                        {/* Detail header */}
+                        <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid #1e293b" }}>
+                            <div style={{ color: "#BF5AF2", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", marginBottom: 4 }}>
+                                ⚡ FUSION DETAIL
+                            </div>
+                            <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600, lineHeight: 1.3 }}>
+                                {detail.title || "Fusion Event"}
+                            </div>
+                            {detail.subtitle && (
+                                <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{detail.subtitle}</div>
+                            )}
+                        </div>
+
+                        <div style={{ flex: 1, overflowY: "auto", padding: "10px 14px" }}>
+                            {detailLoading && (
+                                <div style={{ color: "#334155", fontSize: 10, textAlign: "center", padding: 8 }}>Loading signals…</div>
+                            )}
+
+                            {/* Confidence + domains */}
+                            <div style={{ marginBottom: 10 }}>
+                                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
+                                    {(detail.domains || []).map(d => (
+                                        <span key={d} style={{ fontSize: 8, padding: "2px 6px", borderRadius: 2, background: (DOMAIN_COLOR_CE[d] || "#64748b") + "22", color: DOMAIN_COLOR_CE[d] || "#64748b", fontWeight: 700 }}>{d}</span>
+                                    ))}
+                                    <span style={{ fontSize: 8, padding: "2px 6px", borderRadius: 2, background: (SEV_COLOR_CE[detail.severity] || "#64748b") + "22", color: SEV_COLOR_CE[detail.severity] || "#64748b" }}>
+                                        {(detail.severity || "").toUpperCase()}
+                                    </span>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <div style={{ flex: 1, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                                        <div style={{ width: `${Math.round((detail.confidence || 0) * 100)}%`, height: "100%", background: "#BF5AF2", borderRadius: 2 }} />
+                                    </div>
+                                    <span style={{ fontSize: 9, color: "#BF5AF2", fontWeight: 700 }}>{Math.round((detail.confidence || 0) * 100)}%</span>
+                                </div>
+                                <div style={{ fontSize: 8, color: "#334155", marginTop: 4 }}>
+                                    {detail.signal_count || 0} signals · {(detail.domains || []).length} domains
+                                    {detail.location_name && ` · ${detail.location_name}`}
+                                </div>
+                            </div>
+
+                            {/* Narrative */}
+                            {detail.narrative && (
+                                <div style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.55, marginBottom: 10 }}>
+                                    {detail.narrative}
+                                </div>
+                            )}
+
+                            {/* Key signals */}
+                            {(detail.key_signals || []).length > 0 && (
+                                <div style={{ marginBottom: 10 }}>
+                                    <div style={{ fontSize: 8, color: "#334155", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>KEY SIGNALS</div>
+                                    {detail.key_signals.map((s, i) => (
+                                        <div key={i} style={{ fontSize: 10, color: "#64748b", padding: "2px 0", display: "flex", gap: 5 }}>
+                                            <span style={{ color: "#BF5AF2", flexShrink: 0 }}>▸</span>{s}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Threat indicators */}
+                            {(detail.threat_indicators || []).length > 0 && (
+                                <div style={{ marginBottom: 10 }}>
+                                    <div style={{ fontSize: 8, color: "#7f1d1d", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>THREAT INDICATORS</div>
+                                    {detail.threat_indicators.map((t, i) => (
+                                        <div key={i} style={{ fontSize: 10, color: "#f87171", padding: "2px 0", display: "flex", gap: 5 }}>
+                                            <span style={{ flexShrink: 0 }}>⚠</span>{t}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Contributing signals */}
+                            {(detail.resolved_signals || []).length > 0 && (
+                                <div style={{ marginBottom: 10 }}>
+                                    <div style={{ fontSize: 8, color: "#334155", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>CONTRIBUTING SIGNALS</div>
+                                    {detail.resolved_signals.map((s, i) => {
+                                        const dc = DOMAIN_COLOR_CE[s.domain] || "#64748b"
+                                        return (
+                                            <div key={i} style={{ padding: "4px 0", borderBottom: "1px solid rgba(148,163,184,0.05)" }}>
+                                                <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                                                    <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 2, background: dc + "22", color: dc, fontWeight: 600 }}>{s.domain}</span>
+                                                    <span style={{ fontSize: 10, color: "#94a3b8" }}>{s.rule_name || s.signal_id}</span>
+                                                </div>
+                                                {s.summary && <div style={{ fontSize: 9, color: "#475569", marginTop: 2, paddingLeft: 2 }}>{s.summary}</div>}
+                                                {s.timestamp && <div style={{ fontSize: 8, color: "#1e293b", marginTop: 1 }}>{new Date(s.timestamp).toLocaleString("en-GB", { hour12: false, dateStyle: "short", timeStyle: "short" })}</div>}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )}
+
+                            {/* Analyst notes */}
+                            <div style={{ marginBottom: 10 }}>
+                                <div style={{ fontSize: 8, color: "#334155", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>ANALYST NOTES</div>
+                                <textarea
+                                    value={noteText}
+                                    onChange={e => setNoteText(e.target.value)}
+                                    placeholder="Add analyst notes…"
+                                    style={{
+                                        width: "100%", boxSizing: "border-box", minHeight: 60,
+                                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                                        borderRadius: 4, color: "#e2e8f0", fontSize: 10,
+                                        padding: "5px 7px", resize: "vertical", fontFamily: "system-ui, sans-serif",
+                                    }}
+                                />
+                                <button onClick={saveNote} disabled={noteSaving} style={{
+                                    marginTop: 4, padding: "3px 10px", fontSize: 9, fontWeight: 600,
+                                    background: "rgba(191,90,242,0.12)", border: "1px solid rgba(191,90,242,0.25)",
+                                    borderRadius: 4, color: "#BF5AF2", cursor: "pointer",
+                                }}>{noteSaving ? "Saving…" : "Save Note"}</button>
+                            </div>
+                        </div>
+
+                        {/* Action bar */}
+                        <div style={{ borderTop: "1px solid #1e293b", padding: "8px 14px", display: "flex", gap: 6 }}>
+                            {detail.status !== "resolved" && (
+                                <button onClick={resolveFusion} style={{
+                                    padding: "4px 10px", fontSize: 9, fontWeight: 600,
+                                    background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.3)",
+                                    borderRadius: 4, color: "#f87171", cursor: "pointer",
+                                }}>Resolve</button>
+                            )}
+                            <button onClick={() => { window.dispatchEvent(new CustomEvent("open-globe-fusion", { detail: { fusion_id: detail.fusion_id, lat: detail.lat, lon: detail.lon } })) }} style={{
+                                padding: "4px 10px", fontSize: 9, fontWeight: 600,
+                                background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+                                borderRadius: 4, color: "#64748b", cursor: "pointer",
+                            }}>Open on Globe</button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
+    )
+}
+
 function WorkspaceRouter({ workspace, node, brainStatus }) {
     switch (workspace) {
         case "ais-source":      return <AISSourceWorkspace />
@@ -957,6 +1350,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "news-detector":   return <DetectorWorkspace source="NEWS" />
         case "ml-detector":     return <MLDetectorWorkspace />
         case "surveillance-zones": return <SurveillanceZonesWorkspace />
+        case "correlation-engine": return <CorrelationEngineWorkspace />
         case "brain":           return <BrainWorkspace brainStatus={brainStatus} />
         case "rule-logic":      return <RuleLogicWorkspace isMobile={false} />
         case "ontology":        return <OntologyWorkspace />

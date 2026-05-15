@@ -590,6 +590,13 @@ function ThreatMatrix({ compact = false }) {
                                 )}
                             </div>
                             <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 8, display: "flex", alignItems: "center", gap: 4 }}>
+                                {(s.fusion_count ?? 0) > 0 && (
+                                    <span title={`${s.fusion_count} active fusion event${s.fusion_count !== 1 ? "s" : ""}`} style={{
+                                        fontSize: 9, padding: "1px 5px", borderRadius: 3,
+                                        background: "rgba(191,90,242,0.18)", color: "#BF5AF2",
+                                        fontWeight: 700, letterSpacing: "0.04em",
+                                    }}>⚡{s.fusion_count}</span>
+                                )}
                                 <TrendArrow current={s.threat_score} previous={prev?.threat_score} />
                                 <div>
                                     <div style={{ color: c, fontSize: compact ? 9 : 10, fontWeight: 700 }}>{s.threat_level}</div>

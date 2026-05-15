@@ -633,6 +633,30 @@ class SentinelScanner:
         except Exception as e:
             print(f"[sentinel_scanner] alert inject error: {e}")
 
+        # Feed fusion engine
+        try:
+            import main as _main2
+            if hasattr(_main2, "_fusion_engine") and _main2._fusion_engine:
+                import datetime as _dt2
+                _main2._fusion_engine.on_signal({
+                    "signal_id":    f"SENTINEL-{detection.get('detection_id', '')}",
+                    "domain":       "SENTINEL",
+                    "severity":     sev,
+                    "lat":          lat,
+                    "lon":          lon,
+                    "location_name": zone_name,
+                    "region_id":    None,
+                    "country":      None,
+                    "timestamp":    _dt2.datetime.utcnow(),
+                    "alert_id":     None,
+                    "assessment_id": None,
+                    "rule_id":      None,
+                    "rule_name":    f"Sentinel: {obj_type}",
+                    "summary":      f"{obj_type.replace('_',' ').title()} detected with {int(conf*100)}% confidence",
+                })
+        except Exception as _fse:
+            print(f"[sentinel_scanner] fusion signal error: {_fse}")
+
 
 class _noop_ctx:
     def __enter__(self): return self

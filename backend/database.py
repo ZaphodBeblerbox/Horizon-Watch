@@ -341,6 +341,57 @@ class WeeklySnapshot(Base):
     created_at       = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class FusionEvent(Base):
+    __tablename__ = "fusion_events"
+
+    id                      = Column(Integer, primary_key=True)
+    fusion_id               = Column(String, unique=True, index=True, nullable=False)
+    created_at              = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at              = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    expires_at              = Column(DateTime, nullable=False)
+
+    # Haiku-generated identity
+    title                   = Column(String, nullable=False, default="Intelligence Fusion Event")
+    subtitle                = Column(String, nullable=True)
+    narrative               = Column(Text, nullable=True)
+
+    # Classification
+    severity                = Column(String, nullable=False, default="medium", index=True)
+    confidence              = Column(Float, default=0.5)
+    domain_count            = Column(Integer, default=1)
+    domains                 = Column(Text, default="[]")            # JSON array
+    fusion_type             = Column(String, default="MULTI_DOMAIN") # MULTI_DOMAIN / ESCALATION_CHAIN / PATTERN_SURGE
+
+    # Geography
+    location_name           = Column(String, nullable=True)
+    location_country        = Column(String, nullable=True)
+    region_id               = Column(String, nullable=True)
+    lat                     = Column(Float, nullable=True)
+    lon                     = Column(Float, nullable=True)
+    radius_km               = Column(Float, default=0.0)
+
+    # Contributing signals
+    contributing_assessments = Column(Text, default="[]")           # JSON array of assessment_ids
+    contributing_alert_ids   = Column(Text, default="[]")           # JSON array of alert ids
+    contributing_rule_ids    = Column(Text, default="[]")           # JSON array of rule ids
+    signal_count            = Column(Integer, default=0)
+
+    # Claude-ready output
+    key_signals             = Column(Text, default="[]")            # JSON array of bullet points
+    recommended_actions     = Column(Text, default="[]")            # JSON array
+    threat_indicators       = Column(Text, default="[]")            # JSON array of named threats
+
+    # Map
+    marker_type             = Column(String, default="FUSION_EVENT")
+    marker_visible          = Column(Boolean, default=True)
+    poi_id                  = Column(Integer, nullable=True)
+
+    # Status
+    status                  = Column(String, default="active", index=True)  # active / resolved / expired
+    resolved_at             = Column(DateTime, nullable=True)
+    analyst_notes           = Column(Text, nullable=True)
+
+
 @contextmanager
 def get_db():
     db = SessionLocal()
@@ -357,6 +408,7 @@ def migrate_db():
         import intelligence_schema as _is  # noqa: F401  — registers model with Base
     except ImportError:
         pass
+    # FusionEvent is defined in this module — already registered with Base
     import sqlite3, os
     db_path = os.getenv('DATA_DIR', './data') + '/akili.db'
     if not os.path.exists(db_path):
