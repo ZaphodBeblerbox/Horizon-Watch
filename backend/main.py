@@ -239,6 +239,14 @@ except ImportError as _fe_err:
     _fusion_engine = None
     _HAS_FUSION = False
 
+try:
+    from surge_engine import surge_engine as _surge_engine
+    _HAS_SURGE = True
+except ImportError as _se_err:
+    print(f"[startup] surge engine not available: {_se_err}")
+    _surge_engine = None
+    _HAS_SURGE = False
+
 _api_key = os.getenv("ANTHROPIC_API_KEY")
 if not _api_key:
     print("[startup] WARNING: ANTHROPIC_API_KEY is not set — /analyse will return an error until a key is provided.")
@@ -5809,6 +5817,13 @@ def _run_news_conflict_extraction_sync():
                     _news_pattern_engine.on_article_ingested(article_record)
                 except Exception:
                     pass
+            if (_surge_engine
+                    and article_record.get("llm_extracted")
+                    and article_record.get("location_country")):
+                try:
+                    _surge_engine.on_article(article_record)
+                except Exception:
+                    pass
             marker = _make_news_marker(article_record)
             if marker:
                 new_markers.append(marker)
@@ -9397,12 +9412,14 @@ async def _auto_ingest_task():
 
 
 async def _fusion_expire_loop():
-    """Prune stale fusion signals every 15 minutes."""
+    """Prune stale fusion signals and surge events every 15 minutes."""
     await asyncio.sleep(30)
     while True:
         try:
             if _fusion_engine:
                 _fusion_engine.expire_old_signals()
+            if _surge_engine:
+                _surge_engine.expire_old_surges()
         except Exception as _fxe:
             print(f"[fusion] expire loop error: {_fxe}")
         await asyncio.sleep(900)   # 15 minutes
@@ -16972,6 +16989,150 @@ async def api_fusion_settings_put(request: Request):
     return _fusion_settings
 
 
+# ── Surge API ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/surge/config")
+def api_surge_config_get(db=Depends(get_db)):
+    from database import SurgeConfig
+    cfg = db.query(SurgeConfig).first()
+    if cfg is None:
+        cfg = SurgeConfig()
+        db.add(cfg)
+        db.commit()
+        db.refresh(cfg)
+    import json as _json
+    try:
+        eligible = _json.loads(cfg.eligible_types or "[]")
+    except Exception:
+        eligible = []
+    return {
+        "enabled":                  cfg.enabled,
+        "volume_window_hours":      cfg.volume_window_hours,
+        "volume_multiplier":        cfg.volume_multiplier,
+        "velocity_window_minutes":  cfg.velocity_window_minutes,
+        "velocity_threshold":       cfg.velocity_threshold,
+        "baseline_days":            cfg.baseline_days,
+        "eligible_types":           eligible,
+        "cooldown_minutes":         cfg.cooldown_minutes,
+    }
+
+
+@app.put("/api/surge/config")
+async def api_surge_config_put(request: Request, db=Depends(get_db)):
+    from database import SurgeConfig
+    import json as _json
+    body = await request.json()
+    cfg = db.query(SurgeConfig).first()
+    if cfg is None:
+        cfg = SurgeConfig()
+        db.add(cfg)
+    allowed_bool  = {"enabled"}
+    allowed_int   = {"volume_window_hours", "velocity_window_minutes", "velocity_threshold",
+                     "baseline_days", "cooldown_minutes"}
+    allowed_float = {"volume_multiplier"}
+    for k in allowed_bool:
+        if k in body:
+            setattr(cfg, k, bool(body[k]))
+    for k in allowed_int:
+        if k in body:
+            setattr(cfg, k, int(body[k]))
+    for k in allowed_float:
+        if k in body:
+            setattr(cfg, k, float(body[k]))
+    if "eligible_types" in body:
+        cfg.eligible_types = _json.dumps(body["eligible_types"])
+    db.commit()
+    db.refresh(cfg)
+    try:
+        eligible = _json.loads(cfg.eligible_types or "[]")
+    except Exception:
+        eligible = []
+    return {
+        "enabled":                  cfg.enabled,
+        "volume_window_hours":      cfg.volume_window_hours,
+        "volume_multiplier":        cfg.volume_multiplier,
+        "velocity_window_minutes":  cfg.velocity_window_minutes,
+        "velocity_threshold":       cfg.velocity_threshold,
+        "baseline_days":            cfg.baseline_days,
+        "eligible_types":           eligible,
+        "cooldown_minutes":         cfg.cooldown_minutes,
+    }
+
+
+@app.get("/api/surge/events")
+def api_surge_events(
+    status: str = None,
+    article_type: str = None,
+    country: str = None,
+    limit: int = 50,
+    db=Depends(get_db),
+):
+    from database import SurgeEvent
+    import json as _json
+    q = db.query(SurgeEvent)
+    if status:
+        q = q.filter(SurgeEvent.status == status)
+    if article_type:
+        q = q.filter(SurgeEvent.article_type == article_type)
+    if country:
+        q = q.filter(SurgeEvent.location_country == country)
+    rows = q.order_by(SurgeEvent.created_at.desc()).limit(limit).all()
+    result = []
+    for r in rows:
+        try:
+            evidence = _json.loads(r.evidence_items or "[]")
+        except Exception:
+            evidence = []
+        result.append({
+            "id":                       r.id,
+            "surge_id":                 r.surge_id,
+            "created_at":               r.created_at.isoformat() if r.created_at else None,
+            "expires_at":               r.expires_at.isoformat() if r.expires_at else None,
+            "location_name":            r.location_name,
+            "location_country":         r.location_country,
+            "region_id":                r.region_id,
+            "lat":                      r.lat,
+            "lon":                      r.lon,
+            "article_type":             r.article_type,
+            "surge_type":               r.surge_type,
+            "article_count":            r.article_count,
+            "baseline_count":           r.baseline_count,
+            "multiplier":               r.multiplier,
+            "time_window_description":  r.time_window_description,
+            "severity":                 r.severity,
+            "headline":                 r.headline,
+            "evidence_items":           evidence,
+            "status":                   r.status,
+        })
+    return result
+
+
+@app.get("/api/surge/stats")
+def api_surge_stats(db=Depends(get_db)):
+    from database import SurgeEvent
+    import datetime as _dt
+    active = db.query(SurgeEvent).filter(SurgeEvent.status == "active").all()
+    by_type: dict = {}
+    by_severity: dict = {}
+    hottest: dict = {}
+    for ev in active:
+        by_type[ev.article_type]   = by_type.get(ev.article_type, 0) + 1
+        by_severity[ev.severity]   = by_severity.get(ev.severity, 0) + 1
+        loc = ev.location_country or ev.location_name or "unknown"
+        hottest[loc] = hottest.get(loc, 0) + 1
+    hottest_location = max(hottest, key=hottest.get) if hottest else None
+    buf_stats = {}
+    if _surge_engine:
+        buf_stats = _surge_engine.get_buffer_stats()
+    return {
+        "active_surges":    len(active),
+        "by_type":          by_type,
+        "by_severity":      by_severity,
+        "hottest_location": hottest_location,
+        "buffer_stats":     buf_stats,
+    }
+
+
 # ── Forge alerts ──────────────────────────────────────────────────────────────
 
 @app.get("/api/forge/alerts")
@@ -17754,7 +17915,7 @@ def _save_pipeline(data: dict):
 async def forge_get_pipeline(_forge=Depends(_require_forge)):
     data = _load_pipeline()
     if not data:
-        raise HTTPException(status_code=404, detail="No saved pipeline")
+        return {"nodes": [], "edges": [], "status": "default"}
     return data
 
 

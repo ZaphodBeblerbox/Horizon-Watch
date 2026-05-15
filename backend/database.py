@@ -392,6 +392,44 @@ class FusionEvent(Base):
     analyst_notes           = Column(Text, nullable=True)
 
 
+class SurgeConfig(Base):
+    __tablename__ = "surge_configs"
+    id                      = Column(Integer, primary_key=True)
+    enabled                 = Column(Boolean, default=True)
+    volume_window_hours     = Column(Integer, default=3)
+    volume_multiplier       = Column(Float, default=2.0)
+    velocity_window_minutes = Column(Integer, default=30)
+    velocity_threshold      = Column(Integer, default=5)
+    baseline_days           = Column(Integer, default=7)
+    eligible_types          = Column(Text, default='["conflict","maritime","aviation","infrastructure","energy","cyber","disaster"]')
+    cooldown_minutes        = Column(Integer, default=60)
+    created_at              = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at              = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class SurgeEvent(Base):
+    __tablename__ = "surge_events"
+    id                      = Column(Integer, primary_key=True)
+    surge_id                = Column(String, unique=True, index=True, nullable=False)
+    created_at              = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at              = Column(DateTime, nullable=False)
+    location_name           = Column(String, nullable=True)
+    location_country        = Column(String, nullable=True)
+    region_id               = Column(String, nullable=True)
+    lat                     = Column(Float, nullable=True)
+    lon                     = Column(Float, nullable=True)
+    article_type            = Column(String, nullable=False)
+    surge_type              = Column(String, nullable=False)   # VOLUME_SURGE | VELOCITY_SPIKE
+    article_count           = Column(Integer, default=0)
+    baseline_count          = Column(Float, nullable=True)
+    multiplier              = Column(Float, nullable=True)
+    time_window_description = Column(String, nullable=True)
+    severity                = Column(String, nullable=False, default="medium", index=True)
+    headline                = Column(String, nullable=False)
+    evidence_items          = Column(Text, default="[]")       # JSON array {title, source}
+    status                  = Column(String, default="active", index=True)  # active | expired
+
+
 @contextmanager
 def get_db():
     db = SessionLocal()

@@ -1337,6 +1337,61 @@ function CorrelationEngineWorkspace() {
     )
 }
 
+// ── Forge landing nav ──────────────────────────────────────────────────────────
+const FORGE_NAV = [
+    { ws: "correlation-engine", label: "Correlation Engine",    color: "#BF5AF2", desc: "Active fusion events · multi-domain signal monitor · fusion settings" },
+    { ws: "ais-detector",       label: "AIS Anomaly Detector",  color: "#34AADC", desc: "Vessel tracking rules · loitering · dark ship · escalation" },
+    { ws: "news-source",        label: "News Feed",             color: "#FF9500", desc: "RSS feeds · article ingestion · SURGE surge detection settings" },
+    { ws: "rule-logic",         label: "Rule Logic",            color: "#fb923c", desc: "Forge rules · escalation chains · connections" },
+    { ws: "surveillance-zones", label: "Surveillance Zones",    color: "#30D158", desc: "Sentinel satellite scan zones · zone analytics" },
+    { ws: "ontology",           label: "Entity Ontology",       color: "#60a5fa", desc: "Intelligence entity graph · cables · chokepoints · actors" },
+]
+
+function ForgeLandingNav({ brainStatus, onNavigate, onPipeline }) {
+    return (
+        <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+            <div style={{ marginBottom: 20 }}>
+                <div style={{ color: "#4A9EE0", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 4 }}>
+                    FORGE — INTELLIGENCE TRAINING LAB
+                </div>
+                <div style={{ color: "#334155", fontSize: 11 }}>
+                    Select a workspace to configure or monitor.
+                </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10, marginBottom: 16 }}>
+                {FORGE_NAV.map(({ ws, label, color, desc }) => (
+                    <button key={ws} onClick={() => onNavigate(ws)} style={{
+                        background: "rgba(17,24,39,0.7)", border: `1px solid rgba(255,255,255,0.05)`,
+                        borderLeft: `3px solid ${color}`, borderRadius: 6,
+                        padding: "12px 14px", textAlign: "left", cursor: "pointer",
+                        transition: "background 0.15s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = `${color}12`}
+                    onMouseLeave={e => e.currentTarget.style.background = "rgba(17,24,39,0.7)"}
+                    >
+                        <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{label}</div>
+                        <div style={{ color: "#475569", fontSize: 10, lineHeight: 1.4 }}>{desc}</div>
+                    </button>
+                ))}
+            </div>
+            <button onClick={onPipeline} style={{
+                padding: "7px 14px", fontSize: 10, fontWeight: 600,
+                background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                borderRadius: 5, color: "#334155", cursor: "pointer",
+            }}>
+                ⌁ View Pipeline Canvas
+            </button>
+            {brainStatus && (
+                <div style={{ marginTop: 16, fontSize: 9, color: "#1e293b" }}>
+                    Brain status: {brainStatus.status || "running"} ·
+                    AIS {brainStatus.ais_vessel_count ?? "—"} vessels ·
+                    News {brainStatus.news_article_count ?? "—"} articles
+                </div>
+            )}
+        </div>
+    )
+}
+
 function WorkspaceRouter({ workspace, node, brainStatus }) {
     switch (workspace) {
         case "ais-source":      return <AISSourceWorkspace />
@@ -1545,14 +1600,33 @@ function ADSBSourceWorkspace() {
     )
 }
 
+const SURGE_TYPES = ["conflict", "maritime", "aviation", "infrastructure", "energy", "cyber", "disaster"]
+const SEV_COLOR = { critical: "#f87171", high: "#fb923c", medium: "#fbbf24", low: "#4ade80" }
+
 function NewsSourceWorkspace() {
     const [config, setConfig] = useState(null)
     const [newKw, setNewKw] = useState("")
+    const [surgeConfig, setSurgeConfig] = useState(null)
+    const [surgeEvents, setSurgeEvents] = useState([])
+    const [surgeSaving, setSurgeSaving] = useState(false)
+    const [surgeMsg, setSurgeMsg] = useState("")
 
     useEffect(() => {
         fetch(`${API}/api/forge/source/src_news/config`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : {}).then(setConfig).catch(() => setConfig({}))
+        loadSurgeConfig()
+        loadSurgeEvents()
+        const t = setInterval(loadSurgeEvents, 60000)
+        return () => clearInterval(t)
     }, [])
+
+    const loadSurgeConfig = () =>
+        fetch(`${API}/api/surge/config`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null).then(d => d && setSurgeConfig(d)).catch(() => {})
+
+    const loadSurgeEvents = () =>
+        fetch(`${API}/api/surge/events?status=active&limit=20`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : []).then(setSurgeEvents).catch(() => {})
 
     const save = async (patch) => {
         const res = await fetch(`${API}/api/forge/source/src_news/config`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify(patch) })
@@ -1568,10 +1642,28 @@ function NewsSourceWorkspace() {
         setConfig(c => ({ ...c, keywords: kws })); save({ keywords: kws })
     }
 
+    const saveSurge = async (patch) => {
+        setSurgeSaving(true); setSurgeMsg("")
+        try {
+            const res = await fetch(`${API}/api/surge/config`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify(patch) })
+            if (res.ok) { const d = await res.json(); setSurgeConfig(d); setSurgeMsg("Saved"); setTimeout(() => setSurgeMsg(""), 2000) }
+            else setSurgeMsg("Failed")
+        } catch (_e) { setSurgeMsg("Failed") }
+        finally { setSurgeSaving(false) }
+    }
+
+    const toggleSurgeType = (t) => {
+        const cur = surgeConfig?.eligible_types || []
+        const next = cur.includes(t) ? cur.filter(x => x !== t) : [...cur, t]
+        setSurgeConfig(c => ({ ...c, eligible_types: next }))
+        saveSurge({ eligible_types: next })
+    }
+
     if (!config) return <WorkspaceBody><div style={{ color: "#475569", fontSize: 12 }}>Loading…</div></WorkspaceBody>
 
     const health = config.feed_health || {}
     const failCount = Object.values(health).filter(v => v > 0).length
+    const sc = surgeConfig || {}
 
     return (
         <WorkspaceBody>
@@ -1608,6 +1700,103 @@ function NewsSourceWorkspace() {
                             </div>
                         ))}
                     </Section>
+                </div>
+            </div>
+
+            {/* SURGE settings */}
+            <div style={{ maxWidth: 680, marginTop: 24 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#FF9500", letterSpacing: "0.05em" }}>SURGE</span>
+                        <span style={{ fontSize: 11, color: "#475569" }}>Activity Surge Detection</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {surgeMsg && <span style={{ color: surgeMsg === "Saved" ? "#4ade80" : "#f87171", fontSize: 11 }}>{surgeMsg}</span>}
+                        <button
+                            onClick={() => saveSurge({ enabled: !sc.enabled })}
+                            style={{ padding: "3px 12px", borderRadius: 6, border: "1px solid", fontSize: 11, cursor: "pointer", background: sc.enabled ? "rgba(255,149,0,0.12)" : "transparent", color: sc.enabled ? "#FF9500" : "#475569", borderColor: sc.enabled ? "rgba(255,149,0,0.3)" : "rgba(148,163,184,0.2)" }}
+                        >{sc.enabled ? "Enabled" : "Disabled"}</button>
+                    </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                    <div>
+                        <Section title="Volume Detection">
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                    <span style={{ color: "#94a3b8", fontSize: 11 }}>Window (hours)</span>
+                                    <input type="number" min="1" max="24" value={sc.volume_window_hours ?? 3}
+                                        onChange={e => setSurgeConfig(c => ({ ...c, volume_window_hours: +e.target.value }))}
+                                        onBlur={e => saveSurge({ volume_window_hours: +e.target.value })}
+                                        style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                    <span style={{ color: "#94a3b8", fontSize: 11 }}>Surge multiplier</span>
+                                    <input type="number" min="1.2" max="10" step="0.1" value={sc.volume_multiplier ?? 2.0}
+                                        onChange={e => setSurgeConfig(c => ({ ...c, volume_multiplier: +e.target.value }))}
+                                        onBlur={e => saveSurge({ volume_multiplier: +e.target.value })}
+                                        style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                    <span style={{ color: "#94a3b8", fontSize: 11 }}>Baseline days</span>
+                                    <input type="number" min="1" max="30" value={sc.baseline_days ?? 7}
+                                        onChange={e => setSurgeConfig(c => ({ ...c, baseline_days: +e.target.value }))}
+                                        onBlur={e => saveSurge({ baseline_days: +e.target.value })}
+                                        style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                                </div>
+                            </div>
+                        </Section>
+                        <Section title="Velocity Detection">
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                    <span style={{ color: "#94a3b8", fontSize: 11 }}>Window (minutes)</span>
+                                    <input type="number" min="5" max="120" value={sc.velocity_window_minutes ?? 30}
+                                        onChange={e => setSurgeConfig(c => ({ ...c, velocity_window_minutes: +e.target.value }))}
+                                        onBlur={e => saveSurge({ velocity_window_minutes: +e.target.value })}
+                                        style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                    <span style={{ color: "#94a3b8", fontSize: 11 }}>Article threshold</span>
+                                    <input type="number" min="2" max="50" value={sc.velocity_threshold ?? 5}
+                                        onChange={e => setSurgeConfig(c => ({ ...c, velocity_threshold: +e.target.value }))}
+                                        onBlur={e => saveSurge({ velocity_threshold: +e.target.value })}
+                                        style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                    <span style={{ color: "#94a3b8", fontSize: 11 }}>Cooldown (minutes)</span>
+                                    <input type="number" min="5" max="480" value={sc.cooldown_minutes ?? 60}
+                                        onChange={e => setSurgeConfig(c => ({ ...c, cooldown_minutes: +e.target.value }))}
+                                        onBlur={e => saveSurge({ cooldown_minutes: +e.target.value })}
+                                        style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                                </div>
+                            </div>
+                        </Section>
+                    </div>
+                    <div>
+                        <Section title="Eligible Article Types">
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {SURGE_TYPES.map(t => {
+                                    const on = (sc.eligible_types || []).includes(t)
+                                    return (
+                                        <button key={t} onClick={() => toggleSurgeType(t)} style={{ padding: "3px 10px", borderRadius: 12, border: "1px solid", fontSize: 11, cursor: "pointer", background: on ? "rgba(255,149,0,0.1)" : "transparent", color: on ? "#FF9500" : "#475569", borderColor: on ? "rgba(255,149,0,0.3)" : "rgba(148,163,184,0.15)" }}>{t}</button>
+                                    )
+                                })}
+                            </div>
+                        </Section>
+                        <Section title={`Active Surges (${surgeEvents.length})`}>
+                            {surgeEvents.length === 0
+                                ? <div style={{ color: "#334155", fontSize: 11 }}>No active surges.</div>
+                                : surgeEvents.map(ev => (
+                                    <div key={ev.surge_id} style={{ padding: "6px 0", borderBottom: "1px solid rgba(148,163,184,0.05)" }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                                            <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: `${SEV_COLOR[ev.severity] ?? "#94a3b8"}22`, color: SEV_COLOR[ev.severity] ?? "#94a3b8", fontWeight: 600, letterSpacing: "0.04em" }}>{ev.severity.toUpperCase()}</span>
+                                            <span style={{ color: "#e2e8f0", fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.headline}</span>
+                                        </div>
+                                        <div style={{ color: "#475569", fontSize: 10 }}>{ev.time_window_description}</div>
+                                    </div>
+                                ))
+                            }
+                        </Section>
+                    </div>
                 </div>
             </div>
         </WorkspaceBody>
@@ -5100,9 +5289,12 @@ export default function ForgePanel({ user, isMobile = false, onClose }) {
         setActiveWorkspace(WS_MAP[nodeId] || "generic")
     }
 
+    const [showPipeline, setShowPipeline] = useState(false)
+
     const goBack = () => {
         setActiveWorkspace(null)
         setActiveNode(null)
+        setShowPipeline(false)
     }
 
     if (isMobile) return <ForgeMobileView onClose={onClose} />
@@ -5110,7 +5302,11 @@ export default function ForgePanel({ user, isMobile = false, onClose }) {
     return (
         <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", zIndex: 50, display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif" }}>
             <ForgeHeader brainStatus={brainStatus} activeNode={activeNode} onBack={goBack} />
-            {!activeWorkspace ? (
+            {activeWorkspace ? (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                    <WorkspaceRouter workspace={activeWorkspace} node={activeNode} brainStatus={brainStatus} />
+                </div>
+            ) : showPipeline ? (
                 <div style={{ flex: 1, position: "relative" }}>
                     <PipelineCanvas
                         initialNodes={pipelineNodes}
@@ -5120,9 +5316,11 @@ export default function ForgePanel({ user, isMobile = false, onClose }) {
                     />
                 </div>
             ) : (
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <WorkspaceRouter workspace={activeWorkspace} node={activeNode} brainStatus={brainStatus} />
-                </div>
+                <ForgeLandingNav
+                    brainStatus={brainStatus}
+                    onNavigate={(ws) => { setActiveWorkspace(ws); setActiveNode(null) }}
+                    onPipeline={() => setShowPipeline(true)}
+                />
             )}
         </div>
     )
