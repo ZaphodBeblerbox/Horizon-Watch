@@ -69,20 +69,6 @@ DEFAULT_RULES = [
         "regions": ["all"],
     },
     {
-        "id": "rule_006",
-        "name": "Ship-to-Ship Proximity",
-        "description": "Two vessels within 500m both at <2 knots (potential transfer)",
-        "source": "AIS",
-        "trigger_type": "ship_to_ship",
-        "status": "active",
-        "params": {
-            "proximity_meters": 500,
-            "max_speed_knots": 2,
-        },
-        "severity": "high",
-        "regions": ["all"],
-    },
-    {
         "id": "rule_007",
         "name": "Chokepoint Transit — Bab el-Mandeb",
         "description": "Vessel near Bab el-Mandeb with unusual heading",

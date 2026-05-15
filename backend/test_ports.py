@@ -94,27 +94,8 @@ print(f"   Sample: {sample.get('name', '?')} / {sample.get('system_id', '?')}")
 print("   PASS\n")
 
 
-# ── 6. Create AIS_STS_PROXIMITY rule via /api/rules ──────────────────────────
-print("6. POST /api/rules — AIS_STS_PROXIMITY")
-sts_body = {
-    "rule_name":    "Test STS Rule",
-    "trigger_type": "AIS_STS_PROXIMITY",
-    "severity":     "high",
-    "params": {
-        "proximity_metres":     500,
-        "min_duration_minutes": 15,
-        "max_speed_knots":      2.0,
-    },
-}
-d = post("/api/rules", sts_body)
-assert "id" in d, f"Expected id in response: {d}"
-sts_id = d["id"]
-print(f"   Created STS rule id={sts_id}")
-print("   PASS\n")
-
-
-# ── 7. Create AIS_DARK_SHIP rule via /api/rules ───────────────────────────────
-print("7. POST /api/rules — AIS_DARK_SHIP")
+# ── 6. Create AIS_DARK_SHIP rule via /api/rules ───────────────────────────────
+print("6. POST /api/rules — AIS_DARK_SHIP")
 dark_body = {
     "rule_name":    "Test Dark Ship Rule",
     "trigger_type": "AIS_DARK_SHIP",
@@ -132,27 +113,24 @@ print(f"   Created dark-ship rule id={dark_id}")
 print("   PASS\n")
 
 
-# ── 8. Verify both rules appear in GET /api/rules ────────────────────────────
-print("8. GET /api/rules — verify both rules present")
+# ── 7. Verify dark ship rule appears in GET /api/rules ───────────────────────
+print("7. GET /api/rules — verify dark ship rule present")
 d = get("/api/rules")
 rules = d.get("rules") or (d if isinstance(d, list) else [])
 ids = {r["id"] for r in rules}
-assert sts_id  in ids, f"STS rule {sts_id} not in /api/rules response"
 assert dark_id in ids, f"Dark ship rule {dark_id} not in /api/rules response"
-print(f"   Both rules visible in rule list ({len(rules)} total)")
+print(f"   Dark ship rule visible in rule list ({len(rules)} total)")
 print("   PASS\n")
 
 
-# ── 9. Cleanup: delete test rules ────────────────────────────────────────────
-print("9. DELETE test rules")
-delete(f"/api/rules/{sts_id}")
+# ── 8. Cleanup: delete test rule ─────────────────────────────────────────────
+print("8. DELETE test rule")
 delete(f"/api/rules/{dark_id}")
 d = get("/api/rules")
 rules_after = d.get("rules") or (d if isinstance(d, list) else [])
 ids_after = {r["id"] for r in rules_after}
-assert sts_id  not in ids_after, "STS rule not deleted"
 assert dark_id not in ids_after, "Dark ship rule not deleted"
-print("   Both test rules deleted")
+print("   Test rule deleted")
 print("   PASS\n")
 
 

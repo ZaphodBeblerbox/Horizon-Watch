@@ -3,8 +3,6 @@ Migrate existing EscalationChain rows to RuleConnection rows, then remove them.
 
 Mapping:
   CHAIN-1  Cable Loitering + Dark Ship   → ESCALATION  rule 1 + 6  DARK_SHIP_CABLE
-  CHAIN-2  STS Transfer + Dark Ship      → ESCALATION  rule 4 + 6  STS_TRANSFER_DARK
-  CHAIN-3  Cable Loitering + STS + Dark  → SEQUENCE    rule 1 + 4  cable must fire first (30 min)
   CHAIN-4  Strategic Port + Dark Ship    → ESCALATION  rule 5 + 6  ESCALATED_DUAL
 
 Usage:
@@ -47,8 +45,6 @@ try:
     MAPPING = [
         # (chain_id, conn_name, rule_id_a, rule_id_b, rel_type, esc_sev, esc_icon, window_min)
         (1, "Cable Loitering + Dark Ship",   1, 6, "ESCALATION",  "critical", "DARK_SHIP_CABLE",   30),
-        (2, "STS Transfer + Dark Ship",      4, 6, "ESCALATION",  "critical", "STS_TRANSFER_DARK", 30),
-        (3, "Cable Loitering → STS Sequence",1, 4, "SEQUENCE",    None,       None,                30),
         (4, "Strategic Port + Dark Ship",    5, 6, "ESCALATION",  "critical", "ESCALATED_DUAL",    30),
     ]
 

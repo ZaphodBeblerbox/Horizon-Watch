@@ -218,7 +218,6 @@ try:
     from detectors.correlation_engine import (
         CorrelationEngine as _CorrelationEngine,
         EscalationEngine as _EscalationEngine,
-        STSDetector as _STSDetector,
         DarkShipDetector as _DarkShipDetector,
         ADSBLoiterDetector as _ADSBLoiterDetector,
         ChokepointActivityDetector as _ChokepointActivityDetector,
@@ -7429,13 +7428,12 @@ if _HAS_DETECTORS:
     _threat_engine       = _ThreatEngine()
     _correlation_engine  = _CorrelationEngine()
     _escalation_engine   = _EscalationEngine()
-    _sts_detector        = _STSDetector()
     _dark_ship_detector  = _DarkShipDetector()
     _adsb_loiter_detector = _ADSBLoiterDetector()
     _chokepoint_detector  = _ChokepointActivityDetector()
 else:
     _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
-    _escalation_engine = _sts_detector = _dark_ship_detector = _adsb_loiter_detector = None
+    _escalation_engine = _dark_ship_detector = _adsb_loiter_detector = None
     _chokepoint_detector = None
     _news_pattern_engine = None
 
@@ -15673,7 +15671,7 @@ async def _forge_detection_cycle():
             with _AIS_LOCK:
                 vessels_snap = dict(_AIS_VESSELS)
 
-            # Pre-normalize the entire snapshot so ship_to_ship lookups work
+            # Pre-normalize the entire AIS snapshot
             normalized_snap = {}
             for _m, _v in vessels_snap.items():
                 _n = _normalize_vessel(_v, _m)
@@ -15770,48 +15768,6 @@ async def _forge_detection_cycle():
                     print(f"[forge-brain] Stage1b loitering: {len(cable_loiter_rules)} cable / {len(port_loiter_rules)} port rules → {len(loiter_hits)} alert(s)")
             except Exception as _le:
                 print(f"[forge-brain] loitering check error: {_le}")
-
-            # Stage 1c — STS proximity detection (DB-backed AIS_STS_PROXIMITY rules)
-            new_sts_alerts: list = []
-            try:
-                from database import RuleConfig, PortBoundary, get_db
-                import json as _json_sts
-                with get_db() as _sdb:
-                    sts_rule_rows = _sdb.query(RuleConfig).filter(
-                        RuleConfig.rule_name == "AIS_STS_PROXIMITY",
-                        RuleConfig.enabled == True,
-                    ).all()
-                sts_rules = [
-                    {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
-                     "params": _json_sts.loads(r.params) if isinstance(r.params, str) else r.params}
-                    for r in sts_rule_rows
-                ]
-                if sts_rules and _sts_detector is not None:
-                    cycle_now = datetime.now(timezone.utc)
-                    _sts_detector.update_positions(normalized_snap)
-
-                    def _port_check(lat, lon):
-                        try:
-                            with get_db() as _pdb:
-                                candidates = _pdb.query(PortBoundary).filter(
-                                    PortBoundary.latitude  .between(lat - 0.14, lat + 0.14),
-                                    PortBoundary.longitude .between(lon - 0.20, lon + 0.20),
-                                ).all()
-                            return any(
-                                _haversine_m(lat, lon, p.latitude, p.longitude) <= p.boundary_radius_metres
-                                for p in candidates
-                            )
-                        except Exception:
-                            return False
-
-                    new_sts_alerts = _sts_detector.check(
-                        normalized_snap, sts_rules, cycle_now, port_check_fn=_port_check
-                    )
-                    _sts_detector.purge_stale(cycle_now)
-                    new_ais_alerts.extend(new_sts_alerts)
-                    print(f"[forge-brain] Stage1c STS: {len(sts_rules)} rule(s), {len(new_sts_alerts)} alert(s)")
-            except Exception as _se:
-                print(f"[forge-brain] STS check error: {_se}")
 
             # Stage 1d — Dark ship (AIS gap) detection (DB-backed AIS_DARK_SHIP rules)
             new_dark_alerts: list = []
@@ -16136,7 +16092,6 @@ async def _forge_detection_cycle():
                 "aircraft_tracked":  len(_GLOBAL_ADSB_CACHE),
                 "rules_active":      active_rule_count,
                 "ais_alerts":        len(new_ais_alerts),
-                "sts_alerts":        len(new_sts_alerts),
                 "dark_alerts":       len(new_dark_alerts),
                 "adsb_alerts":       len(new_adsb_alerts),
                 "news_alerts":       len(new_news_alerts),

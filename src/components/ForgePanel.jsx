@@ -1352,7 +1352,6 @@ const NEWS_ARTICLE_TYPES = ["conflict", "sanctions", "military", "humanitarian",
 const TRIGGER_TYPES = {
     AIS: [
         { value: "stationary_near_infrastructure", label: "Loitering near infrastructure (cable / port)", params: { infra_type: "cable", max_speed_knots: 0.5, proximity_km: 10, min_duration_minutes: 120 } },
-        { value: "AIS_STS_PROXIMITY",              label: "Ship-to-Ship Proximity (outside port)", params: { proximity_metres: 500, min_duration_minutes: 15, max_speed_knots: 2.0 } },
         { value: "AIS_DARK_SHIP",                  label: "AIS Dark Ship (gap detection)", params: { min_gap_minutes: 60, min_speed_before_gap: 2.0 } },
         { value: "AIS_CHOKEPOINT_ACTIVITY",        label: "AIS Chokepoint Activity (transit / loitering)", params: { target: "ALL", monitor_transit: true, monitor_loitering: false, min_loiter_duration_minutes: 45, max_loiter_speed_knots: 1.0 } },
     ],
@@ -1402,7 +1401,7 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const [scopeSingle, setScopeSingle] = useState("")
     const [regions, setRegions]         = useState([])
 
-    // STS / Dark ship state
+    // Dark ship state
     const [darkRegion, setDarkRegion]   = useState("")   // last_known_region for dark ship
     const [iconType, setIconType]       = useState("")   // optional ALERT_ICONS key override
 
@@ -1429,12 +1428,11 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const [flagStates, setFlagStates]             = useState("")
 
     const isInfraRule   = source === "AIS"  && triggerType === "stationary_near_infrastructure"
-    const isStsRule     = source === "AIS"  && triggerType === "AIS_STS_PROXIMITY"
     const isDarkRule    = source === "AIS"  && triggerType === "AIS_DARK_SHIP"
     const isLoiterRule  = source === "ADSB" && triggerType === "ADSB_LOITERING_NEAR_AIRPORT"
     const isChokeRule   = source === "AIS"  && triggerType === "AIS_CHOKEPOINT_ACTIVITY"
     const isNewsRule    = source === "NEWS" && triggerType === "NEWS_PATTERN"
-    const isDbRule      = isInfraRule || isStsRule || isDarkRule || isLoiterRule || isChokeRule || isNewsRule
+    const isDbRule      = isInfraRule || isDarkRule || isLoiterRule || isChokeRule || isNewsRule
 
     useEffect(() => {
         if ((isInfraRule || isDarkRule || isLoiterRule) && regions.length === 0) {
@@ -1506,18 +1504,6 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                             min_duration_minutes: parseFloat(params.min_duration_minutes ?? 30),
                             distance_metres:      Math.round((parseFloat(params.proximity_km ?? 0.5)) * 1000),
                             duration_minutes:     parseFloat(params.min_duration_minutes ?? 30),
-                            ...(iconType ? { icon_type: iconType } : {}),
-                        },
-                    }
-                } else if (isStsRule) {
-                    ruleBody = {
-                        rule_name: name,
-                        trigger_type: "AIS_STS_PROXIMITY",
-                        severity,
-                        params: {
-                            proximity_metres:     parseFloat(params.proximity_metres ?? 500),
-                            min_duration_minutes: parseFloat(params.min_duration_minutes ?? 15),
-                            max_speed_knots:      parseFloat(params.max_speed_knots ?? 2.0),
                             ...(iconType ? { icon_type: iconType } : {}),
                         },
                     }
@@ -1693,27 +1679,6 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                         {scopeMode === "SINGLE" && fld("Cable System ID (e.g. CABLE-042)", (
                             <input value={scopeSingle} onChange={e => setScopeSingle(e.target.value)} placeholder="CABLE-NNN" style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
                         ))}
-                    </>
-                ) : isStsRule ? (
-                    <>
-                        <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                            {[
-                                ["proximity_metres",     "Proximity (m)",   params.proximity_metres ?? 500],
-                                ["min_duration_minutes", "Duration (min)",  params.min_duration_minutes ?? 15],
-                                ["max_speed_knots",      "Max speed (kn)",  params.max_speed_knots ?? 2.0],
-                            ].map(([key, label, def]) => (
-                                <div key={key}>
-                                    <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
-                                    <input type="number" step="any"
-                                        value={params[key] ?? def}
-                                        onChange={e => setParams(p => ({ ...p, [key]: e.target.value }))}
-                                        style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
-                                </div>
-                            ))}
-                        </div>
-                        <div style={{ marginBottom: 10, padding: "7px 10px", background: "rgba(96,165,250,0.06)", borderRadius: 3, border: "1px solid rgba(96,165,250,0.12)", color: "#475569", fontSize: 10 }}>
-                            Fires when two vessels are within proximity for the set duration, <em>outside</em> any port boundary.
-                        </div>
                     </>
                 ) : isDarkRule ? (
                     <>

@@ -51,25 +51,6 @@ class AISAnomalyDetector:
                     alerts.append(self._make_alert(rule, vessel,
                         f"Speed anomaly: {vessel.get('name','?')} at {speed:.1f} kn"))
 
-            elif trigger == "ship_to_ship":
-                if all_vessels and vessel.get("speed", 99) <= params.get("max_speed_knots", 2):
-                    own_mmsi = str(vessel.get("mmsi", ""))
-                    for other_mmsi, other in all_vessels.items():
-                        if str(other_mmsi) == own_mmsi:
-                            continue
-                        if not other.get("lat") or not other.get("lng"):
-                            continue
-                        if other.get("speed", 99) > params.get("max_speed_knots", 2):
-                            continue
-                        dist_m = self._haversine(
-                            vessel["lat"], vessel["lng"], other["lat"], other["lng"]
-                        ) * 1000
-                        if dist_m <= params.get("proximity_meters", 500):
-                            alerts.append(self._make_alert(rule, vessel,
-                                f"Ship-to-ship: {vessel.get('name','?')} within "
-                                f"{dist_m:.0f}m of {other.get('name','?')}"))
-                            break
-
             elif trigger == "transponder_gap":
                 pass   # requires history tracking
 

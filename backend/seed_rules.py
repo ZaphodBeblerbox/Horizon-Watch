@@ -63,18 +63,6 @@ RULES = [
         },
     },
     {
-        "name":         "Ship-to-Ship Proximity",
-        "trigger_type": "AIS_STS_PROXIMITY",
-        "severity":     "high",
-        "icon_type":    "STS_TRANSFER",
-        "params": {
-            "target":                  "ALL",
-            "proximity_metres":        500,
-            "min_duration_minutes":    20,
-            "max_speed_knots":         1.5,
-        },
-    },
-    {
         "name":         "Loitering — Strategic Ports",
         "trigger_type": "AIS_LOITERING_NEAR_INFRA",
         "severity":     "high",
@@ -148,23 +136,6 @@ def seed():
                                     rule_ids["Dark Ship — Global"]],
             "escalated_severity":  "critical",
             "escalated_icon_type": "DARK_SHIP_CABLE",
-            "time_window_minutes": 30,
-        },
-        {
-            "chain_name":          "STS Transfer + Dark Ship",
-            "rule_ids":            [rule_ids["Ship-to-Ship Proximity"],
-                                    rule_ids["Dark Ship — Global"]],
-            "escalated_severity":  "critical",
-            "escalated_icon_type": "STS_TRANSFER_DARK",
-            "time_window_minutes": 30,
-        },
-        {
-            "chain_name":          "Cable Loitering + STS + Dark Ship",
-            "rule_ids":            [rule_ids["Cable Loitering — Global"],
-                                    rule_ids["Ship-to-Ship Proximity"],
-                                    rule_ids["Dark Ship — Global"]],
-            "escalated_severity":  "critical",
-            "escalated_icon_type": "ESCALATED_TRIPLE",
             "time_window_minutes": 30,
         },
         {
@@ -316,20 +287,6 @@ def seed_db(db=None) -> dict:
                 "rule_names":          ["Cable Loitering — Global", "Dark Ship — Global"],
                 "escalated_severity":  "critical",
                 "escalated_icon_type": "DARK_SHIP_CABLE",
-                "time_window_minutes": 30,
-            },
-            {
-                "chain_name":          "STS Transfer + Dark Ship",
-                "rule_names":          ["Ship-to-Ship Proximity", "Dark Ship — Global"],
-                "escalated_severity":  "critical",
-                "escalated_icon_type": "STS_TRANSFER_DARK",
-                "time_window_minutes": 30,
-            },
-            {
-                "chain_name":          "Cable Loitering + STS + Dark Ship",
-                "rule_names":          ["Cable Loitering — Global", "Ship-to-Ship Proximity", "Dark Ship — Global"],
-                "escalated_severity":  "critical",
-                "escalated_icon_type": "ESCALATED_TRIPLE",
                 "time_window_minutes": 30,
             },
             {
