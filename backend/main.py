@@ -987,6 +987,223 @@ def get_health_detailed():
     }
 
 
+# ── Storage API ───────────────────────────────────────────────────────────────
+
+def _fmt_bytes(n: int) -> str:
+    if n >= 1 << 30: return f"{n / (1<<30):.2f} GB"
+    if n >= 1 << 20: return f"{n / (1<<20):.1f} MB"
+    if n >= 1 << 10: return f"{n / (1<<10):.1f} KB"
+    return f"{n} B"
+
+
+@app.get("/api/storage/stats")
+def get_storage_stats():
+    import subprocess as _sp
+
+    # ── Disk ─────────────────────────────────────────────────────────────────
+    disk_raw = _sp.run(
+        "df -h / | tail -1", capture_output=True, text=True, shell=True
+    ).stdout.strip().split()
+
+    # ── Database file ─────────────────────────────────────────────────────────
+    db_path = os.path.join(DATA_DIR, "akili.db")
+    db_bytes = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+
+    # ── Table row counts via SQLite ───────────────────────────────────────────
+    table_counts: dict = {}
+    try:
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(db_path)
+        cur  = conn.cursor()
+        tables = cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+        for (tname,) in tables:
+            table_counts[tname] = cur.execute(
+                f"SELECT COUNT(*) FROM [{tname}]"
+            ).fetchone()[0]
+        freelist = cur.execute("PRAGMA freelist_count").fetchone()[0]
+        page_size = cur.execute("PRAGMA page_size").fetchone()[0]
+        reclaimable_bytes = freelist * page_size
+        conn.close()
+    except Exception as _dbe:
+        reclaimable_bytes = 0
+        print(f"[storage] db audit error: {_dbe}")
+
+    # ── ML models ─────────────────────────────────────────────────────────────
+    model_files = ["yolov8n.pt", "yolov8n.onnx", "yolov8n-obb.pt", "yolov8n-obb.onnx"]
+    model_bytes = sum(
+        os.path.getsize(os.path.join(BASE_DIR, f))
+        for f in model_files
+        if os.path.exists(os.path.join(BASE_DIR, f))
+    )
+
+    # ── Geocode cache ─────────────────────────────────────────────────────────
+    geocache_dir = os.path.join(DATA_DIR, "geocode_cache")
+    geocache_bytes = 0
+    geocache_files = 0
+    if os.path.isdir(geocache_dir):
+        for fn in os.listdir(geocache_dir):
+            fp = os.path.join(geocache_dir, fn)
+            if os.path.isfile(fp):
+                geocache_bytes += os.path.getsize(fp)
+                geocache_files += 1
+
+    # ── Event store ───────────────────────────────────────────────────────────
+    es_path = os.path.join(DATA_DIR, "event_store.json")
+    event_store_bytes = os.path.getsize(es_path) if os.path.exists(es_path) else 0
+
+    # ── Sentinel images (PNG cache) ───────────────────────────────────────────
+    sentinel_result = _sp.run(
+        f'find {DATA_DIR} -name "*.png" 2>/dev/null | wc -l',
+        capture_output=True, text=True, shell=True
+    ).stdout.strip()
+    sentinel_images = int(sentinel_result) if sentinel_result.isdigit() else 0
+
+    sentinel_bytes_result = _sp.run(
+        f'find {DATA_DIR} -name "*.png" -exec du -sb {{}} + 2>/dev/null | awk \'{{sum+=$1}} END {{print sum+0}}\'',
+        capture_output=True, text=True, shell=True
+    ).stdout.strip()
+    sentinel_bytes = int(sentinel_bytes_result) if sentinel_bytes_result.isdigit() else 0
+
+    # ── Python venv ───────────────────────────────────────────────────────────
+    venv_raw = _sp.run(
+        "du -sb /app/.venv 2>/dev/null | cut -f1 || echo 0",
+        capture_output=True, text=True, shell=True
+    ).stdout.strip().split("\n")[0]
+    venv_bytes = int(venv_raw) if venv_raw.isdigit() else 0
+
+    # ── Top tables by rough size estimate ─────────────────────────────────────
+    top_tables = sorted(
+        [{"table": k, "rows": v} for k, v in table_counts.items()],
+        key=lambda x: x["rows"], reverse=True
+    )[:10]
+
+    return {
+        "disk": {
+            "total":   disk_raw[1] if len(disk_raw) > 1 else "?",
+            "used":    disk_raw[2] if len(disk_raw) > 2 else "?",
+            "free":    disk_raw[3] if len(disk_raw) > 3 else "?",
+            "percent": disk_raw[4] if len(disk_raw) > 4 else "?",
+        },
+        "database": {
+            "bytes":            db_bytes,
+            "human":            _fmt_bytes(db_bytes),
+            "reclaimable_bytes": reclaimable_bytes,
+            "reclaimable_human": _fmt_bytes(reclaimable_bytes),
+            "top_tables":       top_tables,
+        },
+        "ml_models": {
+            "bytes": model_bytes,
+            "human": _fmt_bytes(model_bytes),
+            "files": model_files,
+        },
+        "geocoder_cache": {
+            "bytes": geocache_bytes,
+            "human": _fmt_bytes(geocache_bytes),
+            "files": geocache_files,
+        },
+        "event_store": {
+            "bytes": event_store_bytes,
+            "human": _fmt_bytes(event_store_bytes),
+        },
+        "sentinel_images": {
+            "count": sentinel_images,
+            "bytes": sentinel_bytes,
+            "human": _fmt_bytes(sentinel_bytes),
+        },
+        "venv": {
+            "bytes": venv_bytes,
+            "human": _fmt_bytes(venv_bytes),
+        },
+    }
+
+
+@app.post("/api/storage/clear-geocache")
+def storage_clear_geocache():
+    geocache_dir = os.path.join(DATA_DIR, "geocode_cache")
+    if not os.path.isdir(geocache_dir):
+        return {"cleared_bytes": 0, "files_deleted": 0}
+    cleared = 0
+    deleted = 0
+    for fn in os.listdir(geocache_dir):
+        fp = os.path.join(geocache_dir, fn)
+        if os.path.isfile(fp):
+            try:
+                cleared += os.path.getsize(fp)
+                os.remove(fp)
+                deleted += 1
+            except Exception:
+                pass
+    print(f"[storage] geocache cleared: {deleted} files, {_fmt_bytes(cleared)}")
+    return {"cleared_bytes": cleared, "cleared_human": _fmt_bytes(cleared), "files_deleted": deleted}
+
+
+@app.post("/api/storage/clear-sentinel-cache")
+def storage_clear_sentinel():
+    import subprocess as _sp
+    result = _sp.run(
+        f'find {DATA_DIR} -name "*.png" 2>/dev/null',
+        capture_output=True, text=True, shell=True
+    )
+    files = [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
+    cleared = 0
+    deleted = 0
+    for fp in files:
+        try:
+            cleared += os.path.getsize(fp)
+            os.remove(fp)
+            deleted += 1
+        except Exception:
+            pass
+    print(f"[storage] sentinel cache cleared: {deleted} files, {_fmt_bytes(cleared)}")
+    return {"cleared_bytes": cleared, "cleared_human": _fmt_bytes(cleared), "files_deleted": deleted}
+
+
+@app.post("/api/storage/prune-history")
+async def storage_prune_history(request: Request):
+    """Delete aircraft_history, vessel_history, and track_density rows older
+    than `days` days, then run VACUUM to reclaim disk space."""
+    body = await request.json()
+    days = max(1, int(body.get("days", 7)))
+    import sqlite3 as _sqlite3, datetime as _dt
+
+    db_path   = os.path.join(DATA_DIR, "akili.db")
+    cutoff    = (_dt.datetime.utcnow() - _dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    size_before = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+
+    deleted: dict = {}
+    try:
+        conn = _sqlite3.connect(db_path, timeout=30)
+        cur  = conn.cursor()
+        for table in ("aircraft_history", "vessel_history"):
+            cur.execute(f"DELETE FROM [{table}] WHERE timestamp < ?", (cutoff,))
+            deleted[table] = cur.rowcount
+        # track_density — prune by hour column
+        cur.execute("DELETE FROM track_density WHERE hour < ?", (cutoff,))
+        deleted["track_density"] = cur.rowcount
+        conn.commit()
+        print(f"[storage] pruned rows: {deleted}")
+        print(f"[storage] running VACUUM…")
+        conn.execute("VACUUM")
+        conn.close()
+    except Exception as _e:
+        print(f"[storage] prune error: {_e}")
+        return {"ok": False, "error": str(_e)}
+
+    size_after  = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+    reclaimed   = size_before - size_after
+    return {
+        "ok":             True,
+        "days_kept":      days,
+        "deleted":        deleted,
+        "size_before":    _fmt_bytes(size_before),
+        "size_after":     _fmt_bytes(size_after),
+        "reclaimed":      _fmt_bytes(max(reclaimed, 0)),
+        "reclaimed_bytes": max(reclaimed, 0),
+    }
+
+
 def _load_imb_incidents() -> list:
     global _IMB_INCIDENTS
     path = BASE_DIR / "data" / "imb_piracy.json"

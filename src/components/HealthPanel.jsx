@@ -1,7 +1,15 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import API_BASE from "../apiBase.js"
 
 const API = API_BASE
+
+function fmtBytes(n) {
+    if (!n) return "0 B"
+    if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(2)} GB`
+    if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`
+    if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KB`
+    return `${n} B`
+}
 
 function timeAgo(isoStr) {
     if (!isoStr) return "Never fetched"
@@ -91,6 +99,193 @@ function SpendChart({ daily }) {
 }
 
 const TYPE_ORDER = ["briefing", "analysis", "route", "background"]
+
+const STORAGE_CATS = [
+    { key: "database",        label: "Database",        color: "#60a5fa" },
+    { key: "venv",            label: "Python venv",     color: "#94a3b8" },
+    { key: "ml_models",       label: "ML Models",       color: "#BF5AF2" },
+    { key: "event_store",     label: "Event Store",     color: "#f97316" },
+    { key: "geocoder_cache",  label: "Geocoder Cache",  color: "#fbbf24" },
+    { key: "sentinel_images", label: "Sentinel Images", color: "#30D158" },
+]
+
+function StorageSection() {
+    const [stats, setStats]         = useState(null)
+    const [loading, setLoading]     = useState(false)
+    const [clearing, setClearing]   = useState(null)
+    const [pruning, setPruning]     = useState(false)
+    const [pruneMsg, setPruneMsg]   = useState("")
+    const [clearMsg, setClearMsg]   = useState({})
+    const [pruneDays, setPruneDays] = useState(7)
+
+    const load = useCallback(() => {
+        setLoading(true)
+        fetch(`${API}/api/storage/stats`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { setStats(d); setLoading(false) })
+            .catch(() => setLoading(false))
+    }, [])
+
+    useEffect(() => { load() }, [load])
+
+    const clearAction = async (action) => {
+        setClearing(action)
+        setClearMsg(m => ({ ...m, [action]: "" }))
+        try {
+            const res = await fetch(`${API}/api/storage/${action}`, { method: "POST" })
+            const d   = res.ok ? await res.json() : null
+            setClearMsg(m => ({ ...m, [action]: d ? `Cleared ${d.cleared_human} (${d.files_deleted} files)` : "Failed" }))
+            load()
+        } catch (_e) {
+            setClearMsg(m => ({ ...m, [action]: "Failed" }))
+        } finally {
+            setClearing(null)
+        }
+    }
+
+    const prune = async () => {
+        setPruning(true); setPruneMsg("")
+        try {
+            const res = await fetch(`${API}/api/storage/prune-history`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ days: pruneDays }),
+            })
+            const d = res.ok ? await res.json() : null
+            if (d?.ok) {
+                const parts = Object.entries(d.deleted || {}).map(([t, n]) => `${n.toLocaleString()} ${t}`).join(", ")
+                setPruneMsg(`Deleted ${parts} · Reclaimed ${d.reclaimed}`)
+                load()
+            } else {
+                setPruneMsg(d?.error || "Failed")
+            }
+        } catch (_e) {
+            setPruneMsg("Failed")
+        } finally {
+            setPruning(false) }
+    }
+
+    if (loading && !stats) return (
+        <div style={{ color: "var(--akili-text-secondary)", fontSize: 11, padding: "8px 0" }}>Loading storage data…</div>
+    )
+    if (!stats) return null
+
+    // Compute total known bytes for proportional bars
+    const knownBytes = STORAGE_CATS.reduce((sum, c) => sum + (stats[c.key]?.bytes || 0), 0)
+    const disk = stats.disk || {}
+    const db   = stats.database || {}
+
+    return (
+        <div>
+            {/* Disk summary */}
+            <div style={{ padding: "10px 12px", background: "var(--akili-hover)", borderRadius: 6, border: "1px solid var(--akili-border)", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: "var(--akili-text-primary)", fontWeight: 500 }}>Disk Usage</span>
+                    <span style={{ fontSize: 11, color: "var(--akili-text-secondary)" }}>{disk.used} / {disk.total} ({disk.percent})</span>
+                </div>
+                <div style={{ height: 6, background: "var(--akili-hover-strong)", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{
+                        height: "100%",
+                        width: disk.percent ? disk.percent : "0%",
+                        background: parseInt(disk.percent) > 85 ? "#ef4444" : parseInt(disk.percent) > 60 ? "#f97316" : "var(--akili-accent)",
+                        borderRadius: 3, transition: "width 0.4s",
+                    }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                    <span style={{ fontSize: 9, color: "var(--akili-text-muted)" }}>{disk.free} free</span>
+                    <button onClick={load} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--akili-text-muted)", fontSize: 9, padding: 0 }}>Refresh</button>
+                </div>
+            </div>
+
+            {/* Category breakdown */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+                {STORAGE_CATS.map(cat => {
+                    const bytes = stats[cat.key]?.bytes || 0
+                    const human = stats[cat.key]?.human || "—"
+                    const pct   = knownBytes > 0 ? (bytes / knownBytes) * 100 : 0
+                    const extra = cat.key === "database"
+                        ? ` · ${db.reclaimable_human || "0 B"} reclaimable`
+                        : cat.key === "sentinel_images"
+                        ? ` · ${stats.sentinel_images?.count || 0} images`
+                        : cat.key === "geocoder_cache"
+                        ? ` · ${stats.geocoder_cache?.files || 0} files`
+                        : ""
+                    return (
+                        <div key={cat.key}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                                <span style={{ fontSize: 10, color: "var(--akili-text-secondary)" }}>
+                                    {cat.label}
+                                    {extra && <span style={{ color: "var(--akili-text-muted)", marginLeft: 4 }}>{extra}</span>}
+                                </span>
+                                <span style={{ fontSize: 10, color: "var(--akili-text-primary)", fontWeight: 500 }}>{human}</span>
+                            </div>
+                            <div style={{ height: 4, background: "var(--akili-hover-strong)", borderRadius: 2, overflow: "hidden" }}>
+                                <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: cat.color, borderRadius: 2, transition: "width 0.4s" }} />
+                            </div>
+                        </div>
+                    )
+                })}
+            </div>
+
+            {/* Top tables */}
+            {db.top_tables?.length > 0 && (
+                <div style={{ padding: "8px 10px", background: "var(--akili-hover)", borderRadius: 5, border: "1px solid var(--akili-border)", marginBottom: 10 }}>
+                    <div style={{ fontSize: 9, color: "var(--akili-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+                        Largest Tables (rows)
+                    </div>
+                    {db.top_tables.slice(0, 6).map(t => (
+                        <div key={t.table} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+                            <span style={{ fontSize: 10, color: "var(--akili-text-secondary)", fontFamily: "monospace" }}>{t.table}</span>
+                            <span style={{ fontSize: 10, color: "var(--akili-text-primary)", fontWeight: 500 }}>{t.rows.toLocaleString()}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Prune history */}
+            <div style={{ padding: "10px 12px", background: "var(--akili-hover)", borderRadius: 6, border: "1px solid var(--akili-border)", marginBottom: 8 }}>
+                <div style={{ fontSize: 9, color: "var(--akili-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                    Prune Tracking History
+                </div>
+                <div style={{ fontSize: 10, color: "var(--akili-text-secondary)", marginBottom: 8 }}>
+                    Deletes AIS/ADS-B position rows older than N days from aircraft_history, vessel_history, and track_density, then runs VACUUM to reclaim space.
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 10, color: "var(--akili-text-secondary)" }}>Keep last</span>
+                    <input
+                        type="number" min="1" max="90" value={pruneDays}
+                        onChange={e => setPruneDays(Math.max(1, +e.target.value))}
+                        style={{ width: 52, padding: "3px 6px", background: "var(--akili-hover-strong)", border: "1px solid var(--akili-border)", borderRadius: 4, color: "var(--akili-text-primary)", fontSize: 11 }}
+                    />
+                    <span style={{ fontSize: 10, color: "var(--akili-text-secondary)" }}>days</span>
+                    <button
+                        onClick={prune}
+                        disabled={pruning}
+                        style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.08)", color: "#ef4444", fontSize: 11, cursor: pruning ? "not-allowed" : "pointer", opacity: pruning ? 0.6 : 1 }}
+                    >{pruning ? "Pruning…" : "Prune & Vacuum"}</button>
+                </div>
+                {pruneMsg && <div style={{ marginTop: 6, fontSize: 10, color: pruneMsg.startsWith("Failed") ? "#ef4444" : "#4ade80" }}>{pruneMsg}</div>}
+            </div>
+
+            {/* Clear buttons */}
+            <div style={{ display: "flex", gap: 8 }}>
+                {[
+                    { action: "clear-geocache",        label: "Clear Geocoder Cache" },
+                    { action: "clear-sentinel-cache",  label: "Clear Sentinel PNGs" },
+                ].map(({ action, label }) => (
+                    <div key={action} style={{ flex: 1 }}>
+                        <button
+                            onClick={() => clearAction(action)}
+                            disabled={clearing === action}
+                            style={{ width: "100%", padding: "5px 8px", borderRadius: 4, border: "1px solid var(--akili-border)", background: "var(--akili-hover)", color: "var(--akili-text-secondary)", fontSize: 10, cursor: clearing === action ? "not-allowed" : "pointer", opacity: clearing === action ? 0.6 : 1 }}
+                        >{clearing === action ? "Clearing…" : label}</button>
+                        {clearMsg[action] && <div style={{ marginTop: 3, fontSize: 9, color: clearMsg[action].startsWith("Failed") ? "#ef4444" : "#4ade80", textAlign: "center" }}>{clearMsg[action]}</div>}
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
 
 export default function HealthPanel({ onClose }) {
     const [data, setData]     = useState(null)
@@ -269,6 +464,10 @@ export default function HealthPanel({ onClose }) {
                                 </div>
                             ))}
                         </div>
+
+                        {/* Storage */}
+                        <Section title="Storage" />
+                        <StorageSection />
 
                         {/* Claude API usage */}
                         {usage && (
