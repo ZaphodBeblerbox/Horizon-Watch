@@ -370,6 +370,195 @@ def seed_db(db=None) -> dict:
             db.close()
 
 
+NEWS_RULES = [
+    {
+        "name":         "Rising Tensions — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "high",
+        "icon_type":    "RISING_TENSIONS",
+        "params": {
+            "pattern_type":             "RISING_TENSIONS",
+            "location_scope":           "ALL",
+            "article_count_threshold":  5,
+            "timeframe_hours":          6,
+            "min_relevance_score":      6.0,
+            "article_types":            ["conflict", "aviation"],
+            "cooldown_hours":           2,
+        },
+    },
+    {
+        "name":         "Port Disruption — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "high",
+        "icon_type":    "PORT_DISRUPTION",
+        "params": {
+            "pattern_type":             "PORT_DISRUPTION",
+            "location_scope":           "ALL",
+            "article_count_threshold":  3,
+            "timeframe_hours":          12,
+            "min_relevance_score":      5.0,
+            "article_types":            ["maritime", "infrastructure"],
+            "keywords_required":        ["port", "terminal", "shipping", "vessel", "cargo", "blockade", "closure", "attack"],
+            "cooldown_hours":           4,
+        },
+    },
+    {
+        "name":         "Infrastructure Threat — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "high",
+        "icon_type":    "INFRASTRUCTURE_THREAT",
+        "params": {
+            "pattern_type":             "INFRASTRUCTURE_THREAT",
+            "location_scope":           "ALL",
+            "article_count_threshold":  2,
+            "timeframe_hours":          6,
+            "min_relevance_score":      7.0,
+            "article_types":            ["infrastructure", "energy", "cyber"],
+            "keywords_required":        ["attack", "damage", "destroyed", "sabotage", "explosion", "fire", "outage", "pipeline", "cable", "power"],
+            "cooldown_hours":           3,
+        },
+    },
+    {
+        "name":         "Escalation Spike — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "critical",
+        "icon_type":    "ESCALATION_SPIKE",
+        "params": {
+            "pattern_type":             "ESCALATION_SPIKE",
+            "location_scope":           "ALL",
+            "article_count_threshold":  10,
+            "timeframe_hours":          3,
+            "min_relevance_score":      5.0,
+            "article_types":            ["conflict", "political", "maritime"],
+            "cooldown_hours":           1,
+        },
+    },
+    {
+        "name":         "Sanctions Pressure — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "medium",
+        "icon_type":    "SANCTIONS_PRESSURE",
+        "params": {
+            "pattern_type":             "SANCTIONS_PRESSURE",
+            "location_scope":           "ALL",
+            "article_count_threshold":  4,
+            "timeframe_hours":          24,
+            "min_relevance_score":      5.0,
+            "article_types":            ["political", "economic"],
+            "keywords_required":        ["sanction", "embargo", "restriction", "ban", "freeze", "penalty", "tariff"],
+            "cooldown_hours":           6,
+        },
+    },
+    {
+        "name":         "Military Mobilisation — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "high",
+        "icon_type":    "MILITARY_MOBILISATION",
+        "params": {
+            "pattern_type":             "MILITARY_MOBILISATION",
+            "location_scope":           "ALL",
+            "article_count_threshold":  3,
+            "timeframe_hours":          12,
+            "min_relevance_score":      7.0,
+            "article_types":            ["conflict", "political"],
+            "keywords_required":        ["troops", "military", "forces", "deploy", "mobilise", "mobilize", "exercise", "drill", "warship", "aircraft carrier", "buildup", "reinforcement"],
+            "cooldown_hours":           4,
+        },
+    },
+    {
+        "name":         "Humanitarian Crisis — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "high",
+        "icon_type":    "HUMANITARIAN_CRISIS",
+        "params": {
+            "pattern_type":             "HUMANITARIAN_CRISIS",
+            "location_scope":           "ALL",
+            "article_count_threshold":  4,
+            "timeframe_hours":          24,
+            "min_relevance_score":      6.0,
+            "article_types":            ["conflict", "disaster"],
+            "keywords_required":        ["civilian", "casualties", "displaced", "refugees", "famine", "humanitarian", "aid", "evacuation", "massacre"],
+            "cooldown_hours":           6,
+        },
+    },
+    {
+        "name":         "Ceasefire Breakdown — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "critical",
+        "icon_type":    "CEASEFIRE_BREAKDOWN",
+        "params": {
+            "pattern_type":             "CEASEFIRE_BREAKDOWN",
+            "location_scope":           "ALL",
+            "article_count_threshold":  3,
+            "timeframe_hours":          6,
+            "min_relevance_score":      7.0,
+            "article_types":            ["conflict", "political"],
+            "keywords_required":        ["ceasefire", "peace talks", "violation", "collapsed", "breakdown", "resumed fighting", "offensive"],
+            "cooldown_hours":           3,
+        },
+    },
+    {
+        "name":         "Energy Supply Risk — Global",
+        "trigger_type": "NEWS_PATTERN",
+        "severity":     "medium",
+        "icon_type":    "ENERGY_SUPPLY_RISK",
+        "params": {
+            "pattern_type":             "ENERGY_SUPPLY_RISK",
+            "location_scope":           "ALL",
+            "article_count_threshold":  3,
+            "timeframe_hours":          12,
+            "min_relevance_score":      6.0,
+            "article_types":            ["energy", "maritime", "infrastructure"],
+            "keywords_required":        ["oil", "gas", "LNG", "pipeline", "refinery", "tanker", "supply", "shortage", "disruption", "export", "OPEC"],
+            "cooldown_hours":           4,
+        },
+    },
+]
+
+
+def seed_news_rules(db=None) -> dict:
+    """Seed 9 default NEWS_PATTERN rules. Idempotent — skips existing by name."""
+    import json as _json
+    from database import RuleConfig, OntologyEntity, SessionLocal as _SL
+
+    _own = db is None
+    if _own:
+        db = _SL()
+    created = 0
+    try:
+        for spec in NEWS_RULES:
+            existing = db.query(RuleConfig).filter(RuleConfig.name == spec["name"]).first()
+            if existing:
+                continue
+            row = RuleConfig(
+                name         = spec["name"],
+                rule_name    = spec["trigger_type"],
+                trigger_type = spec["trigger_type"],
+                severity     = spec["severity"],
+                icon_type    = spec["icon_type"],
+                params       = _json.dumps(spec["params"]),
+            )
+            db.add(row)
+            db.flush()
+            onto_id = f"RULE-{row.id}"
+            if not db.query(OntologyEntity).filter(OntologyEntity.system_id == onto_id).first():
+                db.add(OntologyEntity(
+                    system_id   = onto_id,
+                    entity_type = "Rule",
+                    name        = spec["name"],
+                    infra_type  = spec["trigger_type"],
+                    entity_metadata = _json.dumps({"trigger_type": spec["trigger_type"], "severity": spec["severity"]}),
+                ))
+            created += 1
+        db.commit()
+        print(f"[seed-news-rules] {created} news pattern rules seeded")
+        return {"created": created}
+    finally:
+        if _own:
+            db.close()
+
+
 if __name__ == "__main__":
     seed()
     seed_chokepoint_rules()
+    seed_news_rules()

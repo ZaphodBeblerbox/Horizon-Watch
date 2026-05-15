@@ -7,10 +7,299 @@ Also contains:
 - STSDetector           — ship-to-ship proximity outside port boundaries
 - DarkShipDetector      — AIS gap / dark-ship detection
 - ADSBLoiterDetector    — ADS-B aircraft loitering near airport
+- NewsPatternEngine     — rolling article buffer, NEWS_PATTERN rule evaluation
 """
 from datetime import datetime, timezone, timedelta
 import math
 import uuid
+import json
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NEWS PATTERN REGISTRY
+# ══════════════════════════════════════════════════════════════════════════════
+
+NEWS_PATTERNS = {
+    "RISING_TENSIONS": {
+        "description":       "Multiple conflict/military articles about same location",
+        "default_article_types": ["conflict", "aviation"],
+        "default_threshold": 5,
+        "default_timeframe": 6,
+        "default_min_relevance": 6.0,
+        "severity":          "high",
+        "marker_type":       "RISING_TENSIONS",
+        "headline_template": "Rising tensions detected — {location}",
+        "summary_template":  "{count} conflict-related articles in {timeframe}h mentioning {location}. Sources: {source_list}",
+    },
+    "PORT_DISRUPTION": {
+        "description":       "Multiple maritime articles mentioning same port",
+        "default_article_types": ["maritime", "infrastructure"],
+        "default_threshold": 3,
+        "default_timeframe": 12,
+        "default_min_relevance": 5.0,
+        "default_keywords": ["port", "terminal", "shipping", "vessel", "cargo",
+                             "blockade", "closure", "attack"],
+        "severity":          "high",
+        "marker_type":       "PORT_DISRUPTION",
+        "headline_template": "Port disruption signals — {location}",
+        "summary_template":  "{count} maritime articles in {timeframe}h mentioning {location}.",
+    },
+    "INFRASTRUCTURE_THREAT": {
+        "description":       "Articles mentioning attacks or damage to infrastructure",
+        "default_article_types": ["infrastructure", "energy", "cyber"],
+        "default_threshold": 2,
+        "default_timeframe": 6,
+        "default_min_relevance": 7.0,
+        "default_keywords": ["attack", "damage", "destroyed", "sabotage",
+                             "explosion", "fire", "outage", "pipeline", "cable", "power"],
+        "severity":          "high",
+        "marker_type":       "INFRASTRUCTURE_THREAT",
+        "headline_template": "Infrastructure threat signals — {location}",
+        "summary_template":  "{count} infrastructure-related articles in {timeframe}h flagging {location}.",
+    },
+    "ESCALATION_SPIKE": {
+        "description":       "Sudden surge in article volume about a region",
+        "default_article_types": ["conflict", "political", "maritime"],
+        "default_threshold": 10,
+        "default_timeframe": 3,
+        "default_min_relevance": 5.0,
+        "severity":          "critical",
+        "marker_type":       "ESCALATION_SPIKE",
+        "headline_template": "Escalation spike detected — {location}",
+        "summary_template":  "{count} articles in {timeframe}h — significant volume increase for {location}.",
+    },
+    "SANCTIONS_PRESSURE": {
+        "description":       "Multiple articles about sanctions targeting same country",
+        "default_article_types": ["political", "economic"],
+        "default_threshold": 4,
+        "default_timeframe": 24,
+        "default_min_relevance": 5.0,
+        "default_keywords": ["sanction", "embargo", "restriction", "ban",
+                             "freeze", "penalty", "tariff"],
+        "severity":          "medium",
+        "marker_type":       "SANCTIONS_PRESSURE",
+        "headline_template": "Sanctions pressure — {location}",
+        "summary_template":  "{count} sanctions-related articles in {timeframe}h targeting {location}.",
+    },
+    "MILITARY_MOBILISATION": {
+        "description":       "Articles mentioning troop movements or military buildup",
+        "default_article_types": ["conflict", "political"],
+        "default_threshold": 3,
+        "default_timeframe": 12,
+        "default_min_relevance": 7.0,
+        "default_keywords": ["troops", "military", "forces", "deploy", "mobilise",
+                             "mobilize", "exercise", "drill", "warship", "aircraft carrier",
+                             "buildup", "reinforcement", "battalion", "regiment"],
+        "severity":          "high",
+        "marker_type":       "MILITARY_MOBILISATION",
+        "headline_template": "Military mobilisation signals — {location}",
+        "summary_template":  "{count} mobilisation-related articles in {timeframe}h for {location}.",
+    },
+    "HUMANITARIAN_CRISIS": {
+        "description":       "Articles mentioning civilian casualties or displacement",
+        "default_article_types": ["conflict", "disaster"],
+        "default_threshold": 4,
+        "default_timeframe": 24,
+        "default_min_relevance": 6.0,
+        "default_keywords": ["civilian", "casualties", "displaced", "refugees",
+                             "famine", "humanitarian", "aid", "evacuation", "massacre"],
+        "severity":          "high",
+        "marker_type":       "HUMANITARIAN_CRISIS",
+        "headline_template": "Humanitarian crisis signals — {location}",
+        "summary_template":  "{count} humanitarian articles in {timeframe}h covering {location}.",
+    },
+    "CEASEFIRE_BREAKDOWN": {
+        "description":       "Articles suggesting peace process failing or ceasefire violated",
+        "default_article_types": ["conflict", "political"],
+        "default_threshold": 3,
+        "default_timeframe": 6,
+        "default_min_relevance": 7.0,
+        "default_keywords": ["ceasefire", "peace talks", "violation", "collapsed",
+                             "breakdown", "resumed fighting", "offensive"],
+        "severity":          "critical",
+        "marker_type":       "CEASEFIRE_BREAKDOWN",
+        "headline_template": "Ceasefire breakdown signals — {location}",
+        "summary_template":  "{count} ceasefire-related articles in {timeframe}h flagging {location}.",
+    },
+    "ENERGY_SUPPLY_RISK": {
+        "description":       "Articles suggesting threat to energy supply chains",
+        "default_article_types": ["energy", "maritime", "infrastructure"],
+        "default_threshold": 3,
+        "default_timeframe": 12,
+        "default_min_relevance": 6.0,
+        "default_keywords": ["oil", "gas", "LNG", "pipeline", "refinery",
+                             "tanker", "supply", "shortage", "disruption", "export", "OPEC"],
+        "severity":          "medium",
+        "marker_type":       "ENERGY_SUPPLY_RISK",
+        "headline_template": "Energy supply risk signals — {location}",
+        "summary_template":  "{count} energy-supply articles in {timeframe}h flagging {location}.",
+    },
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NEWS PATTERN ENGINE
+# ══════════════════════════════════════════════════════════════════════════════
+
+class NewsPatternEngine:
+    """
+    Maintains a rolling 72-hour article buffer keyed by location_country.
+    On each ingested article, evaluates all enabled NEWS_PATTERN rules.
+    When a pattern threshold is met (and not in cooldown), calls the fire callback.
+    """
+
+    BUFFER_MAX_AGE_HOURS = 72
+
+    def __init__(self):
+        # location_key (ISO2 or region_id) → [ article_dict, ... ]
+        self._buffer: dict = {}
+        # (rule_id, location) → datetime when cooldown expires
+        self._cooldowns: dict = {}
+        # Active rule list (loaded externally via reload_rules)
+        self._rules: list = []
+        # Callback invoked on pattern fire: fn(rule, matching, location, trigger_article)
+        self._on_fire = None
+
+    def set_fire_callback(self, fn) -> None:
+        self._on_fire = fn
+
+    def reload_rules(self, rules: list) -> None:
+        """Replace the active NEWS_PATTERN rule list."""
+        self._rules = [
+            r for r in rules
+            if (r.get("trigger_type") or r.get("rule_name")) == "NEWS_PATTERN"
+            and r.get("enabled", True)
+        ]
+
+    def on_article_ingested(self, article: dict) -> None:
+        """Called for every fully-processed article (has article_type + coords)."""
+        self._add_to_buffer(article)
+        for rule in self._rules:
+            try:
+                self._check_pattern(rule, article)
+            except Exception as _e:
+                pass  # Never crash the ingestion pipeline
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _add_to_buffer(self, article: dict) -> None:
+        """Add article to buffer under its location_country key. Prune stale."""
+        country = (
+            article.get("location_country")
+            or article.get("resolved_country_code")
+            or ""
+        ).lower().strip()
+        if not country:
+            return
+
+        now = datetime.utcnow()
+        entry = {
+            "ingested_at":    now,
+            "location_country": country,
+            "article_type":   (article.get("article_type") or "other").lower(),
+            "relevance_score": float(article.get("llm_relevance_score") or 0),
+            "title":          article.get("title") or "",
+            "source":         article.get("source") or "",
+            "url":            article.get("url") or "",
+            "summary":        (article.get("summary") or "")[:200],
+            "lat":            article.get("lat"),
+            "lon":            article.get("lon"),
+        }
+
+        bucket = self._buffer.setdefault(country, [])
+        bucket.append(entry)
+
+        # Prune articles older than BUFFER_MAX_AGE_HOURS
+        cutoff = now - timedelta(hours=self.BUFFER_MAX_AGE_HOURS)
+        self._buffer[country] = [a for a in bucket if a["ingested_at"] >= cutoff]
+
+    def _check_pattern(self, rule: dict, trigger_article: dict) -> None:
+        params = rule.get("params") or {}
+        if isinstance(params, str):
+            try:
+                params = json.loads(params)
+            except Exception:
+                return
+
+        pattern_type   = params.get("pattern_type")
+        if not pattern_type or pattern_type not in NEWS_PATTERNS:
+            return
+
+        location_scope  = params.get("location_scope", "ALL")
+        timeframe_hours = int(params.get("timeframe_hours",
+                              NEWS_PATTERNS[pattern_type].get("default_timeframe", 24)))
+        threshold       = int(params.get("article_count_threshold",
+                              NEWS_PATTERNS[pattern_type].get("default_threshold", 3)))
+        min_relevance   = float(params.get("min_relevance_score",
+                                NEWS_PATTERNS[pattern_type].get("default_min_relevance", 5.0)))
+        article_types   = params.get("article_types",
+                          NEWS_PATTERNS[pattern_type].get("default_article_types", []))
+        kw_required     = params.get("keywords_required",
+                          NEWS_PATTERNS[pattern_type].get("default_keywords"))
+        kw_excluded     = params.get("keywords_excluded") or []
+
+        location = self._resolve_scope(location_scope, trigger_article)
+        if not location:
+            return
+
+        # Check cooldown
+        cooldown_hours = int(params.get("cooldown_hours", 2))
+        cd_key = (str(rule.get("id") or rule.get("rule_name")), location)
+        if cd_key in self._cooldowns and datetime.utcnow() < self._cooldowns[cd_key]:
+            return
+
+        # Filter buffer
+        cutoff = datetime.utcnow() - timedelta(hours=timeframe_hours)
+        bucket = self._buffer.get(location.lower(), [])
+
+        matching = [
+            a for a in bucket
+            if a["ingested_at"] >= cutoff
+            and a["relevance_score"] >= min_relevance
+            and (not article_types or a["article_type"] in [t.lower() for t in article_types])
+            and self._matches_keywords(a, kw_required, kw_excluded)
+        ]
+
+        if len(matching) < threshold:
+            return
+
+        # Fire
+        if self._on_fire:
+            self._on_fire(rule, matching, location, trigger_article)
+
+        # Set cooldown
+        self._cooldowns[cd_key] = datetime.utcnow() + timedelta(hours=cooldown_hours)
+
+    @staticmethod
+    def _resolve_scope(scope: str, article: dict) -> str | None:
+        if scope == "ALL":
+            return (
+                article.get("location_country")
+                or article.get("resolved_country_code")
+                or ""
+            ).lower().strip() or None
+        if scope.startswith("COUNTRY:"):
+            return scope.split(":", 1)[1].lower().strip()
+        if scope.startswith("REGION:"):
+            return scope.split(":", 1)[1].lower().strip()
+        return None
+
+    @staticmethod
+    def _matches_keywords(article: dict, required: list | None, excluded: list | None) -> bool:
+        if not required and not excluded:
+            return True
+        text = (article.get("title", "") + " " + article.get("summary", "")).lower()
+        if excluded:
+            for kw in excluded:
+                if kw.lower() in text:
+                    return False
+        if required:
+            return any(kw.lower() in text for kw in required)
+        return True
+
+
+# Module-level singleton used by main.py
+news_pattern_engine = NewsPatternEngine()
 
 
 # ── Severity helpers ──────────────────────────────────────────────────────────

@@ -2,8 +2,9 @@ import { useState, useEffect } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
-import { makeAlertCanvas } from "./iconUtils.js"
+import { makeAlertCanvas, makeAssessmentCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 
 function forgeHeaders() {
     return {
@@ -13,10 +14,31 @@ function forgeHeaders() {
 }
 
 const ICON_CACHE = {}
-function alertIcon(source, severity) {
-    const key = `${source}-${severity}`
-    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAlertCanvas(source, severity)
+
+function alertIcon(a) {
+    const iconType = a.icon_type || ""
+    const severity = a.severity || "medium"
+
+    // News assessment — diamond icon with pattern colour
+    if (NEWS_PATTERN_ICON_KEYS.has(iconType)) {
+        const color = ALERT_ICONS[iconType]?.color || "#FF6B35"
+        const key   = `assess-${iconType}-${severity}`
+        if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAssessmentCanvas(color, severity)
+        return ICON_CACHE[key]
+    }
+
+    // Standard forge alert — source-coloured circle
+    const key = `${a.source || "NEWS"}-${severity}`
+    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAlertCanvas(a.source || "NEWS", severity)
     return ICON_CACHE[key]
+}
+
+// Scale billboard by severity for assessment markers
+function severityScale(severity) {
+    if (severity === "critical") return 1.4
+    if (severity === "high")     return 1.2
+    if (severity === "medium")   return 1.0
+    return 0.85
 }
 
 export default function GlobeAlertsLayer({ enabled }) {
@@ -40,7 +62,9 @@ export default function GlobeAlertsLayer({ enabled }) {
         const ids = []
         alerts.forEach((a, i) => {
             const id = `alert-forge-${a.id || i}`
-            setEntity(id, "alert", { ...a, _idx: i })
+            // Assessment alerts get their own entity type so GlobePopup can route them
+            const entityType = NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "") ? "assessment" : "alert"
+            setEntity(id, entityType, { ...a, _idx: i })
             ids.push(id)
         })
         return () => ids.forEach(deleteEntity)
@@ -56,8 +80,11 @@ export default function GlobeAlertsLayer({ enabled }) {
                 const lat = Number(a.lat)
                 const lon = Number(a.lng ?? a.lon)
                 if (!isFinite(lat) || !isFinite(lon)) return null
-                const icon = alertIcon(a.source || "NEWS", a.severity || "medium")
+                const icon  = alertIcon(a)
                 if (!icon) return null
+                const isAssessment = NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")
+                const baseSize = isAssessment ? 40 : 38
+                const scale    = isAssessment ? severityScale(a.severity) : 1.0
                 return (
                     <Entity
                         id={`alert-forge-${a.id || i}`}
@@ -65,11 +92,12 @@ export default function GlobeAlertsLayer({ enabled }) {
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
                             image:           icon,
-                            width:           38,
-                            height:          38,
+                            width:           Math.round(baseSize * scale),
+                            height:          Math.round(baseSize * scale),
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             scaleByDistance: new NearFarScalar(1000, 1.3, 12_000_000, 0.28),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
+                            eyeOffset: isAssessment ? new (Cartesian3)(0, 0, -60) : undefined,
                         }}
                     />
                 )

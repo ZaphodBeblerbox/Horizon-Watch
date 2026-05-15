@@ -222,6 +222,9 @@ try:
         DarkShipDetector as _DarkShipDetector,
         ADSBLoiterDetector as _ADSBLoiterDetector,
         ChokepointActivityDetector as _ChokepointActivityDetector,
+        NewsPatternEngine as _NewsPatternEngine,
+        NEWS_PATTERNS as _NEWS_PATTERNS,
+        news_pattern_engine as _news_pattern_engine,
     )
     _HAS_DETECTORS = True
 except ImportError as _det_err:
@@ -5382,6 +5385,33 @@ def _run_news_conflict_extraction_sync():
     """
     global _NEWS_CONFLICT_MARKERS, _PROCESSED_URLS, _FIRST_EXTRACTION_DONE
 
+    # Reload NEWS_PATTERN rules into engine each cycle (picks up DB changes)
+    if _news_pattern_engine:
+        try:
+            from database import RuleConfig, get_db as _gdb_np
+            with _gdb_np() as _db_np:
+                _np_rows = _db_np.query(RuleConfig).filter(
+                    RuleConfig.trigger_type == "NEWS_PATTERN",
+                    RuleConfig.enabled == True,  # noqa: E712
+                ).all()
+            import json as _jnp
+            _np_rule_dicts = [
+                {
+                    "id":           r.id,
+                    "name":         r.name,
+                    "rule_name":    r.rule_name,
+                    "trigger_type": r.trigger_type,
+                    "severity":     r.severity,
+                    "icon_type":    r.icon_type,
+                    "enabled":      r.enabled,
+                    "params":       _jnp.loads(r.params) if isinstance(r.params, str) else (r.params or {}),
+                }
+                for r in _np_rows
+            ]
+            _news_pattern_engine.reload_rules(_np_rule_dicts)
+        except Exception:
+            pass
+
     MAX_NOM_CALLS = 100       # hard cap per cycle (only counts uncached HTTP calls)
     MAX_LLM_CALLS = 20        # cap LLM calls per feed cycle to avoid rate-limit spikes
     nom_calls = 0
@@ -5702,6 +5732,7 @@ def _run_news_conflict_extraction_sync():
                     article_record.update({
                         "extracted_location":    intel.get("location") or "",
                         "extraction_confidence": intel.get("location_confidence") or "none",
+                        "location_country":      intel.get("location_country") or "",
                         "article_type":          intel.get("article_type") or "other",
                         "llm_relevance_score":   intel.get("relevance_score"),
                         "relevance_reasoning":   intel.get("relevance_reasoning") or "",
@@ -5761,6 +5792,15 @@ def _run_news_conflict_extraction_sync():
                     print(f"[article-intelligence] skipped for '{title[:50]}': {_llm_err}")
 
             _upsert_news_article(article_record)
+            # Feed into NewsPatternEngine (only articles with coords + LLM extraction)
+            if (_news_pattern_engine
+                    and article_record.get("llm_extracted")
+                    and article_record.get("lat") is not None
+                    and (article_record.get("location_country") or article_record.get("resolved_country_code"))):
+                try:
+                    _news_pattern_engine.on_article_ingested(article_record)
+                except Exception:
+                    pass
             marker = _make_news_marker(article_record)
             if marker:
                 new_markers.append(marker)
@@ -7397,6 +7437,129 @@ else:
     _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
     _escalation_engine = _sts_detector = _dark_ship_detector = _adsb_loiter_detector = None
     _chokepoint_detector = None
+    _news_pattern_engine = None
+
+
+def _news_assessment_fire(rule: dict, matching_articles: list, location: str, trigger_article: dict) -> None:
+    """Callback fired by NewsPatternEngine when a pattern threshold is exceeded."""
+    import json as _jf
+    import uuid as _uuid
+    try:
+        from intelligence_schema import IntelligenceAssessment
+        from database import get_db as _get_db
+    except ImportError:
+        return
+    if not _news_pattern_engine:
+        return
+
+    pattern_type = (rule.get("params") or {}).get("pattern_type") if isinstance(rule.get("params"), dict) else None
+    if not pattern_type:
+        try:
+            _p = _jf.loads(rule.get("params") or "{}")
+            pattern_type = _p.get("pattern_type")
+        except Exception:
+            return
+    if not pattern_type:
+        return
+
+    pdef = _NEWS_PATTERNS.get(pattern_type, {})
+    count     = len(matching_articles)
+    tf_hours  = int((rule.get("params") or {}).get("timeframe_hours", pdef.get("default_timeframe", 24)) if isinstance(rule.get("params"), dict) else pdef.get("default_timeframe", 24))
+    sources   = list({a.get("source", "") for a in matching_articles[:5] if a.get("source")})
+    source_list = ", ".join(sources) or "various"
+
+    headline  = pdef.get("headline_template", "Intelligence pattern — {location}").format(
+        location=location, count=count, timeframe=tf_hours)
+    summary   = pdef.get("summary_template", "{count} articles in {timeframe}h for {location}.").format(
+        count=count, location=location, timeframe=tf_hours, source_list=source_list)
+
+    avg_rel   = sum(a.get("relevance_score", 5) for a in matching_articles) / count
+    key_signals = [
+        f"{count} articles in {tf_hours}h",
+        f"Location: {location.upper()}",
+        f"Pattern: {pattern_type}",
+        f"Avg relevance: {avg_rel:.1f}/10",
+        f"Sources: {source_list}",
+    ]
+
+    threshold = int((rule.get("params") or {}).get("article_count_threshold", pdef.get("default_threshold", 3)) if isinstance(rule.get("params"), dict) else pdef.get("default_threshold", 3))
+    confidence = min(0.95, 0.5 + (count / max(threshold, 1) - 1) * 0.2)
+
+    evidence = [
+        {
+            "title":          a.get("title", ""),
+            "source":         a.get("source", ""),
+            "article_type":   a.get("article_type", ""),
+            "relevance_score": a.get("relevance_score", 0),
+            "url":            a.get("url", ""),
+        }
+        for a in matching_articles[:10]
+    ]
+
+    lat = trigger_article.get("lat")
+    lon = trigger_article.get("lon")
+    assess_id = f"ASSESS-{_uuid.uuid4().hex[:8].upper()}"
+
+    try:
+        with _get_db() as _db:
+            _ass = IntelligenceAssessment(
+                assessment_id         = assess_id,
+                assessment_type       = pattern_type,
+                domain                = "NEWS",
+                severity              = pdef.get("severity", "medium"),
+                location_name         = location.upper(),
+                location_country      = location if len(location) == 2 else None,
+                confidence            = round(confidence, 3),
+                confidence_reasoning  = f"{count} articles exceed threshold of {threshold}",
+                evidence_count        = count,
+                evidence_items        = _jf.dumps(evidence),
+                timeframe_hours       = tf_hours,
+                headline              = headline[:200],
+                summary               = summary,
+                key_signals           = _jf.dumps(key_signals),
+                recommended_actions   = _jf.dumps([]),
+                source_rule_id        = rule.get("id"),
+                source_rule_name      = rule.get("name") or rule.get("rule_name"),
+                contributing_alert_ids = _jf.dumps([]),
+                marker_type           = pdef.get("marker_type", "UNKNOWN_CONTACT"),
+                marker_visible        = True,
+                expires_at            = datetime.utcnow() + timedelta(hours=24),
+                lat                   = lat,
+                lon                   = lon,
+            )
+            _db.add(_ass)
+            _db.commit()
+    except Exception as _db_err:
+        print(f"[news-pattern] DB write failed: {_db_err}")
+
+    # Append to forge alerts so globe layer picks it up immediately
+    _alert = {
+        "id":             f"news_pattern_{int(time.time()*1000)}",
+        "rule_id":        rule.get("id"),
+        "rule_name":      f"NEWS_{pattern_type}",
+        "source":         "NEWS",
+        "severity":       pdef.get("severity", "medium"),
+        "icon_type":      pdef.get("marker_type", "UNKNOWN_CONTACT"),
+        "lat":            lat,
+        "lng":            lon,
+        "title":          headline,
+        "message":        summary,
+        "assessment_id":  assess_id,
+        "location":       location.upper(),
+        "pattern_type":   pattern_type,
+        "evidence_count": count,
+        "key_signals":    key_signals,
+        "timestamp":      datetime.utcnow().isoformat(),
+        "provenance": {
+            "source_type":    "NEWS",
+            "detection_rule": f"NEWS_{pattern_type}",
+            "trigger_reason": pattern_type,
+        },
+    }
+    _forge_alerts.append(_alert)
+    print(f"[news-pattern] fired {pattern_type} for {location.upper()} ({count} articles, conf={confidence:.2f})")
+
+
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
 _correlation_assessments: list = []  # cross-domain correlation results (24h)
 _last_cycle_stats: dict = {}         # stats from the most-recent detection cycle
@@ -9298,6 +9461,11 @@ async def startup_event():
 
     _reset_count = _reset_recent_llm_extractions(days=7)
     print(f"[startup] reset llm_extracted for {_reset_count} recent articles (prompt update)")
+
+    # Wire NewsPatternEngine fire callback
+    if _news_pattern_engine:
+        _news_pattern_engine.set_fire_callback(_news_assessment_fire)
+        print("[startup] NewsPatternEngine fire callback registered")
 
     asyncio.create_task(_extract_news_conflicts_loop())
     asyncio.create_task(_background_news_geocode_loop())
@@ -16308,6 +16476,159 @@ def forge_brain_inspect(_forge=Depends(_require_forge)):
             "correlations": len(_correlation_assessments),
         },
     }
+
+
+# ── Intelligence Assessments ─────────────────────────────────────────────────
+
+
+def _assessment_to_dict(row) -> dict:
+    import json as _ja
+    def _parse(s):
+        try:
+            return _ja.loads(s) if isinstance(s, str) else (s or [])
+        except Exception:
+            return []
+    return {
+        "id":                    row.id,
+        "assessment_id":         row.assessment_id,
+        "assessment_type":       row.assessment_type,
+        "domain":                row.domain,
+        "severity":              row.severity,
+        "location_name":         row.location_name,
+        "location_country":      row.location_country,
+        "region_id":             row.region_id,
+        "lat":                   row.lat,
+        "lon":                   row.lon,
+        "confidence":            row.confidence,
+        "confidence_reasoning":  row.confidence_reasoning,
+        "evidence_count":        row.evidence_count,
+        "evidence_items":        _parse(row.evidence_items),
+        "timeframe_hours":       row.timeframe_hours,
+        "headline":              row.headline,
+        "summary":               row.summary,
+        "key_signals":           _parse(row.key_signals),
+        "recommended_actions":   _parse(row.recommended_actions),
+        "source_rule_id":        row.source_rule_id,
+        "source_rule_name":      row.source_rule_name,
+        "marker_type":           row.marker_type,
+        "marker_visible":        row.marker_visible,
+        "created_at":            row.created_at.isoformat() if row.created_at else None,
+        "expires_at":            row.expires_at.isoformat() if row.expires_at else None,
+    }
+
+
+@app.get("/api/assessments")
+def api_assessments_list(
+    domain: str = None,
+    assessment_type: str = None,
+    severity: str = None,
+    since: str = None,
+    location: str = None,
+    marker_visible: bool = None,
+):
+    """Return non-expired IntelligenceAssessment rows, newest first."""
+    try:
+        from intelligence_schema import IntelligenceAssessment
+        from database import get_db as _gdb_a
+    except ImportError:
+        return []
+    with _gdb_a() as _db:
+        q = _db.query(IntelligenceAssessment).filter(
+            IntelligenceAssessment.expires_at > datetime.utcnow()
+        )
+        if domain:
+            q = q.filter(IntelligenceAssessment.domain == domain)
+        if assessment_type:
+            q = q.filter(IntelligenceAssessment.assessment_type == assessment_type)
+        if severity:
+            q = q.filter(IntelligenceAssessment.severity == severity)
+        if since:
+            try:
+                since_dt = datetime.fromisoformat(since.replace("Z", "+00:00")).replace(tzinfo=None)
+                q = q.filter(IntelligenceAssessment.created_at >= since_dt)
+            except Exception:
+                pass
+        if location:
+            q = q.filter(IntelligenceAssessment.location_country == location.lower())
+        if marker_visible is not None:
+            q = q.filter(IntelligenceAssessment.marker_visible == marker_visible)
+        rows = q.order_by(IntelligenceAssessment.created_at.desc()).limit(200).all()
+    return [_assessment_to_dict(r) for r in rows]
+
+
+@app.get("/api/assessments/for-claude")
+def api_assessments_for_claude():
+    """Return last 24h of assessments formatted for Claude consumption."""
+    try:
+        from intelligence_schema import IntelligenceAssessment
+        from database import get_db as _gdb_c
+    except ImportError:
+        return []
+    SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "info": 3}
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    with _gdb_c() as _db:
+        rows = _db.query(IntelligenceAssessment).filter(
+            IntelligenceAssessment.created_at >= cutoff,
+            IntelligenceAssessment.expires_at > datetime.utcnow(),
+        ).all()
+    import json as _jc
+    def _parse(s):
+        try:
+            return _jc.loads(s) if isinstance(s, str) else (s or [])
+        except Exception:
+            return []
+    items = []
+    for r in rows:
+        items.append({
+            "type":           r.assessment_type,
+            "headline":       r.headline,
+            "location":       r.location_name,
+            "confidence":     r.confidence,
+            "severity":       r.severity,
+            "signals":        _parse(r.key_signals),
+            "evidence_count": r.evidence_count,
+            "timeframe_hours": r.timeframe_hours,
+            "summary":        r.summary,
+            "created_at":     r.created_at.isoformat() if r.created_at else None,
+        })
+    items.sort(key=lambda x: (SEV_ORDER.get(x["severity"], 4), -(x["confidence"] or 0)))
+    return items
+
+
+@app.get("/api/assessments/{assessment_id}")
+def api_assessments_get(assessment_id: str):
+    """Return a single IntelligenceAssessment by assessment_id."""
+    try:
+        from intelligence_schema import IntelligenceAssessment
+        from database import get_db as _gdb_g
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Intelligence schema not available")
+    with _gdb_g() as _db:
+        row = _db.query(IntelligenceAssessment).filter(
+            IntelligenceAssessment.assessment_id == assessment_id
+        ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Assessment {assessment_id} not found")
+    return _assessment_to_dict(row)
+
+
+@app.delete("/api/assessments/{assessment_id}")
+def api_assessments_delete(assessment_id: str):
+    """Dismiss an assessment (operator manual action)."""
+    try:
+        from intelligence_schema import IntelligenceAssessment
+        from database import get_db as _gdb_d
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Intelligence schema not available")
+    with _gdb_d() as _db:
+        row = _db.query(IntelligenceAssessment).filter(
+            IntelligenceAssessment.assessment_id == assessment_id
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Assessment {assessment_id} not found")
+        _db.delete(row)
+        _db.commit()
+    return {"deleted": assessment_id}
 
 
 # ── Forge alerts ──────────────────────────────────────────────────────────────

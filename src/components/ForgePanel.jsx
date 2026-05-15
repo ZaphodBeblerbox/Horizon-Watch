@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import API_BASE from "../apiBase.js"
 import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.jsx"
-import { ALERT_ICONS } from "../constants/alertIcons.js"
+import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 
 const API = API_BASE
@@ -1335,6 +1335,20 @@ function OsintWorkspace() {
 // DETECTOR WORKSPACES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const NEWS_PATTERN_DEFS = {
+    RISING_TENSIONS:       { label: "Rising Tensions",        article_count_threshold: 4, timeframe_hours: 24, min_relevance_score: 6.5, cooldown_hours: 6  },
+    PORT_DISRUPTION:       { label: "Port Disruption",        article_count_threshold: 3, timeframe_hours: 12, min_relevance_score: 6.0, cooldown_hours: 8  },
+    INFRASTRUCTURE_THREAT: { label: "Infrastructure Threat",  article_count_threshold: 3, timeframe_hours: 24, min_relevance_score: 7.0, cooldown_hours: 12 },
+    ESCALATION_SPIKE:      { label: "Escalation Spike",       article_count_threshold: 6, timeframe_hours: 6,  min_relevance_score: 6.0, cooldown_hours: 4  },
+    SANCTIONS_PRESSURE:    { label: "Sanctions Pressure",     article_count_threshold: 4, timeframe_hours: 48, min_relevance_score: 6.5, cooldown_hours: 24 },
+    MILITARY_MOBILISATION: { label: "Military Mobilisation",  article_count_threshold: 3, timeframe_hours: 24, min_relevance_score: 7.0, cooldown_hours: 12 },
+    HUMANITARIAN_CRISIS:   { label: "Humanitarian Crisis",    article_count_threshold: 4, timeframe_hours: 24, min_relevance_score: 6.0, cooldown_hours: 8  },
+    CEASEFIRE_BREAKDOWN:   { label: "Ceasefire Breakdown",    article_count_threshold: 3, timeframe_hours: 24, min_relevance_score: 7.0, cooldown_hours: 12 },
+    ENERGY_SUPPLY_RISK:    { label: "Energy Supply Risk",     article_count_threshold: 3, timeframe_hours: 24, min_relevance_score: 6.5, cooldown_hours: 8  },
+}
+
+const NEWS_ARTICLE_TYPES = ["conflict", "sanctions", "military", "humanitarian", "energy", "infrastructure", "political", "diplomatic"]
+
 const TRIGGER_TYPES = {
     AIS: [
         { value: "stationary_near_infrastructure", label: "Loitering near infrastructure (cable / port)", params: { infra_type: "cable", max_speed_knots: 0.5, proximity_km: 10, min_duration_minutes: 120 } },
@@ -1345,7 +1359,9 @@ const TRIGGER_TYPES = {
     ADSB: [
         { value: "ADSB_LOITERING_NEAR_AIRPORT", label: "ADSB Loitering near airport", params: { airport_types: ["large_airport", "medium_airport"], proximity_km: 5, min_duration_minutes: 20, max_speed_knots: 200 } },
     ],
-    NEWS: [],
+    NEWS: [
+        { value: "NEWS_PATTERN", label: "News Pattern Detection", params: { article_count_threshold: 4, timeframe_hours: 24, min_relevance_score: 6.0, cooldown_hours: 6 } },
+    ],
 }
 
 const INFRA_TYPES = ["Submarine Cable", "Port", "Airport"]
@@ -1390,6 +1406,14 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const [darkRegion, setDarkRegion]   = useState("")   // last_known_region for dark ship
     const [iconType, setIconType]       = useState("")   // optional ALERT_ICONS key override
 
+    // News pattern state
+    const [newsPatternType, setNewsPatternType] = useState("RISING_TENSIONS")
+    const [newsArticleTypes, setNewsArticleTypes] = useState([])
+    const [newsKeywordsReq, setNewsKeywordsReq]   = useState("")
+    const [newsKeywordsExcl, setNewsKeywordsExcl] = useState("")
+    const [newsLocScope, setNewsLocScope]         = useState("ALL")
+    const [newsLocValue, setNewsLocValue]         = useState("")
+
     // ADSB loiter state
     const [loiterScopeMode, setLoiterScopeMode]     = useState("ALL")
     const [loiterScopeRegion, setLoiterScopeRegion] = useState("")
@@ -1409,7 +1433,8 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const isDarkRule    = source === "AIS"  && triggerType === "AIS_DARK_SHIP"
     const isLoiterRule  = source === "ADSB" && triggerType === "ADSB_LOITERING_NEAR_AIRPORT"
     const isChokeRule   = source === "AIS"  && triggerType === "AIS_CHOKEPOINT_ACTIVITY"
-    const isDbRule      = isInfraRule || isStsRule || isDarkRule || isLoiterRule || isChokeRule
+    const isNewsRule    = source === "NEWS" && triggerType === "NEWS_PATTERN"
+    const isDbRule      = isInfraRule || isStsRule || isDarkRule || isLoiterRule || isChokeRule || isNewsRule
 
     useEffect(() => {
         if ((isInfraRule || isDarkRule || isLoiterRule) && regions.length === 0) {
@@ -1443,6 +1468,19 @@ function CreateRuleModal({ source, onClose, onCreated }) {
         setLoiterScopeMode("ALL"); setLoiterScopeRegion(""); setLoiterScopeSingle("")
         setChokeTarget("ALL"); setChokeSelected([]); setMonitorTransit(true)
         setMonitorLoitering(false); setVesselTypes([]); setFlagStates("")
+        setNewsPatternType("RISING_TENSIONS"); setNewsArticleTypes([]); setNewsKeywordsReq(""); setNewsKeywordsExcl(""); setNewsLocScope("ALL"); setNewsLocValue("")
+    }
+
+    const selectNewsPattern = (pt) => {
+        setNewsPatternType(pt)
+        const def = NEWS_PATTERN_DEFS[pt] || {}
+        setParams(p => ({
+            ...p,
+            article_count_threshold: def.article_count_threshold ?? p.article_count_threshold,
+            timeframe_hours:         def.timeframe_hours         ?? p.timeframe_hours,
+            min_relevance_score:     def.min_relevance_score     ?? p.min_relevance_score,
+            cooldown_hours:          def.cooldown_hours          ?? p.cooldown_hours,
+        }))
     }
 
     const save = async () => {
@@ -1530,6 +1568,24 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                             ...(vesselTypes.length > 0 ? { vessel_types: vesselTypes } : {}),
                             ...(flagStates.trim() ? { flag_states: flagStates.split(",").map(s => s.trim()).filter(Boolean) } : {}),
                             ...(iconType ? { icon_type: iconType } : {}),
+                        },
+                    }
+                } else if (isNewsRule) {
+                    ruleBody = {
+                        rule_name: name,
+                        trigger_type: "NEWS_PATTERN",
+                        severity,
+                        icon_type: newsPatternType,
+                        params: {
+                            pattern_type:            newsPatternType,
+                            article_count_threshold: parseInt(params.article_count_threshold ?? 4),
+                            timeframe_hours:         parseInt(params.timeframe_hours ?? 24),
+                            min_relevance_score:     parseFloat(params.min_relevance_score ?? 6.0),
+                            cooldown_hours:          parseInt(params.cooldown_hours ?? 6),
+                            ...(newsArticleTypes.length > 0 ? { article_types: newsArticleTypes } : {}),
+                            ...(newsKeywordsReq.trim() ? { keywords_required: newsKeywordsReq.split(",").map(s => s.trim()).filter(Boolean) } : {}),
+                            ...(newsKeywordsExcl.trim() ? { keywords_excluded: newsKeywordsExcl.split(",").map(s => s.trim()).filter(Boolean) } : {}),
+                            ...(newsLocScope === "COUNTRY" && newsLocValue.trim() ? { location_scope: newsLocValue.trim().toUpperCase() } : {}),
                         },
                     }
                 }
@@ -1831,6 +1887,67 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                                 style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
                         ))}
                     </>
+                ) : isNewsRule ? (
+                    <>
+                        {fld("Pattern Type", (
+                            <select value={newsPatternType} onChange={e => selectNewsPattern(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                {Object.entries(NEWS_PATTERN_DEFS).map(([key, def]) => (
+                                    <option key={key} value={key}>{def.label}</option>
+                                ))}
+                            </select>
+                        ))}
+                        <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                            {[
+                                ["article_count_threshold", "Article threshold",    params.article_count_threshold ?? 4],
+                                ["timeframe_hours",         "Timeframe (hours)",    params.timeframe_hours ?? 24],
+                                ["min_relevance_score",     "Min relevance (0–10)", params.min_relevance_score ?? 6.0],
+                                ["cooldown_hours",          "Cooldown (hours)",     params.cooldown_hours ?? 6],
+                            ].map(([key, label, def]) => (
+                                <div key={key}>
+                                    <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
+                                    <input type="number" step="any"
+                                        value={params[key] ?? def}
+                                        onChange={e => setParams(p => ({ ...p, [key]: e.target.value }))}
+                                        style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                                </div>
+                            ))}
+                        </div>
+                        {fld("Location Scope", (
+                            <select value={newsLocScope} onChange={e => { setNewsLocScope(e.target.value); setNewsLocValue("") }} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
+                                <option value="ALL">All locations globally</option>
+                                <option value="COUNTRY">Specific country (ISO-2)</option>
+                            </select>
+                        ))}
+                        {newsLocScope === "COUNTRY" && fld("Country code (e.g. UA, RU, CN)", (
+                            <input value={newsLocValue} onChange={e => setNewsLocValue(e.target.value.toUpperCase())}
+                                placeholder="e.g. UA" maxLength={2}
+                                style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                        ))}
+                        <div style={{ marginBottom: 10 }}>
+                            <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 6 }}>Article Types to Include (leave unchecked for all)</label>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "4px 10px" }}>
+                                {NEWS_ARTICLE_TYPES.map(at => (
+                                    <label key={at} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", color: "#94a3b8", fontSize: 10 }}>
+                                        <input type="checkbox"
+                                            checked={newsArticleTypes.includes(at)}
+                                            onChange={e => setNewsArticleTypes(prev => e.target.checked ? [...prev, at] : prev.filter(t => t !== at))}
+                                            style={{ accentColor: "#60a5fa" }} />
+                                        {at}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                        {fld("Keywords required (comma-sep, leave blank for none)", (
+                            <input value={newsKeywordsReq} onChange={e => setNewsKeywordsReq(e.target.value)}
+                                placeholder="e.g. ceasefire, evacuation"
+                                style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                        ))}
+                        {fld("Keywords excluded (comma-sep, leave blank for none)", (
+                            <input value={newsKeywordsExcl} onChange={e => setNewsKeywordsExcl(e.target.value)}
+                                placeholder="e.g. historical, anniversary"
+                                style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                        ))}
+                    </>
                 ) : (
                     triggerType && Object.keys(params).length > 0 && (
                         <div style={{ marginBottom: 12 }}>
@@ -1847,10 +1964,10 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                     )
                 )}
 
-                {isDbRule && fld("Alert Icon (optional)", (
+                {isDbRule && !isNewsRule && fld("Alert Icon (optional)", (
                     <select value={iconType} onChange={e => setIconType(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
                         <option value="">Default for rule type</option>
-                        {Object.entries(ALERT_ICONS).map(([key, def]) => (
+                        {Object.entries(ALERT_ICONS).filter(([key]) => !NEWS_PATTERN_ICON_KEYS.has(key)).map(([key, def]) => (
                             <option key={key} value={key}>{def.label}</option>
                         ))}
                     </select>

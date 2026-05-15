@@ -425,3 +425,54 @@ export function altColorHex(alt) {
     if (alt < 35000) return "#3b82f6"
     return "#a855f7"
 }
+
+
+// ── News Assessment marker (diamond shape, coloured by icon_type) ─────────────
+// Each NEWS_PATTERN type gets a distinctive colour; shape is a rotated square
+// (diamond) so it differs visually from circular event markers.
+export function makeAssessmentCanvas(color, severity) {
+    const SIZE = 40
+    const hex  = color || "#FF6B35"
+    return makeCanvas(SIZE, SIZE, (ctx, w, h) => {
+        const cx = w / 2, cy = h / 2
+
+        // Soft radial glow
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, w * 0.48)
+        grd.addColorStop(0,   hex + "55")
+        grd.addColorStop(0.55, hex + "22")
+        grd.addColorStop(1,    hex + "00")
+        ctx.beginPath()
+        ctx.arc(cx, cy, w * 0.48, 0, Math.PI * 2)
+        ctx.fillStyle = grd
+        ctx.fill()
+
+        // Diamond (45° rotated square)
+        const r = severity === "critical" ? 11 : severity === "high" ? 9.5 : 8.5
+        ctx.save()
+        ctx.translate(cx, cy)
+        ctx.rotate(Math.PI / 4)
+        ctx.beginPath()
+        ctx.rect(-r / 2, -r / 2, r, r)
+        ctx.fillStyle = "rgba(8,12,24,0.90)"
+        ctx.fill()
+        ctx.strokeStyle = hex
+        ctx.lineWidth   = severity === "critical" ? 2.2 : 1.8
+        ctx.stroke()
+        ctx.restore()
+
+        // Pulse ring for critical
+        if (severity === "critical") {
+            ctx.beginPath()
+            ctx.arc(cx, cy, 15, 0, Math.PI * 2)
+            ctx.strokeStyle = hex + "55"
+            ctx.lineWidth   = 1
+            ctx.stroke()
+        }
+
+        // Centre dot
+        ctx.beginPath()
+        ctx.arc(cx, cy, 2.2, 0, Math.PI * 2)
+        ctx.fillStyle = hex
+        ctx.fill()
+    })
+}

@@ -12,7 +12,8 @@ import GlobeEEZPopup      from "./GlobeEEZPopup.jsx"
 import GlobeCablePopup    from "./GlobeCablePopup.jsx"
 import GlobeInfraPopup    from "./GlobeInfraPopup.jsx"
 import GlobeHeatmapPopup  from "./GlobeHeatmapPopup.jsx"
-import GlobeAlertPopup    from "./GlobeAlertPopup.jsx"
+import GlobeAlertPopup      from "./GlobeAlertPopup.jsx"
+import GlobeAssessmentPopup from "./GlobeAssessmentPopup.jsx"
 import GlobeAirportPopup  from "./GlobeAirportPopup.jsx"
 import GlobePortPopup     from "./GlobePortPopup.jsx"
 import API_BASE           from "../apiBase.js"
@@ -236,6 +237,8 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                         <GlobeHeatmapPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "alert" ? (
                         <GlobeAlertPopup data={popup.data} onClose={handleClose} />
+                    ) : popup.type === "assessment" ? (
+                        <GlobeAssessmentPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "airport" ? (
                         <GlobeAirportPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "port" ? (

@@ -352,6 +352,11 @@ def get_db():
 
 def migrate_db():
     """Add missing columns to existing database and create new tables."""
+    # Register IntelligenceAssessment with Base before create_all
+    try:
+        import intelligence_schema as _is  # noqa: F401  — registers model with Base
+    except ImportError:
+        pass
     import sqlite3, os
     db_path = os.getenv('DATA_DIR', './data') + '/akili.db'
     if not os.path.exists(db_path):
@@ -413,6 +418,10 @@ def migrate_db():
     Base.metadata.create_all(bind=engine)
 
 def init_db():
+    try:
+        import intelligence_schema as _is  # noqa: F401
+    except ImportError:
+        pass
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:

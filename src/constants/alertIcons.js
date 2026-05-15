@@ -1,4 +1,27 @@
+// ── News Pattern Assessment Icons ─────────────────────────────────────────────
+export const NEWS_PATTERN_ICONS = {
+  RISING_TENSIONS:       { label: "Rising Tensions",        color: "#FF6B35", description: "Multiple conflict articles detected in same location" },
+  PORT_DISRUPTION:       { label: "Port Disruption",        color: "#FF9500", description: "Maritime disruption signals at port" },
+  INFRASTRUCTURE_THREAT: { label: "Infrastructure Threat",  color: "#FF2D55", description: "Articles signalling infrastructure attack or damage" },
+  ESCALATION_SPIKE:      { label: "Escalation Spike",       color: "#9B0000", description: "Sudden surge in conflict article volume" },
+  SANCTIONS_PRESSURE:    { label: "Sanctions Pressure",     color: "#5856D6", description: "Multiple sanctions-related articles targeting same country" },
+  MILITARY_MOBILISATION: { label: "Military Mobilisation",  color: "#FF3B30", description: "Troop movement or military buildup signals" },
+  HUMANITARIAN_CRISIS:   { label: "Humanitarian Crisis",    color: "#FF6B35", description: "Civilian casualty or displacement signals" },
+  CEASEFIRE_BREAKDOWN:   { label: "Ceasefire Breakdown",    color: "#9B0000", description: "Peace process failure or ceasefire violation signals" },
+  ENERGY_SUPPLY_RISK:    { label: "Energy Supply Risk",     color: "#FFCC00", description: "Threat to energy supply chain detected" },
+}
+
 export const ALERT_ICONS = {
+  // ── News assessment icons (pattern-fired) ────────────────────────────────
+  RISING_TENSIONS:       { label: "Rising Tensions",        icon: "TrendingUp",  color: "#FF6B35", description: "Multiple conflict articles detected in same location" },
+  PORT_DISRUPTION:       { label: "Port Disruption",        icon: "Anchor",      color: "#FF9500", description: "Maritime disruption signals at port" },
+  INFRASTRUCTURE_THREAT: { label: "Infrastructure Threat",  icon: "Zap",         color: "#FF2D55", description: "Articles signalling infrastructure attack or damage" },
+  ESCALATION_SPIKE:      { label: "Escalation Spike",       icon: "Activity",    color: "#9B0000", description: "Sudden surge in conflict article volume" },
+  SANCTIONS_PRESSURE:    { label: "Sanctions Pressure",     icon: "Scale",       color: "#5856D6", description: "Multiple sanctions-related articles targeting same country" },
+  MILITARY_MOBILISATION: { label: "Military Mobilisation",  icon: "Crosshair",   color: "#FF3B30", description: "Troop movement or military buildup signals" },
+  HUMANITARIAN_CRISIS:   { label: "Humanitarian Crisis",    icon: "Heart",       color: "#FF6B35", description: "Civilian casualty or displacement signals" },
+  CEASEFIRE_BREAKDOWN:   { label: "Ceasefire Breakdown",    icon: "ShieldOff",   color: "#9B0000", description: "Peace process failure or ceasefire violation signals" },
+  ENERGY_SUPPLY_RISK:    { label: "Energy Supply Risk",     icon: "Flame",       color: "#FFCC00", description: "Threat to energy supply chain detected" },
   LOITERING_CABLE:    { label: "Cable Loiterer",          icon: "Anchor",         color: "#FF6B35", description: "Vessel loitering within cable proximity" },
   LOITERING_PORT:     { label: "Port Loiterer",           icon: "Ship",           color: "#FF6B35", description: "Vessel loitering outside a port boundary" },
   LOITERING_INFRA:    { label: "Infra Loiterer",          icon: "AlertTriangle",  color: "#FF9500", description: "Vessel loitering near critical infrastructure" },
@@ -20,6 +43,12 @@ export const ALERT_ICONS = {
   CONVOY:             { label: "Convoy Movement",         icon: "Truck",          color: "#34AADC", description: "Multiple vessels moving in convoy pattern" },
   UNKNOWN_CONTACT:    { label: "Unknown Contact",         icon: "HelpCircle",     color: "#8E8E93", description: "Unidentified vessel contact requiring investigation" },
 }
+
+export const NEWS_PATTERN_ICON_KEYS = new Set([
+  "RISING_TENSIONS", "PORT_DISRUPTION", "INFRASTRUCTURE_THREAT", "ESCALATION_SPIKE",
+  "SANCTIONS_PRESSURE", "MILITARY_MOBILISATION", "HUMANITARIAN_CRISIS",
+  "CEASEFIRE_BREAKDOWN", "ENERGY_SUPPLY_RISK",
+])
 
 export const DEFAULT_ICON_FOR_TRIGGER = {
   stationary_near_infrastructure: "LOITERING_INFRA",
