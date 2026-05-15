@@ -225,8 +225,6 @@ class SentinelScanner:
             run_infrastructure_change_detection, run_vessel_without_ais,
         )
         import main as _main_mod
-        def _run_ow_det(b, btype, conf=0.15):
-            return _main_mod._run_overwatch_detection_sync(b, btype, conf)
 
         now = datetime.datetime.utcnow()
 
@@ -412,8 +410,23 @@ class SentinelScanner:
 
             try:
                 if task_name == "ship_detection":
-                    # Uses ESRI satellite tiles + DOTA OBB YOLO via overwatch pipeline
-                    dets = _run_ow_det(bbox, "TRUE_COLOR", 0.15)
+                    # Use pre-fetched Sentinel true-colour through the same inference
+                    # pipeline as /api/overwatch/detect-image. Falls back to ESRI tiles
+                    # if Copernicus credentials are absent.
+                    tc_img = images.get("true_colour")
+                    if tc_img is not None:
+                        ow_bounds = {"north": north, "south": south,
+                                     "east": east,  "west": west}
+                        raw = _main_mod._run_inference_on_image(
+                            tc_img, ow_bounds, 0.15, enhance=False, model_key="dota"
+                        )
+                        dets = _main_mod._convert_overwatch_detections(
+                            raw.get("detections", []), "TRUE_COLOR"
+                        )
+                    else:
+                        dets = _main_mod._run_overwatch_detection_sync(
+                            bbox, "TRUE_COLOR", 0.15
+                        )
                     ship_detections = dets
                     all_detections.extend(dets)
 
@@ -422,13 +435,25 @@ class SentinelScanner:
                     all_detections.extend(dets)
 
                 elif task_name == "smoke_plume_detection":
-                    # Uses Sentinel-2 SWIR + true-colour via overwatch pipeline
-                    dets = _run_ow_det(bbox, "FALSE_COLOR", 0.15)
+                    # Use pre-fetched SWIR + true_colour bands directly
+                    from sentinel_ml import run_smoke_plume_detection
+                    if images.get("swir") is not None:
+                        dets = run_smoke_plume_detection(images, bbox)
+                    else:
+                        dets = _main_mod._run_overwatch_detection_sync(
+                            bbox, "FALSE_COLOR", 0.15
+                        )
                     all_detections.extend(dets)
 
                 elif task_name == "fire_detection":
-                    # Uses Sentinel-2 SWIR + NIR via overwatch pipeline
-                    dets = _run_ow_det(bbox, "SWIR", 0.15)
+                    # Use pre-fetched SWIR + NIR bands directly
+                    from sentinel_ml import run_fire_detection
+                    if images.get("swir") is not None:
+                        dets = run_fire_detection(images, bbox)
+                    else:
+                        dets = _main_mod._run_overwatch_detection_sync(
+                            bbox, "SWIR", 0.15
+                        )
                     all_detections.extend(dets)
 
                 elif task_name == "burn_scar_detection":
@@ -566,6 +591,53 @@ class SentinelScanner:
             f"{by_type}"
         )
         return {"scan_id": scan_id, "status": "complete", "summary": result_summary}
+
+    async def run_detection_on_bbox(self, bbox: dict, db=None) -> list:
+        """Async wrapper: fetch Sentinel true-colour for bbox and run ship detection."""
+        import asyncio, functools
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, functools.partial(self._run_detection_on_bbox_sync, bbox)
+        )
+
+    def _run_detection_on_bbox_sync(self, bbox: dict) -> list:
+        import json as _j
+        west  = float(bbox["min_lon"])
+        south = float(bbox["min_lat"])
+        east  = float(bbox["max_lon"])
+        north = float(bbox["max_lat"])
+        img_w = min(2048, max(512, int(abs(east - west) * 11100)))
+        img_h = min(2048, max(512, int(abs(north - south) * 11100)))
+
+        img_bytes = _fetch_sentinel_image(
+            west, south, east, north, "true-colour",
+            max_cloud=30, width=img_w, height=img_h,
+        )
+        pil = _bytes_to_pil(img_bytes)
+        if pil is None:
+            print("[sentinel_scanner] run_detection_on_bbox: Sentinel fetch failed")
+            return []
+
+        try:
+            import main as _main_mod
+            ow_bounds = {"north": north, "south": south, "east": east, "west": west}
+            raw  = _main_mod._run_inference_on_image(
+                pil, ow_bounds, 0.15, enhance=False, model_key="dota"
+            )
+            dets = _main_mod._convert_overwatch_detections(
+                raw.get("detections", []), "TRUE_COLOR"
+            )
+            for d in dets:
+                try:
+                    attrs = _j.loads(d.get("attributes") or "{}")
+                    d["estimated_length_m"] = attrs.get("estimated_length_m")
+                    d["estimated_width_m"]  = attrs.get("estimated_width_m")
+                except Exception:
+                    pass
+            return dets
+        except Exception as e:
+            print(f"[sentinel_scanner] run_detection_on_bbox error: {e}")
+            return []
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
