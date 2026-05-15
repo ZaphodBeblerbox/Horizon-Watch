@@ -78,7 +78,12 @@ class FusionEngine:
         self._log_signal(signal)
 
         geo_key = self._resolve_geo_key(signal)
+        print(f"[FUSION] Signal received: {signal.get('domain')} | "
+              f"{signal.get('signal_id')} | geo_key={geo_key}")
         self._add_signal(geo_key, signal)
+        current = self.active_signals.get(geo_key, [])
+        domains_now = set(s["domain"] for s in current)
+        print(f"[FUSION] Active signals for {geo_key}: {len(current)} | domains={domains_now}")
         self._evaluate_fusion(geo_key)
 
     def get_recent_signals(self, limit: int = 50) -> list:
@@ -149,9 +154,12 @@ class FusionEngine:
             return
 
         domains = set(s["domain"] for s in signals)
+        print(f"[FUSION] Evaluating {geo_key}: {len(signals)} signals, {len(domains)} domains={domains}")
         if len(domains) < self.min_domains:
+            print(f"[FUSION] Not enough domains ({len(domains)} < {self.min_domains}), skipping")
             return
         if len(signals) < self.min_signals:
+            print(f"[FUSION] Not enough signals ({len(signals)} < {self.min_signals}), skipping")
             return
 
         existing = self._find_existing_fusion(geo_key)

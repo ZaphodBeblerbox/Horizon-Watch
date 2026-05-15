@@ -130,6 +130,7 @@ app.add_middleware(
         "http://localhost:5175",
         "http://localhost:3000",
         "https://horizon-watch.vercel.app",
+        "https://horizon-watch-production.up.railway.app",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,

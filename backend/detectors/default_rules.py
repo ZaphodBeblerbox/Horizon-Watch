@@ -30,19 +30,6 @@ DEFAULT_RULES = [
         "regions": ["Persian Gulf"],
     },
     {
-        "id": "rule_003",
-        "name": "Speed Anomaly",
-        "description": "Vessel exceeding 25 knots",
-        "source": "AIS",
-        "trigger_type": "speed_anomaly",
-        "status": "active",
-        "params": {
-            "max_speed_knots": 25,
-        },
-        "severity": "medium",
-        "regions": ["all"],
-    },
-    {
         "id": "rule_004",
         "name": "Military Aircraft",
         "description": "Known military callsign prefix active on ADS-B",

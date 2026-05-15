@@ -45,12 +45,6 @@ class AISAnomalyDetector:
                                 f"Vessel stationary {hit:.1f}km from {cable.get('name','submarine cable')}"))
                             break
 
-            elif trigger == "speed_anomaly":
-                speed = vessel.get("speed", 0)
-                if speed > params.get("max_speed_knots", 25):
-                    alerts.append(self._make_alert(rule, vessel,
-                        f"Speed anomaly: {vessel.get('name','?')} at {speed:.1f} kn"))
-
             elif trigger == "transponder_gap":
                 pass   # requires history tracking
 
