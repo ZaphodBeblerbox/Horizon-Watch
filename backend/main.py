@@ -56,6 +56,7 @@ import feedparser
 from email.utils import parsedate_to_datetime
 
 from rss_feeds import ADDITIONAL_SCAN_FEEDS, RSS_FEED_META, LOCAL_CITY_FEEDS
+from database import get_db
 
 # ── Web push (optional — gracefully disabled if pywebpush not installed) ──────
 try:
@@ -375,6 +376,9 @@ def _load_static_infra_datasets() -> None:
         try:
             with open(path, newline="", encoding="utf-8-sig") as fh:
                 return list(_csv.DictReader(fh))
+        except FileNotFoundError:
+            print(f"[static_infra] {path.name} not found — skipping (will use DB or download)")
+            return []
         except Exception as ex:
             print(f"[static_infra] Could not load {path.name}: {ex}")
             return []
@@ -12991,6 +12995,9 @@ def _load_pipelines() -> dict:
         try:
             raw = _json.loads(_PIPELINES_PATH.read_text())
             _PIPELINES_DATA = raw
+        except FileNotFoundError:
+            print("[pipelines] pipelines.json not found — skipping (will fetch from remote)")
+            _PIPELINES_DATA = {"pipelines": []}
         except Exception as ex:
             print(f"[pipelines] load failed: {ex}")
             _PIPELINES_DATA = {"pipelines": [], "error": str(ex)}
@@ -13061,6 +13068,8 @@ _SHIPPING_ROUTES: list = []
 try:
     _SHIPPING_ROUTES = _json.loads(_SHIPPING_ROUTES_PATH.read_text())
     print(f"[shipping_routes] loaded {len(_SHIPPING_ROUTES)} named routes")
+except FileNotFoundError:
+    print("[shipping_routes] shipping_routes.json not found — skipping")
 except Exception as ex:
     print(f"[shipping_routes] load failed: {ex}")
 
