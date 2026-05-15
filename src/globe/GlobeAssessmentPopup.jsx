@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
+import { safeArray } from "../utils/safeArray.js"
 
 const SEV_COLOR = {
     critical: "#f87171",
@@ -24,9 +25,8 @@ export default function GlobeAssessmentPopup({ data, onClose }) {
     const iconDef  = ALERT_ICONS[a.icon_type || ""] || {}
     const typeColor = iconDef.color || sevColor
 
-    const keySignals  = Array.isArray(a.key_signals)  ? a.key_signals  : []
-    const evidence    = Array.isArray(a.evidence_items) ? a.evidence_items
-                        : (Array.isArray(a.evidence_count) ? [] : [])
+    const keySignals  = safeArray(a.key_signals)
+    const evidence    = safeArray(a.evidence_items)
     const confidence  = typeof a.confidence === "number" ? a.confidence : null
 
     return (

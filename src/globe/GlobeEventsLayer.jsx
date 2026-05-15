@@ -2,6 +2,7 @@ import { useState, useEffect } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
+import { safeArray } from "../utils/safeArray.js"
 import { makeTypedEventCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, EVENTS_CAP } from "./isMobile.js"
@@ -121,7 +122,7 @@ export default function GlobeEventsLayer({
             }
             return fetch(url)
                 .then(r => r.ok ? r.json() : null)
-                .then(d => { if (!cancelled) setEvents(d?.events || []) })
+                .then(d => { if (!cancelled) setEvents(safeArray(d?.events)) })
                 .catch(() => {})
         }
         load()

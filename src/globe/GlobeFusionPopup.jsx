@@ -1,5 +1,6 @@
 import { useState } from "react"
 import API_BASE from "../apiBase.js"
+import { safeArray } from "../utils/safeArray.js"
 
 const SEV_COLOR = {
     critical: "#f87171",
@@ -58,10 +59,10 @@ export default function GlobeFusionPopup({ data, onClose }) {
     const sevColor  = SEV_COLOR[sev] || "#60a5fa"
     const fusColor  = "#BF5AF2"
 
-    const domains           = Array.isArray(f.domains)           ? f.domains           : []
-    const keySignals        = Array.isArray(f.key_signals)       ? f.key_signals       : []
-    const threatIndicators  = Array.isArray(f.threat_indicators) ? f.threat_indicators : []
-    const contribSignals    = Array.isArray(f.resolved_signals)  ? f.resolved_signals  : []
+    const domains           = safeArray(f.domains)
+    const keySignals        = safeArray(f.key_signals)
+    const threatIndicators  = safeArray(f.threat_indicators)
+    const contribSignals    = safeArray(f.resolved_signals)
 
     const handleSaveNote = async () => {
         setNoteSaving(true)

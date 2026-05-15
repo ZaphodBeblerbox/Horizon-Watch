@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import API_BASE from "../apiBase.js"
+import { safeArray } from "../utils/safeArray.js"
 import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.jsx"
 import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
@@ -968,11 +969,11 @@ function CorrelationEngineWorkspace() {
     const reload = () => {
         fetch(`${API}/api/signals/recent?limit=50`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
-            .then(d => { setSignals(Array.isArray(d) ? d : []); setTimeout(() => { if (signalListRef.current) signalListRef.current.scrollTop = 0 }, 50) })
+            .then(d => { setSignals(safeArray(d)); setTimeout(() => { if (signalListRef.current) signalListRef.current.scrollTop = 0 }, 50) })
             .catch(() => {})
         fetch(`${API}/api/fusions?status=active&limit=50`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
-            .then(d => setFusions(Array.isArray(d) ? d : []))
+            .then(d => setFusions(safeArray(d)))
             .catch(() => {})
         fetch(`${API}/api/fusion-settings`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : null)
@@ -1133,7 +1134,7 @@ function CorrelationEngineWorkspace() {
                                             <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 2, background: sc + "22", color: sc, fontWeight: 700 }}>
                                                 {(f.severity || "?").toUpperCase()}
                                             </span>
-                                            {(f.domains || []).map(d => (
+                                            {safeArray(f.domains).map(d => (
                                                 <span key={d} style={{ fontSize: 8, padding: "1px 5px", borderRadius: 2, background: (DOMAIN_COLOR_CE[d] || "#64748b") + "22", color: DOMAIN_COLOR_CE[d] || "#64748b" }}>{d}</span>
                                             ))}
                                         </div>
@@ -1223,7 +1224,7 @@ function CorrelationEngineWorkspace() {
                             {/* Confidence + domains */}
                             <div style={{ marginBottom: 10 }}>
                                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
-                                    {(detail.domains || []).map(d => (
+                                    {safeArray(detail.domains).map(d => (
                                         <span key={d} style={{ fontSize: 8, padding: "2px 6px", borderRadius: 2, background: (DOMAIN_COLOR_CE[d] || "#64748b") + "22", color: DOMAIN_COLOR_CE[d] || "#64748b", fontWeight: 700 }}>{d}</span>
                                     ))}
                                     <span style={{ fontSize: 8, padding: "2px 6px", borderRadius: 2, background: (SEV_COLOR_CE[detail.severity] || "#64748b") + "22", color: SEV_COLOR_CE[detail.severity] || "#64748b" }}>
@@ -1237,7 +1238,7 @@ function CorrelationEngineWorkspace() {
                                     <span style={{ fontSize: 9, color: "#BF5AF2", fontWeight: 700 }}>{Math.round((detail.confidence || 0) * 100)}%</span>
                                 </div>
                                 <div style={{ fontSize: 8, color: "#334155", marginTop: 4 }}>
-                                    {detail.signal_count || 0} signals · {(detail.domains || []).length} domains
+                                    {detail.signal_count || 0} signals · {safeArray(detail.domains).length} domains
                                     {detail.location_name && ` · ${detail.location_name}`}
                                 </div>
                             </div>
@@ -1250,10 +1251,10 @@ function CorrelationEngineWorkspace() {
                             )}
 
                             {/* Key signals */}
-                            {(detail.key_signals || []).length > 0 && (
+                            {safeArray(detail.key_signals).length > 0 && (
                                 <div style={{ marginBottom: 10 }}>
                                     <div style={{ fontSize: 8, color: "#334155", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>KEY SIGNALS</div>
-                                    {detail.key_signals.map((s, i) => (
+                                    {safeArray(detail.key_signals).map((s, i) => (
                                         <div key={i} style={{ fontSize: 10, color: "#64748b", padding: "2px 0", display: "flex", gap: 5 }}>
                                             <span style={{ color: "#BF5AF2", flexShrink: 0 }}>▸</span>{s}
                                         </div>
@@ -1262,10 +1263,10 @@ function CorrelationEngineWorkspace() {
                             )}
 
                             {/* Threat indicators */}
-                            {(detail.threat_indicators || []).length > 0 && (
+                            {safeArray(detail.threat_indicators).length > 0 && (
                                 <div style={{ marginBottom: 10 }}>
                                     <div style={{ fontSize: 8, color: "#7f1d1d", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>THREAT INDICATORS</div>
-                                    {detail.threat_indicators.map((t, i) => (
+                                    {safeArray(detail.threat_indicators).map((t, i) => (
                                         <div key={i} style={{ fontSize: 10, color: "#f87171", padding: "2px 0", display: "flex", gap: 5 }}>
                                             <span style={{ flexShrink: 0 }}>⚠</span>{t}
                                         </div>
@@ -1274,10 +1275,10 @@ function CorrelationEngineWorkspace() {
                             )}
 
                             {/* Contributing signals */}
-                            {(detail.resolved_signals || []).length > 0 && (
+                            {safeArray(detail.resolved_signals).length > 0 && (
                                 <div style={{ marginBottom: 10 }}>
                                     <div style={{ fontSize: 8, color: "#334155", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>CONTRIBUTING SIGNALS</div>
-                                    {detail.resolved_signals.map((s, i) => {
+                                    {safeArray(detail.resolved_signals).map((s, i) => {
                                         const dc = DOMAIN_COLOR_CE[s.domain] || "#64748b"
                                         return (
                                             <div key={i} style={{ padding: "4px 0", borderBottom: "1px solid rgba(148,163,184,0.05)" }}>
@@ -1512,8 +1513,8 @@ function AISSourceWorkspace() {
                             <ConfigRow label="Regions" value="Persian Gulf, Red Sea, Mediterranean, SE Asia + 11 more" />
                         </Section>
                         <Section title="Active Filters">
-                            {(config.filters || []).length === 0 ? <div style={{ color: "#334155", fontSize: 11 }}>No filters — all vessels in scope.</div> :
-                                (config.filters || []).map(f => <div key={f} style={{ color: "#94a3b8", fontSize: 11, padding: "3px 0" }}>{f}</div>)}
+                            {safeArray(config.filters).length === 0 ? <div style={{ color: "#334155", fontSize: 11 }}>No filters — all vessels in scope.</div> :
+                                safeArray(config.filters).map(f => <div key={f} style={{ color: "#94a3b8", fontSize: 11, padding: "3px 0" }}>{f}</div>)}
                         </Section>
                     </div>
                 )}
@@ -1626,7 +1627,7 @@ function NewsSourceWorkspace() {
 
     const loadSurgeEvents = () =>
         fetch(`${API}/api/surge/events?status=active&limit=20`, { headers: forgeHeaders() })
-            .then(r => r.ok ? r.json() : []).then(setSurgeEvents).catch(() => {})
+            .then(r => r.ok ? r.json() : []).then(d => setSurgeEvents(safeArray(d))).catch(() => {})
 
     const save = async (patch) => {
         const res = await fetch(`${API}/api/forge/source/src_news/config`, { method: "PUT", headers: forgeHeaders(), body: JSON.stringify(patch) })
@@ -1653,7 +1654,7 @@ function NewsSourceWorkspace() {
     }
 
     const toggleSurgeType = (t) => {
-        const cur = surgeConfig?.eligible_types || []
+        const cur = safeArray(surgeConfig?.eligible_types)
         const next = cur.includes(t) ? cur.filter(x => x !== t) : [...cur, t]
         setSurgeConfig(c => ({ ...c, eligible_types: next }))
         saveSurge({ eligible_types: next })
@@ -1676,13 +1677,13 @@ function NewsSourceWorkspace() {
                     <Section title="Keywords">
                         <div style={{ color: "#475569", fontSize: 10, marginBottom: 8 }}>Filter news to events containing these terms.</div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
-                            {(config.keywords || []).map(kw => (
+                            {safeArray(config.keywords).map(kw => (
                                 <span key={kw} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 10, fontSize: 11, background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.18)", color: "#60a5fa" }}>
                                     {kw}
                                     <button onClick={() => removeKw(kw)} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 0, fontSize: 12, lineHeight: 1 }}>×</button>
                                 </span>
                             ))}
-                            {!(config.keywords || []).length && <span style={{ color: "#334155", fontSize: 11 }}>No keywords — scoring all events.</span>}
+                            {!safeArray(config.keywords).length && <span style={{ color: "#334155", fontSize: 11 }}>No keywords — scoring all events.</span>}
                         </div>
                         <div style={{ display: "flex", gap: 6 }}>
                             <input value={newKw} onChange={e => setNewKw(e.target.value)} onKeyDown={e => e.key === "Enter" && addKw()} placeholder="Add keyword…" style={{ ...inputStyle, flex: 1 }} />
@@ -1775,7 +1776,7 @@ function NewsSourceWorkspace() {
                         <Section title="Eligible Article Types">
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                                 {SURGE_TYPES.map(t => {
-                                    const on = (sc.eligible_types || []).includes(t)
+                                    const on = safeArray(sc.eligible_types).includes(t)
                                     return (
                                         <button key={t} onClick={() => toggleSurgeType(t)} style={{ padding: "3px 10px", borderRadius: 12, border: "1px solid", fontSize: 11, cursor: "pointer", background: on ? "rgba(255,149,0,0.1)" : "transparent", color: on ? "#FF9500" : "#475569", borderColor: on ? "rgba(255,149,0,0.3)" : "rgba(148,163,184,0.15)" }}>{t}</button>
                                     )

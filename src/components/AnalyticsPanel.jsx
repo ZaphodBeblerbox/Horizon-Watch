@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react"
 import API_BASE from "../apiBase.js"
+import { safeArray } from "../utils/safeArray.js"
 import {
     LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, CartesianGrid,
@@ -56,7 +57,7 @@ export default function AnalyticsPanel({ onClose, onExpand = null, isTabMode = f
                 .then(r => r.ok ? r.json() : null),
         ]).then(([ts, bd]) => {
             if (cancelled) return
-            setTimeseries((ts?.points || []).map(p => ({ time: fmtTime(p.time), count: p.count })))
+            setTimeseries(safeArray(ts?.points).map(p => ({ time: fmtTime(p.time), count: p.count })))
             const entries = Object.entries(bd?.breakdown || {}).slice(0, 8)
             setBreakdown(entries.map(([name, value]) => ({ name, value })))
         }).finally(() => { if (!cancelled) setLoading(false) })

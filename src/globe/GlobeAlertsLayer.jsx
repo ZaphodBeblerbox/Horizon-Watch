@@ -2,6 +2,7 @@ import { useState, useEffect } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
+import { safeArray } from "../utils/safeArray.js"
 import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
@@ -60,13 +61,13 @@ export default function GlobeAlertsLayer({ enabled }) {
         const loadAlerts = () =>
             fetch(`${API_BASE}/api/forge/alerts`, { headers: forgeHeaders() })
                 .then(r => r.ok ? r.json() : [])
-                .then(d => { if (!cancelled) setAlerts(Array.isArray(d) ? d : []) })
+                .then(d => { if (!cancelled) setAlerts(safeArray(d)) })
                 .catch(() => {})
 
         const loadFusions = () =>
             fetch(`${API_BASE}/api/fusions?status=active`, { headers: forgeHeaders() })
                 .then(r => r.ok ? r.json() : [])
-                .then(d => { if (!cancelled) setFusions(Array.isArray(d) ? d : []) })
+                .then(d => { if (!cancelled) setFusions(safeArray(d)) })
                 .catch(() => {})
 
         loadAlerts(); loadFusions()
