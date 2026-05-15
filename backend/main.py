@@ -9545,9 +9545,9 @@ async def startup_event():
                 "timestamp":    datetime.utcnow().isoformat(),
                 "provenance": {"source_type": "FUSION", "detection_rule": "INTELLIGENCE_FUSION"},
             }
+            global _forge_alerts
             _forge_alerts.append(_forge_alert)
             # Remove suppressed individual alert markers
-            global _forge_alerts
             _forge_alerts = [a for a in _forge_alerts if a.get("id") not in suppressed_alert_ids]
 
         _fusion_engine.set_fire_callback(_fusion_fire_callback)
