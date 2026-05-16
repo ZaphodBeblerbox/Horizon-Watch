@@ -40,8 +40,8 @@ export function colorForClass(cls) { return colorForCat(catForClass(cls)) }
 // ── Persistence ───────────────────────────────────────────────────────────────
 const SCANS_KEY  = "ow-saved-scans-v1"
 const IMAGES_KEY = "ow-saved-images-v1"
-export function loadSavedScans()  { try { return JSON.parse(localStorage.getItem(SCANS_KEY))  || [] } catch { return [] } }
-export function loadSavedImages() { try { return JSON.parse(localStorage.getItem(IMAGES_KEY)) || [] } catch { return [] } }
+export function loadSavedScans()  { try { const p = JSON.parse(localStorage.getItem(SCANS_KEY));  return Array.isArray(p) ? p : [] } catch { return [] } }
+export function loadSavedImages() { try { const p = JSON.parse(localStorage.getItem(IMAGES_KEY)); return Array.isArray(p) ? p : [] } catch { return [] } }
 export function persistSavedScans(arr)  { try { localStorage.setItem(SCANS_KEY,  JSON.stringify(arr)) } catch {} }
 export function persistSavedImages(arr) {
     try { localStorage.setItem(IMAGES_KEY, JSON.stringify(arr)) } catch {
