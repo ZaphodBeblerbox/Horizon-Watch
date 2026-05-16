@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { apiFetch } from "../auth.js"
+import { safeArray } from "../utils/safeArray.js"
 
 function relTime(iso) {
     if (!iso) return ""
@@ -67,7 +68,7 @@ export default function DirectChatPanel({ currentUser, onClose }) {
     const fetchConversations = useCallback(async () => {
         try {
             const res  = await apiFetch("/api/chat/conversations")
-            if (res.ok) setConversations(await res.json())
+            if (res.ok) setConversations(safeArray(await res.json()))
         } catch { /* ignore */ }
     }, [])
 
@@ -81,7 +82,7 @@ export default function DirectChatPanel({ currentUser, onClose }) {
         setLoadingMsgs(true)
         try {
             const res = await apiFetch(`/api/chat/conversations/${partnerId}/messages`)
-            if (res.ok) setMessages(await res.json())
+            if (res.ok) setMessages(safeArray(await res.json()))
         } catch { /* ignore */ }
         setLoadingMsgs(false)
     }, [])
@@ -105,7 +106,7 @@ export default function DirectChatPanel({ currentUser, onClose }) {
         const t = setTimeout(async () => {
             try {
                 const res = await apiFetch(`/api/users/search?q=${encodeURIComponent(searchQ)}`)
-                if (res.ok) setSearchResults(await res.json())
+                if (res.ok) setSearchResults(safeArray(await res.json()))
             } catch { /* ignore */ }
             setSearching(false)
         }, 300)
