@@ -28,32 +28,44 @@ window.onunhandledrejection = function(e) {
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props)
-    this.state = { error: null }
+    this.state = { error: null, componentStack: null }
   }
   static getDerivedStateFromError(err) {
     return { error: err }
   }
   componentDidCatch(err, info) {
-    console.error('REACT CRASH:', err, info)
+    console.error('=== REACT CRASH ===', err)
+    console.error('=== COMPONENT STACK ===', info.componentStack)
+    this.setState({ componentStack: info.componentStack })
   }
   render() {
     if (this.state.error) {
       return (
         <div style={{
-          position: 'fixed', inset: 0, background: '#0a0e14', display: 'flex',
-          flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'monospace', color: '#e8edf2', padding: 24, gap: 16,
+          position: 'fixed', inset: 0, background: '#0a0e14', overflow: 'auto',
+          fontFamily: 'monospace', color: '#e8edf2', padding: 24,
         }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#ef4444' }}>App crashed</div>
-          <div style={{ fontSize: 12, color: '#f97316', maxWidth: 600, textAlign: 'center' }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#ef4444', marginBottom: 12 }}>
+            App crashed
+          </div>
+          <div style={{ fontSize: 13, color: '#f97316', marginBottom: 16 }}>
             {this.state.error?.message}
           </div>
-          <pre style={{ fontSize: 10, color: '#4a6080', maxWidth: 700, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-            {this.state.error?.stack?.slice(0, 800)}
+          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
+            Error stack:
+          </div>
+          <pre style={{ fontSize: 10, color: '#4a6080', marginBottom: 20, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+            {this.state.error?.stack}
+          </pre>
+          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
+            Component stack (screenshot this):
+          </div>
+          <pre style={{ fontSize: 11, color: '#fbbf24', whiteSpace: 'pre-wrap', lineHeight: 1.6, marginBottom: 24 }}>
+            {this.state.componentStack}
           </pre>
           <button
             onClick={() => { localStorage.removeItem('akili_tabs'); window.location.reload() }}
-            style={{ marginTop: 8, padding: '8px 20px', background: '#0d9488', border: 'none', borderRadius: 4, color: '#fff', fontSize: 13, cursor: 'pointer' }}
+            style={{ padding: '8px 20px', background: '#0d9488', border: 'none', borderRadius: 4, color: '#fff', fontSize: 13, cursor: 'pointer' }}
           >
             Clear tabs + reload
           </button>
