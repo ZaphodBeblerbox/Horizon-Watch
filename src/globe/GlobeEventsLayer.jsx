@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -25,18 +25,19 @@ const TYPE_HEX = {
 }
 const DEFAULT_HEX = "#64748b"
 
-// Colours for LLM-extracted article_type
+// Colours for LLM-extracted article_type / icon_type
 const ARTICLE_TYPE_HEX = {
     conflict:       "#FF3B30",
     maritime:       "#34AADC",
     aviation:       "#5856D6",
     infrastructure: "#FF9500",
     energy:         "#FFCC00",
-    political:      "#8E8E93",
-    economic:       "#30D158",
     cyber:          "#FF2D55",
     disaster:       "#FF6B35",
-    other:          "#8E8E93",
+    political:      "#8E8E93",
+    local_incident: "#30D158",
+    economic:       "#636366",
+    other:          "#636366",
 }
 
 const TYPE_MAP = {
@@ -55,9 +56,8 @@ const TYPE_MAP = {
 }
 
 function hexForEvent(ev) {
-    // Prefer LLM article_type colour if available
-    const at = (ev.article_type || "").toLowerCase()
-    if (at && ARTICLE_TYPE_HEX[at]) return ARTICLE_TYPE_HEX[at]
+    const it = (ev.icon_type || ev.article_type || "").toLowerCase()
+    if (it && ARTICLE_TYPE_HEX[it]) return ARTICLE_TYPE_HEX[it]
     const t = (ev.event_type || ev.type || "").toLowerCase()
     return TYPE_HEX[t] || DEFAULT_HEX
 }
@@ -68,9 +68,63 @@ function typeForEvent(ev) {
 }
 
 const ICON_CACHE = {}
-function getIcon(type, hex) {
-    const key = `${type}-${hex}`
-    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeTypedEventCanvas(type, hex)
+
+function _hexToRgbArr(hex) {
+    const n = parseInt(hex.replace("#", ""), 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+function decorateTier1Icon(base, hex, isBreaking) {
+    const dpr  = Math.max(window.devicePixelRatio || 2, 2)
+    const ring = isBreaking ? 14 : 10
+    const bw   = base.width  / dpr
+    const bh   = base.height / dpr
+    const w    = bw + ring * 2
+    const h    = bh + ring * 2 + (isBreaking ? 14 : 0)
+    const canvas = document.createElement("canvas")
+    canvas.width  = w * dpr
+    canvas.height = h * dpr
+    const ctx = canvas.getContext("2d")
+    ctx.scale(dpr, dpr)
+    const cx = w / 2
+    const cy = (bh + ring * 2) / 2
+    const [r, g, b] = _hexToRgbArr(hex)
+    // Outer glow ring
+    ctx.beginPath()
+    ctx.arc(cx, cy, cx - 2, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.5)`
+    ctx.lineWidth = 2
+    ctx.stroke()
+    // Inner pulse ring
+    ctx.beginPath()
+    ctx.arc(cx, cy, cx - 6, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.25)`
+    ctx.lineWidth = 1
+    ctx.stroke()
+    // Base icon
+    ctx.drawImage(base, ring * dpr / dpr, ring * dpr / dpr, bw, bh)
+    // BREAKING badge
+    if (isBreaking) {
+        const by = bh + ring * 2 + 1
+        ctx.fillStyle = "#FF3B30"
+        ctx.beginPath()
+        ctx.roundRect(cx - 18, by, 36, 12, 3)
+        ctx.fill()
+        ctx.fillStyle = "#fff"
+        ctx.font = "bold 8px system-ui"
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+        ctx.fillText("BREAKING", cx, by + 6)
+    }
+    return canvas
+}
+
+function getIcon(type, hex, tier, isBreaking) {
+    const key = `${type}-${hex}-t${tier}-b${isBreaking ? 1 : 0}`
+    if (!ICON_CACHE[key]) {
+        const base = makeTypedEventCanvas(type, hex)
+        ICON_CACHE[key] = (tier === 1) ? decorateTier1Icon(base, hex, !!isBreaking) : base
+    }
     return ICON_CACHE[key]
 }
 
@@ -97,8 +151,9 @@ const PRECISION_EVENT_TYPES = new Set([
 const PRECISION_ARTICLE_TYPES = new Set(["conflict", "maritime", "aviation"])
 
 function isPrecision(ev) {
+    if (ev.tier === 1) return true
     const et = (ev.event_type || ev.type || "").toLowerCase()
-    const at = (ev.article_type || "").toLowerCase()
+    const at = (ev.icon_type || ev.article_type || "").toLowerCase()
     const rs = ev.relevance_score ?? 0
     return PRECISION_EVENT_TYPES.has(et) || PRECISION_ARTICLE_TYPES.has(at) || rs >= 8.0
 }
@@ -151,6 +206,8 @@ export default function GlobeEventsLayer({
         const prec = isPrecision(ev)
         if (precisionEnabled && prec) return true      // always show precision events
         if (!enabled) return false                      // general layer off
+        // Numeric tier takes priority over legacy relevance_score filter
+        if (typeof ev.tier === "number") return ev.tier <= 3
         return (ev.relevance_score ?? 5) >= minRelevance
     })
 
@@ -162,12 +219,16 @@ export default function GlobeEventsLayer({
             {visible.map(ev => {
                 if (!ev.lat || !ev.lon || !isFinite(ev.lat) || !isFinite(ev.lon)) return null
 
-                const tier = (ev.relevance_tier || "medium").toLowerCase()
+                // Numeric tier (1=breaking, 2=significant, 3=local); fall back to
+                // legacy relevance_tier string for articles ingested before the overhaul
+                const numTier = typeof ev.tier === "number" ? ev.tier
+                    : ev.relevance_tier === "high" ? 1
+                    : ev.relevance_tier === "medium" ? 2 : 3
                 const prec    = isPrecision(ev)
                 const baseHex = hexForEvent(ev)
-                const hex   = (!prec && tier === "low") ? mutedHex(baseHex) : baseHex
-                const type  = typeForEvent(ev)
-                const icon  = getIcon(type, hex)
+                const hex     = (!prec && numTier >= 3) ? mutedHex(baseHex) : baseHex
+                const type    = typeForEvent(ev)
+                const icon    = getIcon(type, hex, numTier, !!ev.is_breaking)
                 if (!icon || icon.width === 0 || icon.height === 0) return null
 
                 // Base icon size from location confidence
@@ -175,15 +236,20 @@ export default function GlobeEventsLayer({
                 const isApprox = approxConf === "fallback_region" || approxConf === "relaxed" || approxConf === "fallback_country"
                 const baseSize = isApprox ? 32 : 44
 
-                // Precision events always render at full size/opacity
+                // Tier-based scale and opacity
                 let iconSize = baseSize
                 let alpha    = 1.0
                 if (!prec) {
-                    if (tier === "medium") { iconSize = Math.round(baseSize * 0.7); alpha = 0.75 }
-                    if (tier === "low")    { iconSize = Math.round(baseSize * 0.5); alpha = 0.45 }
+                    if (numTier === 2) { iconSize = Math.round(baseSize * 0.8);  alpha = 0.85 }
+                    if (numTier >= 3)  { iconSize = Math.round(baseSize * 0.55); alpha = 0.50 }
+                }
+                // Tier 1 icons get extra canvas space for the ring — account for it
+                if (numTier === 1) {
+                    const ring = ev.is_breaking ? 14 : 10
+                    iconSize = baseSize + ring * 2
                 }
 
-                const cesiumColor = (isApprox || (tier !== "high" && !prec))
+                const cesiumColor = (isApprox || (numTier >= 2 && !prec))
                     ? Color.fromAlpha(Color.WHITE, Math.min(alpha, isApprox ? 0.6 : 1.0) * alpha)
                     : undefined
 

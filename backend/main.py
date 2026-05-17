@@ -82,7 +82,7 @@ from location_extract import (
     country_name_from_code,
 )
 from article_extract import get_article_preview
-from article_intelligence import extract_article_intelligence
+from article_intelligence import analyse_article
 import usage_tracker
 from classifier import classify_event
 import event_store as es
@@ -2543,6 +2543,7 @@ def _geocode_from_text_blob(
     feed_url: str = "",
     max_candidates: int = 5,
     allow_live_lookup: bool = True,
+    use_spacy: bool = True,
 ) -> tuple[Optional[dict], Optional[str], list[str], dict]:
     """
     Region-aware staged geocoding:
@@ -2559,7 +2560,7 @@ def _geocode_from_text_blob(
 
     # Augment with gazetteer (appended after ranked candidates to preserve order)
     seen = {c.lower() for c in candidates}
-    for loc in extract_locations_gazetteer(text_blob):
+    for loc in extract_locations_gazetteer(text_blob, use_spacy=use_spacy):
         key = loc.lower()
         if key not in seen:
             candidates.append(loc)
@@ -5060,10 +5061,11 @@ _GAZETTEER = [
 _GAZETTEER_LOWER = [p.lower() for p in _GAZETTEER]
 
 
-def extract_locations_gazetteer(text: str) -> list[str]:
+def extract_locations_gazetteer(text: str, use_spacy: bool = True) -> list[str]:
     """
     Fast string-match against global gazetteer, then layer spaCy NER on top.
     Gazetteer runs even without spaCy, giving reliable results for known cities.
+    Pass use_spacy=False to skip spaCy (saves CPU for low-tier articles).
     """
     found: list[str] = []
     seen: set[str] = set()
@@ -5073,7 +5075,7 @@ def extract_locations_gazetteer(text: str) -> list[str]:
             found.append(place)
             seen.add(place)
     # Layer spaCy on top to catch locations the gazetteer misses
-    if _HAS_SPACY and _nlp is not None:
+    if use_spacy and _HAS_SPACY and _nlp is not None:
         for ent in _nlp(text).ents:
             if ent.label_ in ("GPE", "LOC") and ent.text not in seen:
                 found.append(ent.text)
@@ -5134,45 +5136,100 @@ def _score_confidence(source_name: str, nominatim_result: dict) -> str:
 
 _NOM_HEADERS = {"User-Agent": "Akili/1.0 (geopolitical intelligence platform; open-source)"}
 
-# ── Gate 0: headline security relevance filter ────────────────────────────────
+
+def _fetch_og_image(url: str, timeout: int = 3) -> Optional[str]:
+    """Fetch Open Graph image URL from article page. Best-effort, short timeout."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            html = resp.read(65536).decode("utf-8", errors="ignore")
+        for pattern in [
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+            r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+        ]:
+            m = re.search(pattern, html, re.I)
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    return None
+
+
+# ── Gate filters ──────────────────────────────────────────────────────────────
 # Any headline for an intelligence platform must contain at least one of these.
 # Articles whose headlines contain NONE of these keywords are irrelevant to
 # geopolitical/security monitoring (sports, entertainment, lifestyle, etc.)
 # and are rejected before geocoding to avoid wasting Nominatim quota.
-_GATE0_SECURITY_KEYWORDS: frozenset[str] = frozenset({
+_STRATEGIC_KEYWORDS: frozenset[str] = frozenset({
     # Violence / conflict
-    "attack", "conflict", "war", "battle", "fighting", "gunfire", "shooting",
+    "attack", "attacks", "conflict", "war", "battle", "fighting", "gunfire", "shooting",
     "airstrike", "air strike", "bomb", "blast", "explosion", "missile", "rocket",
     "strike", "killed", "kill", "dead", "death", "casualties", "fatalities",
     "wounded", "injured", "troops", "military", "forces", "rebel", "insurgent",
     "jihadist", "terrorist", "terrorism", "siege", "offensive", "shelling",
     "ceasefire", "coup", "hostage", "captured", "detained", "arrested", "executed",
+    "clashes", "offensive", "advance", "retreat", "frontline", "front line",
     # Maritime / transport
     "ship", "vessel", "tanker", "naval", "piracy", "hijack", "port", "harbour",
     "harbor", "fleet", "submarine", "coast guard", "coastguard", "maritime",
     "aircraft", "airport", "runway", "airspace", "airline", "drone", "uav",
+    "strait", "blockade", "sanctions", "embargo",
     # Infrastructure / energy
     "pipeline", "power plant", "electricity", "grid", "blackout", "outage",
     "internet", "network", "cable", "refinery", "oil", "gas", "fuel", "nuclear",
+    "cybersecurity", "cyberattack", "ransomware", "hack",
     # Political / civil
     "protest", "demonstration", "riot", "election", "sanctions", "embargo",
     "government", "president", "minister", "parliament", "coup", "referendum",
     "crisis", "emergency", "displaced", "refugee", "evacuate", "blockade",
+    "uprising", "revolution", "martial law", "state of emergency",
     # Security signals
-    "intelligence", "espionage", "spy", "surveillance", "cybersecurity",
-    "hacker", "breach", "leak", "arrest", "warrant", "extradition",
+    "intelligence", "espionage", "spy", "surveillance",
+    "breach", "leak", "warrant", "extradition",
+    # Disaster / humanitarian
+    "earthquake", "tsunami", "flood", "cyclone", "typhoon", "hurricane",
+    "wildfire", "eruption", "disaster", "famine", "humanitarian",
+})
+
+# Gate 2: hard blacklist — titles clearly about sports/entertainment/lifestyle.
+# Checked BEFORE strategic keywords to reject obvious noise quickly.
+_BLACKLIST_PHRASES: frozenset[str] = frozenset({
+    # Sports
+    "premier league", "champions league", "world cup final", "super bowl",
+    "nba finals", "nfl ", "nba ", "nhl ", "mlb ", "mls ",
+    "formula 1", "formula one", "grand prix", "wimbledon", "us open tennis",
+    "australian open", "french open", "golf tournament", "golf championship",
+    "soccer match", "football match", "football game", "rugby match",
+    "cricket match", "boxing match", "ufc ", "wrestling match",
+    # Entertainment / celebrity
+    "box office", "oscar winner", "grammy award", "emmy award",
+    "celebrity", "actor arrested", "actress", "pop star", "music video",
+    "album release", "movie release", "film review", "tv show", "reality show",
+    "season finale", "netflix series", "streaming series",
+    # Lifestyle / wellness
+    "best diet", "weight loss tips", "fitness tips", "skincare routine",
+    "beauty products", "fashion week", "travel tips", "vacation guide",
+    "restaurant review", "food recipe", "holiday deals",
+    # Micro-finance / irrelevant business
+    "payday loan", "microfinance", "microloan", "fintech app",
+    "cryptocurrency price", "bitcoin price", "nft sales",
 })
 
 
-def _gate0_passes(title: str, summary: str = "") -> bool:
+def _blacklist_gate_fails(title: str) -> bool:
+    """Returns True if the title matches a blacklisted phrase (article should be dropped)."""
+    text = title.lower()
+    return any(phrase in text for phrase in _BLACKLIST_PHRASES)
+
+
+def _strategic_gate_passes(title: str, summary: str = "") -> bool:
     """
-    Gate 0: headline-level relevance pre-filter.
-    Rejects articles whose headline contains zero security keywords.
-    The summary is also checked so genuinely relevant articles with bland
-    headlines (e.g., UN agency reports) still pass.
+    Gate 4: positive strategic keyword gate for global feeds.
+    Rejects articles whose title+summary contains zero security/geopolitical keywords.
     """
     text = (f"{title} {summary[:200]}").lower()
-    return any(kw in text for kw in _GATE0_SECURITY_KEYWORDS)
+    return any(kw in text for kw in _STRATEGIC_KEYWORDS)
 
 
 # ── Event type pre-classifier ─────────────────────────────────────────────────
@@ -5771,123 +5828,158 @@ def _run_news_conflict_extraction_sync():
             # permanently clog the dedup cache if the filter threshold changes)
             _PROCESSED_URLS[url] = time.time()
 
-            # ── Local city feed: bypass Gate 0, use city coords as default geocode ──
+            # ── Gate 2: hard blacklist (sports/entertainment/lifestyle) ──────────
+            if _blacklist_gate_fails(title):
+                rejected_gate0 += 1
+                continue
+
+            # ── Gate 3: local city feed routing (bypass Gate 4) ───────────────
             _city_meta = _LOCAL_FEED_CITY.get(feed_url)
             if _city_meta:
-                # Skip security keyword gate for local city feeds
                 _city_country, _city_name, _city_lat, _city_lon = _city_meta
             else:
-                # ── Gate 0: headline security relevance ──────────────────────
-                if not _gate0_passes(title, summary):
+                # ── Gate 4: strategic keyword filter for global feeds ─────────
+                if not _strategic_gate_passes(title, summary):
                     rejected_gate0 += 1
                     continue
 
             # ── Event type pre-classification ─────────────────────────────────
             article_event_type = _classify_event_type(title, summary)
 
+            # ── LLM article analysis (before geocoding — gates on tier) ───────
+            _clean_body = re.sub(r'<[^>]+>', '', summary or '')
+            _intel = None
+            _intel_llm_called = False
+            if client and llm_calls_this_cycle < MAX_LLM_CALLS:
+                try:
+                    _intel = analyse_article(title, _clean_body, source_name)
+                    llm_calls_this_cycle += 1
+                    _intel_llm_called = True
+                    time.sleep(0.1)
+                except Exception as _ai_err:
+                    print(f"[article-intelligence] failed for '{title[:50]}': {_ai_err}")
+            if _intel is None:
+                _intel = {
+                    "location": None, "location_country": None, "location_confidence": "none",
+                    "article_type": "other", "icon_type": "other", "tier": 3,
+                    "relevance_score": 5.0, "event_title": None, "has_image": False,
+                    "is_breaking": False, "context_summary": "",
+                }
+            _intel_tier    = int(_intel.get("tier") or 3)
+            _intel_loc     = _intel.get("location")
+            _intel_conf    = _intel.get("location_confidence", "none")
+            _intel_country = _intel.get("location_country")
+            _intel_score   = float(_intel.get("relevance_score") or 0)
+
+            # Drop tier 4 before geocoding (avoids wasting Nominatim quota)
+            if _intel_tier >= 4:
+                rejected_gate0 += 1
+                continue
+
             allow_live_lookup = nom_calls < MAX_NOM_CALLS
             if not allow_live_lookup and not nom_cap_logged:
                 print(f"[feed] Nominatim cap ({MAX_NOM_CALLS}) reached — continuing feed scan with cached geocodes/fallback only")
                 nom_cap_logged = True
 
-            # For local city feeds, use city coordinates directly (skip geocoding)
+            winning_candidate = None
+            candidates: list = []
+            _LLM_REJECT_TYPES = {"amenity", "office", "building", "shop"}
+
+            # ── Geocoding ─────────────────────────────────────────────────────
             if _city_meta:
                 geo = {"lat": _city_lat, "lon": _city_lon, "display_name": _city_name, "type": "city_default"}
                 winning_candidate = _city_name
                 candidates = [_city_name]
                 meta = {"location_confidence": "city_feed", "resolved_country_code": None, "resolved_display_name": _city_name}
-                stats_before = get_geocode_stats()
-                stats_after = stats_before
+                # Tier 1 city feed: attempt street-level precision geocoding
+                if _intel_tier == 1 and _intel_loc and _intel_conf == "city" and allow_live_lookup:
+                    try:
+                        _sl_query = f"{_intel_loc}, {_city_name}, {_city_country}"
+                        _sl_geos  = geocode_place(_sl_query)
+                        if _sl_geos:
+                            _sl      = _sl_geos[0]
+                            _sl_type = str(_sl.get("type") or "").lower()
+                            _sl_cls  = str(_sl.get("class") or "").lower()
+                            _sl_lat  = float(_sl.get("lat", 0))
+                            _sl_lon  = float(_sl.get("lon", 0))
+                            _SL_GOOD = {"highway", "place", "suburb", "neighbourhood", "quarter"}
+                            if (_sl_type in _SL_GOOD or _sl_cls in _SL_GOOD) and _sl_lat != 0.0:
+                                geo  = {"lat": _sl_lat, "lon": _sl_lon, "display_name": _sl.get("display_name"), "type": _sl.get("type")}
+                                meta = {
+                                    "location_confidence": "llm_street",
+                                    "resolved_country_code": (_sl.get("address") or {}).get("country_code"),
+                                    "resolved_display_name": _sl.get("display_name"),
+                                }
+                                nom_calls += 1
+                    except Exception:
+                        pass
             else:
+                geo = None
                 stats_before = get_geocode_stats()
-                geo, winning_candidate, candidates, meta = _geocode_from_text_blob(
-                    title,
-                    summary,
-                    source_name=source_name,
-                    feed_url=feed_url,
-                    max_candidates=5,
-                    allow_live_lookup=allow_live_lookup,
-                )
+
+                # Primary: geocode LLM-extracted location (more precise than text-blob NER)
+                if _intel_loc and _intel_conf in ("city", "region", "country") and allow_live_lookup:
+                    try:
+                        _lgeos = geocode_place(_intel_loc)
+                        if _lgeos:
+                            _lg    = _lgeos[0]
+                            _ltype = str(_lg.get("type") or "").lower()
+                            _lcls  = str(_lg.get("class") or "").lower()
+                            _llat  = float(_lg.get("lat", 0))
+                            _llon  = float(_lg.get("lon", 0))
+                            if (_llat != 0.0 and _llon != 0.0
+                                    and _ltype not in _LLM_REJECT_TYPES
+                                    and _lcls  not in _LLM_REJECT_TYPES
+                                    and _geocode_result_matches_country(_lg, _intel_country)):
+                                geo = {"lat": _llat, "lon": _llon, "display_name": _lg.get("display_name"), "type": _lg.get("type")}
+                                meta = {
+                                    "location_confidence": "llm_geocoded",
+                                    "resolved_country_code": (_lg.get("address") or {}).get("country_code"),
+                                    "resolved_display_name": _lg.get("display_name"),
+                                }
+                                winning_candidate = _intel_loc
+                    except Exception:
+                        pass
+
+                # Fallback: text-blob NER geocoding (spaCy only for tier 1)
+                if not geo:
+                    geo, winning_candidate, candidates, meta = _geocode_from_text_blob(
+                        title,
+                        summary,
+                        source_name=source_name,
+                        feed_url=feed_url,
+                        max_candidates=5,
+                        allow_live_lookup=allow_live_lookup,
+                        use_spacy=(_intel_tier == 1),
+                    )
+
                 stats_after = get_geocode_stats()
-            if stats_after["http_calls"] > stats_before["http_calls"]:
-                nom_calls += (stats_after["http_calls"] - stats_before["http_calls"])
-            f_locations += len(candidates[:5])
+                if stats_after["http_calls"] > stats_before["http_calls"]:
+                    nom_calls += (stats_after["http_calls"] - stats_before["http_calls"])
+                f_locations += len(candidates[:5])
 
             if not geo:
-                # Attempt LLM extraction before giving up — it may find a location
-                # the regex geocoder missed entirely
-                _llm_rescued = False
-                _existing_stored_nogeo = _NEWS_ARTICLE_STORE.get(url, {})
-                if (client
-                        and not _existing_stored_nogeo.get("llm_extracted")
-                        and llm_calls_this_cycle < MAX_LLM_CALLS):
-                    try:
-                        _intel_ng = extract_article_intelligence(title, summary, source_name)
-                        llm_calls_this_cycle += 1
-                        time.sleep(0.1)
-                        _loc_ng   = _intel_ng.get("location")
-                        _conf_ng  = _intel_ng.get("location_confidence", "none")
-                        if _loc_ng and _conf_ng in ("city", "region", "country"):
-                            _lgeos_ng = geocode_place(_loc_ng)
-                            if _lgeos_ng:
-                                _lg_ng   = _lgeos_ng[0]
-                                _llat_ng = float(_lg_ng.get("lat", 0))
-                                _llon_ng = float(_lg_ng.get("lon", 0))
-                                _ltype_ng = str(_lg_ng.get("type") or "").lower()
-                                _lclass_ng = str(_lg_ng.get("class") or "").lower()
-                                _REJECT = {"amenity", "office", "building", "shop"}
-                                _exp_cc_ng = _intel_ng.get("location_country")
-                                if (_llat_ng != 0.0 and _llon_ng != 0.0
-                                        and _ltype_ng not in _REJECT
-                                        and _lclass_ng not in _REJECT
-                                        and _geocode_result_matches_country(_lg_ng, _exp_cc_ng)):
-                                    geo = {
-                                        "lat": _llat_ng, "lon": _llon_ng,
-                                        "display_name": _lg_ng.get("display_name"),
-                                        "type": _lg_ng.get("type"),
-                                    }
-                                    meta = {
-                                        "location_confidence": "llm_geocoded",
-                                        "resolved_country_code": (_lg_ng.get("address") or {}).get("country_code"),
-                                        "resolved_display_name": _lg_ng.get("display_name"),
-                                    }
-                                    winning_candidate = _loc_ng
-                                    _llm_rescued = True
-                                    # Store LLM fields so they aren't re-extracted below
-                                    _existing_stored_nogeo = {
-                                        "llm_extracted": True,
-                                        "extracted_location": _loc_ng,
-                                        "extraction_confidence": _conf_ng,
-                                        "article_type": _intel_ng.get("article_type") or "other",
-                                        "llm_relevance_score": _intel_ng.get("relevance_score"),
-                                        "relevance_reasoning": _intel_ng.get("relevance_reasoning") or "",
-                                        "relevance_tier": _intel_ng.get("relevance_tier") or "medium",
-                                    }
-                    except Exception as _ng_err:
-                        print(f"[article-intelligence] no-geo rescue failed for '{title[:50]}': {_ng_err}")
-
-                if not geo:
-                    articles_without_coords += 1
-                    rejected_no_geo += 1
-                    _upsert_news_article({
-                        "url": url,
-                        "title": title,
-                        "source": source_name,
-                        "feed_region": feed_region,
-                        "summary": summary[:400],
-                        "published": published_iso,
-                        "expires_at": expires_iso,
-                        "location_name": None,
-                        "lat": None,
-                        "lon": None,
-                        "confidence": "low",
-                        "location_confidence": meta.get("location_confidence", "none"),
-                        "resolved_country_code": meta.get("resolved_country_code"),
-                        "resolved_display_name": meta.get("resolved_display_name"),
-                        "geocode_candidate": winning_candidate,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    })
-                    continue
+                articles_without_coords += 1
+                rejected_no_geo += 1
+                _upsert_news_article({
+                    "url": url,
+                    "title": title,
+                    "source": source_name,
+                    "feed_region": feed_region,
+                    "summary": summary[:400],
+                    "published": published_iso,
+                    "expires_at": expires_iso,
+                    "location_name": None,
+                    "lat": None,
+                    "lon": None,
+                    "confidence": "low",
+                    "location_confidence": meta.get("location_confidence", "none"),
+                    "resolved_country_code": meta.get("resolved_country_code"),
+                    "resolved_display_name": meta.get("resolved_display_name"),
+                    "geocode_candidate": winning_candidate,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+                continue
 
             articles_with_coords += 1
             f_geocoded += 1
@@ -5926,125 +6018,63 @@ def _run_news_conflict_extraction_sync():
             if winning_candidate:
                 successful_candidates[winning_candidate] += 1
 
+            # OG image fetch for tier 1/2 articles with has_image=True
+            if _intel.get("has_image") and not entry_image_url:
+                entry_image_url = _fetch_og_image(url)
+
             article_record = {
-                "url": url,
-                "title": title,
-                "source": source_name,
-                "feed_region": feed_region,
-                "summary": summary[:400],
-                "published": published_iso,
-                "expires_at": expires_iso,
-                "location_name": geo.get("display_name"),
-                "lat": lat,
-                "lon": lon,
-                "confidence": confidence,
-                "location_confidence": location_confidence,
+                "url":                   url,
+                "title":                 title,
+                "source":                source_name,
+                "feed_region":           feed_region,
+                "summary":               summary[:400],
+                "published":             published_iso,
+                "expires_at":            expires_iso,
+                "location_name":         geo.get("display_name"),
+                "lat":                   lat,
+                "lon":                   lon,
+                "confidence":            confidence,
+                "location_confidence":   location_confidence,
                 "resolved_country_code": meta.get("resolved_country_code"),
                 "resolved_display_name": meta.get("resolved_display_name"),
-                "geocode_candidate": winning_candidate,
-                "event_type": article_event_type,
-                "image_url": entry_image_url,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "geocode_candidate":     winning_candidate,
+                "event_type":            article_event_type,
+                "image_url":             entry_image_url,
+                "updated_at":            datetime.now(timezone.utc).isoformat(),
+                # LLM intelligence fields
+                "extracted_location":    _intel_loc or "",
+                "extraction_confidence": _intel_conf or "none",
+                "location_country":      _intel_country or "",
+                "article_type":          _intel.get("article_type") or "other",
+                "icon_type":             _intel.get("icon_type") or "other",
+                "tier":                  _intel_tier,
+                "llm_relevance_score":   _intel_score,
+                "event_title":           _intel.get("event_title"),
+                "has_image":             _intel.get("has_image", False),
+                "is_breaking":           _intel.get("is_breaking", False),
+                "context_summary":       _intel.get("context_summary", ""),
+                "llm_extracted":         _intel_llm_called,
             }
 
-            # ── LLM intelligence extraction (Claude Haiku) ────────────────────
-            # If this article was rescued from no-geo by LLM above, _existing_stored_nogeo
-            # contains the pre-filled LLM fields; otherwise look up the article store.
-            existing_stored = locals().get("_existing_stored_nogeo") or _NEWS_ARTICLE_STORE.get(url, {})
-            # Reset the rescue var so it doesn't bleed into the next iteration
-            _existing_stored_nogeo = {}
-
-            _LLM_REJECT_TYPES = {"amenity", "office", "building", "shop"}
-
-            if existing_stored.get("llm_extracted"):
-                # Carry over already-extracted fields so _upsert doesn't wipe them
-                for _f in ("extracted_location", "extraction_confidence", "article_type",
-                           "llm_relevance_score", "relevance_reasoning", "relevance_tier",
-                           "llm_extracted"):
-                    if _f in existing_stored:
-                        article_record[_f] = existing_stored[_f]
-            elif client and llm_calls_this_cycle < MAX_LLM_CALLS:
-                try:
-                    intel = extract_article_intelligence(title, summary, source_name)
-                    article_record.update({
-                        "extracted_location":    intel.get("location") or "",
-                        "extraction_confidence": intel.get("location_confidence") or "none",
-                        "location_country":      intel.get("location_country") or "",
-                        "article_type":          intel.get("article_type") or "other",
-                        "llm_relevance_score":   intel.get("relevance_score"),
-                        "relevance_reasoning":   intel.get("relevance_reasoning") or "",
-                        "relevance_tier":        intel.get("relevance_tier") or "medium",
-                        "llm_extracted":         True,
-                    })
-                    llm_calls_this_cycle += 1
-                    time.sleep(0.1)
-
-                    llm_loc   = intel.get("location")
-                    llm_conf  = intel.get("location_confidence", "none")
-                    llm_score = float(intel.get("relevance_score") or 0)
-
-                    # ── City feed: attempt street-level geocoding ─────────────
-                    if _city_meta and llm_loc and llm_conf == "city":
-                        _city_country_name, _city_name_lc, _city_lat_lc, _city_lon_lc = _city_meta
-                        _sl_query = f"{llm_loc}, {_city_name_lc}, {_city_country_name}"
-                        _sl_geos  = geocode_place(_sl_query)
-                        if _sl_geos:
-                            _sl       = _sl_geos[0]
-                            _sl_type  = str(_sl.get("type") or "").lower()
-                            _sl_class = str(_sl.get("class") or "").lower()
-                            _sl_lat   = float(_sl.get("lat", 0))
-                            _sl_lon   = float(_sl.get("lon", 0))
-                            _SL_GOOD  = {"highway", "place", "suburb", "neighbourhood", "quarter"}
-                            if (_sl_type in _SL_GOOD or _sl_class in _SL_GOOD) and _sl_lat != 0.0:
-                                article_record["lat"] = _sl_lat
-                                article_record["lon"] = _sl_lon
-                                article_record["location_name"] = _sl.get("display_name")
-                                article_record["location_confidence"] = "llm_street"
-
-                    # ── Non-city feed: confidence-weighted coordinate overwrite ─
-                    elif (
-                        llm_loc
-                        and llm_loc != winning_candidate
-                        and llm_conf in ("city", "region")
-                        and llm_score >= 5.0
-                    ):
-                        _lgeos = geocode_place(llm_loc)
-                        if _lgeos:
-                            _lg    = _lgeos[0]
-                            _ltype = str(_lg.get("type") or "").lower()
-                            _lcls  = str(_lg.get("class") or "").lower()
-                            _llat  = float(_lg.get("lat", 0))
-                            _llon  = float(_lg.get("lon", 0))
-                            if (
-                                _llat != 0.0 and _llon != 0.0
-                                and _ltype not in _LLM_REJECT_TYPES
-                                and _lcls  not in _LLM_REJECT_TYPES
-                                and _geocode_result_matches_country(_lg, intel.get("location_country"))
-                            ):
-                                article_record["lat"] = _llat
-                                article_record["lon"] = _llon
-                                article_record["location_name"] = _lg.get("display_name")
-                                article_record["location_confidence"] = "llm_geocoded"
-                except Exception as _llm_err:
-                    print(f"[article-intelligence] skipped for '{title[:50]}': {_llm_err}")
-
             _upsert_news_article(article_record)
-            # Feed into NewsPatternEngine (only articles with coords + LLM extraction)
+
+            # Feed news pattern engine → fusion (tier 1 only)
             if (_news_pattern_engine
-                    and article_record.get("llm_extracted")
+                    and _intel_tier == 1
                     and article_record.get("lat") is not None
                     and (article_record.get("location_country") or article_record.get("resolved_country_code"))):
                 try:
                     _news_pattern_engine.on_article_ingested(article_record)
                 except Exception:
                     pass
-            if (_surge_engine
-                    and article_record.get("llm_extracted")
-                    and article_record.get("location_country")):
+
+            # Feed surge engine (tiers 1-3)
+            if _surge_engine and article_record.get("location_country"):
                 try:
                     _surge_engine.on_article(article_record)
                 except Exception:
                     pass
+
             marker = _make_news_marker(article_record)
             if marker:
                 new_markers.append(marker)
@@ -8391,7 +8421,7 @@ async def _global_adsb_cache_loop():
             print(f"[ADSB-GLOBAL] {len(_GLOBAL_ADSB_CACHE)} aircraft tracked globally")
         except Exception as e:
             print(f"[ADSB-GLOBAL] loop error: {e}")
-        await asyncio.sleep(55)
+        await asyncio.sleep(120)
 
 
 def _cross_domain_correlation(now_iso: str) -> list:
@@ -9822,6 +9852,7 @@ async def startup_event():
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_threat_matrix_loop())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
+    print(f"[startup] Poll intervals — AIS: WebSocket | ADSB: 120s | RSS: 1800s")
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
 
 
@@ -10513,14 +10544,17 @@ async def backfill_article_intelligence():
             if not title:
                 continue
             try:
-                intel = extract_article_intelligence(title, summary, source)
+                intel = analyse_article(title, summary, source)
                 updates = {
                     "extracted_location":    intel.get("location") or "",
                     "extraction_confidence": intel.get("location_confidence") or "none",
                     "article_type":          intel.get("article_type") or "other",
+                    "icon_type":             intel.get("icon_type") or "other",
+                    "tier":                  intel.get("tier") or 3,
                     "llm_relevance_score":   intel.get("relevance_score"),
-                    "relevance_reasoning":   intel.get("relevance_reasoning") or "",
-                    "relevance_tier":        intel.get("relevance_tier") or "medium",
+                    "event_title":           intel.get("event_title"),
+                    "is_breaking":           intel.get("is_breaking", False),
+                    "context_summary":       intel.get("context_summary", ""),
                     "llm_extracted":         True,
                 }
                 # If LLM found a location and article has no coords, try geocoding

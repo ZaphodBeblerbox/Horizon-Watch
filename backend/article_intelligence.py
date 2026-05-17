@@ -1,107 +1,90 @@
 """
-article_intelligence.py — LLM-based article intelligence extraction via Claude Haiku.
+article_intelligence.py — Unified article intelligence via Claude Haiku.
 
-Single call per article to extract:
-  - Physical location of the event
-  - Article type (conflict/maritime/aviation/etc.)
-  - Relevance score (0.0-10.0) for maritime/geospatial intelligence
+Single call per article returning all intelligence fields: location,
+article_type, tier (1-4), event_title, icon_type, has_image, is_breaking,
+and context_summary.
 """
 from __future__ import annotations
 import json
-import time
+import re
 
 import anthropic
 
 _SYSTEM = (
-    "You are an intelligence analyst assistant. Given a news article, extract "
-    "three things with precision. Return ONLY valid JSON, no preamble, no "
-    "markdown, no explanation."
+    "You are an intelligence analyst. Analyse the news article and return ONLY "
+    "valid JSON — no preamble, no markdown fences, no explanation."
 )
 
 _USER_TMPL = (
-    "Article title: {title}\n"
-    "Article source: {source}\n"
-    "Article body (may be truncated): {body}\n\n"
+    "Title: {title}\n"
+    "Source: {source}\n"
+    "Body: {body}\n\n"
     "Return a JSON object with exactly these fields:\n"
     '{{\n'
-    '  "location": "The SPECIFIC PHYSICAL PLACE where this event is HAPPENING ON THE GROUND RIGHT NOW. Rules: '
-    "Return the city, port, strait, region, or country where the physical event occurs — a bombing, a ship "
-    "incident, a fire, a protest, a clash. "
-    "If the article is about a COMPANY decision (layoffs, stock price, earnings, merger, product launch) → return null. Companies are not locations. "
-    "If the article is about a PERSON's statement, speech, or travel with no physical incident → return null. "
-    "If the article is about FINANCIAL MARKETS, CURRENCIES, COMMODITIES with no physical location → return null. "
-    "If the article mentions a city only because a company is HQ'd there or an official spoke there → return null, that is not where the event is occurring. "
-    "If the article is about DIPLOMACY or NEGOTIATIONS, return the country the negotiations are ABOUT, not where the talks are held. "
-    "If genuinely uncertain, return null. A wrong location is worse than no location.\",\n"
+    '  "location": "Specific place name (city/port/strait/region/country) where the physical event occurs. '
+    "null if no physical event — company news, stock prices, earnings, sports, celebrity, lifestyle.\",\n"
+    '  "location_country": "ISO-3166-1 alpha-2 lowercase country code for the event location. '
+    'null if uncertain, international waters, or multi-country.\",\n'
     '  "location_confidence": "city OR region OR country OR none",\n'
-    '  "location_country": "ISO 2-letter country code (lowercase) of the country where the physical event is occurring. '
-    'International waters / straits → null. If the location spans multiple countries → null. If uncertain → null.",\n'
-    '  "article_type": "one of: conflict / maritime / aviation / infrastructure / '
-    'energy / political / economic / cyber / disaster / other",\n'
-    '  "relevance_score": a float 0.0-10.0. Rules: '
-    "9-10 = direct military/maritime/infrastructure threat or incident. "
-    "7-8 = significant geopolitical event with operational implications. "
-    "5-6 = relevant background intelligence (sanctions, diplomacy, tensions). "
-    "3-4 = tangentially related (economics, politics without direct impact). "
-    "1-2 = mostly irrelevant to maritime/geospatial intelligence. "
-    "0 = completely irrelevant (sports, entertainment, lifestyle). "
-    "STRICT RULES: Any article about company finances, stock prices, earnings, layoffs unrelated to military/strategic industry → maximum 2.0. "
-    "Sports, entertainment, lifestyle, celebrity → 0.0. "
-    "Technology product launches with no defence/surveillance angle → 1.0. "
-    "Only score >= 6.0 if there is a clear physical security, military, maritime, infrastructure, or conflict dimension.,\n"
-    '  "relevance_reasoning": "one sentence explaining the score"\n'
+    '  "article_type": "conflict OR maritime OR aviation OR infrastructure OR energy OR cyber OR disaster OR political OR economic OR local_incident OR other",\n'
+    '  "icon_type": "conflict OR maritime OR aviation OR infrastructure OR energy OR cyber OR disaster OR political OR local_incident OR economic OR other",\n'
+    '  "tier": integer 1-4 where 1=breaking/urgent national-international security event '
+    "(missile strike, naval incident, major infrastructure attack), "
+    "2=significant geopolitical or strategic event (sanctions, troop movements, major protests, energy crisis), "
+    "3=local situational awareness (minor incidents, regional politics, local disasters), "
+    "4=irrelevant (sports, entertainment, lifestyle, celebrity, company earnings unrelated to defence/security),\n"
+    '  "relevance_score": float 0.0-10.0 — 9-10 direct military/maritime/infrastructure threat; '
+    "7-8 major geopolitical; 5-6 relevant background; 3-4 tangential; 1-2 mostly irrelevant; 0 sports/celebrity,\n"
+    '  "event_title": "Concise 4-8 word label for this event, e.g. \'Missile strike on Kyiv port\' or \'Typhoon Haikui Taiwan landfall\'. null if no specific event.",\n'
+    '  "has_image": true or false — true if article likely has an impactful photo worth displaying,\n'
+    '  "is_breaking": true or false — true only for tier 1 events reported within the last 6 hours,\n'
+    '  "context_summary": "1-2 sentence intelligence summary: what happened, where, and why it matters."\n'
     "}}"
 )
 
 _FALLBACK: dict = {
     "location": None,
-    "location_confidence": "none",
     "location_country": None,
+    "location_confidence": "none",
     "article_type": "other",
-    "relevance_score": 5.0,
-    "relevance_reasoning": "extraction failed",
-    "relevance_tier": "medium",
+    "icon_type": "other",
+    "tier": 4,
+    "relevance_score": 0.0,
+    "event_title": None,
+    "has_image": False,
+    "is_breaking": False,
+    "context_summary": "",
 }
 
-
-def _tier(score: float) -> str:
-    if score >= 7.0:
-        return "high"
-    if score >= 4.0:
-        return "medium"
-    return "low"
+_STRIP_MD = re.compile(r"```(?:json)?\s*|\s*```")
 
 
-def extract_article_intelligence(
+def analyse_article(
     title: str,
     body: str | None = None,
     source: str | None = None,
 ) -> dict:
     """
-    Single Claude Haiku call. Returns extracted intelligence fields.
-    Never raises — returns _FALLBACK dict on any failure.
+    Single Claude Haiku call returning all intelligence fields.
+    Never raises — returns _FALLBACK (tier=4) on any failure.
     """
     try:
         client = anthropic.Anthropic()
+        clean_body = re.sub(r"<[^>]+>", "", body or "")[:600]
         user = _USER_TMPL.format(
             title=title or "",
             source=source or "unknown",
-            body=(body[:500] if body else "not available"),
+            body=clean_body or "not available",
         )
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=180,
+            max_tokens=350,
             temperature=0,
             system=_SYSTEM,
             messages=[{"role": "user", "content": user}],
         )
-        raw = msg.content[0].text.strip()
-        # Strip markdown code fences if model wraps output
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1] if len(parts) > 1 else raw
-            if raw.startswith("json"):
-                raw = raw[4:].lstrip()
+        raw = _STRIP_MD.sub("", msg.content[0].text.strip())
         data = json.loads(raw)
 
         location = data.get("location")
@@ -115,19 +98,33 @@ def extract_article_intelligence(
             loc_country = loc_country.lower().strip()[:2] or None
 
         try:
-            score = float(data.get("relevance_score", 5.0))
+            tier = int(data.get("tier", 4))
+            tier = max(1, min(4, tier))
+        except (TypeError, ValueError):
+            tier = 4
+
+        try:
+            score = float(data.get("relevance_score", 0.0))
             score = max(0.0, min(10.0, score))
         except (TypeError, ValueError):
-            score = 5.0
+            score = 0.0
+
+        event_title = data.get("event_title") or None
+        if isinstance(event_title, str) and not event_title.strip():
+            event_title = None
 
         return {
             "location":             location,
-            "location_confidence":  str(data.get("location_confidence", "none")).lower(),
             "location_country":     loc_country,
+            "location_confidence":  str(data.get("location_confidence", "none")).lower(),
             "article_type":         str(data.get("article_type", "other")).lower(),
+            "icon_type":            str(data.get("icon_type", "other")).lower(),
+            "tier":                 tier,
             "relevance_score":      score,
-            "relevance_reasoning":  str(data.get("relevance_reasoning", "")),
-            "relevance_tier":       _tier(score),
+            "event_title":          event_title,
+            "has_image":            bool(data.get("has_image", False)),
+            "is_breaking":          bool(data.get("is_breaking", False)),
+            "context_summary":      str(data.get("context_summary", "") or ""),
         }
     except Exception as ex:
         print(f"[article-intelligence] failed for '{(title or '')[:60]}': {ex}")
