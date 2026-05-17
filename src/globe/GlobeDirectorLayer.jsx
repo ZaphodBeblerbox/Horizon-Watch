@@ -21,13 +21,14 @@ import {
     HeightReference,
     LabelStyle,
     VerticalOrigin,
-    PolylineDashMaterialProperty,
     ColorMaterialProperty,
     CallbackProperty,
     PolygonHierarchy,
     Math as CesiumMath,
 } from "cesium"
 import API_BASE from "../apiBase.js"
+import { makeAssessmentCanvas } from "./iconUtils.js"
+import { ALERT_ICONS } from "../constants/alertIcons.js"
 
 // ── Icon sizes mirror demoIconUtils.js ─────────────────────────────────────────
 const ICON_SIZES = {
@@ -110,6 +111,39 @@ function _makeBillboardUrl(iconType, color) {
     return "data:image/svg+xml;base64," + btoa(svg)
 }
 
+// ── Director marker icon helpers ──────────────────────────────────────────────
+
+const _DIRECTOR_TYPE_ICON = {
+    conflict:       "MILITARY_MOBILISATION",
+    airstrike:      "MILITARY_MOBILISATION",
+    military:       "MILITARY_MOBILISATION",
+    maritime:       "DARK_SHIP",
+    vessel:         "DARK_SHIP",
+    navy:           "DARK_SHIP",
+    infrastructure: "INFRASTRUCTURE_THREAT",
+    pipeline:       "INFRASTRUCTURE_THREAT",
+    cable:          "INFRASTRUCTURE_THREAT",
+    chokepoint:     "CHOKEPOINT_TRANSIT",
+    strait:         "CHOKEPOINT_TRANSIT",
+    political:      "SANCTIONS_PRESSURE",
+    sanctions:      "SANCTIONS_PRESSURE",
+    energy:         "ENERGY_SUPPLY_RISK",
+    oil:            "ENERGY_SUPPLY_RISK",
+    gas:            "ENERGY_SUPPLY_RISK",
+}
+
+const _DIRECTOR_ICON_CACHE = {}
+
+function _directorIconCanvas(type) {
+    const key  = (type || "").toLowerCase()
+    const iconKey = _DIRECTOR_TYPE_ICON[key] || "UNKNOWN_CONTACT"
+    if (!_DIRECTOR_ICON_CACHE[iconKey]) {
+        const color = ALERT_ICONS[iconKey]?.color || "#8E8E93"
+        _DIRECTOR_ICON_CACHE[iconKey] = makeAssessmentCanvas(color, "medium")
+    }
+    return _DIRECTOR_ICON_CACHE[iconKey]
+}
+
 // ── Camera helpers ────────────────────────────────────────────────────────────
 
 const ZOOM_TO_HEIGHT = {
@@ -122,25 +156,22 @@ const ZOOM_TO_HEIGHT = {
 function _flyTo(viewer, center, zoom, opts = {}) {
     if (!viewer || !center?.length) return
     const height = ZOOM_TO_HEIGHT[zoom] || 500_000
-    // Default: always top-down. Oblique only when scene explicitly requests it.
-    const pitch   = opts.camera_pitch   != null ? CesiumMath.toRadians(opts.camera_pitch)   : CesiumMath.toRadians(-90)
-    const heading = opts.camera_heading != null ? CesiumMath.toRadians(opts.camera_heading) : CesiumMath.toRadians(0)
     viewer.camera.flyTo({
         destination: Cartesian3.fromDegrees(center[1], center[0], height),
-        orientation: { heading, pitch, roll: 0 },
+        orientation: {
+            heading: CesiumMath.toRadians(0),
+            pitch:   CesiumMath.toRadians(-90),
+            roll:    0,
+        },
         duration: opts.duration != null ? opts.duration / 1000 : 2.5,
     })
 }
 
-// Extract fly_to from a visuals scene and fly — reads camera_heading/pitch
+// Extract fly_to from a visuals scene and fly
 function _flyToFromVisuals(viewer, visuals) {
     const ft = (visuals || []).find(v => v.action === "fly_to")
     if (!ft) return
-    _flyTo(viewer, [ft.lat, ft.lon], ft.zoom, {
-        camera_heading: ft.camera_heading,
-        camera_pitch:   ft.camera_pitch,
-        duration:       ft.duration,
-    })
+    _flyTo(viewer, [ft.lat, ft.lon], ft.zoom, { duration: ft.duration })
 }
 
 // ── Distance / duration helpers ───────────────────────────────────────────────
@@ -270,10 +301,20 @@ function _renderSpotlight(el, viewer, sceneLocal) {
 }
 
 function _renderFacilityMarker(el, viewer, sceneLocal, isAborted) {
+    const billInfo = el._billboard
+    const billUrl  = billInfo ? _makeBillboardUrl(billInfo.iconType, billInfo.color) : null
+    const [bw, bh] = billInfo ? (ICON_SIZES[billInfo.iconType] || ICON_SIZES.default) : [0, 0]
     const c = Color.fromCssColorString(el.color || "#f59e0b")
     const e = viewer.entities.add({
         position: Cartesian3.fromDegrees(el.lng, el.lat, 0),
-        point: {
+        billboard: billUrl ? {
+            image:                    billUrl,
+            width:                    bw,
+            height:                   bh,
+            heightReference:          HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        } : undefined,
+        point: billUrl ? undefined : {
             pixelSize:    10,
             color:        c,
             outlineColor: Color.WHITE.withAlpha(0.6),
@@ -289,7 +330,7 @@ function _renderFacilityMarker(el, viewer, sceneLocal, isAborted) {
             outlineWidth:  2,
             style:         LabelStyle.FILL_AND_OUTLINE,
             verticalOrigin:           VerticalOrigin.BOTTOM,
-            pixelOffset:              new Cartesian2(0, -14),
+            pixelOffset:              new Cartesian2(0, -(bh ? bh / 2 + 4 : 14)),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             heightReference:          HeightReference.CLAMP_TO_GROUND,
         } : undefined,
@@ -316,15 +357,12 @@ function _renderInterceptLine(el, viewer, sceneLocal) {
     const pts = el.path || (el.from && el.to ? [el.from, el.to] : [])
     if (pts.length < 2) return
     const color = Color.fromCssColorString(el.color || "#ef4444")
-    // Use slight altitude so PolylineDashMaterialProperty renders (not clampToGround)
     const positions = pts.map(([lat, lng]) => Cartesian3.fromDegrees(lng, lat, 50))
     const e = viewer.entities.add({
         polyline: {
             positions,
             width:    el.weight || 2,
-            material: el.dashed !== false
-                ? new PolylineDashMaterialProperty({ color: color.withAlpha(0.9), dashLength: 12 })
-                : new ColorMaterialProperty(color.withAlpha(0.9)),
+            material: new ColorMaterialProperty(color.withAlpha(0.9)),
         },
     })
     sceneLocal.push({ type: "entity", ref: e })
@@ -385,9 +423,7 @@ function _renderPerimeter(el, viewer, sceneLocal) {
         polyline: {
             positions: linePos,
             width: 2,
-            material: el.dashed
-                ? new PolylineDashMaterialProperty({ color: color.withAlpha(0.8), dashLength: 12 })
-                : new ColorMaterialProperty(color.withAlpha(0.8)),
+            material: new ColorMaterialProperty(color.withAlpha(0.8)),
         },
     })
     sceneLocal.push({ type: "entity", ref: e })
@@ -458,7 +494,7 @@ function _renderFlowArrows(el, viewer, sceneLocal) {
             polyline: {
                 positions,
                 width:    flow.width || 2,
-                material: new PolylineDashMaterialProperty({ color: c.withAlpha(0.75), dashLength: 16 }),
+                material: new ColorMaterialProperty(c.withAlpha(0.75)),
             },
         }) })
         // Arrow tip label at endpoint
@@ -533,7 +569,7 @@ function _renderOverwatchScan(el, viewer, sceneLocal, intervals, isAborted) {
         polyline: {
             positions: borderPos,
             width: 1.5,
-            material: new PolylineDashMaterialProperty({ color: c.withAlpha(0.6), dashLength: 8 }),
+            material: new ColorMaterialProperty(c.withAlpha(0.6)),
         },
     }) })
 
@@ -845,7 +881,7 @@ function _renderElement(el, animDurMs, viewer, sceneLocal, persistent, animFrame
             break
 
         case "overwatch_scan":
-            _renderOverwatchScan(el, viewer, sceneLocal, intervals, isAborted)
+            // Animated scan overlay disabled during Director playback
             break
 
         case "detection_boxes":
@@ -857,17 +893,9 @@ function _renderElement(el, animDurMs, viewer, sceneLocal, persistent, animFrame
             break
 
         case "ship_animation":
-            for (const v of (el.vessels || []))
-                _spawnVessel(v, animDurMs, viewer, persistent, animFrames, isAborted)
-            break
-
         case "flight_animation":
-            for (const ac of (el.aircraft || []))
-                _spawnVessel(ac, animDurMs, viewer, persistent, animFrames, isAborted)
-            break
-
         case "troop_movement":
-            _renderTroopMovement(el, animDurMs, viewer, persistent, animFrames, isAborted)
+            // Animated military unit overlays disabled during Director playback
             break
 
         case "combined_ops":
@@ -1022,9 +1050,7 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
                 polyline: {
                     positions,
                     width:    action.weight || 2,
-                    material: action.dashed
-                        ? new PolylineDashMaterialProperty({ color: c.withAlpha(0.85), dashLength: 12 })
-                        : new ColorMaterialProperty(c.withAlpha(0.85)),
+                    material: new ColorMaterialProperty(c.withAlpha(0.85)),
                 },
             }) })
             if (action.label) {
@@ -1055,31 +1081,62 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
         }
 
         case "place_event": {
-            const typeColors = {
-                conflict: "#ef4444", maritime: "#3b82f6", political: "#8b5cf6",
-                humanitarian: "#f59e0b", infrastructure: "#6366f1",
-                economic: "#22c55e", military: "#ef4444",
-            }
-            _renderFacilityMarker({
-                lat:   action.lat,
-                lng:   action.lon,
-                name:  action.title || "",
-                color: typeColors[action.type] || "#f59e0b",
-            }, viewer, sceneLocal, isAborted)
+            const canvas = _directorIconCanvas(action.type)
+            const e = viewer.entities.add({
+                position: Cartesian3.fromDegrees(action.lon, action.lat, 0),
+                billboard: {
+                    image:                    canvas,
+                    width:                    32,
+                    height:                   32,
+                    heightReference:          HeightReference.CLAMP_TO_GROUND,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+                label: (action.title) ? {
+                    text:          action.title,
+                    font:          "bold 11px system-ui,sans-serif",
+                    fillColor:     Color.fromCssColorString("#e2e8f0"),
+                    outlineColor:  Color.BLACK,
+                    outlineWidth:  2,
+                    style:         LabelStyle.FILL_AND_OUTLINE,
+                    verticalOrigin:           VerticalOrigin.BOTTOM,
+                    pixelOffset:              new Cartesian2(0, -20),
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    heightReference:          HeightReference.CLAMP_TO_GROUND,
+                } : undefined,
+            })
+            sceneLocal.push({ type: "entity", ref: e })
             break
         }
 
         case "place_location": {
-            const locColors = {
-                city: "#e2e8f0", base: "#ef4444", port: "#3b82f6",
-                facility: "#f59e0b", landmark: "#a78bfa", target: "#ef4444",
+            const locTypeToDirectorType = {
+                base: "military", port: "maritime", facility: "infrastructure",
+                target: "conflict",
             }
-            _renderFacilityMarker({
-                lat:   action.lat,
-                lng:   action.lon,
-                name:  action.name || "",
-                color: locColors[action.type] || "#e2e8f0",
-            }, viewer, sceneLocal, isAborted)
+            const canvas = _directorIconCanvas(locTypeToDirectorType[action.type] || action.type)
+            const e = viewer.entities.add({
+                position: Cartesian3.fromDegrees(action.lon, action.lat, 0),
+                billboard: {
+                    image:                    canvas,
+                    width:                    32,
+                    height:                   32,
+                    heightReference:          HeightReference.CLAMP_TO_GROUND,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+                label: (action.name) ? {
+                    text:          action.name,
+                    font:          "bold 11px system-ui,sans-serif",
+                    fillColor:     Color.fromCssColorString("#e2e8f0"),
+                    outlineColor:  Color.BLACK,
+                    outlineWidth:  2,
+                    style:         LabelStyle.FILL_AND_OUTLINE,
+                    verticalOrigin:           VerticalOrigin.BOTTOM,
+                    pixelOffset:              new Cartesian2(0, -20),
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    heightReference:          HeightReference.CLAMP_TO_GROUND,
+                } : undefined,
+            })
+            sceneLocal.push({ type: "entity", ref: e })
             break
         }
 
@@ -1141,11 +1198,9 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
             break
         }
 
-        case "troop_movement": {
-            // CommandRunner troop_movement uses same schema as scene_elements
-            _renderTroopMovement(action, 15_000, viewer, persistent, animFrames, isAborted)
+        case "troop_movement":
+            // Animated troop movement disabled during Director playback
             break
-        }
 
         case "formation": {
             for (const unit of (action.units || [])) {
@@ -1171,24 +1226,7 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
                         heightReference: unit.type === "aircraft" ? HeightReference.NONE : HeightReference.CLAMP_TO_GROUND,
                     } : undefined,
                 })
-                // Animate toward target if action.target exists
-                if (action.target) {
-                    const startLat = unit.lat, startLng = unit.lon ?? unit.lng ?? 0
-                    const endLat   = action.target[0], endLng = action.target[1]
-                    const dur      = 12_000
-                    const start    = performance.now()
-                    const isAir    = unit.type === "aircraft"
-                    const alt      = isAir ? 8_000 : 0
-                    function step() {
-                        if (isAborted() || viewer.isDestroyed()) return
-                        const p = Math.min((performance.now() - start) / dur, 1)
-                        const lat = startLat + (endLat - startLat) * p
-                        const lng = startLng + (endLng - startLng) * p
-                        marker.position = Cartesian3.fromDegrees(lng, lat, alt)
-                        if (p < 1) animFrames.push(requestAnimationFrame(step))
-                    }
-                    animFrames.push(requestAnimationFrame(step))
-                }
+                // Animated movement toward target disabled during Director playback
                 sceneLocal.push({ type: "entity", ref: marker })
             }
             // Pulsing target circle
@@ -1261,10 +1299,7 @@ export default function GlobeDirectorLayer({ scene }) {
             }
         } else {
             // DemoRunner / scene_elements format
-            _flyTo(viewer, scene.center, scene.zoom, {
-                camera_heading: scene.camera_heading,
-                camera_pitch:   scene.camera_pitch,
-            })
+            _flyTo(viewer, scene.center, scene.zoom)
             const wordCount = (scene.narration || "").split(/\s+/).filter(Boolean).length
             const animDurMs = Math.max((wordCount / 2.5) * 1_000, 6_000)
             for (const el of (scene.scene_elements || [])) {
