@@ -524,6 +524,9 @@ _BRIEFING_RATE_LIMIT_S  = 7200    # 2 hours between manual regenerates
 # ── Director background job queue ────────────────────────────────────────────
 _DIRECTOR_JOBS: dict = {}   # job_id → { status, progress, intent, created_at, result, error }
 
+# ── Last prepared intelligence picture ───────────────────────────────────────
+_last_intelligence_picture: dict = {}
+
 # ── Anomaly alerts ───────────────────────────────────────────────────────────
 _ANOMALY_ALERTS: list = []
 
@@ -3178,61 +3181,251 @@ async def director_generate(
     request: Request,
     current_user=Depends(get_optional_user),
 ):
-    """Generate a director action sequence from intent + live snapshot."""
+    """
+    Generate a director briefing.
+    - With body { "intent": "..." } → uses existing snapshot-based generation (legacy path)
+    - Without body / empty intent → uses intelligence picture + Claude Opus (new path)
+    """
     if not client:
         raise HTTPException(503, "Claude client not configured")
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
     intent   = (body.get("intent") or "").strip()
     snapshot = body.get("snapshot") or {}
-    if not intent:
-        raise HTTPException(400, "intent is required")
 
-    if not isinstance(snapshot, dict) or not snapshot:
-        # Build a fresh snapshot if the caller didn't pass one
-        with _SURFACE_POOL_LOCK:
-            surface_pool = list(_SURFACE_POOL)
-        now_ts = time.time()
-        adsb_latest: list[dict] = []
-        seen_icao: set[str] = set()
-        for entry in _adsb_cache.values():
-            if now_ts - entry.get("ts", 0) < 120:
-                for ac in (entry.get("data") or []):
-                    icao = ac.get("icao") or ac.get("hex") or ""
-                    if icao and icao not in seen_icao:
-                        seen_icao.add(icao)
-                        adsb_latest.append(ac)
-        snapshot = _director_svc.build_snapshot(
-            surface_pool=surface_pool,
-            ais_vessels=_AIS_VESSELS,
-            adsb_cache_latest=adsb_latest,
-            event_store_fn=es.get_active_events,
-            active_profile=_ACTIVE_PROFILE,
-            static_airports=_STATIC_AIRPORTS,
-            static_ports=_STATIC_PORTS,
-        )
+    # ── Legacy path: intent provided → existing snapshot-based generation ─────
+    if intent:
+        if not isinstance(snapshot, dict) or not snapshot:
+            with _SURFACE_POOL_LOCK:
+                surface_pool = list(_SURFACE_POOL)
+            now_ts = time.time()
+            adsb_latest: list[dict] = []
+            seen_icao: set[str] = set()
+            for entry in _adsb_cache.values():
+                if now_ts - entry.get("ts", 0) < 120:
+                    for ac in (entry.get("data") or []):
+                        icao = ac.get("icao") or ac.get("hex") or ""
+                        if icao and icao not in seen_icao:
+                            seen_icao.add(icao)
+                            adsb_latest.append(ac)
+            snapshot = _director_svc.build_snapshot(
+                surface_pool=surface_pool,
+                ais_vessels=_AIS_VESSELS,
+                adsb_cache_latest=adsb_latest,
+                event_store_fn=es.get_active_events,
+                active_profile=_ACTIVE_PROFILE,
+                static_airports=_STATIC_AIRPORTS,
+                static_ports=_STATIC_PORTS,
+            )
+        loop = asyncio.get_event_loop()
+        try:
+            sequence = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _executor,
+                    lambda: _director_svc.generate_sequence(
+                        intent=intent,
+                        snapshot=snapshot,
+                        client=client,
+                        usage_tracker=usage_tracker,
+                        profile=_ACTIVE_PROFILE,
+                    ),
+                ),
+                timeout=200,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Director generation timed out — try a shorter briefing intent")
+        except ValueError as exc:
+            raise HTTPException(502, str(exc))
+        return sequence
 
+    # ── Intelligence picture path: no intent → full Opus briefing ────────────
+    global _last_intelligence_picture
     loop = asyncio.get_event_loop()
+
+    from briefing_prep import prepare_intelligence_picture as _prep_ip
+    _fe = _fusion_engine  # capture ref for lambda
     try:
-        sequence = await asyncio.wait_for(
+        pic = await asyncio.wait_for(
             loop.run_in_executor(
                 _executor,
-                lambda: _director_svc.generate_sequence(
-                    intent=intent,
-                    snapshot=snapshot,
-                    client=client,
-                    usage_tracker=usage_tracker,
-                    profile=_ACTIVE_PROFILE,
+                lambda: _prep_ip(
+                    db=next(_db_gen()),
+                    forge_alerts=list(_forge_alerts),
+                    fusion_engine_instance=_fe,
                 ),
             ),
-            timeout=200,  # 200s max — enough for Claude + 20s headroom
+            timeout=30,
+        )
+    except Exception as _e:
+        raise HTTPException(500, f"Intelligence picture failed: {_e}")
+
+    _last_intelligence_picture = pic
+
+    # Truncate picture for prompt to avoid token blowout
+    def _truncated_pic(p: dict) -> dict:
+        import copy
+        t = copy.deepcopy(p)
+        if len(t.get("ais_anomalies", [])) > 5:
+            t["ais_anomalies"] = t["ais_anomalies"][:5]
+        if len(t.get("adsb_anomalies", [])) > 5:
+            t["adsb_anomalies"] = t["adsb_anomalies"][:5]
+        return t
+
+    pic_str = _json.dumps(_truncated_pic(pic), ensure_ascii=False, separators=(",", ":"))
+    if len(pic_str) > 40000:
+        pic_str = pic_str[:40000] + "..."
+
+    _BRIEFING_SYSTEM = (
+        "You are a senior intelligence analyst presenting a classified briefing "
+        "to a strategic decision-maker. You have access to a real-time intelligence "
+        "picture combining AIS vessel tracking, ADS-B aircraft monitoring, satellite "
+        "imagery analysis, and news intelligence.\n\n"
+        "Generate a structured briefing as a JSON array of segments. Each segment "
+        "represents one camera position on a globe and one narrative point. Be "
+        "specific, factual, and use only the data provided. Do not invent events "
+        "or locations not in the data.\n\n"
+        "Rules:\n"
+        "- If no significant activity exists for a domain, do not fabricate it\n"
+        "- Every location must have real coordinates from the data provided\n"
+        "- Segments should flow geographically where possible\n"
+        "- Lead with the most critical fusion events\n"
+        "- End with a trend summary and watch items\n"
+        "Return ONLY a valid JSON array. No preamble, no markdown fences."
+    )
+    _BRIEFING_USER = (
+        "Generate an intelligence briefing from this real-time picture.\n\n"
+        "INTELLIGENCE PICTURE:\n" + pic_str + "\n\n"
+        "Return a JSON array where each element has:\n"
+        '{"segment_index": integer, "title": "ALL CAPS SHORT TITLE", '
+        '"narrative": "3-6 sentences. Specific, factual, analyst voice.", '
+        '"lat": float, "lon": float, '
+        '"altitude": float (50000-150000 incident, 300000-600000 regional, '
+        '1000000-3000000 global), '
+        '"markers": [{"lat":f,"lon":f,"label":"short","icon_type":"ALERT","severity":"medium"}], '
+        '"source_type": "fusion|surge|ais|adsb|sentinel|news|overview", '
+        '"source_id": "id or null", '
+        '"zone_ids": ["SZONE-xxx"]}\n\n'
+        "Briefing structure:\n"
+        "1. One global overview segment (altitude ~4000000)\n"
+        "2. Segments for each active fusion event (most critical first)\n"
+        "3. Segments for elevated regions with active signals\n"
+        "4. Segments for notable AIS/ADSB anomalies in strategic zones\n"
+        "5. Segments for Sentinel detections if present\n"
+        "6. One closing trend segment\n\n"
+        "Minimum 5, maximum 30 segments. Quality over quantity."
+    )
+
+    def _call_claude():
+        msg = client.messages.create(
+            model="claude-opus-4-20250514",
+            max_tokens=16000,
+            timeout=180,
+            system=_BRIEFING_SYSTEM,
+            messages=[{"role": "user", "content": _BRIEFING_USER}],
+        )
+        usage_tracker.record_call(
+            msg.usage.input_tokens,
+            msg.usage.output_tokens,
+            call_type="director_briefing",
+            headline="Director: intelligence picture briefing",
+        )
+        return msg.content[0].text.strip()
+
+    try:
+        raw = await asyncio.wait_for(
+            loop.run_in_executor(_executor, _call_claude),
+            timeout=200,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(504, "Director generation timed out — try a shorter briefing intent")
-    except ValueError as exc:
-        raise HTTPException(502, str(exc))
+        raise HTTPException(504, "Briefing generation timed out")
 
-    return sequence
+    # Parse JSON
+    segments = _parse_briefing_json(raw)
+    if not segments:
+        raise HTTPException(502, f"Failed to parse briefing JSON. Raw: {raw[:300]}")
+
+    return {
+        "segments":   segments,
+        "generated_at": pic["generated_at"],
+        "statistics": pic["statistics"],
+        "threat_overview": pic["threat_overview"],
+    }
+
+
+def _parse_briefing_json(raw: str) -> list:
+    """Tolerant JSON parser for the segments array."""
+    import re as _re2
+    text = raw.strip()
+    # Strip markdown fences
+    text = _re2.sub(r"^```(?:json)?\s*", "", text)
+    text = _re2.sub(r"\s*```$", "", text)
+    # Find first [ ... ]
+    bracket = text.find("[")
+    if bracket >= 0:
+        text = text[bracket:]
+    try:
+        result = _json.loads(text)
+        if isinstance(result, list):
+            return result
+    except Exception:
+        pass
+    # Try to find just the array part
+    match = _re2.search(r"\[.*\]", text, _re2.DOTALL)
+    if match:
+        try:
+            result = _json.loads(match.group(0))
+            if isinstance(result, list):
+                return result
+        except Exception:
+            pass
+    return []
+
+
+def _db_gen():
+    """One-shot generator yielding a single DB session."""
+    from database import get_db as _gdb_ip
+    with _gdb_ip() as _sess:
+        yield _sess
+
+
+@app.post("/api/director/prepare-briefing")
+async def director_prepare_briefing(current_user=Depends(get_optional_user)):
+    """
+    Aggregate all active intelligence signals into a structured picture.
+    Stores the result in memory for GET /api/director/intelligence-picture.
+    """
+    global _last_intelligence_picture
+    loop = asyncio.get_event_loop()
+    from briefing_prep import prepare_intelligence_picture as _prep_ip
+    _fe = _fusion_engine
+    try:
+        pic = await asyncio.wait_for(
+            loop.run_in_executor(
+                _executor,
+                lambda: _prep_ip(
+                    db=next(_db_gen()),
+                    forge_alerts=list(_forge_alerts),
+                    fusion_engine_instance=_fe,
+                ),
+            ),
+            timeout=30,
+        )
+    except Exception as _e:
+        raise HTTPException(500, f"Intelligence picture failed: {_e}")
+    _last_intelligence_picture = pic
+    return pic
+
+
+@app.get("/api/director/intelligence-picture")
+async def director_intelligence_picture(current_user=Depends(get_optional_user)):
+    """Return the most recently prepared intelligence picture."""
+    if not _last_intelligence_picture:
+        return {"error": "No briefing prepared", "hint": "POST /api/director/prepare-briefing first"}
+    return _last_intelligence_picture
 
 
 @app.post("/api/director/save")

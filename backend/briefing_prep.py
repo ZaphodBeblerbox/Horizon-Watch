@@ -1,0 +1,305 @@
+"""
+briefing_prep.py — Aggregate all active intelligence signals into a structured
+intelligence picture for Claude to reason about.
+
+prepare_intelligence_picture(db, forge_alerts, fusion_engine_instance) -> dict
+
+Designed to run synchronously inside a ThreadPoolExecutor from an async context.
+"""
+from __future__ import annotations
+import json
+import datetime
+from datetime import timedelta
+
+
+def prepare_intelligence_picture(
+    db,
+    forge_alerts: list | None = None,
+    fusion_engine_instance=None,
+) -> dict:
+    """
+    Collect and score all active intelligence signals, group by region/zone,
+    return a structured dict Claude can reason about directly.
+    """
+    from database import (
+        FusionEvent, SurgeEvent, SentinelDetection, StrategicZone,
+    )
+    from intelligence_schema import IntelligenceAssessment
+    import threat_matrix
+    from relevance_scorer import relevance_scorer
+
+    now      = datetime.datetime.utcnow()
+    cutoff_24h = now - timedelta(hours=24)
+    cutoff_48h = now - timedelta(hours=48)
+
+    alerts = forge_alerts or []
+
+    # ── 1. Threat matrix — use cached scores (refreshed hourly) ──────────────
+    cached = threat_matrix.get_cached_scores()
+    elevated_regions = []
+    for row in cached:
+        score = row.get("threat_score", 0)
+        if score >= 25:
+            elevated_regions.append({
+                "region":  row["region_name"],
+                "score":   score,
+                "level":   row.get("threat_level", "LOW"),
+                "trend":   row.get("trend", "stable"),
+                "signals": row.get("contributing_signals", []),
+            })
+    elevated_regions.sort(key=lambda x: x["score"], reverse=True)
+
+    # ── 2. Active fusion events ────────────────────────────────────────────────
+    try:
+        fusions = (
+            db.query(FusionEvent)
+            .filter(FusionEvent.status == "active", FusionEvent.expires_at > now)
+            .order_by(FusionEvent.confidence.desc())
+            .all()
+        )
+    except Exception:
+        fusions = []
+
+    fusion_items = []
+    for f in fusions:
+        try:
+            fusion_items.append({
+                "fusion_id":         f.fusion_id,
+                "title":             f.title,
+                "subtitle":          f.subtitle,
+                "narrative":         f.narrative,
+                "severity":          f.severity,
+                "confidence":        f.confidence,
+                "domains":           _safe_json(f.domains, []),
+                "location":          f.location_name,
+                "lat":               f.lat,
+                "lon":               f.lon,
+                "signal_count":      f.signal_count,
+                "key_signals":       _safe_json(f.key_signals, []),
+                "threat_indicators": _safe_json(f.threat_indicators, []),
+                "created_at":        _iso(f.created_at),
+            })
+        except Exception:
+            pass
+
+    # ── 3. Active surge events ─────────────────────────────────────────────────
+    try:
+        surges = (
+            db.query(SurgeEvent)
+            .filter(SurgeEvent.status == "active", SurgeEvent.expires_at > now)
+            .order_by(SurgeEvent.severity.desc())
+            .all()
+        )
+    except Exception:
+        surges = []
+
+    surge_items = []
+    for s in surges:
+        try:
+            surge_items.append({
+                "surge_id":     s.surge_id,
+                "headline":     s.headline,
+                "article_type": s.article_type,
+                "surge_type":   s.surge_type,
+                "location":     s.location_name,
+                "country":      s.location_country,
+                "lat":          s.lat,
+                "lon":          s.lon,
+                "article_count": s.article_count,
+                "time_window":  s.time_window_description,
+                "severity":     s.severity,
+                "evidence":     _safe_json(s.evidence_items, [])[:5],
+            })
+        except Exception:
+            pass
+
+    # ── 4. Collect + score signals from forge alerts + fusion engine ───────────
+    signals_raw: list[dict] = []
+    seen_ids: set[str] = set()
+
+    for a in alerts[-500:]:
+        lat = a.get("lat")
+        lon = a.get("lng") or a.get("lon")
+        if lat is None or lon is None:
+            continue
+        sid = str(a.get("id") or f"alert-{lat:.3f}-{lon:.3f}")
+        if sid in seen_ids:
+            continue
+        seen_ids.add(sid)
+        signals_raw.append({
+            "signal_id":    sid,
+            "domain":       (a.get("source") or "AIS").upper(),
+            "severity":     a.get("severity", "medium"),
+            "lat":          lat,
+            "lon":          lon,
+            "location_name": a.get("title") or a.get("rule_name") or "",
+            "summary":      a.get("message") or a.get("title") or "",
+            "rule_name":    a.get("rule_name") or "",
+            "title":        a.get("title") or "",
+            "created_at":   a.get("timestamp") or now.isoformat(),
+        })
+
+    if fusion_engine_instance:
+        try:
+            for bucket in fusion_engine_instance.active_signals.values():
+                for s in bucket:
+                    sid = str(s.get("signal_id", ""))
+                    if sid and sid not in seen_ids:
+                        seen_ids.add(sid)
+                        signals_raw.append(s)
+        except Exception:
+            pass
+
+    all_scored = relevance_scorer.score_all_active_signals(signals_raw, db)
+
+    high_relevance = [s for s in all_scored if s.get("relevance_score", 0) >= 60]
+    ais_signals    = [s for s in high_relevance if s.get("domain", "") == "AIS"]
+    adsb_signals   = [s for s in high_relevance if s.get("domain", "") == "ADSB"]
+
+    # ── 5. Recent Sentinel detections (48h, immediate tier) ───────────────────
+    try:
+        sentinel_rows = (
+            db.query(SentinelDetection)
+            .filter(
+                SentinelDetection.alert_tier == "immediate",
+                SentinelDetection.created_at > cutoff_48h,
+            )
+            .order_by(SentinelDetection.confidence.desc())
+            .limit(20)
+            .all()
+        )
+    except Exception:
+        sentinel_rows = []
+
+    sentinel_items = []
+    for d in sentinel_rows:
+        try:
+            zone_ctx = []
+            if d.centroid_lat and d.centroid_lon:
+                zone_ctx = relevance_scorer.get_containing_zones(d.centroid_lat, d.centroid_lon, db)
+            sentinel_items.append({
+                "detection_id":           d.detection_id,
+                "object_type":            d.object_type,
+                "confidence":             d.confidence,
+                "severity":               d.severity,
+                "lat":                    d.centroid_lat,
+                "lon":                    d.centroid_lon,
+                "nearest_port":           d.nearest_port,
+                "nearest_infrastructure": d.nearest_infrastructure,
+                "nearest_chokepoint":     d.nearest_chokepoint,
+                "zone_context":           [z.get("name") for z in zone_ctx],
+                "image_crop_url":         d.image_crop_url,
+                "scan_timestamp":         _iso(d.created_at),
+            })
+        except Exception:
+            pass
+
+    # ── 6. Top news assessments (high/critical, not expired) ──────────────────
+    try:
+        from sqlalchemy import or_ as _or
+        assessments = (
+            db.query(IntelligenceAssessment)
+            .filter(
+                IntelligenceAssessment.domain == "NEWS",
+                IntelligenceAssessment.expires_at > now,
+                IntelligenceAssessment.severity.in_(["high", "critical"]),
+            )
+            .order_by(IntelligenceAssessment.confidence.desc())
+            .limit(15)
+            .all()
+        )
+    except Exception:
+        assessments = []
+
+    assessment_items = []
+    for a in assessments:
+        try:
+            assessment_items.append({
+                "assessment_id": a.assessment_id,
+                "type":          a.assessment_type,
+                "headline":      a.headline,
+                "summary":       a.summary,
+                "severity":      a.severity,
+                "confidence":    a.confidence,
+                "location":      a.location_name,
+                "country":       a.location_country,
+                "lat":           a.lat,
+                "lon":           a.lon,
+                "key_signals":   _safe_json(a.key_signals, []),
+                "evidence_count": a.evidence_count,
+            })
+        except Exception:
+            pass
+
+    # ── 7. Active strategic zones with signal counts ───────────────────────────
+    try:
+        zone_rows = db.query(StrategicZone).filter(StrategicZone.enabled == True).all()
+    except Exception:
+        zone_rows = []
+
+    active_zones = []
+    for z in zone_rows:
+        zone_signals = [
+            s for s in all_scored
+            if s.get("lat") is not None and s.get("lon") is not None
+            and z.bbox_min_lat <= s["lat"] <= z.bbox_max_lat
+            and z.bbox_min_lon <= s["lon"] <= z.bbox_max_lon
+        ]
+        if zone_signals or z.severity_baseline in ("high", "critical"):
+            active_zones.append({
+                "zone_id":             z.zone_id,
+                "name":                z.name,
+                "zone_type":           z.zone_type,
+                "severity_baseline":   z.severity_baseline,
+                "description":         z.description,
+                "signal_count":        len(zone_signals),
+                "highest_signal_score": max(
+                    (s.get("relevance_score", 0) for s in zone_signals), default=0
+                ),
+            })
+
+    active_zones.sort(key=lambda x: x["highest_signal_score"], reverse=True)
+
+    # ── 8. Statistics ──────────────────────────────────────────────────────────
+    total_signals    = len(all_scored)
+    critical_signals = len([s for s in all_scored if s.get("relevance_score", 0) >= 70])
+
+    return {
+        "generated_at":   now.isoformat(),
+        "classification": "HORIZON WATCH INTELLIGENCE PICTURE",
+        "statistics": {
+            "total_active_signals": total_signals,
+            "critical_signals":     critical_signals,
+            "active_fusions":       len(fusion_items),
+            "active_surges":        len(surge_items),
+            "elevated_regions":     len(elevated_regions),
+        },
+        "threat_overview": {
+            "elevated_regions": elevated_regions,
+            "most_active_zone": active_zones[0]["name"] if active_zones else None,
+        },
+        "fusion_events":      fusion_items,
+        "surge_events":       surge_items,
+        "ais_anomalies":      ais_signals[:10],
+        "adsb_anomalies":     adsb_signals[:10],
+        "sentinel_detections": sentinel_items[:10],
+        "news_assessments":   assessment_items[:10],
+        "strategic_zones":    active_zones[:10],
+    }
+
+
+def _safe_json(value, default):
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _iso(dt) -> str | None:
+    if dt is None:
+        return None
+    if isinstance(dt, datetime.datetime):
+        return dt.isoformat()
+    return str(dt)
