@@ -2954,11 +2954,19 @@ function DrawZoneGlobe({ onPolygon }) {
         if (!val.trim() || val.length < 2) { setSuggestions([]); return }
         setSearching(true)
         searchDebounce.current = setTimeout(() => {
-            fetch(`${API}/geocode?q=${encodeURIComponent(val)}&limit=5`)
-                .then(r => r.ok ? r.json() : null)
-                .then(d => { setSuggestions(Array.isArray(d) ? d : (d?.results ?? [])); setSearching(false) })
+            fetch(`${API}/api/search?q=${encodeURIComponent(val)}&types=airport,port,chokepoint,location&limit=8`)
+                .then(r => r.ok ? r.json() : [])
+                .then(d => { setSuggestions(Array.isArray(d) ? d : []); setSearching(false) })
                 .catch(() => setSearching(false))
-        }, 350)
+        }, 300)
+    }
+
+    function _altForSearchResult(r) {
+        if (r.type === "airport" || r.type === "port") return 80_000
+        if (r.type === "chokepoint") return 200_000
+        if (r.category === "country" || r.category === "boundary") return 1_000_000
+        if (r.osm_type === "relation") return 800_000
+        return 300_000
     }
 
     function handleFlyTo(result) {
@@ -2969,12 +2977,12 @@ function DrawZoneGlobe({ onPolygon }) {
         if (lon == null || lat == null) return
         import("cesium").then(({ Cartesian3 }) => {
             viewer.camera.flyTo({
-                destination: Cartesian3.fromDegrees(lon, lat, 500_000),
+                destination: Cartesian3.fromDegrees(lon, lat, _altForSearchResult(result)),
                 duration: 1.5,
             })
         }).catch(() => {})
         setSuggestions([])
-        setSearchQuery(result.display_name || result.name || "")
+        setSearchQuery(result.name || result.display_name || "")
     }
 
     const { count, area, closed, err } = uiState
@@ -3016,7 +3024,7 @@ function DrawZoneGlobe({ onPolygon }) {
                                 onMouseEnter={e => e.currentTarget.style.background = "#1e293b"}
                                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                             >
-                                {r.display_name || r.name || JSON.stringify(r)}
+                                {r.name || r.display_name || "Unknown"}
                             </div>
                         ))}
                     </div>

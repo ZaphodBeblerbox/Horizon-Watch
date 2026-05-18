@@ -149,6 +149,21 @@ export default function GlobeView({
         return () => clearInterval(t)
     }, [adsbEnabled, externalADSB]) // eslint-disable-line react-hooks/exhaustive-deps
 
+    // akili:fly-to — triggered by GlobalSearch and other search components
+    useEffect(() => {
+        const handler = (e) => {
+            const { lat, lon, altitude = 100_000 } = e.detail || {}
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer || lat == null || lon == null) return
+            viewer.camera.flyTo({
+                destination: Cartesian3.fromDegrees(lon, lat, altitude),
+                duration: 1.5,
+            })
+        }
+        window.addEventListener("akili:fly-to", handler)
+        return () => window.removeEventListener("akili:fly-to", handler)
+    }, [])
+
     // Apply maximum rendering quality + WebGL context loss recovery
     useEffect(() => {
         let attempts = 0

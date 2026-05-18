@@ -13700,6 +13700,282 @@ def api_airports_near(
     return {"type": "FeatureCollection", "features": [_airport_feature(r) for r in results]}
 
 
+@app.get("/api/search")
+async def unified_search(
+    q:     str = Query(..., min_length=2),
+    types: str = Query("all"),
+    limit: int = Query(10, ge=1, le=20),
+):
+    """
+    Unified search across airports, ports, cables, chokepoints, assessments,
+    fusion events, watch zones, rules, POIs, and Nominatim geographic search.
+    Returns up to 15 ranked results.
+    """
+    q = q.strip()
+    if len(q) < 2:
+        return []
+
+    want_set = None if types.lower() == "all" else set(types.lower().split(","))
+
+    def _want(t: str) -> bool:
+        return want_set is None or t in want_set
+
+    term = f"%{q}%"
+    q_lo = q.lower()
+
+    def _db_search() -> list:
+        from database import (
+            Airport, PortBoundary, CableSegment, OntologyEntity,
+            FusionEvent, WatchZone, RuleConfig, get_db,
+        )
+        from sqlalchemy import or_
+        hits: list = []
+        try:
+            with get_db() as db:
+                if _want("airport"):
+                    rows = db.query(Airport).filter(or_(
+                        Airport.airport_name.ilike(term),
+                        Airport.icao_code.ilike(term),
+                        Airport.iata_code.ilike(term),
+                        Airport.municipality.ilike(term),
+                        Airport.country_name.ilike(term),
+                    )).limit(10).all()
+                    for r in rows:
+                        hits.append({
+                            "type": "airport",
+                            "system_id": r.system_id,
+                            "name": r.airport_name,
+                            "icao": r.icao_code,
+                            "iata": r.iata_code,
+                            "country": r.country_name or r.country_code,
+                            "lat": r.latitude,
+                            "lon": r.longitude,
+                            "airport_type": r.airport_type,
+                        })
+
+                if _want("port"):
+                    rows = db.query(PortBoundary).filter(or_(
+                        PortBoundary.port_name.ilike(term),
+                        PortBoundary.country.ilike(term),
+                    )).limit(10).all()
+                    for r in rows:
+                        hits.append({
+                            "type": "port",
+                            "system_id": r.system_id,
+                            "name": r.port_name,
+                            "country": r.country,
+                            "lat": r.latitude,
+                            "lon": r.longitude,
+                            "port_size": r.port_size,
+                        })
+
+                if _want("cable"):
+                    import re as _re
+                    ilike_rows = db.query(CableSegment).filter(or_(
+                        CableSegment.cable_name.ilike(term),
+                        CableSegment.owners.ilike(term),
+                        CableSegment.all_countries.ilike(term),
+                    )).limit(10).all()
+                    # Compact normalized fallback — handles "SEA-ME-WE 5" → "seamewe5"
+                    q_compact = _re.sub(r'[^a-z0-9]', '', q_lo)
+                    norm_rows = []
+                    if len(q_compact) >= 3:
+                        seen_ids = {r.cable_id for r in ilike_rows}
+                        slim = db.query(
+                            CableSegment.cable_id, CableSegment.cable_name,
+                            CableSegment.owners, CableSegment.all_countries,
+                            CableSegment.system_id, CableSegment.region_id,
+                        ).all()
+                        for r in slim:
+                            cid   = _re.sub(r'[^a-z0-9]', '', (r.cable_id   or "").lower())
+                            cname = _re.sub(r'[^a-z0-9]', '', (r.cable_name or "").lower())
+                            if (q_compact in cname or q_compact in cid) and r.cable_id not in seen_ids:
+                                norm_rows.append(r)
+                                seen_ids.add(r.cable_id)
+                    for r in (ilike_rows + norm_rows)[:10]:
+                        hits.append({
+                            "type": "cable",
+                            "system_id": r.system_id or r.cable_id,
+                            "name": r.cable_name,
+                            "owners": r.owners,
+                            "region_id": r.region_id,
+                            "all_countries": r.all_countries,
+                            "lat": None,
+                            "lon": None,
+                        })
+
+                if _want("chokepoint"):
+                    rows = db.query(OntologyEntity).filter(
+                        OntologyEntity.entity_type.ilike("Chokepoint"),
+                        OntologyEntity.name.ilike(term),
+                    ).limit(10).all()
+                    for r in rows:
+                        try:
+                            meta = _json.loads(r.entity_metadata or "{}")
+                        except Exception:
+                            meta = {}
+                        hits.append({
+                            "type": "chokepoint",
+                            "system_id": r.system_id,
+                            "name": r.name,
+                            "lat": meta.get("lat"),
+                            "lon": meta.get("lon"),
+                        })
+
+                if _want("assessment"):
+                    try:
+                        from intelligence_schema import IntelligenceAssessment
+                        rows = (
+                            db.query(IntelligenceAssessment)
+                            .filter(or_(
+                                IntelligenceAssessment.headline.ilike(term),
+                                IntelligenceAssessment.location_name.ilike(term),
+                            ))
+                            .order_by(IntelligenceAssessment.created_at.desc())
+                            .limit(10).all()
+                        )
+                        for r in rows:
+                            hits.append({
+                                "type": "assessment",
+                                "assessment_id": r.assessment_id,
+                                "name": r.headline,
+                                "severity": r.severity,
+                                "lat": r.lat,
+                                "lon": r.lon,
+                                "location_name": r.location_name,
+                            })
+                    except Exception:
+                        pass
+
+                if _want("fusion"):
+                    rows = (
+                        db.query(FusionEvent)
+                        .filter(or_(
+                            FusionEvent.title.ilike(term),
+                            FusionEvent.location_name.ilike(term),
+                        ))
+                        .order_by(FusionEvent.created_at.desc())
+                        .limit(10).all()
+                    )
+                    for r in rows:
+                        hits.append({
+                            "type": "fusion",
+                            "fusion_id": r.fusion_id,
+                            "name": r.title,
+                            "severity": r.severity,
+                            "lat": r.lat,
+                            "lon": r.lon,
+                            "location_name": r.location_name,
+                        })
+
+                if _want("zone"):
+                    rows = db.query(WatchZone).filter(or_(
+                        WatchZone.name.ilike(term),
+                        WatchZone.description.ilike(term),
+                    )).limit(10).all()
+                    for r in rows:
+                        hits.append({
+                            "type": "zone",
+                            "system_id": r.system_id,
+                            "name": r.name,
+                            "priority": r.priority,
+                            "lat": ((r.bbox_min_lat or 0) + (r.bbox_max_lat or 0)) / 2 or None,
+                            "lon": ((r.bbox_min_lon or 0) + (r.bbox_max_lon or 0)) / 2 or None,
+                        })
+
+                if _want("rule"):
+                    rows = db.query(RuleConfig).filter(or_(
+                        RuleConfig.rule_name.ilike(term),
+                        RuleConfig.name.ilike(term),
+                    )).limit(10).all()
+                    for r in rows:
+                        hits.append({
+                            "type": "rule",
+                            "id": r.id,
+                            "name": r.name or r.rule_name,
+                            "rule_name": r.rule_name,
+                            "trigger_type": r.trigger_type,
+                            "lat": None,
+                            "lon": None,
+                        })
+        except Exception as ex:
+            print(f"[search] db error: {ex}")
+        return hits
+
+    def _poi_search() -> list:
+        if not _want("poi"):
+            return []
+        hits = []
+        try:
+            for p in _poi_load():
+                name  = (p.get("name")  or "").lower()
+                notes = (p.get("notes") or "").lower()
+                if q_lo in name or q_lo in notes:
+                    hits.append({
+                        "type": "poi",
+                        "id": p.get("id"),
+                        "name": p.get("name") or "Unknown",
+                        "lat": p.get("lat"),
+                        "lon": p.get("lon"),
+                        "icon_type": p.get("icon_type"),
+                    })
+        except Exception:
+            pass
+        return hits[:5]
+
+    loop = asyncio.get_event_loop()
+    db_hits, poi_hits = await asyncio.gather(
+        loop.run_in_executor(_executor, _db_search),
+        loop.run_in_executor(_executor, _poi_search),
+    )
+
+    all_db = db_hits + poi_hits
+
+    nom_hits: list = []
+    if _want("location") or _want("city") or _want("country") or len(all_db) < 3:
+        try:
+            async with httpx.AsyncClient(
+                timeout=5.0,
+                headers={"User-Agent": "AkiliDashboard/1.0 (contact: dev@local)"},
+            ) as hc:
+                r = await hc.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={"format": "json", "q": q, "limit": "5", "addressdetails": "1"},
+                )
+                r.raise_for_status()
+                raw = r.json()
+            for item in (raw if isinstance(raw, list) else []):
+                try:
+                    nom_hits.append({
+                        "type": "location",
+                        "name": item.get("display_name", "").split(",")[0].strip(),
+                        "display_name": item.get("display_name", ""),
+                        "lat": float(item["lat"]),
+                        "lon": float(item["lon"]),
+                        "osm_type": item.get("osm_type"),
+                        "category": item.get("class") or item.get("category"),
+                        "country_code": (item.get("address") or {}).get("country_code"),
+                    })
+                except (KeyError, TypeError, ValueError):
+                    pass
+        except Exception as ex:
+            print(f"[search] nominatim error: {ex}")
+
+    def _score(r: dict) -> int:
+        if (r.get("name") or "").lower() == q_lo:
+            return 0
+        if r["type"] in ("airport", "port", "chokepoint"):
+            return 1
+        if r["type"] in ("cable", "zone", "rule", "poi"):
+            return 2
+        if r["type"] in ("assessment", "fusion"):
+            return 3
+        return 4
+
+    combined = sorted(all_db + nom_hits, key=_score)
+    return combined[:15]
+
+
 @app.get("/api/airports/by-region/{region_id}")
 def api_airports_by_region(region_id: str, response: FastAPIResponse):
     """All airports in a region."""

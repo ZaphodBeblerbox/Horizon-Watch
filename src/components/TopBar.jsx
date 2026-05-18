@@ -28,71 +28,26 @@ function IconCompress() {
 // ── Search helpers ────────────────────────────────────────────────────────────
 
 const TYPE_META = {
-    country:    { icon: "🌍", color: "#38bdf8" },
+    airport:    { icon: "✈",  color: "#a78bfa" },
     port:       { icon: "⚓", color: "#34d399" },
-    airport:    { icon: "✈️", color: "#a78bfa" },
-    chokepoint: { icon: "🔒", color: "#fb923c" },
+    cable:      { icon: "〰", color: "#fb923c" },
+    chokepoint: { icon: "🔺", color: "#fbbf24" },
     poi:        { icon: "👤", color: "#f472b6" },
-    city:       { icon: "🏙️", color: "#cbd5e1" },
-    address:    { icon: "📍", color: "#94a3b8" },
+    assessment: { icon: "⚡", color: "#ef4444" },
+    fusion:     { icon: "🔮", color: "#8b5cf6" },
+    zone:       { icon: "👁", color: "#10b981" },
+    rule:       { icon: "⚙", color: "#6b7280" },
+    location:   { icon: "📌", color: "#e2e8f0" },
+    country:    { icon: "🌍", color: "#38bdf8" },
+    city:       { icon: "🏙", color: "#cbd5e1" },
 }
 
-function zoomForNominatim(r) {
-    const cls  = r.class || ""
-    const type = r.type  || r.addresstype || ""
-    if (cls === "boundary" || type === "country" || type === "administrative") return 5
-    if (type === "city" || type === "town") return 12
-    if (type === "suburb" || type === "village") return 14
-    return 13
-}
-
-async function searchNominatim(query) {
+async function runUnifiedSearch(query, apiBase) {
     try {
-        const res = await fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`,
-            { headers: { "Accept-Language": "en" } }
-        )
-        const data = await res.json()
-        return data.map(r => ({
-            id:    "nom-" + r.place_id,
-            name:  r.display_name.split(",")[0],
-            sub:   r.display_name.split(",").slice(1, 3).join(",").trim(),
-            lat:   parseFloat(r.lat),
-            lon:   parseFloat(r.lon),
-            zoom:  zoomForNominatim(r),
-            type:  (r.class === "boundary" || r.type === "administrative") ? "country" : "city",
-        }))
+        const url = `${apiBase}/api/search?q=${encodeURIComponent(query.trim())}&limit=8`
+        const data = await fetch(url).then(r => r.ok ? r.json() : []).catch(() => [])
+        return Array.isArray(data) ? data : []
     } catch { return [] }
-}
-
-async function searchOurDB(query, apiBase) {
-    const q = query.toLowerCase()
-    const results = []
-    try {
-        const [ports, airports, chokepoints] = await Promise.allSettled([
-            fetch(`${apiBase}/api/infrastructure/ports`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-            fetch(`${apiBase}/api/infrastructure/airports`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-            fetch(`${apiBase}/api/infrastructure/chokepoints`).then(r => r.ok ? r.json() : []).catch(() => []),
-        ])
-        ;(ports.value?.ports || ports.value || []).forEach(p => {
-            const name = p.name || p.port_name || ""
-            if (name.toLowerCase().includes(q)) results.push({ id: "port-" + (p.id || name), name, sub: p.country || "Port", lat: p.lat, lon: p.lon, zoom: 14, type: "port" })
-        })
-        ;(airports.value?.airports || airports.value || []).forEach(a => {
-            const name = a.name || a.airport_name || ""
-            const iata = a.iata || ""
-            if (name.toLowerCase().includes(q) || iata.toLowerCase().includes(q))
-                results.push({ id: "apt-" + (a.id || iata || name), name, sub: a.country || "Airport", lat: a.lat, lon: a.lon, zoom: 14, type: "airport" })
-        })
-        ;(chokepoints.value || []).forEach(c => {
-            const name = c.name || c.properties?.name || ""
-            const lat  = c.lat ?? c.center?.[0] ?? c.properties?.lat
-            const lon  = c.lon ?? c.center?.[1] ?? c.properties?.lon
-            if (name.toLowerCase().includes(q) && lat && lon)
-                results.push({ id: "cp-" + name, name, sub: "Chokepoint", lat, lon, zoom: 8, type: "chokepoint" })
-        })
-    } catch { /* best-effort */ }
-    return results
 }
 
 // ── Inline search bar ────────────────────────────────────────────────────────
@@ -139,10 +94,9 @@ function InlineSearch({ onResult, apiBase }) {
     const runSearch = useCallback(async (q) => {
         if (q.trim().length < 2) { setResults([]); setOpen(false); return }
         setLoading(true)
-        const [db, nom] = await Promise.all([searchOurDB(q, apiBase), searchNominatim(q)])
-        const merged = [...db, ...nom].slice(0, 8)
-        setResults(merged)
-        setOpen(merged.length > 0)
+        const data = await runUnifiedSearch(q, apiBase)
+        setResults(data)
+        setOpen(data.length > 0)
         setActive(-1)
         setLoading(false)
     }, [apiBase])
@@ -156,8 +110,15 @@ function InlineSearch({ onResult, apiBase }) {
     }
 
     const handleSelect = (r) => {
-        onResult(r)
-        setQuery(r.name)
+        onResult?.(r)
+        if (r.lat != null && r.lon != null) {
+            const alt = r.type === "airport" || r.type === "port" ? 80_000
+                : r.type === "chokepoint" ? 120_000
+                : r.type === "location" && (r.category === "country" || r.osm_type === "relation") ? 800_000
+                : 100_000
+            window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: r.lat, lon: r.lon, altitude: alt } }))
+        }
+        setQuery(r.name || "")
         setOpen(false)
         inputRef.current?.blur()
     }
@@ -238,10 +199,11 @@ function InlineSearch({ onResult, apiBase }) {
                     overflow:   "hidden",
                 }}>
                     {results.map((r, i) => {
-                        const meta = TYPE_META[r.type] || TYPE_META.city
+                        const meta = TYPE_META[r.type] || TYPE_META.location
+                        const sub  = r.country || r.location_name || r.display_name?.split(",").slice(1, 3).join(",").trim() || ""
                         return (
                             <div
-                                key={r.id}
+                                key={r.system_id || r.assessment_id || r.fusion_id || r.id || `${r.type}-${i}`}
                                 onMouseEnter={() => setActive(i)}
                                 onMouseDown={(e) => { e.preventDefault(); handleSelect(r) }}
                                 style={{
@@ -257,7 +219,7 @@ function InlineSearch({ onResult, apiBase }) {
                                 <span style={{ fontSize: 12, flexShrink: 0 }}>{meta.icon}</span>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontSize: 11, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-                                    {r.sub && <div style={{ fontSize: 10, color: "rgba(148,163,184,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{r.sub}</div>}
+                                    {sub && <div style={{ fontSize: 10, color: "rgba(148,163,184,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{sub}</div>}
                                 </div>
                                 <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: meta.color, opacity: 0.75, flexShrink: 0 }}>{r.type}</span>
                             </div>
