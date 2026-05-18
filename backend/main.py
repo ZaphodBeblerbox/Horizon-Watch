@@ -9649,6 +9649,21 @@ def _auto_ingest() -> None:
     except Exception as _e:
         print(f"[auto-ingest] Chokepoints seed failed: {_e}")
 
+    # 9. Strategic Zones baseline
+    try:
+        with _SL() as _db:
+            from database import StrategicZone as _SZ
+            sz_count = _db.query(_SZ).count()
+        if sz_count == 0:
+            print("[auto-ingest] StrategicZones: seeding baseline…")
+            from seed_strategic_zones import seed_strategic_zones as _seed_sz
+            stats = _seed_sz()
+            print(f"[auto-ingest] StrategicZones: {stats}")
+        else:
+            print(f"[auto-ingest] StrategicZones: {sz_count} present, ok")
+    except Exception as _e:
+        print(f"[auto-ingest] StrategicZones seed failed: {_e}")
+
     print("[auto-ingest] ✓ complete")
 
 
@@ -13898,6 +13913,34 @@ async def unified_search(
                             "lat": None,
                             "lon": None,
                         })
+
+                if _want("strategic_zone"):
+                    try:
+                        from database import StrategicZone as _SZ
+                        rows = db.query(_SZ).filter(
+                            _SZ.enabled == True,
+                            or_(
+                                _SZ.name.ilike(term),
+                                _SZ.description.ilike(term),
+                                _SZ.zone_type.ilike(term),
+                            )
+                        ).limit(10).all()
+                        for r in rows:
+                            lat = (r.bbox_min_lat + r.bbox_max_lat) / 2
+                            lon = (r.bbox_min_lon + r.bbox_max_lon) / 2
+                            hits.append({
+                                "type": "strategic_zone",
+                                "system_id": r.zone_id,
+                                "name": r.name,
+                                "zone_type": r.zone_type,
+                                "severity_baseline": r.severity_baseline,
+                                "colour": r.colour,
+                                "description": r.description,
+                                "lat": lat,
+                                "lon": lon,
+                            })
+                    except Exception:
+                        pass
         except Exception as ex:
             print(f"[search] db error: {ex}")
         return hits
@@ -13932,7 +13975,7 @@ async def unified_search(
     all_db = db_hits + poi_hits
 
     nom_hits: list = []
-    if _want("location") or _want("city") or _want("country") or len(all_db) < 3:
+    if _want("location") or _want("city") or _want("country") or (len(all_db) < 3 and not _want("strategic_zone")):
         try:
             async with httpx.AsyncClient(
                 timeout=5.0,
@@ -13966,7 +14009,7 @@ async def unified_search(
             return 0
         if r["type"] in ("airport", "port", "chokepoint"):
             return 1
-        if r["type"] in ("cable", "zone", "rule", "poi"):
+        if r["type"] in ("cable", "zone", "rule", "poi", "strategic_zone"):
             return 2
         if r["type"] in ("assessment", "fusion"):
             return 3
@@ -18537,3 +18580,274 @@ def forge_activate_mission(mission_id: str, _forge=Depends(_require_forge)):
         m["active"] = (m["id"] == mission_id)
     _forge_save(_FORGE_MISSION_FILE, missions)
     return {"activated": mission_id}
+
+
+# ── Strategic Zones API ───────────────────────────────────────────────────────
+
+@app.get("/api/strategic-zones")
+def api_list_strategic_zones(
+    zone_type:         str | None = Query(None),
+    severity_baseline: str | None = Query(None),
+    is_baseline:       bool | None = Query(None),
+    enabled_only:      bool        = Query(True),
+):
+    from database import StrategicZone, get_db
+    from sqlalchemy import and_
+    filters = []
+    if enabled_only:
+        filters.append(StrategicZone.enabled == True)
+    if zone_type:
+        filters.append(StrategicZone.zone_type == zone_type.upper())
+    if severity_baseline:
+        filters.append(StrategicZone.severity_baseline == severity_baseline.lower())
+    if is_baseline is not None:
+        filters.append(StrategicZone.is_baseline == is_baseline)
+    with get_db() as db:
+        rows = db.query(StrategicZone).filter(and_(*filters) if filters else True).all()
+    return [_sz_to_dict(r) for r in rows]
+
+
+@app.post("/api/strategic-zones", status_code=201)
+def api_create_strategic_zone(body: dict):
+    import uuid, datetime as _dt
+    from database import StrategicZone, OntologyEntity, get_db
+    coords = body.get("coordinates")
+    if not coords or not isinstance(coords, list):
+        raise HTTPException(status_code=400, detail="coordinates required (list of [lon,lat])")
+    zone_id = body.get("zone_id") or f"SZONE-{uuid.uuid4().hex[:8].upper()}"
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    min_lon, max_lon = min(lons), max(lons)
+    min_lat, max_lat = min(lats), max(lats)
+    geojson = _json.dumps({"type": "Polygon", "coordinates": [coords]})
+    zone = StrategicZone(
+        zone_id           = zone_id,
+        name              = body.get("name", "Unnamed Zone"),
+        zone_type         = (body.get("zone_type") or "CUSTOM").upper(),
+        severity_baseline = body.get("severity_baseline", "medium").lower(),
+        polygon_geojson   = geojson,
+        bbox_min_lon      = min_lon,
+        bbox_min_lat      = min_lat,
+        bbox_max_lon      = max_lon,
+        bbox_max_lat      = max_lat,
+        colour            = body.get("colour", "#FF9500"),
+        description       = body.get("description"),
+        is_baseline       = False,
+        enabled           = True,
+        created_at        = _dt.datetime.utcnow(),
+        zone_metadata     = _json.dumps({"severity_baseline": body.get("severity_baseline", "medium"), "colour": body.get("colour", "#FF9500")}),
+    )
+    with get_db() as db:
+        existing = db.query(StrategicZone).filter_by(zone_id=zone_id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail=f"zone_id '{zone_id}' already exists")
+        db.add(zone)
+        oe = db.query(OntologyEntity).filter_by(system_id=zone_id).first()
+        meta = _json.dumps({"lat": (min_lat + max_lat) / 2, "lon": (min_lon + max_lon) / 2,
+                            "severity_baseline": zone.severity_baseline, "colour": zone.colour,
+                            "description": zone.description, "is_baseline": False})
+        if oe:
+            oe.name = zone.name; oe.infra_type = zone.zone_type; oe.entity_metadata = meta
+        else:
+            db.add(OntologyEntity(system_id=zone_id, entity_type="Strategic Zone",
+                                  name=zone.name, infra_type=zone.zone_type, entity_metadata=meta))
+        db.commit()
+        return _sz_to_dict(db.query(StrategicZone).filter_by(zone_id=zone_id).first())
+
+
+@app.put("/api/strategic-zones/{zone_id}")
+def api_update_strategic_zone(zone_id: str, body: dict):
+    import datetime as _dt
+    from database import StrategicZone, OntologyEntity, get_db
+    with get_db() as db:
+        zone = db.query(StrategicZone).filter_by(zone_id=zone_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' not found")
+        if zone.is_baseline and body.get("coordinates"):
+            raise HTTPException(status_code=403, detail="Cannot change polygon of baseline zones")
+        if "name" in body:
+            zone.name = body["name"]
+        if "zone_type" in body:
+            zone.zone_type = body["zone_type"].upper()
+        if "severity_baseline" in body:
+            zone.severity_baseline = body["severity_baseline"].lower()
+        if "colour" in body:
+            zone.colour = body["colour"]
+        if "description" in body:
+            zone.description = body["description"]
+        if "enabled" in body:
+            zone.enabled = bool(body["enabled"])
+        if "coordinates" in body and not zone.is_baseline:
+            coords = body["coordinates"]
+            lons = [c[0] for c in coords]; lats = [c[1] for c in coords]
+            zone.bbox_min_lon = min(lons); zone.bbox_max_lon = max(lons)
+            zone.bbox_min_lat = min(lats); zone.bbox_max_lat = max(lats)
+            zone.polygon_geojson = _json.dumps({"type": "Polygon", "coordinates": [coords]})
+        zone.updated_at = _dt.datetime.utcnow()
+        oe = db.query(OntologyEntity).filter_by(system_id=zone_id).first()
+        if oe:
+            oe.name = zone.name; oe.infra_type = zone.zone_type
+            oe.entity_metadata = _json.dumps({
+                "lat": (zone.bbox_min_lat + zone.bbox_max_lat) / 2,
+                "lon": (zone.bbox_min_lon + zone.bbox_max_lon) / 2,
+                "severity_baseline": zone.severity_baseline,
+                "colour": zone.colour,
+                "description": zone.description,
+                "is_baseline": zone.is_baseline,
+            })
+        db.commit()
+        return _sz_to_dict(db.query(StrategicZone).filter_by(zone_id=zone_id).first())
+
+
+@app.delete("/api/strategic-zones/{zone_id}")
+def api_delete_strategic_zone(zone_id: str):
+    from database import StrategicZone, get_db
+    with get_db() as db:
+        zone = db.query(StrategicZone).filter_by(zone_id=zone_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' not found")
+        if zone.is_baseline:
+            # Soft-delete: disable baseline zones instead of hard delete
+            zone.enabled = False
+            db.commit()
+            return {"status": "disabled", "zone_id": zone_id}
+        db.delete(zone)
+        db.commit()
+    return {"status": "deleted", "zone_id": zone_id}
+
+
+@app.get("/api/strategic-zones/{zone_id}")
+def api_get_strategic_zone(zone_id: str):
+    from database import StrategicZone, get_db
+    with get_db() as db:
+        zone = db.query(StrategicZone).filter_by(zone_id=zone_id).first()
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' not found")
+    return _sz_to_dict(zone)
+
+
+@app.get("/api/strategic-zones/{zone_id}/signals")
+def api_zone_signals(
+    zone_id: str,
+    limit: int = Query(50, ge=1, le=200),
+):
+    """AIS alerts, news assessments, and fusion events that overlap this zone's bounding box."""
+    from database import StrategicZone, FusionEvent, get_db
+    from sqlalchemy import or_
+    with get_db() as db:
+        zone = db.query(StrategicZone).filter_by(zone_id=zone_id).first()
+        if not zone:
+            raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' not found")
+
+        min_lat, max_lat = zone.bbox_min_lat, zone.bbox_max_lat
+        min_lon, max_lon = zone.bbox_min_lon, zone.bbox_max_lon
+
+        fusions = (
+            db.query(FusionEvent)
+            .filter(
+                FusionEvent.lat.between(min_lat, max_lat),
+                FusionEvent.lon.between(min_lon, max_lon),
+            )
+            .order_by(FusionEvent.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        fusion_hits = [
+            {
+                "signal_type": "fusion",
+                "id": r.fusion_id,
+                "title": r.title,
+                "severity": r.severity,
+                "lat": r.lat,
+                "lon": r.lon,
+                "location_name": r.location_name,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in fusions
+        ]
+
+        # News assessments
+        assessment_hits = []
+        try:
+            from intelligence_schema import IntelligenceAssessment
+            assessments = (
+                db.query(IntelligenceAssessment)
+                .filter(
+                    IntelligenceAssessment.lat.between(min_lat, max_lat),
+                    IntelligenceAssessment.lon.between(min_lon, max_lon),
+                )
+                .order_by(IntelligenceAssessment.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            assessment_hits = [
+                {
+                    "signal_type": "assessment",
+                    "id": r.assessment_id,
+                    "title": r.headline,
+                    "severity": r.severity,
+                    "lat": r.lat,
+                    "lon": r.lon,
+                    "location_name": r.location_name,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in assessments
+            ]
+        except Exception:
+            pass
+
+    # AIS/ADSB alerts from in-memory _forge_alerts
+    alert_hits = []
+    try:
+        for a in _forge_alerts[-500:]:
+            a_lat = a.get("lat"); a_lon = a.get("lng") or a.get("lon")
+            if a_lat is None or a_lon is None:
+                continue
+            if min_lat <= a_lat <= max_lat and min_lon <= a_lon <= max_lon:
+                alert_hits.append({
+                    "signal_type": a.get("source", "alert").lower(),
+                    "id": a.get("id"),
+                    "title": a.get("title") or a.get("rule_name"),
+                    "severity": a.get("severity"),
+                    "lat": a_lat,
+                    "lon": a_lon,
+                    "created_at": a.get("timestamp"),
+                })
+    except Exception:
+        pass
+
+    all_signals = sorted(
+        fusion_hits + assessment_hits + alert_hits,
+        key=lambda x: x.get("created_at") or "",
+        reverse=True,
+    )
+    return {
+        "zone_id": zone_id,
+        "signal_count": len(all_signals),
+        "signals": all_signals[:limit],
+    }
+
+
+def _sz_to_dict(z) -> dict:
+    if z is None:
+        return {}
+    try:
+        coords = _json.loads(z.polygon_geojson).get("coordinates", [[]])[0]
+    except Exception:
+        coords = []
+    return {
+        "zone_id":           z.zone_id,
+        "name":              z.name,
+        "zone_type":         z.zone_type,
+        "severity_baseline": z.severity_baseline,
+        "colour":            z.colour,
+        "description":       z.description,
+        "is_baseline":       z.is_baseline,
+        "enabled":           z.enabled,
+        "coordinates":       coords,
+        "bbox":              [z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat],
+        "lat":               (z.bbox_min_lat + z.bbox_max_lat) / 2,
+        "lon":               (z.bbox_min_lon + z.bbox_max_lon) / 2,
+        "created_at":        z.created_at.isoformat() if z.created_at else None,
+        "updated_at":        z.updated_at.isoformat() if z.updated_at else None,
+    }

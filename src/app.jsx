@@ -1409,6 +1409,7 @@ export default function App() {
                             cityLabelsEnabled={activeWorkspace?.layers?.cityLabels ?? false}
                             cablesEnabled={activeWorkspace?.layers?.cables ?? false}
                             chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
+                            strategicZonesEnabled={activeWorkspace?.layers?.showStrategicZones ?? false}
                             poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                             precisionEventsEnabled={activeWorkspace?.layers?.precisionEvents ?? true}

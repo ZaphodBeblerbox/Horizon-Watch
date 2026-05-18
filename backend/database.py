@@ -407,6 +407,31 @@ class SurgeConfig(Base):
     updated_at              = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class StrategicZone(Base):
+    __tablename__ = "strategic_zones"
+
+    id                 = Column(Integer, primary_key=True)
+    zone_id            = Column(String, unique=True, index=True, nullable=False)   # SZONE-001
+    name               = Column(String, nullable=False)
+    zone_type          = Column(String, nullable=False, index=True)
+    # CONFLICT_ACTIVE | CONFLICT_FROZEN | MILITARY_SENSITIVE | ECONOMIC_CRITICAL
+    # CHOKEPOINT_EXTENDED | NUCLEAR_SENSITIVE | INSTABILITY | CUSTOM
+    severity_baseline  = Column(String, nullable=False, default="medium")          # low/medium/high/critical
+    polygon_geojson    = Column(Text, nullable=False)                              # GeoJSON Polygon/MultiPolygon string
+    bbox_min_lon       = Column(Float, nullable=False, default=0.0)
+    bbox_min_lat       = Column(Float, nullable=False, default=0.0)
+    bbox_max_lon       = Column(Float, nullable=False, default=0.0)
+    bbox_max_lat       = Column(Float, nullable=False, default=0.0)
+    colour             = Column(String, nullable=False, default="#FF9500")
+    description        = Column(Text, nullable=True)
+    is_baseline        = Column(Boolean, default=False)
+    enabled            = Column(Boolean, default=True)
+    created_at         = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at         = Column(DateTime, default=datetime.datetime.utcnow,
+                                onupdate=datetime.datetime.utcnow)
+    zone_metadata      = Column(Text, nullable=True)                               # JSON string
+
+
 class SurgeEvent(Base):
     __tablename__ = "surge_events"
     id                      = Column(Integer, primary_key=True)

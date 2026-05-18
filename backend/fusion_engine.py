@@ -75,11 +75,19 @@ class FusionEngine:
           assessment_id (nullable), alert_id (nullable), rule_id, rule_name, summary
         """
         signal.setdefault("timestamp", datetime.datetime.utcnow())
+
+        # Attach relevance score from strategic zone context
+        try:
+            from relevance_scorer import relevance_scorer as _rs
+            signal.setdefault("relevance_score", _rs.score_signal(signal))
+        except Exception:
+            signal.setdefault("relevance_score", 0)
+
         self._log_signal(signal)
 
         geo_key = self._resolve_geo_key(signal)
         print(f"[FUSION] Signal received: {signal.get('domain')} | "
-              f"{signal.get('signal_id')} | geo_key={geo_key}")
+              f"{signal.get('signal_id')} | geo_key={geo_key} | relevance={signal.get('relevance_score', 0)}")
         self._add_signal(geo_key, signal)
         current = self.active_signals.get(geo_key, [])
         domains_now = set(s["domain"] for s in current)
@@ -153,20 +161,25 @@ class FusionEngine:
         if not signals:
             return
 
-        domains = set(s["domain"] for s in signals)
-        print(f"[FUSION] Evaluating {geo_key}: {len(signals)} signals, {len(domains)} domains={domains}")
+        # Prioritise strategically relevant signals when scoring
+        high_relevance = [s for s in signals if s.get("relevance_score", 0) >= 30]
+        candidate_pool = high_relevance if len(high_relevance) >= self.min_signals else signals
+
+        domains = set(s["domain"] for s in candidate_pool)
+        print(f"[FUSION] Evaluating {geo_key}: {len(signals)} signals ({len(high_relevance)} high-relevance), "
+              f"{len(domains)} domains={domains}")
         if len(domains) < self.min_domains:
             print(f"[FUSION] Not enough domains ({len(domains)} < {self.min_domains}), skipping")
             return
-        if len(signals) < self.min_signals:
-            print(f"[FUSION] Not enough signals ({len(signals)} < {self.min_signals}), skipping")
+        if len(candidate_pool) < self.min_signals:
+            print(f"[FUSION] Not enough signals ({len(candidate_pool)} < {self.min_signals}), skipping")
             return
 
         existing = self._find_existing_fusion(geo_key)
         if existing:
-            self._update_fusion(existing, signals, geo_key, domains)
+            self._update_fusion(existing, candidate_pool, geo_key, domains)
         else:
-            self._create_fusion(signals, geo_key, domains)
+            self._create_fusion(candidate_pool, geo_key, domains)
 
     def _find_existing_fusion(self, geo_key: str):
         """Return active in-memory fusion for geo_key, or None."""

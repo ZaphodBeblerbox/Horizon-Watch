@@ -23,6 +23,7 @@ import GlobeThreatHeatmapLayer  from "../globe/GlobeThreatHeatmapLayer.jsx"
 import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
+import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -84,6 +85,7 @@ export default function GlobeView({
     bordersEnabled   = false,
     cablesEnabled    = false,
     chokepointsEnabled = false,
+    strategicZonesEnabled = false,
     poiEnabled       = false,
     eventsEnabled    = true,
     cityLabelsEnabled = false,
@@ -337,6 +339,7 @@ export default function GlobeView({
                 <GlobeCablesLayer         enabled={cablesEnabled} />
 
                 {/* ── Point / entity layers ───────────────────────────────────── */}
+                <GlobeStrategicZonesLayer enabled={strategicZonesEnabled} />
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
                 <GlobePOILayer          enabled={poiEnabled} />
                 <GlobeEventsLayer       enabled={eventsEnabled} precisionEnabled={precisionEventsEnabled} bounds={viewBounds} minRelevance={eventsMinRelevance} />

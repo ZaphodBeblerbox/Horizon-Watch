@@ -189,6 +189,12 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
                 onToggle={() => onToggle("poi")}
             />
             <LayerRow
+                label="Strategic Zones"
+                hint="Conflict zones · nuclear corridors · chokepoints"
+                toggled={active.showStrategicZones ?? false}
+                onToggle={() => onToggle("showStrategicZones")}
+            />
+            <LayerRow
                 label="Chokepoints"
                 hint="Strategic maritime passages"
                 toggled={active.chokepoints}

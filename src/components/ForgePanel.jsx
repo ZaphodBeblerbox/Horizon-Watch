@@ -1345,6 +1345,7 @@ const FORGE_NAV = [
     { ws: "news-source",        label: "News Feed",             color: "#FF9500", desc: "RSS feeds · article ingestion · SURGE surge detection settings" },
     { ws: "rule-logic",         label: "Rule Logic",            color: "#fb923c", desc: "Forge rules · escalation chains · connections" },
     { ws: "surveillance-zones", label: "Surveillance Zones",    color: "#30D158", desc: "Sentinel satellite scan zones · zone analytics" },
+    { ws: "strategic-zones",    label: "Strategic Zones",       color: "#FF3B30", desc: "Conflict zones · interest areas · relevance scoring · baseline zones" },
     { ws: "ontology",           label: "Entity Ontology",       color: "#60a5fa", desc: "Intelligence entity graph · cables · chokepoints · actors" },
 ]
 
@@ -1406,6 +1407,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "news-detector":   return <DetectorWorkspace source="NEWS" />
         case "ml-detector":     return <MLDetectorWorkspace />
         case "surveillance-zones": return <SurveillanceZonesWorkspace />
+        case "strategic-zones":    return <StrategicZonesWorkspace />
         case "correlation-engine": return <CorrelationEngineWorkspace />
         case "brain":           return <BrainWorkspace brainStatus={brainStatus} />
         case "rule-logic":      return <RuleLogicWorkspace isMobile={false} />
@@ -1425,6 +1427,208 @@ function SimpleInfo({ title, body }) {
                 <div style={{ color: "#e2e8f0", fontSize: 15, fontWeight: 600, marginBottom: 10 }}>{title}</div>
                 <div style={{ color: "#475569", fontSize: 13, lineHeight: 1.6 }}>{body}</div>
             </div>
+        </WorkspaceBody>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STRATEGIC ZONES WORKSPACE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ZONE_TYPE_LABELS = {
+    CONFLICT_ACTIVE:    "Active Conflict",
+    CONFLICT_FROZEN:    "Frozen Conflict",
+    MILITARY_SENSITIVE: "Military Sensitive",
+    ECONOMIC_CRITICAL:  "Economic Critical",
+    CHOKEPOINT_EXTENDED:"Chokepoint Extended",
+    NUCLEAR_SENSITIVE:  "Nuclear Sensitive",
+    INSTABILITY:        "Instability",
+    CUSTOM:             "Custom",
+}
+const SEVERITY_COLOURS = {
+    critical: "#FF3B30",
+    high:     "#FF9500",
+    medium:   "#FFCC00",
+    low:      "#34C759",
+}
+
+function StrategicZonesWorkspace() {
+    const [zones, setZones]       = useState([])
+    const [loading, setLoading]   = useState(true)
+    const [filter, setFilter]     = useState("all")
+    const [creating, setCreating] = useState(false)
+    const [newZone, setNewZone]   = useState({ name: "", zone_type: "CUSTOM", severity_baseline: "medium", colour: "#FF9500", description: "" })
+    const [coordStr, setCoordStr] = useState("")
+    const [saveErr, setSaveErr]   = useState("")
+
+    const load = () => {
+        setLoading(true)
+        fetch(`${apiBase}/api/strategic-zones?enabled_only=false`)
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setZones(d); setLoading(false) })
+            .catch(() => setLoading(false))
+    }
+    useEffect(() => { load() }, [])
+
+    const filtered = filter === "all" ? zones : zones.filter(z => z.zone_type === filter)
+    const grouped  = {}
+    for (const z of filtered) {
+        const k = z.zone_type || "CUSTOM"
+        if (!grouped[k]) grouped[k] = []
+        grouped[k].push(z)
+    }
+
+    const toggleEnabled = (zone) => {
+        fetch(`${apiBase}/api/strategic-zones/${zone.zone_id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: !zone.enabled }),
+        }).then(() => load())
+    }
+
+    const handleCreate = () => {
+        setSaveErr("")
+        let coords
+        try {
+            coords = JSON.parse(coordStr)
+            if (!Array.isArray(coords) || coords.length < 4) throw new Error("Need ≥ 4 points")
+        } catch (e) {
+            setSaveErr("Invalid coordinates JSON: " + e.message)
+            return
+        }
+        fetch(`${apiBase}/api/strategic-zones`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...newZone, coordinates: coords }),
+        })
+            .then(async r => {
+                if (!r.ok) { const j = await r.json(); throw new Error(j.detail || r.status) }
+                return r.json()
+            })
+            .then(() => { setCreating(false); load() })
+            .catch(e => setSaveErr(e.message))
+    }
+
+    return (
+        <WorkspaceBody>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>Strategic Zones</div>
+                <button onClick={() => setCreating(c => !c)} style={{
+                    background: creating ? "rgba(255,59,48,0.15)" : "rgba(255,59,48,0.1)",
+                    border: "1px solid rgba(255,59,48,0.35)", borderRadius: 5,
+                    color: "#FF3B30", fontSize: 11, padding: "4px 12px", cursor: "pointer",
+                }}>
+                    {creating ? "Cancel" : "+ New Zone"}
+                </button>
+            </div>
+
+            {creating && (
+                <div style={{ background: "rgba(17,24,39,0.8)", border: "1px solid rgba(255,59,48,0.2)", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                    <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>New Strategic Zone</div>
+                    {[
+                        { key: "name",              label: "Name",        type: "text"  },
+                        { key: "description",       label: "Description", type: "text"  },
+                        { key: "colour",            label: "Colour",      type: "color" },
+                    ].map(({ key, label, type }) => (
+                        <div key={key} style={{ marginBottom: 8 }}>
+                            <div style={{ color: "#64748b", fontSize: 11, marginBottom: 3 }}>{label}</div>
+                            <input type={type} value={newZone[key]} onChange={e => setNewZone(z => ({ ...z, [key]: e.target.value }))}
+                                style={{ width: "100%", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }} />
+                        </div>
+                    ))}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                        <div>
+                            <div style={{ color: "#64748b", fontSize: 11, marginBottom: 3 }}>Type</div>
+                            <select value={newZone.zone_type} onChange={e => setNewZone(z => ({ ...z, zone_type: e.target.value }))}
+                                style={{ width: "100%", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }}>
+                                {Object.entries(ZONE_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <div style={{ color: "#64748b", fontSize: 11, marginBottom: 3 }}>Severity</div>
+                            <select value={newZone.severity_baseline} onChange={e => setNewZone(z => ({ ...z, severity_baseline: e.target.value }))}
+                                style={{ width: "100%", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }}>
+                                {["critical","high","medium","low"].map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                        <div style={{ color: "#64748b", fontSize: 11, marginBottom: 3 }}>Coordinates (JSON array of [lon,lat] pairs)</div>
+                        <textarea value={coordStr} onChange={e => setCoordStr(e.target.value)} rows={3}
+                            placeholder='[[lon1,lat1],[lon2,lat2],...]'
+                            style={{ width: "100%", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 11, resize: "vertical", fontFamily: "monospace" }} />
+                    </div>
+                    {saveErr && <div style={{ color: "#FF3B30", fontSize: 11, marginBottom: 8 }}>{saveErr}</div>}
+                    <button onClick={handleCreate} style={{
+                        background: "rgba(255,59,48,0.15)", border: "1px solid rgba(255,59,48,0.4)", borderRadius: 5,
+                        color: "#FF3B30", fontSize: 11, padding: "5px 14px", cursor: "pointer",
+                    }}>Save Zone</button>
+                </div>
+            )}
+
+            <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+                {["all", ...Object.keys(ZONE_TYPE_LABELS)].map(k => (
+                    <button key={k} onClick={() => setFilter(k)} style={{
+                        background: filter === k ? "rgba(255,59,48,0.15)" : "rgba(30,41,59,0.5)",
+                        border: `1px solid ${filter === k ? "rgba(255,59,48,0.4)" : "rgba(255,255,255,0.08)"}`,
+                        borderRadius: 4, color: filter === k ? "#FF6B6B" : "#64748b",
+                        fontSize: 10, padding: "3px 8px", cursor: "pointer",
+                    }}>
+                        {k === "all" ? "All" : ZONE_TYPE_LABELS[k]}
+                    </button>
+                ))}
+            </div>
+
+            {loading ? (
+                <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div>
+            ) : (
+                Object.entries(grouped).map(([type, zlist]) => (
+                    <div key={type} style={{ marginBottom: 18 }}>
+                        <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", marginBottom: 6, textTransform: "uppercase" }}>
+                            {ZONE_TYPE_LABELS[type] || type}
+                        </div>
+                        {zlist.map(z => (
+                            <div key={z.zone_id} style={{
+                                background: "rgba(17,24,39,0.7)", border: `1px solid rgba(255,255,255,0.06)`,
+                                borderLeft: `3px solid ${z.colour || "#FF9500"}`, borderRadius: 5,
+                                padding: "9px 12px", marginBottom: 6,
+                                opacity: z.enabled ? 1 : 0.45,
+                            }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                                            <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{z.name}</span>
+                                            {z.is_baseline && (
+                                                <span style={{ color: "#64748b", fontSize: 9, border: "1px solid rgba(100,116,139,0.3)", borderRadius: 3, padding: "0 4px" }}>BASELINE</span>
+                                            )}
+                                            <span style={{
+                                                color: SEVERITY_COLOURS[z.severity_baseline] || "#94a3b8",
+                                                fontSize: 9, fontWeight: 700,
+                                            }}>{z.severity_baseline?.toUpperCase()}</span>
+                                        </div>
+                                        {z.description && (
+                                            <div style={{ color: "#475569", fontSize: 11, lineHeight: 1.4 }}>
+                                                {z.description.length > 120 ? z.description.slice(0, 120) + "…" : z.description}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <button onClick={() => toggleEnabled(z)} style={{
+                                        marginLeft: 10, background: z.enabled ? "rgba(52,199,89,0.1)" : "rgba(255,255,255,0.05)",
+                                        border: `1px solid ${z.enabled ? "rgba(52,199,89,0.3)" : "rgba(255,255,255,0.1)"}`,
+                                        borderRadius: 4, color: z.enabled ? "#34C759" : "#475569",
+                                        fontSize: 10, padding: "3px 8px", cursor: "pointer", whiteSpace: "nowrap",
+                                    }}>
+                                        {z.enabled ? "Enabled" : "Disabled"}
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ))
+            )}
+            {!loading && zones.length === 0 && (
+                <div style={{ color: "#475569", fontSize: 12 }}>No zones found. Click "+ New Zone" to create one.</div>
+            )}
         </WorkspaceBody>
     )
 }
