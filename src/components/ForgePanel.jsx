@@ -1394,7 +1394,7 @@ function ForgeLandingNav({ brainStatus, onNavigate, onPipeline }) {
     )
 }
 
-function WorkspaceRouter({ workspace, node, brainStatus }) {
+function WorkspaceRouter({ workspace, node, brainStatus, onEnableRegionalScan }) {
     switch (workspace) {
         case "ais-source":      return <AISSourceWorkspace />
         case "adsb-source":     return <ADSBSourceWorkspace />
@@ -1406,7 +1406,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "adsb-detector":   return <DetectorWorkspace source="ADSB" />
         case "news-detector":   return <DetectorWorkspace source="NEWS" />
         case "ml-detector":     return <MLDetectorWorkspace />
-        case "surveillance-zones": return <SurveillanceZonesWorkspace />
+        case "surveillance-zones": return <SurveillanceZonesWorkspace onEnableRegionalScan={onEnableRegionalScan} />
         case "strategic-zones":    return <StrategicZonesWorkspace />
         case "correlation-engine": return <CorrelationEngineWorkspace />
         case "brain":           return <BrainWorkspace brainStatus={brainStatus} />
@@ -3637,7 +3637,7 @@ function ScanDetailPanel({ zone, scan, onClose }) {
     )
 }
 
-function SurveillanceZonesWorkspace() {
+function SurveillanceZonesWorkspace({ onEnableRegionalScan }) {
     const [zones, setZones] = useState([])
     const [showCreate, setShowCreate] = useState(false)
     const [expandedZone, setExpandedZone] = useState(null)
@@ -3722,6 +3722,8 @@ function SurveillanceZonesWorkspace() {
                             No surveillance zones configured. Create one to start scheduled Sentinel-2 scanning.
                         </div>
                     )}
+
+                    <RegionalScansSection onViewOnGlobe={onEnableRegionalScan} />
 
                     {zones.map(zone => {
                         const priColor = PRIORITY_COLORS[zone.priority] || "#94a3b8"
@@ -3909,6 +3911,313 @@ function SurveillanceZonesWorkspace() {
             )}
         </div>
     )
+}
+
+// ── Regional Scans ────────────────────────────────────────────────────────────
+
+const PHASE_STEPS = ["acquisition", "spectral", "detection", "vision", "report"]
+const PHASE_PCT   = { acquisition: 10, spectral: 30, detection: 50, vision: 70, report: 90 }
+
+function ScanStatusBadge({ status, phase }) {
+    if (status === "complete")  return <span style={sBadge("#34C759")}>COMPLETE</span>
+    if (status === "failed")    return <span style={sBadge("#FF3B30")}>FAILED</span>
+    if (status === "running")   return <span style={sBadge("#FFCC00", true)}>RUNNING</span>
+    return <span style={sBadge("#94a3b8")}>PENDING</span>
+}
+
+function sBadge(color, pulse = false) {
+    return {
+        padding: "1px 7px", borderRadius: 3,
+        fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
+        background: `rgba(${hexRgbF(color)},0.15)`,
+        border: `1px solid rgba(${hexRgbF(color)},0.4)`,
+        color,
+        animation: pulse ? "rscan-pulse 1.5s ease-in-out infinite" : "none",
+    }
+}
+
+function hexRgbF(hex) {
+    const h = hex.replace("#", "")
+    const n = parseInt(h, 16)
+    return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`
+}
+
+function ScanReportModal({ report, jobMeta, onClose }) {
+    const det_count = jobMeta?.detections_flagged ?? 0
+    return (
+        <div style={{
+            position: "fixed", inset: 0, zIndex: 12000,
+            background: "rgba(0,0,0,0.72)", display: "flex",
+            alignItems: "center", justifyContent: "center",
+        }} onClick={onClose}>
+            <div style={{
+                background: "#0d1627", borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.1)",
+                width: "min(760px, 94vw)", maxHeight: "82vh",
+                display: "flex", flexDirection: "column",
+                boxShadow: "0 24px 60px rgba(0,0,0,0.7)",
+            }} onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div style={{
+                    padding: "14px 18px 12px",
+                    borderBottom: "1px solid rgba(255,255,255,0.08)",
+                    display: "flex", alignItems: "center", gap: 10,
+                }}>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#e8edf2" }}>
+                            UAE Intelligence Report
+                        </div>
+                        <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>
+                            {det_count} flagged detections · {jobMeta?.image_date?.slice(0, 10) || ""}
+                        </div>
+                    </div>
+                    <button onClick={onClose} style={{
+                        background: "none", border: "none", color: "rgba(255,255,255,0.4)",
+                        cursor: "pointer", fontSize: 18, lineHeight: 1,
+                    }}>×</button>
+                </div>
+                {/* Report body */}
+                <div style={{
+                    flex: 1, overflowY: "auto", padding: "16px 20px 20px",
+                    fontSize: 12, lineHeight: 1.7, color: "rgba(232,237,242,0.82)",
+                    whiteSpace: "pre-wrap", fontFamily: "monospace",
+                }}>
+                    {report || "No report available."}
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function RegionalScansSection({ onViewOnGlobe }) {
+    const [scans, setScans]           = useState([])
+    const [triggering, setTriggering] = useState(false)
+    const [showReport, setShowReport] = useState(false)
+    const [toast, setToast]           = useState("")
+
+    const load = () =>
+        fetch(`${API}/api/regional-scans`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setScans(Array.isArray(d) ? d : []))
+            .catch(() => {})
+
+    useEffect(() => {
+        load()
+        // Poll every 15s when a scan is running
+        const id = setInterval(load, 15000)
+        return () => clearInterval(id)
+    }, [])
+
+    const latest  = scans[0] || null
+    const running = latest?.status === "running"
+    const pct     = running ? (PHASE_PCT[latest?.phase] || 10) : (latest?.status === "complete" ? 100 : 0)
+
+    const triggerScan = async () => {
+        setTriggering(true)
+        try {
+            const r = await fetch(`${API}/api/regional-scans/trigger`, {
+                method: "POST",
+                headers: { ...forgeHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ region_name: "UAE" }),
+            })
+            const d = await r.json()
+            setToast(d.message || `Scan triggered: ${d.job_id}`)
+            setTimeout(() => setToast(""), 4000)
+            load()
+        } catch (e) {
+            setToast("Trigger failed")
+            setTimeout(() => setToast(""), 3000)
+        } finally {
+            setTriggering(false)
+        }
+    }
+
+    const openReport = () => setShowReport(true)
+    const viewOnGlobe = () => {
+        if (onViewOnGlobe) onViewOnGlobe()
+        window.dispatchEvent(new CustomEvent("akili:fly-to", {
+            detail: { lat: 24.3, lon: 54.0, zoom: 6, duration: 2500 },
+        }))
+    }
+
+    const relTime = (iso) => {
+        if (!iso) return "—"
+        const diff = Date.now() - new Date(iso).getTime()
+        const h    = Math.floor(diff / 3600000)
+        const d    = Math.floor(h / 24)
+        if (d > 0)  return `${d}d ago`
+        if (h > 0)  return `${h}h ago`
+        return "just now"
+    }
+
+    return (
+        <div style={{ marginTop: 18 }}>
+            {/* Section header */}
+            <div style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: "0.1em",
+                color: "#4A9EE0", textTransform: "uppercase",
+                borderBottom: "1px solid rgba(45,110,181,0.25)",
+                paddingBottom: 5, marginBottom: 10,
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+                <span>Regional Scans</span>
+                <span style={{ color: "#334155", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                    Automated 5-day Sentinel-2 analysis
+                </span>
+            </div>
+
+            {toast && (
+                <div style={{
+                    fontSize: 10, color: "#4ade80", background: "rgba(74,222,128,0.08)",
+                    border: "1px solid rgba(74,222,128,0.2)", borderRadius: 5,
+                    padding: "5px 10px", marginBottom: 8,
+                }}>
+                    {toast}
+                </div>
+            )}
+
+            {/* Scan card */}
+            <div style={{
+                background: "#0d1627",
+                border: `1px solid ${running ? "rgba(255,204,0,0.25)" : "rgba(255,255,255,0.07)"}`,
+                borderRadius: 7, padding: "11px 13px",
+            }}>
+                {/* Row 1: region + status */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "#e8edf2", flex: 1 }}>
+                        UAE
+                    </span>
+                    {latest ? <ScanStatusBadge status={latest.status} phase={latest.phase} /> : (
+                        <span style={{ fontSize: 9, color: "#475569" }}>No scans yet</span>
+                    )}
+                </div>
+
+                {/* Progress bar when running */}
+                {running && (
+                    <div style={{ marginBottom: 8 }}>
+                        <div style={{
+                            height: 3, borderRadius: 2,
+                            background: "rgba(255,255,255,0.06)", overflow: "hidden",
+                        }}>
+                            <div style={{
+                                height: "100%", borderRadius: 2,
+                                width: `${pct}%`,
+                                background: "linear-gradient(90deg, #FFCC00, #FF9500)",
+                                transition: "width 1s ease",
+                            }} />
+                        </div>
+                        <div style={{ fontSize: 9, color: "#FFCC00", marginTop: 4, textTransform: "uppercase" }}>
+                            Phase: {latest.phase} · Running — this may take several hours
+                        </div>
+                    </div>
+                )}
+
+                {/* Meta */}
+                {latest && (
+                    <div style={{ fontSize: 10, color: "#475569", display: "flex", gap: 12, marginBottom: 7 }}>
+                        <span>Last scan: {relTime(latest.completed_at || latest.started_at)}</span>
+                        {latest.status === "complete" && (
+                            <span style={{ color: "#64748b" }}>
+                                {latest.detections_flagged} flagged / {latest.detections_total} total
+                            </span>
+                        )}
+                    </div>
+                )}
+
+                {/* Summary */}
+                {latest?.report_summary && (
+                    <div style={{
+                        fontSize: 11, lineHeight: 1.5, color: "rgba(232,237,242,0.6)",
+                        marginBottom: 9,
+                        display: "-webkit-box", WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical", overflow: "hidden",
+                    }}>
+                        {latest.report_summary}
+                    </div>
+                )}
+
+                {/* Error */}
+                {latest?.status === "failed" && latest?.error_message && (
+                    <div style={{ fontSize: 10, color: "#FF3B30", marginBottom: 8 }}>
+                        Error: {latest.error_message.slice(0, 80)}
+                    </div>
+                )}
+
+                {/* Actions */}
+                <div style={{ display: "flex", gap: 5 }}>
+                    {latest?.status === "complete" && latest?.claude_report !== null && (
+                        <button onClick={openReport} style={scanActionBtn("#4A9EE0")}>
+                            View Report
+                        </button>
+                    )}
+                    {latest?.status === "complete" && (
+                        <button onClick={viewOnGlobe} style={scanActionBtn("#34C759")}>
+                            View on Globe
+                        </button>
+                    )}
+                    <button
+                        onClick={triggerScan}
+                        disabled={triggering || running}
+                        style={scanActionBtn(running || triggering ? "#334155" : "#5856D6")}
+                    >
+                        {running ? "Running…" : triggering ? "Starting…" : "Scan Now"}
+                    </button>
+                </div>
+            </div>
+
+            {/* Past scans list (collapsed) */}
+            {scans.length > 1 && (
+                <div style={{ marginTop: 6 }}>
+                    {scans.slice(1, 4).map(s => (
+                        <div key={s.job_id} style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)",
+                            fontSize: 10, color: "#475569",
+                        }}>
+                            <span style={{ flex: 1 }}>{s.job_id}</span>
+                            <ScanStatusBadge status={s.status} />
+                            <span>{relTime(s.completed_at)}</span>
+                            <span style={{ color: "#334155" }}>
+                                {s.detections_flagged ?? "—"} det
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {showReport && latest && (
+                <ReportModalLoader jobId={latest.job_id} jobMeta={latest} onClose={() => setShowReport(false)} />
+            )}
+
+            <style>{`
+                @keyframes rscan-pulse {
+                    0%,100% { opacity: 1 }
+                    50% { opacity: 0.5 }
+                }
+            `}</style>
+        </div>
+    )
+}
+
+function ReportModalLoader({ jobId, jobMeta, onClose }) {
+    const [report, setReport] = useState(null)
+    useEffect(() => {
+        fetch(`${API}/api/regional-scans/${jobId}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => setReport(d?.claude_report ?? "No report available."))
+            .catch(() => setReport("Failed to load report."))
+    }, [jobId])
+    return <ScanReportModal report={report} jobMeta={jobMeta} onClose={onClose} />
+}
+
+function scanActionBtn(color) {
+    return {
+        flex: 1, padding: "5px 0", borderRadius: 5, fontSize: 10, fontWeight: 500,
+        background: `rgba(${hexRgbF(color)},0.12)`,
+        border: `1px solid rgba(${hexRgbF(color)},0.28)`,
+        color, cursor: "pointer", fontFamily: "inherit",
+        opacity: 1, transition: "opacity 0.15s",
+    }
 }
 
 function MLDetectorWorkspace() {
@@ -5465,7 +5774,7 @@ function ForgeMobileView({ onClose }) {
     )
 }
 
-export default function ForgePanel({ user, isMobile = false, onClose }) {
+export default function ForgePanel({ user, isMobile = false, onClose, onEnableRegionalScan }) {
     const [brainStatus, setBrainStatus]   = useState(null)
     const [activeWorkspace, setActiveWorkspace] = useState(null)
     const [activeNode, setActiveNode]     = useState(null)
@@ -5524,7 +5833,7 @@ export default function ForgePanel({ user, isMobile = false, onClose }) {
             <ForgeHeader brainStatus={brainStatus} activeNode={activeNode} onBack={goBack} />
             {activeWorkspace ? (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <WorkspaceRouter workspace={activeWorkspace} node={activeNode} brainStatus={brainStatus} />
+                    <WorkspaceRouter workspace={activeWorkspace} node={activeNode} brainStatus={brainStatus} onEnableRegionalScan={onEnableRegionalScan} />
                 </div>
             ) : showPipeline ? (
                 <div style={{ flex: 1, position: "relative" }}>

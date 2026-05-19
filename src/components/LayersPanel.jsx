@@ -207,6 +207,12 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
                 toggled={active.threatHeatmap ?? false}
                 onToggle={() => onToggle("threatHeatmap")}
             />
+            <LayerRow
+                label="UAE Regional Scan"
+                hint="Flagged changes from latest Sentinel-2 scan"
+                toggled={active.showRegionalScan ?? false}
+                onToggle={() => onToggle("showRegionalScan")}
+            />
 
             <SectionHeader label="Infrastructure" />
             <LayerRow

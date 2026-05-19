@@ -1279,7 +1279,7 @@ def generate_sequence(
 
     logger.info("[DIRECTOR] Calling Claude for intent: %s", intent[:80])
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=20000,
         timeout=180,  # 3-minute hard timeout — prevents indefinite hang
         system=SYSTEM_PROMPT,

@@ -791,6 +791,13 @@ export default function App() {
         })
     }, [activeWorkspaceId])
 
+    const handleEnableRegionalScan = useCallback(() => {
+        handleLayersChange({
+            ...(activeWorkspace?.layers ?? {}),
+            showRegionalScan: true,
+        })
+    }, [handleLayersChange, activeWorkspace])
+
     // ── Tab management ────────────────────────────────────────────────────────
     const switchTab = useCallback((id) => {
         setActiveTabId(prev => {
@@ -1432,6 +1439,7 @@ export default function App() {
                             overwatchDrawActive={overwatchDrawActive}
                             onOverwatchBounds={handleOverwatchBounds}
                             satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
+                            regionalScanEnabled={activeWorkspace?.layers?.showRegionalScan ?? false}
                             directorScene={directorScene}
                             autoModeEnabled={showAutoMode}
                         />
@@ -1567,6 +1575,7 @@ export default function App() {
                                 user={currentUser}
                                 isMobile={isMobile}
                                 onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
+                                onEnableRegionalScan={handleEnableRegionalScan}
                             />
                         </ForgeGate>
                     </div>

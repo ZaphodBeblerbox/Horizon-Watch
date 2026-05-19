@@ -22,6 +22,7 @@ import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
+import GlobeRegionalScanLayer   from "../globe/GlobeRegionalScanLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -105,6 +106,7 @@ export default function GlobeView({
     eventsMinRelevance = 4,
     precisionEventsEnabled = true,
     autoModeEnabled = false,
+    regionalScanEnabled = false,
     // Director Mode scene (null when inactive)
     directorScene = null,
     // Data props (optional — GlobeView fetches internally when null)
@@ -426,6 +428,9 @@ export default function GlobeView({
 
                 {/* ── Threat heatmap layer ─────────────────────────────────────── */}
                 <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />
+
+                {/* ── UAE Regional Scan detections ─────────────────────────────── */}
+                <GlobeRegionalScanLayer enabled={regionalScanEnabled} />
 
                 {/* ── Passive auto mode ────────────────────────────────────────── */}
                 <GlobeAutoMode enabled={autoModeEnabled} isMobile={isMobile} />

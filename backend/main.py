@@ -3115,6 +3115,32 @@ from services.aircraft_photo_service import get_photo  as _get_photo
 from services.vessel_photo_service   import get_photo  as _get_vessel_photo
 import services.director_service as _director_svc
 
+from regional_scanner import regional_scanner as _regional_scanner
+from database import RegionalScanJob as _RegionalScanJob, RegionalScanDetection as _RegionalScanDetection
+
+# Wire YOLO + broadcast into scanner so it can use main.py infrastructure
+def _rscan_yolo_fn(bbox, band_type, db):
+    return _run_overwatch_detection_sync(bbox, band_type=band_type, db=db)
+
+_regional_scanner.yolo_fn      = _rscan_yolo_fn
+_regional_scanner.broadcast_fn = _broadcast_push
+
+UAE_REGION = {
+    "name":                    "UAE",
+    "bbox": {
+        "min_lon": 51.5,
+        "min_lat": 22.5,
+        "max_lon": 56.5,
+        "max_lat": 26.2,
+    },
+    "tile_size_deg":           0.15,
+    "spectral_change_threshold": 0.12,
+    "scan_interval_days":      5,
+    "max_cloud_cover":         20,
+}
+
+_REGION_MAP = {"UAE": UAE_REGION}
+
 @app.get("/api/aviation/test")
 async def aviation_test():
     """Smoke-test endpoint — confirms aviation routes are registered."""
@@ -3342,7 +3368,7 @@ async def director_generate(
 
     def _call_claude():
         msg = client.messages.create(
-            model="claude-opus-4-20250514",
+            model="claude-opus-4-7",
             max_tokens=16000,
             timeout=180,
             system=_BRIEFING_SYSTEM,
@@ -3363,6 +3389,8 @@ async def director_generate(
         )
     except asyncio.TimeoutError:
         raise HTTPException(504, "Briefing generation timed out")
+    except Exception as _claude_err:
+        raise HTTPException(502, f"Briefing generation failed: {_claude_err}")
 
     # Parse JSON
     segments = _parse_briefing_json(raw)
@@ -3910,6 +3938,199 @@ async def director_transcript(seq_id: str):
     text = _director_svc.sequence_to_transcript(seq)
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse(text)
+
+
+# ── Regional Intelligence Scans ──────────────────────────────────────────────
+
+def _rscan_to_dict(job: "_RegionalScanJob") -> dict:
+    return {
+        "job_id":             job.job_id,
+        "region_name":        job.region_name,
+        "status":             job.status,
+        "phase":              job.phase,
+        "created_at":         job.created_at.isoformat() if job.created_at else None,
+        "started_at":         job.started_at.isoformat() if job.started_at else None,
+        "completed_at":       job.completed_at.isoformat() if job.completed_at else None,
+        "image_date":         job.image_date.isoformat() if job.image_date else None,
+        "baseline_date":      job.baseline_date.isoformat() if job.baseline_date else None,
+        "total_tiles":        job.total_tiles,
+        "flagged_tiles":      job.flagged_tiles,
+        "detections_total":   job.detections_total,
+        "detections_flagged": job.detections_flagged,
+        "report_summary":     job.report_summary,
+        "error_message":      job.error_message,
+    }
+
+
+def _rsdet_to_geojson_feature(d: "_RegionalScanDetection") -> dict:
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [d.centroid_lon, d.centroid_lat]},
+        "properties": {
+            "detection_id":             d.detection_id,
+            "job_id":                   d.job_id,
+            "region_name":              d.region_name,
+            "detection_type":           d.detection_type,
+            "change_type":              d.change_type,
+            "confidence":               d.confidence,
+            "centroid_lat":             d.centroid_lat,
+            "centroid_lon":             d.centroid_lon,
+            "bbox_min_lon":             d.bbox_min_lon,
+            "bbox_min_lat":             d.bbox_min_lat,
+            "bbox_max_lon":             d.bbox_max_lon,
+            "bbox_max_lat":             d.bbox_max_lat,
+            "nearest_asset_type":       d.nearest_asset_type,
+            "nearest_asset_name":       d.nearest_asset_name,
+            "nearest_asset_distance_km":d.nearest_asset_distance_km,
+            "in_strategic_zone":        d.in_strategic_zone,
+            "spectral_change_score":    d.spectral_change_score,
+            "yolo_confirmed":           d.yolo_confirmed,
+            "yolo_object_type":         d.yolo_object_type,
+            "claude_vision_analysis":   d.claude_vision_analysis,
+            "claude_severity":          d.claude_severity,
+            "claude_threat_assessment": d.claude_threat_assessment,
+            "image_date":               d.image_date.isoformat() if d.image_date else None,
+            "baseline_date":            d.baseline_date.isoformat() if d.baseline_date else None,
+            "suppressed":               d.suppressed,
+        },
+    }
+
+
+@app.post("/api/regional-scans/trigger")
+async def regional_scan_trigger(
+    request: Request,
+    current_user=Depends(get_optional_user),
+):
+    """Trigger a regional intelligence scan. Body: { region_name: 'UAE' }"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    region_name = (body.get("region_name") or "UAE").strip().upper()
+    region = _REGION_MAP.get(region_name)
+    if not region:
+        raise HTTPException(400, f"Unknown region: {region_name!r}. Available: {list(_REGION_MAP)}")
+
+    with get_db() as db:
+        # Prevent concurrent runs for the same region
+        running = (
+            db.query(_RegionalScanJob)
+            .filter_by(region_name=region_name, status="running")
+            .first()
+        )
+        if running:
+            return {"job_id": running.job_id, "status": "running",
+                    "message": "Scan already in progress"}
+
+        from regional_scanner import _next_job_id
+        job = _RegionalScanJob(
+            job_id       = _next_job_id(db),
+            region_name  = region_name,
+            bbox_min_lon = region["bbox"]["min_lon"],
+            bbox_min_lat = region["bbox"]["min_lat"],
+            bbox_max_lon = region["bbox"]["max_lon"],
+            bbox_max_lat = region["bbox"]["max_lat"],
+            status       = "running",
+            phase        = "acquisition",
+            started_at   = datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.job_id
+
+    async def _run_bg():
+        with get_db() as bg_db:
+            job_row = bg_db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
+            if job_row:
+                try:
+                    await _regional_scanner.run_scan(region, bg_db)
+                except Exception as e:
+                    print(f"[regional_scan] background task failed: {e}")
+
+    asyncio.create_task(_run_bg())
+    return {"job_id": job_id, "status": "running", "region_name": region_name}
+
+
+@app.get("/api/regional-scans/latest")
+async def regional_scan_latest(
+    region_name: str = Query("UAE"),
+    current_user=Depends(get_optional_user),
+):
+    """Return the most recent completed scan for a region."""
+    with get_db() as db:
+        job = (
+            db.query(_RegionalScanJob)
+            .filter_by(region_name=region_name.upper(), status="complete")
+            .order_by(_RegionalScanJob.completed_at.desc())
+            .first()
+        )
+        if not job:
+            return {"job": None}
+        return {"job": _rscan_to_dict(job)}
+
+
+@app.get("/api/regional-scans")
+async def regional_scans_list(current_user=Depends(get_optional_user)):
+    """List all regional scan jobs, newest first."""
+    with get_db() as db:
+        jobs = (
+            db.query(_RegionalScanJob)
+            .order_by(_RegionalScanJob.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        return [_rscan_to_dict(j) for j in jobs]
+
+
+@app.get("/api/regional-scans/{job_id}")
+async def regional_scan_detail(job_id: str, current_user=Depends(get_optional_user)):
+    """Full job details including claude_report."""
+    with get_db() as db:
+        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
+        if not job:
+            raise HTTPException(404, f"Scan {job_id!r} not found")
+        d = _rscan_to_dict(job)
+        d["claude_report"] = job.claude_report
+        return d
+
+
+@app.get("/api/regional-scans/{job_id}/detections")
+@app.get("/api/regional-scans/{job_id}/detections/geojson")
+async def regional_scan_detections(
+    job_id: str,
+    detection_type: Optional[str] = Query(None),
+    min_confidence: float = Query(0.0),
+    severity: Optional[str] = Query(None),
+    current_user=Depends(get_optional_user),
+):
+    """Return detections as GeoJSON FeatureCollection."""
+    with get_db() as db:
+        q = db.query(_RegionalScanDetection).filter(
+            _RegionalScanDetection.job_id == job_id,
+            _RegionalScanDetection.suppressed == False,
+            _RegionalScanDetection.confidence >= min_confidence,
+        )
+        if detection_type:
+            q = q.filter(_RegionalScanDetection.detection_type == detection_type.upper())
+        if severity:
+            q = q.filter(_RegionalScanDetection.claude_severity == severity.lower())
+        dets = q.order_by(_RegionalScanDetection.confidence.desc()).all()
+        return {
+            "type": "FeatureCollection",
+            "features": [_rsdet_to_geojson_feature(d) for d in dets],
+        }
+
+
+@app.delete("/api/regional-scans/detections/{detection_id}/suppress")
+async def regional_scan_suppress(detection_id: str, current_user=Depends(get_optional_user)):
+    """Operator dismissal — sets suppressed=True on a detection."""
+    with get_db() as db:
+        det = db.query(_RegionalScanDetection).filter_by(detection_id=detection_id).first()
+        if not det:
+            raise HTTPException(404, f"Detection {detection_id!r} not found")
+        det.suppressed = True
+        db.commit()
+        return {"suppressed": True, "detection_id": detection_id}
 
 
 # ── Director person dossier ───────────────────────────────────────────────────
@@ -9674,6 +9895,42 @@ Write in intelligence briefing style — 3–4 paragraphs maximum."""
         return JSONResponse({"error": str(e)})
 
 
+async def _regional_scan_scheduler_loop():
+    """Check every 24h whether UAE regional scan is due (5-day cadence)."""
+    await asyncio.sleep(60)   # allow startup to settle
+    while True:
+        try:
+            with get_db() as _db:
+                latest = (
+                    _db.query(_RegionalScanJob)
+                    .filter_by(region_name="UAE", status="complete")
+                    .order_by(_RegionalScanJob.completed_at.desc())
+                    .first()
+                )
+                is_running = (
+                    _db.query(_RegionalScanJob)
+                    .filter_by(region_name="UAE", status="running")
+                    .first()
+                ) is not None
+
+            if not is_running:
+                days_since = None
+                if latest and latest.completed_at:
+                    days_since = (datetime.utcnow() - latest.completed_at).days
+                if days_since is None or days_since >= UAE_REGION["scan_interval_days"]:
+                    print("[regional-scheduler] UAE scan due — triggering")
+                    async def _bg():
+                        with get_db() as _bg_db:
+                            try:
+                                await _regional_scanner.run_scan(UAE_REGION, _bg_db)
+                            except Exception as _e:
+                                print(f"[regional-scheduler] scan failed: {_e}")
+                    asyncio.create_task(_bg())
+        except Exception as _e:
+            print(f"[regional-scheduler] loop error: {_e}")
+        await asyncio.sleep(86400)   # check again in 24 hours
+
+
 async def _sentinel_zone_scheduler_loop():
     """Background loop: every 15 minutes, trigger scans for due WatchZones."""
     import asyncio as _asyncio_sched
@@ -10100,6 +10357,7 @@ async def startup_event():
             print("[forge] using default threat weights")
         asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
+    asyncio.create_task(_regional_scan_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
