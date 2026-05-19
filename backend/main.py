@@ -19041,6 +19041,7 @@ def _sz_to_dict(z) -> dict:
         "bbox":              [z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat],
         "lat":               (z.bbox_min_lat + z.bbox_max_lat) / 2,
         "lon":               (z.bbox_min_lon + z.bbox_max_lon) / 2,
+        "images":            (_json.loads(z.zone_metadata) if z.zone_metadata else {}).get("images", []),
         "created_at":        z.created_at.isoformat() if z.created_at else None,
         "updated_at":        z.updated_at.isoformat() if z.updated_at else None,
     }

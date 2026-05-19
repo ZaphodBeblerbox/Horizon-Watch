@@ -5502,6 +5502,13 @@ export default function ForgePanel({ user, isMobile = false, onClose }) {
         setActiveWorkspace(WS_MAP[nodeId] || "generic")
     }
 
+    // Allow external components to navigate directly to a workspace via custom event
+    useEffect(() => {
+        const h = (e) => { if (e.detail?.workspace) setActiveWorkspace(e.detail.workspace) }
+        window.addEventListener("akili:forge-nav", h)
+        return () => window.removeEventListener("akili:forge-nav", h)
+    }, [])
+
     const [showPipeline, setShowPipeline] = useState(false)
 
     const goBack = () => {

@@ -6,10 +6,12 @@ import {
     DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
+import GlobeStrategicZoneTooltip from "./GlobeStrategicZoneTooltip.jsx"
 
-const ALPHA_FILL    = 0.13
-const ALPHA_OUTLINE = 0.85
-const ALPHA_LABEL   = 0.9
+const ALPHA_FILL      = 0.12
+const ALPHA_FILL_SEL  = 0.25
+const ALPHA_OUTLINE   = 0.85
+const ALPHA_LABEL     = 0.9
 
 function parseColour(hex, alpha) {
     try {
@@ -20,8 +22,8 @@ function parseColour(hex, alpha) {
 }
 
 export default function GlobeStrategicZonesLayer({ enabled }) {
-    const [zones, setZones]     = useState([])
-    const [selected, setSelected] = useState(null)
+    const [zones,   setZones]   = useState([])
+    const [tooltip, setTooltip] = useState(null) // { zone, x, y }
 
     const load = useCallback(() => {
         fetch(`${API_BASE}/api/strategic-zones?enabled_only=true`)
@@ -39,41 +41,36 @@ export default function GlobeStrategicZonesLayer({ enabled }) {
 
     if (!enabled || !zones.length) return null
 
+    const selectedId = tooltip?.zone?.zone_id ?? null
+
     return (
         <>
             {zones.map(z => {
                 const coords = z.coordinates || []
                 if (coords.length < 3) return null
 
-                // coordinates are [lon, lat] pairs
                 const positions = coords
                     .filter(c => Array.isArray(c) && c.length >= 2 && isFinite(c[0]) && isFinite(c[1]))
                     .map(([lon, lat]) => Cartesian3.fromDegrees(lon, lat, 0))
 
                 if (positions.length < 3) return null
 
-                const fill    = parseColour(z.colour, ALPHA_FILL)
+                const isSel   = selectedId === z.zone_id
+                const fill    = parseColour(z.colour, isSel ? ALPHA_FILL_SEL : ALPHA_FILL)
                 const outline = parseColour(z.colour, ALPHA_OUTLINE)
-                const isSelected = selected === z.zone_id
 
                 return (
                     <Entity
                         key={z.zone_id}
                         id={`szone-${z.zone_id}`}
                         name={z.name}
-                        description={
-                            `<b>${z.name}</b><br/>` +
-                            `Type: ${z.zone_type?.replace(/_/g, " ")}<br/>` +
-                            `Severity: ${z.severity_baseline?.toUpperCase()}<br/><br/>` +
-                            (z.description || "")
-                        }
                         polygon={{
-                            hierarchy:      new PolygonHierarchy(positions),
-                            material:       isSelected ? fill.withAlpha(0.28) : fill,
-                            outline:        true,
-                            outlineColor:   outline,
-                            outlineWidth:   isSelected ? 3.0 : 1.5,
-                            height:         0,
+                            hierarchy:    new PolygonHierarchy(positions),
+                            material:     fill,
+                            outline:      true,
+                            outlineColor: outline,
+                            outlineWidth: isSel ? 3.0 : 1.5,
+                            height:       0,
                             classificationType: 0,
                         }}
                         label={{
@@ -93,10 +90,28 @@ export default function GlobeStrategicZonesLayer({ enabled }) {
                             backgroundPadding:  { x: 6, y: 3 },
                         }}
                         position={Cartesian3.fromDegrees(z.lon, z.lat, 0)}
-                        onClick={() => setSelected(s => s === z.zone_id ? null : z.zone_id)}
+                        onClick={(movement) => {
+                            const pos = movement?.position
+                            const sx  = pos?.x ?? window.innerWidth  / 2
+                            const sy  = pos?.y ?? window.innerHeight / 2
+                            setTooltip(prev =>
+                                prev?.zone?.zone_id === z.zone_id
+                                    ? null
+                                    : { zone: z, x: sx, y: sy }
+                            )
+                        }}
                     />
                 )
             })}
+
+            {tooltip && (
+                <GlobeStrategicZoneTooltip
+                    zone={tooltip.zone}
+                    x={tooltip.x}
+                    y={tooltip.y}
+                    onClose={() => setTooltip(null)}
+                />
+            )}
         </>
     )
 }

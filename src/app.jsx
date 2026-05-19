@@ -812,6 +812,13 @@ export default function App() {
         switchTab(newId)
     }, [tabs, switchTab])
 
+    // Allow globe components to open Forge via custom event
+    useEffect(() => {
+        const h = () => openTab("forge")
+        window.addEventListener("akili:open-forge", h)
+        return () => window.removeEventListener("akili:open-forge", h)
+    }, [openTab])
+
     const closeTab = useCallback((id) => {
         const tab = tabs.find(t => t.id === id)
         if (!tab || tab.type === "map") return
