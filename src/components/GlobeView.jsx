@@ -1,9 +1,9 @@
 import "../cesiumConfig.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
-import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider } from "cesium"
+import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
-import { esriSatelliteProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
+import { esriSatelliteProvider, esriLabelsProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
@@ -15,7 +15,6 @@ import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
 import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
-import GlobeCityLabelsLayer     from "../globe/GlobeCityLabelsLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import GlobeDirectorLayer       from "../globe/GlobeDirectorLayer.jsx"
 import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
@@ -164,6 +163,67 @@ export default function GlobeView({
         }
         window.addEventListener("akili:fly-to", handler)
         return () => window.removeEventListener("akili:fly-to", handler)
+    }, [])
+
+    // akili:search-marker — temporary blue dot + label after a search fly-to
+    useEffect(() => {
+        const handler = (e) => {
+            const { lat, lon, name, osm_type, category } = e.detail || {}
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer || lat == null || lon == null) return
+
+            const pos    = Cartesian3.fromDegrees(lon, lat)
+            const dotCol = Color.fromCssColorString("#34AADC")
+            const isArea = category === "country" || category === "boundary" || osm_type === "relation"
+
+            const marker = viewer.entities.add({
+                position: pos,
+                point: {
+                    pixelSize:                12,
+                    color:                    dotCol,
+                    outlineColor:             Color.WHITE,
+                    outlineWidth:             2,
+                    heightReference:          HeightReference.CLAMP_TO_GROUND,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+                label: name ? {
+                    text:                     name,
+                    font:                     "13px sans-serif",
+                    fillColor:                Color.WHITE,
+                    outlineColor:             Color.BLACK,
+                    outlineWidth:             2,
+                    style:                    LabelStyle.FILL_AND_OUTLINE,
+                    verticalOrigin:           VerticalOrigin.BOTTOM,
+                    pixelOffset:              new Cartesian2(0, -16),
+                    heightReference:          HeightReference.CLAMP_TO_GROUND,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                } : undefined,
+            })
+
+            let circle = null
+            if (isArea) {
+                const radius = category === "country" ? 200_000 : 50_000
+                circle = viewer.entities.add({
+                    position: pos,
+                    ellipse: {
+                        semiMinorAxis: radius,
+                        semiMajorAxis: radius,
+                        material:      dotCol.withAlpha(0.15),
+                        outline:       true,
+                        outlineColor:  dotCol.withAlpha(0.6),
+                        outlineWidth:  2,
+                        heightReference: HeightReference.CLAMP_TO_GROUND,
+                    },
+                })
+            }
+
+            setTimeout(() => {
+                if (viewer.entities.contains(marker)) viewer.entities.remove(marker)
+                if (circle && viewer.entities.contains(circle)) viewer.entities.remove(circle)
+            }, 4000)
+        }
+        window.addEventListener("akili:search-marker", handler)
+        return () => window.removeEventListener("akili:search-marker", handler)
     }, [])
 
     // Apply maximum rendering quality + WebGL context loss recovery
@@ -343,7 +403,9 @@ export default function GlobeView({
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
                 <GlobePOILayer          enabled={poiEnabled} />
                 <GlobeEventsLayer       enabled={eventsEnabled} precisionEnabled={precisionEventsEnabled} bounds={viewBounds} minRelevance={eventsMinRelevance} />
-                <GlobeCityLabelsLayer   enabled={cityLabelsEnabled} />
+                {cityLabelsEnabled && (
+                    <ImageryLayer imageryProvider={esriLabelsProvider} alpha={1.0} maximumTerrainLevel={19} />
+                )}
 
                 {/* ── Heatmap overlays (rectangle entities, clamped to ground) ─ */}
                 <GlobeHeatmapLayer enabled={aisHeatmapEnabled}  domain="ais"  hours={heatmapHours} bounds={viewBounds} />

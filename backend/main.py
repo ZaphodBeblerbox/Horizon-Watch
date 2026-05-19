@@ -267,6 +267,8 @@ else:
 
 _analysis_cache: dict = {}
 _geocode_proxy_cache: dict[tuple[str, int], list[dict]] = {}
+_nominatim_search_cache: dict[str, tuple[list, float]] = {}  # { query_lower: (results, ts) }
+_NOMINATIM_CACHE_TTL = 300  # 5 minutes
 
 # ── Mission Profile context helper ────────────────────────────────────────────
 
@@ -13908,6 +13910,24 @@ def api_airports_near(
     return {"type": "FeatureCollection", "features": [_airport_feature(r) for r in results]}
 
 
+def _clean_display_name(display_name: str) -> str:
+    """Strip non-Latin characters and tidy punctuation from a Nominatim display_name."""
+    import re
+    cleaned = re.sub(r'[^\x00-\x7FÀ-ɏḀ-ỿ,.\-\s]', '', display_name)
+    cleaned = re.sub(r',\s*,', ',', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned.strip(',').strip()
+
+
+def _shorten_display_name(display_name: str) -> str:
+    """Collapse 'City, Region, Sub, Country' → 'City, Country'."""
+    parts = [p.strip() for p in display_name.split(',')]
+    parts = [p for p in parts if p]
+    if len(parts) >= 2:
+        return f"{parts[0]}, {parts[-1]}"
+    return parts[0] if parts else display_name
+
+
 @app.get("/api/search")
 async def unified_search(
     q:     str = Query(..., min_length=2),
@@ -14169,33 +14189,46 @@ async def unified_search(
 
     nom_hits: list = []
     if _want("location") or _want("city") or _want("country") or (len(all_db) < 3 and not _want("strategic_zone")):
-        try:
-            async with httpx.AsyncClient(
-                timeout=5.0,
-                headers={"User-Agent": "AkiliDashboard/1.0 (contact: dev@local)"},
-            ) as hc:
-                r = await hc.get(
-                    "https://nominatim.openstreetmap.org/search",
-                    params={"format": "json", "q": q, "limit": "5", "addressdetails": "1"},
-                )
-                r.raise_for_status()
-                raw = r.json()
-            for item in (raw if isinstance(raw, list) else []):
-                try:
-                    nom_hits.append({
-                        "type": "location",
-                        "name": item.get("display_name", "").split(",")[0].strip(),
-                        "display_name": item.get("display_name", ""),
-                        "lat": float(item["lat"]),
-                        "lon": float(item["lon"]),
-                        "osm_type": item.get("osm_type"),
-                        "category": item.get("class") or item.get("category"),
-                        "country_code": (item.get("address") or {}).get("country_code"),
-                    })
-                except (KeyError, TypeError, ValueError):
-                    pass
-        except Exception as ex:
-            print(f"[search] nominatim error: {ex}")
+        import time as _time
+        _cache_key = q.lower().strip()
+        _cached_nom, _cached_ts = _nominatim_search_cache.get(_cache_key, (None, 0))
+        if _cached_nom is not None and _time.time() - _cached_ts < _NOMINATIM_CACHE_TTL:
+            nom_hits = _cached_nom
+        else:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=5.0,
+                    headers={
+                        "User-Agent": "AkiliDashboard/1.0 (contact: dev@local)",
+                        "Accept-Language": "en",
+                    },
+                ) as hc:
+                    r = await hc.get(
+                        "https://nominatim.openstreetmap.org/search",
+                        params={"format": "json", "q": q, "limit": "5", "addressdetails": "1"},
+                    )
+                    r.raise_for_status()
+                    raw = r.json()
+                for item in (raw if isinstance(raw, list) else []):
+                    try:
+                        raw_display = item.get("display_name", "")
+                        cleaned     = _clean_display_name(raw_display)
+                        short       = _shorten_display_name(cleaned)
+                        nom_hits.append({
+                            "type":         "location",
+                            "name":         cleaned.split(",")[0].strip(),
+                            "display_name": short,
+                            "lat":          float(item["lat"]),
+                            "lon":          float(item["lon"]),
+                            "osm_type":     item.get("osm_type"),
+                            "category":     item.get("class") or item.get("category"),
+                            "country_code": (item.get("address") or {}).get("country_code"),
+                        })
+                    except (KeyError, TypeError, ValueError):
+                        pass
+                _nominatim_search_cache[_cache_key] = (nom_hits, _time.time())
+            except Exception as ex:
+                print(f"[search] nominatim error: {ex}")
 
     def _score(r: dict) -> int:
         if (r.get("name") or "").lower() == q_lo:

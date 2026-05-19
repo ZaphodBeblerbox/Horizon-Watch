@@ -162,6 +162,9 @@ export default function GlobalSearch({ onResult, apiBase = API_BASE }) {
             window.dispatchEvent(new CustomEvent("akili:fly-to", {
                 detail: { lat: r.lat, lon: r.lon, altitude: altitudeForResult(r) },
             }))
+            window.dispatchEvent(new CustomEvent("akili:search-marker", {
+                detail: { lat: r.lat, lon: r.lon, name: r.name, osm_type: r.osm_type, category: r.category },
+            }))
         }
         setQuery(r.name || "")
         setOpen(false)
