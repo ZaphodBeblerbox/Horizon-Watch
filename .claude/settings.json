@@ -134,7 +134,16 @@
       "Bash(pip install *)",
       "Bash(python3 -c \"import mapbox_vector_tile; print\\('ok'\\)\")",
       "Bash(python3 -c \"import PIL; print\\('PIL ok'\\)\")",
-      "Bash(node -e \"const r = require\\('/Users/marcamaylunau/NAGINI 2.0/node_modules/resium'\\); console.log\\(Object.keys\\(r\\).filter\\(k => k.includes\\('Cesium'\\) || k.includes\\('useCes'\\)\\)\\)\")"
+      "Bash(node -e \"const r = require\\('/Users/marcamaylunau/NAGINI 2.0/node_modules/resium'\\); console.log\\(Object.keys\\(r\\).filter\\(k => k.includes\\('Cesium'\\) || k.includes\\('useCes'\\)\\)\\)\")",
+      "Bash(curl -s http://localhost:8000/geo/countries)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(lsof -ti:8000)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'✓ /geo/countries: {len\\(d[\\\\\"features\\\\\"]\\)} features'\\)\")",
+      "Bash(curl -s \"http://localhost:8000/api/infrastructure/chokepoints?name=Strait+of+Hormuz\")",
+      "Bash(lsof -ti:5173)",
+      "Bash(npx tsc *)",
+      "Bash(curl -s \"http://localhost:8000/geo/countries\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Features:', len\\(d.get\\('features',[]\\)\\), 'Sample:', d['features'][0]['properties'].get\\('name'\\) or d['features'][0]['properties'].get\\('NAME'\\) or d['features'][0]['properties'].get\\('ADMIN'\\)\\)\")"
     ]
   }
 }

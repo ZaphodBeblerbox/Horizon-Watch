@@ -1412,7 +1412,6 @@ export default function App() {
                             adsbEnabled={activeWorkspace?.layers?.adsb ?? false}
                             aisEnabled={activeWorkspace?.layers?.aisVessels ?? false}
                             eezEnabled={activeWorkspace?.layers?.eez ?? false}
-                            bordersEnabled={activeWorkspace?.layers?.borders ?? false}
                             cityLabelsEnabled={activeWorkspace?.layers?.cityLabels ?? false}
                             cablesEnabled={activeWorkspace?.layers?.cables ?? false}
                             chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}

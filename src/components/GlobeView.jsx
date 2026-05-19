@@ -7,7 +7,6 @@ import { esriSatelliteProvider, esriLabelsProvider, openSeaMapProvider, openInfr
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
-import GlobeCountryBordersLayer from "../globe/GlobeCountryBordersLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
@@ -81,7 +80,6 @@ export default function GlobeView({
     adsbEnabled      = false,
     aisEnabled       = false,
     eezEnabled       = false,
-    bordersEnabled   = false,
     cablesEnabled    = false,
     chokepointsEnabled = false,
     strategicZonesEnabled = false,
@@ -395,7 +393,6 @@ export default function GlobeView({
 
                 {/* ── GeoJSON line layers ─────────────────────────────────────── */}
                 <GlobeEEZLayer            enabled={eezEnabled} />
-                <GlobeCountryBordersLayer enabled={bordersEnabled} />
                 <GlobeCablesLayer         enabled={cablesEnabled} />
 
                 {/* ── Point / entity layers ───────────────────────────────────── */}

@@ -141,11 +141,6 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
 
             <SectionHeader label="Boundaries" />
             <LayerRow
-                label="Country Borders"
-                toggled={active.borders}
-                onToggle={() => onToggle("borders")}
-            />
-            <LayerRow
                 label="Exclusive Economic Zones"
                 hint="200 nm maritime boundaries"
                 toggled={active.eez}

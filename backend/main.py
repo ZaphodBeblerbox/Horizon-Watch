@@ -269,6 +269,25 @@ _analysis_cache: dict = {}
 _geocode_proxy_cache: dict[tuple[str, int], list[dict]] = {}
 _nominatim_search_cache: dict[str, tuple[list, float]] = {}  # { query_lower: (results, ts) }
 _NOMINATIM_CACHE_TTL = 300  # 5 minutes
+_zone_image_cache: dict[str, list[str]] = {}  # zone_id → [url, ...]
+
+_ZONE_SEARCH_QUERIES: dict[str, list[str]] = {
+    "SZONE-001": ["Ukraine war Donbas 2023", "Bakhmut battle", "Zaporizhzhia front"],
+    "SZONE-002": ["Taiwan Strait warship", "PLA Navy exercise", "Taiwan military"],
+    "SZONE-003": ["Sudan Khartoum war 2023", "RSF Sudan", "Darfur conflict"],
+    "SZONE-004": ["Gaza Strip conflict 2023", "Iron Dome Israel", "Gaza airstrike"],
+    "SZONE-005": ["South China Sea island", "Spratly Islands aerial", "PLAN warship"],
+    "SZONE-006": ["Sahel Mali military", "Burkina Faso insurgency", "Niger coup 2023"],
+    "SZONE-007": ["Natanz nuclear facility", "Iran ballistic missile", "Isfahan nuclear"],
+    "SZONE-008": ["Korean DMZ soldiers", "North Korea missile launch", "DPRK military"],
+    "SZONE-009": ["Myanmar civil war 2022", "Burma military junta", "Mandalay protest"],
+    "SZONE-010": ["Gulf of Aden ship", "Houthi attack vessel", "Red Sea shipping"],
+    "SZONE-011": ["Baltic Sea NATO warship", "Kaliningrad Russia", "Baltic exercise"],
+    "SZONE-012": ["Aleppo Syria ruins", "Syria war aftermath", "Damascus Syria"],
+    "SZONE-013": ["Strait of Hormuz oil tanker", "IRGC patrol boat", "Persian Gulf ship"],
+    "SZONE-014": ["Tigray Ethiopia war", "Addis Ababa Ethiopia", "Horn of Africa"],
+    "SZONE-015": ["Venezuela Caracas crisis", "Essequibo border", "Venezuela protest"],
+}
 
 # ── Mission Profile context helper ────────────────────────────────────────────
 
@@ -9872,6 +9891,28 @@ async def _auto_ingest_task():
         print(f"[auto-ingest] task error: {_e}")
 
 
+async def _zone_images_warmup_task():
+    """Load zone images from DB metadata into the in-memory cache on startup."""
+    await asyncio.sleep(8)
+    try:
+        from database import StrategicZone, get_db
+        with get_db() as db:
+            zones = db.query(StrategicZone).filter(StrategicZone.enabled == True).all()
+        for z in zones:
+            if z.zone_id in _zone_image_cache:
+                continue
+            try:
+                meta   = _json.loads(z.zone_metadata) if z.zone_metadata else {}
+                images = meta.get("images", [])
+                if images:
+                    _zone_image_cache[z.zone_id] = images
+            except Exception:
+                pass
+        print(f"[zone-images] warmup complete — {len(_zone_image_cache)} zones cached")
+    except Exception as ex:
+        print(f"[zone-images] warmup error: {ex}")
+
+
 async def _fusion_expire_loop():
     """Prune stale fusion signals and surge events every 15 minutes."""
     await asyncio.sleep(30)
@@ -10060,6 +10101,7 @@ async def startup_event():
         asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
+    asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] Poll intervals — AIS: WebSocket | ADSB: 120s | RSS: 1800s")
@@ -19052,6 +19094,106 @@ def api_zone_signals(
         "signal_count": len(all_signals),
         "signals": all_signals[:limit],
     }
+
+
+async def _fetch_zone_images_from_wikimedia(zone_id: str) -> list[str]:
+    """Fetch up to 3 representative images from Wikimedia Commons for a strategic zone."""
+    images: list[str] = []
+    queries = _ZONE_SEARCH_QUERIES.get(zone_id, [])
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": "HorizonWatch/1.0"}) as client:
+            for query in queries:
+                if len(images) >= 3:
+                    break
+                try:
+                    r = await client.get(
+                        "https://commons.wikimedia.org/w/api.php",
+                        params={
+                            "action":       "query",
+                            "generator":    "search",
+                            "gsrnamespace": "6",
+                            "gsrsearch":    query,
+                            "gsrlimit":     "6",
+                            "prop":         "imageinfo",
+                            "iiprop":       "url|mime|size",
+                            "iiurlwidth":   "800",
+                            "format":       "json",
+                        },
+                    )
+                    data = r.json()
+                    pages = data.get("query", {}).get("pages", {})
+                    for page in sorted(pages.values(), key=lambda p: p.get("index", 999)):
+                        info_list = page.get("imageinfo", [])
+                        if not info_list:
+                            continue
+                        info  = info_list[0]
+                        mime  = info.get("mime", "")
+                        url   = info.get("thumburl") or info.get("url", "")
+                        width = info.get("thumbwidth") or info.get("width", 0) or 0
+                        if url and ("image/jpeg" in mime or "image/png" in mime) and int(width) >= 400:
+                            images.append(url)
+                            if len(images) >= 3:
+                                break
+                except Exception as ex:
+                    print(f"[zone-images] query '{query}' failed: {ex}")
+    except Exception as ex:
+        print(f"[zone-images] client error for {zone_id}: {ex}")
+    print(f"[zone-images] {zone_id}: found {len(images)} images")
+    return images[:3]
+
+
+@app.get("/api/strategic-zones/{zone_id}/images")
+async def api_zone_images(zone_id: str):
+    """Return up to 3 image URLs for a zone; fetch from Wikimedia if not cached."""
+    if zone_id in _zone_image_cache:
+        return {"zone_id": zone_id, "images": _zone_image_cache[zone_id]}
+    # Load from DB metadata
+    from database import StrategicZone, get_db
+    with get_db() as db:
+        zone = db.query(StrategicZone).filter_by(zone_id=zone_id).first()
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' not found")
+    try:
+        meta   = _json.loads(zone.zone_metadata) if zone.zone_metadata else {}
+        images = meta.get("images", [])
+    except Exception:
+        images = []
+    if images:
+        _zone_image_cache[zone_id] = images
+        return {"zone_id": zone_id, "images": images}
+    # Nothing stored — fetch from Wikimedia and persist
+    images = await _fetch_zone_images_from_wikimedia(zone_id)
+    _zone_image_cache[zone_id] = images
+    try:
+        with get_db() as db:
+            z2 = db.query(StrategicZone).filter_by(zone_id=zone_id).first()
+            if z2:
+                meta2 = _json.loads(z2.zone_metadata) if z2.zone_metadata else {}
+                meta2["images"] = images
+                z2.zone_metadata = _json.dumps(meta2)
+                db.commit()
+    except Exception:
+        pass
+    return {"zone_id": zone_id, "images": images}
+
+
+@app.post("/api/strategic-zones/{zone_id}/refresh-images")
+async def api_refresh_zone_images(zone_id: str):
+    """Force-refresh Wikimedia images for a zone and persist to metadata."""
+    from database import StrategicZone, get_db
+    images = await _fetch_zone_images_from_wikimedia(zone_id)
+    _zone_image_cache[zone_id] = images
+    try:
+        with get_db() as db:
+            zone = db.query(StrategicZone).filter_by(zone_id=zone_id).first()
+            if zone:
+                meta = _json.loads(zone.zone_metadata) if zone.zone_metadata else {}
+                meta["images"] = images
+                zone.zone_metadata = _json.dumps(meta)
+                db.commit()
+    except Exception:
+        pass
+    return {"zone_id": zone_id, "images": images}
 
 
 def _sz_to_dict(z) -> dict:
