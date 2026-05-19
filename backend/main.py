@@ -88,6 +88,8 @@ from classifier import classify_event
 import event_store as es
 import event_bridge
 import threat_matrix
+from alert_writer import write_alert, write_news_article
+from entity_linker import entity_linker
 
 try:
     from langdetect import detect as _langdetect_detect
@@ -6522,9 +6524,23 @@ def _run_news_conflict_extraction_sync():
                 "is_breaking":           _intel.get("is_breaking", False),
                 "context_summary":       _intel.get("context_summary", ""),
                 "llm_extracted":         _intel_llm_called,
+                "entities":              _intel.get("entities") or [],
+                "source_name":           source_name,
             }
 
             _upsert_news_article(article_record)
+            try:
+                write_news_article(article_record)
+                if _intel_llm_called and article_record.get("lat") is not None:
+                    entity_linker.link_article(
+                        url=url,
+                        lat=article_record.get("lat"),
+                        lon=article_record.get("lon"),
+                        title=title,
+                        entities=article_record.get("entities") or [],
+                    )
+            except Exception as _aw_err:
+                print(f"[alert-writer] news article persist error: {_aw_err}")
 
             # Feed news pattern engine → fusion (tier 1 only)
             if (_news_pattern_engine
@@ -10256,6 +10272,30 @@ async def _threat_matrix_loop():
         await asyncio.sleep(3600)
 
 
+async def _dirty_region_refresh_loop():
+    """Refreshes threat-matrix scores for dirty regions every 30 seconds."""
+    from alert_writer import pop_dirty_regions
+    await asyncio.sleep(30)
+    while True:
+        try:
+            dirty = pop_dirty_regions()
+            if dirty:
+                from database import get_db as _gdb_dr
+                active_events = []
+                try:
+                    active_events = es.get_active_events()
+                except Exception:
+                    pass
+                with _gdb_dr() as _dr_db:
+                    threat_matrix.refresh_dirty_regions(
+                        dirty, _dr_db, list(_forge_alerts), active_events,
+                    )
+                print(f"[threat-matrix] dirty-region refresh: {dirty}")
+        except Exception as _dr_e:
+            print(f"[threat-matrix] dirty-region loop error: {_dr_e}")
+        await asyncio.sleep(30)
+
+
 def _reset_recent_llm_extractions(days: int = 7) -> int:
     """Clear llm_extracted flag for recent articles so they are re-run with the
     current prompt (e.g. after a prompt change that adds location_country).
@@ -10304,6 +10344,41 @@ async def startup_event():
         print("[startup] database initialised")
     except Exception as _e:
         print(f"[startup] database init failed: {_e}")
+
+    # Rebuild _forge_alerts from DB and load entity linker cache
+    try:
+        def _rebuild_from_db():
+            global _forge_alerts
+            from database import get_db as _gdb, Alert as _AlertModel
+            import json as _json2
+            cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+            rebuilt = []
+            with _gdb() as _db:
+                rows = (_db.query(_AlertModel)
+                        .filter(_AlertModel.status == "active",
+                                _AlertModel.created_at >= datetime.utcnow() - timedelta(hours=24))
+                        .order_by(_AlertModel.created_at.asc())
+                        .all())
+                for row in rows:
+                    try:
+                        d = _json2.loads(row.raw_json or "{}")
+                    except Exception:
+                        d = {}
+                    d.setdefault("id",        row.alert_id)
+                    d.setdefault("title",     row.title)
+                    d.setdefault("severity",  row.severity)
+                    d.setdefault("lat",       row.lat)
+                    d.setdefault("lng",       row.lon)
+                    d.setdefault("source",    row.source)
+                    d.setdefault("timestamp", row.created_at.isoformat() if row.created_at else "")
+                    rebuilt.append(d)
+            _forge_alerts = rebuilt
+            print(f"[startup] rebuilt _forge_alerts from DB: {len(rebuilt)} alerts")
+            entity_linker.load_cache()
+        await asyncio.wait_for(loop.run_in_executor(_executor, _rebuild_from_db), timeout=30)
+    except Exception as _e:
+        print(f"[startup] forge_alerts rebuild error: {_e}")
+
     print("[startup] classifier.py loaded")
     print("[startup] significance scorer initialised")
     print("[startup] prefetch cache initialised")
@@ -10394,6 +10469,7 @@ async def startup_event():
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
+    asyncio.create_task(_dirty_region_refresh_loop())
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] Poll intervals — AIS: WebSocket | ADSB: 120s | RSS: 1800s")
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
@@ -17312,6 +17388,23 @@ async def _forge_detection_cycle():
             all_new = new_ais_alerts + new_adsb_alerts + new_news_alerts
             _forge_alerts.extend(all_new)
             _correlation_assessments.extend(new_assessments)
+            # Persist new alerts to DB
+            for _aw_alert in all_new:
+                try:
+                    _src = "ais" if _aw_alert in new_ais_alerts else ("adsb" if _aw_alert in new_adsb_alerts else "news")
+                    write_alert({**_aw_alert, "source": _src})
+                    _a_lat = _aw_alert.get("lat")
+                    _a_lon = _aw_alert.get("lng") or _aw_alert.get("lon")
+                    if _a_lat is not None and _a_lon is not None:
+                        entity_linker.link_alert(
+                            alert_id=_aw_alert.get("id", ""),
+                            source_type=_src,
+                            lat=_a_lat,
+                            lon=_a_lon,
+                            title=_aw_alert.get("title") or _aw_alert.get("message", ""),
+                        )
+                except Exception as _aw_e:
+                    print(f"[alert-writer] alert persist error: {_aw_e}")
 
             # Feed AIS and ADSB alerts into fusion engine
             if _fusion_engine:
@@ -18278,6 +18371,244 @@ def api_surge_stats():
 @app.get("/api/forge/alerts")
 def forge_get_alerts(_forge=Depends(_require_forge)):
     return _forge_alerts
+
+
+# ── Persistence API endpoints ──────────────────────────────────────────────────
+
+@app.get("/api/alerts")
+def api_get_alerts(
+    source: str = None,
+    alert_type: str = None,
+    region: str = None,
+    severity: str = None,
+    status: str = "active",
+    limit: int = 100,
+    _u=Depends(_require_user),
+):
+    from database import Alert as _AlertModel, get_db as _gdb_api
+    with _gdb_api() as _db:
+        q = _db.query(_AlertModel).filter(_AlertModel.status == status)
+        if source:
+            q = q.filter(_AlertModel.source == source)
+        if alert_type:
+            q = q.filter(_AlertModel.alert_type == alert_type)
+        if region:
+            q = q.filter(_AlertModel.region == region)
+        if severity:
+            q = q.filter(_AlertModel.severity == severity)
+        rows = q.order_by(_AlertModel.created_at.desc()).limit(limit).all()
+        return [
+            {
+                "alert_id":    r.alert_id, "source": r.source, "alert_type": r.alert_type,
+                "title":       r.title, "severity": r.severity, "lat": r.lat, "lon": r.lon,
+                "region":      r.region, "country_code": r.country_code,
+                "entity_type": r.entity_type, "entity_id": r.entity_id, "entity_name": r.entity_name,
+                "zone_ids":    r.zone_ids, "tags": r.tags, "status": r.status,
+                "created_at":  r.created_at.isoformat() if r.created_at else None,
+                "expires_at":  r.expires_at.isoformat() if r.expires_at else None,
+            }
+            for r in rows
+        ]
+
+
+@app.get("/api/alerts/{alert_id}")
+def api_get_alert(alert_id: str, _u=Depends(_require_user)):
+    from database import Alert as _AlertModel, get_db as _gdb_api
+    with _gdb_api() as _db:
+        r = _db.query(_AlertModel).filter(_AlertModel.alert_id == alert_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        import json as _j
+        return {
+            "alert_id":    r.alert_id, "source": r.source, "alert_type": r.alert_type,
+            "title":       r.title, "severity": r.severity, "lat": r.lat, "lon": r.lon,
+            "region":      r.region, "country_code": r.country_code,
+            "entity_type": r.entity_type, "entity_id": r.entity_id, "entity_name": r.entity_name,
+            "raw_json":    _j.loads(r.raw_json or "{}"),
+            "zone_ids":    _j.loads(r.zone_ids or "[]"),
+            "tags":        _j.loads(r.tags or "[]"),
+            "status":      r.status,
+            "created_at":  r.created_at.isoformat() if r.created_at else None,
+            "expires_at":  r.expires_at.isoformat() if r.expires_at else None,
+        }
+
+
+@app.get("/api/signals")
+def api_get_signals(
+    domain: str = None,
+    region: str = None,
+    limit: int = 100,
+    _u=Depends(_require_user),
+):
+    from database import Signal as _SignalModel, get_db as _gdb_api
+    with _gdb_api() as _db:
+        q = _db.query(_SignalModel)
+        if domain:
+            q = q.filter(_SignalModel.domain == domain)
+        if region:
+            q = q.filter(_SignalModel.region == region)
+        rows = q.order_by(_SignalModel.created_at.desc()).limit(limit).all()
+        return [
+            {
+                "signal_id":   r.signal_id, "domain": r.domain, "signal_type": r.signal_type,
+                "geo_key":     r.geo_key, "lat": r.lat, "lon": r.lon,
+                "region":      r.region, "country_code": r.country_code,
+                "source_id":   r.source_id, "title": r.title, "score": r.score,
+                "fusion_id":   r.fusion_id,
+                "created_at":  r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+
+
+@app.get("/api/news-articles")
+def api_get_news_articles(
+    article_type: str = None,
+    country_code: str = None,
+    region: str = None,
+    tier: int = None,
+    llm_only: bool = False,
+    limit: int = 100,
+    _u=Depends(_require_user),
+):
+    from database import NewsArticle as _NAModel, get_db as _gdb_api
+    import json as _j
+    with _gdb_api() as _db:
+        q = _db.query(_NAModel)
+        if article_type:
+            q = q.filter(_NAModel.article_type == article_type)
+        if country_code:
+            q = q.filter(_NAModel.country_code == country_code)
+        if region:
+            q = q.filter(_NAModel.region == region)
+        if tier is not None:
+            q = q.filter(_NAModel.tier == tier)
+        if llm_only:
+            q = q.filter(_NAModel.llm_extracted == True)
+        rows = q.order_by(_NAModel.ingested_at.desc()).limit(limit).all()
+        return [
+            {
+                "url":            r.url, "title": r.title, "source_name": r.source_name,
+                "published":      r.published, "lat": r.lat, "lon": r.lon,
+                "location_name":  r.location_name, "country_code": r.country_code,
+                "article_type":   r.article_type, "tier": r.tier, "relevance_score": r.relevance_score,
+                "event_title":    r.event_title, "context_summary": r.context_summary,
+                "is_breaking":    r.is_breaking, "llm_extracted": r.llm_extracted,
+                "entities":       _j.loads(r.entities_json or "[]"),
+                "image_url":      r.image_url, "region": r.region,
+                "ingested_at":    r.ingested_at.isoformat() if r.ingested_at else None,
+            }
+            for r in rows
+        ]
+
+
+@app.get("/api/news-articles/{url:path}")
+def api_get_news_article(url: str, _u=Depends(_require_user)):
+    from database import NewsArticle as _NAModel, get_db as _gdb_api
+    import json as _j
+    with _gdb_api() as _db:
+        r = _db.query(_NAModel).filter(_NAModel.url == url).first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Article not found")
+        return {
+            "url":           r.url, "title": r.title, "source_name": r.source_name,
+            "published":     r.published, "lat": r.lat, "lon": r.lon,
+            "location_name": r.location_name, "country_code": r.country_code,
+            "article_type":  r.article_type, "tier": r.tier, "relevance_score": r.relevance_score,
+            "event_title":   r.event_title, "context_summary": r.context_summary,
+            "is_breaking":   r.is_breaking, "llm_extracted": r.llm_extracted,
+            "entities":      _j.loads(r.entities_json or "[]"),
+            "image_url":     r.image_url, "body": r.body, "region": r.region,
+            "ingested_at":   r.ingested_at.isoformat() if r.ingested_at else None,
+        }
+
+
+@app.get("/api/ontology-links")
+def api_get_ontology_links(
+    entity_type: str = None,
+    entity_id: str = None,
+    source_type: str = None,
+    limit: int = 100,
+    _u=Depends(_require_user),
+):
+    from database import OntologyLink as _OLModel, get_db as _gdb_api
+    with _gdb_api() as _db:
+        q = _db.query(_OLModel)
+        if entity_type:
+            q = q.filter(_OLModel.entity_type == entity_type)
+        if entity_id:
+            q = q.filter(_OLModel.entity_id == entity_id)
+        if source_type:
+            q = q.filter(_OLModel.source_type == source_type)
+        rows = q.order_by(_OLModel.created_at.desc()).limit(limit).all()
+        return [
+            {
+                "link_id":     r.link_id, "source_type": r.source_type, "source_id": r.source_id,
+                "entity_type": r.entity_type, "entity_id": r.entity_id, "entity_name": r.entity_name,
+                "link_type":   r.link_type, "distance_km": r.distance_km, "confidence": r.confidence,
+                "created_at":  r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+
+
+@app.get("/api/entities/{entity_type}/{entity_id}/links")
+def api_get_entity_links(entity_type: str, entity_id: str, _u=Depends(_require_user)):
+    from database import OntologyLink as _OLModel, get_db as _gdb_api
+    with _gdb_api() as _db:
+        rows = (_db.query(_OLModel)
+                .filter(_OLModel.entity_type == entity_type, _OLModel.entity_id == entity_id)
+                .order_by(_OLModel.created_at.desc())
+                .limit(200)
+                .all())
+        return [
+            {
+                "link_id":     r.link_id, "source_type": r.source_type, "source_id": r.source_id,
+                "link_type":   r.link_type, "distance_km": r.distance_km, "confidence": r.confidence,
+                "created_at":  r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+
+
+@app.get("/api/entities/{entity_type}/{entity_id}/timeline")
+def api_get_entity_timeline(
+    entity_type: str, entity_id: str,
+    days: int = 7,
+    _u=Depends(_require_user),
+):
+    from database import OntologyLink as _OLModel, Alert as _AlertModel, NewsArticle as _NAModel, get_db as _gdb_api
+    import json as _j
+    since = datetime.utcnow() - timedelta(days=days)
+    with _gdb_api() as _db:
+        links = (_db.query(_OLModel)
+                 .filter(_OLModel.entity_type == entity_type,
+                         _OLModel.entity_id == entity_id,
+                         _OLModel.created_at >= since)
+                 .order_by(_OLModel.created_at.desc())
+                 .limit(200)
+                 .all())
+        events = []
+        for lnk in links:
+            item = {
+                "link_id":     lnk.link_id, "source_type": lnk.source_type,
+                "source_id":   lnk.source_id, "link_type": lnk.link_type,
+                "distance_km": lnk.distance_km,
+                "ts":          lnk.created_at.isoformat() if lnk.created_at else None,
+            }
+            if lnk.source_type == "alert":
+                r = _db.query(_AlertModel).filter(_AlertModel.alert_id == lnk.source_id).first()
+                if r:
+                    item["title"]    = r.title
+                    item["severity"] = r.severity
+            elif lnk.source_type == "article":
+                r = _db.query(_NAModel).filter(_NAModel.url == lnk.source_id).first()
+                if r:
+                    item["title"]        = r.event_title or r.title
+                    item["article_type"] = r.article_type
+                    item["tier"]         = r.tier
+            events.append(item)
+        return {"entity_type": entity_type, "entity_id": entity_id, "days": days, "events": events}
 
 
 @app.get("/api/forge/correlations")

@@ -247,3 +247,18 @@ def refresh_cache(db, forge_alerts: list = None, news_events: list = None,
     _THREAT_CACHE    = scores
     _THREAT_CACHE_TS = time.time()
     return scores
+
+
+def refresh_dirty_regions(dirty: set, db, forge_alerts: list = None,
+                           news_events: list = None, fusion_events: list = None):
+    """Recompute threat scores only for regions in the dirty set. Updates _THREAT_CACHE in place."""
+    global _THREAT_CACHE
+    if not dirty:
+        return
+    updated = {s["region"]: s for s in _THREAT_CACHE}
+    for region_name in REGIONS:
+        if region_name in dirty:
+            updated[region_name] = compute_threat_score(region_name, db, forge_alerts, news_events, fusion_events)
+    scores = list(updated.values())
+    scores.sort(key=lambda x: x["threat_score"], reverse=True)
+    _THREAT_CACHE = scores

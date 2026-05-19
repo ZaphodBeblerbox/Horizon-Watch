@@ -39,7 +39,11 @@ _USER_TMPL = (
     '  "event_title": "Concise 4-8 word label for this event, e.g. \'Missile strike on Kyiv port\' or \'Typhoon Haikui Taiwan landfall\'. null if no specific event.",\n'
     '  "has_image": true or false — true if article likely has an impactful photo worth displaying,\n'
     '  "is_breaking": true or false — true only for tier 1 events reported within the last 6 hours,\n'
-    '  "context_summary": "1-2 sentence intelligence summary: what happened, where, and why it matters."\n'
+    '  "context_summary": "1-2 sentence intelligence summary: what happened, where, and why it matters.",\n'
+    '  "entities": array of up to 8 named entities critical to this event. Each object: '
+    '{{"name": "entity name", "type": "person|organization|vessel|aircraft|port|airport|location|infrastructure", '
+    '"role": "one-word role e.g. attacker/target/operator/authority"}}. '
+    'Empty array [] if no significant named entities.\n'
     "}}"
 )
 
@@ -55,6 +59,7 @@ _FALLBACK: dict = {
     "has_image": False,
     "is_breaking": False,
     "context_summary": "",
+    "entities": [],
 }
 
 _STRIP_MD = re.compile(r"```(?:json)?\s*|\s*```")
@@ -79,7 +84,7 @@ def analyse_article(
         )
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=350,
+            max_tokens=500,
             temperature=0,
             system=_SYSTEM,
             messages=[{"role": "user", "content": user}],
@@ -113,6 +118,12 @@ def analyse_article(
         if isinstance(event_title, str) and not event_title.strip():
             event_title = None
 
+        raw_entities = data.get("entities") or []
+        entities = [
+            e for e in raw_entities
+            if isinstance(e, dict) and e.get("name")
+        ][:8]
+
         return {
             "location":             location,
             "location_country":     loc_country,
@@ -125,6 +136,7 @@ def analyse_article(
             "has_image":            bool(data.get("has_image", False)),
             "is_breaking":          bool(data.get("is_breaking", False)),
             "context_summary":      str(data.get("context_summary", "") or ""),
+            "entities":             entities,
         }
     except Exception as ex:
         print(f"[article-intelligence] failed for '{(title or '')[:60]}': {ex}")

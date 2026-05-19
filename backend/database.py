@@ -519,6 +519,120 @@ class RegionalScanDetection(Base):
     suppressed                  = Column(Boolean, default=False)
 
 
+class Alert(Base):
+    """Persisted forge alert from AIS/ADSB/surge/fusion pipelines."""
+    __tablename__ = "alerts"
+
+    id              = Column(Integer, primary_key=True)
+    alert_id        = Column(String, unique=True, index=True, nullable=False)   # ALT-<uuid8>
+    source          = Column(String, nullable=False, index=True)                # ais|adsb|surge|fusion|manual
+    alert_type      = Column(String, nullable=False, index=True)               # vessel_dark|aircraft_squawk|surge|etc
+    title           = Column(String, nullable=False)
+    severity        = Column(String, nullable=False, default="medium", index=True)
+    lat             = Column(Float, nullable=True)
+    lon             = Column(Float, nullable=True)
+    region          = Column(String, nullable=True, index=True)
+    country_code    = Column(String, nullable=True, index=True)
+    entity_type     = Column(String, nullable=True)                             # vessel|aircraft|port|zone|etc
+    entity_id       = Column(String, nullable=True, index=True)                 # mmsi|icao|etc
+    entity_name     = Column(String, nullable=True)
+    raw_json        = Column(Text, default="{}")                                # full original alert dict
+    zone_ids        = Column(Text, default="[]")                                # JSON list of containing zone IDs
+    tags            = Column(Text, default="[]")                                # JSON list of string tags
+    status          = Column(String, default="active", index=True)              # active|acknowledged|expired
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    expires_at      = Column(DateTime, nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    acknowledged_by = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_alerts_region_created", "region", "created_at"),
+        Index("ix_alerts_source_type",    "source",  "alert_type"),
+    )
+
+
+class Signal(Base):
+    """Raw signal ingested by fusion engine — one signal per domain event."""
+    __tablename__ = "signals"
+
+    id           = Column(Integer, primary_key=True)
+    signal_id    = Column(String, unique=True, index=True, nullable=False)   # SIG-<uuid8>
+    domain       = Column(String, nullable=False, index=True)                # maritime|aviation|news|surge
+    signal_type  = Column(String, nullable=False, index=True)
+    geo_key      = Column(String, nullable=True, index=True)                 # lat_lon bucket
+    lat          = Column(Float, nullable=True)
+    lon          = Column(Float, nullable=True)
+    region       = Column(String, nullable=True, index=True)
+    country_code = Column(String, nullable=True)
+    source_id    = Column(String, nullable=True)                             # mmsi|icao|url|etc
+    title        = Column(String, nullable=True)
+    raw_json     = Column(Text, default="{}")
+    score        = Column(Float, default=0.0)
+    fusion_id    = Column(String, nullable=True, index=True)                 # FK → FusionEvent if consumed
+    created_at   = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_signals_domain_type",   "domain", "signal_type"),
+        Index("ix_signals_region_time",   "region", "created_at"),
+    )
+
+
+class NewsArticle(Base):
+    """Persisted news article with LLM intelligence fields."""
+    __tablename__ = "news_articles"
+
+    id                   = Column(Integer, primary_key=True)
+    url                  = Column(String, unique=True, index=True, nullable=False)
+    title                = Column(String, nullable=False)
+    source_name          = Column(String, nullable=True, index=True)
+    published            = Column(String, nullable=True)
+    lat                  = Column(Float, nullable=True)
+    lon                  = Column(Float, nullable=True)
+    location_name        = Column(String, nullable=True)
+    country_code         = Column(String, nullable=True, index=True)
+    article_type         = Column(String, nullable=True, index=True)         # conflict|energy|aviation|etc
+    tier                 = Column(Integer, nullable=True, index=True)        # 1-4 (LLM relevance tier)
+    relevance_score      = Column(Float, nullable=True)
+    event_title          = Column(String, nullable=True)
+    context_summary      = Column(Text, nullable=True)
+    is_breaking          = Column(Boolean, default=False)
+    llm_extracted        = Column(Boolean, default=False)
+    entities_json        = Column(Text, default="[]")                        # JSON array of entity dicts
+    image_url            = Column(String, nullable=True)
+    body                 = Column(Text, nullable=True)
+    ingested_at          = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    region               = Column(String, nullable=True, index=True)
+
+    __table_args__ = (
+        Index("ix_news_country_time",  "country_code", "ingested_at"),
+        Index("ix_news_type_tier",     "article_type", "tier"),
+        Index("ix_news_region_time",   "region",       "ingested_at"),
+    )
+
+
+class OntologyLink(Base):
+    """Directed link from an event (alert/signal/article) to an ontology entity."""
+    __tablename__ = "ontology_links"
+
+    id              = Column(Integer, primary_key=True)
+    link_id         = Column(String, unique=True, index=True, nullable=False)  # LNK-<uuid8>
+    source_type     = Column(String, nullable=False, index=True)               # alert|signal|article|fusion
+    source_id       = Column(String, nullable=False, index=True)               # alert_id|signal_id|url|etc
+    entity_type     = Column(String, nullable=False, index=True)               # cable|port|airport|zone|vessel|aircraft
+    entity_id       = Column(String, nullable=False, index=True)               # system_id or DB pk
+    entity_name     = Column(String, nullable=True)
+    link_type       = Column(String, nullable=False, default="proximity")       # proximity|mention|impact
+    distance_km     = Column(Float, nullable=True)                             # for proximity links
+    confidence      = Column(Float, default=1.0)
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_ontlink_entity",      "entity_type", "entity_id"),
+        Index("ix_ontlink_source",      "source_type", "source_id"),
+        Index("ix_ontlink_entity_time", "entity_type", "created_at"),
+    )
+
+
 @contextmanager
 def get_db():
     db = SessionLocal()
