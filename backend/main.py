@@ -5826,10 +5826,19 @@ def _make_news_marker(article: dict) -> Optional[dict]:
         "resolved_display_name": article.get("resolved_display_name"),
         "published": article.get("published", datetime.now(timezone.utc).isoformat()),
         "expires_at": article.get("expires_at", (datetime.now(timezone.utc) + timedelta(hours=_NEWS_MARKER_WINDOW_HOURS)).isoformat()),
-        "image_url":   article.get("image_url") or article.get("og_image") or article.get("image") or None,
-        "summary":     (article.get("summary") or article.get("description") or "")[:400],
-        "source_name": article.get("source_name") or article.get("feed_name") or article.get("source") or "",
-        "num_sources": article.get("num_sources") or 1,
+        "image_url":       article.get("image_url") or article.get("og_image") or article.get("image") or None,
+        "summary":         (article.get("summary") or article.get("description") or "")[:400],
+        "source_name":     article.get("source_name") or article.get("feed_name") or article.get("source") or "",
+        "num_sources":     article.get("num_sources") or 1,
+        # LLM intelligence fields
+        "event_title":     article.get("event_title"),
+        "article_type":    article.get("article_type") or "other",
+        "icon_type":       article.get("icon_type") or "other",
+        "tier":            article.get("tier") or 3,
+        "context_summary": article.get("context_summary") or "",
+        "is_breaking":     article.get("is_breaking") or False,
+        "llm_relevance_score": article.get("llm_relevance_score") or 0,
+        "llm_extracted":   article.get("llm_extracted") or False,
     }
 
 
@@ -6095,15 +6104,26 @@ def _gate1_filter_markers(markers: list[dict]) -> None:
     print(f"[gate1] scored {len(batch)} articles — removed {len(to_remove)}")
 
 
+_NOMINATIM_PERSON_TYPES = {"person", "given_name", "surname", "family_name"}
+
 def _geocode_result_matches_country(geocode_result: dict, expected_iso) -> bool:
     """Return True if Nominatim result country matches the LLM-expected ISO2.
-    If expected_iso is None/unknown, or Nominatim didn't return a country, always accept."""
+    If expected_iso is None/unknown, or Nominatim didn't return a country, always accept.
+    Always rejects results where Nominatim identifies a person name rather than a place."""
+    # Reject person-name results — Nominatim can geocode "Trump" to US locations
+    result_type = str(geocode_result.get("type") or "").lower()
+    result_cls  = str(geocode_result.get("class") or "").lower()
+    if result_type in _NOMINATIM_PERSON_TYPES or result_cls in _NOMINATIM_PERSON_TYPES:
+        print(f"[geocode_guard] Rejected person/name result: type={result_type} class={result_cls}")
+        return False
     if not expected_iso:
         return True
     result_cc = (geocode_result.get("address") or {}).get("country_code", "").lower().strip()
     if not result_cc:
         return True
-    return result_cc == str(expected_iso).lower().strip()
+    match = result_cc == str(expected_iso).lower().strip()
+    print(f"[geocode_guard] expected={str(expected_iso).lower()} got={result_cc} match={match}")
+    return match
 
 
 def _run_news_conflict_extraction_sync():
@@ -6142,7 +6162,7 @@ def _run_news_conflict_extraction_sync():
             pass
 
     MAX_NOM_CALLS = 100       # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS = 20        # cap LLM calls per feed cycle to avoid rate-limit spikes
+    MAX_LLM_CALLS = 300       # cap LLM calls per feed cycle (raised from 20 — 20 was too low)
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
@@ -6287,12 +6307,24 @@ def _run_news_conflict_extraction_sync():
             _intel_llm_called = False
             if client and llm_calls_this_cycle < MAX_LLM_CALLS:
                 try:
+                    print(f"[article_intel] Calling Haiku for: {title[:60]}")
                     _intel = analyse_article(title, _clean_body, source_name)
                     llm_calls_this_cycle += 1
                     _intel_llm_called = True
+                    print(f"[article_intel] Got tier={_intel.get('tier')} "
+                          f"type={_intel.get('article_type')} "
+                          f"score={_intel.get('relevance_score')}")
                     time.sleep(0.1)
                 except Exception as _ai_err:
-                    print(f"[article-intelligence] failed for '{title[:50]}': {_ai_err}")
+                    import traceback as _tb
+                    print(f"[article_intel] FAILED: {type(_ai_err).__name__}: {_ai_err}")
+                    _tb.print_exc()
+            elif not client:
+                if llm_calls_this_cycle == 0:
+                    print("[article_intel] SKIPPED — Anthropic client is None (ANTHROPIC_API_KEY not set?)")
+            else:
+                if llm_calls_this_cycle == MAX_LLM_CALLS:
+                    print(f"[article_intel] Cap reached ({MAX_LLM_CALLS}) — remaining articles use fallback")
             if _intel is None:
                 _intel = {
                     "location": None, "location_country": None, "location_confidence": "none",
@@ -6318,7 +6350,8 @@ def _run_news_conflict_extraction_sync():
 
             winning_candidate = None
             candidates: list = []
-            _LLM_REJECT_TYPES = {"amenity", "office", "building", "shop"}
+            _LLM_REJECT_TYPES = {"amenity", "office", "building", "shop",
+                                 "person", "given_name", "surname", "family_name"}
 
             # ── Geocoding ─────────────────────────────────────────────────────
             if _city_meta:

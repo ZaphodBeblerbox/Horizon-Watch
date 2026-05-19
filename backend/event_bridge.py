@@ -98,6 +98,8 @@ def _run_bridge_sync(get_news_store_fn, get_conflict_markers_fn):
                 relevance_score=float(article.get('llm_relevance_score') or 0) or None,
                 relevance_tier=article.get('relevance_tier') or '',
                 llm_extracted=bool(article.get('llm_extracted')),
+                event_title=article.get('event_title') or '',
+                context_summary=article.get('context_summary') or '',
             )
             if result:
                 ingested += 1

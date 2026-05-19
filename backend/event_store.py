@@ -40,7 +40,7 @@ INFRA_RELEVANCE: dict[str, list[str]] = {
     "nuclear":      ["hospital", "power_plant", "military_base", "port"],
     "flood":        ["hospital", "power_plant", "airport", "dam"],
     "conflict_zone":["military_base", "hospital", "airport", "power_plant"],
-    "general":      ["hospital", "airport", "military_base"],
+    "general":      [],
 }
 
 # ── Event type classifier keywords ───────────────────────────────────────────
@@ -108,11 +108,11 @@ def classify_event_type(title: str, body: str = '') -> str:
 
 
 def extract_actors(title: str, body: str = '') -> list[str]:
-    """Extract known actors mentioned in the text."""
+    """Extract known actors mentioned in the text using whole-word matching."""
     text = title + ' ' + body
     found = []
     for actor in KNOWN_ACTORS:
-        if actor.lower() in text.lower() and actor not in found:
+        if re.search(r'\b' + re.escape(actor) + r'\b', text, re.IGNORECASE) and actor not in found:
             found.append(actor)
     return found[:4]  # Max 4 actors
 
@@ -196,6 +196,8 @@ def ingest_event(
     relevance_score: float = None,
     relevance_tier: str = '',
     llm_extracted: bool = False,
+    event_title: str = '',
+    context_summary: str = '',
     extra: dict = None,
 ) -> Optional[str]:
     """
@@ -293,6 +295,8 @@ def ingest_event(
             'relevance_score': relevance_score,
             'relevance_tier': relevance_tier,
             'llm_extracted': llm_extracted,
+            'event_title': event_title or None,
+            'context_summary': context_summary or '',
             'corroboration_count': 1,
             'thread_id': None,
             'infra_types': INFRA_RELEVANCE.get(event_type, INFRA_RELEVANCE['general']),
@@ -518,6 +522,9 @@ def build_threads() -> dict:
             'country_code':        latest.get('country_code', ''),
             'location_confidence': latest.get('location_confidence', ''),
             'corroboration_count': sum(e.get('corroboration_count', 1) for e in thread_events),
+            'event_title':         next((e.get('event_title') for e in reversed(thread_events) if e.get('event_title')), None),
+            'context_summary':     next((e.get('context_summary') for e in reversed(thread_events) if e.get('context_summary')), ''),
+            'article_type':        latest.get('article_type', ''),
         }
 
     with _THREAD_STORE_LOCK:
