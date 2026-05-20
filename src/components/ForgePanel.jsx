@@ -4,6 +4,7 @@ import { safeArray } from "../utils/safeArray.js"
 import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.jsx"
 import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
+import ForceGraph from "./forge/ForceGraph.jsx"
 
 const API = API_BASE
 
@@ -5439,8 +5440,8 @@ function OntologyWorkspace() {
             <Toolbar>
                 <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…" style={{ ...inputStyle, flex: 1, maxWidth: 200 }} />
                 <div style={{ display: "flex", gap: 2, background: "#0a0e1a", borderRadius: 4, padding: 2 }}>
-                    {["table", "graph"].map(v => (
-                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? "rgba(96,165,250,0.12)" : "transparent", color: view === v ? "#60a5fa" : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
+                    {["table", "graph", "live"].map(v => (
+                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? (v === "live" ? "rgba(236,72,153,0.14)" : "rgba(96,165,250,0.12)") : "transparent", color: view === v ? (v === "live" ? "#ec4899" : "#60a5fa") : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
                     ))}
                 </div>
                 <button onClick={() => { setShowAdd(v => !v); setShowLink(false) }} style={{ padding: "5px 10px", borderRadius: 5, border: "none", background: showAdd ? "#60a5fa" : "#1e293b", color: showAdd ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>+ Entity</button>
@@ -5464,8 +5465,9 @@ function OntologyWorkspace() {
                     ))}
                 </div>
             )}
-            <WorkspaceBody style={view === "graph" ? { padding: 0, overflow: "hidden" } : {}}>
-                {!loaded ? <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div> :
+            <WorkspaceBody style={(view === "graph" || view === "live") ? { padding: 0, overflow: "hidden" } : {}}>
+                {view === "live" ? <ForceGraph /> :
+                !loaded ? <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div> :
                 view === "graph" ? <OntologyGraph
                     nodes={nodes} edges={allEdges}
                     onNodeClick={setSelectedNode}

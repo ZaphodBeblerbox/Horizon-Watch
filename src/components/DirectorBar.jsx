@@ -19,6 +19,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react"
+import { natoIconSvg } from "../globe/natoIcons.js"
 
 const BAR_STYLES = `
   @keyframes director-bar-slide-up {
@@ -394,6 +395,16 @@ function StyleTag() {
 }
 
 
+// ── TTS helper ────────────────────────────────────────────────────────────────
+function speakText(text) {
+  if (!text || !window.speechSynthesis) return
+  window.speechSynthesis.cancel()
+  const utt = new SpeechSynthesisUtterance(text)
+  utt.rate  = 0.95
+  utt.pitch = 0.95
+  window.speechSynthesis.speak(utt)
+}
+
 export default function DirectorBar({
   visible        = false,
   sequence       = null,
@@ -411,6 +422,7 @@ export default function DirectorBar({
 }) {
   const [collapsed, setCollapsed]   = useState(false)
   const [intent,    setIntent]      = useState("")
+  const [ttsActive, setTtsActive]   = useState(false)
   const intentRef                   = useRef(null)
 
   const { isPlaying, currentIndex, total } = runnerState
@@ -461,7 +473,16 @@ export default function DirectorBar({
 
         {/* ── Strip: logo + progress + controls ── */}
         <div className="db-strip">
-          <span className="db-strip-logo">Director</span>
+          <span
+            className="db-strip-logo"
+            style={{ display: "flex", alignItems: "center", gap: 5 }}
+          >
+            <span
+              style={{ display: "inline-block", verticalAlign: "middle" }}
+              dangerouslySetInnerHTML={{ __html: natoIconSvg("FUSION_EVENT", 14, "#388bff") }}
+            />
+            Director
+          </span>
 
           {hasSequence && (
             <span className="db-step-counter">
@@ -527,6 +548,22 @@ export default function DirectorBar({
             >{collapsed ? "▲" : "▼"}</button>
           )}
 
+          {/* TTS test */}
+          <button
+            className={`db-btn${ttsActive ? " primary" : ""}`}
+            title={ttsActive ? "Stop narration" : "Read aloud"}
+            onClick={() => {
+              if (ttsActive) {
+                window.speechSynthesis?.cancel()
+                setTtsActive(false)
+              } else {
+                const text = currentAction?.text || currentAction?.sections?.[0]?.text || ""
+                if (text) { speakText(text); setTtsActive(true) }
+              }
+            }}
+            style={{ fontSize: 12 }}
+          >{ttsActive ? "🔇" : "🔊"}</button>
+
           {/* Close */}
           <button
             className="db-btn danger"
@@ -553,7 +590,16 @@ export default function DirectorBar({
                   {currentAction && !isSummary && (
                     <>
                       {narrationHeading && (
-                        <div className="db-narration-heading">{narrationHeading}</div>
+                        <div className="db-narration-heading" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          {currentAction.domain && (
+                            <span style={{
+                              fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3,
+                              background: "rgba(56,139,255,0.18)", color: "#56cfff",
+                              letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0,
+                            }}>{currentAction.domain}</span>
+                          )}
+                          {narrationHeading}
+                        </div>
                       )}
                       <div className="db-narration-text">{narrationText}</div>
                     </>
@@ -596,29 +642,14 @@ export default function DirectorBar({
                   )}
                 </div>
 
-                {/* Context Cards */}
+                {/* Context Cards — compact strip at bottom of narration */}
                 {contextCards.length > 0 && (
                   <div className="db-context-cards" style={{ marginTop: 4 }}>
-                    {contextCards.slice(-3).map((card, i) => (
+                    {contextCards.slice(-2).map((card, i) => (
                       <div key={i} className="db-context-card">
                         <div className="db-context-card-title">{card.title}</div>
                         <div className="db-context-card-text">{card.summary}</div>
                         {card.source && <div className="db-context-card-source">{card.source}</div>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Indicators */}
-                {indicators.length > 0 && (
-                  <div className="db-indicators">
-                    {indicators.map((ind, i) => (
-                      <div
-                        key={i}
-                        className={`db-indicator-card ${ind.type || ""}`}
-                      >
-                        <div className="db-indicator-label">{ind.label}</div>
-                        <div className="db-indicator-value">{ind.value}</div>
                       </div>
                     ))}
                   </div>

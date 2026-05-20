@@ -6,7 +6,7 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import {
     LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-    PieChart, Pie, Cell, CartesianGrid,
+    PieChart, Pie, Cell, CartesianGrid, BarChart, Bar,
 } from "recharts"
 
 const PIE_COLORS = ["#4A9EE0", "#5BC97F", "#E8B23A", "#E55757", "#9B59B6", "#9AA4B5", "#38bdf8", "#f97316"]
@@ -524,18 +524,127 @@ function GlobalOverviewChart() {
     )
 }
 
+// ── Explanation modal ─────────────────────────────────────────────────────────
+
+function ExplainModal({ regionName, onClose }) {
+    const [data,    setData]    = useState(null)
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        fetch(`${API_BASE}/api/analytics/threat-matrix/${encodeURIComponent(regionName)}/explain`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { setData(d); setLoading(false) })
+            .catch(() => setLoading(false))
+    }, [regionName])
+
+    const drivers = data?.drivers ?? []
+    const chartData = drivers.map(d => ({ name: d.label || d.source || d.type || "Signal", value: d.score || d.weight || d.contribution || 0 }))
+    const levelColor = LEVEL_COLORS[data?.threat_level] || "#64748b"
+
+    return (
+        <div style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center",
+        }} onClick={onClose}>
+            <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                    width: 420, maxHeight: "80vh", overflowY: "auto",
+                    background: "#0a101e", border: "1px solid rgba(56,139,255,0.2)",
+                    borderRadius: 10, padding: "20px 22px",
+                    boxShadow: "0 24px 64px rgba(0,0,0,0.7)",
+                    fontFamily: "system-ui, sans-serif",
+                }}
+            >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+                    <div>
+                        <div style={{ fontSize: 11, color: "#475569", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 3 }}>
+                            Threat Explainer
+                        </div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: "#e2e8f0" }}>{regionName}</div>
+                    </div>
+                    <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 18 }}>✕</button>
+                </div>
+
+                {loading && <div style={{ color: "#475569", fontSize: 11, textAlign: "center", padding: 24 }}>Loading drivers…</div>}
+
+                {data && !loading && (
+                    <>
+                        {/* Score summary */}
+                        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                            {[
+                                { label: "Score",      value: data.threat_score ?? "—",    color: levelColor },
+                                { label: "Level",      value: data.threat_level || "—",     color: levelColor },
+                                { label: "Alerts",     value: data.alert_count ?? 0,        color: "#94a3b8" },
+                                { label: "Fusions",    value: data.fusion_count ?? 0,       color: "#a78bfa" },
+                            ].map(c => (
+                                <div key={c.label} style={{ flex: 1, background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: "7px 10px", textAlign: "center" }}>
+                                    <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>{c.label}</div>
+                                    <div style={{ fontSize: 14, fontWeight: 700, color: c.color, marginTop: 2 }}>{c.value}</div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Score bar */}
+                        <div style={{ marginBottom: 14 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 9, color: "#475569" }}>
+                                <span>0</span><span>Threat Score</span><span>100</span>
+                            </div>
+                            <div style={{ height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
+                                <div style={{
+                                    height: "100%", borderRadius: 4,
+                                    width: `${Math.min(100, data.threat_score ?? 0)}%`,
+                                    background: `linear-gradient(90deg, #1d4ed8, ${levelColor})`,
+                                    transition: "width 0.6s ease",
+                                }} />
+                            </div>
+                        </div>
+
+                        {/* Driver chart */}
+                        {chartData.length > 0 && (
+                            <>
+                                <div style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                                    Signal Drivers
+                                </div>
+                                <ResponsiveContainer width="100%" height={Math.max(80, chartData.length * 28)}>
+                                    <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+                                        <XAxis type="number" tick={{ fill: "#475569", fontSize: 8 }} domain={[0, "auto"]} />
+                                        <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} width={110} />
+                                        <Tooltip
+                                            contentStyle={{ background: "#0a101e", border: "1px solid rgba(56,139,255,0.2)", fontSize: 11 }}
+                                            labelStyle={{ color: "#94a3b8" }}
+                                        />
+                                        <Bar dataKey="value" fill={levelColor} radius={[0, 3, 3, 0]} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </>
+                        )}
+
+                        {/* Narrative */}
+                        {data.narrative && (
+                            <div style={{ marginTop: 12, fontSize: 11, color: "rgba(203,213,225,0.8)", lineHeight: 1.6, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 12 }}>
+                                {data.narrative}
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        </div>
+    )
+}
+
 function ThreatMatrix({ compact = false }) {
     const [scores,   setScores]   = useState([])
     const [loading,  setLoading]  = useState(true)
     const [history,  setHistory]  = useState([])
-    const [expanded, setExpanded] = useState(null)   // region name being drilled into
+    const [expanded, setExpanded] = useState(null)   // region name for chart drill-down
+    const [explain,  setExplain]  = useState(null)   // region name for explain modal
 
     useEffect(() => {
         fetch(`${API_BASE}/api/analytics/threat-matrix`)
             .then(r => r.ok ? r.json() : [])
             .then(data => { setScores(Array.isArray(data) ? data : []); setLoading(false) })
             .catch(() => setLoading(false))
-        // Fetch yesterday's snapshot for trend arrows
         fetch(`${API_BASE}/api/analytics/threat-matrix/history?days=2`)
             .then(r => r.ok ? r.json() : [])
             .then(data => setHistory(Array.isArray(data) ? data : []))
@@ -561,6 +670,93 @@ function ThreatMatrix({ compact = false }) {
         )
     }
 
+    // Card layout for full view; compact list rows for sidebar
+    if (!compact) {
+        return (
+            <>
+                {explain && <ExplainModal regionName={explain} onClose={() => setExplain(null)} />}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+                    {scores.map(s => {
+                        const c    = LEVEL_COLORS[s.threat_level] || "#64748b"
+                        const prev = yesterdayMap[s.region_name]
+                        const delta = prev ? s.threat_score - prev.threat_score : null
+                        const isOpen = expanded === s.region_name
+                        return (
+                            <div key={s.region_name} style={{ width: 200, flexShrink: 0 }}>
+                                <div
+                                    style={{
+                                        background: "rgba(17,24,39,0.85)", borderRadius: 7,
+                                        border: `1px solid ${c}28`,
+                                        borderTop: `3px solid ${c}`,
+                                        padding: "9px 10px",
+                                        cursor: "pointer",
+                                        transition: "border-color 0.15s",
+                                    }}
+                                    onClick={() => setExpanded(isOpen ? null : s.region_name)}
+                                >
+                                    {/* Region name */}
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: "#cbd5e1", marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {s.region_name}
+                                    </div>
+
+                                    {/* Score bar */}
+                                    <div style={{ height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 2, marginBottom: 6, overflow: "hidden" }}>
+                                        <div style={{ height: "100%", borderRadius: 2, width: `${Math.min(100, s.threat_score ?? 0)}%`, background: `linear-gradient(90deg, #1d4ed8, ${c})`, transition: "width 0.6s ease" }} />
+                                    </div>
+
+                                    {/* Score + level + trend */}
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                                        <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                                            <span style={{ color: c, fontSize: 18, fontWeight: 700, lineHeight: 1 }}>{s.threat_score ?? 0}</span>
+                                            <span style={{ color: c, fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>{s.threat_level}</span>
+                                        </div>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                                            {delta != null && Math.abs(delta) >= 1 && (
+                                                <span style={{ fontSize: 10, color: delta > 0 ? "#ef4444" : "#22c55e" }}>
+                                                    {delta > 0 ? "▲" : "▼"}{Math.abs(Math.round(delta))}
+                                                </span>
+                                            )}
+                                            {(s.fusion_count ?? 0) > 0 && (
+                                                <span style={{ fontSize: 8, padding: "1px 4px", borderRadius: 3, background: "rgba(191,90,242,0.18)", color: "#BF5AF2", fontWeight: 700 }}>
+                                                    ⚡{s.fusion_count}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Driver counts */}
+                                    <div style={{ display: "flex", gap: 6, fontSize: 9, color: "#475569" }}>
+                                        <span>{s.alert_count ?? 0} alerts</span>
+                                        <span>{s.sentinel_detection_count ?? 0} det.</span>
+                                    </div>
+                                </div>
+
+                                {/* Explain button */}
+                                <button
+                                    onClick={e => { e.stopPropagation(); setExplain(s.region_name) }}
+                                    style={{
+                                        width: "100%", marginTop: 3, padding: "3px 0", fontSize: 9,
+                                        background: "rgba(56,139,255,0.06)", border: "1px solid rgba(56,139,255,0.12)",
+                                        borderRadius: 4, color: "#4A9EE0", cursor: "pointer",
+                                        fontWeight: 600, letterSpacing: "0.04em",
+                                    }}
+                                >
+                                    Explain →
+                                </button>
+
+                                {isOpen && (
+                                    <RegionChart regionName={s.region_name} onClose={() => setExpanded(null)} />
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+                <GlobalOverviewChart />
+            </>
+        )
+    }
+
+    // Compact list rows (sidebar mode)
     return (
         <div>
             {scores.map(s => {
@@ -573,45 +769,32 @@ function ThreatMatrix({ compact = false }) {
                             onClick={() => setExpanded(isOpen ? null : s.region_name)}
                             style={{
                                 display: "flex", justifyContent: "space-between", alignItems: "center",
-                                padding: compact ? "5px 8px" : "7px 10px",
-                                marginBottom: 3,
+                                padding: "5px 8px", marginBottom: 3,
                                 background: isOpen ? "rgba(30,58,95,0.5)" : "rgba(17,24,39,0.7)",
-                                borderRadius: 5,
-                                borderLeft: `3px solid ${c}`,
-                                cursor: "pointer",
+                                borderRadius: 5, borderLeft: `3px solid ${c}`, cursor: "pointer",
                             }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ color: "#cbd5e1", fontSize: compact ? 10 : 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                <div style={{ color: "#cbd5e1", fontSize: 10, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                     {s.region_name}
                                 </div>
-                                {!compact && (
-                                    <div style={{ color: "#475569", fontSize: 9, marginTop: 1 }}>
-                                        {s.alert_count ?? 0} alerts · {s.sentinel_detection_count ?? 0} detections
-                                    </div>
-                                )}
                             </div>
-                            <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 8, display: "flex", alignItems: "center", gap: 4 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0, marginLeft: 8 }}>
                                 {(s.fusion_count ?? 0) > 0 && (
-                                    <span title={`${s.fusion_count} active fusion event${s.fusion_count !== 1 ? "s" : ""}`} style={{
-                                        fontSize: 9, padding: "1px 5px", borderRadius: 3,
-                                        background: "rgba(191,90,242,0.18)", color: "#BF5AF2",
-                                        fontWeight: 700, letterSpacing: "0.04em",
-                                    }}>⚡{s.fusion_count}</span>
+                                    <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "rgba(191,90,242,0.18)", color: "#BF5AF2", fontWeight: 700 }}>⚡{s.fusion_count}</span>
                                 )}
                                 <TrendArrow current={s.threat_score} previous={prev?.threat_score} />
                                 <div>
-                                    <div style={{ color: c, fontSize: compact ? 9 : 10, fontWeight: 700 }}>{s.threat_level}</div>
-                                    <div style={{ color: "#94a3b8", fontSize: compact ? 11 : 13, fontWeight: 700 }}>{s.threat_score ?? 0}</div>
+                                    <div style={{ color: c, fontSize: 9, fontWeight: 700 }}>{s.threat_level}</div>
+                                    <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700 }}>{s.threat_score ?? 0}</div>
                                 </div>
                             </div>
                         </div>
-                        {isOpen && !compact && (
+                        {isOpen && (
                             <RegionChart regionName={s.region_name} onClose={() => setExpanded(null)} />
                         )}
                     </div>
                 )
             })}
-            {!compact && <GlobalOverviewChart />}
         </div>
     )
 }

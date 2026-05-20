@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useCesium } from "resium"
 import {
-    Cartesian3, EasingFunction, SceneTransforms,
+    Cartesian3, EasingFunction, SceneTransforms, Math as CesiumMath,
 } from "cesium"
 import API_BASE from "../apiBase.js"
 
@@ -132,10 +132,17 @@ export default function GlobeAutoMode({ enabled, isMobile = false }) {
 
                     // 1. Fly
                     rotateRef.current = false
-                    const currentAlt = viewer.camera.positionCartographic?.height ?? 8_000_000
+                    // city-level: 400km; regional (country only, no specific city): 800km
+                    const hasCity = !!(ev.city || ev.location_name || ev.location)
+                    const alt     = hasCity ? 400_000 : 800_000
                     await new Promise(res => {
                         viewer.camera.flyTo({
-                            destination:    Cartesian3.fromDegrees(lon, lat, currentAlt),
+                            destination:    Cartesian3.fromDegrees(lon, lat, alt),
+                            orientation: {
+                                heading: CesiumMath.toRadians(Math.random() * 30),
+                                pitch:   CesiumMath.toRadians(-75),
+                                roll:    0,
+                            },
                             duration:       4.0,
                             easingFunction: EasingFunction.SINUSOIDAL_IN_OUT,
                             complete: res, cancel: res,
