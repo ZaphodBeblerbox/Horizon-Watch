@@ -18402,7 +18402,7 @@ def api_get_alerts(
     severity: str = None,
     status: str = "active",
     limit: int = 100,
-    _u=Depends(_require_user),
+    current_user=Depends(get_optional_user),
 ):
     from database import Alert as _AlertModel, get_db as _gdb_api
     with _gdb_api() as _db:
@@ -18431,7 +18431,7 @@ def api_get_alerts(
 
 
 @app.get("/api/alerts/{alert_id}")
-def api_get_alert(alert_id: str, _u=Depends(_require_user)):
+def api_get_alert(alert_id: str, current_user=Depends(get_optional_user)):
     from database import Alert as _AlertModel, get_db as _gdb_api
     with _gdb_api() as _db:
         r = _db.query(_AlertModel).filter(_AlertModel.alert_id == alert_id).first()
@@ -18457,7 +18457,7 @@ def api_get_signals(
     domain: str = None,
     region: str = None,
     limit: int = 100,
-    _u=Depends(_require_user),
+    current_user=Depends(get_optional_user),
 ):
     from database import Signal as _SignalModel, get_db as _gdb_api
     with _gdb_api() as _db:
@@ -18488,7 +18488,7 @@ def api_get_news_articles(
     tier: int = None,
     llm_only: bool = False,
     limit: int = 100,
-    _u=Depends(_require_user),
+    current_user=Depends(get_optional_user),
 ):
     from database import NewsArticle as _NAModel, get_db as _gdb_api
     import json as _j
@@ -18522,7 +18522,7 @@ def api_get_news_articles(
 
 
 @app.get("/api/news-articles/{url:path}")
-def api_get_news_article(url: str, _u=Depends(_require_user)):
+def api_get_news_article(url: str, current_user=Depends(get_optional_user)):
     from database import NewsArticle as _NAModel, get_db as _gdb_api
     import json as _j
     with _gdb_api() as _db:
@@ -18548,7 +18548,7 @@ def api_get_ontology_links(
     entity_id: str = None,
     source_type: str = None,
     limit: int = 100,
-    _u=Depends(_require_user),
+    current_user=Depends(get_optional_user),
 ):
     from database import OntologyLink as _OLModel, get_db as _gdb_api
     with _gdb_api() as _db:
@@ -18572,7 +18572,7 @@ def api_get_ontology_links(
 
 
 @app.get("/api/entities/{entity_type}/{entity_id}/profile")
-def api_get_entity_profile(entity_type: str, entity_id: str, _u=Depends(_require_user)):
+def api_get_entity_profile(entity_type: str, entity_id: str, current_user=Depends(get_optional_user)):
     """Full intelligence profile for any ontology entity."""
     from database import (OntologyLink as _OLM, Alert as _AM, NewsArticle as _NAM,
                           FusionEvent as _FEM, SurgeEvent as _SEM,
@@ -18692,7 +18692,7 @@ def api_get_entity_profile(entity_type: str, entity_id: str, _u=Depends(_require
 
 
 @app.get("/api/entities/{entity_type}/{entity_id}/links")
-def api_get_entity_links(entity_type: str, entity_id: str, _u=Depends(_require_user)):
+def api_get_entity_links(entity_type: str, entity_id: str, current_user=Depends(get_optional_user)):
     from database import OntologyLink as _OLModel, get_db as _gdb_api
     with _gdb_api() as _db:
         rows = (_db.query(_OLModel)
@@ -18714,7 +18714,7 @@ def api_get_entity_links(entity_type: str, entity_id: str, _u=Depends(_require_u
 def api_get_entity_timeline(
     entity_type: str, entity_id: str,
     days: int = 7,
-    _u=Depends(_require_user),
+    current_user=Depends(get_optional_user),
 ):
     from database import OntologyLink as _OLModel, Alert as _AlertModel, NewsArticle as _NAModel, get_db as _gdb_api
     import json as _j
