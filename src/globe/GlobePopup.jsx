@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import {
     ScreenSpaceEventHandler, ScreenSpaceEventType,
     defined, SceneTransforms,
-    Cartographic, Math as CesiumMath,
+    Cartographic, Math as CesiumMath, Cartesian2,
 } from "cesium"
 import { getEntity } from "./entityStore.js"
 import GlobeAircraftPopup from "./GlobeAircraftPopup.jsx"

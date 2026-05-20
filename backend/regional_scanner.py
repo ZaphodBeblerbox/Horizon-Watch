@@ -40,8 +40,8 @@ def _fetch_tile_sync(
     max_age_days: int = 5,
     min_age_days: int = 0,
     max_cloud: int = 30,
-    width: int = 512,
-    height: int = 512,
+    width: int = 256,
+    height: int = 256,
 ) -> Optional[dict]:
     """Fetch Sentinel-2 true-colour tile via Copernicus Process API.
     Returns {"b64": base64_png, "date": datetime} or None.
@@ -97,7 +97,7 @@ def _fetch_tile_sync(
                 "Accept":        "image/png",
             },
         )
-        with urllib.request.urlopen(req, timeout=25) as r:
+        with urllib.request.urlopen(req, timeout=12) as r:
             if r.status == 200:
                 raw = r.read()
                 return {"b64": base64.b64encode(raw).decode(), "date": t_to}
@@ -200,7 +200,7 @@ class TileByTileScanner:
                 try:
                     detections = await asyncio.wait_for(
                         self._process_single_tile(tile, region, job_id, db),
-                        timeout=35.0,
+                        timeout=75.0,
                     )
                     job.tiles_complete   = (job.tiles_complete or 0) + 1
                     job.detections_total = (job.detections_total or 0) + len(detections)

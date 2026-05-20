@@ -161,54 +161,12 @@ function MetaRow({ label, children }) {
     )
 }
 
-// ── Progress overlay ──────────────────────────────────────────────────────────
-
-function ScanProgressOverlay({ progress }) {
-    if (!progress) return null
-    const { tilesComplete, totalTiles, detections, jobId } = progress
-    const pct = totalTiles > 0 ? Math.round(tilesComplete / totalTiles * 100) : 0
-    return createPortal(
-        <div style={{
-            position: "fixed", bottom: 56, left: 16,
-            background: "rgba(8,16,32,0.88)",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
-            border: "1px solid rgba(255,204,0,0.3)",
-            borderRadius: 8, padding: "8px 12px",
-            zIndex: 8800,
-            fontFamily: "Inter, system-ui, sans-serif",
-            color: "#fff",
-            minWidth: 200,
-        }}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: "#FFCC00", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>
-                UAE Scan Running
-            </div>
-            <div style={{
-                height: 3, borderRadius: 2,
-                background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: 5,
-            }}>
-                <div style={{
-                    height: "100%", borderRadius: 2,
-                    width: `${pct}%`,
-                    background: "linear-gradient(90deg, #FFCC00, #FF9500)",
-                    transition: "width 0.8s ease",
-                }} />
-            </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.65)" }}>
-                {tilesComplete} / {totalTiles} tiles · {detections} detection{detections !== 1 ? "s" : ""}
-            </div>
-        </div>,
-        document.body,
-    )
-}
-
 // ── Main layer ────────────────────────────────────────────────────────────────
 
 export default function GlobeRegionalScanLayer({ enabled }) {
     const { viewer }              = useCesium()
     const [detections, setDets]   = useState([])
     const [tileBboxes, setTileBboxes] = useState([])  // [{west,south,east,north}]
-    const [progress, setProgress] = useState(null)    // {tilesComplete,totalTiles,detections,jobId}
     const [jobId, setJobId]       = useState(null)
     const [selDet, setSelDet]     = useState(null)
     const [tooltipPos, setTPos]   = useState({ x: 0, y: 0 })
@@ -228,14 +186,6 @@ export default function GlobeRegionalScanLayer({ enabled }) {
                 const jid = d.job?.job_id
                 if (jid) {
                     setJobId(jid)
-                    if (d.job?.status === "running") {
-                        setProgress({
-                            tilesComplete: d.job.tiles_complete || 0,
-                            totalTiles:    d.job.total_tiles    || 0,
-                            detections:    d.job.detections_total || 0,
-                            jobId:         jid,
-                        })
-                    }
                 }
                 const feats = d.features || []
                 feats.forEach(f => knownIdsRef.current.add(f.properties?.detection_id))
@@ -257,12 +207,6 @@ export default function GlobeRegionalScanLayer({ enabled }) {
 
                 if (msg.event === "scan_progress") {
                     const p = msg.payload || {}
-                    setProgress({
-                        tilesComplete: p.tiles_complete || 0,
-                        totalTiles:    p.total_tiles    || 0,
-                        detections:    p.detections_total || 0,
-                        jobId:         p.job_id,
-                    })
                     if (p.job_id) setJobId(p.job_id)
 
                     // Add tile bbox rectangle for this completed tile
@@ -294,7 +238,6 @@ export default function GlobeRegionalScanLayer({ enabled }) {
 
                 if (msg.event === "scan_complete") {
                     const p = msg.payload || {}
-                    setProgress(null)
                     // Fetch complete detections set
                     const jid = p.job_id || jobId
                     if (jid) {
@@ -324,7 +267,6 @@ export default function GlobeRegionalScanLayer({ enabled }) {
         if (!enabled) {
             setDets([])
             setTileBboxes([])
-            setProgress(null)
             setSelDet(null)
             setTVis(false)
             knownIdsRef.current = new Set()
@@ -449,7 +391,6 @@ export default function GlobeRegionalScanLayer({ enabled }) {
                 onSuppress={handleSuppress}
             />
 
-            <ScanProgressOverlay progress={progress} />
         </>
     )
 }
