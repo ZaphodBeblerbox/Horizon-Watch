@@ -10,16 +10,14 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 const HALF_CELL = 0.05  // 0.1° grid → ±0.05° from center
 
 const colorFor = (intensity) => {
-    if (intensity > 0.90) return Color.fromCssColorString("#FF0000").withAlpha(0.70)
-    if (intensity > 0.80) return Color.fromCssColorString("#FF3300").withAlpha(0.65)
-    if (intensity > 0.70) return Color.fromCssColorString("#FF6600").withAlpha(0.60)
-    if (intensity > 0.60) return Color.fromCssColorString("#FF9900").withAlpha(0.55)
-    if (intensity > 0.50) return Color.fromCssColorString("#FFCC00").withAlpha(0.50)
-    if (intensity > 0.40) return Color.fromCssColorString("#CCFF00").withAlpha(0.40)
-    if (intensity > 0.30) return Color.fromCssColorString("#66FF00").withAlpha(0.35)
-    if (intensity > 0.20) return Color.fromCssColorString("#00FFCC").withAlpha(0.25)
-    if (intensity > 0.10) return Color.fromCssColorString("#0099FF").withAlpha(0.20)
-    return                 Color.fromCssColorString("#0033FF").withAlpha(0.10)
+    if (intensity > 0.90) return Color.fromCssColorString("#FF0000").withAlpha(0.85)
+    if (intensity > 0.75) return Color.fromCssColorString("#FF6000").withAlpha(0.80)
+    if (intensity > 0.60) return Color.fromCssColorString("#FFB300").withAlpha(0.75)
+    if (intensity > 0.45) return Color.fromCssColorString("#FFFF00").withAlpha(0.70)
+    if (intensity > 0.30) return Color.fromCssColorString("#00FF80").withAlpha(0.65)
+    if (intensity > 0.20) return Color.fromCssColorString("#00CCFF").withAlpha(0.55)
+    if (intensity > 0.10) return Color.fromCssColorString("#0066FF").withAlpha(0.45)
+    return                 Color.fromCssColorString("#0033FF").withAlpha(0.35)
 }
 
 export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24, bounds = null }) {

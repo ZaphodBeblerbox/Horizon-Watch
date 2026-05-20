@@ -94,6 +94,15 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                     const bbox  = REGION_BBOXES[s.region_name]
                     if (!bbox)  return
                     const score = s.threat_score ?? 0
+                    const regionData = {
+                        region_name:  s.region_name,
+                        threat_score: score,
+                        threat_level: s.threat_level,
+                        trend:        s.trend,
+                        alert_count:  s.alert_count  ?? 0,
+                        fusion_count: s.fusion_count ?? 0,
+                        signals:      s.signals      ?? [],
+                    }
 
                     // 1° grid cells within the region
                     for (let lat = bbox.south; lat < bbox.north; lat += 1) {
@@ -110,6 +119,8 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                                     heightReference: HeightReference.CLAMP_TO_GROUND,
                                 },
                             })
+                            // Register so GlobePopup.jsx click handler can identify it
+                            setEntity(id, "threat_region", regionData)
                             added.push(ent)
                         }
                     }

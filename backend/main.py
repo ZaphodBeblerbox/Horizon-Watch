@@ -3136,10 +3136,13 @@ UAE_REGION = {
         "max_lon": 56.5,
         "max_lat": 26.2,
     },
-    "tile_size_deg":           0.5,
+    "tile_size_deg":            0.5,
     "spectral_change_threshold": 0.12,
-    "scan_interval_days":      5,
-    "max_cloud_cover":         20,
+    "scan_interval_days":       5,
+    "max_cloud_cover":          20,
+    "max_concurrent_fetches":   3,
+    "tile_timeout_seconds":     25,
+    "max_acquisition_minutes":  60,
 }
 
 _REGION_MAP = {"UAE": UAE_REGION}
@@ -4050,8 +4053,29 @@ async def regional_scan_trigger(
                 except Exception as e:
                     print(f"[regional_scan] background task failed: {e}")
 
+    import math
+    bbox = region["bbox"]
+    tile_deg = region.get("tile_size_deg", 0.5)
+    max_concurrent = region.get("max_concurrent_fetches", 3)
+    tile_timeout_s = region.get("tile_timeout_seconds", 25)
+    tiles_lon = math.ceil((bbox["max_lon"] - bbox["min_lon"]) / tile_deg)
+    tiles_lat = math.ceil((bbox["max_lat"] - bbox["min_lat"]) / tile_deg)
+    estimated_tiles = tiles_lon * tiles_lat
+    # Two passes (baseline + current), each tile ~tile_timeout_s at max_concurrent concurrency
+    batches = math.ceil(estimated_tiles / max_concurrent)
+    estimated_minutes = math.ceil(batches * tile_timeout_s * 2 / 60)
+    from datetime import timezone
+    estimated_completion = (datetime.now(timezone.utc) + __import__("datetime").timedelta(minutes=estimated_minutes)).isoformat()
+
     asyncio.create_task(_run_bg())
-    return {"job_id": job_id, "status": "running", "region_name": region_name}
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "region_name": region_name,
+        "estimated_tiles": estimated_tiles,
+        "estimated_minutes": estimated_minutes,
+        "estimated_completion": estimated_completion,
+    }
 
 
 @app.get("/api/regional-scans/latest")

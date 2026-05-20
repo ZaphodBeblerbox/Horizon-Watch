@@ -4015,6 +4015,8 @@ function RegionalScansSection({ onViewOnGlobe }) {
     const running = latest?.status === "running"
     const pct     = running ? (PHASE_PCT[latest?.phase] || 10) : (latest?.status === "complete" ? 100 : 0)
 
+    const [eta, setEta] = useState(null)   // { tiles, minutes, completion }
+
     const triggerScan = async () => {
         setTriggering(true)
         try {
@@ -4024,8 +4026,13 @@ function RegionalScansSection({ onViewOnGlobe }) {
                 body: JSON.stringify({ region_name: "UAE" }),
             })
             const d = await r.json()
-            setToast(d.message || `Scan triggered: ${d.job_id}`)
-            setTimeout(() => setToast(""), 4000)
+            if (d.estimated_tiles) {
+                setEta({ tiles: d.estimated_tiles, minutes: d.estimated_minutes, completion: d.estimated_completion })
+                setToast(`Scan started · ~${d.estimated_tiles} tiles · ETA ~${d.estimated_minutes} min`)
+            } else {
+                setToast(d.message || `Scan triggered: ${d.job_id}`)
+            }
+            setTimeout(() => setToast(""), 5000)
             load()
         } catch (e) {
             setToast("Trigger failed")
@@ -4128,7 +4135,8 @@ function RegionalScansSection({ onViewOnGlobe }) {
                             }} />
                         </div>
                         <div style={{ fontSize: 9, color: "#FFCC00", marginTop: 4, textTransform: "uppercase" }}>
-                            Phase: {latest.phase} · Running — this may take several hours
+                            Phase: {latest.phase} · Running
+                            {eta ? ` · ~${eta.tiles} tiles · ETA ~${eta.minutes} min` : " — this may take several hours"}
                         </div>
                     </div>
                 )}

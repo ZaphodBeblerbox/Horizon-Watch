@@ -19,6 +19,84 @@ import GlobeAirportPopup  from "./GlobeAirportPopup.jsx"
 import GlobePortPopup     from "./GlobePortPopup.jsx"
 import API_BASE           from "../apiBase.js"
 
+// ── Inline threat-region popup ────────────────────────────────────────────────
+const THREAT_COLORS = { critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }
+function ThreatRegionPopup({ data, onClose }) {
+    const [explain,   setExplain]   = useState(null)
+    const [expLoad,   setExpLoad]   = useState(false)
+    const lvl   = (data.threat_level || "low").toLowerCase()
+    const col   = THREAT_COLORS[lvl] || "#64748b"
+    const score = Math.round(data.threat_score ?? 0)
+    const trend = data.trend || ""
+    const trendArrow = trend === "escalating" ? "▲" : trend === "de-escalating" ? "▼" : "→"
+    const trendCol   = trend === "escalating" ? "#ef4444" : trend === "de-escalating" ? "#22c55e" : "#94a3b8"
+
+    const loadExplain = () => {
+        if (explain || expLoad) return
+        setExpLoad(true)
+        fetch(`${API_BASE}/api/analytics/threat-matrix/${encodeURIComponent(data.region_name)}/explain`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { setExplain(d); setExpLoad(false) })
+            .catch(() => setExpLoad(false))
+    }
+
+    return (
+        <div style={{ fontFamily: "system-ui, sans-serif" }}>
+            {/* Header */}
+            <div style={{ padding: "10px 12px 8px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                    <div style={{ display: "inline-block", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, marginBottom: 5, background: col + "22", color: col, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                        {lvl}
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#e2e8f0" }}>{data.region_name}</div>
+                </div>
+                <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, padding: 0 }}>✕</button>
+            </div>
+            {/* Body */}
+            <div style={{ padding: "10px 12px" }}>
+                {/* Score bar */}
+                <div style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>
+                        <span>Threat Score</span>
+                        <span style={{ color: col, fontWeight: 700 }}>{score} / 100</span>
+                    </div>
+                    <div style={{ height: 5, background: "rgba(255,255,255,0.08)", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(90deg, #1d4ed8, ${col})`, borderRadius: 3, transition: "width 0.5s ease" }} />
+                    </div>
+                </div>
+                {/* Trend + counts */}
+                <div style={{ display: "flex", gap: 10, marginBottom: 10, fontSize: 10, color: "#94a3b8" }}>
+                    <span style={{ color: trendCol }}>{trendArrow} {trend || "stable"}</span>
+                    {data.alert_count > 0 && <span>{data.alert_count} alert{data.alert_count !== 1 ? "s" : ""}</span>}
+                    {data.fusion_count > 0 && <span style={{ color: "#a78bfa" }}>{data.fusion_count} fusion</span>}
+                </div>
+                {/* Signals */}
+                {(data.signals || []).length > 0 && (
+                    <div style={{ fontSize: 9, color: "#475569", marginBottom: 10 }}>
+                        {data.signals.slice(0, 4).join(" · ")}
+                    </div>
+                )}
+                {/* Explain section */}
+                {!explain && (
+                    <button onClick={loadExplain} disabled={expLoad} style={{
+                        width: "100%", padding: "5px 0", borderRadius: 5,
+                        background: "rgba(56,139,255,0.12)", border: "1px solid rgba(56,139,255,0.25)",
+                        color: "#60a5fa", fontSize: 10, cursor: expLoad ? "default" : "pointer",
+                        fontFamily: "inherit",
+                    }}>
+                        {expLoad ? "Loading…" : "View details →"}
+                    </button>
+                )}
+                {explain && (
+                    <div style={{ marginTop: 8, fontSize: 10, color: "rgba(203,213,225,0.8)", lineHeight: 1.5, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>
+                        {explain.narrative || `${data.region_name} threat analysis`}
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
 const HOVER_TYPES = new Set(["eez", "cable"])
 
 function buildOverpassQuery(lat, lon, radius) {
@@ -244,6 +322,8 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                         <GlobeFusionPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "airport" ? (
                         <GlobeAirportPopup data={popup.data} onClose={handleClose} />
+                    ) : popup.type === "threat_region" ? (
+                        <ThreatRegionPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "port" ? (
                         <GlobePortPopup data={popup.data} onClose={handleClose} />
                     ) : (

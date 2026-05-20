@@ -189,8 +189,8 @@ export default function ToastSystem({ toasts, onDismiss, onOpen, toastDuration =
         return () => document.removeEventListener("visibilitychange", h)
     }, [])
 
-    // Don't render toasts when tab is backgrounded — push notifications handle that case
-    if (!tabVisible) return null
+    // Note: we used to return null here when tab was hidden, but that caused
+    // unmount/remount flashes when switching tabs — toasts now render transparently.
 
     return (
         <>
