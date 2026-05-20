@@ -139,6 +139,18 @@ class RegionalScanner:
         self.yolo_fn      = yolo_fn       # sync fn(bbox, band_type, db) → list[dict]
         self.broadcast_fn = broadcast_fn  # fn(title, body, data)
 
+    def _check_cancelled(self, job, db) -> bool:
+        """Return True (and update DB) if a cancellation flag is set for this job."""
+        if _scan_cancellation_flags.get(job.job_id, False):
+            print(f"[regional_scanner] {job.job_id}: cancellation detected in phase {job.phase}")
+            _scan_cancellation_flags.pop(job.job_id, None)
+            job.status = "cancelled"
+            job.phase  = "cancelled"
+            job.completed_at = datetime.datetime.utcnow()
+            db.commit()
+            return True
+        return False
+
     async def run_scan(self, region: dict, db) -> RegionalScanJob:
         job = RegionalScanJob(
             job_id         = _next_job_id(db),
@@ -260,12 +272,8 @@ class RegionalScanner:
 
         # ── Current image fetch (batches of 3) ────────────────────────────────
         for batch_start in range(0, len(tiles), BATCH):
-            # Operator cancellation check
-            if _scan_cancellation_flags.get(job.job_id):
-                print(f"[regional_scanner] {job.job_id}: cancelled by operator")
-                _scan_cancellation_flags.pop(job.job_id, None)
-                job.status = "cancelled"; job.phase = "cancelled"
-                db.commit()
+            # Cancellation check before batch
+            if self._check_cancelled(job, db):
                 return []
             # Overall acquisition timeout guard
             if asyncio.get_event_loop().time() - acq_start > TOTAL_TIMEOUT:
@@ -278,6 +286,11 @@ class RegionalScanner:
             results = await asyncio.gather(*[
                 _fetch_one(t, current_from, now, max_cloud) for t in batch
             ])
+
+            # Cancellation check after gather completes (catches flag set during slow fetch)
+            if self._check_cancelled(job, db):
+                return []
+
             for tile, raw in zip(batch, results):
                 if raw:
                     tile["image_bytes"] = raw
@@ -293,18 +306,14 @@ class RegionalScanner:
                     pass
                 print(f"[regional_scanner] {job.job_id}: progress {fetched_count}/{len(tiles)}")
 
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
 
         print(f"[regional_scanner] {job.job_id}: {fetched_count}/{len(tiles)} current tiles fetched")
 
         # ── Baseline fetch (batches of 3, only for tiles that have current image) ──
         baseline_tiles = [t for t in tiles if t.get("image_bytes")]
         for batch_start in range(0, len(baseline_tiles), BATCH):
-            if _scan_cancellation_flags.get(job.job_id):
-                print(f"[regional_scanner] {job.job_id}: cancelled by operator (baseline)")
-                _scan_cancellation_flags.pop(job.job_id, None)
-                job.status = "cancelled"; job.phase = "cancelled"
-                db.commit()
+            if self._check_cancelled(job, db):
                 return []
             if asyncio.get_event_loop().time() - acq_start > TOTAL_TIMEOUT:
                 print(f"[regional_scanner] {job.job_id}: 4h timeout hit during baseline — continuing with partial data")
@@ -314,11 +323,13 @@ class RegionalScanner:
             results = await asyncio.gather(*[
                 _fetch_one(t, baseline_from, baseline_to, 30) for t in batch
             ])
+            if self._check_cancelled(job, db):
+                return []
             for tile, raw in zip(batch, results):
                 tile["baseline_bytes"] = raw
                 tile["baseline_date"]  = baseline_to if raw else None
 
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
 
         fetched = sum(1 for t in tiles if t.get("image_bytes"))
         print(f"[regional_scanner] {job.job_id}: {fetched}/{len(tiles)} tiles fetched (final)")
@@ -335,6 +346,8 @@ class RegionalScanner:
     # ── Phase 2: Spectral change detection ────────────────────────────────────
 
     async def _phase_spectral(self, job, tiles, region, db) -> list:
+        if self._check_cancelled(job, db):
+            return []
         job.phase = "spectral"
         db.commit()
 
@@ -415,6 +428,8 @@ class RegionalScanner:
     # ── Phase 3: YOLO detection + asset cross-reference ───────────────────────
 
     async def _phase_detection(self, job, flagged_tiles, db) -> list:
+        if self._check_cancelled(job, db):
+            return []
         job.phase = "detection"
         db.commit()
 
@@ -577,6 +592,8 @@ class RegionalScanner:
     # ── Phase 4: Claude Vision ─────────────────────────────────────────────────
 
     async def _phase_vision(self, job, detections, db) -> None:
+        if self._check_cancelled(job, db):
+            return
         job.phase = "vision"
         db.commit()
 
@@ -676,6 +693,8 @@ class RegionalScanner:
     # ── Phase 5: Opus report ───────────────────────────────────────────────────
 
     async def _phase_report(self, job, db) -> None:
+        if self._check_cancelled(job, db):
+            return
         job.phase = "report"
         db.commit()
 

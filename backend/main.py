@@ -4160,6 +4160,25 @@ async def regional_scan_suppress(detection_id: str, current_user=Depends(get_opt
         return {"suppressed": True, "detection_id": detection_id}
 
 
+@app.post("/api/admin/reset-zone-intervals")
+async def admin_reset_zone_intervals(current_user=Depends(get_optional_user)):
+    """One-time: set all WatchZone scan_interval_hours to 120 (5 days) and recalculate next_scan_at."""
+    from database import WatchZone
+    updated = 0
+    with get_db() as db:
+        zones = db.query(WatchZone).all()
+        now = datetime.utcnow()
+        for z in zones:
+            z.scan_interval_hours = 120
+            if z.last_scan_at:
+                z.next_scan_at = z.last_scan_at + __import__("datetime").timedelta(hours=120)
+            else:
+                z.next_scan_at = now + __import__("datetime").timedelta(hours=120)
+            updated += 1
+        db.commit()
+    return {"updated": updated, "scan_interval_hours": 120}
+
+
 @app.post("/api/regional-scans/{job_id}/cancel")
 async def regional_scan_cancel(job_id: str, current_user=Depends(get_optional_user)):
     """Signal a running scan to stop at the next tile batch boundary."""
@@ -8626,8 +8645,9 @@ async def _ais_websocket_loop():
             _AIS_STATUS["connected"] = False
             _AIS_STATUS["error"]     = str(ex)
             print(f"[ais] disconnected: {ex!r} — reconnecting in {reconnect_delay}s")
+            # Preserve vessel_count from last known state — don't reset to 0 on disconnect
             await asyncio.sleep(reconnect_delay)
-            reconnect_delay = min(reconnect_delay * 2, 60)  # exponential backoff, cap 60s
+            reconnect_delay = min(reconnect_delay * 2, 300)  # exponential backoff, cap 5 min
 
         # Evict stale entries every reconnect cycle
         now = time.time()
