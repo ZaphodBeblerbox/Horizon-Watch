@@ -373,6 +373,15 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
         except Exception as _el_e:
             print(f"[fusion] entity_linker error: {_el_e}")
 
+        try:
+            from event_bus import event_bus as _eb, Events as _Ev
+            _eb.publish_sync(_Ev.FUSION_CREATED, {
+                "fusion_id": fusion_id, "title": title,
+                "severity":  severity, "lat": lat, "lon": lon,
+            })
+        except Exception:
+            pass
+
         # Register in-memory
         fusion_dict = {
             "fusion_id":     fusion_id,

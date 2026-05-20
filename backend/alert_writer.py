@@ -39,6 +39,11 @@ def _mark_region_dirty(region: Optional[str]):
     with _dirty_lock:
         _dirty_regions.add(region)
         _dirty_timer[region] = time.time()
+    try:
+        from event_bus import event_bus as _eb, Events as _Ev
+        _eb.publish_sync(_Ev.THREAT_REGION_DIRTY, {"region": region})
+    except Exception:
+        pass
 
 
 def pop_dirty_regions() -> set[str]:
@@ -94,6 +99,21 @@ def write_alert(alert_dict: dict) -> Optional[str]:
             db.commit()
 
         _mark_region_dirty(region)
+
+        try:
+            from event_bus import event_bus as _eb, Events as _Ev
+            _eb.publish_sync(_Ev.ALERT_CREATED, {
+                "alert_id": alert_id,
+                "source":   row.source,
+                "severity": row.severity,
+                "title":    row.title,
+                "lat":      row.lat,
+                "lon":      row.lon,
+                "region":   region,
+            })
+        except Exception:
+            pass
+
         return alert_id
 
     except Exception as ex:
@@ -161,6 +181,13 @@ def write_news_article(article: dict) -> bool:
             db.commit()
 
         _mark_region_dirty(region)
+
+        try:
+            from event_bus import event_bus as _eb, Events as _Ev
+            _eb.publish_sync(_Ev.ARTICLE_CREATED, {"article": article, "url": url})
+        except Exception:
+            pass
+
         return True
 
     except Exception as ex:

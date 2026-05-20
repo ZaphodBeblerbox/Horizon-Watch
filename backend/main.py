@@ -49,7 +49,7 @@ _socket.setdefaulttimeout(20)
 
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Depends, UploadFile, File, Form
-from fastapi.responses import Response as FastAPIResponse, JSONResponse
+from fastapi.responses import Response as FastAPIResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
 import feedparser
@@ -90,6 +90,7 @@ import event_bridge
 import threat_matrix
 from alert_writer import write_alert, write_news_article
 from entity_linker import entity_linker
+from event_bus import event_bus, Events
 
 try:
     from langdetect import detect as _langdetect_detect
@@ -8356,6 +8357,77 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
             print(f"[fusion] news signal error: {_fe_err}")
 
 
+# ── Graph SSE client registry ──────────────────────────────────────────────
+_graph_sse_queues: list = []   # list of asyncio.Queue, one per connected SSE client
+
+
+def _graph_sse_push(msg: dict):
+    """Push a message to all connected graph SSE clients."""
+    import json as _js
+    data = _js.dumps(msg, default=str)
+    for q in list(_graph_sse_queues):
+        try:
+            q.put_nowait(data)
+        except Exception:
+            pass
+
+
+# ── Event bus handlers ─────────────────────────────────────────────────────
+
+async def _on_alert_created(payload: dict):
+    _graph_sse_push({"event": "node_added", "payload": {
+        "id": payload.get("alert_id"), "type": "alert",
+        "label": payload.get("title", "")[:60],
+        "severity": payload.get("severity"), "domain": payload.get("source"),
+        "lat": payload.get("lat"), "lon": payload.get("lon"),
+        "is_live": True,
+    }})
+
+
+async def _on_article_created(payload: dict):
+    article = payload.get("article", {})
+    if not article.get("location_country"):
+        return
+    # Defer to surge / news-pattern engines — already wired directly, no double-feed
+
+
+async def _on_fusion_created(payload: dict):
+    _graph_sse_push({"event": "node_added", "payload": {
+        "id": payload.get("fusion_id"), "type": "fusion_event",
+        "label": payload.get("title", "")[:60],
+        "severity": payload.get("severity"), "domain": "FUSION",
+        "lat": payload.get("lat"), "lon": payload.get("lon"),
+        "is_live": True,
+    }})
+
+
+async def _on_surge_created(payload: dict):
+    _graph_sse_push({"event": "node_added", "payload": {
+        "id": payload.get("surge_id"), "type": "surge",
+        "label": payload.get("headline", "")[:60],
+        "severity": payload.get("severity"), "domain": "NEWS",
+        "lat": payload.get("lat"), "lon": payload.get("lon"),
+        "is_live": True,
+    }})
+
+
+async def _on_threat_dirty(payload: dict):
+    region = payload.get("region")
+    if not region:
+        return
+    try:
+        from database import get_db as _gdb_td
+        with _gdb_td() as _td_db:
+            score = threat_matrix.compute_threat_score(region, _td_db, list(_forge_alerts))
+        _graph_sse_push({"event": "score_updated", "payload": {"region": region, **score}})
+    except Exception as _td_e:
+        print(f"[event-bus] threat_dirty handler error: {_td_e}")
+
+
+async def _on_regional_scan_complete(payload: dict):
+    _graph_sse_push({"event": "regional_scan_complete", "payload": payload})
+
+
 def normalize_signal(domain: str, source_obj: dict, alert_id: str = None) -> dict:
     """Normalize any alert/event into a standard signal dict for fusion_engine.on_signal()."""
     import uuid as _uuidn
@@ -10512,6 +10584,19 @@ async def startup_event():
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
     asyncio.create_task(_dirty_region_refresh_loop())
+
+    # ── Event bus ─────────────────────────────────────────────────────────
+    _evt_loop = asyncio.get_event_loop()
+    event_bus.set_loop(_evt_loop)
+    event_bus.subscribe(Events.ALERT_CREATED,          _on_alert_created)
+    event_bus.subscribe(Events.ARTICLE_CREATED,        _on_article_created)
+    event_bus.subscribe(Events.FUSION_CREATED,         _on_fusion_created)
+    event_bus.subscribe(Events.SURGE_CREATED,          _on_surge_created)
+    event_bus.subscribe(Events.THREAT_REGION_DIRTY,    _on_threat_dirty)
+    event_bus.subscribe(Events.REGIONAL_SCAN_COMPLETE, _on_regional_scan_complete)
+    asyncio.create_task(event_bus.start())
+    print("[startup] event bus started")
+
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] Poll intervals — AIS: WebSocket | ADSB: 120s | RSS: 1800s")
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
@@ -18748,6 +18833,332 @@ def api_get_entity_timeline(
                     item["tier"]         = r.tier
             events.append(item)
         return {"entity_type": entity_type, "entity_id": entity_id, "days": days, "events": events}
+
+
+# ── Ontology graph endpoints ────────────────────────────────────────────────
+
+@app.get("/api/ontology/graph")
+def api_ontology_graph(
+    include_airports: bool = False,
+    include_ports: bool = False,
+    include_cables: bool = True,
+    include_live: bool = True,
+    severity_filter: str = None,
+    since: str = None,
+    limit_live: int = 200,
+    current_user=Depends(get_optional_user),
+):
+    from database import (
+        OntologyEntity as _OEM, Alert as _AM, FusionEvent as _FEM,
+        SurgeEvent as _SEM, OntologyLink as _OLM, RuleConnection as _RCM,
+        Airport as _AirM, PortBoundary as _PortM, CableSegment as _CabM,
+        get_db as _gdb_g,
+    )
+    from intelligence_schema import IntelligenceAssessment as _IAM
+    import json as _jg
+    now = datetime.utcnow()
+    cutoff_live = now - timedelta(hours=24)
+    cutoff_links = now - timedelta(hours=48)
+    if since:
+        try:
+            cutoff_live = datetime.fromisoformat(since.rstrip("Z"))
+        except Exception:
+            pass
+
+    SEV_ORDER = {"critical": 4, "high": 3, "medium": 2, "info": 1, "low": 0}
+
+    nodes = []
+    edges = []
+    live_alert_count = 0
+    live_fusion_count = 0
+
+    with _gdb_g() as _db:
+        # ── Static OntologyEntity nodes ───────────────────────────────────
+        q_ent = _db.query(_OEM)
+        ents = q_ent.limit(2000).all()
+        for e in ents:
+            etype = (e.entity_type or "").lower()
+            if etype in ("airport", "large_airport") and not include_airports:
+                continue
+            if etype == "port" and not include_ports:
+                continue
+            if etype == "cable" and not include_cables:
+                continue
+            nodes.append({
+                "id":    e.system_id, "type": e.entity_type,
+                "label": e.name or e.system_id,
+                "region_id": e.region_id, "infra_type": e.infra_type,
+                "is_live": False,
+            })
+
+        # Static infra nodes (cables only unless flags set)
+        if include_cables:
+            for r in _db.query(_CabM.system_id, _CabM.cable_name).limit(500).all():
+                if r.system_id:
+                    nodes.append({"id": r.system_id, "type": "cable",
+                                  "label": r.cable_name or r.system_id, "is_live": False})
+        if include_ports:
+            for r in _db.query(_PortM.id, _PortM.port_name, _PortM.system_id).limit(200).all():
+                sid = str(r.system_id or r.id)
+                nodes.append({"id": sid, "type": "port",
+                              "label": r.port_name or sid, "is_live": False})
+        if include_airports:
+            for r in _db.query(_AirM.id, _AirM.name, _AirM.airport_type).filter(
+                    _AirM.airport_type == "large_airport").limit(300).all():
+                nodes.append({"id": str(r.id), "type": "airport",
+                              "label": r.name or str(r.id), "is_live": False})
+
+        # ── Live nodes ────────────────────────────────────────────────────
+        if include_live:
+            q_alr = (_db.query(_AM).filter(_AM.status == "active", _AM.created_at >= cutoff_live)
+                     .order_by(_AM.created_at.desc()).limit(limit_live).all())
+            for r in q_alr:
+                if severity_filter and SEV_ORDER.get(r.severity, 0) < SEV_ORDER.get(severity_filter, 0):
+                    continue
+                nodes.append({
+                    "id": r.alert_id, "type": "alert", "label": r.title[:60],
+                    "severity": r.severity, "domain": r.source,
+                    "lat": r.lat, "lon": r.lon,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "is_live": True,
+                })
+                live_alert_count += 1
+
+            for r in (_db.query(_FEM).filter(_FEM.status == "active", _FEM.expires_at > now)
+                      .limit(50).all()):
+                nodes.append({
+                    "id": r.fusion_id, "type": "fusion_event", "label": r.title[:60],
+                    "severity": r.severity, "domain": "FUSION",
+                    "lat": r.lat, "lon": r.lon,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "is_live": True,
+                })
+                live_fusion_count += 1
+
+            for r in (_db.query(_SEM).filter(_SEM.status == "active", _SEM.expires_at > now)
+                      .limit(30).all()):
+                nodes.append({
+                    "id": r.surge_id, "type": "surge", "label": r.headline[:60],
+                    "severity": r.severity, "domain": "NEWS",
+                    "lat": r.lat, "lon": r.lon,
+                    "is_live": True,
+                })
+
+            for r in (_db.query(_IAM).filter(_IAM.expires_at > now,
+                      _IAM.severity.in_(["high", "critical"])).limit(30).all()):
+                nodes.append({
+                    "id": r.assessment_id, "type": "assessment", "label": r.headline[:60],
+                    "severity": r.severity, "domain": r.domain,
+                    "lat": r.lat, "lon": r.lon, "is_live": True,
+                })
+
+        # ── Static edges (RuleConnections) ────────────────────────────────
+        for r in _db.query(_RCM).limit(500).all():
+            edges.append({
+                "id":         f"RC-{r.id}",
+                "source":     str(r.rule_id_a), "target": str(r.rule_id_b),
+                "type":       r.relationship_type,
+                "confidence": 1.0, "is_live": False,
+            })
+
+        # ── Dynamic edges (OntologyLinks, last 48h) ───────────────────────
+        dyn_links = (_db.query(_OLM)
+                     .filter(_OLM.created_at >= cutoff_links)
+                     .order_by(_OLM.created_at.desc())
+                     .limit(1000).all())
+        for r in dyn_links:
+            edges.append({
+                "id":         r.link_id,
+                "source":     r.source_id, "target": r.entity_id,
+                "type":       r.link_type,
+                "confidence": r.confidence,
+                "distance_km": r.distance_km,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "is_live":    True,
+            })
+
+    # Deduplicate nodes by id
+    seen_ids: set = set()
+    unique_nodes = []
+    for n in nodes:
+        if n["id"] not in seen_ids:
+            seen_ids.add(n["id"])
+            unique_nodes.append(n)
+
+    return {
+        "nodes": unique_nodes,
+        "edges": edges,
+        "stats": {
+            "total_nodes":    len(unique_nodes),
+            "total_edges":    len(edges),
+            "live_alerts":    live_alert_count,
+            "live_fusions":   live_fusion_count,
+            "static_entities": sum(1 for n in unique_nodes if not n.get("is_live")),
+            "dynamic_links":  sum(1 for e in edges if e.get("is_live")),
+        },
+    }
+
+
+@app.get("/api/ontology/graph/delta")
+def api_ontology_graph_delta(
+    since: str,
+    current_user=Depends(get_optional_user),
+):
+    """Return only nodes/edges created after `since` (ISO timestamp)."""
+    return api_ontology_graph(
+        include_cables=True, include_live=True, since=since, limit_live=500,
+        current_user=current_user,
+    )
+
+
+@app.get("/api/ontology/graph/stream")
+async def api_ontology_graph_stream(request: Request):
+    """SSE stream for real-time graph deltas."""
+    import asyncio as _asyncio
+    q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    _graph_sse_queues.append(q)
+
+    async def _generate():
+        try:
+            yield "data: {\"event\": \"connected\"}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=30.0)
+                    yield f"data: {msg}\n\n"
+                except asyncio.TimeoutError:
+                    yield "data: {\"event\": \"heartbeat\"}\n\n"
+        finally:
+            try:
+                _graph_sse_queues.remove(q)
+            except ValueError:
+                pass
+
+    return StreamingResponse(_generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+# ── Threat matrix explainability ─────────────────────────────────────────────
+
+@app.get("/api/analytics/threat-matrix/{region_name}/explain")
+async def api_threat_matrix_explain(
+    region_name: str,
+    current_user=Depends(get_optional_user),
+):
+    from database import (Alert as _AMex, FusionEvent as _FMex, SurgeEvent as _SMex,
+                          SentinelDetection as _SDex, OntologyLink as _OLex,
+                          get_db as _gdb_ex)
+    import json as _jex
+    from threat_matrix import REGIONS, _in_bbox, _threat_level
+    region_name_decoded = region_name.replace("+", " ")
+    region = REGIONS.get(region_name_decoded)
+    if not region:
+        raise HTTPException(status_code=404, detail=f"Region '{region_name_decoded}' not found")
+
+    bbox   = region["bbox"]
+    now    = datetime.utcnow()
+    cutoff = now - timedelta(hours=24)
+
+    with _gdb_ex() as _db:
+        # Collect driver data
+        db_alerts = (_db.query(_AMex)
+                     .filter(_AMex.status == "active", _AMex.created_at >= cutoff,
+                             _AMex.lat.between(bbox["min_lat"], bbox["max_lat"]),
+                             _AMex.lon.between(bbox["min_lon"], bbox["max_lon"]))
+                     .order_by(_AMex.created_at.desc()).limit(20).all())
+
+        fusions = (_db.query(_FMex)
+                   .filter(_FMex.status == "active", _FMex.expires_at > now,
+                           _FMex.lat.isnot(None))
+                   .all())
+        fusions_in = [f for f in fusions if _in_bbox(f.lat, f.lon, bbox)]
+
+        surges = (_db.query(_SMex)
+                  .filter(_SMex.status == "active", _SMex.expires_at > now)
+                  .all())
+        surges_in = [s for s in surges
+                     if _in_bbox(s.lat, s.lon, bbox) if s.lat]
+
+        sentinels = (_db.query(_SDex)
+                     .filter(_SDex.created_at >= cutoff)
+                     .all())
+        sents_in = [d for d in sentinels if _in_bbox(d.centroid_lat, d.centroid_lon, bbox)]
+
+        links_in = (_db.query(_OLex)
+                    .filter(_OLex.created_at >= cutoff)
+                    .limit(50).all())
+
+        # Score breakdown
+        SEV_W = {"info": 0.5, "medium": 1, "high": 2, "critical": 4}
+        weighted = sum(SEV_W.get(a.severity or "medium", 1) for a in db_alerts)
+        forge_n  = len([a for a in db_alerts if a.source in ("ais","adsb","sentinel")])
+        sent_sc  = sum(SEV_W.get(d.severity or "info", 1) for d in sents_in)
+        fus_sc   = len(fusions_in) * 15
+        surge_sc = sum(10 for _ in surges_in)
+        link_sc  = min(len(links_in), 10)
+        base_sc  = min(weighted * 2, 40)
+        forge_sc = min(forge_n * 5, 25)
+        total    = min(base_sc + forge_sc + min(sent_sc, 20) + min(fus_sc, 30)
+                       + min(surge_sc, 25) + link_sc, 100.0)
+
+        drivers = {
+            "alerts":    [{"alert_id": a.alert_id, "title": a.title,
+                           "severity": a.severity, "source": a.source,
+                           "lat": a.lat, "lon": a.lon} for a in db_alerts[:5]],
+            "fusions":   [{"fusion_id": f.fusion_id, "title": f.title,
+                           "severity": f.severity, "confidence": f.confidence}
+                          for f in fusions_in[:5]],
+            "surges":    [{"surge_id": s.surge_id, "headline": s.headline,
+                           "severity": s.severity} for s in surges_in[:3]],
+            "sentinels": [{"detection_id": d.detection_id, "object_type": d.object_type,
+                           "severity": d.severity, "confidence": d.confidence,
+                           "nearest_port": d.nearest_port} for d in sents_in[:3]],
+            "links":     [{"link_id": l.link_id, "source_type": l.source_type,
+                           "entity_type": l.entity_type, "entity_name": l.entity_name}
+                          for l in links_in[:5]],
+        }
+
+    # Generate Haiku explanation
+    explanation = ""
+    if client:
+        try:
+            driver_txt = (
+                f"Region: {region_name_decoded}\n"
+                f"Alert count: {len(db_alerts)} (forge: {forge_n})\n"
+                f"Fusion events: {len(fusions_in)}\n"
+                f"Surge events: {len(surges_in)}\n"
+                f"Sentinel detections: {len(sents_in)}\n"
+                f"Top alerts: {'; '.join(a['title'] for a in drivers['alerts'][:3])}\n"
+                f"Top fusions: {'; '.join(f['title'] for f in drivers['fusions'][:2])}\n"
+            )
+            _msg = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=200, temperature=0,
+                system="You are an intelligence analyst. Write one precise paragraph explaining why this region has an elevated threat score. Analyst voice, specific, no preamble.",
+                messages=[{"role": "user", "content": driver_txt}],
+            )
+            explanation = _msg.content[0].text.strip()
+        except Exception as _hex:
+            explanation = f"Score driven by {len(db_alerts)} active alerts and {len(fusions_in)} fusion events in {region_name_decoded}."
+
+    return {
+        "region":      region_name_decoded,
+        "score":       round(total, 1),
+        "threat_level": _threat_level(total),
+        "explanation": explanation,
+        "drivers":     drivers,
+        "score_breakdown": {
+            "base_alert_score": round(base_sc, 1),
+            "forge_bonus":      round(forge_sc, 1),
+            "fusion_score":     round(min(fus_sc, 30), 1),
+            "surge_bonus":      round(min(surge_sc, 25), 1),
+            "sentinel_score":   round(min(sent_sc, 20), 1),
+            "link_bonus":       link_sc,
+            "total":            round(total, 1),
+        },
+    }
 
 
 @app.get("/api/forge/correlations")

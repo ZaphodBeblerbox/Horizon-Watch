@@ -32,7 +32,42 @@ def prepare_intelligence_picture(
     cutoff_24h = now - timedelta(hours=24)
     cutoff_48h = now - timedelta(hours=48)
 
-    alerts = forge_alerts or []
+    alerts = list(forge_alerts or [])
+
+    # ── 0. Supplement forge_alerts with persisted Alert DB rows ──────────────
+    try:
+        from database import Alert as _AlertDB, NewsArticle as _NADB, OntologyLink as _OLDB
+        db_alert_rows = (
+            db.query(_AlertDB)
+            .filter(_AlertDB.status == "active", _AlertDB.created_at >= cutoff_24h)
+            .order_by(_AlertDB.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        existing_ids = {str(a.get("id", "")) for a in alerts}
+        for row in db_alert_rows:
+            if row.alert_id not in existing_ids:
+                alerts.append({
+                    "id":        row.alert_id,
+                    "source":    row.source,
+                    "alert_type": row.alert_type,
+                    "title":     row.title,
+                    "severity":  row.severity,
+                    "lat":       row.lat,
+                    "lng":       row.lon,
+                    "timestamp": row.created_at.isoformat() if row.created_at else "",
+                })
+
+        # Top tier-1/2 news articles (last 24h)
+        top_articles = (
+            db.query(_NADB)
+            .filter(_NADB.tier.in_([1, 2]), _NADB.ingested_at >= cutoff_24h)
+            .order_by(_NADB.relevance_score.desc())
+            .limit(20)
+            .all()
+        )
+    except Exception:
+        top_articles = []
 
     # ── 1. Threat matrix — use cached scores (refreshed hourly) ──────────────
     cached = threat_matrix.get_cached_scores()
@@ -117,6 +152,23 @@ def prepare_intelligence_picture(
     signals_raw: list[dict] = []
     seen_ids: set[str] = set()
 
+    # Pre-fetch OntologyLinks for all alerts to enrich signal context
+    _alert_links: dict = {}
+    try:
+        from database import OntologyLink as _OLsig
+        alert_ids_for_links = [str(a.get("id", "")) for a in alerts[-100:] if a.get("id")]
+        if alert_ids_for_links:
+            links_rows = (db.query(_OLsig)
+                          .filter(_OLsig.source_id.in_(alert_ids_for_links))
+                          .all())
+            for lr in links_rows:
+                _alert_links.setdefault(lr.source_id, []).append({
+                    "entity_type": lr.entity_type, "entity_name": lr.entity_name,
+                    "link_type": lr.link_type, "distance_km": lr.distance_km,
+                })
+    except Exception:
+        pass
+
     for a in alerts[-500:]:
         lat = a.get("lat")
         lon = a.get("lng") or a.get("lon")
@@ -126,6 +178,7 @@ def prepare_intelligence_picture(
         if sid in seen_ids:
             continue
         seen_ids.add(sid)
+        _links = _alert_links.get(sid, [])
         signals_raw.append({
             "signal_id":    sid,
             "domain":       (a.get("source") or "AIS").upper(),
@@ -137,6 +190,9 @@ def prepare_intelligence_picture(
             "rule_name":    a.get("rule_name") or "",
             "title":        a.get("title") or "",
             "created_at":   a.get("timestamp") or now.isoformat(),
+            "linked_zones":        [l["entity_name"] for l in _links if l["entity_type"] in ("watch_zone","strategic_zone")],
+            "linked_cables":       [l["entity_name"] for l in _links if l["entity_type"] == "cable"],
+            "linked_ports":        [l["entity_name"] for l in _links if l["entity_type"] == "port"],
         })
 
     if fusion_engine_instance:
@@ -285,6 +341,16 @@ def prepare_intelligence_picture(
         "sentinel_detections": sentinel_items[:10],
         "news_assessments":   assessment_items[:10],
         "strategic_zones":    active_zones[:10],
+        "top_articles":       [
+            {
+                "url":           a.url, "title": a.event_title or a.title,
+                "article_type":  a.article_type, "tier": a.tier,
+                "relevance_score": a.relevance_score,
+                "context_summary": a.context_summary,
+                "country_code":  a.country_code, "lat": a.lat, "lon": a.lon,
+            }
+            for a in top_articles
+        ],
     }
 
 

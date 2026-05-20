@@ -244,6 +244,17 @@ class SurgeEngine:
             print(f"[surge] DB write error: {e}")
             return
 
+        # Publish SURGE_CREATED event
+        try:
+            from event_bus import event_bus as _eb_s, Events as _Ev_s
+            _eb_s.publish_sync(_Ev_s.SURGE_CREATED, {
+                "surge_id":    surge_id, "headline": headline,
+                "article_type": article_type, "lat": lat, "lon": lon,
+                "severity":    severity,
+            })
+        except Exception:
+            pass
+
         # Persist as Alert + create OntologyLinks + mark region dirty
         try:
             from alert_writer import write_alert as _write_alert, _mark_region_dirty as _mrd
