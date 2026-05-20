@@ -3123,7 +3123,7 @@ from regional_scanner import tile_scanner as _tile_scanner
 from database import RegionalScanJob as _RegionalScanJob, RegionalScanDetection as _RegionalScanDetection
 
 # Wire SSE push into scanner so detections are streamed to connected clients
-_rscan_mod.sse_push_fn = _graph_sse_push
+_rscan_mod.sse_push_fn = lambda msg: _graph_sse_push(msg)
 
 @app.get("/api/aviation/test")
 async def aviation_test():
