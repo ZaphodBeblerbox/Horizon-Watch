@@ -3118,34 +3118,12 @@ from services.aircraft_photo_service import get_photo  as _get_photo
 from services.vessel_photo_service   import get_photo  as _get_vessel_photo
 import services.director_service as _director_svc
 
-from regional_scanner import regional_scanner as _regional_scanner
+import regional_scanner as _rscan_mod
+from regional_scanner import tile_scanner as _tile_scanner
 from database import RegionalScanJob as _RegionalScanJob, RegionalScanDetection as _RegionalScanDetection
 
-# Wire YOLO + broadcast into scanner so it can use main.py infrastructure
-def _rscan_yolo_fn(bbox, band_type, db):
-    return _run_overwatch_detection_sync(bbox, band_type=band_type, db=db)
-
-_regional_scanner.yolo_fn      = _rscan_yolo_fn
-_regional_scanner.broadcast_fn = _broadcast_push
-
-UAE_REGION = {
-    "name":                    "UAE",
-    "bbox": {
-        "min_lon": 51.5,
-        "min_lat": 22.5,
-        "max_lon": 56.5,
-        "max_lat": 26.2,
-    },
-    "tile_size_deg":            0.5,
-    "spectral_change_threshold": 0.12,
-    "scan_interval_days":       5,
-    "max_cloud_cover":          20,
-    "max_concurrent_fetches":   3,
-    "tile_timeout_seconds":     25,
-    "max_acquisition_minutes":  60,
-}
-
-_REGION_MAP = {"UAE": UAE_REGION}
+# Wire SSE push into scanner so detections are streamed to connected clients
+_rscan_mod.sse_push_fn = _graph_sse_push
 
 @app.get("/api/aviation/test")
 async def aviation_test():
@@ -3949,22 +3927,25 @@ async def director_transcript(seq_id: str):
 # ── Regional Intelligence Scans ──────────────────────────────────────────────
 
 def _rscan_to_dict(job: "_RegionalScanJob") -> dict:
+    total = max(job.total_tiles or 1, 1)
+    done  = job.tiles_complete or 0
     return {
         "job_id":             job.job_id,
         "region_name":        job.region_name,
         "status":             job.status,
-        "phase":              job.phase,
-        "created_at":         job.created_at.isoformat() if job.created_at else None,
-        "started_at":         job.started_at.isoformat() if job.started_at else None,
+        "created_at":         job.created_at.isoformat()   if job.created_at   else None,
+        "started_at":         job.started_at.isoformat()   if job.started_at   else None,
         "completed_at":       job.completed_at.isoformat() if job.completed_at else None,
-        "image_date":         job.image_date.isoformat() if job.image_date else None,
-        "baseline_date":      job.baseline_date.isoformat() if job.baseline_date else None,
-        "total_tiles":        job.total_tiles,
-        "flagged_tiles":      job.flagged_tiles,
-        "detections_total":   job.detections_total,
-        "detections_flagged": job.detections_flagged,
+        "total_tiles":        job.total_tiles or 0,
+        "tiles_complete":     done,
+        "tiles_failed":       job.tiles_failed or 0,
+        "current_tile_index": job.current_tile_index or 0,
+        "detections_total":   job.detections_total or 0,
+        "pct_complete":       (round(done / total * 100) if job.status == "running"
+                               else (100 if job.status == "complete" else 0)),
         "report_summary":     job.report_summary,
         "error_message":      job.error_message,
+        "cancelled":          job.cancelled or False,
     }
 
 
@@ -3973,31 +3954,27 @@ def _rsdet_to_geojson_feature(d: "_RegionalScanDetection") -> dict:
         "type": "Feature",
         "geometry": {"type": "Point", "coordinates": [d.centroid_lon, d.centroid_lat]},
         "properties": {
-            "detection_id":             d.detection_id,
-            "job_id":                   d.job_id,
-            "region_name":              d.region_name,
-            "detection_type":           d.detection_type,
-            "change_type":              d.change_type,
-            "confidence":               d.confidence,
-            "centroid_lat":             d.centroid_lat,
-            "centroid_lon":             d.centroid_lon,
-            "bbox_min_lon":             d.bbox_min_lon,
-            "bbox_min_lat":             d.bbox_min_lat,
-            "bbox_max_lon":             d.bbox_max_lon,
-            "bbox_max_lat":             d.bbox_max_lat,
-            "nearest_asset_type":       d.nearest_asset_type,
-            "nearest_asset_name":       d.nearest_asset_name,
-            "nearest_asset_distance_km":d.nearest_asset_distance_km,
-            "in_strategic_zone":        d.in_strategic_zone,
-            "spectral_change_score":    d.spectral_change_score,
-            "yolo_confirmed":           d.yolo_confirmed,
-            "yolo_object_type":         d.yolo_object_type,
-            "claude_vision_analysis":   d.claude_vision_analysis,
-            "claude_severity":          d.claude_severity,
-            "claude_threat_assessment": d.claude_threat_assessment,
-            "image_date":               d.image_date.isoformat() if d.image_date else None,
-            "baseline_date":            d.baseline_date.isoformat() if d.baseline_date else None,
-            "suppressed":               d.suppressed,
+            "detection_id":              d.detection_id,
+            "job_id":                    d.job_id,
+            "tile_index":                getattr(d, "tile_index", None),
+            "region_name":               d.region_name,
+            "detection_type":            d.detection_type,
+            "change_type":               d.change_type,
+            "confidence":                d.confidence,
+            "centroid_lat":              d.centroid_lat,
+            "centroid_lon":              d.centroid_lon,
+            "tile_min_lon":              d.bbox_min_lon,
+            "tile_min_lat":              d.bbox_min_lat,
+            "tile_max_lon":              d.bbox_max_lon,
+            "tile_max_lat":              d.bbox_max_lat,
+            "nearest_asset_type":        d.nearest_asset_type,
+            "nearest_asset_name":        d.nearest_asset_name,
+            "nearest_asset_distance_km": d.nearest_asset_distance_km,
+            "in_strategic_zone":         d.in_strategic_zone,
+            "spectral_change_score":     d.spectral_change_score,
+            "claude_vision_analysis":    d.claude_vision_analysis,
+            "claude_severity":           d.claude_severity,
+            "suppressed":                d.suppressed,
         },
     }
 
@@ -4007,98 +3984,58 @@ async def regional_scan_trigger(
     request: Request,
     current_user=Depends(get_optional_user),
 ):
-    """Trigger a regional intelligence scan. Body: { region_name: 'UAE' }"""
+    """Start tile-by-tile UAE scan. Returns immediately; detections stream via SSE."""
     try:
         body = await request.json()
     except Exception:
         body = {}
     region_name = (body.get("region_name") or "UAE").strip().upper()
-    region = _REGION_MAP.get(region_name)
+    region = _tile_scanner.REGIONS.get(region_name)
     if not region:
-        raise HTTPException(400, f"Unknown region: {region_name!r}. Available: {list(_REGION_MAP)}")
+        raise HTTPException(400, f"Unknown region: {region_name!r}")
 
     with get_db() as db:
-        # Prevent concurrent runs for the same region
         running = (
             db.query(_RegionalScanJob)
             .filter_by(region_name=region_name, status="running")
             .first()
         )
         if running:
-            return {"job_id": running.job_id, "status": "running",
-                    "message": "Scan already in progress"}
+            return {
+                "job_id":      running.job_id,
+                "status":      "running",
+                "message":     "Scan already in progress",
+                "total_tiles": running.total_tiles,
+            }
+        job = await _tile_scanner.start_scan(region_name, db)
 
-        from regional_scanner import _next_job_id
-        job = _RegionalScanJob(
-            job_id       = _next_job_id(db),
-            region_name  = region_name,
-            bbox_min_lon = region["bbox"]["min_lon"],
-            bbox_min_lat = region["bbox"]["min_lat"],
-            bbox_max_lon = region["bbox"]["max_lon"],
-            bbox_max_lat = region["bbox"]["max_lat"],
-            status       = "running",
-            phase        = "acquisition",
-            started_at   = datetime.utcnow(),
-        )
-        db.add(job)
-        db.commit()
-        job_id = job.job_id
-
-    async def _run_bg():
-        with get_db() as bg_db:
-            job_row = bg_db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
-            if job_row:
-                try:
-                    await _regional_scanner.run_scan(region, bg_db)
-                except Exception as e:
-                    print(f"[regional_scan] background task failed: {e}")
-
-    import math
-    bbox = region["bbox"]
-    tile_deg = region.get("tile_size_deg", 0.5)
-    max_concurrent = region.get("max_concurrent_fetches", 3)
-    tile_timeout_s = region.get("tile_timeout_seconds", 25)
-    tiles_lon = math.ceil((bbox["max_lon"] - bbox["min_lon"]) / tile_deg)
-    tiles_lat = math.ceil((bbox["max_lat"] - bbox["min_lat"]) / tile_deg)
-    estimated_tiles = tiles_lon * tiles_lat
-    # Two passes (baseline + current), each tile ~tile_timeout_s at max_concurrent concurrency
-    batches = math.ceil(estimated_tiles / max_concurrent)
-    estimated_minutes = math.ceil(batches * tile_timeout_s * 2 / 60)
-    from datetime import timezone
-    estimated_completion = (datetime.now(timezone.utc) + __import__("datetime").timedelta(minutes=estimated_minutes)).isoformat()
-
-    asyncio.create_task(_run_bg())
+    tiles         = _tile_scanner.generate_tiles(region)
+    est_mins      = round(len(tiles) * 4 / 3 / 60 + 5)
     return {
-        "job_id": job_id,
-        "status": "running",
-        "region_name": region_name,
-        "estimated_tiles": estimated_tiles,
-        "estimated_minutes": estimated_minutes,
-        "estimated_completion": estimated_completion,
+        "job_id":            job.job_id,
+        "status":            "running",
+        "total_tiles":       len(tiles),
+        "estimated_minutes": est_mins,
+        "message":           f"Scan started. ~{est_mins} minutes estimated. Results appear on map as tiles complete.",
     }
 
 
-@app.get("/api/regional-scans/latest")
-async def regional_scan_latest(
-    region_name: str = Query("UAE"),
-    current_user=Depends(get_optional_user),
-):
-    """Return the most recent completed scan for a region."""
+@app.post("/api/regional-scans/{job_id}/cancel")
+async def regional_scan_cancel(job_id: str, current_user=Depends(get_optional_user)):
+    """Set job.cancelled = True — background task checks this flag each tile."""
     with get_db() as db:
-        job = (
-            db.query(_RegionalScanJob)
-            .filter_by(region_name=region_name.upper(), status="complete")
-            .order_by(_RegionalScanJob.completed_at.desc())
-            .first()
-        )
+        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
         if not job:
-            return {"job": None}
-        return {"job": _rscan_to_dict(job)}
+            raise HTTPException(404, f"Scan {job_id!r} not found")
+        if job.status != "running":
+            return {"status": job.status, "message": "Scan is not currently running"}
+        job.cancelled = True
+        db.commit()
+    return {"status": "cancellation_requested", "job_id": job_id}
 
 
 @app.get("/api/regional-scans")
 async def regional_scans_list(current_user=Depends(get_optional_user)):
-    """List all regional scan jobs, newest first."""
     with get_db() as db:
         jobs = (
             db.query(_RegionalScanJob)
@@ -4109,9 +4046,39 @@ async def regional_scans_list(current_user=Depends(get_optional_user)):
         return [_rscan_to_dict(j) for j in jobs]
 
 
+@app.get("/api/regional-scans/latest/detections")
+async def regional_scan_latest_detections(
+    region_name: str = Query("UAE"),
+    current_user=Depends(get_optional_user),
+):
+    """Detections from the most recent running or complete scan — used by globe layer."""
+    with get_db() as db:
+        job = (
+            db.query(_RegionalScanJob)
+            .filter(
+                _RegionalScanJob.region_name == region_name.upper(),
+                _RegionalScanJob.status.in_(["running", "complete"]),
+            )
+            .order_by(_RegionalScanJob.created_at.desc())
+            .first()
+        )
+        if not job:
+            return {"type": "FeatureCollection", "features": [], "job": None}
+        dets = (
+            db.query(_RegionalScanDetection)
+            .filter_by(job_id=job.job_id, suppressed=False)
+            .order_by(_RegionalScanDetection.confidence.desc())
+            .all()
+        )
+        return {
+            "type":     "FeatureCollection",
+            "features": [_rsdet_to_geojson_feature(d) for d in dets],
+            "job":      _rscan_to_dict(job),
+        }
+
+
 @app.get("/api/regional-scans/{job_id}")
 async def regional_scan_detail(job_id: str, current_user=Depends(get_optional_user)):
-    """Full job details including claude_report."""
     with get_db() as db:
         job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
         if not job:
@@ -4130,7 +4097,6 @@ async def regional_scan_detections(
     severity: Optional[str] = Query(None),
     current_user=Depends(get_optional_user),
 ):
-    """Return detections as GeoJSON FeatureCollection."""
     with get_db() as db:
         q = db.query(_RegionalScanDetection).filter(
             _RegionalScanDetection.job_id == job_id,
@@ -4142,55 +4108,34 @@ async def regional_scan_detections(
         if severity:
             q = q.filter(_RegionalScanDetection.claude_severity == severity.lower())
         dets = q.order_by(_RegionalScanDetection.confidence.desc()).all()
-        return {
-            "type": "FeatureCollection",
-            "features": [_rsdet_to_geojson_feature(d) for d in dets],
-        }
+        return {"type": "FeatureCollection", "features": [_rsdet_to_geojson_feature(d) for d in dets]}
 
 
 @app.delete("/api/regional-scans/detections/{detection_id}/suppress")
 async def regional_scan_suppress(detection_id: str, current_user=Depends(get_optional_user)):
-    """Operator dismissal — sets suppressed=True on a detection."""
     with get_db() as db:
         det = db.query(_RegionalScanDetection).filter_by(detection_id=detection_id).first()
         if not det:
             raise HTTPException(404, f"Detection {detection_id!r} not found")
         det.suppressed = True
         db.commit()
-        return {"suppressed": True, "detection_id": detection_id}
+    return {"suppressed": True, "detection_id": detection_id}
 
 
 @app.post("/api/admin/reset-zone-intervals")
 async def admin_reset_zone_intervals(current_user=Depends(get_optional_user)):
-    """One-time: set all WatchZone scan_interval_hours to 120 (5 days) and recalculate next_scan_at."""
+    """Set all WatchZone scan_interval_hours to 120 (5 days) and recalculate next_scan_at."""
     from database import WatchZone
     updated = 0
     with get_db() as db:
         zones = db.query(WatchZone).all()
-        now = datetime.utcnow()
+        now   = datetime.utcnow()
         for z in zones:
             z.scan_interval_hours = 120
-            if z.last_scan_at:
-                z.next_scan_at = z.last_scan_at + __import__("datetime").timedelta(hours=120)
-            else:
-                z.next_scan_at = now + __import__("datetime").timedelta(hours=120)
+            z.next_scan_at = (z.last_scan_at or now) + __import__("datetime").timedelta(hours=120)
             updated += 1
         db.commit()
     return {"updated": updated, "scan_interval_hours": 120}
-
-
-@app.post("/api/regional-scans/{job_id}/cancel")
-async def regional_scan_cancel(job_id: str, current_user=Depends(get_optional_user)):
-    """Signal a running scan to stop at the next tile batch boundary."""
-    from regional_scanner import _scan_cancellation_flags as _scf
-    with get_db() as db:
-        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
-        if not job:
-            raise HTTPException(404, f"Scan {job_id!r} not found")
-        if job.status != "running":
-            return {"status": job.status, "message": "Scan is not currently running"}
-        _scf[job_id] = True
-        return {"status": "cancelling", "job_id": job_id}
 
 
 # ── Director person dossier ───────────────────────────────────────────────────
@@ -10138,14 +10083,14 @@ async def _regional_scan_scheduler_loop():
                 days_since = None
                 if latest and latest.completed_at:
                     days_since = (datetime.utcnow() - latest.completed_at).days
-                if days_since is None or days_since >= UAE_REGION["scan_interval_days"]:
-                    print("[regional-scheduler] UAE scan due — triggering")
+                if days_since is None or days_since >= 5:
+                    print("[regional-scheduler] UAE scan due — triggering tile-by-tile scan")
                     async def _bg():
-                        with get_db() as _bg_db:
-                            try:
-                                await _regional_scanner.run_scan(UAE_REGION, _bg_db)
-                            except Exception as _e:
-                                print(f"[regional-scheduler] scan failed: {_e}")
+                        try:
+                            with get_db() as _sched_db:
+                                await _tile_scanner.start_scan("UAE", _sched_db)
+                        except Exception as _e:
+                            print(f"[regional-scheduler] scan failed: {_e}")
                     asyncio.create_task(_bg())
         except Exception as _e:
             print(f"[regional-scheduler] loop error: {_e}")

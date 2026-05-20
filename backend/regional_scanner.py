@@ -1,11 +1,13 @@
-"""regional_scanner.py — Tile-by-tile Sentinel-2 regional intelligence scan.
+"""regional_scanner.py — Tile-by-tile streaming Sentinel-2 scan for UAE.
 
-Pipeline phases:
-  1. acquisition  — fetch current + baseline Sentinel-2 tiles for region bbox
-  2. spectral     — compute spectral change scores tile-by-tile
-  3. detection    — YOLO on flagged tiles + asset proximity cross-reference
-  4. vision       — Claude Vision on confirmed detections
-  5. report       — Claude Opus full intelligence report
+Pipeline per tile:
+  1. Fetch current Sentinel-2 image (last 5 days)
+  2. Fetch baseline image (30-60 days ago)
+  3. Spectral change analysis
+  4. If flagged + relevant: Claude Vision analysis
+  5. Store detection + emit SSE event immediately
+
+At completion: Claude Opus intelligence report.
 """
 from __future__ import annotations
 
@@ -14,8 +16,9 @@ import base64
 import datetime
 import io
 import json
-import re
 import math
+import re
+import uuid
 from typing import Callable, Optional
 
 import anthropic
@@ -23,77 +26,67 @@ import anthropic
 from database import (
     RegionalScanJob, RegionalScanDetection,
     Airport, PortBoundary, StrategicZone,
-    get_db,
+    SessionLocal,
 )
 
-# Module-level cancellation flags: {job_id: True} means that scan should stop.
-_scan_cancellation_flags: dict[str, bool] = {}
+# Set from main.py at startup — called to push SSE events to all clients
+sse_push_fn: Optional[Callable] = None
 
 
-# ── ID generators ──────────────────────────────────────────────────────────────
+# ── Sentinel-2 tile fetch (sync, runs in executor) ────────────────────────────
 
-def _next_job_id(db) -> str:
-    n = db.query(RegionalScanJob).count() + 1
-    return f"RSCAN-{n:04d}"
-
-
-def _next_det_id(db) -> str:
-    n = db.query(RegionalScanDetection).count() + 1
-    return f"RDET-{n:04d}"
-
-
-# ── Sentinel fetch (wraps sentinel_scanner._fetch_sentinel_image) ──────────────
-
-def _fetch_tile_range(
+def _fetch_tile_sync(
     west: float, south: float, east: float, north: float,
-    image_type: str = "true-colour",
-    date_from: Optional[datetime.datetime] = None,
-    date_to: Optional[datetime.datetime] = None,
-    max_cloud: int = 20,
+    max_age_days: int = 5,
+    min_age_days: int = 0,
+    max_cloud: int = 30,
     width: int = 512,
     height: int = 512,
-) -> Optional[bytes]:
-    """Fetch Sentinel-2 tile for an explicit date range."""
-    from sentinel_scanner import _get_token_sync, _EVALSCRIPTS_SCANNER, _SH_PROCESS_URL
-    import urllib.request
-
-    token = _get_token_sync()
-    if not token:
-        return None
-    evalscript = _EVALSCRIPTS_SCANNER.get(image_type)
-    if not evalscript:
-        return None
-
-    now = datetime.datetime.utcnow()
-    t_to   = date_to   or now
-    t_from = date_from or (now - datetime.timedelta(days=7))
-
-    payload = {
-        "input": {
-            "bounds": {
-                "bbox": [west, south, east, north],
-                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
-            },
-            "data": [{
-                "type": "sentinel-2-l2a",
-                "dataFilter": {
-                    "maxCloudCoverage": max_cloud,
-                    "timeRange": {
-                        "from": t_from.strftime("%Y-%m-%dT00:00:00Z"),
-                        "to":   t_to.strftime("%Y-%m-%dT23:59:59Z"),
-                    },
-                    "mosaickingOrder": "leastCC",
-                },
-            }],
-        },
-        "output": {
-            "width":  width,
-            "height": height,
-            "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
-        },
-        "evalscript": evalscript,
-    }
+) -> Optional[dict]:
+    """Fetch Sentinel-2 true-colour tile via Copernicus Process API.
+    Returns {"b64": base64_png, "date": datetime} or None.
+    """
     try:
+        from sentinel_scanner import _get_token_sync, _EVALSCRIPTS_SCANNER, _SH_PROCESS_URL
+        import urllib.request
+
+        token = _get_token_sync()
+        if not token:
+            return None
+        evalscript = _EVALSCRIPTS_SCANNER.get("true-colour")
+        if not evalscript:
+            return None
+
+        now   = datetime.datetime.utcnow()
+        t_to  = now - datetime.timedelta(days=min_age_days)
+        t_from = now - datetime.timedelta(days=max_age_days)
+
+        payload = {
+            "input": {
+                "bounds": {
+                    "bbox": [west, south, east, north],
+                    "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+                },
+                "data": [{
+                    "type": "sentinel-2-l2a",
+                    "dataFilter": {
+                        "maxCloudCoverage": max_cloud,
+                        "timeRange": {
+                            "from": t_from.strftime("%Y-%m-%dT00:00:00Z"),
+                            "to":   t_to.strftime("%Y-%m-%dT23:59:59Z"),
+                        },
+                        "mosaickingOrder": "leastCC",
+                    },
+                }],
+            },
+            "output": {
+                "width":  width,
+                "height": height,
+                "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+            },
+            "evalscript": evalscript,
+        }
+
         body = json.dumps(payload).encode("utf-8")
         req  = urllib.request.Request(
             _SH_PROCESS_URL,
@@ -104,478 +97,421 @@ def _fetch_tile_range(
                 "Accept":        "image/png",
             },
         )
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return r.read() if r.status == 200 else None
+        with urllib.request.urlopen(req, timeout=25) as r:
+            if r.status == 200:
+                raw = r.read()
+                return {"b64": base64.b64encode(raw).decode(), "date": t_to}
+        return None
     except Exception as e:
-        print(f"[regional_scanner] tile fetch error: {e}")
+        print(f"[scanner] tile fetch error ({west:.2f},{south:.2f}): {e}")
         return None
 
 
-def _decode_image(b64_or_bytes):
-    """Decode base64 string or raw bytes → numpy RGB array."""
-    try:
-        import numpy as np
-        from PIL import Image
-        if isinstance(b64_or_bytes, str):
-            data = base64.b64decode(b64_or_bytes)
-        else:
-            data = b64_or_bytes
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-        return np.array(img)
-    except Exception:
-        return None
+# ── TileByTileScanner ─────────────────────────────────────────────────────────
 
+class TileByTileScanner:
 
-# ── RegionalScanner ────────────────────────────────────────────────────────────
+    UAE_REGION = {
+        "name": "UAE",
+        "bbox": {"min_lon": 51.5, "min_lat": 22.5, "max_lon": 56.5, "max_lat": 26.2},
+        "tile_size_deg": 0.5,
+        "max_cloud_cover": 30,
+        "spectral_change_threshold": 0.12,
+        "scan_interval_days": 5,
+    }
 
-class RegionalScanner:
-    """Orchestrates a full regional satellite intelligence scan."""
+    REGIONS = {"UAE": UAE_REGION}
 
-    def __init__(
-        self,
-        yolo_fn: Optional[Callable] = None,
-        broadcast_fn: Optional[Callable] = None,
-    ):
-        self.yolo_fn      = yolo_fn       # sync fn(bbox, band_type, db) → list[dict]
-        self.broadcast_fn = broadcast_fn  # fn(title, body, data)
+    # ── Tile generation ────────────────────────────────────────────────────────
 
-    def _check_cancelled(self, job, db) -> bool:
-        """Return True (and update DB) if a cancellation flag is set for this job."""
-        if _scan_cancellation_flags.get(job.job_id, False):
-            print(f"[regional_scanner] {job.job_id}: cancellation detected in phase {job.phase}")
-            _scan_cancellation_flags.pop(job.job_id, None)
-            job.status = "cancelled"
-            job.phase  = "cancelled"
-            job.completed_at = datetime.datetime.utcnow()
-            db.commit()
-            return True
-        return False
-
-    async def run_scan(self, region: dict, db) -> RegionalScanJob:
-        job = RegionalScanJob(
-            job_id         = _next_job_id(db),
-            region_name    = region["name"],
-            bbox_min_lon   = region["bbox"]["min_lon"],
-            bbox_min_lat   = region["bbox"]["min_lat"],
-            bbox_max_lon   = region["bbox"]["max_lon"],
-            bbox_max_lat   = region["bbox"]["max_lat"],
-            status         = "running",
-            phase          = "acquisition",
-            started_at     = datetime.datetime.utcnow(),
-        )
-        db.add(job)
-        db.commit()
-        print(f"[regional_scanner] {job.job_id}: started scan of {region['name']}")
-
-        try:
-            tiles      = await self._phase_acquisition(job, region, db)
-            flagged    = await self._phase_spectral(job, tiles, region, db)
-            detections = await self._phase_detection(job, flagged, db)
-            await self._phase_vision(job, detections, db)
-            await self._phase_report(job, db)
-
-            job.status       = "complete"
-            job.completed_at = datetime.datetime.utcnow()
-            db.commit()
-            print(f"[regional_scanner] {job.job_id}: complete — "
-                  f"{job.detections_flagged} flagged detections")
-
-            if self.broadcast_fn:
-                try:
-                    self.broadcast_fn(
-                        f"UAE Regional Scan Complete",
-                        job.report_summary or f"{job.detections_flagged} detections",
-                        {"type": "regional_scan_complete", "job_id": job.job_id,
-                         "region": job.region_name, "detections": job.detections_flagged},
-                    )
-                except Exception:
-                    pass
-
-        except Exception as e:
-            print(f"[regional_scanner] {job.job_id}: FAILED — {e}")
-            import traceback; traceback.print_exc()
-            job.status        = "failed"
-            job.error_message = str(e)[:500]
-            job.completed_at  = datetime.datetime.utcnow()
-            db.commit()
-            raise
-
-        return job
-
-    # ── Phase 1: Acquisition ───────────────────────────────────────────────────
-
-    async def _phase_acquisition(self, job, region, db) -> list:
-        job.phase = "acquisition"
-        db.commit()
-
-        bbox      = region["bbox"]
-        tile_size = region["tile_size_deg"]
-        tiles: list[dict] = []
-
+    def generate_tiles(self, region: dict) -> list:
+        bbox = region["bbox"]
+        size = region["tile_size_deg"]
+        tiles = []
         lon = bbox["min_lon"]
         while lon < bbox["max_lon"]:
             lat = bbox["min_lat"]
             while lat < bbox["max_lat"]:
                 tiles.append({
-                    "index": len(tiles),
-                    "bbox": {
-                        "min_lon": round(lon, 6),
-                        "min_lat": round(lat, 6),
-                        "max_lon": round(min(lon + tile_size, bbox["max_lon"]), 6),
-                        "max_lat": round(min(lat + tile_size, bbox["max_lat"]), 6),
-                    },
+                    "index":   len(tiles),
+                    "min_lon": round(lon, 4),
+                    "min_lat": round(lat, 4),
+                    "max_lon": round(min(lon + size, bbox["max_lon"]), 4),
+                    "max_lat": round(min(lat + size, bbox["max_lat"]), 4),
                 })
-                lat += tile_size
-            lon += tile_size
-
-        job.total_tiles = len(tiles)
-        db.commit()
-        print(f"[regional_scanner] {job.job_id}: {len(tiles)} tiles in grid")
-
-        now           = datetime.datetime.utcnow()
-        current_from  = now - datetime.timedelta(days=region.get("scan_interval_days", 5))
-        baseline_to   = now - datetime.timedelta(days=30)
-        baseline_from = now - datetime.timedelta(days=60)
-        max_cloud     = region.get("max_cloud_cover", 20)
-
-        loop           = asyncio.get_event_loop()
-        BATCH          = 3        # concurrent tile fetches
-        TILE_TIMEOUT   = 30       # per-tile HTTP timeout (seconds)
-        TOTAL_TIMEOUT  = 4 * 3600 # 4-hour overall acquisition limit
-        acq_start      = asyncio.get_event_loop().time()
-        fetched_count  = 0
-
-        async def _fetch_one(tile, date_from, date_to, cloud):
-            """Fetch a single tile with per-tile timeout; returns None on any error."""
-            b = tile["bbox"]
-            try:
-                raw = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda b=b, df=date_from, dt=date_to, c=cloud: _fetch_tile_range(
-                            b["min_lon"], b["min_lat"], b["max_lon"], b["max_lat"],
-                            image_type="true-colour",
-                            date_from=df,
-                            date_to=dt,
-                            max_cloud=c,
-                        ),
-                    ),
-                    timeout=TILE_TIMEOUT,
-                )
-                return raw
-            except asyncio.TimeoutError:
-                print(f"[regional_scanner] tile {tile['index']} timed out — skipping")
-                return None
-            except Exception as e:
-                print(f"[regional_scanner] tile {tile['index']} error: {e}")
-                return None
-
-        # ── Current image fetch (batches of 3) ────────────────────────────────
-        for batch_start in range(0, len(tiles), BATCH):
-            # Cancellation check before batch
-            if self._check_cancelled(job, db):
-                return []
-            # Overall acquisition timeout guard
-            if asyncio.get_event_loop().time() - acq_start > TOTAL_TIMEOUT:
-                raise RuntimeError(
-                    f"Acquisition timeout — too many tiles for sequential fetch "
-                    f"({fetched_count}/{len(tiles)} fetched before 4h limit)"
-                )
-
-            batch = tiles[batch_start:batch_start + BATCH]
-            results = await asyncio.gather(*[
-                _fetch_one(t, current_from, now, max_cloud) for t in batch
-            ])
-
-            # Cancellation check after gather completes (catches flag set during slow fetch)
-            if self._check_cancelled(job, db):
-                return []
-
-            for tile, raw in zip(batch, results):
-                if raw:
-                    tile["image_bytes"] = raw
-                    tile["image_date"]  = now
-                    fetched_count += 1
-
-            # Progress checkpoint every 50 tiles
-            if (batch_start + BATCH) % 50 == 0 or batch_start + BATCH >= len(tiles):
-                job.metadata = json.dumps({"tiles_fetched": fetched_count, "tiles_total": len(tiles)})
-                try:
-                    db.commit()
-                except Exception:
-                    pass
-                print(f"[regional_scanner] {job.job_id}: progress {fetched_count}/{len(tiles)}")
-
-            await asyncio.sleep(0.2)
-
-        print(f"[regional_scanner] {job.job_id}: {fetched_count}/{len(tiles)} current tiles fetched")
-
-        # ── Baseline fetch (batches of 3, only for tiles that have current image) ──
-        baseline_tiles = [t for t in tiles if t.get("image_bytes")]
-        for batch_start in range(0, len(baseline_tiles), BATCH):
-            if self._check_cancelled(job, db):
-                return []
-            if asyncio.get_event_loop().time() - acq_start > TOTAL_TIMEOUT:
-                print(f"[regional_scanner] {job.job_id}: 4h timeout hit during baseline — continuing with partial data")
-                break
-
-            batch = baseline_tiles[batch_start:batch_start + BATCH]
-            results = await asyncio.gather(*[
-                _fetch_one(t, baseline_from, baseline_to, 30) for t in batch
-            ])
-            if self._check_cancelled(job, db):
-                return []
-            for tile, raw in zip(batch, results):
-                tile["baseline_bytes"] = raw
-                tile["baseline_date"]  = baseline_to if raw else None
-
-            await asyncio.sleep(0.2)
-
-        fetched = sum(1 for t in tiles if t.get("image_bytes"))
-        print(f"[regional_scanner] {job.job_id}: {fetched}/{len(tiles)} tiles fetched (final)")
-
-        dated = [t["image_date"] for t in tiles if t.get("image_date")]
-        if dated:
-            job.image_date = min(dated)
-        bdated = [t["baseline_date"] for t in tiles if t.get("baseline_date")]
-        if bdated:
-            job.baseline_date = max(bdated)
-        db.commit()
+                lat += size
+            lon += size
         return tiles
 
-    # ── Phase 2: Spectral change detection ────────────────────────────────────
+    # ── Job creation + background launch ──────────────────────────────────────
 
-    async def _phase_spectral(self, job, tiles, region, db) -> list:
-        if self._check_cancelled(job, db):
-            return []
-        job.phase = "spectral"
+    async def start_scan(self, region_name: str, db) -> RegionalScanJob:
+        region = self.REGIONS.get(region_name.upper())
+        if not region:
+            raise ValueError(f"Unknown region: {region_name!r}")
+
+        tiles  = self.generate_tiles(region)
+        job_id = f"RSCAN-{uuid.uuid4().hex[:6].upper()}"
+
+        job = RegionalScanJob(
+            job_id             = job_id,
+            region_name        = region_name.upper(),
+            status             = "running",
+            bbox_min_lon       = region["bbox"]["min_lon"],
+            bbox_min_lat       = region["bbox"]["min_lat"],
+            bbox_max_lon       = region["bbox"]["max_lon"],
+            bbox_max_lat       = region["bbox"]["max_lat"],
+            tile_size_deg      = region["tile_size_deg"],
+            total_tiles        = len(tiles),
+            tiles_complete     = 0,
+            tiles_failed       = 0,
+            detections_total   = 0,
+            current_tile_index = 0,
+            cancelled          = False,
+            started_at         = datetime.datetime.utcnow(),
+        )
+        db.add(job)
         db.commit()
+        db.refresh(job)
 
-        import numpy as np
-        from PIL import Image
+        asyncio.create_task(self._process_tiles(job_id, tiles, region))
+        print(f"[scanner] {job_id}: started — {len(tiles)} tiles")
+        return job
 
-        threshold  = region.get("spectral_change_threshold", 0.12)
-        flagged: list[dict] = []
+    # ── Background tile loop ───────────────────────────────────────────────────
 
-        for tile in tiles:
-            if not tile.get("image_bytes") or not tile.get("baseline_bytes"):
-                continue
-            try:
-                curr = _decode_image(tile["image_bytes"])
-                base = _decode_image(tile["baseline_bytes"])
-                if curr is None or base is None:
-                    continue
-
-                h, w = curr.shape[:2]
-                if base.shape[:2] != (h, w):
-                    base = np.array(Image.fromarray(base).resize((w, h)))
-
-                r_c = curr[:,:,0].astype(float) / 255
-                g_c = curr[:,:,1].astype(float) / 255
-                b_c = curr[:,:,2].astype(float) / 255
-                r_b = base[:,:,0].astype(float) / 255
-                g_b = base[:,:,1].astype(float) / 255
-                b_b = base[:,:,2].astype(float) / 255
-
-                # Fire: bright warm pixels (red-dominant, low blue)
-                fire_mask  = (r_c > 0.72) & (g_c < 0.42) & (b_c < 0.32)
-                fire_score = float(np.mean(fire_mask))
-
-                # Burn scar: darkening vs baseline in all channels
-                burn_mask  = ((r_b - r_c) > 0.18) & ((g_b - g_c) > 0.12) & (r_c < 0.32)
-                burn_score = float(np.mean(burn_mask))
-
-                # General pixel diff
-                diff       = np.abs(curr.astype(float) - base.astype(float))
-                mean_diff  = float(np.mean(diff)) / 255
-
-                # New built-up (bright grey not in baseline)
-                bright_c   = (r_c > 0.52) & (g_c > 0.52) & (b_c > 0.52)
-                bright_b   = (r_b > 0.52) & (g_b > 0.52) & (b_b > 0.52)
-                buildup    = float(np.mean(bright_c & ~bright_b))
-
-                should_flag = (
-                    fire_score   > 0.005 or
-                    burn_score   > 0.015 or
-                    mean_diff    > threshold or
-                    buildup      > 0.04
-                )
-
-                if should_flag:
-                    change_types = []
-                    if fire_score  > 0.005: change_types.append("FIRE")
-                    if burn_score  > 0.015: change_types.append("BURN_SCAR")
-                    if mean_diff   > threshold: change_types.append("CHANGE")
-                    if buildup     > 0.04:  change_types.append("BUILDUP")
-
-                    tile["change_score"]  = max(
-                        fire_score * 5, burn_score * 3, mean_diff, buildup * 2
-                    )
-                    tile["change_types"]  = change_types
-                    tile["fire_score"]    = fire_score
-                    tile["burn_score"]    = burn_score
-                    tile["change_diff"]   = mean_diff
-                    flagged.append(tile)
-
-            except Exception as e:
-                print(f"[regional_scanner] spectral tile {tile['index']}: {e}")
-
-        job.flagged_tiles = len(flagged)
-        db.commit()
-        print(f"[regional_scanner] {job.job_id}: {len(flagged)} flagged tiles")
-        return flagged
-
-    # ── Phase 3: YOLO detection + asset cross-reference ───────────────────────
-
-    async def _phase_detection(self, job, flagged_tiles, db) -> list:
-        if self._check_cancelled(job, db):
-            return []
-        job.phase = "detection"
-        db.commit()
-
-        loop = asyncio.get_event_loop()
-        all_detections: list[RegionalScanDetection] = []
-
-        for tile in flagged_tiles:
-            if not tile.get("image_bytes"):
-                continue
-            b = tile["bbox"]
-            tile_lat = (b["min_lat"] + b["max_lat"]) / 2
-            tile_lon = (b["min_lon"] + b["max_lon"]) / 2
-
-            # YOLO (optional — injected from main.py)
-            yolo_results: list[dict] = []
-            if self.yolo_fn:
-                try:
-                    yolo_results = await loop.run_in_executor(
-                        None, lambda t=tile: self.yolo_fn(t["bbox"], "TRUE_COLOR", db)
-                    )
-                except Exception as e:
-                    print(f"[regional_scanner] YOLO tile {tile['index']}: {e}")
-
-            # Always flag fire/burn detections
-            for ct in tile.get("change_types", []):
-                if ct in ("FIRE", "BURN_SCAR"):
-                    score = tile.get("fire_score", 0) if ct == "FIRE" else tile.get("burn_score", 0)
-                    det = self._create_detection(
-                        job=job, tile=tile,
-                        detection_type=ct, change_type="NEW",
-                        confidence=min(0.5 + score * 10, 0.95),
-                        centroid_lat=tile_lat, centroid_lon=tile_lon,
-                        yolo_confirmed=False, db=db,
-                    )
-                    if det:
-                        all_detections.append(det)
-
-            # Flag infrastructure changes only near known assets / strategic zones
-            if any(ct in tile.get("change_types", []) for ct in ("CHANGE", "BUILDUP")):
-                nearby = await loop.run_in_executor(
-                    None, lambda: self._get_nearby_assets(tile_lat, tile_lon, 8, db)
-                )
-                in_zone = await loop.run_in_executor(
-                    None, lambda: self._in_strategic_zone(tile_lat, tile_lon, db)
-                )
-                if nearby or in_zone:
-                    det_type = self._classify_change_type(tile, nearby, yolo_results)
-                    det = self._create_detection(
-                        job=job, tile=tile,
-                        detection_type=det_type, change_type="NEW",
-                        confidence=min(tile.get("change_score", 0.4), 0.9),
-                        centroid_lat=tile_lat, centroid_lon=tile_lon,
-                        yolo_confirmed=bool(yolo_results),
-                        yolo_object_type=yolo_results[0].get("object_type") if yolo_results else None,
-                        nearest_assets=nearby, db=db,
-                    )
-                    if det:
-                        all_detections.append(det)
-
-        job.detections_total   = len(all_detections)
-        job.detections_flagged = sum(1 for d in all_detections if d.confidence > 0.4)
-        db.commit()
-        print(f"[regional_scanner] {job.job_id}: {len(all_detections)} detections")
-        return all_detections
-
-    def _create_detection(
-        self, job, tile, detection_type, change_type, confidence,
-        centroid_lat, centroid_lon, yolo_confirmed, db,
-        yolo_object_type=None, nearest_assets=None,
-    ) -> Optional[RegionalScanDetection]:
+    async def _process_tiles(self, job_id: str, tiles: list, region: dict):
+        db = SessionLocal()
         try:
-            b = tile["bbox"]
-            nearest = (nearest_assets or [])
-            first   = nearest[0] if nearest else None
+            for tile in tiles:
+                # Cancellation check
+                job = db.query(RegionalScanJob).filter_by(job_id=job_id).first()
+                if not job or job.cancelled or job.status != "running":
+                    if job and job.cancelled:
+                        job.status       = "cancelled"
+                        job.completed_at = datetime.datetime.utcnow()
+                        db.commit()
+                    return
 
-            # Strategic zone lookup
-            zone_id = self._in_strategic_zone_id(centroid_lat, centroid_lon, db)
+                job.current_tile_index = tile["index"]
+                db.commit()
+
+                # Process tile
+                try:
+                    detections = await asyncio.wait_for(
+                        self._process_single_tile(tile, region, job_id, db),
+                        timeout=35.0,
+                    )
+                    job.tiles_complete   = (job.tiles_complete or 0) + 1
+                    job.detections_total = (job.detections_total or 0) + len(detections)
+                    db.commit()
+
+                    self._emit("scan_progress", {
+                        "job_id":         job_id,
+                        "tile_index":     tile["index"],
+                        "total_tiles":    len(tiles),
+                        "tiles_complete": job.tiles_complete,
+                        "pct":            round(job.tiles_complete / len(tiles) * 100),
+                        "new_detections": [
+                            {
+                                "detection_id":   d.detection_id,
+                                "detection_type": d.detection_type,
+                                "confidence":     d.confidence,
+                                "lat":            d.centroid_lat,
+                                "lon":            d.centroid_lon,
+                                "severity":       d.claude_severity or "medium",
+                                "tile_bbox": {
+                                    "min_lon": tile["min_lon"],
+                                    "min_lat": tile["min_lat"],
+                                    "max_lon": tile["max_lon"],
+                                    "max_lat": tile["max_lat"],
+                                },
+                            }
+                            for d in detections
+                        ],
+                        "tile_bbox": {
+                            "min_lon": tile["min_lon"],
+                            "min_lat": tile["min_lat"],
+                            "max_lon": tile["max_lon"],
+                            "max_lat": tile["max_lat"],
+                        },
+                    })
+
+                except asyncio.TimeoutError:
+                    print(f"[scanner] tile {tile['index']} timed out")
+                    job.tiles_failed = (job.tiles_failed or 0) + 1
+                    db.commit()
+                except Exception as e:
+                    print(f"[scanner] tile {tile['index']} error: {e}")
+                    job.tiles_failed = (job.tiles_failed or 0) + 1
+                    db.commit()
+
+                await asyncio.sleep(0.5)
+
+            # All tiles complete
+            job = db.query(RegionalScanJob).filter_by(job_id=job_id).first()
+            if job and not job.cancelled:
+                job.status       = "complete"
+                job.completed_at = datetime.datetime.utcnow()
+                db.commit()
+                await self._generate_report(job_id, db)
+
+                job = db.query(RegionalScanJob).filter_by(job_id=job_id).first()
+                self._emit("scan_complete", {
+                    "job_id":           job_id,
+                    "region":           job.region_name if job else "UAE",
+                    "total_detections": job.detections_total if job else 0,
+                    "tiles_complete":   job.tiles_complete if job else len(tiles),
+                    "summary":          job.report_summary if job else None,
+                })
+
+        except Exception as e:
+            print(f"[scanner] {job_id} fatal: {e}")
+            import traceback; traceback.print_exc()
+            try:
+                job = db.query(RegionalScanJob).filter_by(job_id=job_id).first()
+                if job:
+                    job.status        = "failed"
+                    job.error_message = str(e)[:500]
+                    job.completed_at  = datetime.datetime.utcnow()
+                    db.commit()
+            except Exception:
+                pass
+        finally:
+            db.close()
+
+    # ── Single tile pipeline ───────────────────────────────────────────────────
+
+    async def _process_single_tile(
+        self, tile: dict, region: dict, job_id: str, db
+    ) -> list[RegionalScanDetection]:
+        loop = asyncio.get_event_loop()
+
+        # 1. Fetch current image
+        current = await loop.run_in_executor(
+            None,
+            lambda: _fetch_tile_sync(
+                tile["min_lon"], tile["min_lat"],
+                tile["max_lon"], tile["max_lat"],
+                max_age_days=region.get("scan_interval_days", 5),
+                min_age_days=0,
+                max_cloud=region.get("max_cloud_cover", 30),
+            ),
+        )
+        if not current:
+            return []
+
+        # 2. Fetch baseline (30-60 days ago)
+        baseline = await loop.run_in_executor(
+            None,
+            lambda: _fetch_tile_sync(
+                tile["min_lon"], tile["min_lat"],
+                tile["max_lon"], tile["max_lat"],
+                max_age_days=60,
+                min_age_days=30,
+                max_cloud=40,
+            ),
+        )
+
+        # 3. Spectral analysis
+        spectral = self._analyse_spectral(current, baseline, region)
+        if not spectral["flagged"]:
+            return []
+
+        # 4. Context: nearby assets + strategic zone
+        tile_lat = (tile["min_lat"] + tile["max_lat"]) / 2
+        tile_lon = (tile["min_lon"] + tile["max_lon"]) / 2
+        nearby  = await loop.run_in_executor(None, lambda: self._get_nearby_assets(tile_lat, tile_lon, 10, db))
+        zone_id = await loop.run_in_executor(None, lambda: self._get_containing_zone(tile_lat, tile_lon, db))
+
+        detections = []
+        for change_type in spectral["change_types"]:
+            is_fire   = change_type in ("FIRE", "SMOKE", "BURN_SCAR")
+            relevant  = is_fire or bool(nearby) or bool(zone_id)
+            if not relevant:
+                continue
+
+            det_type   = self._map_change_type(change_type, nearby)
+            confidence = spectral["scores"].get(change_type, 0.5)
+
+            # 5. Claude Vision for significant or fire detections
+            claude_analysis = None
+            claude_severity = "medium"
+            if confidence > 0.45 or is_fire:
+                try:
+                    vision = await self._claude_vision(current, tile, det_type, nearby, zone_id)
+                    claude_analysis = vision.get("description")
+                    claude_severity = vision.get("severity", "medium")
+                except Exception as ve:
+                    print(f"[scanner] vision tile {tile['index']}: {ve}")
 
             det = RegionalScanDetection(
-                detection_id             = _next_det_id(db),
-                job_id                   = job.job_id,
-                region_name              = job.region_name,
-                detection_type           = detection_type,
-                change_type              = change_type,
+                detection_id             = f"RDET-{uuid.uuid4().hex[:6].upper()}",
+                job_id                   = job_id,
+                tile_index               = tile["index"],
+                region_name              = "UAE",
+                detection_type           = det_type,
                 confidence               = round(confidence, 3),
-                centroid_lat             = centroid_lat,
-                centroid_lon             = centroid_lon,
-                bbox_min_lon             = b["min_lon"],
-                bbox_min_lat             = b["min_lat"],
-                bbox_max_lon             = b["max_lon"],
-                bbox_max_lat             = b["max_lat"],
-                spectral_change_score    = round(tile.get("change_score", 0), 4),
-                yolo_confirmed           = yolo_confirmed,
-                yolo_object_type         = yolo_object_type,
-                nearest_asset_type       = first["type"] if first else None,
-                nearest_asset_name       = first["name"] if first else None,
-                nearest_asset_distance_km= round(first["distance_km"], 2) if first else None,
+                centroid_lat             = tile_lat,
+                centroid_lon             = tile_lon,
+                bbox_min_lon             = tile["min_lon"],
+                bbox_min_lat             = tile["min_lat"],
+                bbox_max_lon             = tile["max_lon"],
+                bbox_max_lat             = tile["max_lat"],
+                spectral_change_score    = round(spectral["max_score"], 4),
+                change_type              = "FIRE" if is_fire else "CHANGED",
+                nearest_asset_name       = nearby[0]["name"]        if nearby else None,
+                nearest_asset_type       = nearby[0]["type"]        if nearby else None,
+                nearest_asset_distance_km= round(nearby[0]["distance_km"], 2) if nearby else None,
                 in_strategic_zone        = zone_id,
-                image_date               = tile.get("image_date"),
-                baseline_date            = tile.get("baseline_date"),
+                claude_vision_analysis   = claude_analysis,
+                claude_severity          = claude_severity,
+                image_b64                = current["b64"] if is_fire else None,
+                created_at               = datetime.datetime.utcnow(),
             )
             db.add(det)
-            db.commit()
-            return det
-        except Exception as e:
-            print(f"[regional_scanner] create_detection error: {e}")
-            return None
+            detections.append(det)
 
-    def _classify_change_type(self, tile, nearby_assets, yolo_results) -> str:
-        asset_types  = {a["type"] for a in nearby_assets}
-        change_types = set(tile.get("change_types", []))
-        if "airport"         in asset_types: return "RUNWAY_CHANGE"
-        if "port"            in asset_types: return "PORT_CHANGE"
-        if "energy"          in asset_types or "pipeline" in asset_types: return "ENERGY_CHANGE"
-        if not nearby_assets:               return "UNKNOWN_COMPOUND"
-        if "BUILDUP"         in change_types: return "INFRASTRUCTURE_CHANGE"
-        return "INFRASTRUCTURE_CHANGE"
+        db.commit()
+        return detections
+
+    # ── Spectral analysis ──────────────────────────────────────────────────────
+
+    def _analyse_spectral(self, current: dict, baseline: Optional[dict], region: dict) -> dict:
+        try:
+            import numpy as np
+            from PIL import Image
+
+            if not current or not current.get("b64"):
+                return {"flagged": False, "change_types": [], "scores": {}, "max_score": 0.0}
+
+            img_bytes = base64.b64decode(current["b64"])
+            curr = np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"), dtype=float) / 255.0
+            r, g, b = curr[:, :, 0], curr[:, :, 1], curr[:, :, 2]
+
+            change_types: list[str] = []
+            scores: dict[str, float] = {}
+
+            # Fire: high red, low green/blue
+            fire_mask  = (r > 0.72) & (g < 0.35) & (b < 0.25)
+            fire_score = float(np.mean(fire_mask))
+            if fire_score > 0.008:
+                change_types.append("FIRE")
+                scores["FIRE"] = min(fire_score * 60, 1.0)
+
+            # Smoke: near-grey mid-brightness
+            smoke_mask  = (np.abs(r - g) < 0.08) & (np.abs(g - b) < 0.08) & (r > 0.45) & (r < 0.75)
+            smoke_score = float(np.mean(smoke_mask))
+            if smoke_score > 0.06:
+                change_types.append("SMOKE")
+                scores["SMOKE"] = min(smoke_score * 10, 1.0)
+
+            # Change vs baseline
+            if baseline and baseline.get("b64"):
+                base_bytes = base64.b64decode(baseline["b64"])
+                base_arr   = np.array(Image.open(io.BytesIO(base_bytes)).convert("RGB"), dtype=float) / 255.0
+                if base_arr.shape == curr.shape:
+                    diff      = np.abs(curr - base_arr)
+                    mean_diff = float(np.mean(diff))
+                    threshold = region.get("spectral_change_threshold", 0.12)
+                    if mean_diff > threshold:
+                        change_types.append("CHANGE")
+                        scores["CHANGE"] = min(mean_diff * 5, 1.0)
+
+                    burn_mask  = (base_arr[:, :, 0] - r > 0.18) & (base_arr[:, :, 1] - g > 0.12) & (r < 0.25)
+                    burn_score = float(np.mean(burn_mask))
+                    if burn_score > 0.015:
+                        change_types.append("BURN_SCAR")
+                        scores["BURN_SCAR"] = min(burn_score * 30, 1.0)
+
+            max_score = max(scores.values()) if scores else 0.0
+            return {"flagged": bool(change_types), "change_types": change_types,
+                    "scores": scores, "max_score": max_score}
+
+        except Exception as e:
+            print(f"[scanner] spectral error: {e}")
+            return {"flagged": False, "change_types": [], "scores": {}, "max_score": 0.0}
+
+    # ── Claude Vision ──────────────────────────────────────────────────────────
+
+    async def _claude_vision(
+        self, image: dict, tile: dict, det_type: str,
+        nearby: list, zone_id: Optional[str],
+    ) -> dict:
+        loop = asyncio.get_event_loop()
+        asset_ctx = (
+            f"Nearest: {nearby[0]['name']} ({nearby[0]['type']}, {nearby[0]['distance_km']:.1f}km)"
+            if nearby else "No known assets nearby"
+        )
+
+        def _call():
+            client = anthropic.Anthropic()
+            resp = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=300,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type":       "base64",
+                                "media_type": "image/png",
+                                "data":       image["b64"],
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Satellite image from UAE "
+                                f"({tile['min_lat']:.2f}N,{tile['min_lon']:.2f}E – "
+                                f"{tile['max_lat']:.2f}N,{tile['max_lon']:.2f}E).\n"
+                                f"Detection: {det_type}\n{asset_ctx}\n"
+                                f"Zone: {zone_id or 'None'}\n\n"
+                                "Describe what you observe in 2 sentences. "
+                                "Return JSON only:\n"
+                                '{"description": "...", "severity": "info|medium|high|critical"}'
+                            ),
+                        },
+                    ],
+                }],
+            )
+            text  = resp.content[0].text
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            return json.loads(match.group()) if match else {"description": text[:200], "severity": "medium"}
+
+        return await loop.run_in_executor(None, _call)
+
+    # ── Asset / zone lookup ────────────────────────────────────────────────────
 
     def _get_nearby_assets(self, lat: float, lon: float, radius_km: float, db) -> list:
-        deg = radius_km / 111.32
-        assets: list[dict] = []
-
-        for a in db.query(Airport).filter(
-            Airport.latitude.between(lat - deg, lat + deg),
-            Airport.longitude.between(lon - deg, lon + deg),
-        ).all():
-            assets.append({
-                "type": "airport", "name": a.airport_name,
-                "distance_km": math.hypot(lat - a.latitude, lon - a.longitude) * 111.32,
-            })
-
-        for p in db.query(PortBoundary).filter(
-            PortBoundary.latitude.between(lat - deg, lat + deg),
-            PortBoundary.longitude.between(lon - deg, lon + deg),
-        ).all():
-            assets.append({
-                "type": "port", "name": p.port_name,
-                "distance_km": math.hypot(lat - p.latitude, lon - p.longitude) * 111.32,
-            })
-
+        deg    = radius_km / 111.32
+        assets = []
+        try:
+            for a in db.query(Airport).filter(
+                Airport.latitude.between(lat - deg, lat + deg),
+                Airport.longitude.between(lon - deg, lon + deg),
+            ).limit(5).all():
+                assets.append({
+                    "type": "airport", "name": a.airport_name,
+                    "distance_km": math.hypot(lat - a.latitude, lon - a.longitude) * 111.32,
+                })
+        except Exception:
+            pass
+        try:
+            for p in db.query(PortBoundary).filter(
+                PortBoundary.latitude.between(lat - deg, lat + deg),
+                PortBoundary.longitude.between(lon - deg, lon + deg),
+            ).limit(5).all():
+                assets.append({
+                    "type": "port", "name": p.port_name,
+                    "distance_km": math.hypot(lat - p.latitude, lon - p.longitude) * 111.32,
+                })
+        except Exception:
+            pass
         return sorted(assets, key=lambda x: x["distance_km"])
 
-    def _in_strategic_zone(self, lat: float, lon: float, db) -> bool:
-        return self._in_strategic_zone_id(lat, lon, db) is not None
-
-    def _in_strategic_zone_id(self, lat: float, lon: float, db) -> Optional[str]:
+    def _get_containing_zone(self, lat: float, lon: float, db) -> Optional[str]:
         try:
             from shapely.geometry import Point, shape
             pt = Point(lon, lat)
@@ -589,199 +525,88 @@ class RegionalScanner:
             pass
         return None
 
-    # ── Phase 4: Claude Vision ─────────────────────────────────────────────────
+    def _map_change_type(self, spectral_type: str, nearby: list) -> str:
+        if spectral_type == "FIRE":      return "FIRE"
+        if spectral_type == "SMOKE":     return "SMOKE"
+        if spectral_type == "BURN_SCAR": return "BURN_SCAR"
+        if nearby:
+            t = nearby[0]["type"]
+            if t == "airport": return "RUNWAY_CHANGE"
+            if t == "port":    return "PORT_CHANGE"
+        return "INFRASTRUCTURE_CHANGE"
 
-    async def _phase_vision(self, job, detections, db) -> None:
-        if self._check_cancelled(job, db):
-            return
-        job.phase = "vision"
-        db.commit()
+    # ── Opus report ────────────────────────────────────────────────────────────
 
-        qualifying = [d for d in detections if d.confidence > 0.4]
-        print(f"[regional_scanner] {job.job_id}: "
-              f"sending {len(qualifying)} detections to Claude Vision")
-
-        ai_client = anthropic.Anthropic()
-        loop      = asyncio.get_event_loop()
-
-        for det in qualifying:
-            try:
-                # Find original tile image bytes
-                tile_bytes = self._get_tile_bytes_for_det(det, detections, job)
-                if not tile_bytes:
-                    continue
-
-                image_date_str = det.image_date.strftime("%Y-%m-%d") if det.image_date else "unknown"
-                context = (
-                    f"You are analysing a Sentinel-2 satellite image crop from the "
-                    f"{det.region_name} region captured on {image_date_str}.\n\n"
-                    f"Detection metadata:\n"
-                    f"- Type: {det.detection_type}\n"
-                    f"- Change from baseline: {det.change_type}\n"
-                    f"- Spectral change score: {det.spectral_change_score:.3f}\n"
-                    f"- Nearest known asset: {det.nearest_asset_name or 'None'} "
-                    f"({det.nearest_asset_type or 'unknown'}"
-                    + (f", {det.nearest_asset_distance_km:.1f}km away" if det.nearest_asset_distance_km else "") + ")\n"
-                    f"- Inside strategic zone: {det.in_strategic_zone or 'No'}\n"
-                    f"- YOLO detected: {det.yolo_object_type or 'No detection'}\n\n"
-                    "Analyse this image and return ONLY valid JSON:\n"
-                    '{"description": "...", "likely_purpose": "...", '
-                    '"military_relevance": "...", '
-                    '"severity": "info|medium|high|critical", '
-                    '"threat_assessment": "one sentence"}'
-                )
-
-                b64 = base64.b64encode(tile_bytes).decode()
-
-                def _call(b64=b64, context=context):
-                    msg = ai_client.messages.create(
-                        model="claude-sonnet-4-6",
-                        max_tokens=512,
-                        messages=[{
-                            "role": "user",
-                            "content": [
-                                {"type": "image", "source": {
-                                    "type": "base64",
-                                    "media_type": "image/png",
-                                    "data": b64,
-                                }},
-                                {"type": "text", "text": context},
-                            ],
-                        }],
-                    )
-                    return msg.content[0].text
-
-                text = await loop.run_in_executor(None, _call)
-                m = re.search(r'\{.*\}', text, re.DOTALL)
-                if m:
-                    try:
-                        a = json.loads(m.group())
-                        det.claude_vision_analysis   = a.get("description", "")[:1000]
-                        det.claude_threat_assessment = a.get("threat_assessment", "")[:300]
-                        det.claude_severity          = a.get("severity", "info")
-                    except json.JSONDecodeError:
-                        det.claude_vision_analysis = text[:500]
-                else:
-                    det.claude_vision_analysis = text[:500]
-
-                db.commit()
-                await asyncio.sleep(1.2)
-
-            except Exception as e:
-                print(f"[regional_scanner] vision {det.detection_id}: {e}")
-
-    def _get_tile_bytes_for_det(self, det, detections, job) -> Optional[bytes]:
-        """Retrieve the tile bytes associated with this detection (from in-memory pipeline state).
-        We keep it simple: re-fetch a small crop around the detection centroid."""
-        try:
-            margin = 0.03  # ~3km
-            return _fetch_tile_range(
-                det.centroid_lon - margin,
-                det.centroid_lat - margin,
-                det.centroid_lon + margin,
-                det.centroid_lat + margin,
-                image_type="true-colour",
-                date_from=(det.image_date - datetime.timedelta(days=7)) if det.image_date else None,
-                date_to=det.image_date,
-                max_cloud=30,
-                width=256,
-                height=256,
-            )
-        except Exception:
-            return None
-
-    # ── Phase 5: Opus report ───────────────────────────────────────────────────
-
-    async def _phase_report(self, job, db) -> None:
-        if self._check_cancelled(job, db):
-            return
-        job.phase = "report"
-        db.commit()
-
-        detections = (
+    async def _generate_report(self, job_id: str, db):
+        dets = (
             db.query(RegionalScanDetection)
-            .filter(
-                RegionalScanDetection.job_id == job.job_id,
-                RegionalScanDetection.suppressed == False,
-            )
-            .order_by(RegionalScanDetection.confidence.desc())
+            .filter_by(job_id=job_id, suppressed=False)
             .all()
         )
+        job = db.query(RegionalScanJob).filter_by(job_id=job_id).first()
 
-        if not detections:
-            job.claude_report  = "No significant changes detected in this scan cycle."
-            job.report_summary = "No significant changes detected."
-            db.commit()
+        if not dets or not job:
+            if job:
+                job.report_summary = "No significant changes detected."
+                job.claude_report  = "No significant changes detected in this scan cycle."
+                db.commit()
             return
 
-        det_rows = []
-        for d in detections[:50]:
-            det_rows.append({
-                "type":           d.detection_type,
-                "change":         d.change_type,
-                "location":       f"{d.centroid_lat:.4f}N {d.centroid_lon:.4f}E",
-                "confidence":     round(d.confidence, 2),
-                "nearest_asset":  (f"{d.nearest_asset_name} ({d.nearest_asset_type})"
-                                   if d.nearest_asset_name else "No known asset nearby"),
-                "distance_km":    d.nearest_asset_distance_km,
-                "strategic_zone": d.in_strategic_zone or "None",
-                "analysis":       d.claude_vision_analysis or "Not analysed",
-                "severity":       d.claude_severity or "info",
-                "threat":         d.claude_threat_assessment or "None",
-            })
+        det_rows = [{
+            "type":        d.detection_type,
+            "confidence":  round(d.confidence, 2),
+            "lat":         d.centroid_lat,
+            "lon":         d.centroid_lon,
+            "asset":       d.nearest_asset_name,
+            "zone":        d.in_strategic_zone,
+            "analysis":    d.claude_vision_analysis or "",
+            "severity":    d.claude_severity,
+        } for d in dets[:40]]
 
-        image_date_str    = job.image_date.strftime("%Y-%m-%d")    if job.image_date    else "unknown"
-        baseline_date_str = job.baseline_date.strftime("%Y-%m-%d") if job.baseline_date else "unknown"
+        loop = asyncio.get_event_loop()
 
-        prompt = (
-            f"You are a senior intelligence analyst. Generate a structured intelligence "
-            f"report based on the following satellite imagery analysis of the {job.region_name} region.\n\n"
-            f"Scan period: {baseline_date_str} → {image_date_str}\n"
-            f"Total tiles analysed: {job.total_tiles}\n"
-            f"Flagged tiles: {job.flagged_tiles}\n"
-            f"Total detections: {job.detections_total}\n\n"
-            f"DETECTIONS:\n{json.dumps(det_rows, indent=2)}\n\n"
-            "Generate a formal intelligence report with these sections:\n"
-            "1. EXECUTIVE SUMMARY (3-4 sentences, most critical findings)\n"
-            "2. CRITICAL FINDINGS (highest-severity detections with location, nature, significance)\n"
-            "3. AIRPORT AND AIRFIELD ACTIVITY (changes at known airports or unknown airstrips)\n"
-            "4. PORT AND MARITIME INFRASTRUCTURE (changes at ports, new berths, vessel concentrations)\n"
-            "5. ENERGY AND OIL INFRASTRUCTURE (refinery, pipeline, storage changes)\n"
-            "6. UNKNOWN STRUCTURES AND COMPOUNDS (new construction with no DB match)\n"
-            "7. FIRE AND ENVIRONMENTAL EVENTS (fires, burn scars, industrial incidents)\n"
-            "8. MILITARY INDICATORS (changes suggesting buildup, new facilities, equipment)\n"
-            "9. ASSESSMENT AND WATCH ITEMS (overall threat assessment, next scan priorities)\n\n"
-            "Be specific about locations (use coordinates). Be direct about military relevance. "
-            "Do not hedge unnecessarily. Write for a senior analyst who needs actionable intelligence."
-        )
-
-        ai_client = anthropic.Anthropic()
-        loop      = asyncio.get_event_loop()
-
-        def _call_opus():
-            return ai_client.messages.create(
+        def _run():
+            client = anthropic.Anthropic()
+            report = client.messages.create(
                 model="claude-opus-4-7",
-                max_tokens=4000,
-                messages=[{"role": "user", "content": prompt}],
-            ).content[0].text
-
-        report = await loop.run_in_executor(None, _call_opus)
-        job.claude_report = report
-
-        def _call_haiku():
-            return ai_client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=150,
+                max_tokens=2000,
                 messages=[{"role": "user", "content": (
-                    "Summarise this intelligence report in one sentence of max 30 words, "
-                    f"naming the most critical finding:\n\n{report[:2000]}"
+                    f"Intelligence report: UAE regional satellite scan.\n"
+                    f"{len(dets)} detections found.\n\n"
+                    f"Detections:\n{json.dumps(det_rows, indent=2)}\n\n"
+                    "Write a structured report with sections:\n"
+                    "EXECUTIVE SUMMARY, CRITICAL FINDINGS, INFRASTRUCTURE CHANGES, "
+                    "FIRE/ENVIRONMENTAL, UNKNOWN STRUCTURES, ASSESSMENT.\n"
+                    "Be specific about coordinates and asset names."
                 )}],
             ).content[0].text
 
-        job.report_summary = await loop.run_in_executor(None, _call_haiku)
-        db.commit()
-        print(f"[regional_scanner] {job.job_id}: report generated")
+            summary = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=100,
+                messages=[{"role": "user", "content": f"One sentence (max 25 words):\n{report[:1000]}"}],
+            ).content[0].text
+
+            return report, summary
+
+        try:
+            report, summary = await loop.run_in_executor(None, _run)
+            job.claude_report  = report
+            job.report_summary = summary
+            db.commit()
+            print(f"[scanner] {job_id}: report generated")
+        except Exception as e:
+            print(f"[scanner] {job_id}: report error: {e}")
+
+    # ── SSE emit helper ────────────────────────────────────────────────────────
+
+    def _emit(self, event_type: str, payload: dict):
+        if sse_push_fn:
+            try:
+                sse_push_fn({"event": event_type, "payload": payload})
+            except Exception:
+                pass
 
 
-# ── Singleton ──────────────────────────────────────────────────────────────────
-regional_scanner = RegionalScanner()
+# ── Module singleton ───────────────────────────────────────────────────────────
+tile_scanner = TileByTileScanner()

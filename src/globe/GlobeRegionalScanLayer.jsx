@@ -3,7 +3,7 @@ import { createPortal } from "react-dom"
 import { Entity } from "resium"
 import { useCesium } from "resium"
 import {
-    Cartesian3, Color,
+    Cartesian3, Color, Rectangle,
     NearFarScalar, DistanceDisplayCondition,
     SceneTransforms,
 } from "cesium"
@@ -107,17 +107,6 @@ function DetectionTooltip({ det, x, y, visible, onClose, onSuppress }) {
                     </div>
                 )}
 
-                {/* Threat assessment */}
-                {p.claude_threat_assessment && (
-                    <div style={{
-                        fontSize: 10, fontStyle: "italic",
-                        color: "rgba(255,255,255,0.5)", marginBottom: 10,
-                        borderLeft: `2px solid ${cfg.color}`, paddingLeft: 8,
-                    }}>
-                        {p.claude_threat_assessment}
-                    </div>
-                )}
-
                 {/* Meta rows */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {p.nearest_asset_name && (
@@ -135,7 +124,6 @@ function DetectionTooltip({ det, x, y, visible, onClose, onSuppress }) {
                     </MetaRow>
                     <MetaRow label="Confidence">
                         {(p.confidence * 100).toFixed(0)}%
-                        {p.yolo_confirmed && " · YOLO confirmed"}
                     </MetaRow>
                     {p.image_date && (
                         <MetaRow label="Image date">
@@ -173,31 +161,174 @@ function MetaRow({ label, children }) {
     )
 }
 
+// ── Progress overlay ──────────────────────────────────────────────────────────
+
+function ScanProgressOverlay({ progress }) {
+    if (!progress) return null
+    const { tilesComplete, totalTiles, detections, jobId } = progress
+    const pct = totalTiles > 0 ? Math.round(tilesComplete / totalTiles * 100) : 0
+    return createPortal(
+        <div style={{
+            position: "fixed", bottom: 56, left: 16,
+            background: "rgba(8,16,32,0.88)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            border: "1px solid rgba(255,204,0,0.3)",
+            borderRadius: 8, padding: "8px 12px",
+            zIndex: 8800,
+            fontFamily: "Inter, system-ui, sans-serif",
+            color: "#fff",
+            minWidth: 200,
+        }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: "#FFCC00", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>
+                UAE Scan Running
+            </div>
+            <div style={{
+                height: 3, borderRadius: 2,
+                background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: 5,
+            }}>
+                <div style={{
+                    height: "100%", borderRadius: 2,
+                    width: `${pct}%`,
+                    background: "linear-gradient(90deg, #FFCC00, #FF9500)",
+                    transition: "width 0.8s ease",
+                }} />
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.65)" }}>
+                {tilesComplete} / {totalTiles} tiles · {detections} detection{detections !== 1 ? "s" : ""}
+            </div>
+        </div>,
+        document.body,
+    )
+}
+
 // ── Main layer ────────────────────────────────────────────────────────────────
 
 export default function GlobeRegionalScanLayer({ enabled }) {
-    const { viewer }             = useCesium()
-    const [detections, setDets]  = useState([])
-    const [jobId, setJobId]      = useState(null)
-    const [selDet, setSelDet]    = useState(null)
-    const [tooltipPos, setTPos]  = useState({ x: 0, y: 0 })
-    const [tooltipVis, setTVis]  = useState(false)
-    const centroidRef            = useRef(null)
+    const { viewer }              = useCesium()
+    const [detections, setDets]   = useState([])
+    const [tileBboxes, setTileBboxes] = useState([])  // [{west,south,east,north}]
+    const [progress, setProgress] = useState(null)    // {tilesComplete,totalTiles,detections,jobId}
+    const [jobId, setJobId]       = useState(null)
+    const [selDet, setSelDet]     = useState(null)
+    const [tooltipPos, setTPos]   = useState({ x: 0, y: 0 })
+    const [tooltipVis, setTVis]   = useState(false)
+    const centroidRef             = useRef(null)
+    const sseRef                  = useRef(null)
+    const knownIdsRef             = useRef(new Set())
 
-    // Fetch latest scan + detections on mount / enable
+    // Initial load: fetch latest scan + detections
     useEffect(() => {
         if (!enabled) return
-        fetch(`${API_BASE}/api/regional-scans/latest?region_name=UAE`)
+
+        fetch(`${API_BASE}/api/regional-scans/latest/detections`)
             .then(r => r.ok ? r.json() : null)
             .then(d => {
-                const jid = d?.job?.job_id
-                if (!jid) return
-                setJobId(jid)
-                return fetch(`${API_BASE}/api/regional-scans/${jid}/detections`)
-                    .then(r => r.ok ? r.json() : null)
-                    .then(g => setDets(g?.features || []))
+                if (!d) return
+                const jid = d.job?.job_id
+                if (jid) {
+                    setJobId(jid)
+                    if (d.job?.status === "running") {
+                        setProgress({
+                            tilesComplete: d.job.tiles_complete || 0,
+                            totalTiles:    d.job.total_tiles    || 0,
+                            detections:    d.job.detections_total || 0,
+                            jobId:         jid,
+                        })
+                    }
+                }
+                const feats = d.features || []
+                feats.forEach(f => knownIdsRef.current.add(f.properties?.detection_id))
+                setDets(feats)
             })
             .catch(() => {})
+    }, [enabled])
+
+    // SSE stream for live updates
+    useEffect(() => {
+        if (!enabled) return
+
+        const es = new EventSource(`${API_BASE}/api/ontology/graph/stream`)
+        sseRef.current = es
+
+        es.onmessage = (ev) => {
+            try {
+                const msg = JSON.parse(ev.data)
+
+                if (msg.event === "scan_progress") {
+                    const p = msg.payload || {}
+                    setProgress({
+                        tilesComplete: p.tiles_complete || 0,
+                        totalTiles:    p.total_tiles    || 0,
+                        detections:    p.detections_total || 0,
+                        jobId:         p.job_id,
+                    })
+                    if (p.job_id) setJobId(p.job_id)
+
+                    // Add tile bbox rectangle for this completed tile
+                    const tb = p.tile_bbox
+                    if (tb) {
+                        setTileBboxes(prev => [...prev, {
+                            west:  tb.min_lon,
+                            south: tb.min_lat,
+                            east:  tb.max_lon,
+                            north: tb.max_lat,
+                            tileIndex: p.tile_index,
+                        }])
+                    }
+
+                    // Merge any new detections that came with this tile
+                    const newDets = p.new_detections || []
+                    if (newDets.length > 0) {
+                        setDets(prev => {
+                            const additions = newDets.filter(f => {
+                                const id = f.properties?.detection_id
+                                if (knownIdsRef.current.has(id)) return false
+                                knownIdsRef.current.add(id)
+                                return true
+                            })
+                            return additions.length > 0 ? [...prev, ...additions] : prev
+                        })
+                    }
+                }
+
+                if (msg.event === "scan_complete") {
+                    const p = msg.payload || {}
+                    setProgress(null)
+                    // Fetch complete detections set
+                    const jid = p.job_id || jobId
+                    if (jid) {
+                        fetch(`${API_BASE}/api/regional-scans/${jid}/detections`)
+                            .then(r => r.ok ? r.json() : null)
+                            .then(g => {
+                                if (g?.features) {
+                                    knownIdsRef.current = new Set(g.features.map(f => f.properties?.detection_id))
+                                    setDets(g.features)
+                                }
+                            })
+                            .catch(() => {})
+                    }
+                    setTileBboxes([])
+                }
+            } catch (_) {}
+        }
+
+        return () => {
+            es.close()
+            sseRef.current = null
+        }
+    }, [enabled])
+
+    // Clear state when disabled
+    useEffect(() => {
+        if (!enabled) {
+            setDets([])
+            setTileBboxes([])
+            setProgress(null)
+            setSelDet(null)
+            setTVis(false)
+            knownIdsRef.current = new Set()
+        }
     }, [enabled])
 
     // Track selected detection centroid for tooltip repositioning
@@ -242,16 +373,33 @@ export default function GlobeRegionalScanLayer({ enabled }) {
                 method: "DELETE",
             })
             setDets(prev => prev.filter(f => f.properties?.detection_id !== detectionId))
+            knownIdsRef.current.delete(detectionId)
             handleClose()
         } catch (e) {
             console.error("[GlobeRegionalScanLayer] suppress error:", e)
         }
     }, [handleClose])
 
-    if (!enabled || !detections.length) return null
+    if (!enabled) return null
 
     return (
         <>
+            {/* Tile sweep rectangles — show completed tiles as faint outlines */}
+            {tileBboxes.map((tb, i) => (
+                <Entity
+                    key={`tile-bbox-${tb.tileIndex ?? i}`}
+                    rectangle={{
+                        coordinates: Rectangle.fromDegrees(tb.west, tb.south, tb.east, tb.north),
+                        material: Color.fromCssColorString("#FFCC00").withAlpha(0.06),
+                        outline: true,
+                        outlineColor: Color.fromCssColorString("#FFCC00").withAlpha(0.28),
+                        outlineWidth: 1,
+                        height: 0,
+                    }}
+                />
+            ))}
+
+            {/* Detection points */}
             {detections.map(feat => {
                 const p      = feat.properties || {}
                 const color  = detColor(p.detection_type)
@@ -300,6 +448,8 @@ export default function GlobeRegionalScanLayer({ enabled }) {
                 onClose={handleClose}
                 onSuppress={handleSuppress}
             />
+
+            <ScanProgressOverlay progress={progress} />
         </>
     )
 }

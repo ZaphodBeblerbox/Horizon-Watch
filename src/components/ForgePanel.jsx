@@ -3918,9 +3918,7 @@ function SurveillanceZonesWorkspace({ onEnableRegionalScan }) {
 // ── Regional Scans ────────────────────────────────────────────────────────────
 
 const PHASE_STEPS = ["acquisition", "spectral", "detection", "vision", "report"]
-const PHASE_PCT   = { acquisition: 10, spectral: 30, detection: 50, vision: 70, report: 90 }
-
-function ScanStatusBadge({ status, phase }) {
+function ScanStatusBadge({ status }) {
     if (status === "complete")  return <span style={sBadge("#34C759")}>COMPLETE</span>
     if (status === "failed")    return <span style={sBadge("#FF3B30")}>FAILED</span>
     if (status === "running")   return <span style={sBadge("#FFCC00", true)}>RUNNING</span>
@@ -3945,7 +3943,7 @@ function hexRgbF(hex) {
 }
 
 function ScanReportModal({ report, jobMeta, onClose }) {
-    const det_count = jobMeta?.detections_flagged ?? 0
+    const det_count = jobMeta?.detections_total ?? 0
     return (
         <div style={{
             position: "fixed", inset: 0, zIndex: 12000,
@@ -3997,6 +3995,7 @@ function RegionalScansSection({ onViewOnGlobe }) {
     const [cancelling, setCancelling] = useState(false)
     const [showReport, setShowReport] = useState(false)
     const [toast, setToast]           = useState("")
+    const [liveTiles, setLiveTiles]   = useState(null)  // {complete, total, detections} from SSE
 
     const load = () =>
         fetch(`${API}/api/regional-scans`, { headers: forgeHeaders() })
@@ -4006,14 +4005,41 @@ function RegionalScansSection({ onViewOnGlobe }) {
 
     useEffect(() => {
         load()
-        // Poll every 15s when a scan is running
         const id = setInterval(load, 15000)
         return () => clearInterval(id)
     }, [])
 
+    // SSE for real-time tile progress
+    useEffect(() => {
+        const es = new EventSource(`${API}/api/ontology/graph/stream`)
+        es.onmessage = (ev) => {
+            try {
+                const msg = JSON.parse(ev.data)
+                if (msg.event === "scan_progress") {
+                    const p = msg.payload || {}
+                    setLiveTiles({
+                        complete:   p.tiles_complete  || 0,
+                        total:      p.total_tiles     || 0,
+                        detections: p.detections_total || 0,
+                    })
+                }
+                if (msg.event === "scan_complete") {
+                    setLiveTiles(null)
+                    setTimeout(load, 1500)
+                }
+            } catch (_) {}
+        }
+        return () => es.close()
+    }, [])
+
     const latest  = scans[0] || null
     const running = latest?.status === "running"
-    const pct     = running ? (PHASE_PCT[latest?.phase] || 10) : (latest?.status === "complete" ? 100 : 0)
+
+    const tilesComplete = liveTiles?.complete ?? latest?.tiles_complete ?? 0
+    const totalTiles    = liveTiles?.total    ?? latest?.total_tiles    ?? 0
+    const pct = running
+        ? (totalTiles > 0 ? Math.round(tilesComplete / totalTiles * 100) : 5)
+        : (latest?.status === "complete" ? 100 : 0)
 
     const [eta, setEta] = useState(null)   // { tiles, minutes, completion }
 
@@ -4131,12 +4157,14 @@ function RegionalScansSection({ onViewOnGlobe }) {
                                 height: "100%", borderRadius: 2,
                                 width: `${pct}%`,
                                 background: "linear-gradient(90deg, #FFCC00, #FF9500)",
-                                transition: "width 1s ease",
+                                transition: "width 0.8s ease",
                             }} />
                         </div>
                         <div style={{ fontSize: 9, color: "#FFCC00", marginTop: 4, textTransform: "uppercase" }}>
-                            Phase: {latest.phase} · Running
-                            {eta ? ` · ~${eta.tiles} tiles · ETA ~${eta.minutes} min` : " — this may take several hours"}
+                            {totalTiles > 0
+                                ? `${tilesComplete} / ${totalTiles} tiles · ${liveTiles?.detections ?? latest?.detections_total ?? 0} detections`
+                                : eta ? `~${eta.tiles} tiles · ETA ~${eta.minutes} min` : "Acquiring tiles…"
+                            }
                         </div>
                     </div>
                 )}
@@ -4147,7 +4175,7 @@ function RegionalScansSection({ onViewOnGlobe }) {
                         <span>Last scan: {relTime(latest.completed_at || latest.started_at)}</span>
                         {latest.status === "complete" && (
                             <span style={{ color: "#64748b" }}>
-                                {latest.detections_flagged} flagged / {latest.detections_total} total
+                                {latest.detections_total ?? 0} detections
                             </span>
                         )}
                     </div>
@@ -4218,7 +4246,7 @@ function RegionalScansSection({ onViewOnGlobe }) {
                             <ScanStatusBadge status={s.status} />
                             <span>{relTime(s.completed_at)}</span>
                             <span style={{ color: "#334155" }}>
-                                {s.detections_flagged ?? "—"} det
+                                {s.detections_total ?? "—"} det
                             </span>
                         </div>
                     ))}

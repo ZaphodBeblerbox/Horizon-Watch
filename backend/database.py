@@ -458,41 +458,44 @@ class SurgeEvent(Base):
 class RegionalScanJob(Base):
     __tablename__ = "regional_scan_jobs"
 
-    id                  = Column(Integer, primary_key=True)
-    job_id              = Column(String, unique=True, index=True, nullable=False)   # RSCAN-0001
-    region_name         = Column(String, nullable=False, default="UAE")
-    bbox_min_lon        = Column(Float, nullable=False, default=0.0)
-    bbox_min_lat        = Column(Float, nullable=False, default=0.0)
-    bbox_max_lon        = Column(Float, nullable=False, default=0.0)
-    bbox_max_lat        = Column(Float, nullable=False, default=0.0)
-    status              = Column(String, nullable=False, default="pending", index=True)  # pending/running/complete/failed
-    phase               = Column(String, nullable=True)                              # acquisition/spectral/detection/vision/report
-    created_at          = Column(DateTime, default=datetime.datetime.utcnow)
-    started_at          = Column(DateTime, nullable=True)
-    completed_at        = Column(DateTime, nullable=True)
-    image_date          = Column(DateTime, nullable=True)
-    baseline_date       = Column(DateTime, nullable=True)
-    total_tiles         = Column(Integer, default=0)
-    flagged_tiles       = Column(Integer, default=0)
-    detections_total    = Column(Integer, default=0)
-    detections_flagged  = Column(Integer, default=0)
-    claude_report       = Column(Text, nullable=True)
-    report_summary      = Column(String, nullable=True)
-    error_message       = Column(String, nullable=True)
-    scan_metadata       = Column(Text, nullable=True)   # JSON string
+    id                   = Column(Integer, primary_key=True)
+    job_id               = Column(String, unique=True, index=True, nullable=False)
+    region_name          = Column(String, nullable=False, default="UAE")
+    status               = Column(String, nullable=False, default="pending", index=True)
+    bbox_min_lon         = Column(Float, nullable=False, default=0.0)
+    bbox_min_lat         = Column(Float, nullable=False, default=0.0)
+    bbox_max_lon         = Column(Float, nullable=False, default=0.0)
+    bbox_max_lat         = Column(Float, nullable=False, default=0.0)
+    tile_size_deg        = Column(Float, nullable=True, default=0.5)
+    total_tiles          = Column(Integer, default=0)
+    tiles_complete       = Column(Integer, default=0)
+    tiles_failed         = Column(Integer, default=0)
+    detections_total     = Column(Integer, default=0)
+    current_tile_index   = Column(Integer, default=0)
+    cancelled            = Column(Boolean, default=False)
+    created_at           = Column(DateTime, default=datetime.datetime.utcnow)
+    started_at           = Column(DateTime, nullable=True)
+    completed_at         = Column(DateTime, nullable=True)
+    claude_report        = Column(Text, nullable=True)
+    report_summary       = Column(String, nullable=True)
+    error_message        = Column(String, nullable=True)
+    # Legacy columns kept for backward compat
+    phase                = Column(String, nullable=True)
+    flagged_tiles        = Column(Integer, default=0)
+    detections_flagged   = Column(Integer, default=0)
+    scan_metadata        = Column(Text, nullable=True)
 
 
 class RegionalScanDetection(Base):
     __tablename__ = "regional_scan_detections"
 
     id                          = Column(Integer, primary_key=True)
-    detection_id                = Column(String, unique=True, index=True, nullable=False)  # RDET-0001
+    detection_id                = Column(String, unique=True, index=True, nullable=False)
     job_id                      = Column(String, ForeignKey("regional_scan_jobs.job_id"), nullable=False, index=True)
+    tile_index                  = Column(Integer, nullable=True, default=0)
     region_name                 = Column(String, nullable=False, default="UAE")
     detection_type              = Column(String, nullable=False, index=True)
-    # FIRE | SMOKE | BURN_SCAR | RUNWAY_CHANGE | PORT_CHANGE | ENERGY_CHANGE |
-    # UNKNOWN_COMPOUND | VEHICLE_CLUSTER | EXCAVATION | INFRASTRUCTURE_CHANGE | MILITARY_ACTIVITY
-    change_type                 = Column(String, nullable=False, default="NEW")  # NEW | EXPANDED | DAMAGED | DISAPPEARED
+    change_type                 = Column(String, nullable=False, default="CHANGED")
     confidence                  = Column(Float, nullable=False, default=0.5)
     centroid_lat                = Column(Float, nullable=False)
     centroid_lon                = Column(Float, nullable=False)
@@ -500,23 +503,20 @@ class RegionalScanDetection(Base):
     bbox_min_lat                = Column(Float, nullable=True)
     bbox_max_lon                = Column(Float, nullable=True)
     bbox_max_lat                = Column(Float, nullable=True)
-    geo_polygon                 = Column(Text, nullable=True)       # GeoJSON polygon string
-    area_m2                     = Column(Float, nullable=True)
     nearest_asset_type          = Column(String, nullable=True)
     nearest_asset_name          = Column(String, nullable=True)
     nearest_asset_distance_km   = Column(Float, nullable=True)
-    in_strategic_zone           = Column(String, nullable=True)     # zone_id if inside one
+    in_strategic_zone           = Column(String, nullable=True)
     spectral_change_score       = Column(Float, default=0.0)
-    yolo_confirmed              = Column(Boolean, default=False)
-    yolo_object_type            = Column(String, nullable=True)
-    claude_vision_analysis      = Column(Text, nullable=True)
-    claude_severity             = Column(String, nullable=True)     # info/medium/high/critical
-    claude_threat_assessment    = Column(String, nullable=True)
-    image_crop_url              = Column(String, nullable=True)
-    image_date                  = Column(DateTime, nullable=True)
-    baseline_date               = Column(DateTime, nullable=True)
+    claude_vision_analysis      = Column(Text, nullable=True)   # primary analysis field
+    claude_severity             = Column(String, nullable=True)
+    image_b64                   = Column(Text, nullable=True)   # base64 PNG, fire only
     created_at                  = Column(DateTime, default=datetime.datetime.utcnow)
     suppressed                  = Column(Boolean, default=False)
+    # Legacy columns
+    claude_threat_assessment    = Column(String, nullable=True)
+    yolo_confirmed              = Column(Boolean, default=False)
+    yolo_object_type            = Column(String, nullable=True)
 
 
 class Alert(Base):
@@ -704,11 +704,36 @@ def migrate_db():
                 cur.execute(f'ALTER TABLE rule_configs ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] rule_configs: added column {col}')
 
+    # regional_scan_jobs new columns (tile-by-tile streaming schema)
+    rscan_new_cols = [
+        ('tile_size_deg',      'REAL DEFAULT 0.5'),
+        ('tiles_complete',     'INTEGER DEFAULT 0'),
+        ('tiles_failed',       'INTEGER DEFAULT 0'),
+        ('current_tile_index', 'INTEGER DEFAULT 0'),
+        ('cancelled',          'BOOLEAN DEFAULT 0'),
+    ]
+    if 'regional_scan_jobs' in tables:
+        rsj_existing = [row[1] for row in cur.execute('PRAGMA table_info(regional_scan_jobs)').fetchall()]
+        for col, typ in rscan_new_cols:
+            if col not in rsj_existing:
+                cur.execute(f'ALTER TABLE regional_scan_jobs ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] regional_scan_jobs: added column {col}')
+
+    # regional_scan_detections new columns
+    rsdet_new_cols = [
+        ('tile_index', 'INTEGER DEFAULT 0'),
+        ('image_b64',  'TEXT'),
+    ]
+    if 'regional_scan_detections' in tables:
+        rsd_existing = [row[1] for row in cur.execute('PRAGMA table_info(regional_scan_detections)').fetchall()]
+        for col, typ in rsdet_new_cols:
+            if col not in rsd_existing:
+                cur.execute(f'ALTER TABLE regional_scan_detections ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] regional_scan_detections: added column {col}')
+
     conn.commit()
     conn.close()
-    # Create new tables via SQLAlchemy (idempotent) — includes watch_zones,
-    # sentinel_scans, sentinel_detections, rule_connections,
-    # regional_scan_jobs, regional_scan_detections
+    # Create new tables via SQLAlchemy (idempotent)
     Base.metadata.create_all(bind=engine)
 
 def init_db():
