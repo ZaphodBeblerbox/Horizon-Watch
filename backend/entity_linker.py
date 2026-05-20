@@ -305,7 +305,9 @@ class EntityLinker:
     def _make_link(source_type: str, source_id: str,
                    entity_type: str, entity_id: str, entity_name: str,
                    link_type: str, distance_km: float = None,
-                   confidence: float = 1.0) -> dict:
+                   confidence: float = 1.0):
+        if not source_id or not entity_id:
+            return None
         return {
             "link_id":     _link_id(),
             "source_type": source_type,
@@ -321,6 +323,7 @@ class EntityLinker:
 
     @staticmethod
     def _persist_links(links: list[dict]):
+        links = [l for l in links if l is not None]
         if not links:
             return
         try:

@@ -36,12 +36,20 @@ def get_unified_events(
         bbox = (south, north, west, east)
 
     if mode == "threads":
-        results = es.get_threads(
+        raw = es.get_threads(
             theater_bbox=bbox,
             min_severity=min_severity,
             max_age_hours=max_age_hours,
             limit=limit,
         )
+        results = []
+        for t in raw:
+            t2 = dict(t)
+            t2.setdefault("id",    t2.get("thread_id", ""))
+            t2.setdefault("type",  t2.get("event_type", "general"))
+            t2.setdefault("tier",  t2.get("severity_tier", "low"))
+            t2.setdefault("title", t2.get("headline", ""))
+            results.append(t2)
     else:
         results = es.get_active_events(
             theater_bbox=bbox,

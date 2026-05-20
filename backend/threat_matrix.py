@@ -249,6 +249,16 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
             "sentinel_score":        round(sentinel_weighted, 1),
             "link_bonus":            link_bonus,
         },
+        "score_drivers": [
+            {"name": "forge_alerts",          "value": alert_count,                  "contribution": round(min(weighted_alert_score * 2, 40), 1)},
+            {"name": "rule_triggers",         "value": forge_alert_count,            "contribution": round(min(forge_alert_count * 5, 25), 1)},
+            {"name": "satellite_detections",  "value": sentinel_count,               "contribution": round(min(sentinel_weighted, 20), 1)},
+            {"name": "news_events",           "value": news_count,                   "contribution": round(min(news_count * 2, 15), 1)},
+            {"name": "fusion_events",         "value": fusion_count,                 "contribution": round(min(fusion_count * 15, 30), 1)},
+            {"name": "surge_events",          "value": round(surge_bonus, 1),        "contribution": round(surge_bonus, 1)},
+            {"name": "ontology_links",        "value": link_bonus,                   "contribution": round(link_bonus, 1)},
+        ],
+        "active_signals":            len(signals),
         "contributing_signals":      signals,
     }
 

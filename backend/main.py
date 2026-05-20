@@ -3457,7 +3457,14 @@ async def director_prepare_briefing(current_user=Depends(get_optional_user)):
 async def director_intelligence_picture(current_user=Depends(get_optional_user)):
     """Return the most recently prepared intelligence picture."""
     if not _last_intelligence_picture:
-        return {"error": "No briefing prepared", "hint": "POST /api/director/prepare-briefing first"}
+        asyncio.create_task(director_prepare_briefing(current_user=None))
+        return {
+            "status":  "preparing",
+            "message": "Intelligence picture is being compiled. Retry in 30 seconds.",
+            "regions": [],
+            "alerts":  [],
+            "fusions": [],
+        }
     return _last_intelligence_picture
 
 
@@ -4120,6 +4127,22 @@ async def regional_scan_suppress(detection_id: str, current_user=Depends(get_opt
         det.suppressed = True
         db.commit()
     return {"suppressed": True, "detection_id": detection_id}
+
+
+@app.post("/api/regional-scans/{job_id}/generate-report")
+async def regional_scan_generate_report(job_id: str, current_user=Depends(get_optional_user)):
+    """Re-trigger report generation for a completed scan job."""
+    with get_db() as db:
+        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
+        if not job:
+            raise HTTPException(404, f"Job {job_id!r} not found")
+
+    async def _run():
+        with get_db() as _db:
+            await _tile_scanner._generate_report(job_id, _db)
+
+    asyncio.create_task(_run())
+    return {"job_id": job_id, "status": "report_requested"}
 
 
 @app.post("/api/admin/reset-zone-intervals")
@@ -8525,7 +8548,11 @@ async def _ais_websocket_loop():
     while True:
         try:
             print(f"[ais] connecting to aisstream.io (bboxes: {len(_AIS_BBOXES)} regions) …")
-            async with _ws.connect(AIS_URL, ping_interval=20, ping_timeout=15, open_timeout=15) as ws:
+            import ssl as _ssl_mod
+            _ais_ssl_ctx = _ssl_mod.create_default_context()
+            _ais_ssl_ctx.check_hostname = False
+            _ais_ssl_ctx.verify_mode = _ssl_mod.CERT_NONE
+            async with _ws.connect(AIS_URL, ssl=_ais_ssl_ctx, ping_interval=20, ping_timeout=15, open_timeout=15) as ws:
                 await ws.send(subscribe_msg)
                 _AIS_STATUS["connected"] = True
                 _AIS_STATUS["error"]     = None
@@ -10449,6 +10476,7 @@ async def startup_event():
     loop = asyncio.get_event_loop()
     print(f"[startup] *** HORIZON WATCH STARTING — env='{os.getenv('RAILWAY_ENVIRONMENT','local')}' DATA_DIR={DATA_DIR} ***")
     print(f"[startup] ELEVENLABS_API_KEY present: {bool(os.getenv('ELEVENLABS_API_KEY'))}")
+    print(f"[startup] ANTHROPIC_API_KEY present: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
     # Initialise response cache
     if _HAS_RESPONSE_CACHE:
         FastAPICache.init(InMemoryBackend())
@@ -10614,6 +10642,15 @@ async def startup_event():
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
     asyncio.create_task(_dirty_region_refresh_loop())
+
+    async def _director_auto_prepare():
+        await asyncio.sleep(120)
+        try:
+            await director_prepare_briefing(current_user=None)
+            print("[startup] director auto-prepare complete")
+        except Exception as _e:
+            print(f"[startup] director auto-prepare failed: {_e}")
+    asyncio.create_task(_director_auto_prepare())
 
     # ── Event bus ─────────────────────────────────────────────────────────
     _evt_loop = asyncio.get_event_loop()
@@ -19436,7 +19473,10 @@ def _forge_ontology_save(ontology: dict):
 
 @app.get("/api/forge/ontology")
 def forge_get_ontology(_forge=Depends(_require_forge)):
-    return _forge_ontology_load()
+    result = _forge_ontology_load()
+    if not result.get("nodes"):
+        result = api_ontology_graph(current_user=None)
+    return result
 
 
 @app.post("/api/forge/ontology/build")
