@@ -334,9 +334,44 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                 # Suppress individual assessment markers that are now fused
                 self._suppress_assessments(db, [s["assessment_id"] for s in signals if s.get("assessment_id")])
 
+                # Register fusion event as an OntologyEntity so it appears in the registry
+                try:
+                    from database import OntologyEntity as _OE
+                    _oe = db.query(_OE).filter(_OE.system_id == fusion_id).first()
+                    _meta = json.dumps({
+                        "severity":     severity,
+                        "confidence":   round(confidence, 3),
+                        "domains":      sorted(domains),
+                        "signal_count": len(signals),
+                        "location":     location_name,
+                        "created_at":   datetime.datetime.utcnow().isoformat(),
+                    })
+                    if _oe:
+                        _oe.name            = title[:200]
+                        _oe.entity_metadata = _meta
+                    else:
+                        db.add(_OE(
+                            system_id       = fusion_id,
+                            entity_type     = "fusion_event",
+                            name            = title[:200],
+                            infra_type      = "MULTI_DOMAIN",
+                            region_id       = region_id,
+                            entity_metadata = _meta,
+                        ))
+                    db.commit()
+                except Exception as _oe_e:
+                    print(f"[fusion] OntologyEntity upsert error: {_oe_e}")
+
         except Exception as e:
             print(f"[fusion] DB write error: {e}")
             return
+
+        # Link fusion event to nearby ontology entities (cables, ports, airports, zones)
+        try:
+            from entity_linker import entity_linker as _el
+            _el.link_fusion_event(fusion_id, lat, lon, title)
+        except Exception as _el_e:
+            print(f"[fusion] entity_linker error: {_el_e}")
 
         # Register in-memory
         fusion_dict = {

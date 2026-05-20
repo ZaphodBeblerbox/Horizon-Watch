@@ -8289,6 +8289,25 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
     except Exception as _db_err:
         print(f"[news-pattern] DB write failed: {_db_err}")
 
+    # Persist as Alert + OntologyLinks + mark region dirty
+    try:
+        _region_id = trigger_article.get("region_id") or None
+        write_alert({
+            "id":         assess_id,
+            "source":     "news",
+            "alert_type": f"news_{pattern_type.lower()}",
+            "title":      headline,
+            "severity":   pdef.get("severity", "medium"),
+            "lat":        lat,
+            "lon":        lon,
+            "region":     _region_id,
+        })
+        entity_linker.link_alert(assess_id, "article", lat, lon, headline)
+        from alert_writer import _mark_region_dirty as _mrd_naf
+        _mrd_naf(_region_id)
+    except Exception as _naf_e:
+        print(f"[news-pattern] alert persist error: {_naf_e}")
+
     # Append to forge alerts so globe layer picks it up immediately
     _alert = {
         "id":             f"news_pattern_{int(time.time()*1000)}",
@@ -8316,27 +8335,50 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
     _forge_alerts.append(_alert)
     print(f"[news-pattern] fired {pattern_type} for {location.upper()} ({count} articles, conf={confidence:.2f})")
 
-    # Feed fusion engine
+    # Feed fusion engine via normalize_signal
     if _fusion_engine:
         try:
-            _fusion_engine.on_signal({
-                "signal_id":    f"NEWS-{assess_id}",
-                "domain":       "NEWS",
-                "severity":     pdef.get("severity", "medium"),
-                "lat":          lat,
-                "lon":          lon,
-                "location_name": location.upper(),
-                "region_id":    None,
-                "country":      location if len(location) == 2 else None,
-                "timestamp":    datetime.utcnow(),
-                "alert_id":     None,
-                "assessment_id": assess_id,
-                "rule_id":      rule.get("id"),
-                "rule_name":    rule.get("name") or rule.get("rule_name"),
-                "summary":      headline,
-            })
+            _fusion_engine.on_signal(normalize_signal(
+                "NEWS",
+                {
+                    "severity":      pdef.get("severity", "medium"),
+                    "lat":           lat,
+                    "lon":           lon,
+                    "location_name": location.upper(),
+                    "country":       location if len(location) == 2 else None,
+                    "rule_id":       rule.get("id"),
+                    "rule_name":     rule.get("name") or rule.get("rule_name"),
+                    "title":         headline,
+                    "assessment_id": assess_id,
+                },
+            ))
         except Exception as _fe_err:
             print(f"[fusion] news signal error: {_fe_err}")
+
+
+def normalize_signal(domain: str, source_obj: dict, alert_id: str = None) -> dict:
+    """Normalize any alert/event into a standard signal dict for fusion_engine.on_signal()."""
+    import uuid as _uuidn
+    return {
+        "signal_id":     f"SIG-{_uuidn.uuid4().hex[:8].upper()}",
+        "domain":        domain,
+        "alert_id":      alert_id,
+        "severity":      source_obj.get("severity", "medium"),
+        "confidence":    source_obj.get("confidence", 0.8),
+        "relevance_score": source_obj.get("relevance_score", 50),
+        "lat":           source_obj.get("lat"),
+        "lon":           source_obj.get("lng") or source_obj.get("lon"),
+        "location_name": (source_obj.get("location_name") or
+                          source_obj.get("location") or
+                          source_obj.get("region_id")),
+        "region_id":     source_obj.get("region_id"),
+        "country":       source_obj.get("country"),
+        "timestamp":     datetime.utcnow(),
+        "rule_id":       source_obj.get("rule_id"),
+        "rule_name":     source_obj.get("rule_name") or source_obj.get("rule_trigger", ""),
+        "summary":       (source_obj.get("title") or source_obj.get("message", ""))[:200],
+        "assessment_id": source_obj.get("assessment_id"),
+    }
 
 
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
@@ -17406,44 +17448,21 @@ async def _forge_detection_cycle():
                 except Exception as _aw_e:
                     print(f"[alert-writer] alert persist error: {_aw_e}")
 
-            # Feed AIS and ADSB alerts into fusion engine
+            # Feed AIS and ADSB alerts into fusion engine via normalize_signal
             if _fusion_engine:
                 try:
-                    _fn_now = datetime.now(timezone.utc).replace(tzinfo=None)
                     for _fa in new_ais_alerts:
-                        _fusion_engine.on_signal({
-                            "signal_id":    f"AIS-{_fa.get('id', '')}",
-                            "domain":       "AIS",
-                            "severity":     _fa.get("severity", "medium"),
-                            "lat":          _fa.get("lat"),
-                            "lon":          _fa.get("lng") or _fa.get("lon"),
-                            "location_name": _fa.get("location_name") or _fa.get("vessel") or "",
-                            "region_id":    _fa.get("region_id"),
-                            "country":      _fa.get("country"),
-                            "timestamp":    _fn_now,
-                            "alert_id":     _fa.get("id"),
-                            "assessment_id": None,
-                            "rule_id":      _fa.get("rule_id"),
-                            "rule_name":    _fa.get("rule_name") or _fa.get("rule_trigger"),
-                            "summary":      _fa.get("title") or _fa.get("message", "")[:120],
-                        })
+                        _fusion_engine.on_signal(normalize_signal(
+                            "AIS",
+                            {**_fa, "location_name": _fa.get("location_name") or _fa.get("vessel") or ""},
+                            alert_id=_fa.get("id"),
+                        ))
                     for _fa in new_adsb_alerts:
-                        _fusion_engine.on_signal({
-                            "signal_id":    f"ADSB-{_fa.get('id', '')}",
-                            "domain":       "ADSB",
-                            "severity":     _fa.get("severity", "medium"),
-                            "lat":          _fa.get("lat"),
-                            "lon":          _fa.get("lng") or _fa.get("lon"),
-                            "location_name": _fa.get("location_name") or _fa.get("aircraft") or "",
-                            "region_id":    _fa.get("region_id"),
-                            "country":      _fa.get("country"),
-                            "timestamp":    _fn_now,
-                            "alert_id":     _fa.get("id"),
-                            "assessment_id": None,
-                            "rule_id":      _fa.get("rule_id"),
-                            "rule_name":    _fa.get("rule_name") or _fa.get("rule_trigger"),
-                            "summary":      _fa.get("title") or _fa.get("message", "")[:120],
-                        })
+                        _fusion_engine.on_signal(normalize_signal(
+                            "ADSB",
+                            {**_fa, "location_name": _fa.get("location_name") or _fa.get("aircraft") or ""},
+                            alert_id=_fa.get("id"),
+                        ))
                 except Exception as _fe_err2:
                     print(f"[fusion] forge-brain signal error: {_fe_err2}")
 
@@ -18550,6 +18569,126 @@ def api_get_ontology_links(
             }
             for r in rows
         ]
+
+
+@app.get("/api/entities/{entity_type}/{entity_id}/profile")
+def api_get_entity_profile(entity_type: str, entity_id: str, _u=Depends(_require_user)):
+    """Full intelligence profile for any ontology entity."""
+    from database import (OntologyLink as _OLM, Alert as _AM, NewsArticle as _NAM,
+                          FusionEvent as _FEM, SurgeEvent as _SEM,
+                          OntologyEntity as _OEM, get_db as _gdb_p)
+    import json as _jprof
+    now = datetime.utcnow()
+    cutoff_24h = now - timedelta(hours=24)
+    cutoff_48h = now - timedelta(hours=48)
+
+    with _gdb_p() as _db:
+        # 1. Entity record
+        ent = _db.query(_OEM).filter(_OEM.system_id == entity_id).first()
+        entity_data = None
+        if ent:
+            entity_data = {
+                "system_id":   ent.system_id, "entity_type": ent.entity_type,
+                "name":        ent.name, "infra_type": ent.infra_type,
+                "region_id":   ent.region_id,
+                "metadata":    _jprof.loads(ent.entity_metadata or "{}"),
+            }
+
+        # 2. All OntologyLinks to this entity (last 48h)
+        links = (_db.query(_OLM)
+                 .filter(_OLM.entity_type == entity_type,
+                         _OLM.entity_id   == entity_id,
+                         _OLM.created_at  >= cutoff_48h)
+                 .order_by(_OLM.created_at.desc())
+                 .limit(200).all())
+
+        alert_ids   = [l.source_id for l in links if l.source_type in ("alert","ais","adsb","sentinel","surge","news")]
+        article_urls = [l.source_id for l in links if l.source_type == "article"]
+        fusion_ids  = [l.source_id for l in links if l.source_type == "fusion"]
+
+        # 3. Linked Alerts (last 24h)
+        active_alerts = []
+        if alert_ids:
+            rows = (_db.query(_AM)
+                    .filter(_AM.alert_id.in_(alert_ids),
+                            _AM.status == "active",
+                            _AM.created_at >= cutoff_24h)
+                    .order_by(_AM.created_at.desc()).limit(20).all())
+            active_alerts = [
+                {"alert_id": r.alert_id, "title": r.title, "severity": r.severity,
+                 "source": r.source, "lat": r.lat, "lon": r.lon,
+                 "created_at": r.created_at.isoformat() if r.created_at else None}
+                for r in rows
+            ]
+
+        # 4. Linked News Articles (last 48h)
+        recent_articles = []
+        if article_urls:
+            rows = (_db.query(_NAM)
+                    .filter(_NAM.url.in_(article_urls),
+                            _NAM.ingested_at >= cutoff_48h)
+                    .order_by(_NAM.ingested_at.desc()).limit(20).all())
+            recent_articles = [
+                {"url": r.url, "title": r.event_title or r.title,
+                 "article_type": r.article_type, "tier": r.tier,
+                 "ingested_at": r.ingested_at.isoformat() if r.ingested_at else None}
+                for r in rows
+            ]
+
+        # 5. Linked Fusion Events
+        active_fusions = []
+        if fusion_ids:
+            rows = (_db.query(_FEM)
+                    .filter(_FEM.fusion_id.in_(fusion_ids),
+                            _FEM.status == "active")
+                    .limit(10).all())
+            active_fusions = [
+                {"fusion_id": r.fusion_id, "title": r.title,
+                 "severity": r.severity, "confidence": r.confidence,
+                 "domains": _jprof.loads(r.domains or "[]")}
+                for r in rows
+            ]
+
+        # 6. Active Surges in same region (via entity's region_id)
+        active_surges = []
+        if ent and ent.region_id:
+            rows = (_db.query(_SEM)
+                    .filter(_SEM.region_id == ent.region_id,
+                            _SEM.status == "active",
+                            _SEM.expires_at > now)
+                    .order_by(_SEM.expires_at.desc()).limit(5).all())
+            active_surges = [
+                {"surge_id": r.surge_id, "headline": r.headline,
+                 "severity": r.severity, "article_type": r.article_type}
+                for r in rows
+            ]
+
+        # 7. Threat contribution
+        severities = [a["severity"] for a in active_alerts]
+        sev_order  = {"critical": 4, "high": 3, "medium": 2, "info": 1, "low": 0}
+        highest    = max(severities, key=lambda s: sev_order.get(s, 0)) if severities else None
+
+        recent_links = [
+            {"link_id": l.link_id, "source_type": l.source_type, "source_id": l.source_id,
+             "link_type": l.link_type, "distance_km": l.distance_km,
+             "created_at": l.created_at.isoformat() if l.created_at else None}
+            for l in links[:50]
+        ]
+
+        return {
+            "entity":              entity_data,
+            "active_alerts":       active_alerts,
+            "recent_articles":     recent_articles,
+            "active_fusions":      active_fusions,
+            "active_surges":       active_surges,
+            "threat_contribution": {
+                "alert_count":          len(active_alerts),
+                "highest_severity":     highest,
+                "linked_fusion_count":  len(active_fusions),
+                "linked_surge_count":   len(active_surges),
+            },
+            "recent_links":        recent_links,
+        }
 
 
 @app.get("/api/entities/{entity_type}/{entity_id}/links")

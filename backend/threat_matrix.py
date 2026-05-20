@@ -9,6 +9,8 @@ refresh_cache()   — called hourly from the scheduler
 import json
 import datetime
 
+_threat_cache_history: dict = {}   # region_name → {"score": float}
+
 # ── Region definitions ────────────────────────────────────────────────────────
 # bbox keys: min_lat, max_lat, min_lon, max_lon
 
@@ -85,10 +87,10 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
                           fusion_events: list = None) -> dict:
     """
     Compute a 0-100 composite threat score for a region.
-    Queries SentinelDetection from the last 24h.
-    forge_alerts / news_events passed in (no DB query needed for live data).
+    Primary source: persisted Alert + FusionEvent + SentinelDetection DB tables.
+    forge_alerts / news_events / fusion_events used as supplement when DB empty.
     """
-    from database import SentinelDetection
+    from database import SentinelDetection, Alert, FusionEvent, OntologyLink
     region = REGIONS.get(region_name)
     if not region:
         return {"region_name": region_name, "threat_score": 0.0, "threat_level": "LOW",
@@ -96,23 +98,57 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
                 "sentinel_detection_count": 0, "news_event_count": 0,
                 "contributing_signals": []}
 
-    bbox = region["bbox"]
-    now  = datetime.datetime.utcnow()
+    bbox   = region["bbox"]
+    now    = datetime.datetime.utcnow()
     cutoff = now - datetime.timedelta(hours=24)
+    SEV_WEIGHTS = {"info": 0.5, "medium": 1, "high": 2, "critical": 4}
 
-    # ── Forge alerts ──────────────────────────────────────────────────────────
+    # ── 1. Persisted Alerts (bbox spatial filter, last 24h) ───────────────────
+    db_alerts      = []
+    db_alert_count = 0
+    weighted_alert_score = 0.0
+    try:
+        db_alerts = (db.query(Alert)
+                     .filter(
+                         Alert.status == "active",
+                         Alert.created_at >= cutoff,
+                         Alert.lat.between(bbox["min_lat"], bbox["max_lat"]),
+                         Alert.lon.between(bbox["min_lon"], bbox["max_lon"]),
+                     )
+                     .all())
+        db_alert_count = len(db_alerts)
+        weighted_alert_score = sum(SEV_WEIGHTS.get(a.severity or "medium", 1) for a in db_alerts)
+    except Exception:
+        pass
+
+    # Fallback to in-memory forge_alerts if DB table empty
     alerts_all = forge_alerts or []
-    region_alerts  = [a for a in alerts_all
-                      if _in_bbox(a.get("lat"), a.get("lng") or a.get("lon"), bbox)]
-    forge_specific = [a for a in region_alerts
-                      if any(a.get("type", "").startswith(p)
-                             for p in ("AIS_", "ADSB_", "SENTINEL_"))]
+    mem_alerts = [a for a in alerts_all
+                  if _in_bbox(a.get("lat"), a.get("lng") or a.get("lon"), bbox)]
+    alert_count = db_alert_count or len(mem_alerts)
 
-    alert_count       = len(region_alerts)
-    forge_alert_count = len(forge_specific)
+    forge_specific_db  = [a for a in db_alerts  if a.source in ("ais", "adsb", "sentinel")]
+    forge_specific_mem = [a for a in mem_alerts  if any(a.get("type", "").startswith(p)
+                                                        for p in ("AIS_", "ADSB_", "SENTINEL_"))]
+    forge_alert_count  = len(forge_specific_db) or len(forge_specific_mem)
 
-    # ── Sentinel detections (last 24h by image time, fallback created_at) ────
-    SEV_WEIGHTS = {"info": 1, "medium": 2, "high": 5, "critical": 10}
+    # ── 2. Active FusionEvents (from DB) ──────────────────────────────────────
+    fusion_count = 0
+    try:
+        fes = (db.query(FusionEvent)
+               .filter(FusionEvent.status == "active",
+                       FusionEvent.expires_at > now,
+                       FusionEvent.lat.isnot(None))
+               .all())
+        fusion_count = sum(1 for fe in fes
+                           if _in_bbox(fe.lat, fe.lon, bbox))
+    except Exception:
+        # Fallback to passed-in list
+        fusions_all  = fusion_events or []
+        fusion_count = sum(1 for fe in fusions_all
+                           if _in_bbox(fe.get("lat"), fe.get("lon"), bbox))
+
+    # ── 3. Sentinel detections (last 24h) ────────────────────────────────────
     sentinel_weighted = 0
     sentinel_count    = 0
     try:
@@ -126,29 +162,36 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
     except Exception:
         pass
 
-    # ── News events ───────────────────────────────────────────────────────────
+    # ── 4. News events (from event store, passed in) ──────────────────────────
     evts = news_events or []
     news_count = sum(
         1 for ev in evts
         if _in_bbox(ev.get("lat"), ev.get("lng") or ev.get("lon"), bbox)
     )
 
-    # ── Active fusion events in region ───────────────────────────────────────
-    fusions_all  = fusion_events or []
-    fusion_count = sum(
-        1 for fe in fusions_all
-        if _in_bbox(fe.get("lat"), fe.get("lon"), bbox)
-    )
+    # ── 5. OntologyLink bonus — events linked to entities in this region ──────
+    link_bonus = 0
+    try:
+        region_ids = region.get("region_ids", [])
+        if region_ids:
+            link_count = (db.query(OntologyLink)
+                          .filter(OntologyLink.created_at >= cutoff,
+                                  OntologyLink.entity_type.in_(
+                                      ["cable", "port", "airport", "watch_zone", "strategic_zone"]))
+                          .count())
+            # Crude region filter: total link activity, capped contribution
+            link_bonus = min(link_count, 10)
+    except Exception:
+        pass
 
-    # ── Surge bonus from surge_engine score cache ─────────────────────────
+    # ── 6. Surge bonus ────────────────────────────────────────────────────────
     surge_bonus = 0
     try:
         from surge_engine import _surge_scores
         region_countries_lower = {c.lower() for c in region.get("countries", [])}
         region_ids_set = set(region.get("region_ids", []))
-        now_utc = datetime.datetime.utcnow()
         for (country, surge_region_id), data in list(_surge_scores.items()):
-            if data["expires_at"] < now_utc:
+            if data["expires_at"] < now:
                 continue
             if surge_region_id and surge_region_id in region_ids_set:
                 surge_bonus += data["score_bonus"]
@@ -158,13 +201,21 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
     except ImportError:
         pass
 
-    # ── Composite score ───────────────────────────────────────────────────────
-    base             = min(alert_count       * 3,  40)
-    forge_bonus      = min(forge_alert_count * 5,  25)
-    sentinel_bonus   = min(sentinel_weighted,       20)
-    news_bonus       = min(news_count        * 2,  15)
-    fusion_bonus     = min(fusion_count      * 15, 30)
-    score = min(base + forge_bonus + sentinel_bonus + news_bonus + fusion_bonus + surge_bonus, 100.0)
+    # ── 7. Composite score ────────────────────────────────────────────────────
+    base           = min(weighted_alert_score * 2, 40)
+    forge_bonus    = min(forge_alert_count * 5,    25)
+    sentinel_bonus = min(sentinel_weighted,         20)
+    news_bonus     = min(news_count * 2,            15)
+    fusion_bonus   = min(fusion_count * 15,         30)
+    score = min(base + forge_bonus + sentinel_bonus + news_bonus
+                + fusion_bonus + surge_bonus + link_bonus, 100.0)
+
+    # ── 8. Trend vs last cached score ────────────────────────────────────────
+    prev_score = _threat_cache_history.get(region_name, {}).get("score", score)
+    trend = ("escalating"    if score > prev_score + 5 else
+             "de-escalating" if score < prev_score - 5 else
+             "stable")
+    _threat_cache_history.setdefault(region_name, {})["score"] = score
 
     signals = []
     if alert_count       > 0: signals.append("forge_alerts")
@@ -173,18 +224,31 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
     if news_count        > 0: signals.append("news_events")
     if fusion_count      > 0: signals.append("fusion_events")
     if surge_bonus       > 0: signals.append("surge_events")
+    if link_bonus        > 0: signals.append("ontology_links")
 
     return {
         "region_name":               region_name,
+        "region":                    region_name,
         "region_id":                 (region["region_ids"] or [""])[0],
         "threat_score":              round(score, 1),
         "threat_level":              _threat_level(score),
+        "trend":                     trend,
         "alert_count":               alert_count,
         "forge_alert_count":         forge_alert_count,
         "sentinel_detection_count":  sentinel_count,
         "news_event_count":          news_count,
         "fusion_count":              fusion_count,
         "surge_bonus":               surge_bonus,
+        "link_bonus":                link_bonus,
+        "drivers": {
+            "alert_count":           alert_count,
+            "weighted_alert_score":  round(weighted_alert_score, 1),
+            "forge_alert_count":     forge_alert_count,
+            "fusion_events":         fusion_count,
+            "surge_bonus":           surge_bonus,
+            "sentinel_score":        round(sentinel_weighted, 1),
+            "link_bonus":            link_bonus,
+        },
         "contributing_signals":      signals,
     }
 

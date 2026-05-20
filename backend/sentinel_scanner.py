@@ -705,6 +705,25 @@ class SentinelScanner:
         except Exception as e:
             print(f"[sentinel_scanner] alert inject error: {e}")
 
+        # Persist to DB + create OntologyLinks + mark region dirty
+        try:
+            from alert_writer import write_alert as _write_alert, _mark_region_dirty as _mrd_sent
+            from entity_linker import entity_linker as _el_sent
+            _sent_id = f"SENT-{detection.get('detection_id', '')}"
+            _write_alert({
+                "id":         _sent_id,
+                "source":     "sentinel",
+                "alert_type": f"sentinel_{obj_type.lower()}",
+                "title":      f"SENTINEL: {obj_type.replace('_', ' ').title()} detected in {zone_name}",
+                "severity":   sev,
+                "lat":        lat,
+                "lon":        lon,
+            })
+            _el_sent.link_alert(_sent_id, "sentinel", lat, lon, zone_name)
+            _mrd_sent(zone_system_id)
+        except Exception as _se:
+            print(f"[sentinel_scanner] alert persist error: {_se}")
+
         # Feed fusion engine
         try:
             import main as _main2

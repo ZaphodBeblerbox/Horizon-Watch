@@ -244,6 +244,26 @@ class SurgeEngine:
             print(f"[surge] DB write error: {e}")
             return
 
+        # Persist as Alert + create OntologyLinks + mark region dirty
+        try:
+            from alert_writer import write_alert as _write_alert, _mark_region_dirty as _mrd
+            from entity_linker import entity_linker as _el
+            _write_alert({
+                "id":         surge_id,
+                "source":     "surge",
+                "alert_type": f"surge_{surge_type.lower()}",
+                "title":      headline,
+                "severity":   severity,
+                "lat":        lat,
+                "lon":        lon,
+                "region":     region_id,
+                "country_code": country,
+            })
+            _el.link_alert(surge_id, "surge", lat, lon, headline)
+            _mrd(region_id)
+        except Exception as _aw_e:
+            print(f"[surge] alert persist error: {_aw_e}")
+
         # Feed fusion engine
         try:
             from fusion_engine import fusion_engine as _fe
