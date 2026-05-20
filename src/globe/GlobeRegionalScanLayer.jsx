@@ -172,7 +172,6 @@ export default function GlobeRegionalScanLayer({ enabled }) {
     const [tooltipPos, setTPos]   = useState({ x: 0, y: 0 })
     const [tooltipVis, setTVis]   = useState(false)
     const centroidRef             = useRef(null)
-    const sseRef                  = useRef(null)
     const knownIdsRef             = useRef(new Set())
 
     // Initial load: fetch latest scan + detections
@@ -194,73 +193,7 @@ export default function GlobeRegionalScanLayer({ enabled }) {
             .catch(() => {})
     }, [enabled])
 
-    // SSE stream for live updates
-    useEffect(() => {
-        if (!enabled) return
-
-        const es = new EventSource(`${API_BASE}/api/ontology/graph/stream`)
-        sseRef.current = es
-
-        es.onmessage = (ev) => {
-            try {
-                const msg = JSON.parse(ev.data)
-
-                if (msg.event === "scan_progress") {
-                    const p = msg.payload || {}
-                    if (p.job_id) setJobId(p.job_id)
-
-                    // Add tile bbox rectangle for this completed tile
-                    const tb = p.tile_bbox
-                    if (tb) {
-                        setTileBboxes(prev => [...prev, {
-                            west:  tb.min_lon,
-                            south: tb.min_lat,
-                            east:  tb.max_lon,
-                            north: tb.max_lat,
-                            tileIndex: p.tile_index,
-                        }])
-                    }
-
-                    // Merge any new detections that came with this tile
-                    const newDets = p.new_detections || []
-                    if (newDets.length > 0) {
-                        setDets(prev => {
-                            const additions = newDets.filter(f => {
-                                const id = f.properties?.detection_id
-                                if (knownIdsRef.current.has(id)) return false
-                                knownIdsRef.current.add(id)
-                                return true
-                            })
-                            return additions.length > 0 ? [...prev, ...additions] : prev
-                        })
-                    }
-                }
-
-                if (msg.event === "scan_complete") {
-                    const p = msg.payload || {}
-                    // Fetch complete detections set
-                    const jid = p.job_id || jobId
-                    if (jid) {
-                        fetch(`${API_BASE}/api/regional-scans/${jid}/detections`)
-                            .then(r => r.ok ? r.json() : null)
-                            .then(g => {
-                                if (g?.features) {
-                                    knownIdsRef.current = new Set(g.features.map(f => f.properties?.detection_id))
-                                    setDets(g.features)
-                                }
-                            })
-                            .catch(() => {})
-                    }
-                    setTileBboxes([])
-                }
-            } catch (_) {}
-        }
-
-        return () => {
-            es.close()
-            sseRef.current = null
-        }
-    }, [enabled])
+    // SSE disabled — graph/stream endpoint temporarily disabled for backend stability
 
     // Clear state when disabled
     useEffect(() => {

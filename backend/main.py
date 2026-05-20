@@ -10468,6 +10468,24 @@ async def startup_event():
         await asyncio.wait_for(loop.run_in_executor(_executor, _migrate_db), timeout=30)
         await asyncio.wait_for(loop.run_in_executor(_executor, _init_db), timeout=30)
         print("[startup] database initialised")
+
+        # Cancel any scan jobs that were left running before restart
+        try:
+            from database import RegionalScanJob as _RSJ
+            from datetime import datetime as _dt
+            with get_db() as _sdb:
+                _stuck = _sdb.query(_RSJ).filter(_RSJ.status == "running").all()
+                for _j in _stuck:
+                    _j.status        = "cancelled"
+                    _j.cancelled     = True
+                    _j.completed_at  = _dt.utcnow()
+                    _j.error_message = "Auto-cancelled stale job on restart"
+                _sdb.commit()
+            if _stuck:
+                print(f"[startup] Cancelled {len(_stuck)} stale scan job(s)")
+        except Exception as _e:
+            print(f"[startup] stale scan cancel error: {_e}")
+
     except Exception as _e:
         print(f"[startup] database init failed: {_e}")
 
@@ -19024,32 +19042,10 @@ def api_ontology_graph_delta(
 
 
 @app.get("/api/ontology/graph/stream")
-async def api_ontology_graph_stream(request: Request):
-    """SSE stream for real-time graph deltas."""
-    import asyncio as _asyncio
-    q: asyncio.Queue = asyncio.Queue(maxsize=200)
-    _graph_sse_queues.append(q)
-
-    async def _generate():
-        try:
-            yield "data: {\"event\": \"connected\"}\n\n"
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    msg = await asyncio.wait_for(q.get(), timeout=30.0)
-                    yield f"data: {msg}\n\n"
-                except asyncio.TimeoutError:
-                    yield "data: {\"event\": \"heartbeat\"}\n\n"
-        finally:
-            try:
-                _graph_sse_queues.remove(q)
-            except ValueError:
-                pass
-
-    return StreamingResponse(_generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache",
-                                      "X-Accel-Buffering": "no"})
+async def api_ontology_graph_stream():
+    # Temporarily disabled — persistent connections were causing backend instability
+    from fastapi.responses import Response
+    return Response(content="", media_type="text/event-stream")
 
 
 # ── Threat matrix explainability ─────────────────────────────────────────────

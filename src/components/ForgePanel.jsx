@@ -4009,28 +4009,7 @@ function RegionalScansSection({ onViewOnGlobe }) {
         return () => clearInterval(id)
     }, [])
 
-    // SSE for real-time tile progress
-    useEffect(() => {
-        const es = new EventSource(`${API}/api/ontology/graph/stream`)
-        es.onmessage = (ev) => {
-            try {
-                const msg = JSON.parse(ev.data)
-                if (msg.event === "scan_progress") {
-                    const p = msg.payload || {}
-                    setLiveTiles({
-                        complete:   p.tiles_complete  || 0,
-                        total:      p.total_tiles     || 0,
-                        detections: p.detections_total || 0,
-                    })
-                }
-                if (msg.event === "scan_complete") {
-                    setLiveTiles(null)
-                    setTimeout(load, 1500)
-                }
-            } catch (_) {}
-        }
-        return () => es.close()
-    }, [])
+    // SSE disabled — graph/stream endpoint temporarily disabled for backend stability
 
     const latest  = scans[0] || null
     const running = latest?.status === "running"
