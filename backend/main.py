@@ -4136,6 +4136,20 @@ async def regional_scan_suppress(detection_id: str, current_user=Depends(get_opt
         return {"suppressed": True, "detection_id": detection_id}
 
 
+@app.post("/api/regional-scans/{job_id}/cancel")
+async def regional_scan_cancel(job_id: str, current_user=Depends(get_optional_user)):
+    """Signal a running scan to stop at the next tile batch boundary."""
+    from regional_scanner import _scan_cancellation_flags as _scf
+    with get_db() as db:
+        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
+        if not job:
+            raise HTTPException(404, f"Scan {job_id!r} not found")
+        if job.status != "running":
+            return {"status": job.status, "message": "Scan is not currently running"}
+        _scf[job_id] = True
+        return {"status": "cancelling", "job_id": job_id}
+
+
 # ── Director person dossier ───────────────────────────────────────────────────
 
 _PERSON_CACHE: dict[str, dict] = {}

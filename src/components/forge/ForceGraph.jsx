@@ -11,6 +11,46 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import API_BASE from "../../apiBase.js"
 import { drawNatoIcon, entityTypeToIcon, iconColor } from "../../globe/natoIcons.js"
 
+// ── Canonical type normalization (DB mixed-case → canonical lowercase) ────────
+const _TYPE_MAP = {
+    "rule":            "rule",
+    "Rule":            "rule",
+    "rule connection": "rule",
+    "Rule Connection": "rule",
+    "escalation chain":"rule",
+    "Escalation Chain":"rule",
+    "strategic zone":  "strategic_zone",
+    "Strategic Zone":  "strategic_zone",
+    "strategic_zone":  "strategic_zone",
+    "chokepoint":      "watch_zone",
+    "Chokepoint":      "watch_zone",
+    "watch zone":      "watch_zone",
+    "Watch Zone":      "watch_zone",
+    "watch_zone":      "watch_zone",
+    "submarine cable": "cable",
+    "Submarine Cable": "cable",
+    "cable":           "cable",
+    "alert":           "alert",
+    "Alert":           "alert",
+    "surge":           "surge",
+    "surge event":     "surge",
+    "Surge Event":     "surge",
+    "fusion_event":    "fusion_event",
+    "fusion event":    "fusion_event",
+    "Fusion Event":    "fusion_event",
+    "assessment":      "assessment",
+    "port":            "port",
+    "Port":            "port",
+    "airport":         "airport",
+    "Airport":         "airport",
+    "vessel":          "vessel",
+    "aircraft":        "aircraft",
+}
+function canonType(t) {
+    if (!t) return "unknown"
+    return _TYPE_MAP[t] ?? t.toLowerCase().replace(/\s+/g, "_")
+}
+
 // ── Node type priority for capping (lower = higher priority) ─────────────────
 const TYPE_PRIORITY = {
     rule:           1,
@@ -20,6 +60,7 @@ const TYPE_PRIORITY = {
     alert:          5,
     surge:          5,
     fusion_event:   6,
+    assessment:     6,
     port:           7,
     vessel:         8,
     aircraft:       9,
@@ -28,21 +69,22 @@ const TYPE_PRIORITY = {
 const NODE_CAP = 150
 const PORT_CAP = 20
 
-// ── Type cluster targets (as 0–1 fractions of W × H, matching user's 800×600 spec) ──
+// ── Type cluster targets (fractions of W×H, derived from user's 1000×600 spec) ─
 const CLUSTER_TARGETS = {
-    rule:           { rx: 0.1875, ry: 0.50 },
-    strategic_zone: { rx: 0.4375, ry: 0.33 },
-    watch_zone:     { rx: 0.4375, ry: 0.67 },
-    cable:          { rx: 0.6875, ry: 0.50 },
-    alert:          { rx: 0.875,  ry: 0.42 },
-    surge:          { rx: 0.875,  ry: 0.42 },
-    fusion_event:   { rx: 0.875,  ry: 0.67 },
-    vessel:         { rx: 0.625,  ry: 0.75 },
-    aircraft:       { rx: 0.625,  ry: 0.75 },
-    port:           { rx: 0.4375, ry: 0.50 },
-    airport:        { rx: 0.50,   ry: 0.50 },
+    rule:           { rx: 0.12, ry: 0.33 },
+    strategic_zone: { rx: 0.32, ry: 0.25 },
+    watch_zone:     { rx: 0.32, ry: 0.58 },
+    cable:          { rx: 0.52, ry: 0.33 },
+    alert:          { rx: 0.72, ry: 0.25 },
+    surge:          { rx: 0.72, ry: 0.75 },
+    fusion_event:   { rx: 0.72, ry: 0.50 },
+    assessment:     { rx: 0.72, ry: 0.60 },
+    vessel:         { rx: 0.52, ry: 0.75 },
+    aircraft:       { rx: 0.52, ry: 0.75 },
+    port:           { rx: 0.90, ry: 0.42 },
+    airport:        { rx: 0.90, ry: 0.67 },
 }
-const CLUSTER_STRENGTH = 0.003  // per-frame pull fraction (0.3 / 100 frames)
+const CLUSTER_STRENGTH = 0.005
 
 // ── Node radius by type ──────────────────────────────────────────────────────
 const NODE_R = {
@@ -61,7 +103,7 @@ const NODE_R = {
 const MIN_R = 8
 
 function nodeR(node) {
-    const base = Math.max(MIN_R, NODE_R[node.type] || MIN_R)
+    const base = Math.max(MIN_R, NODE_R[canonType(node.type)] || MIN_R)
     const sev  = node.severity || node.data?.severity || ""
     if (sev === "critical") return base + 3
     if (sev === "high")     return base + 1
@@ -99,7 +141,8 @@ const FILTER_GROUPS = [
 const DEFAULT_ACTIVE = new Set(["rules", "zones", "cables"])
 
 function nodeGroupId(type) {
-    return FILTER_GROUPS.find(g => g.types.includes(type))?.id ?? null
+    const ct = canonType(type)
+    return FILTER_GROUPS.find(g => g.types.includes(ct))?.id ?? null
 }
 
 function nodeVisible(node, activeGroups, showAll) {
@@ -113,8 +156,8 @@ function nodeVisible(node, activeGroups, showAll) {
 function capNodes(allNodes) {
     const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, "": 4 }
     const sorted = [...allNodes].sort((a, b) => {
-        const pa = TYPE_PRIORITY[a.type] ?? 99
-        const pb = TYPE_PRIORITY[b.type] ?? 99
+        const pa = TYPE_PRIORITY[canonType(a.type)] ?? 99
+        const pb = TYPE_PRIORITY[canonType(b.type)] ?? 99
         if (pa !== pb) return pa - pb
         return (SEV_ORDER[a.severity || ""] ?? 4) - (SEV_ORDER[b.severity || ""] ?? 4)
     })
@@ -122,7 +165,7 @@ function capNodes(allNodes) {
     const result = []
     for (const node of sorted) {
         if (result.length >= NODE_CAP) break
-        if (node.type === "port") {
+        if (canonType(node.type) === "port") {
             if (portCount.n >= PORT_CAP) continue
             portCount.n++
         }
@@ -175,7 +218,7 @@ export default function ForceGraph({ onNodeClick }) {
                 nodesRef.current = capped.map((n, i) => {
                     const ex = existing.get(n.id)
                     if (ex) return { ...ex, ...n }
-                    const ct = CLUSTER_TARGETS[n.type]
+                    const ct = CLUSTER_TARGETS[canonType(n.type)]
                     const cx = ct ? ct.rx * W : W / 2
                     const cy = ct ? ct.ry * H : H / 2
                     return {
@@ -207,7 +250,7 @@ export default function ForceGraph({ onNodeClick }) {
                         if (existing.has(n.id)) {
                             Object.assign(existing.get(n.id), n)
                         } else if (nodesRef.current.length < NODE_CAP) {
-                            const ct = CLUSTER_TARGETS[n.type]
+                            const ct = CLUSTER_TARGETS[canonType(n.type)]
                             nodesRef.current.push({
                                 ...n,
                                 x:  ct ? ct.rx * W + (Math.random() - 0.5) * 100 : W / 2 + (Math.random() - 0.5) * 200,
@@ -294,7 +337,7 @@ export default function ForceGraph({ onNodeClick }) {
             for (const n of ns) {
                 if (n.pinned) continue
                 // Type clustering
-                const ct = CLUSTER_TARGETS[n.type]
+                const ct = CLUSTER_TARGETS[canonType(n.type)]
                 if (ct) {
                     n.vx += (ct.rx * W - n.x) * CLUSTER_STRENGTH
                     n.vy += (ct.ry * H - n.y) * CLUSTER_STRENGTH
@@ -353,8 +396,9 @@ export default function ForceGraph({ onNodeClick }) {
 
             // Nodes
             for (const node of visible) {
+                const ct   = canonType(node.type)
                 const r    = nodeR(node)
-                const c    = iconColor(node.type)
+                const c    = iconColor(ct)
                 const sev  = node.severity || node.data?.severity || ""
                 const glow = SEV_GLOW[sev]
                 const isHov = node.id === hovId
@@ -364,11 +408,11 @@ export default function ForceGraph({ onNodeClick }) {
                     ctx.shadowBlur  = isHov ? 20 : glow
                     ctx.shadowColor = c
                 }
-                drawNatoIcon(ctx, entityTypeToIcon(node.type), node.x, node.y, r, c)
+                drawNatoIcon(ctx, entityTypeToIcon(ct), node.x, node.y, r, c)
                 ctx.restore()
 
                 // Labels: always for priority types, hover-only for others
-                if (ALWAYS_LABEL.has(node.type) || isHov) {
+                if (ALWAYS_LABEL.has(ct) || isHov) {
                     const label = (node.label || node.name || node.id || "").slice(0, 24)
                     ctx.save()
                     ctx.shadowBlur  = 4
@@ -575,8 +619,8 @@ export default function ForceGraph({ onNodeClick }) {
                                     <div style={{
                                         display: "inline-block", fontSize: 9, fontWeight: 700,
                                         padding: "2px 6px", borderRadius: 3, marginBottom: 6,
-                                        background: iconColor(detailNode.type) + "22",
-                                        color: iconColor(detailNode.type),
+                                        background: iconColor(canonType(detailNode.type)) + "22",
+                                        color: iconColor(canonType(detailNode.type)),
                                         letterSpacing: "0.08em", textTransform: "uppercase",
                                     }}>{detailNode.type || "entity"}</div>
                                     <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", lineHeight: 1.3 }}>

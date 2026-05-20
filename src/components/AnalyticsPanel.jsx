@@ -537,7 +537,8 @@ function ExplainModal({ regionName, onClose }) {
             .catch(() => setLoading(false))
     }, [regionName])
 
-    const drivers = data?.drivers ?? []
+    const rawDrivers = data?.drivers
+    const drivers = Array.isArray(rawDrivers) ? rawDrivers : Object.values(rawDrivers ?? {}).flat()
     const chartData = drivers.map(d => ({ name: d.label || d.source || d.type || "Signal", value: d.score || d.weight || d.contribution || 0 }))
     const levelColor = LEVEL_COLORS[data?.threat_level] || "#64748b"
 

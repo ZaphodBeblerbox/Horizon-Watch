@@ -250,7 +250,7 @@ class WatchZone(Base):
     bbox_max_lon        = Column(Float, nullable=False)
     bbox_max_lat        = Column(Float, nullable=False)
     priority            = Column(String, nullable=False, default="medium")
-    scan_interval_hours = Column(Integer, nullable=False, default=24)
+    scan_interval_hours = Column(Integer, nullable=False, default=120)
     enabled             = Column(Boolean, default=True)
     created_by          = Column(String, nullable=True)
     created_at          = Column(DateTime, default=datetime.datetime.utcnow)

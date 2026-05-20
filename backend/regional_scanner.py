@@ -26,6 +26,9 @@ from database import (
     get_db,
 )
 
+# Module-level cancellation flags: {job_id: True} means that scan should stop.
+_scan_cancellation_flags: dict[str, bool] = {}
+
 
 # ── ID generators ──────────────────────────────────────────────────────────────
 
@@ -257,6 +260,13 @@ class RegionalScanner:
 
         # ── Current image fetch (batches of 3) ────────────────────────────────
         for batch_start in range(0, len(tiles), BATCH):
+            # Operator cancellation check
+            if _scan_cancellation_flags.get(job.job_id):
+                print(f"[regional_scanner] {job.job_id}: cancelled by operator")
+                _scan_cancellation_flags.pop(job.job_id, None)
+                job.status = "cancelled"; job.phase = "cancelled"
+                db.commit()
+                return []
             # Overall acquisition timeout guard
             if asyncio.get_event_loop().time() - acq_start > TOTAL_TIMEOUT:
                 raise RuntimeError(
@@ -290,6 +300,12 @@ class RegionalScanner:
         # ── Baseline fetch (batches of 3, only for tiles that have current image) ──
         baseline_tiles = [t for t in tiles if t.get("image_bytes")]
         for batch_start in range(0, len(baseline_tiles), BATCH):
+            if _scan_cancellation_flags.get(job.job_id):
+                print(f"[regional_scanner] {job.job_id}: cancelled by operator (baseline)")
+                _scan_cancellation_flags.pop(job.job_id, None)
+                job.status = "cancelled"; job.phase = "cancelled"
+                db.commit()
+                return []
             if asyncio.get_event_loop().time() - acq_start > TOTAL_TIMEOUT:
                 print(f"[regional_scanner] {job.job_id}: 4h timeout hit during baseline — continuing with partial data")
                 break

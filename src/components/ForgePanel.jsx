@@ -3266,7 +3266,7 @@ function CreateZoneModal({ onClose, onCreated }) {
     const [name, setName] = useState("")
     const [desc, setDesc] = useState("")
     const [priority, setPriority] = useState("high")
-    const [interval, setInterval] = useState(24)
+    const [interval, setInterval] = useState(120)
     const [threshold, setThreshold] = useState("both")
     const [mlTasks, setMlTasks] = useState(["ship_detection", "fire_detection"])
     const [saving, setSaving] = useState(false)
@@ -3353,9 +3353,10 @@ function CreateZoneModal({ onClose, onCreated }) {
                             <div style={row}>
                                 <span style={lbl}>Scan interval</span>
                                 <select style={sel} value={interval} onChange={e => setInterval(e.target.value)}>
-                                    <option value={6}>Every 6h</option>
-                                    <option value={12}>Every 12h</option>
                                     <option value={24}>Every 24h</option>
+                                    <option value={72}>Every 3 days</option>
+                                    <option value={120}>Every 5 days (default)</option>
+                                    <option value={168}>Every 7 days</option>
                                 </select>
                             </div>
                             <div style={row}>
@@ -3993,6 +3994,7 @@ function ScanReportModal({ report, jobMeta, onClose }) {
 function RegionalScansSection({ onViewOnGlobe }) {
     const [scans, setScans]           = useState([])
     const [triggering, setTriggering] = useState(false)
+    const [cancelling, setCancelling] = useState(false)
     const [showReport, setShowReport] = useState(false)
     const [toast, setToast]           = useState("")
 
@@ -4030,6 +4032,24 @@ function RegionalScansSection({ onViewOnGlobe }) {
             setTimeout(() => setToast(""), 3000)
         } finally {
             setTriggering(false)
+        }
+    }
+
+    const cancelScan = async () => {
+        if (!latest?.job_id) return
+        setCancelling(true)
+        try {
+            await fetch(`${API}/api/regional-scans/${latest.job_id}/cancel`, {
+                method: "POST", headers: forgeHeaders(),
+            })
+            setToast("Cancellation requested — scan will stop at next batch boundary")
+            setTimeout(() => setToast(""), 5000)
+            setTimeout(load, 3000)
+        } catch (_e) {
+            setToast("Cancel request failed")
+            setTimeout(() => setToast(""), 3000)
+        } finally {
+            setCancelling(false)
         }
     }
 
@@ -4156,13 +4176,24 @@ function RegionalScansSection({ onViewOnGlobe }) {
                             View on Globe
                         </button>
                     )}
-                    <button
-                        onClick={triggerScan}
-                        disabled={triggering || running}
-                        style={scanActionBtn(running || triggering ? "#334155" : "#5856D6")}
-                    >
-                        {running ? "Running…" : triggering ? "Starting…" : "Scan Now"}
-                    </button>
+                    {running && (
+                        <button
+                            onClick={cancelScan}
+                            disabled={cancelling}
+                            style={scanActionBtn(cancelling ? "#334155" : "#FF3B30")}
+                        >
+                            {cancelling ? "Stopping…" : "Stop Scan"}
+                        </button>
+                    )}
+                    {!running && (
+                        <button
+                            onClick={triggerScan}
+                            disabled={triggering}
+                            style={scanActionBtn(triggering ? "#334155" : "#5856D6")}
+                        >
+                            {triggering ? "Starting…" : latest?.status === "failed" || latest?.status === "cancelled" ? "Restart Scan" : "Scan Now"}
+                        </button>
+                    )}
                 </div>
             </div>
 
