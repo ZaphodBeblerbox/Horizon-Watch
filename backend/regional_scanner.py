@@ -217,60 +217,96 @@ class RegionalScanner:
         db.commit()
         print(f"[regional_scanner] {job.job_id}: {len(tiles)} tiles in grid")
 
-        now = datetime.datetime.utcnow()
-        current_from = now - datetime.timedelta(days=region.get("scan_interval_days", 5))
-        baseline_to  = now - datetime.timedelta(days=30)
+        now           = datetime.datetime.utcnow()
+        current_from  = now - datetime.timedelta(days=region.get("scan_interval_days", 5))
+        baseline_to   = now - datetime.timedelta(days=30)
         baseline_from = now - datetime.timedelta(days=60)
+        max_cloud     = region.get("max_cloud_cover", 20)
 
-        loop = asyncio.get_event_loop()
+        loop           = asyncio.get_event_loop()
+        BATCH          = 3        # concurrent tile fetches
+        TILE_TIMEOUT   = 30       # per-tile HTTP timeout (seconds)
+        TOTAL_TIMEOUT  = 4 * 3600 # 4-hour overall acquisition limit
+        acq_start      = asyncio.get_event_loop().time()
+        fetched_count  = 0
 
-        for tile in tiles:
+        async def _fetch_one(tile, date_from, date_to, cloud):
+            """Fetch a single tile with per-tile timeout; returns None on any error."""
             b = tile["bbox"]
             try:
-                raw = await loop.run_in_executor(
-                    None,
-                    lambda b=b: _fetch_tile_range(
-                        b["min_lon"], b["min_lat"], b["max_lon"], b["max_lat"],
-                        image_type="true-colour",
-                        date_from=current_from,
-                        date_to=now,
-                        max_cloud=region.get("max_cloud_cover", 20),
+                raw = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda b=b, df=date_from, dt=date_to, c=cloud: _fetch_tile_range(
+                            b["min_lon"], b["min_lat"], b["max_lon"], b["max_lat"],
+                            image_type="true-colour",
+                            date_from=df,
+                            date_to=dt,
+                            max_cloud=c,
+                        ),
                     ),
+                    timeout=TILE_TIMEOUT,
                 )
+                return raw
+            except asyncio.TimeoutError:
+                print(f"[regional_scanner] tile {tile['index']} timed out — skipping")
+                return None
+            except Exception as e:
+                print(f"[regional_scanner] tile {tile['index']} error: {e}")
+                return None
+
+        # ── Current image fetch (batches of 3) ────────────────────────────────
+        for batch_start in range(0, len(tiles), BATCH):
+            # Overall acquisition timeout guard
+            if asyncio.get_event_loop().time() - acq_start > TOTAL_TIMEOUT:
+                raise RuntimeError(
+                    f"Acquisition timeout — too many tiles for sequential fetch "
+                    f"({fetched_count}/{len(tiles)} fetched before 4h limit)"
+                )
+
+            batch = tiles[batch_start:batch_start + BATCH]
+            results = await asyncio.gather(*[
+                _fetch_one(t, current_from, now, max_cloud) for t in batch
+            ])
+            for tile, raw in zip(batch, results):
                 if raw:
                     tile["image_bytes"] = raw
                     tile["image_date"]  = now
-            except Exception as e:
-                tile["error"] = str(e)
+                    fetched_count += 1
 
-            await asyncio.sleep(0.4)
+            # Progress checkpoint every 50 tiles
+            if (batch_start + BATCH) % 50 == 0 or batch_start + BATCH >= len(tiles):
+                job.metadata = json.dumps({"tiles_fetched": fetched_count, "tiles_total": len(tiles)})
+                try:
+                    db.commit()
+                except Exception:
+                    pass
+                print(f"[regional_scanner] {job.job_id}: progress {fetched_count}/{len(tiles)}")
 
-        # Baseline fetch
-        for tile in tiles:
-            if not tile.get("image_bytes"):
-                continue
-            b = tile["bbox"]
-            try:
-                baseline_raw = await loop.run_in_executor(
-                    None,
-                    lambda b=b: _fetch_tile_range(
-                        b["min_lon"], b["min_lat"], b["max_lon"], b["max_lat"],
-                        image_type="true-colour",
-                        date_from=baseline_from,
-                        date_to=baseline_to,
-                        max_cloud=30,
-                    ),
-                )
-                tile["baseline_bytes"] = baseline_raw
-                tile["baseline_date"]  = baseline_to
-            except Exception:
-                tile["baseline_bytes"] = None
+            await asyncio.sleep(0.3)
+
+        print(f"[regional_scanner] {job.job_id}: {fetched_count}/{len(tiles)} current tiles fetched")
+
+        # ── Baseline fetch (batches of 3, only for tiles that have current image) ──
+        baseline_tiles = [t for t in tiles if t.get("image_bytes")]
+        for batch_start in range(0, len(baseline_tiles), BATCH):
+            if asyncio.get_event_loop().time() - acq_start > TOTAL_TIMEOUT:
+                print(f"[regional_scanner] {job.job_id}: 4h timeout hit during baseline — continuing with partial data")
+                break
+
+            batch = baseline_tiles[batch_start:batch_start + BATCH]
+            results = await asyncio.gather(*[
+                _fetch_one(t, baseline_from, baseline_to, 30) for t in batch
+            ])
+            for tile, raw in zip(batch, results):
+                tile["baseline_bytes"] = raw
+                tile["baseline_date"]  = baseline_to if raw else None
+
             await asyncio.sleep(0.3)
 
         fetched = sum(1 for t in tiles if t.get("image_bytes"))
-        print(f"[regional_scanner] {job.job_id}: {fetched}/{len(tiles)} tiles fetched")
+        print(f"[regional_scanner] {job.job_id}: {fetched}/{len(tiles)} tiles fetched (final)")
 
-        # Record earliest image date on job
         dated = [t["image_date"] for t in tiles if t.get("image_date")]
         if dated:
             job.image_date = min(dated)

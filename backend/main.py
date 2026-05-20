@@ -3136,7 +3136,7 @@ UAE_REGION = {
         "max_lon": 56.5,
         "max_lat": 26.2,
     },
-    "tile_size_deg":           0.15,
+    "tile_size_deg":           0.5,
     "spectral_change_threshold": 0.12,
     "scan_interval_days":      5,
     "max_cloud_cover":         20,
@@ -10347,43 +10347,52 @@ async def _fusion_expire_loop():
         await asyncio.sleep(900)   # 15 minutes
 
 
+def _tm_get_fusions():
+    _fusions = []
+    try:
+        if _fusion_engine:
+            from database import FusionEvent as _FE_tm, get_db as _gdb_fe
+            with _gdb_fe() as _dbtm:
+                _fusions = [
+                    {"lat": r.lat, "lon": r.lon, "severity": r.severity}
+                    for r in _dbtm.query(_FE_tm).filter(
+                        _FE_tm.status == "active", _FE_tm.marker_visible == True
+                    ).all()
+                ]
+    except Exception:
+        pass
+    return _fusions
+
+
+def _tm_refresh_once():
+    """Run a single threat-matrix refresh cycle. Safe to call from any context."""
+    try:
+        from database import get_db as _gdb_tm
+        active_events = []
+        try:
+            active_events = es.get_active_events()
+        except Exception:
+            pass
+        fusions = _tm_get_fusions()
+        with _gdb_tm() as _db:
+            threat_matrix.refresh_cache(_db, list(_forge_alerts), active_events, fusions)
+            now_utc = datetime.utcnow()
+            if now_utc.hour == 0 and now_utc.minute < 5:
+                threat_matrix.save_daily_snapshot(_db, list(_forge_alerts), active_events)
+                print("[threat-matrix] daily snapshot saved")
+        print("[threat-matrix] cache refreshed")
+    except Exception as _tm_e:
+        print(f"[threat-matrix] refresh error: {_tm_e}")
+
+
 async def _threat_matrix_loop():
     """Hourly threat-matrix cache refresh + midnight daily snapshot."""
-    await asyncio.sleep(10)
+    # Immediate first run — don't wait an hour for data
+    await asyncio.sleep(15)
+    _tm_refresh_once()
     while True:
-        try:
-            from database import get_db as _gdb_tm
-            active_events = []
-            try:
-                active_events = es.get_active_events()
-            except Exception:
-                pass
-            db = next(_gdb_tm())
-            try:
-                _fusions_for_tm = []
-                try:
-                    if _fusion_engine:
-                        from database import FusionEvent as _FE_tm, get_db as _gdb_fe
-                        import json as _json_tm
-                        with _gdb_fe() as _dbtm:
-                            _fusions_for_tm = [
-                                {"lat": r.lat, "lon": r.lon, "severity": r.severity}
-                                for r in _dbtm.query(_FE_tm).filter(
-                                    _FE_tm.status == "active", _FE_tm.marker_visible == True
-                                ).all()
-                            ]
-                except Exception:
-                    pass
-                threat_matrix.refresh_cache(db, list(_forge_alerts), active_events, _fusions_for_tm)
-                now_utc = datetime.utcnow()
-                if now_utc.hour == 0 and now_utc.minute < 5:
-                    threat_matrix.save_daily_snapshot(db, list(_forge_alerts), active_events)
-                    print("[threat-matrix] daily snapshot saved")
-            finally:
-                db.close()
-        except Exception as _tm_e:
-            print(f"[threat-matrix] loop error: {_tm_e}")
         await asyncio.sleep(3600)
+        _tm_refresh_once()
 
 
 async def _dirty_region_refresh_loop():
@@ -19356,11 +19365,8 @@ def analytics_threat_matrix():
     except Exception:
         pass
     from database import get_db as _gdb_tm2
-    db = next(_gdb_tm2())
-    try:
-        return threat_matrix.refresh_cache(db, list(_forge_alerts), active_events, _fusions_live)
-    finally:
-        db.close()
+    with _gdb_tm2() as _db:
+        return threat_matrix.refresh_cache(_db, list(_forge_alerts), active_events, _fusions_live)
 
 
 @app.get("/api/analytics/threat-matrix/history")
@@ -19372,9 +19378,8 @@ def analytics_threat_matrix_history(
     from database import ThreatMatrixSnapshot, get_db as _gdb_tm3
     import json as _j
     cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-    db = next(_gdb_tm3())
-    try:
-        q = db.query(ThreatMatrixSnapshot).filter(ThreatMatrixSnapshot.snapshot_date >= cutoff)
+    with _gdb_tm3() as _db:
+        q = _db.query(ThreatMatrixSnapshot).filter(ThreatMatrixSnapshot.snapshot_date >= cutoff)
         if region_name:
             q = q.filter(ThreatMatrixSnapshot.region_name == region_name)
         rows = q.order_by(ThreatMatrixSnapshot.snapshot_date).all()
@@ -19393,8 +19398,6 @@ def analytics_threat_matrix_history(
             }
             for r in rows
         ]
-    finally:
-        db.close()
 
 
 # ── Training data export ──────────────────────────────────────────────────────

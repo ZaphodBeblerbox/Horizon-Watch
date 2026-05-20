@@ -1,83 +1,169 @@
 /**
- * ForceGraph.jsx — Live intelligence entity graph
- *
- * Self-fetching from /api/ontology/graph (new live endpoint).
- * Delta-polls every 30 s via /api/ontology/graph/delta?since=<ts>.
- * Renders nodes with NATO-MIL-2525C shapes, animated edge pulses,
- * filter pills, node count badge, and a slide-in entity detail panel.
- *
- * Props (all optional — the component is fully self-contained):
- *   onNodeClick(node)  — called in addition to the internal detail panel
+ * ForceGraph.jsx — Live intelligence entity graph (Issue 4 revision)
+ * - Capped to 150 nodes by type priority (Rules > Zones > Cables > Alerts > Fusion > Ports > Airports)
+ * - Type-based force clustering (user-specified x/y targets, strength 0.3)
+ * - Labels always for Rules/Zones/Fusion, hover-only for everything else
+ * - Edge minimum 1.5px, coloured by relationship type
+ * - Multi-select filter pills, default: Rules + Zones + Cables
  */
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import API_BASE from "../../apiBase.js"
 import { drawNatoIcon, entityTypeToIcon, iconColor } from "../../globe/natoIcons.js"
 
-// ── Node radius by type ───────────────────────────────────────────────────────
+// ── Node type priority for capping (lower = higher priority) ─────────────────
+const TYPE_PRIORITY = {
+    rule:           1,
+    strategic_zone: 2,
+    watch_zone:     3,
+    cable:          4,
+    alert:          5,
+    surge:          5,
+    fusion_event:   6,
+    port:           7,
+    vessel:         8,
+    aircraft:       9,
+    airport:        10,
+}
+const NODE_CAP = 150
+const PORT_CAP = 20
+
+// ── Type cluster targets (as 0–1 fractions of W × H, matching user's 800×600 spec) ──
+const CLUSTER_TARGETS = {
+    rule:           { rx: 0.1875, ry: 0.50 },
+    strategic_zone: { rx: 0.4375, ry: 0.33 },
+    watch_zone:     { rx: 0.4375, ry: 0.67 },
+    cable:          { rx: 0.6875, ry: 0.50 },
+    alert:          { rx: 0.875,  ry: 0.42 },
+    surge:          { rx: 0.875,  ry: 0.42 },
+    fusion_event:   { rx: 0.875,  ry: 0.67 },
+    vessel:         { rx: 0.625,  ry: 0.75 },
+    aircraft:       { rx: 0.625,  ry: 0.75 },
+    port:           { rx: 0.4375, ry: 0.50 },
+    airport:        { rx: 0.50,   ry: 0.50 },
+}
+const CLUSTER_STRENGTH = 0.003  // per-frame pull fraction (0.3 / 100 frames)
+
+// ── Node radius by type ──────────────────────────────────────────────────────
 const NODE_R = {
-    cable:          9,
-    port:           8,
-    airport:        7,
+    rule:           10,
+    cable:           9,
+    port:            8,
+    airport:         7,
     watch_zone:     10,
     strategic_zone: 10,
     fusion_event:   11,
-    surge:          9,
-    alert:          8,
-    vessel:         8,
-    aircraft:       7,
+    surge:           9,
+    alert:           8,
+    vessel:          8,
+    aircraft:        7,
 }
-const DEFAULT_R = 8
+const MIN_R = 8
 
 function nodeR(node) {
-    const base = NODE_R[node.type] || DEFAULT_R
+    const base = Math.max(MIN_R, NODE_R[node.type] || MIN_R)
     const sev  = node.severity || node.data?.severity || ""
     if (sev === "critical") return base + 3
     if (sev === "high")     return base + 1
     return base
 }
 
-// ── Filter pill definitions ───────────────────────────────────────────────────
-const FILTERS = [
-    { id: "all",    label: "All" },
-    { id: "zones",  label: "Zones",  types: ["watch_zone", "strategic_zone"] },
-    { id: "cables", label: "Cables", types: ["cable"] },
-    { id: "alerts", label: "Alerts", types: ["alert", "surge"] },
-    { id: "fusion", label: "Fusion", types: ["fusion_event"] },
-    { id: "infra",  label: "Infra",  types: ["port", "airport"] },
-]
+// ── Types that always show label (others: hover only) ────────────────────────
+const ALWAYS_LABEL = new Set(["rule", "strategic_zone", "watch_zone", "fusion_event"])
 
-function matchesFilter(node, filterId) {
-    if (filterId === "all") return true
-    const f = FILTERS.find(x => x.id === filterId)
-    return f?.types?.includes(node.type) ?? true
+// ── Edge colour by relationship/link type ────────────────────────────────────
+const EDGE_COLOR = {
+    proximity:   "#388bff",
+    mention:     "#22c55e",
+    correlation: "#f59e0b",
+    fusion:      "#a855f7",
+    rule:        "#ec4899",
+}
+const EDGE_DEFAULT_COLOR = "#475569"
+
+function edgeCol(edge) {
+    const t = edge.link_type || edge.type || edge.relationship_type || ""
+    return EDGE_COLOR[t] || EDGE_DEFAULT_COLOR
 }
 
-// ── Edge animation tick (module-level, shared across renders) ─────────────────
+// ── Multi-select filter groups ────────────────────────────────────────────────
+const FILTER_GROUPS = [
+    { id: "rules",   label: "Rules",   types: ["rule"] },
+    { id: "zones",   label: "Zones",   types: ["watch_zone", "strategic_zone"] },
+    { id: "cables",  label: "Cables",  types: ["cable"] },
+    { id: "alerts",  label: "Alerts",  types: ["alert", "surge"] },
+    { id: "fusion",  label: "Fusion",  types: ["fusion_event"] },
+    { id: "infra",   label: "Infra",   types: ["port", "airport"] },
+    { id: "vessels", label: "Vessels", types: ["vessel", "aircraft"] },
+]
+const DEFAULT_ACTIVE = new Set(["rules", "zones", "cables"])
+
+function nodeGroupId(type) {
+    return FILTER_GROUPS.find(g => g.types.includes(type))?.id ?? null
+}
+
+function nodeVisible(node, activeGroups, showAll) {
+    if (showAll) return true
+    const gid = nodeGroupId(node.type)
+    if (!gid) return true
+    return activeGroups.has(gid)
+}
+
+// ── Node capping ──────────────────────────────────────────────────────────────
+function capNodes(allNodes) {
+    const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, "": 4 }
+    const sorted = [...allNodes].sort((a, b) => {
+        const pa = TYPE_PRIORITY[a.type] ?? 99
+        const pb = TYPE_PRIORITY[b.type] ?? 99
+        if (pa !== pb) return pa - pb
+        return (SEV_ORDER[a.severity || ""] ?? 4) - (SEV_ORDER[b.severity || ""] ?? 4)
+    })
+    const portCount = { n: 0 }
+    const result = []
+    for (const node of sorted) {
+        if (result.length >= NODE_CAP) break
+        if (node.type === "port") {
+            if (portCount.n >= PORT_CAP) continue
+            portCount.n++
+        }
+        result.push(node)
+    }
+    return result
+}
+
+// ── Animated edge tick (module-level so it persists across hot-reloads) ───────
 let _tick = 0
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function ForceGraph({ onNodeClick }) {
-    const canvasRef    = useRef(null)
-    const nodesRef     = useRef([])   // { ...apiNode, x, y, vx, vy, pinned }
-    const edgesRef     = useRef([])
-    const animRef      = useRef(null)
-    const dragRef      = useRef(null)
-    const panRef       = useRef({ x: 0, y: 0 })
-    const zoomRef      = useRef(1)
-    const isPanRef     = useRef(false)
-    const panStartRef  = useRef({ x: 0, y: 0 })
-    const lastFetchTs  = useRef(null)
-    const sizeRef      = useRef({ W: 800, H: 600 })
+    const canvasRef       = useRef(null)
+    const nodesRef        = useRef([])
+    const edgesRef        = useRef([])
+    const animRef         = useRef(null)
+    const dragRef         = useRef(null)
+    const panRef          = useRef({ x: 0, y: 0 })
+    const zoomRef         = useRef(1)
+    const isPanRef        = useRef(false)
+    const panStartRef     = useRef({ x: 0, y: 0 })
+    const lastFetchTs     = useRef(null)
+    const sizeRef         = useRef({ W: 800, H: 600 })
+    const hoverRef        = useRef(null)
+    const activeGroupsRef = useRef(new Set(DEFAULT_ACTIVE))
+    const showAllRef      = useRef(false)
 
-    const [filter,      setFilter]      = useState("all")
-    const [nodeCount,   setNodeCount]   = useState(0)
-    const [loading,     setLoading]     = useState(true)
-    const [detailNode,  setDetailNode]  = useState(null)   // node shown in slide panel
-    const [profile,     setProfile]     = useState(null)   // fetched profile data
-    const [profileLoad, setProfileLoad] = useState(false)
+    const [activeGroups, setActiveGroups] = useState(new Set(DEFAULT_ACTIVE))
+    const [showAll,      setShowAll]      = useState(false)
+    const [nodeCount,    setNodeCount]    = useState(0)
+    const [loading,      setLoading]      = useState(true)
+    const [detailNode,   setDetailNode]   = useState(null)
+    const [profile,      setProfile]      = useState(null)
+    const [profileLoad,  setProfileLoad]  = useState(false)
 
-    // ── Fetch full graph ──────────────────────────────────────────────────────
+    // Keep refs in sync for canvas access without re-mounting
+    useEffect(() => { activeGroupsRef.current = activeGroups }, [activeGroups])
+    useEffect(() => { showAllRef.current = showAll }, [showAll])
+
+    // ── Fetch full graph ─────────────────────────────────────────────────────
     const fetchGraph = useCallback(() => {
         fetch(`${API_BASE}/api/ontology/graph?include_live=true&limit_live=200`)
             .then(r => r.ok ? r.json() : null)
@@ -85,25 +171,29 @@ export default function ForceGraph({ onNodeClick }) {
                 if (!data) return
                 const { W, H } = sizeRef.current
                 const existing = new Map(nodesRef.current.map(n => [n.id, n]))
-                const nodes = (data.nodes || []).map((n, i) => {
+                const capped   = capNodes(data.nodes || [])
+                nodesRef.current = capped.map((n, i) => {
                     const ex = existing.get(n.id)
-                    return ex ? { ...ex, ...n } : {
+                    if (ex) return { ...ex, ...n }
+                    const ct = CLUSTER_TARGETS[n.type]
+                    const cx = ct ? ct.rx * W : W / 2
+                    const cy = ct ? ct.ry * H : H / 2
+                    return {
                         ...n,
-                        x:  W / 2 + Math.cos((i / (data.nodes.length || 1)) * Math.PI * 2) * (Math.min(W, H) * 0.32) + (Math.random() - 0.5) * 60,
-                        y:  H / 2 + Math.sin((i / (data.nodes.length || 1)) * Math.PI * 2) * (Math.min(W, H) * 0.32) + (Math.random() - 0.5) * 60,
+                        x:  cx + (Math.random() - 0.5) * 130,
+                        y:  cy + (Math.random() - 0.5) * 130,
                         vx: 0, vy: 0,
                     }
                 })
-                nodesRef.current = nodes
-                edgesRef.current = data.edges || []
+                edgesRef.current  = data.edges || []
                 lastFetchTs.current = new Date().toISOString()
-                setNodeCount(nodes.length)
+                setNodeCount(nodesRef.current.length)
                 setLoading(false)
             })
             .catch(() => setLoading(false))
     }, [])
 
-    // ── Delta poll ────────────────────────────────────────────────────────────
+    // ── Delta poll ───────────────────────────────────────────────────────────
     const fetchDelta = useCallback(() => {
         if (!lastFetchTs.current) return
         fetch(`${API_BASE}/api/ontology/graph/delta?since=${encodeURIComponent(lastFetchTs.current)}`)
@@ -116,11 +206,12 @@ export default function ForceGraph({ onNodeClick }) {
                     data.nodes.forEach(n => {
                         if (existing.has(n.id)) {
                             Object.assign(existing.get(n.id), n)
-                        } else {
+                        } else if (nodesRef.current.length < NODE_CAP) {
+                            const ct = CLUSTER_TARGETS[n.type]
                             nodesRef.current.push({
                                 ...n,
-                                x:  W / 2 + (Math.random() - 0.5) * 200,
-                                y:  H / 2 + (Math.random() - 0.5) * 200,
+                                x:  ct ? ct.rx * W + (Math.random() - 0.5) * 100 : W / 2 + (Math.random() - 0.5) * 200,
+                                y:  ct ? ct.ry * H + (Math.random() - 0.5) * 100 : H / 2 + (Math.random() - 0.5) * 200,
                                 vx: 0, vy: 0,
                             })
                         }
@@ -128,15 +219,15 @@ export default function ForceGraph({ onNodeClick }) {
                     setNodeCount(nodesRef.current.length)
                 }
                 if (data.edges?.length) {
-                    const edgeIds = new Set(edgesRef.current.map(e => e.id))
-                    data.edges.forEach(e => { if (!edgeIds.has(e.id)) edgesRef.current.push(e) })
+                    const ids = new Set(edgesRef.current.map(e => e.id))
+                    data.edges.forEach(e => { if (!ids.has(e.id)) edgesRef.current.push(e) })
                 }
                 lastFetchTs.current = new Date().toISOString()
             })
             .catch(() => {})
     }, [])
 
-    // ── Fetch entity profile on selection ────────────────────────────────────
+    // ── Entity profile ───────────────────────────────────────────────────────
     useEffect(() => {
         if (!detailNode) { setProfile(null); return }
         setProfileLoad(true)
@@ -149,7 +240,7 @@ export default function ForceGraph({ onNodeClick }) {
             .catch(() => setProfileLoad(false))
     }, [detailNode?.id])
 
-    // ── Canvas setup + draw loop ──────────────────────────────────────────────
+    // ── Canvas setup + draw loop ─────────────────────────────────────────────
     useEffect(() => {
         const canvas = canvasRef.current
         if (!canvas) return
@@ -159,7 +250,6 @@ export default function ForceGraph({ onNodeClick }) {
         const H     = outer.height || 600
         const DPR   = window.devicePixelRatio || 1
         sizeRef.current = { W, H }
-
         canvas.width        = W * DPR
         canvas.height       = H * DPR
         canvas.style.width  = W + "px"
@@ -170,11 +260,11 @@ export default function ForceGraph({ onNodeClick }) {
         fetchGraph()
         const deltaInterval = setInterval(fetchDelta, 30_000)
 
-        const REPEL   = 3500
-        const SPRING  = 130
-        const K       = 0.003
-        const DAMP    = 0.84
-        const GRAV    = 0.0008
+        const REPEL  = 2600
+        const SPRING = 105
+        const K      = 0.004
+        const DAMP   = 0.82
+        const GRAV   = 0.0004
 
         function simulate() {
             const ns = nodesRef.current
@@ -184,10 +274,10 @@ export default function ForceGraph({ onNodeClick }) {
                     const dy   = ns[j].y - ns[i].y || 0.01
                     const dist = Math.sqrt(dx * dx + dy * dy) || 1
                     const f    = REPEL / (dist * dist)
-                    ns[i].vx -= (dx / dist) * f * 0.3
-                    ns[i].vy -= (dy / dist) * f * 0.3
-                    ns[j].vx += (dx / dist) * f * 0.3
-                    ns[j].vy += (dy / dist) * f * 0.3
+                    const fx   = (dx / dist) * f * 0.3
+                    const fy   = (dy / dist) * f * 0.3
+                    ns[i].vx -= fx; ns[i].vy -= fy
+                    ns[j].vx += fx; ns[j].vy += fy
                 }
             }
             for (const edge of edgesRef.current) {
@@ -198,19 +288,22 @@ export default function ForceGraph({ onNodeClick }) {
                 const dy   = tgt.y - src.y
                 const dist = Math.sqrt(dx * dx + dy * dy) || 1
                 const f    = (dist - SPRING) * K
-                src.vx += (dx / dist) * f
-                src.vy += (dy / dist) * f
-                tgt.vx -= (dx / dist) * f
-                tgt.vy -= (dy / dist) * f
+                src.vx += (dx / dist) * f; src.vy += (dy / dist) * f
+                tgt.vx -= (dx / dist) * f; tgt.vy -= (dy / dist) * f
             }
             for (const n of ns) {
                 if (n.pinned) continue
+                // Type clustering
+                const ct = CLUSTER_TARGETS[n.type]
+                if (ct) {
+                    n.vx += (ct.rx * W - n.x) * CLUSTER_STRENGTH
+                    n.vy += (ct.ry * H - n.y) * CLUSTER_STRENGTH
+                }
+                // Centre gravity
                 n.vx += (W / 2 - n.x) * GRAV
                 n.vy += (H / 2 - n.y) * GRAV
-                n.vx *= DAMP
-                n.vy *= DAMP
-                n.x  += n.vx
-                n.y  += n.vy
+                n.vx *= DAMP; n.vy *= DAMP
+                n.x  += n.vx; n.y  += n.vy
             }
             _tick = (_tick + 1) % 600
         }
@@ -223,40 +316,37 @@ export default function ForceGraph({ onNodeClick }) {
             ctx.translate(panRef.current.x, panRef.current.y)
             ctx.scale(zoomRef.current, zoomRef.current)
 
-            const ns      = nodesRef.current
-            const es      = edgesRef.current
-            const curFilt = filterRef.current
+            const ns     = nodesRef.current
+            const es     = edgesRef.current
+            const ag     = activeGroupsRef.current
+            const sa     = showAllRef.current
+            const hovId  = hoverRef.current?.id
 
-            // Visible nodes
-            const visible = ns.filter(n => matchesFilter(n, curFilt))
+            const visible = ns.filter(n => nodeVisible(n, ag, sa))
             const visIds  = new Set(visible.map(n => n.id))
 
-            // Edges (only between visible nodes)
+            // Edges
             for (const edge of es) {
                 if (!visIds.has(edge.source) || !visIds.has(edge.target)) continue
                 const src = ns.find(n => n.id === edge.source)
                 const tgt = ns.find(n => n.id === edge.target)
                 if (!src || !tgt) continue
 
-                const dx   = tgt.x - src.x
-                const dy   = tgt.y - src.y
-                const len  = Math.sqrt(dx * dx + dy * dy) || 1
-                const col  = iconColor(src.type || "")
+                const col    = edgeCol(edge)
+                const isHovE = hovId === src.id || hovId === tgt.id
+                const alpha  = isHovE ? "66" : "28"
 
-                // Static edge line
                 ctx.beginPath()
                 ctx.moveTo(src.x, src.y)
                 ctx.lineTo(tgt.x, tgt.y)
-                ctx.strokeStyle = col + "28"
-                ctx.lineWidth   = 1
+                ctx.strokeStyle = col + alpha
+                ctx.lineWidth   = 1.5
                 ctx.stroke()
 
-                // Animated pulse dot travelling along edge
-                const phase = ((_tick * 2 + (parseInt(edge.id || 0, 36) % 100)) % 100) / 100
-                const px = src.x + dx * phase
-                const py = src.y + dy * phase
+                // Animated pulse dot
+                const phase = ((_tick * 2 + (parseInt(edge.id || "0", 36) % 100)) % 100) / 100
                 ctx.beginPath()
-                ctx.arc(px, py, 2, 0, Math.PI * 2)
+                ctx.arc(src.x + (tgt.x - src.x) * phase, src.y + (tgt.y - src.y) * phase, 2, 0, Math.PI * 2)
                 ctx.fillStyle = col + "aa"
                 ctx.fill()
             }
@@ -267,23 +357,28 @@ export default function ForceGraph({ onNodeClick }) {
                 const c    = iconColor(node.type)
                 const sev  = node.severity || node.data?.severity || ""
                 const glow = SEV_GLOW[sev]
+                const isHov = node.id === hovId
 
-                if (glow) {
-                    ctx.save()
-                    ctx.shadowBlur  = glow
+                ctx.save()
+                if (glow || isHov) {
+                    ctx.shadowBlur  = isHov ? 20 : glow
                     ctx.shadowColor = c
                 }
-
                 drawNatoIcon(ctx, entityTypeToIcon(node.type), node.x, node.y, r, c)
+                ctx.restore()
 
-                if (glow) ctx.restore()
-
-                // Label
-                const label = (node.label || node.name || node.id || "").slice(0, 22)
-                ctx.fillStyle  = "#d1d5db"
-                ctx.font       = "bold 8px system-ui"
-                ctx.textAlign  = "center"
-                ctx.fillText(label, node.x, node.y + r + 11)
+                // Labels: always for priority types, hover-only for others
+                if (ALWAYS_LABEL.has(node.type) || isHov) {
+                    const label = (node.label || node.name || node.id || "").slice(0, 24)
+                    ctx.save()
+                    ctx.shadowBlur  = 4
+                    ctx.shadowColor = "rgba(0,0,0,0.9)"
+                    ctx.fillStyle   = isHov ? "#f1f5f9" : "#94a3b8"
+                    ctx.font        = `${isHov ? "bold " : ""}9px system-ui`
+                    ctx.textAlign   = "center"
+                    ctx.fillText(label, node.x, node.y + r + 12)
+                    ctx.restore()
+                }
             }
 
             ctx.restore()
@@ -304,8 +399,8 @@ export default function ForceGraph({ onNodeClick }) {
         function hitNode(ex, ey) {
             const { x, y } = toWorld(ex, ey)
             return nodesRef.current.find(n => {
-                if (!matchesFilter(n, filterRef.current)) return false
-                return Math.hypot(n.x - x, n.y - y) < nodeR(n) + 4
+                if (!nodeVisible(n, activeGroupsRef.current, showAllRef.current)) return false
+                return Math.hypot(n.x - x, n.y - y) < nodeR(n) + 5
             }) || null
         }
 
@@ -315,8 +410,7 @@ export default function ForceGraph({ onNodeClick }) {
             didDrag = false
             const hit = hitNode(e.clientX, e.clientY)
             if (hit) {
-                dragRef.current = hit
-                hit.pinned = true
+                dragRef.current = hit; hit.pinned = true
             } else {
                 isPanRef.current = true
                 panStartRef.current = { x: e.clientX - panRef.current.x, y: e.clientY - panRef.current.y }
@@ -327,16 +421,12 @@ export default function ForceGraph({ onNodeClick }) {
             if (dragRef.current) {
                 didDrag = true
                 const { x, y } = toWorld(e.clientX, e.clientY)
-                dragRef.current.x  = x
-                dragRef.current.y  = y
-                dragRef.current.vx = 0
-                dragRef.current.vy = 0
+                Object.assign(dragRef.current, { x, y, vx: 0, vy: 0 })
             } else if (isPanRef.current) {
                 didDrag = true
-                panRef.current = {
-                    x: e.clientX - panStartRef.current.x,
-                    y: e.clientY - panStartRef.current.y,
-                }
+                panRef.current = { x: e.clientX - panStartRef.current.x, y: e.clientY - panStartRef.current.y }
+            } else {
+                hoverRef.current = hitNode(e.clientX, e.clientY)
             }
         }
 
@@ -348,9 +438,8 @@ export default function ForceGraph({ onNodeClick }) {
         function onClick(e) {
             if (didDrag) return
             const hit = hitNode(e.clientX, e.clientY)
-            if (!hit) { setDetailNodeFn(null); return }
-            setDetailNodeFn(hit)
-            onNodeClick?.(hit)
+            setDetailNodeSetter(hit || null)
+            if (hit) onNodeClick?.(hit)
         }
 
         function onWheel(e) {
@@ -358,72 +447,91 @@ export default function ForceGraph({ onNodeClick }) {
             zoomRef.current = Math.max(0.1, Math.min(5, zoomRef.current * (e.deltaY > 0 ? 0.9 : 1.1)))
         }
 
-        canvas.addEventListener("click",     onClick)
-        canvas.addEventListener("mousedown", onMouseDown)
-        canvas.addEventListener("mousemove", onMouseMove)
-        canvas.addEventListener("mouseup",   onMouseUp)
-        canvas.addEventListener("wheel",     onWheel, { passive: false })
+        function onMouseLeave() { hoverRef.current = null }
+
+        canvas.addEventListener("click",      onClick)
+        canvas.addEventListener("mousedown",  onMouseDown)
+        canvas.addEventListener("mousemove",  onMouseMove)
+        canvas.addEventListener("mouseup",    onMouseUp)
+        canvas.addEventListener("wheel",      onWheel, { passive: false })
+        canvas.addEventListener("mouseleave", onMouseLeave)
 
         return () => {
             cancelAnimationFrame(animRef.current)
             clearInterval(deltaInterval)
-            canvas.removeEventListener("click",     onClick)
-            canvas.removeEventListener("mousedown", onMouseDown)
-            canvas.removeEventListener("mousemove", onMouseMove)
-            canvas.removeEventListener("mouseup",   onMouseUp)
-            canvas.removeEventListener("wheel",     onWheel)
+            canvas.removeEventListener("click",      onClick)
+            canvas.removeEventListener("mousedown",  onMouseDown)
+            canvas.removeEventListener("mousemove",  onMouseMove)
+            canvas.removeEventListener("mouseup",    onMouseUp)
+            canvas.removeEventListener("wheel",      onWheel)
+            canvas.removeEventListener("mouseleave", onMouseLeave)
         }
-    }, [fetchGraph, fetchDelta])  // eslint-disable-line react-hooks/exhaustive-deps
+    }, [fetchGraph, fetchDelta])
 
-    // Expose setDetailNode to event handlers via a ref trick
-    const filterRef        = useRef("all")
-    const setDetailNodeFn  = useCallback((n) => setDetailNode(n), [])
-    useEffect(() => { filterRef.current = filter }, [filter])
+    const setDetailNodeSetter = useCallback((n) => setDetailNode(n), [])
 
-    const sevColor = (s) => ({ critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }[s] || "#64748b")
+    function toggleGroup(gid) {
+        setShowAll(false)
+        setActiveGroups(prev => {
+            const next = new Set(prev)
+            next.has(gid) ? next.delete(gid) : next.add(gid)
+            return next
+        })
+    }
+
+    const sevColor = s => ({ critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }[s] || "#64748b")
+
+    const visibleCount = nodesRef.current.filter(n => nodeVisible(n, activeGroups, showAll)).length
 
     return (
         <div style={{ position: "relative", width: "100%", height: "100%" }}>
-            {/* Canvas */}
             <canvas
                 ref={canvasRef}
                 style={{ width: "100%", height: "100%", cursor: "grab", display: "block", background: "#060b18" }}
             />
 
-            {/* Loading overlay */}
             {loading && (
                 <div style={{
                     position: "absolute", inset: 0, display: "flex", alignItems: "center",
                     justifyContent: "center", color: "rgba(148,163,184,0.6)", fontSize: 12,
                     pointerEvents: "none",
-                }}>
-                    Loading live graph…
-                </div>
+                }}>Loading live graph…</div>
             )}
 
-            {/* Filter pills — top-left */}
+            {/* Filter pills */}
             <div style={{
                 position: "absolute", top: 10, left: 10,
-                display: "flex", gap: 5, flexWrap: "wrap",
+                display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center",
                 pointerEvents: "auto",
             }}>
-                {FILTERS.map(f => (
-                    <button
-                        key={f.id}
-                        onClick={() => setFilter(f.id)}
-                        style={{
+                <span style={{ fontSize: 9, color: "rgba(148,163,184,0.45)", fontWeight: 700, letterSpacing: "0.1em", marginRight: 2 }}>
+                    SHOW
+                </span>
+                {FILTER_GROUPS.map(g => {
+                    const on = !showAll && activeGroups.has(g.id)
+                    return (
+                        <button key={g.id} onClick={() => toggleGroup(g.id)} style={{
                             padding: "3px 10px", borderRadius: 12, border: "none",
                             fontSize: 10, fontWeight: 600, cursor: "pointer",
-                            background: filter === f.id ? "rgba(56,139,255,0.35)" : "rgba(6,11,24,0.75)",
-                            color:      filter === f.id ? "#88c8ff" : "rgba(148,163,184,0.7)",
+                            background: on ? "rgba(56,139,255,0.32)" : "rgba(6,11,24,0.78)",
+                            color:      on ? "#88c8ff" : "rgba(148,163,184,0.5)",
+                            outline:    on ? "1px solid rgba(56,139,255,0.35)" : "none",
                             backdropFilter: "blur(6px)",
-                            transition: "background 0.15s",
-                        }}
-                    >{f.label}</button>
-                ))}
+                            transition: "all 0.15s",
+                        }}>{g.label}</button>
+                    )
+                })}
+                <button onClick={() => setShowAll(s => !s)} style={{
+                    padding: "3px 10px", borderRadius: 12, border: "none",
+                    fontSize: 10, fontWeight: 600, cursor: "pointer",
+                    background: showAll ? "rgba(148,163,184,0.22)" : "rgba(6,11,24,0.78)",
+                    color:      showAll ? "#cbd5e1" : "rgba(148,163,184,0.5)",
+                    backdropFilter: "blur(6px)",
+                    transition: "all 0.15s",
+                }}>All</button>
             </div>
 
-            {/* Node count badge — top-right */}
+            {/* Node count badge */}
             <div style={{
                 position: "absolute", top: 10, right: detailNode ? 336 : 10,
                 background: "rgba(6,11,24,0.75)", backdropFilter: "blur(6px)",
@@ -431,23 +539,36 @@ export default function ForceGraph({ onNodeClick }) {
                 padding: "3px 8px", fontSize: 10, color: "rgba(148,163,184,0.7)",
                 pointerEvents: "none", transition: "right 0.3s",
             }}>
-                {nodeCount} nodes
+                {visibleCount} / {nodeCount}
             </div>
 
-            {/* Entity detail panel — right slide-in */}
+            {/* Edge type legend */}
             <div style={{
-                position:   "absolute", top: 0, right: 0, bottom: 0,
+                position: "absolute", bottom: 10, left: 10,
+                display: "flex", gap: 10, flexWrap: "wrap",
+                pointerEvents: "none",
+            }}>
+                {Object.entries(EDGE_COLOR).map(([type, col]) => (
+                    <div key={type} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ width: 16, height: 2, background: col, borderRadius: 1 }} />
+                        <span style={{ fontSize: 8, color: "rgba(148,163,184,0.45)", textTransform: "capitalize" }}>{type}</span>
+                    </div>
+                ))}
+            </div>
+
+            {/* Entity detail panel */}
+            <div style={{
+                position: "absolute", top: 0, right: 0, bottom: 0,
                 width:      detailNode ? 320 : 0,
                 overflow:   "hidden",
                 transition: "width 0.3s ease",
                 background: "rgba(4,8,20,0.92)",
                 backdropFilter: "blur(16px)",
                 borderLeft: detailNode ? "1px solid rgba(255,255,255,0.07)" : "none",
-                display:    "flex", flexDirection: "column",
+                display: "flex", flexDirection: "column",
             }}>
                 {detailNode && (
                     <>
-                        {/* Panel header */}
                         <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                                 <div>
@@ -462,32 +583,25 @@ export default function ForceGraph({ onNodeClick }) {
                                         {detailNode.label || detailNode.name || detailNode.id}
                                     </div>
                                 </div>
-                                <button
-                                    onClick={() => setDetailNode(null)}
-                                    style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, padding: 0, flexShrink: 0 }}
-                                >✕</button>
+                                <button onClick={() => setDetailNode(null)} style={{
+                                    background: "none", border: "none", color: "#475569",
+                                    cursor: "pointer", fontSize: 16, padding: 0, flexShrink: 0,
+                                }}>✕</button>
                             </div>
                         </div>
 
-                        {/* Panel body */}
                         <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
                             {profileLoad && (
                                 <div style={{ color: "#475569", fontSize: 11, textAlign: "center", padding: 12 }}>Loading profile…</div>
                             )}
-
                             {profile && (
                                 <>
-                                    {/* Recent alerts */}
-                                    {(profile.recent_alerts?.length > 0) && (
+                                    {profile.recent_alerts?.length > 0 && (
                                         <Section label="Active Intelligence">
-                                            {profile.recent_alerts.slice(0, 5).map((a, i) => (
-                                                <AlertRow key={i} alert={a} />
-                                            ))}
+                                            {profile.recent_alerts.slice(0, 5).map((a, i) => <AlertRow key={i} alert={a} />)}
                                         </Section>
                                     )}
-
-                                    {/* 48h timeline */}
-                                    {(profile.timeline?.length > 0) && (
+                                    {profile.timeline?.length > 0 && (
                                         <Section label="48h Timeline">
                                             {profile.timeline.slice(0, 8).map((ev, i) => (
                                                 <div key={i} style={{ display: "flex", gap: 8, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
@@ -500,8 +614,6 @@ export default function ForceGraph({ onNodeClick }) {
                                             ))}
                                         </Section>
                                     )}
-
-                                    {/* Connections */}
                                     {profile.connections && Object.keys(profile.connections).length > 0 && (
                                         <Section label="Connections">
                                             {Object.entries(profile.connections).map(([type, items]) => (
@@ -516,15 +628,10 @@ export default function ForceGraph({ onNodeClick }) {
                                             ))}
                                         </Section>
                                     )}
-
-                                    {/* Threat contribution */}
                                     {profile.threat_contribution != null && (
                                         <Section label="Threat Contribution">
                                             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                                <div style={{
-                                                    flex: 1, height: 6, borderRadius: 3,
-                                                    background: "rgba(255,255,255,0.06)",
-                                                }}>
+                                                <div style={{ flex: 1, height: 6, borderRadius: 3, background: "rgba(255,255,255,0.06)" }}>
                                                     <div style={{
                                                         height: "100%", borderRadius: 3,
                                                         width: `${Math.min(100, profile.threat_contribution)}%`,
@@ -539,11 +646,8 @@ export default function ForceGraph({ onNodeClick }) {
                                     )}
                                 </>
                             )}
-
                             {!profileLoad && !profile && (
-                                <div style={{ color: "#334155", fontSize: 11, textAlign: "center", padding: 24 }}>
-                                    No profile data available
-                                </div>
+                                <div style={{ color: "#334155", fontSize: 11, textAlign: "center", padding: 24 }}>No profile data available</div>
                             )}
                         </div>
                     </>
@@ -565,10 +669,10 @@ function Section({ label, children }) {
 }
 
 function AlertRow({ alert }) {
-    const sevColor = { critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }[alert.severity] || "#64748b"
+    const c = { critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }[alert.severity] || "#64748b"
     return (
         <div style={{ display: "flex", gap: 6, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.03)", alignItems: "flex-start" }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: sevColor, marginTop: 3, flexShrink: 0 }} />
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: c, marginTop: 3, flexShrink: 0 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 10, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {alert.title || alert.alert_type || "Alert"}

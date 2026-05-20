@@ -65,76 +65,98 @@ class EntityLinker:
     # ── Cache loading ──────────────────────────────────────────────────────
 
     def load_cache(self, db=None):
-        """Load entity caches from DB. Called once on startup."""
+        """Load entity caches from DB. Each table query is independent so one
+        missing/broken table never blocks the others."""
         own_db = db is None
         if own_db:
             ctx = get_db()
             db = ctx.__enter__()
         try:
-            cables = db.query(
-                CableSegment.id, CableSegment.cable_name,
-                CableSegment.midpoint_lat, CableSegment.midpoint_lon,
-                CableSegment.system_id,
-            ).all()
-            self._cables = [
-                {"id": str(r.system_id or r.id), "name": r.cable_name or "",
-                 "lat": r.midpoint_lat or 0.0, "lon": r.midpoint_lon or 0.0}
-                for r in cables if r.midpoint_lat is not None
-            ]
+            try:
+                cables = db.query(
+                    CableSegment.id, CableSegment.cable_name,
+                    CableSegment.midpoint_lat, CableSegment.midpoint_lon,
+                    CableSegment.system_id,
+                ).all()
+                self._cables = [
+                    {"id": str(r.system_id or r.id), "name": r.cable_name or "",
+                     "lat": r.midpoint_lat or 0.0, "lon": r.midpoint_lon or 0.0}
+                    for r in cables if r.midpoint_lat is not None
+                ]
+            except Exception as _e:
+                print(f"[entity-linker] cables load error: {_e}")
 
-            ports = db.query(
-                PortBoundary.id, PortBoundary.port_name,
-                PortBoundary.latitude, PortBoundary.longitude,
-                PortBoundary.system_id,
-            ).all()
-            self._ports = [
-                {"id": str(r.system_id or r.id), "name": r.port_name or "",
-                 "lat": r.latitude or 0.0, "lon": r.longitude or 0.0}
-                for r in ports if r.latitude is not None
-            ]
+            try:
+                ports = db.query(
+                    PortBoundary.id, PortBoundary.port_name,
+                    PortBoundary.latitude, PortBoundary.longitude,
+                    PortBoundary.system_id,
+                ).all()
+                self._ports = [
+                    {"id": str(r.system_id or r.id), "name": r.port_name or "",
+                     "lat": r.latitude or 0.0, "lon": r.longitude or 0.0}
+                    for r in ports if r.latitude is not None
+                ]
+            except Exception as _e:
+                print(f"[entity-linker] ports load error: {_e}")
 
-            airports = db.query(
-                Airport.id, Airport.name, Airport.iata_code,
-                Airport.latitude, Airport.longitude,
-            ).all()
-            self._airports = [
-                {"id": str(r.id), "name": r.name or r.iata_code or "",
-                 "lat": r.latitude or 0.0, "lon": r.longitude or 0.0}
-                for r in airports if r.latitude is not None
-            ]
+            try:
+                airports = db.query(
+                    Airport.id, Airport.name, Airport.iata_code,
+                    Airport.latitude, Airport.longitude,
+                ).all()
+                self._airports = [
+                    {"id": str(r.id), "name": r.name or r.iata_code or "",
+                     "lat": r.latitude or 0.0, "lon": r.longitude or 0.0}
+                    for r in airports if r.latitude is not None
+                ]
+            except Exception as _e:
+                print(f"[entity-linker] airports load error: {_e}")
 
-            wz = db.query(
-                WatchZone.id, WatchZone.name,
-                WatchZone.center_lat, WatchZone.center_lon, WatchZone.radius_km,
-            ).all()
-            self._watch_zones = [
-                {"id": str(r.id), "name": r.name or "",
-                 "lat": r.center_lat or 0.0, "lon": r.center_lon or 0.0,
-                 "radius_km": r.radius_km or 50.0}
-                for r in wz if r.center_lat is not None
-            ]
+            try:
+                wz = db.query(
+                    WatchZone.id, WatchZone.name,
+                    WatchZone.center_lat, WatchZone.center_lon, WatchZone.radius_km,
+                ).all()
+                self._watch_zones = [
+                    {"id": str(r.id), "name": r.name or "",
+                     "lat": r.center_lat or 0.0, "lon": r.center_lon or 0.0,
+                     "radius_km": r.radius_km or 50.0}
+                    for r in wz if r.center_lat is not None
+                ]
+            except Exception as _e:
+                print(f"[entity-linker] watch_zones load error: {_e}")
 
-            sz = db.query(
-                StrategicZone.id, StrategicZone.name,
-                StrategicZone.center_lat, StrategicZone.center_lon,
-            ).filter(StrategicZone.active == True).all()
-            self._strategic_zones = [
-                {"id": str(r.id), "name": r.name or "",
-                 "lat": r.center_lat or 0.0, "lon": r.center_lon or 0.0}
-                for r in sz if r.center_lat is not None
-            ]
+            try:
+                # Try with active filter first; fall back to all zones if column missing
+                try:
+                    sz = db.query(
+                        StrategicZone.id, StrategicZone.name,
+                        StrategicZone.center_lat, StrategicZone.center_lon,
+                    ).filter(StrategicZone.active == True).all()
+                except Exception:
+                    sz = db.query(
+                        StrategicZone.id, StrategicZone.name,
+                        StrategicZone.center_lat, StrategicZone.center_lon,
+                    ).all()
+                self._strategic_zones = [
+                    {"id": str(r.id), "name": r.name or "",
+                     "lat": r.center_lat or 0.0, "lon": r.center_lon or 0.0}
+                    for r in sz if r.center_lat is not None
+                ]
+            except Exception as _e:
+                print(f"[entity-linker] strategic_zones load error: {_e}")
 
+        finally:
+            # Always mark loaded so link methods don't no-op
             with self._lock:
                 self._loaded = True
-
-            print(f"[entity-linker] cache loaded: cables={len(self._cables)} "
-                  f"ports={len(self._ports)} airports={len(self._airports)} "
-                  f"zones={len(self._watch_zones)}+{len(self._strategic_zones)}")
-        except Exception as ex:
-            print(f"[entity-linker] load_cache error: {ex}")
-        finally:
             if own_db:
                 ctx.__exit__(None, None, None)
+
+        print(f"[entity-linker] cache loaded: cables={len(self._cables)} "
+              f"ports={len(self._ports)} airports={len(self._airports)} "
+              f"zones={len(self._watch_zones)}+{len(self._strategic_zones)}")
 
     # ── Public link methods ────────────────────────────────────────────────
 
@@ -143,10 +165,14 @@ class EntityLinker:
                    title: str = '', raw_json: dict = None):
         """Write OntologyLink rows for an alert."""
         if not self._loaded:
+            print(f"[entity-linker] link_alert skipped — cache not loaded (alert={alert_id})")
             return
-        links = self._proximity_links(source_type, alert_id, lat, lon)
-        links += self._mention_links(source_type, alert_id, title)
-        self._persist_links(links)
+        try:
+            links = self._proximity_links(source_type, alert_id, lat, lon)
+            links += self._mention_links(source_type, alert_id, title)
+            self._persist_links(links)
+        except Exception as ex:
+            print(f"[entity-linker] link_alert FAILED ({alert_id}): {type(ex).__name__}: {ex}")
 
     def link_article(self, url: str,
                      lat: Optional[float], lon: Optional[float],
