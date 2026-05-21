@@ -23,6 +23,7 @@ import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
 import GlobeRegionalScanLayer   from "../globe/GlobeRegionalScanLayer.jsx"
+import GlobeSurgeLayer          from "../globe/GlobeSurgeLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -402,6 +403,7 @@ export default function GlobeView({
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
                 <GlobePOILayer          enabled={poiEnabled} />
                 <GlobeEventsLayer       enabled={eventsEnabled} precisionEnabled={precisionEventsEnabled} bounds={viewBounds} minRelevance={eventsMinRelevance} />
+                <GlobeSurgeLayer        enabled={eventsEnabled} />
                 {cityLabelsEnabled && (
                     <ImageryLayer imageryProvider={esriLabelsProvider} alpha={1.0} maximumTerrainLevel={19} />
                 )}

@@ -27,6 +27,21 @@ const DET_CONFIG = {
 
 const SEV_COLOR = { critical: "#FF3B30", high: "#FF9500", medium: "#FFCC00", info: "#34C759" }
 
+const DETECTION_EXPLANATIONS = {
+    FIRE:                   "Active fire detected in satellite imagery. High spectral signature consistent with combustion. Requires immediate assessment.",
+    SMOKE:                  "Smoke plume detected. May indicate fire, industrial incident, or controlled burn. Monitor for escalation.",
+    BURN_SCAR:              "Area of recent burning detected — darker spectral signature compared to baseline imagery from 30+ days ago.",
+    RUNWAY_CHANGE:          "Change detected at or near an airfield. May indicate new construction, expansion, or damage to runway or taxiway infrastructure.",
+    PORT_CHANGE:            "Change detected at or near a maritime port. May indicate new berths, infrastructure expansion, unusual vessel concentration, or construction.",
+    ENERGY_CHANGE:          "Change detected near energy infrastructure (refinery, pipeline, storage facility). May indicate expansion, damage, or new construction.",
+    UNKNOWN_COMPOUND:       "New enclosed or walled structure detected with no matching record in our infrastructure database. Location and construction pattern require assessment.",
+    VEHICLE_CLUSTER:        "Unusual concentration of vehicles detected. May indicate military staging, logistics activity, or large-scale operations.",
+    EXCAVATION:             "Large-scale ground disturbance detected. Consistent with excavation, earthworks, or site preparation preceding construction.",
+    INFRASTRUCTURE_CHANGE:  "Change in built-up area or infrastructure detected near a known strategic asset.",
+    MILITARY_ACTIVITY:      "Change pattern near known or suspected military facility. May indicate new construction, equipment deployment, or operational activity.",
+    default:                "Spectral change detected in satellite imagery compared to baseline from 30+ days ago.",
+}
+
 function detColor(type) {
     return DET_CONFIG[type]?.color || "#8E8E93"
 }
@@ -100,15 +115,42 @@ function DetectionTooltip({ det, x, y, visible, onClose, onSuppress }) {
             </div>
 
             <div style={{ padding: "10px 12px" }}>
+                {/* What this means */}
+                <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 4 }}>
+                        What this means
+                    </div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.82)", lineHeight: 1.5 }}>
+                        {DETECTION_EXPLANATIONS[p.detection_type] || DETECTION_EXPLANATIONS.default}
+                    </div>
+                </div>
+
                 {/* Vision analysis */}
                 {p.claude_vision_analysis && (
-                    <div style={{ fontSize: 11, lineHeight: 1.5, color: "rgba(255,255,255,0.8)", marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, lineHeight: 1.5, color: "rgba(255,255,255,0.65)", marginBottom: 8, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>
                         {p.claude_vision_analysis}
                     </div>
                 )}
 
+                {/* Confidence bar */}
+                {p.confidence != null && (() => {
+                    const pct = Math.round(p.confidence * 100)
+                    const col = pct >= 80 ? "#34C759" : pct >= 60 ? "#FF9500" : "#FF3B30"
+                    return (
+                        <div style={{ marginBottom: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 3 }}>
+                                <span>Confidence</span>
+                                <span style={{ fontWeight: 600, color: col }}>{pct}%</span>
+                            </div>
+                            <div style={{ height: 4, background: "rgba(255,255,255,0.08)", borderRadius: 2, overflow: "hidden" }}>
+                                <div style={{ height: "100%", width: `${pct}%`, background: col, borderRadius: 2, transition: "width 0.4s ease" }} />
+                            </div>
+                        </div>
+                    )
+                })()}
+
                 {/* Meta rows */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
                     {p.nearest_asset_name && (
                         <MetaRow label="Nearest asset">
                             {p.nearest_asset_name}
@@ -122,9 +164,6 @@ function DetectionTooltip({ det, x, y, visible, onClose, onSuppress }) {
                     <MetaRow label="Coordinates">
                         {p.centroid_lat?.toFixed(4)}N {p.centroid_lon?.toFixed(4)}E
                     </MetaRow>
-                    <MetaRow label="Confidence">
-                        {(p.confidence * 100).toFixed(0)}%
-                    </MetaRow>
                     {p.image_date && (
                         <MetaRow label="Image date">
                             {p.image_date.slice(0, 10)}
@@ -133,11 +172,16 @@ function DetectionTooltip({ det, x, y, visible, onClose, onSuppress }) {
                     )}
                 </div>
 
+                {/* Source footer */}
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", marginBottom: 8, letterSpacing: "0.05em" }}>
+                    Source: Sentinel-2 (10m resolution, 5-day revisit)
+                </div>
+
                 {/* Suppress button */}
                 <button
                     onClick={() => onSuppress(p.detection_id)}
                     style={{
-                        marginTop: 10, width: "100%", padding: "6px 0",
+                        width: "100%", padding: "6px 0",
                         borderRadius: 6, background: "rgba(255,59,48,0.1)",
                         border: "1px solid rgba(255,59,48,0.25)",
                         color: "#FF3B30", fontSize: 11, cursor: "pointer",

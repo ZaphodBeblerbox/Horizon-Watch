@@ -27,9 +27,10 @@ function whenYTReady(cb) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function NewsReels({ onClose }) {
-    const [shorts,  setShorts]  = useState([])
-    const [index,   setIndex]   = useState(0)
-    const [loading, setLoading] = useState(true)
+    const [shorts,       setShorts]       = useState([])
+    const [index,        setIndex]        = useState(0)
+    const [loading,      setLoading]      = useState(true)
+    const [hasInteracted, setHasInteracted] = useState(false)
 
     const playerRef    = useRef(null)
     const playerDivRef = useRef(null)
@@ -78,7 +79,14 @@ export default function NewsReels({ onClose }) {
                     origin:         window.location.origin,
                 },
                 events: {
-                    onReady: (e) => { e.target.playVideo() },
+                    onReady: (e) => {
+                        e.target.playVideo()
+                        if (hasInteracted) {
+                            try { e.target.unMute(); e.target.setVolume(100) } catch (_) {}
+                        } else {
+                            e.target.mute()
+                        }
+                    },
                     onStateChange: (e) => {
                         if (e.data === window.YT.PlayerState.ENDED)
                             setIndex(i => (i + 1) % shorts.length)
@@ -95,11 +103,15 @@ export default function NewsReels({ onClose }) {
         if (!videoId) return
         try {
             playerRef.current.loadVideoById({ videoId, startSeconds: 0 })
-            playerRef.current.mute()
+            if (hasInteracted) {
+                playerRef.current.unMute(); playerRef.current.setVolume(100)
+            } else {
+                playerRef.current.mute()
+            }
         } catch (e) {
             console.warn("[reels] loadVideoById failed:", e)
         }
-    }, [index, shorts])
+    }, [index, shorts, hasInteracted])
 
     // Destroy on unmount
     useEffect(() => {
@@ -111,7 +123,15 @@ export default function NewsReels({ onClose }) {
         }
     }, [])
 
-    // Swipe only — no tap handling
+    const handleTap = useCallback(() => {
+        if (!hasInteracted) {
+            setHasInteracted(true)
+            if (playerRef.current) {
+                try { playerRef.current.unMute(); playerRef.current.setVolume(100) } catch (_) {}
+            }
+        }
+    }, [hasInteracted])
+
     const handleTouchStart = useCallback((e) => {
         touchStartY.current    = e.touches[0].clientY
         touchStartTime.current = Date.now()
@@ -143,6 +163,7 @@ export default function NewsReels({ onClose }) {
         <div
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
+            onClick={handleTap}
             style={{
                 position: "fixed", inset: 0, background: "#000",
                 zIndex: 9999, display: "flex", flexDirection: "column",
@@ -163,6 +184,18 @@ export default function NewsReels({ onClose }) {
                     color: "rgba(255,255,255,0.4)", fontSize: 13,
                 }}>
                     Loading news reels…
+                </div>
+            )}
+
+            {/* Tap for sound hint */}
+            {!hasInteracted && !loading && (
+                <div style={{
+                    position: "absolute", bottom: 100, left: "50%",
+                    transform: "translateX(-50%)", zIndex: 11,
+                    color: "rgba(255,255,255,0.35)", fontSize: 11,
+                    pointerEvents: "none", whiteSpace: "nowrap",
+                }}>
+                    Tap for sound
                 </div>
             )}
 
