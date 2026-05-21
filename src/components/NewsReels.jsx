@@ -27,21 +27,17 @@ function whenYTReady(cb) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function NewsReels({ onClose }) {
-    const [shorts,         setShorts]         = useState([])
-    const [index,          setIndex]          = useState(0)
-    const [loading,        setLoading]        = useState(true)
-    const [hasInteracted,  setHasInteracted]  = useState(false)
+    const [shorts,  setShorts]  = useState([])
+    const [index,   setIndex]   = useState(0)
+    const [loading, setLoading] = useState(true)
 
-    const playerRef        = useRef(null)
-    const playerDivRef     = useRef(null)
-    const hasInteractedRef = useRef(false)   // mirrors state without stale-closure
-    const touchStartY      = useRef(null)
-    const touchStartTime   = useRef(null)
+    const playerRef    = useRef(null)
+    const playerDivRef = useRef(null)
+    const touchStartY  = useRef(null)
+    const touchStartTime = useRef(null)
 
-    // Load YT API once on mount
     useEffect(() => { loadYTApi() }, [])
 
-    // Fetch shorts
     useEffect(() => {
         fetch(`${API_BASE}/api/news/shorts`)
             .then(r => r.json())
@@ -60,7 +56,7 @@ export default function NewsReels({ onClose }) {
         setIndex(i => (i - 1 + shorts.length) % shorts.length)
     }, [shorts.length])
 
-    // Create player ONCE when shorts first load
+    // Create player once on first load
     useEffect(() => {
         if (!shorts.length || loading) return
         whenYTReady(() => {
@@ -92,25 +88,20 @@ export default function NewsReels({ onClose }) {
         })
     }, [shorts, loading])
 
-    // Load new video into existing player on index change
+    // Load new video on index change
     useEffect(() => {
         if (!shorts.length || !playerRef.current) return
         const videoId = shorts[index]?.video_id
         if (!videoId) return
         try {
             playerRef.current.loadVideoById({ videoId, startSeconds: 0 })
-            if (hasInteractedRef.current) {
-                playerRef.current.unMute()
-                playerRef.current.setVolume(100)
-            } else {
-                playerRef.current.mute()
-            }
+            playerRef.current.mute()
         } catch (e) {
             console.warn("[reels] loadVideoById failed:", e)
         }
     }, [index, shorts])
 
-    // Destroy player on unmount only
+    // Destroy on unmount
     useEffect(() => {
         return () => {
             if (playerRef.current) {
@@ -120,19 +111,7 @@ export default function NewsReels({ onClose }) {
         }
     }, [])
 
-    // Unmute on first interaction
-    const handleTap = useCallback(() => {
-        if (!hasInteractedRef.current) {
-            hasInteractedRef.current = true
-            setHasInteracted(true)
-            try {
-                playerRef.current?.unMute()
-                playerRef.current?.setVolume(100)
-            } catch (_) {}
-        }
-    }, [])
-
-    // Touch
+    // Swipe only — no tap handling
     const handleTouchStart = useCallback((e) => {
         touchStartY.current    = e.touches[0].clientY
         touchStartTime.current = Date.now()
@@ -145,12 +124,9 @@ export default function NewsReels({ onClose }) {
         touchStartY.current = null
         if (Math.abs(deltaY) > 60 || (Math.abs(deltaY) > 30 && deltaT < 300)) {
             if (deltaY > 0) goNext(); else goPrev()
-        } else {
-            handleTap()
         }
-    }, [goNext, goPrev, handleTap])
+    }, [goNext, goPrev])
 
-    // Keyboard
     useEffect(() => {
         const onKey = (e) => {
             if (e.key === "ArrowDown") goNext()
@@ -167,27 +143,16 @@ export default function NewsReels({ onClose }) {
         <div
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
-            onClick={handleTap}
             style={{
                 position: "fixed", inset: 0, background: "#000",
                 zIndex: 9999, display: "flex", flexDirection: "column",
                 overflow: "hidden",
             }}
         >
-            {/* Full-screen player div */}
+            {/* Full-screen player */}
             {!loading && shorts.length > 0 && (
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                     <div ref={playerDivRef} style={{ width: "100%", height: "100%" }} />
-                    {/* Hide YouTube controls bar at bottom */}
-                    <div style={{
-                        position: "absolute", bottom: 0, left: 0, right: 0,
-                        height: "15%", background: "#000", zIndex: 2,
-                    }} />
-                    {/* Hide YouTube title/branding at top */}
-                    <div style={{
-                        position: "absolute", top: 0, left: 0, right: 0,
-                        height: "10%", background: "#000", zIndex: 2,
-                    }} />
                 </div>
             )}
 
@@ -201,7 +166,7 @@ export default function NewsReels({ onClose }) {
                 </div>
             )}
 
-            {/* Top bar — close button only */}
+            {/* Close button — top right */}
             <div style={{
                 position: "absolute", top: 0, left: 0, right: 0, zIndex: 10,
                 padding: "calc(max(48px, env(safe-area-inset-top) + 12px)) 16px 16px",
@@ -220,10 +185,10 @@ export default function NewsReels({ onClose }) {
                 >×</button>
             </div>
 
-            {/* Bottom info overlay */}
+            {/* Bottom info: channel + title + date */}
             {current && (
                 <div style={{
-                    position: "absolute", bottom: 0, left: 0, right: 72, zIndex: 10,
+                    position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 10,
                     padding: "0 16px calc(max(40px, env(safe-area-inset-bottom) + 24px))",
                     background: "linear-gradient(to top, rgba(0,0,0,0.75), transparent)",
                     pointerEvents: "none",
@@ -257,104 +222,6 @@ export default function NewsReels({ onClose }) {
                     </div>
                 </div>
             )}
-
-            {/* Right controls */}
-            <div style={{
-                position: "absolute", right: 12,
-                bottom: "calc(max(80px, env(safe-area-inset-bottom) + 60px))",
-                zIndex: 10, display: "flex", flexDirection: "column",
-                gap: 12, alignItems: "center",
-            }}>
-                {/* Mute toggle */}
-                <button
-                    onClick={(e) => { e.stopPropagation(); handleTap() }}
-                    style={{
-                        background: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.15)",
-                        borderRadius: "50%", width: 44, height: 44,
-                        color: "white", fontSize: 18, cursor: "pointer",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        backdropFilter: "blur(8px)", fontFamily: "inherit",
-                    }}
-                >
-                    {hasInteracted ? "🔊" : "🔇"}
-                </button>
-
-                {/* Open in YouTube */}
-                <a
-                    href={current?.shorts_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    style={{
-                        background: "rgba(255,59,48,0.15)", border: "1px solid rgba(255,59,48,0.3)",
-                        borderRadius: "50%", width: 44, height: 44,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        color: "#FF3B30", fontSize: 11, fontWeight: 700,
-                        textDecoration: "none", backdropFilter: "blur(8px)",
-                    }}
-                >YT</a>
-
-                {/* Counter */}
-                <div style={{
-                    color: "rgba(255,255,255,0.5)", fontSize: 10,
-                    textAlign: "center", lineHeight: 1.4,
-                }}>
-                    {index + 1}<br />
-                    <span style={{ fontSize: 8 }}>/ {shorts.length}</span>
-                </div>
-            </div>
-
-            {/* Left progress dots */}
-            <div style={{
-                position: "absolute", left: 8, top: "50%",
-                transform: "translateY(-50%)", zIndex: 10,
-                display: "flex", flexDirection: "column", gap: 3,
-            }}>
-                {shorts
-                    .slice(Math.max(0, index - 5), Math.min(shorts.length, index + 6))
-                    .map((_, i) => {
-                        const actual = Math.max(0, index - 5) + i
-                        return (
-                            <div
-                                key={actual}
-                                onClick={(e) => { e.stopPropagation(); setIndex(actual) }}
-                                style={{
-                                    width:      3,
-                                    height:     actual === index ? 24 : 5,
-                                    borderRadius: 2,
-                                    background: actual === index ? "white"
-                                              : actual < index   ? "rgba(255,255,255,0.5)"
-                                                                 : "rgba(255,255,255,0.2)",
-                                    cursor: "pointer", transition: "all 0.2s",
-                                }}
-                            />
-                        )
-                    })}
-            </div>
-
-            {/* First-load hint */}
-            {!hasInteracted && !loading && shorts.length > 0 && (
-                <div style={{
-                    position: "absolute", top: "50%", left: "50%",
-                    transform: "translate(-50%, -50%)",
-                    zIndex: 11, textAlign: "center", pointerEvents: "none",
-                    animation: "nr-fadeout 4s forwards 1s",
-                }}>
-                    <div style={{
-                        background: "rgba(0,0,0,0.6)", borderRadius: 12,
-                        padding: "10px 16px", backdropFilter: "blur(8px)",
-                    }}>
-                        <div style={{ color: "white", fontSize: 13 }}>Tap to unmute</div>
-                        <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: 3 }}>
-                            Swipe up/down to browse
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            <style>{`
-                @keyframes nr-fadeout { 0%,80% { opacity:1; } 100% { opacity:0; } }
-            `}</style>
         </div>
     )
 }
