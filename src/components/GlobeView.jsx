@@ -108,6 +108,8 @@ export default function GlobeView({
     precisionEventsEnabled = true,
     autoModeEnabled = false,
     regionalScanEnabled = false,
+    scanCategories = null,
+    scanEssentialOnly = false,
     // Director Mode scene (null when inactive)
     directorScene = null,
     // Data props (optional — GlobeView fetches internally when null)
@@ -432,7 +434,11 @@ export default function GlobeView({
                 <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />
 
                 {/* ── UAE Regional Scan detections ─────────────────────────────── */}
-                <GlobeRegionalScanLayer enabled={regionalScanEnabled} />
+                <GlobeRegionalScanLayer
+                    enabled={regionalScanEnabled}
+                    categories={scanCategories}
+                    essentialOnly={scanEssentialOnly}
+                />
 
                 {/* ── Passive auto mode ────────────────────────────────────────── */}
                 <GlobeAutoMode enabled={autoModeEnabled} isMobile={isMobile} />

@@ -1440,6 +1440,8 @@ export default function App() {
                             onOverwatchBounds={handleOverwatchBounds}
                             satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
                             regionalScanEnabled={activeWorkspace?.layers?.showRegionalScan ?? false}
+                            scanCategories={activeWorkspace?.layers?.scanCategories ?? null}
+                            scanEssentialOnly={activeWorkspace?.layers?.scanEssentialOnly ?? false}
                             directorScene={directorScene}
                             autoModeEnabled={showAutoMode}
                         />

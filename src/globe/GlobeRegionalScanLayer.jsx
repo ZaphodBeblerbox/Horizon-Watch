@@ -209,74 +209,20 @@ function MetaRow({ label, children }) {
     )
 }
 
-// ── Filter panel ──────────────────────────────────────────────────────────────
-
-function FilterPanel({ activeFilters, onToggle, detections }) {
-    const counts = {}
-    detections.forEach(f => {
-        const cat = f.properties?.category || DET_CONFIG[f.properties?.detection_type]?.category || "infrastructure"
-        counts[cat] = (counts[cat] || 0) + 1
-    })
-    return (
-        <div style={{
-            position: "fixed", bottom: 130, right: 12,
-            background: "rgba(8,16,32,0.88)",
-            backdropFilter: "blur(12px)",
-            WebkitBackdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 8, padding: "8px 10px",
-            zIndex: 8100, fontFamily: "Inter, system-ui, sans-serif",
-            minWidth: 148,
-        }}>
-            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                Sentinel Filters
-            </div>
-            {FILTER_CATEGORIES.map(cat => {
-                const active = activeFilters.has(cat.key)
-                const n = counts[cat.key] || 0
-                return (
-                    <button
-                        key={cat.key}
-                        onClick={() => onToggle(cat.key)}
-                        style={{
-                            display: "flex", alignItems: "center", justifyContent: "space-between",
-                            width: "100%", padding: "4px 8px", marginBottom: 3,
-                            background: active ? cat.color + "22" : "transparent",
-                            border: `1px solid ${active ? cat.color + "55" : "rgba(255,255,255,0.07)"}`,
-                            borderRadius: 5,
-                            color: active ? cat.color : "rgba(255,255,255,0.35)",
-                            cursor: "pointer", fontSize: 10, fontWeight: active ? 700 : 400,
-                            textAlign: "left", gap: 6,
-                        }}
-                    >
-                        <span>{cat.icon} {cat.label}</span>
-                        {n > 0 && (
-                            <span style={{
-                                background: active ? cat.color + "33" : "rgba(255,255,255,0.07)",
-                                color: active ? cat.color : "rgba(255,255,255,0.4)",
-                                borderRadius: 3, padding: "1px 5px", fontSize: 9, fontWeight: 700,
-                            }}>{n}</span>
-                        )}
-                    </button>
-                )
-            })}
-        </div>
-    )
-}
-
 // ── Main layer ────────────────────────────────────────────────────────────────
 
-export default function GlobeRegionalScanLayer({ enabled }) {
-    const { viewer }              = useCesium()
-    const [detections, setDets]   = useState([])
-    const [tiles, setTiles]       = useState([])
-    const [selDet, setSelDet]     = useState(null)
-    const [tooltipPos, setTPos]   = useState({ x: 0, y: 0 })
-    const [tooltipVis, setTVis]   = useState(false)
-    const [activeFilters, setFilters] = useState(new Set(ALL_CATEGORIES))
-    const centroidRef             = useRef(null)
-    const knownIdsRef             = useRef(new Set())
-    const imageryLayersRef        = useRef([])
+const ALL_CATEGORY_KEYS = new Set(FILTER_CATEGORIES.map(c => c.key))
+
+export default function GlobeRegionalScanLayer({ enabled, categories, essentialOnly }) {
+    const { viewer }            = useCesium()
+    const [detections, setDets] = useState([])
+    const [tiles, setTiles]     = useState([])
+    const [selDet, setSelDet]   = useState(null)
+    const [tooltipPos, setTPos] = useState({ x: 0, y: 0 })
+    const [tooltipVis, setTVis] = useState(false)
+    const centroidRef           = useRef(null)
+    const knownIdsRef           = useRef(new Set())
+    const imageryLayersRef      = useRef([])
 
     // Fetch latest detections + tiles
     useEffect(() => {
@@ -394,22 +340,16 @@ export default function GlobeRegionalScanLayer({ enabled }) {
         }
     }, [handleClose])
 
-    const toggleFilter = useCallback((key) => {
-        setFilters(prev => {
-            const next = new Set(prev)
-            if (next.has(key)) next.delete(key)
-            else next.add(key)
-            return next
-        })
-    }, [])
-
     if (!enabled) return null
 
-    // Apply category filter
+    // Apply category + essential-only filters
+    const activeCats = categories?.length ? new Set(categories.map(c => c.toLowerCase())) : ALL_CATEGORY_KEYS
     const visibleDets = detections.filter(f => {
         const p   = f.properties || {}
         const cat = p.category || DET_CONFIG[p.detection_type]?.category || "infrastructure"
-        return activeFilters.has(cat)
+        if (!activeCats.has(cat)) return false
+        if (essentialOnly && (p.importance ?? 3) < 4) return false
+        return true
     })
 
     return (
@@ -506,12 +446,6 @@ export default function GlobeRegionalScanLayer({ enabled }) {
                 visible={tooltipVis}
                 onClose={handleClose}
                 onSuppress={handleSuppress}
-            />
-
-            <FilterPanel
-                activeFilters={activeFilters}
-                onToggle={toggleFilter}
-                detections={detections}
             />
         </>
     )

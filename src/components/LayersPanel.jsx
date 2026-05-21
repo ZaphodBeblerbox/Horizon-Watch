@@ -102,7 +102,35 @@ function RelevanceFilter({ value = 4, onChange }) {
     )
 }
 
+const ALL_SCAN_CATEGORIES = ["environmental", "military", "maritime", "aviation", "energy", "infrastructure"]
+const SCAN_CAT_CONFIG = [
+    { key: "environmental", label: "Environmental", icon: "🌿", color: "#34C759" },
+    { key: "military",      label: "Military",      icon: "🎖",  color: "#FF3B30" },
+    { key: "maritime",      label: "Maritime",      icon: "⚓",  color: "#34AADC" },
+    { key: "aviation",      label: "Aviation",      icon: "✈",  color: "#5856D6" },
+    { key: "energy",        label: "Energy",        icon: "⚡",  color: "#FFCC00" },
+    { key: "infrastructure",label: "Infra",         icon: "🏗",  color: "#FF9500" },
+]
+
 function LayerRows3D({ active, onToggle, onLayerSet }) {
+    const showRegionalScan = active.showRegionalScan ?? false
+    const [scanEssentialOnly, setScanEssentialOnly] = useState(active.scanEssentialOnly ?? false)
+    const [scanCategories,    setScanCategories]    = useState(() => active.scanCategories ?? ALL_SCAN_CATEGORIES)
+
+    const toggleScanCategory = (key) => {
+        setScanCategories(prev => {
+            const next = prev.includes(key) ? prev.filter(c => c !== key) : [...prev, key]
+            onLayerSet?.("scanCategories", next)
+            return next
+        })
+    }
+    const toggleEssentialOnly = () => {
+        setScanEssentialOnly(prev => {
+            onLayerSet?.("scanEssentialOnly", !prev)
+            return !prev
+        })
+    }
+
     return (
         <>
             <SectionHeader label="Imagery" />
@@ -207,12 +235,72 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
                 toggled={active.threatHeatmap ?? false}
                 onToggle={() => onToggle("threatHeatmap")}
             />
-            <LayerRow
-                label="UAE Regional Scan"
-                hint="Flagged changes from latest Sentinel-2 scan"
-                toggled={active.showRegionalScan ?? false}
-                onToggle={() => onToggle("showRegionalScan")}
-            />
+            {/* UAE Regional Scan — toggle + inline filters */}
+            <div style={{ marginBottom: showRegionalScan ? 4 : 0 }}>
+                <LayerRow
+                    label="UAE Regional Scan"
+                    hint="Flagged changes from latest Sentinel-2 scan"
+                    toggled={showRegionalScan}
+                    onToggle={() => onToggle("showRegionalScan")}
+                />
+                {showRegionalScan && (
+                    <div style={{ marginTop: 2, marginBottom: 10, paddingLeft: 2 }}>
+                        {/* Essential only */}
+                        <div
+                            onClick={toggleEssentialOnly}
+                            style={{
+                                display: "flex", alignItems: "center", justifyContent: "space-between",
+                                padding: "5px 8px", borderRadius: 6, marginBottom: 6, cursor: "pointer",
+                                background: scanEssentialOnly ? "rgba(255,59,48,0.1)" : "rgba(255,255,255,0.04)",
+                                border: `1px solid ${scanEssentialOnly ? "rgba(255,59,48,0.3)" : "rgba(255,255,255,0.06)"}`,
+                            }}
+                        >
+                            <span style={{
+                                fontSize: 11,
+                                color: scanEssentialOnly ? "#FF3B30" : "rgba(255,255,255,0.5)",
+                                fontWeight: scanEssentialOnly ? 700 : 400,
+                            }}>⚠ Essential only</span>
+                            <div style={{
+                                width: 32, height: 18, borderRadius: 9,
+                                background: scanEssentialOnly ? "#FF3B30" : "rgba(255,255,255,0.1)",
+                                position: "relative", transition: "background 0.2s",
+                            }}>
+                                <div style={{
+                                    position: "absolute", top: 2,
+                                    left: scanEssentialOnly ? 16 : 2,
+                                    width: 14, height: 14, borderRadius: "50%",
+                                    background: "white", transition: "left 0.2s",
+                                }} />
+                            </div>
+                        </div>
+                        {/* Category pills — 2 per row */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                            {SCAN_CAT_CONFIG.map(({ key, label, icon, color }) => {
+                                const active = scanCategories.includes(key)
+                                return (
+                                    <div
+                                        key={key}
+                                        onClick={() => toggleScanCategory(key)}
+                                        style={{
+                                            padding: "4px 6px", borderRadius: 6,
+                                            fontSize: 10, fontWeight: active ? 600 : 400,
+                                            cursor: "pointer", textAlign: "center",
+                                            userSelect: "none", whiteSpace: "nowrap",
+                                            overflow: "hidden", textOverflow: "ellipsis",
+                                            background: active ? color + "22" : "rgba(255,255,255,0.04)",
+                                            border: `1px solid ${active ? color + "55" : "rgba(255,255,255,0.06)"}`,
+                                            color: active ? color : "rgba(255,255,255,0.35)",
+                                            transition: "all 0.15s",
+                                        }}
+                                    >
+                                        {icon} {label}
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
+            </div>
 
             <SectionHeader label="Infrastructure" />
             <LayerRow
