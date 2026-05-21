@@ -93,6 +93,8 @@ onnxruntime
 mapbox-vector-tile
 Pillow
 uvicorn==0.41.0
+ultralytics>=8.0.0
+huggingface_hub>=0.20.0
 websockets==14.2
 wasabi==1.1.3
 weasel==0.4.3

@@ -24,13 +24,41 @@ from typing import Callable, Optional
 import anthropic
 
 from database import (
-    RegionalScanJob, RegionalScanDetection,
+    RegionalScanJob, RegionalScanDetection, RegionalScanTile,
     Airport, PortBoundary, StrategicZone,
     SessionLocal,
 )
 
 # Set from main.py at startup — called to push SSE events to all clients
 sse_push_fn: Optional[Callable] = None
+
+# ── HuggingFace YOLO model registry ───────────────────────────────────────────
+
+MODELS = {
+    "vessels":   "keremberke/yolov8n-ship-detection",
+    "aircraft":  "keremberke/yolov8n-satellite-imagery-detection",
+    "oil_tanks": "keremberke/yolov8n-oil-spill-detection",
+    "defence":   "SkalskiP/yolov8s-military-vehicle-detection",
+}
+
+_loaded_models: dict = {}
+
+
+def load_detection_models():
+    """Download and cache HuggingFace YOLO models. Runs once at startup in a thread."""
+    try:
+        from ultralytics import YOLO
+        for key, hub_id in MODELS.items():
+            try:
+                _loaded_models[key] = YOLO(hub_id)
+                print(f"[scanner] model loaded: {key} ({hub_id})")
+            except Exception as e:
+                print(f"[scanner] model {key} unavailable: {e}")
+                _loaded_models[key] = None
+    except ImportError:
+        print("[scanner] ultralytics not installed — YOLO models disabled, using ONNX fallback")
+        for key in MODELS:
+            _loaded_models[key] = None
 
 
 # ── Sentinel-2 tile fetch (sync, runs in executor) ────────────────────────────
@@ -42,8 +70,9 @@ def _fetch_tile_sync(
     max_cloud: int = 30,
     width: int = 256,
     height: int = 256,
+    band_key: str = "true-colour",
 ) -> Optional[dict]:
-    """Fetch Sentinel-2 true-colour tile via Copernicus Process API.
+    """Fetch Sentinel-2 tile via Copernicus Process API.
     Returns {"b64": base64_png, "date": datetime} or None.
     """
     try:
@@ -53,7 +82,7 @@ def _fetch_tile_sync(
         token = _get_token_sync()
         if not token:
             return None
-        evalscript = _EVALSCRIPTS_SCANNER.get("true-colour")
+        evalscript = _EVALSCRIPTS_SCANNER.get(band_key)
         if not evalscript:
             return None
 
@@ -142,6 +171,301 @@ class TileByTileScanner:
                 lat += size
             lon += size
         return tiles
+
+    # ── Multi-band fetch ──────────────────────────────────────────────────────
+
+    async def _fetch_tile_multiband(
+        self, tile: dict, region: dict
+    ) -> tuple[Optional[dict], Optional[dict]]:
+        """Fetch 5 current bands + 2 baseline bands concurrently.
+        Returns (current_bands, baseline_bands) keyed by band name, or (None, None) on failure.
+        """
+        loop = asyncio.get_event_loop()
+        w = tile["min_lon"]; s = tile["min_lat"]
+        e = tile["max_lon"]; n = tile["max_lat"]
+        max_days  = region.get("scan_interval_days", 5)
+        max_cloud = region.get("max_cloud_cover", 30)
+
+        CURRENT_BANDS  = ["true-colour", "swir", "false-colour", "ndwi", "ndbi"]
+        BASELINE_BANDS = ["true-colour", "false-colour"]
+
+        async def _fetch(key, max_age, min_age, cloud):
+            result = await loop.run_in_executor(
+                None,
+                lambda k=key, ma=max_age, mi=min_age, c=cloud:
+                    _fetch_tile_sync(w, s, e, n, ma, mi, c, band_key=k),
+            )
+            return key, result
+
+        # Fetch current in batches of 3 to avoid API rate limits
+        current: dict = {}
+        for batch in [CURRENT_BANDS[:3], CURRENT_BANDS[3:]]:
+            results = await asyncio.gather(
+                *[_fetch(k, max_days, 0, max_cloud) for k in batch],
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, tuple):
+                    k, v = r
+                    if v:
+                        current[k] = v
+
+        if not current.get("true-colour"):
+            return None, None
+
+        # Fetch baseline
+        baseline: dict = {}
+        bl_results = await asyncio.gather(
+            *[_fetch(k, 60, 30, 40) for k in BASELINE_BANDS],
+            return_exceptions=True,
+        )
+        for r in bl_results:
+            if isinstance(r, tuple):
+                k, v = r
+                if v:
+                    baseline[k] = v
+
+        return current, baseline or None
+
+    # ── Full spectral analysis ─────────────────────────────────────────────────
+
+    def _analyse_spectral_full(self, current: dict, baseline: Optional[dict], region: dict) -> dict:
+        """Multi-spectral analysis across all fetched band combinations."""
+        try:
+            import numpy as np
+            from PIL import Image
+
+            change_types: list[str] = []
+            scores: dict[str, float] = {}
+
+            def _to_arr(b64: str) -> Optional[np.ndarray]:
+                try:
+                    img_bytes = base64.b64decode(b64)
+                    return np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"), dtype=float) / 255.0
+                except Exception:
+                    return None
+
+            # ── True-colour: fire + smoke ────────────────────────────────────
+            if tc := current.get("true-colour"):
+                arr = _to_arr(tc["b64"])
+                if arr is not None:
+                    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+                    fire_mask  = (r > 0.72) & (g < 0.35) & (b < 0.25)
+                    fire_score = float(np.mean(fire_mask))
+                    if fire_score > 0.008:
+                        change_types.append("FIRE")
+                        scores["FIRE"] = min(fire_score * 60, 1.0)
+                    smoke_mask  = (np.abs(r - g) < 0.08) & (np.abs(g - b) < 0.08) & (r > 0.45) & (r < 0.75)
+                    smoke_score = float(np.mean(smoke_mask))
+                    if smoke_score > 0.06:
+                        change_types.append("SMOKE")
+                        scores["SMOKE"] = min(smoke_score * 10, 1.0)
+                    curr_tc_arr = arr
+
+            # ── SWIR: enhanced fire detection ────────────────────────────────
+            if sw := current.get("swir"):
+                arr = _to_arr(sw["b64"])
+                if arr is not None:
+                    swir_fire = arr[:, :, 0] > 0.6
+                    sf = float(np.mean(swir_fire))
+                    if sf > 0.005 and "FIRE" not in change_types:
+                        change_types.append("FIRE")
+                        scores["FIRE"] = min(sf * 80, 1.0)
+
+            # ── NDWI: water body presence ────────────────────────────────────
+            water_mask = None
+            if nw := current.get("ndwi"):
+                arr = _to_arr(nw["b64"])
+                if arr is not None:
+                    eps = 1e-6
+                    ndwi_val = (arr[:, :, 0] - arr[:, :, 1]) / (arr[:, :, 0] + arr[:, :, 1] + eps)
+                    water_mask = ndwi_val > 0.0
+                    scores["WATER_FRACTION"] = float(np.mean(water_mask))
+
+            # ── NDBI: built-up / construction ────────────────────────────────
+            if nb := current.get("ndbi"):
+                arr = _to_arr(nb["b64"])
+                if arr is not None:
+                    eps = 1e-6
+                    ndbi_val = (arr[:, :, 0] - arr[:, :, 1]) / (arr[:, :, 0] + arr[:, :, 1] + eps)
+                    scores["NDBI_MAX"] = float(np.max(ndbi_val))
+                    scores["BUILT_FRACTION"] = float(np.mean(ndbi_val > 0.1))
+
+            # ── Baseline comparison ───────────────────────────────────────────
+            baseline_available = False
+            if baseline and (tc_bl := baseline.get("true-colour")) and current.get("true-colour"):
+                tc_curr = current["true-colour"]
+                curr_arr = _to_arr(tc_curr["b64"])
+                base_arr = _to_arr(tc_bl["b64"])
+                if curr_arr is not None and base_arr is not None and base_arr.shape == curr_arr.shape:
+                    baseline_available = True
+                    diff = np.abs(curr_arr - base_arr)
+                    mean_diff = float(np.mean(diff))
+                    threshold = region.get("spectral_change_threshold", 0.12)
+                    if mean_diff > threshold:
+                        change_types.append("CHANGE")
+                        scores["CHANGE"] = min(mean_diff * 5, 1.0)
+                    burn_mask = (
+                        (base_arr[:, :, 0] - curr_arr[:, :, 0] > 0.18) &
+                        (base_arr[:, :, 1] - curr_arr[:, :, 1] > 0.12) &
+                        (curr_arr[:, :, 0] < 0.25)
+                    )
+                    burn_score = float(np.mean(burn_mask))
+                    if burn_score > 0.015:
+                        change_types.append("BURN_SCAR")
+                        scores["BURN_SCAR"] = min(burn_score * 30, 1.0)
+
+                    # NDVI change (vegetation loss) from false-colour
+                    if (fc_c := current.get("false-colour")) and (fc_b := baseline.get("false-colour")):
+                        fc_curr = _to_arr(fc_c["b64"])
+                        fc_base = _to_arr(fc_b["b64"])
+                        if fc_curr is not None and fc_base is not None and fc_curr.shape == fc_base.shape:
+                            eps = 1e-6
+                            ndvi_c = (fc_curr[:, :, 0] - fc_curr[:, :, 1]) / (fc_curr[:, :, 0] + fc_curr[:, :, 1] + eps)
+                            ndvi_b = (fc_base[:, :, 0] - fc_base[:, :, 1]) / (fc_base[:, :, 0] + fc_base[:, :, 1] + eps)
+                            ndvi_loss = float(np.mean((ndvi_b - ndvi_c) > 0.15))
+                            if ndvi_loss > 0.05:
+                                change_types.append("VEGETATION_LOSS")
+                                scores["VEGETATION_LOSS"] = min(ndvi_loss * 10, 1.0)
+
+                    # NDBI change (new construction)
+                    if current.get("ndbi") and (nb_b64 := scores.get("BUILT_FRACTION", 0)) > 0.08:
+                        change_types.append("CONSTRUCTION")
+                        scores["CONSTRUCTION"] = min(float(nb_b64) * 5, 1.0)
+
+            max_score = max(scores.values()) if scores else 0.0
+            return {
+                "flagged":            bool(change_types),
+                "change_types":       change_types,
+                "scores":             scores,
+                "max_score":          max_score,
+                "baseline_available": baseline_available,
+                "water_mask":         water_mask,
+            }
+
+        except Exception as e:
+            print(f"[scanner] spectral_full error: {e}")
+            return {"flagged": False, "change_types": [], "scores": {}, "max_score": 0.0,
+                    "baseline_available": False, "water_mask": None}
+
+    # ── YOLO inference ─────────────────────────────────────────────────────────
+
+    def _run_all_models(self, current: dict, tile: dict, water_mask=None) -> list:
+        """Run loaded YOLO models with domain masks. Returns list of detection dicts."""
+        if not _loaded_models:
+            return []
+        detections = []
+        tc_data = current.get("true-colour")
+        if not tc_data:
+            return []
+        try:
+            import numpy as np
+            from PIL import Image
+            tc_bytes = base64.b64decode(tc_data["b64"])
+            tc_pil   = Image.open(io.BytesIO(tc_bytes)).convert("RGB")
+            tc_arr   = np.array(tc_pil)
+            h, w     = tc_arr.shape[:2]
+            bbox = {
+                "min_lon": tile["min_lon"], "min_lat": tile["min_lat"],
+                "max_lon": tile["max_lon"], "max_lat": tile["max_lat"],
+            }
+            land_mask = ~water_mask if water_mask is not None else None
+            domain_masks = {
+                "vessels":   water_mask,
+                "aircraft":  land_mask,
+                "oil_tanks": None,
+                "defence":   land_mask,
+            }
+            for model_key, dmask in domain_masks.items():
+                model = _loaded_models.get(model_key)
+                if model is None:
+                    continue
+                try:
+                    if dmask is not None and dmask.shape == tc_arr.shape[:2]:
+                        masked = tc_arr.copy()
+                        masked[~dmask] = 0
+                        img_in = Image.fromarray(masked.astype(np.uint8))
+                    else:
+                        img_in = tc_pil
+                    results = model.predict(img_in, conf=0.3, verbose=False)
+                    for res in results:
+                        if not hasattr(res, "boxes") or res.boxes is None:
+                            continue
+                        for box in res.boxes:
+                            x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
+                            conf   = float(box.conf[0])
+                            cls_id = int(box.cls[0])
+                            cls_name = (res.names or {}).get(cls_id, "unknown")
+                            cx = (x1 + x2) / 2; cy = (y1 + y2) / 2
+                            cent_lon, cent_lat   = self._bbox_px_to_geo(cx, cy, w, h, bbox)
+                            bmin_lon, bmin_lat   = self._bbox_px_to_geo(x1, y1, w, h, bbox)
+                            bmax_lon, bmax_lat   = self._bbox_px_to_geo(x2, y2, w, h, bbox)
+                            detections.append({
+                                "detection_type":   self._yolo_to_det_type(model_key, cls_name),
+                                "category":         self._yolo_to_category(model_key),
+                                "detection_source": f"yolo_{model_key}",
+                                "class_name":       cls_name,
+                                "confidence":       round(conf, 3),
+                                "centroid_lat":     cent_lat,
+                                "centroid_lon":     cent_lon,
+                                "bbox_min_lon":     min(bmin_lon, bmax_lon),
+                                "bbox_min_lat":     min(bmin_lat, bmax_lat),
+                                "bbox_max_lon":     max(bmin_lon, bmax_lon),
+                                "bbox_max_lat":     max(bmin_lat, bmax_lat),
+                                "is_change":        False,
+                            })
+                except Exception as me:
+                    print(f"[scanner] yolo {model_key}: {me}")
+        except Exception as e:
+            print(f"[scanner] _run_all_models: {e}")
+        return detections
+
+    def _bbox_px_to_geo(self, px: float, py: float, img_w: int, img_h: int, bbox: dict) -> tuple:
+        lon = bbox["min_lon"] + (px / img_w) * (bbox["max_lon"] - bbox["min_lon"])
+        lat = bbox["max_lat"] - (py / img_h) * (bbox["max_lat"] - bbox["min_lat"])
+        return float(lon), float(lat)
+
+    def _yolo_to_det_type(self, model_key: str, cls_name: str) -> str:
+        if model_key == "vessels":   return "PORT_CHANGE"
+        if model_key == "aircraft":  return "RUNWAY_CHANGE"
+        if model_key == "oil_tanks": return "ENERGY_CHANGE"
+        if model_key == "defence":   return "MILITARY_ACTIVITY"
+        return "INFRASTRUCTURE_CHANGE"
+
+    def _yolo_to_category(self, model_key: str) -> str:
+        return {"vessels": "maritime", "aircraft": "aviation",
+                "oil_tanks": "energy", "defence": "military"}.get(model_key, "infrastructure")
+
+    def _map_change_type_full(self, spectral_type: str, nearby: list) -> str:
+        TYPE_MAP = {
+            "FIRE": "FIRE", "SMOKE": "SMOKE", "BURN_SCAR": "BURN_SCAR",
+            "VEGETATION_LOSS": "VEGETATION_LOSS", "CONSTRUCTION": "EXCAVATION",
+            "CHANGE": "INFRASTRUCTURE_CHANGE",
+        }
+        if spectral_type in TYPE_MAP:
+            return TYPE_MAP[spectral_type]
+        if nearby:
+            t = nearby[0]["type"]
+            if t == "airport": return "RUNWAY_CHANGE"
+            if t == "port":    return "PORT_CHANGE"
+        return "INFRASTRUCTURE_CHANGE"
+
+    def _spectral_to_category(self, det_type: str) -> str:
+        ENV = {"FIRE", "SMOKE", "BURN_SCAR", "VEGETATION_LOSS"}
+        if det_type in ENV:           return "environmental"
+        if det_type == "RUNWAY_CHANGE": return "aviation"
+        if det_type == "PORT_CHANGE":   return "maritime"
+        if det_type == "ENERGY_CHANGE": return "energy"
+        if det_type in {"MILITARY_ACTIVITY", "VEHICLE_CLUSTER", "UNKNOWN_COMPOUND"}:
+            return "military"
+        return "infrastructure"
+
+    def _importance(self, confidence: float, has_nearby: bool, has_zone: bool, is_fire: bool) -> int:
+        score = round(confidence * 3)
+        if is_fire:    score += 2
+        if has_zone:   score += 1
+        if has_nearby: score += 1
+        return min(5, max(1, score))
 
     # ── Job creation + background launch ──────────────────────────────────────
 
@@ -286,92 +610,139 @@ class TileByTileScanner:
         self, tile: dict, region: dict, job_id: str, db
     ) -> list[RegionalScanDetection]:
         loop = asyncio.get_event_loop()
+        tile_lat = (tile["min_lat"] + tile["max_lat"]) / 2
+        tile_lon = (tile["min_lon"] + tile["max_lon"]) / 2
+        tile_id  = f"RTILE-{uuid.uuid4().hex[:6].upper()}"
 
-        # 1. Fetch current image
-        current = await loop.run_in_executor(
-            None,
-            lambda: _fetch_tile_sync(
-                tile["min_lon"], tile["min_lat"],
-                tile["max_lon"], tile["max_lat"],
-                max_age_days=region.get("scan_interval_days", 5),
-                min_age_days=0,
-                max_cloud=region.get("max_cloud_cover", 30),
-            ),
+        # 1. Fetch all band combinations
+        current, baseline = await self._fetch_tile_multiband(tile, region)
+
+        # Persist tile record
+        tile_row = RegionalScanTile(
+            tile_id     = tile_id,
+            job_id      = job_id,
+            tile_index  = tile["index"],
+            min_lon     = tile["min_lon"],
+            min_lat     = tile["min_lat"],
+            max_lon     = tile["max_lon"],
+            max_lat     = tile["max_lat"],
+            status      = "fetched" if current else "failed",
+            image_b64   = current.get("true-colour", {}).get("b64") if current else None,
+            image_date  = current.get("true-colour", {}).get("date") if current else None,
         )
+        db.add(tile_row)
+        db.commit()
+
         if not current:
             return []
 
-        # 2. Fetch baseline (30-60 days ago)
-        baseline = await loop.run_in_executor(
-            None,
-            lambda: _fetch_tile_sync(
-                tile["min_lon"], tile["min_lat"],
-                tile["max_lon"], tile["max_lat"],
-                max_age_days=60,
-                min_age_days=30,
-                max_cloud=40,
-            ),
+        # 2. Full spectral analysis
+        spectral = self._analyse_spectral_full(current, baseline, region)
+
+        # 3. YOLO inference (runs in executor — CPU-bound)
+        water_mask = spectral.get("water_mask")
+        yolo_dets  = await loop.run_in_executor(
+            None, lambda: self._run_all_models(current, tile, water_mask)
         )
 
-        # 3. Spectral analysis
-        spectral = self._analyse_spectral(current, baseline, region)
-        if not spectral["flagged"]:
+        if not spectral["flagged"] and not yolo_dets:
             return []
 
-        # 4. Context: nearby assets + strategic zone
-        tile_lat = (tile["min_lat"] + tile["max_lat"]) / 2
-        tile_lon = (tile["min_lon"] + tile["max_lon"]) / 2
+        # 4. Context
         nearby  = await loop.run_in_executor(None, lambda: self._get_nearby_assets(tile_lat, tile_lon, 10, db))
         zone_id = await loop.run_in_executor(None, lambda: self._get_containing_zone(tile_lat, tile_lon, db))
 
-        detections = []
+        detections: list[RegionalScanDetection] = []
+
+        # 5. Spectral detections
         for change_type in spectral["change_types"]:
             is_fire   = change_type in ("FIRE", "SMOKE", "BURN_SCAR")
             relevant  = is_fire or bool(nearby) or bool(zone_id)
             if not relevant:
                 continue
-
-            det_type   = self._map_change_type(change_type, nearby)
+            det_type   = self._map_change_type_full(change_type, nearby)
             confidence = spectral["scores"].get(change_type, 0.5)
+            category   = self._spectral_to_category(det_type)
+            importance = self._importance(confidence, bool(nearby), bool(zone_id), is_fire)
 
-            # 5. Claude Vision for significant or fire detections
             claude_analysis = None
             claude_severity = "medium"
             if confidence > 0.45 or is_fire:
                 try:
-                    vision = await self._claude_vision(current, tile, det_type, nearby, zone_id)
+                    vision = await self._claude_vision(
+                        current.get("true-colour", {}), tile, det_type, nearby, zone_id
+                    )
                     claude_analysis = vision.get("description")
                     claude_severity = vision.get("severity", "medium")
                 except Exception as ve:
                     print(f"[scanner] vision tile {tile['index']}: {ve}")
 
             det = RegionalScanDetection(
-                detection_id             = f"RDET-{uuid.uuid4().hex[:6].upper()}",
-                job_id                   = job_id,
-                tile_index               = tile["index"],
-                region_name              = "UAE",
-                detection_type           = det_type,
-                confidence               = round(confidence, 3),
-                centroid_lat             = tile_lat,
-                centroid_lon             = tile_lon,
-                bbox_min_lon             = tile["min_lon"],
-                bbox_min_lat             = tile["min_lat"],
-                bbox_max_lon             = tile["max_lon"],
-                bbox_max_lat             = tile["max_lat"],
-                spectral_change_score    = round(spectral["max_score"], 4),
-                change_type              = "FIRE" if is_fire else "CHANGED",
-                nearest_asset_name       = nearby[0]["name"]        if nearby else None,
-                nearest_asset_type       = nearby[0]["type"]        if nearby else None,
-                nearest_asset_distance_km= round(nearby[0]["distance_km"], 2) if nearby else None,
-                in_strategic_zone        = zone_id,
-                claude_vision_analysis   = claude_analysis,
-                claude_severity          = claude_severity,
-                image_b64                = current["b64"] if is_fire else None,
-                created_at               = datetime.datetime.utcnow(),
+                detection_id              = f"RDET-{uuid.uuid4().hex[:6].upper()}",
+                job_id                    = job_id,
+                tile_index                = tile["index"],
+                region_name               = "UAE",
+                detection_type            = det_type,
+                confidence                = round(confidence, 3),
+                centroid_lat              = tile_lat,
+                centroid_lon              = tile_lon,
+                bbox_min_lon              = tile["min_lon"],
+                bbox_min_lat              = tile["min_lat"],
+                bbox_max_lon              = tile["max_lon"],
+                bbox_max_lat              = tile["max_lat"],
+                spectral_change_score     = round(spectral["max_score"], 4),
+                change_type               = "FIRE" if is_fire else "CHANGED",
+                nearest_asset_name        = nearby[0]["name"]           if nearby else None,
+                nearest_asset_type        = nearby[0]["type"]           if nearby else None,
+                nearest_asset_distance_km = round(nearby[0]["distance_km"], 2) if nearby else None,
+                in_strategic_zone         = zone_id,
+                claude_vision_analysis    = claude_analysis,
+                claude_severity           = claude_severity,
+                image_b64                 = current.get("true-colour", {}).get("b64") if is_fire else None,
+                category                  = category,
+                importance                = importance,
+                detection_source          = "spectral",
+                is_change                 = True,
+                baseline_available        = spectral.get("baseline_available", False),
+                created_at                = datetime.datetime.utcnow(),
             )
             db.add(det)
             detections.append(det)
 
+        # 6. YOLO detections
+        for yd in yolo_dets:
+            importance = self._importance(yd["confidence"], bool(nearby), bool(zone_id), False)
+            det = RegionalScanDetection(
+                detection_id              = f"RDET-{uuid.uuid4().hex[:6].upper()}",
+                job_id                    = job_id,
+                tile_index                = tile["index"],
+                region_name               = "UAE",
+                detection_type            = yd["detection_type"],
+                confidence                = yd["confidence"],
+                centroid_lat              = yd["centroid_lat"],
+                centroid_lon              = yd["centroid_lon"],
+                bbox_min_lon              = yd["bbox_min_lon"],
+                bbox_min_lat              = yd["bbox_min_lat"],
+                bbox_max_lon              = yd["bbox_max_lon"],
+                bbox_max_lat              = yd["bbox_max_lat"],
+                spectral_change_score     = 0.0,
+                change_type               = "DETECTED",
+                nearest_asset_name        = nearby[0]["name"]           if nearby else None,
+                nearest_asset_type        = nearby[0]["type"]           if nearby else None,
+                nearest_asset_distance_km = round(nearby[0]["distance_km"], 2) if nearby else None,
+                in_strategic_zone         = zone_id,
+                category                  = yd["category"],
+                importance                = importance,
+                detection_source          = yd["detection_source"],
+                class_name                = yd["class_name"],
+                is_change                 = False,
+                baseline_available        = spectral.get("baseline_available", False),
+                created_at                = datetime.datetime.utcnow(),
+            )
+            db.add(det)
+            detections.append(det)
+
+        tile_row.detections_count = len(detections)
         db.commit()
         return detections
 

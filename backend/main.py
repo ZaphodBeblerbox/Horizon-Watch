@@ -3129,8 +3129,12 @@ from services.vessel_photo_service   import get_photo  as _get_vessel_photo
 import services.director_service as _director_svc
 
 import regional_scanner as _rscan_mod
-from regional_scanner import tile_scanner as _tile_scanner
-from database import RegionalScanJob as _RegionalScanJob, RegionalScanDetection as _RegionalScanDetection
+from regional_scanner import tile_scanner as _tile_scanner, load_detection_models as _load_detection_models
+from database import (
+    RegionalScanJob as _RegionalScanJob,
+    RegionalScanDetection as _RegionalScanDetection,
+    RegionalScanTile as _RegionalScanTile,
+)
 
 # Wire SSE push into scanner so detections are streamed to connected clients
 _rscan_mod.sse_push_fn = lambda msg: _graph_sse_push(msg)
@@ -3980,6 +3984,11 @@ def _rsdet_to_geojson_feature(d: "_RegionalScanDetection") -> dict:
             "confidence":                d.confidence,
             "centroid_lat":              d.centroid_lat,
             "centroid_lon":              d.centroid_lon,
+            "bbox_min_lon":              d.bbox_min_lon,
+            "bbox_min_lat":              d.bbox_min_lat,
+            "bbox_max_lon":              d.bbox_max_lon,
+            "bbox_max_lat":              d.bbox_max_lat,
+            # legacy field names kept for backward compat
             "tile_min_lon":              d.bbox_min_lon,
             "tile_min_lat":              d.bbox_min_lat,
             "tile_max_lon":              d.bbox_max_lon,
@@ -3992,6 +4001,12 @@ def _rsdet_to_geojson_feature(d: "_RegionalScanDetection") -> dict:
             "claude_vision_analysis":    d.claude_vision_analysis,
             "claude_severity":           d.claude_severity,
             "suppressed":                d.suppressed,
+            "category":                  getattr(d, "category", None),
+            "importance":                getattr(d, "importance", 3),
+            "detection_source":          getattr(d, "detection_source", "spectral"),
+            "class_name":                getattr(d, "class_name", None),
+            "is_change":                 getattr(d, "is_change", False),
+            "baseline_available":        getattr(d, "baseline_available", False),
         },
     }
 
@@ -4092,6 +4107,65 @@ async def regional_scan_latest_detections(
             "features": [_rsdet_to_geojson_feature(d) for d in dets],
             "job":      _rscan_to_dict(job),
         }
+
+
+@app.get("/api/regional-scans/latest/tiles")
+async def regional_scan_latest_tiles(
+    region_name: str = Query("UAE"),
+    current_user=Depends(get_optional_user),
+):
+    """Tile metadata (bbox + status + detection count) for the latest scan."""
+    with get_db() as db:
+        job = (
+            db.query(_RegionalScanJob)
+            .filter(
+                _RegionalScanJob.region_name == region_name.upper(),
+                _RegionalScanJob.status.in_(["running", "complete"]),
+            )
+            .order_by(_RegionalScanJob.created_at.desc())
+            .first()
+        )
+        if not job:
+            return {"tiles": [], "job": None}
+        tiles = (
+            db.query(_RegionalScanTile)
+            .filter_by(job_id=job.job_id)
+            .order_by(_RegionalScanTile.tile_index)
+            .all()
+        )
+        return {
+            "job": _rscan_to_dict(job),
+            "tiles": [
+                {
+                    "tile_id":          t.tile_id,
+                    "tile_index":       t.tile_index,
+                    "min_lon":          t.min_lon,
+                    "min_lat":          t.min_lat,
+                    "max_lon":          t.max_lon,
+                    "max_lat":          t.max_lat,
+                    "status":           t.status,
+                    "has_image":        bool(t.image_b64),
+                    "detections_count": t.detections_count or 0,
+                    "image_url":        f"/api/regional-scans/tiles/{t.tile_id}/image" if t.image_b64 else None,
+                }
+                for t in tiles
+            ],
+        }
+
+
+@app.get("/api/regional-scans/tiles/{tile_id}/image")
+async def regional_scan_tile_image(tile_id: str):
+    """Return the true-color Sentinel-2 PNG for a specific tile."""
+    import base64 as _b64
+    from fastapi.responses import Response
+    with get_db() as db:
+        tile = db.query(_RegionalScanTile).filter_by(tile_id=tile_id).first()
+        if not tile or not tile.image_b64:
+            raise HTTPException(404, "Tile image not found")
+        img_bytes = _b64.b64decode(tile.image_b64)
+        return Response(content=img_bytes, media_type="image/png", headers={
+            "Cache-Control": "public, max-age=86400",
+        })
 
 
 @app.get("/api/regional-scans/{job_id}")
@@ -10885,6 +10959,7 @@ async def startup_event():
     asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_regional_scan_scheduler_loop())
+    asyncio.create_task(asyncio.to_thread(_load_detection_models))
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())

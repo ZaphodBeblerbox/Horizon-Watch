@@ -89,6 +89,16 @@ function evaluatePixel(s){return[3.5*s.B12,3.5*s.B11,3.5*s.B04,s.dataMask]}""",
     "false-colour": """//VERSION=3
 function setup(){return{input:["B08","B04","B03","dataMask"],output:{bands:4}}}
 function evaluatePixel(s){return[3.5*s.B08,3.5*s.B04,3.5*s.B03,s.dataMask]}""",
+
+    # R=B03(Green), G=B08(NIR) — compute NDWI=(R-G)/(R+G) in analysis code
+    "ndwi": """//VERSION=3
+function setup(){return{input:["B03","B08","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){return[3.5*s.B03,3.5*s.B08,0,s.dataMask]}""",
+
+    # R=B11(SWIR1), G=B08(NIR) — compute NDBI=(R-G)/(R+G) in analysis code
+    "ndbi": """//VERSION=3
+function setup(){return{input:["B11","B08","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){return[3.5*s.B11,3.5*s.B08,0,s.dataMask]}""",
 }
 
 # NBR pair: R=B08, G=B12, B=zeros — repurpose false-colour as B08 proxy

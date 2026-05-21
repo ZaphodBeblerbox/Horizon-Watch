@@ -513,10 +513,36 @@ class RegionalScanDetection(Base):
     image_b64                   = Column(Text, nullable=True)   # base64 PNG, fire only
     created_at                  = Column(DateTime, default=datetime.datetime.utcnow)
     suppressed                  = Column(Boolean, default=False)
+    # New ML fields
+    category                    = Column(String, nullable=True)   # environmental|maritime|military|aviation|energy|infrastructure
+    importance                  = Column(Integer, default=3)      # 1-5
+    detection_source            = Column(String, nullable=True)   # spectral|yolo_vessels|yolo_aircraft|yolo_defence|yolo_oil_tanks
+    class_name                  = Column(String, nullable=True)   # YOLO class label
+    is_change                   = Column(Boolean, default=False)  # True = change vs baseline
+    baseline_available          = Column(Boolean, default=False)
     # Legacy columns
     claude_threat_assessment    = Column(String, nullable=True)
     yolo_confirmed              = Column(Boolean, default=False)
     yolo_object_type            = Column(String, nullable=True)
+
+
+class RegionalScanTile(Base):
+    """One fetched Sentinel-2 tile per scan job."""
+    __tablename__ = "regional_scan_tiles"
+
+    id               = Column(Integer, primary_key=True)
+    tile_id          = Column(String, unique=True, index=True, nullable=False)
+    job_id           = Column(String, ForeignKey("regional_scan_jobs.job_id"), nullable=False, index=True)
+    tile_index       = Column(Integer, nullable=False)
+    min_lon          = Column(Float, nullable=False)
+    min_lat          = Column(Float, nullable=False)
+    max_lon          = Column(Float, nullable=False)
+    max_lat          = Column(Float, nullable=False)
+    status           = Column(String, nullable=False, default="pending")  # fetched|failed|skipped
+    image_b64        = Column(Text, nullable=True)   # base64 true-color PNG
+    image_date       = Column(DateTime, nullable=True)
+    detections_count = Column(Integer, default=0)
+    created_at       = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 class Alert(Base):
