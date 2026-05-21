@@ -60,56 +60,65 @@ export default function NewsReels({ onClose }) {
         setIndex(i => (i - 1 + shorts.length) % shorts.length)
     }, [shorts.length])
 
-    // Create/replace YT player when index or shorts list changes
+    // Create player ONCE when shorts first load
     useEffect(() => {
         if (!shorts.length || loading) return
-        const videoId = shorts[index]?.video_id
-        if (!videoId) return
-
-        if (playerRef.current) {
-            try { playerRef.current.destroy() } catch (_) {}
-            playerRef.current = null
-        }
-
         whenYTReady(() => {
-            if (!playerDivRef.current) return
+            if (!playerDivRef.current || playerRef.current) return
             playerRef.current = new window.YT.Player(playerDivRef.current, {
-                videoId,
-                width:  "100%",
-                height: "100%",
+                videoId: shorts[0]?.video_id,
+                width:   "100%",
+                height:  "100%",
                 playerVars: {
-                    autoplay:        1,
-                    mute:            hasInteractedRef.current ? 0 : 1,
-                    controls:        0,
-                    disablekb:       1,
-                    fs:              0,
-                    iv_load_policy:  3,
-                    modestbranding:  1,
-                    playsinline:     1,
-                    rel:             0,
-                    loop:            1,
-                    playlist:        videoId,
-                    origin:          window.location.origin,
+                    autoplay:       1,
+                    mute:           1,
+                    controls:       0,
+                    disablekb:      1,
+                    fs:             0,
+                    iv_load_policy: 3,
+                    modestbranding: 1,
+                    playsinline:    1,
+                    rel:            0,
+                    origin:         window.location.origin,
                 },
                 events: {
-                    onReady: (e) => {
-                        e.target.playVideo()
-                        if (hasInteractedRef.current) e.target.unMute()
-                    },
+                    onReady: (e) => { e.target.playVideo() },
                     onStateChange: (e) => {
-                        if (e.data === window.YT.PlayerState.ENDED) goNext()
+                        if (e.data === window.YT.PlayerState.ENDED)
+                            setIndex(i => (i + 1) % shorts.length)
                     },
                 },
             })
         })
+    }, [shorts, loading])
 
+    // Load new video into existing player on index change
+    useEffect(() => {
+        if (!shorts.length || !playerRef.current) return
+        const videoId = shorts[index]?.video_id
+        if (!videoId) return
+        try {
+            playerRef.current.loadVideoById({ videoId, startSeconds: 0 })
+            if (hasInteractedRef.current) {
+                playerRef.current.unMute()
+                playerRef.current.setVolume(100)
+            } else {
+                playerRef.current.mute()
+            }
+        } catch (e) {
+            console.warn("[reels] loadVideoById failed:", e)
+        }
+    }, [index, shorts])
+
+    // Destroy player on unmount only
+    useEffect(() => {
         return () => {
             if (playerRef.current) {
                 try { playerRef.current.destroy() } catch (_) {}
                 playerRef.current = null
             }
         }
-    }, [index, shorts, loading])  // goNext intentionally omitted — stable enough via ref
+    }, [])
 
     // Unmute on first interaction
     const handleTap = useCallback(() => {
@@ -182,23 +191,13 @@ export default function NewsReels({ onClose }) {
                 </div>
             )}
 
-            {/* Top bar */}
+            {/* Top bar — close button only */}
             <div style={{
                 position: "absolute", top: 0, left: 0, right: 0, zIndex: 10,
                 padding: "calc(max(48px, env(safe-area-inset-top) + 12px)) 16px 16px",
-                background: "linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)",
-                display: "flex", alignItems: "center", justifyContent: "space-between",
+                display: "flex", justifyContent: "flex-end",
                 pointerEvents: "none",
             }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{
-                        width: 7, height: 7, borderRadius: "50%",
-                        background: "#FF3B30", boxShadow: "0 0 8px #FF3B30",
-                    }} />
-                    <span style={{ color: "white", fontSize: 12, fontWeight: 700, letterSpacing: 1.5 }}>
-                        NEWS REELS
-                    </span>
-                </div>
                 <button
                     onClick={(e) => { e.stopPropagation(); onClose() }}
                     style={{
