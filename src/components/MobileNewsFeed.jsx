@@ -64,161 +64,20 @@ const SEVERITY_STYLE = {
   low:         { bg: "rgba(0,200,120,0.18)",  color: "#6ee7b7", border: "rgba(0,200,120,0.3)"   },
 }
 
-// ── YouTube Reels Section ─────────────────────────────────────────────────────
+// ── Skeleton card (loading state) ─────────────────────────────────────────────
 
-function ReelsSkeleton() {
+function SkeletonCard() {
   return (
-    <div style={{
-      background: "rgba(10,18,35,0.95)", borderRadius: 12, padding: 12,
-      marginBottom: 16, border: "1px solid rgba(255,255,255,0.08)",
-    }}>
-      {/* Header skeleton */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "rgba(255,59,48,0.4)" }} />
-        <div style={{ width: 80, height: 10, borderRadius: 4, background: "rgba(255,255,255,0.08)" }} />
+    <div style={{ position:"absolute", top:44, bottom:60, left:12, right:12, borderRadius:12, overflow:"hidden", background:"#0a1628" }}>
+      <div style={{ position:"absolute", inset:0, background:"linear-gradient(135deg, #0a1628 0%, #112038 100%)" }} />
+      <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"24px 18px 24px" }}>
+        <div style={{ height:10, borderRadius:4, background:"rgba(255,255,255,0.07)", width:"30%", marginBottom:12, animation:"sk-pulse 1.5s ease-in-out infinite" }} />
+        <div style={{ height:26, borderRadius:4, background:"rgba(255,255,255,0.1)", width:"95%", marginBottom:8, animation:"sk-pulse 1.5s ease-in-out 0.15s infinite" }} />
+        <div style={{ height:26, borderRadius:4, background:"rgba(255,255,255,0.08)", width:"78%", marginBottom:16, animation:"sk-pulse 1.5s ease-in-out 0.3s infinite" }} />
+        <div style={{ height:12, borderRadius:4, background:"rgba(255,255,255,0.06)", width:"55%", marginBottom:14, animation:"sk-pulse 1.5s ease-in-out 0.45s infinite" }} />
+        <div style={{ height:48, borderRadius:100, background:"rgba(0,170,255,0.1)", animation:"sk-pulse 1.5s ease-in-out 0.6s infinite" }} />
       </div>
-      {/* Video skeleton */}
-      <div style={{ width: "100%", aspectRatio: "16/9", borderRadius: 8, background: "rgba(255,255,255,0.06)", marginBottom: 8 }} />
-      {/* Pills skeleton */}
-      <div style={{ display: "flex", gap: 6 }}>
-        {[70, 50, 80, 55].map((w, i) => (
-          <div key={i} style={{ width: w, height: 24, borderRadius: 20, background: "rgba(255,255,255,0.06)" }} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function LiveNewsReels() {
-  const [reels,        setReels]       = useState([])
-  const [reelIndex,    setReelIndex]   = useState(0)
-  const [reelsLoading, setReelsLoading] = useState(true)
-
-  useEffect(() => {
-    fetch(`${API_BASE}/api/news/reels`)
-      .then(r => r.json())
-      .then(data => {
-        setReels(safeArray(data.videos))
-        setReelsLoading(false)
-      })
-      .catch(() => setReelsLoading(false))
-  }, [])
-
-  // Auto-advance every 45 seconds
-  useEffect(() => {
-    if (reels.length === 0) return
-    const timer = setInterval(() => {
-      setReelIndex(i => (i + 1) % reels.length)
-    }, 45000)
-    return () => clearInterval(timer)
-  }, [reels.length])
-
-  if (reelsLoading) return <ReelsSkeleton />
-  if (reels.length === 0) return (
-    <div style={{
-      background: "rgba(10,18,35,0.95)", borderRadius: 12, padding: "14px 12px",
-      marginBottom: 16, border: "1px solid rgba(255,255,255,0.08)",
-      fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center",
-    }}>
-      Live news unavailable
-    </div>
-  )
-
-  const current    = reels[reelIndex]
-  const channels   = [...new Set(reels.map(v => v.channel))]
-
-  const goToChannel = (ch) => {
-    const idx = reels.findIndex(v => v.channel === ch)
-    if (idx !== -1) setReelIndex(idx)
-  }
-
-  return (
-    <div style={{
-      background: "rgba(10,18,35,0.95)", borderRadius: 12, padding: 12,
-      marginBottom: 16, border: "1px solid rgba(255,255,255,0.08)",
-    }}>
-      {/* Section header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#FF3B30", boxShadow: "0 0 6px #FF3B30" }} />
-          <span style={{ fontSize: 11, color: "#FF3B30", fontWeight: 700, letterSpacing: "1px" }}>LIVE NEWS</span>
-        </div>
-        <span style={{ fontSize: 10, color: "#636366" }}>
-          {channels.slice(0, 4).join(" · ")}{channels.length > 4 ? " …" : ""}
-        </span>
-      </div>
-
-      {/* YouTube iframe */}
-      <iframe
-        key={current?.video_id}
-        src={current?.embed_url}
-        title={current?.title}
-        style={{
-          width: "100%", aspectRatio: "16/9",
-          border: "none", borderRadius: 8, display: "block",
-        }}
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-        allowFullScreen
-      />
-
-      {/* Video info */}
-      <div style={{ padding: "8px 2px 4px" }}>
-        <div style={{ fontSize: 12, color: "#34AADC", fontWeight: 600 }}>{current?.channel}</div>
-        <div style={{ fontSize: 13, color: "white", marginTop: 2, lineHeight: 1.3,
-          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-          {current?.title}
-        </div>
-        <div style={{ fontSize: 11, color: "#636366", marginTop: 2 }}>{timeAgo(current?.published)}</div>
-      </div>
-
-      {/* Prev / counter / next */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <button
-          onClick={() => setReelIndex(i => (i - 1 + reels.length) % reels.length)}
-          style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 18, cursor: "pointer", padding: "0 4px" }}
-        >◀</button>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{reelIndex + 1} / {reels.length}</span>
-        <button
-          onClick={() => setReelIndex(i => (i + 1) % reels.length)}
-          style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 18, cursor: "pointer", padding: "0 4px" }}
-        >▶</button>
-      </div>
-
-      {/* Navigation dots */}
-      <div style={{ display: "flex", gap: 4, justifyContent: "center", marginBottom: 10 }}>
-        {reels.slice(0, 30).map((_, i) => (
-          <div
-            key={i}
-            onClick={() => setReelIndex(i)}
-            style={{
-              width: i === reelIndex ? 16 : 6, height: 6, borderRadius: 3,
-              background: i === reelIndex ? "#34AADC" : "rgba(255,255,255,0.3)",
-              cursor: "pointer", transition: "all 0.2s", flexShrink: 0,
-            }}
-          />
-        ))}
-      </div>
-
-      {/* Channel pills */}
-      <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2,
-        scrollbarWidth: "none", msOverflowStyle: "none" }}>
-        {channels.map(ch => (
-          <button
-            key={ch}
-            onClick={() => goToChannel(ch)}
-            style={{
-              flexShrink: 0, padding: "4px 10px", borderRadius: 20,
-              border: `1px solid ${current?.channel === ch ? "#34AADC" : "rgba(255,255,255,0.12)"}`,
-              background: current?.channel === ch ? "rgba(52,170,220,0.15)" : "rgba(255,255,255,0.05)",
-              color: current?.channel === ch ? "#34AADC" : "rgba(255,255,255,0.55)",
-              fontSize: 10, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
-              fontFamily: "inherit",
-            }}
-          >
-            {ch}
-          </button>
-        ))}
-      </div>
+      <style>{`@keyframes sk-pulse { 0%,100% { opacity:1; } 50% { opacity:0.35; } }`}</style>
     </div>
   )
 }
@@ -279,10 +138,8 @@ export default function MobileNewsFeed({ tab = "world" }) {
   }
 
   if (loading) return (
-    <div style={{ position:"fixed", inset:0, background:"#000", display:"flex", alignItems:"center", justifyContent:"center", color:"white", flexDirection:"column", gap:12, zIndex:100 }}>
-      <div style={{ width:36, height:36, border:"3px solid rgba(255,255,255,0.1)", borderTopColor:"#00aaff", borderRadius:"50%", animation:"mf-spin 1s linear infinite" }} />
-      <div style={{ fontSize:14, color:"rgba(255,255,255,0.5)" }}>Loading {tab}…</div>
-      <style>{`@keyframes mf-spin { to { transform: rotate(360deg); } }`}</style>
+    <div style={{ position:"fixed", inset:0, background:"#000", zIndex:100, overflow:"hidden" }}>
+      <SkeletonCard />
     </div>
   )
 
@@ -314,108 +171,101 @@ export default function MobileNewsFeed({ tab = "world" }) {
   const activeSeg = Math.floor(idx / segStep)
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"#000", zIndex:100, overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
-
-      {/* ── Article swipe section ───────────────────────────────────── */}
-      <div
-        style={{ position:"relative", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none" }}
-        onTouchStart={onTouchStart}
-        onTouchEnd={onTouchEnd}
-      >
+    <div
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+      style={{ position:"fixed", inset:0, background:"#000", zIndex:100, overflow:"hidden", userSelect:"none", WebkitUserSelect:"none" }}
+    >
+      {/* Full-screen article card — sits between TopBar (44px) and BottomNav (60px) */}
+      <div style={{ position:"absolute", top:44, bottom:60, left:12, right:12, borderRadius:12, overflow:"hidden" }}>
         {/* Background */}
-        <div style={{ position:"relative", overflow:"hidden", borderRadius:12, margin:"0 16px", minHeight: 480 }}>
-          <div style={{ position:"absolute", inset:0 }}>
-            {a.image ? (
-              <img
-                src={a.image} alt=""
-                style={{ width:"100%", height:"100%", objectFit:"cover" }}
-                onError={e => { e.target.style.display = "none" }}
-              />
-            ) : (
-              <div style={{ width:"100%", height:"100%", background:"linear-gradient(135deg, #0a1628 0%, #1a2f4e 50%, #0f1e35 100%)" }} />
-            )}
-            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.1) 30%, rgba(0,0,0,0.25) 60%, rgba(0,0,0,0.88) 100%)" }} />
-          </div>
-
-          {/* Progress bar */}
-          <div style={{ position:"absolute", top:12, left:12, right:12, display:"flex", gap:3, height:3, zIndex:10 }}>
-            {Array.from({ length: maxSegs }, (_, i) => (
-              <div key={i} style={{
-                flex:1, borderRadius:2,
-                background: i === activeSeg ? "#00aaff"
-                          : i < activeSeg  ? "rgba(255,255,255,0.55)"
-                          :                  "rgba(255,255,255,0.18)",
-                transition: "background 300ms",
-              }} />
-            ))}
-          </div>
-
-          {/* Counter */}
-          <div style={{ position:"absolute", top:20, right:12, color:"rgba(255,255,255,0.6)", fontSize:12, fontWeight:600, background:"rgba(0,0,0,0.35)", backdropFilter:"blur(8px)", WebkitBackdropFilter:"blur(8px)", padding:"3px 9px", borderRadius:10, zIndex:10 }}>
-            {idx + 1} / {articles.length}
-          </div>
-
-          {/* Content */}
-          <div
-            key={idx}
-            style={{ position:"relative", minHeight: 480, display:"flex", flexDirection:"column", justifyContent:"flex-end", padding:"24px 18px 20px", zIndex:2, animation:"mf-slide 300ms ease-out" }}
-          >
-            {/* Badges */}
-            <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" }}>
-              {sev && a.severity && (
-                <span style={{ padding:"3px 9px", borderRadius:4, fontSize:10, fontWeight:700, letterSpacing:0.8, background:sev.bg, color:sev.color, border:`1px solid ${sev.border}` }}>
-                  {a.severity.toUpperCase()}
-                </span>
-              )}
-              {a.lang && a.lang !== "en" && (
-                <span style={{ padding:"3px 9px", borderRadius:4, fontSize:10, fontWeight:700, background:"rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.7)", border:"1px solid rgba(255,255,255,0.2)" }}>
-                  {a.lang.toUpperCase()}
-                </span>
-              )}
-            </div>
-
-            {/* Source + time */}
-            <div style={{ fontSize:12, color:"rgba(255,255,255,0.5)", marginBottom:7 }}>
-              {[a.source, a.location, timeAgo(a.time)].filter(Boolean).join(" · ")}
-            </div>
-
-            {/* Title */}
-            <h2 style={{ fontSize:22, fontWeight:800, color:"white", lineHeight:1.25, margin:"0 0 10px", textShadow:"0 2px 8px rgba(0,0,0,0.8)", letterSpacing:"-0.3px" }}>
-              {a.title}
-            </h2>
-
-            {/* Summary */}
-            {a.summary && (
-              <p style={{ fontSize:13, color:"rgba(255,255,255,0.82)", lineHeight:1.5, margin:"0 0 14px", textShadow:"0 1px 4px rgba(0,0,0,0.7)", display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden" }}>
-                {a.summary}
-              </p>
-            )}
-
-            {/* Read button */}
-            <a
-              href={a.link} target="_blank" rel="noopener noreferrer"
-              style={{ display:"block", padding:"12px 20px", borderRadius:100, background:"rgba(0,170,255,0.88)", color:"white", textDecoration:"none", fontWeight:600, fontSize:14, textAlign:"center" }}
-            >
-              Read Article
-            </a>
-
-            {/* Swipe hint */}
-            {idx === 0 && articles.length > 1 && (
-              <div style={{ textAlign:"center", marginTop:14, color:"rgba(255,255,255,0.45)", fontSize:12, animation:"mf-bounce 2s ease-in-out infinite" }}>
-                ↑ Swipe up for next
-              </div>
-            )}
-          </div>
+        <div style={{ position:"absolute", inset:0 }}>
+          {a.image ? (
+            <img
+              src={a.image} alt=""
+              style={{ width:"100%", height:"100%", objectFit:"cover" }}
+              onError={e => { e.target.style.display = "none" }}
+            />
+          ) : (
+            <div style={{ width:"100%", height:"100%", background:"linear-gradient(135deg, #0a1628 0%, #1a2f4e 50%, #0f1e35 100%)" }} />
+          )}
+          <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.1) 30%, rgba(0,0,0,0.25) 60%, rgba(0,0,0,0.88) 100%)" }} />
         </div>
 
-        <div style={{ height: "calc(max(24px, env(safe-area-inset-bottom)) + 16px)" }} />
+        {/* Progress bar */}
+        <div style={{ position:"absolute", top:12, left:12, right:12, display:"flex", gap:3, height:3, zIndex:10 }}>
+          {Array.from({ length: maxSegs }, (_, i) => (
+            <div key={i} style={{
+              flex:1, borderRadius:2,
+              background: i === activeSeg ? "#00aaff"
+                        : i < activeSeg  ? "rgba(255,255,255,0.55)"
+                        :                  "rgba(255,255,255,0.18)",
+              transition: "background 300ms",
+            }} />
+          ))}
+        </div>
+
+        {/* Counter */}
+        <div style={{ position:"absolute", top:20, right:12, color:"rgba(255,255,255,0.6)", fontSize:12, fontWeight:600, background:"rgba(0,0,0,0.35)", backdropFilter:"blur(8px)", WebkitBackdropFilter:"blur(8px)", padding:"3px 9px", borderRadius:10, zIndex:10 }}>
+          {idx + 1} / {articles.length}
+        </div>
+
+        {/* Content overlay at bottom */}
+        <div
+          key={idx}
+          style={{ position:"absolute", bottom:0, left:0, right:0, padding:"24px 18px 20px", zIndex:2, animation:"mf-slide 300ms ease-out" }}
+        >
+          {/* Badges */}
+          <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" }}>
+            {sev && a.severity && (
+              <span style={{ padding:"3px 9px", borderRadius:4, fontSize:10, fontWeight:700, letterSpacing:0.8, background:sev.bg, color:sev.color, border:`1px solid ${sev.border}` }}>
+                {a.severity.toUpperCase()}
+              </span>
+            )}
+            {a.lang && a.lang !== "en" && (
+              <span style={{ padding:"3px 9px", borderRadius:4, fontSize:10, fontWeight:700, background:"rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.7)", border:"1px solid rgba(255,255,255,0.2)" }}>
+                {a.lang.toUpperCase()}
+              </span>
+            )}
+          </div>
+
+          {/* Source + time */}
+          <div style={{ fontSize:12, color:"rgba(255,255,255,0.5)", marginBottom:7 }}>
+            {[a.source, a.location, timeAgo(a.time)].filter(Boolean).join(" · ")}
+          </div>
+
+          {/* Title */}
+          <h2 style={{ fontSize:22, fontWeight:800, color:"white", lineHeight:1.25, margin:"0 0 10px", textShadow:"0 2px 8px rgba(0,0,0,0.8)", letterSpacing:"-0.3px" }}>
+            {a.title}
+          </h2>
+
+          {/* Summary */}
+          {a.summary && (
+            <p style={{ fontSize:13, color:"rgba(255,255,255,0.82)", lineHeight:1.5, margin:"0 0 14px", textShadow:"0 1px 4px rgba(0,0,0,0.7)", display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden" }}>
+              {a.summary}
+            </p>
+          )}
+
+          {/* Read button */}
+          <a
+            href={a.link} target="_blank" rel="noopener noreferrer"
+            style={{ display:"block", padding:"12px 20px", borderRadius:100, background:"rgba(0,170,255,0.88)", color:"white", textDecoration:"none", fontWeight:600, fontSize:14, textAlign:"center" }}
+          >
+            Read Article
+          </a>
+
+          {idx === 0 && articles.length > 1 && (
+            <div style={{ textAlign:"center", marginTop:14, color:"rgba(255,255,255,0.45)", fontSize:12, animation:"mf-bounce 2s ease-in-out infinite" }}>
+              ↑ Swipe up for next
+            </div>
+          )}
+        </div>
       </div>
 
       <style>{`
         @keyframes mf-slide  { from { transform:translateY(28px); opacity:0; } to { transform:translateY(0); opacity:1; } }
         @keyframes mf-bounce { 0%,100% { transform:translateY(0); opacity:0.45; } 50% { transform:translateY(-7px); opacity:1; } }
-        @keyframes mf-spin   { to { transform:rotate(360deg); } }
-        @keyframes mf-pulse  { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        @keyframes sk-pulse  { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
       `}</style>
     </div>
   )

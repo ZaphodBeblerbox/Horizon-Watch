@@ -244,7 +244,8 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
         return () => viewer.scene.postRender.removeEventListener(update)
     }, [popup?.entityId, viewerRef])
 
-    const W = 300
+    const isMob = window.innerWidth < 768
+    const W     = isMob ? 260 : 300
     const handleClose = () => setPopup(null)
     const handleFollow = () => {
         const viewer = viewerRef.current?.cesiumElement
@@ -262,7 +263,7 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                     style={{
                         position:      "absolute",
                         left:          Math.min(tooltip.x + 14, (window.innerWidth || 1200) - 220),
-                        top:           Math.max(tooltip.y - 36, 56),
+                        top:           Math.max(Math.min(tooltip.y - 36, (window.innerHeight || 800) - 60 - (isMob ? 56 : 16)), 56),
                         zIndex:        10001,
                         background:    "rgba(10,14,20,0.92)",
                         border:        "1px solid rgba(255,255,255,0.12)",
@@ -288,7 +289,7 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                     style={{
                         position:      "absolute",
                         left:          Math.min(popup.x + 14, (window.innerWidth || 1200) - W - 10),
-                        top:           Math.max(popup.y - 80, 56),
+                        top:           Math.max(Math.min(popup.y - 80, (window.innerHeight || 800) - 320 - (isMob ? 56 : 16)), 56),
                         zIndex:        10000,
                         width:         W,
                         maxHeight:     520,

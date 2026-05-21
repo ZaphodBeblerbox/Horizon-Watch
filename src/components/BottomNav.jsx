@@ -17,7 +17,6 @@ const BOTTOM_NAV_STYLES = `
 .bottom-nav-scroll { -ms-overflow-style: none; scrollbar-width: none; }
 `
 
-const ITEM_W = 64  // px per nav item
 
 export default function BottomNav({
     activeTabType,
@@ -111,19 +110,6 @@ export default function BottomNav({
             active: activeTabType === "analytics",
         },
         {
-            id:    "poi",
-            label: "POI",
-            icon:  (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="10" cy="7.5" r="3"/>
-                    <path d="M10 10.5C7 10.5 4.5 12.5 4.5 15H15.5C15.5 12.5 13 10.5 10 10.5Z"/>
-                    <circle cx="10" cy="7.5" r="6.5" strokeDasharray="2.5 2" opacity="0.3"/>
-                </svg>
-            ),
-            onClick: onOpenPoi,
-            active: activeTabType === "poi",
-        },
-        {
             id:    "forge",
             label: "Forge",
             icon:  (
@@ -134,49 +120,6 @@ export default function BottomNav({
             onClick: onOpenForge,
             active: activeTabType === "forge",
             activeColor: "#4A9EE0",
-        },
-        {
-            id:    "layers",
-            label: "Layers",
-            icon:  (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="10,2 18,6 10,10 2,6"/>
-                    <polyline points="2,10 10,14 18,10"/>
-                    <polyline points="2,14 10,18 18,14"/>
-                </svg>
-            ),
-            onClick: onOpenLayers,
-            active: rightPanel === "layers",
-        },
-        {
-            id:          "director",
-            label:       "Director",
-            icon:        (
-                <span
-                    className={directorActive ? "director-nav-icon-active" : ""}
-                    style={{ fontSize: 18, lineHeight: 1, display: "inline-block" }}
-                >◈</span>
-            ),
-            onClick:     onDirectorTap,
-            active:      directorActive,
-            activeColor: "#f59e0b",
-        },
-        {
-            id:    "overwatch",
-            label: "Overwatch",
-            icon:  (
-                <svg width="20" height="20" viewBox="0 0 18 18" fill="none" stroke="currentColor"
-                    strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M1 9C1 9 4 3 9 3C14 3 17 9 17 9C17 9 14 15 9 15C4 15 1 9 1 9Z"/>
-                    <circle cx="9" cy="9" r="2.5"/>
-                    <line x1="9"  y1="1"  x2="9"  y2="3"/>
-                    <line x1="9"  y1="15" x2="9"  y2="17"/>
-                    <line x1="1"  y1="9"  x2="3"  y2="9"/>
-                    <line x1="15" y1="9"  x2="17" y2="9"/>
-                </svg>
-            ),
-            onClick: onToggleOverwatch,
-            active: !!overwatchActive,
         },
         {
             id:    "menu",
@@ -211,29 +154,14 @@ export default function BottomNav({
             zIndex:         1200,
             fontFamily:     "Inter, -apple-system, sans-serif",
         }}>
-            {/* Scrollable row — hidden scrollbar, scroll-snap */}
-            <div
-                className="bottom-nav-scroll"
-                style={{
-                    display:            "flex",
-                    alignItems:         "stretch",
-                    height:             56,
-                    overflowX:          "auto",
-                    overflowY:          "hidden",
-                    scrollSnapType:     "x mandatory",
-                    WebkitOverflowScrolling: "touch",
-                    /* fade-out hint on the right edge so user knows it scrolls */
-                    maskImage:          "linear-gradient(to right, black 80%, transparent 100%)",
-                    WebkitMaskImage:    "linear-gradient(to right, black 80%, transparent 100%)",
-                }}
-            >
+            {/* Static row — 7 items each flex:1 */}
+            <div style={{ display: "flex", alignItems: "stretch", height: 56 }}>
                 {items.map(item => (
                     <button
                         key={item.id}
                         onClick={item.onClick}
                         style={{
-                            flexShrink:     0,
-                            width:          ITEM_W,
+                            flex:           1,
                             display:        "flex",
                             flexDirection:  "column",
                             alignItems:     "center",
@@ -243,16 +171,14 @@ export default function BottomNav({
                             border:         "none",
                             cursor:         "pointer",
                             color:          item.active ? (item.activeColor || "#2d8fe8") : "rgba(255,255,255,0.35)",
-                            fontSize:       8.5,
+                            fontSize:       11,
                             fontWeight:     item.active ? 700 : 400,
-                            letterSpacing:  "0.06em",
+                            letterSpacing:  "0.04em",
                             textTransform:  "uppercase",
                             padding:        "6px 0 2px",
-                            transition:     "color 0.15s",
+                            transition:     "color 0.15s, border-color 0.15s",
                             minHeight:      56,
-                            scrollSnapAlign: "start",
                             WebkitTapHighlightColor: "transparent",
-                            /* active indicator dot above icon */
                             borderTop: item.active ? `2px solid ${item.activeColor || "#2d8fe8"}` : "2px solid transparent",
                         }}
                     >
@@ -260,8 +186,6 @@ export default function BottomNav({
                         {item.label}
                     </button>
                 ))}
-                {/* Spacer so last item doesn't sit behind the fade mask */}
-                <div style={{ flexShrink: 0, width: 20 }} />
             </div>
         </nav>
         </>
