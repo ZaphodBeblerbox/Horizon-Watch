@@ -86,7 +86,14 @@ def analyse_article(
     Never raises — returns _FALLBACK (tier=4) on any failure.
     """
     try:
+        import os as _os
         import usage_tracker as _ut
+        _daily_cap = float(_os.getenv("CLAUDE_DAILY_HARD_CAP_USD", "0.65"))
+        _today_cost = _ut.get_today_cost()
+        if _today_cost >= _daily_cap:
+            print(f"[article-intelligence] Daily cap ${_daily_cap} hit "
+                  f"(${_today_cost:.3f}) — returning fallback")
+            return dict(_FALLBACK)
         client = anthropic.Anthropic()
         clean_body = re.sub(r"<[^>]+>", "", body or "")[:600]
         user = _USER_TMPL.format(

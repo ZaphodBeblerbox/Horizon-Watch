@@ -6424,8 +6424,8 @@ def _run_news_conflict_extraction_sync():
         except Exception:
             pass
 
-    MAX_NOM_CALLS         = 100   # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS_PER_CYCLE = 15   # LLM calls per feed cycle (cost control)
+    MAX_NOM_CALLS           = 100   # hard cap per cycle (only counts uncached HTTP calls)
+    MAX_LLM_CALLS_PER_CYCLE = 3     # LLM calls per feed cycle — keep low to limit blast radius on restart
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
