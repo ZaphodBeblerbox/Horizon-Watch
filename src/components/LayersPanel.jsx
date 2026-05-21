@@ -173,7 +173,7 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
             />
             {(active.unifiedEvents ?? true) && onLayerSet && (
                 <RelevanceFilter
-                    value={active.eventsMinRelevance ?? 4}
+                    value={active.eventsMinRelevance ?? 0}
                     onChange={v => onLayerSet("eventsMinRelevance", v)}
                 />
             )}

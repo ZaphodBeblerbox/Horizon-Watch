@@ -1426,7 +1426,7 @@ export default function App() {
                             poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                             precisionEventsEnabled={activeWorkspace?.layers?.precisionEvents ?? true}
-                            eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 4}
+                            eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 0}
                             alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? false}
                             threatHeatmapEnabled={activeWorkspace?.layers?.threatHeatmap ?? false}
                             airportsEnabled={activeWorkspace?.layers?.airports ?? false}

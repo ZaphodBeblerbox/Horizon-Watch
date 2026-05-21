@@ -29,11 +29,22 @@ _USER_TMPL = (
     '  "location_confidence": "city OR region OR country OR none",\n'
     '  "article_type": "conflict OR maritime OR aviation OR infrastructure OR energy OR cyber OR disaster OR political OR economic OR local_incident OR other",\n'
     '  "icon_type": "conflict OR maritime OR aviation OR infrastructure OR energy OR cyber OR disaster OR political OR local_incident OR economic OR other",\n'
-    '  "tier": integer 1-4 where 1=breaking/urgent national-international security event '
-    "(missile strike, naval incident, major infrastructure attack), "
-    "2=significant geopolitical or strategic event (sanctions, troop movements, major protests, energy crisis), "
-    "3=local situational awareness (minor incidents, regional politics, local disasters), "
-    "4=irrelevant (sports, entertainment, lifestyle, celebrity, company earnings unrelated to defence/security),\n"
+    '  "tier": integer 1-4 where:\n'
+    "    1 = breaking/urgent security event: active armed conflict, airstrikes, missile launches, "
+    "naval incidents, ship attacks, piracy, chokepoint disruptions (Suez/Hormuz/Bab el-Mandeb), "
+    "mass casualty events (10+ dead), nuclear/chemical weapon events, coup d'état, "
+    "assassination of major figures, major natural disaster (earthquake M6+, major flood).\n"
+    "    2 = significant geopolitical/strategic event: military movements/exercises/deployments, "
+    "sanctions/trade restrictions/diplomatic expulsion, political crisis/protests with violence, "
+    "infrastructure attack or sabotage, any terrorist attack, refugee/displacement crisis, "
+    "energy supply disruption, cyberattack on critical infrastructure, election crisis or disputed results.\n"
+    "    3 = contextual/background: diplomatic meetings, economic data with geopolitical implications, "
+    "general political developments, humanitarian aid, non-violent protests, minor incidents.\n"
+    "    4 = irrelevant: local crime (not terrorism), sports, entertainment, celebrity, "
+    "local transport/infrastructure (S-Bahn, metro), weather (unless disaster scale), "
+    "cultural events, corporate/business news without geopolitical impact.\n"
+    "    IMPORTANT: Use tier 2 broadly — when in doubt between tier 2 and 3, choose tier 2.\n"
+    '    Assign tier 4 ONLY for clearly irrelevant content (sports, celebrity, local traffic).,\n'
     '  "relevance_score": float 0.0-10.0 — 9-10 direct military/maritime/infrastructure threat; '
     "7-8 major geopolitical; 5-6 relevant background; 3-4 tangential; 1-2 mostly irrelevant; 0 sports/celebrity,\n"
     '  "event_title": "Concise 4-8 word label for this event, e.g. \'Missile strike on Kyiv port\' or \'Typhoon Haikui Taiwan landfall\'. null if no specific event.",\n'
@@ -75,6 +86,7 @@ def analyse_article(
     Never raises — returns _FALLBACK (tier=4) on any failure.
     """
     try:
+        import usage_tracker as _ut
         client = anthropic.Anthropic()
         clean_body = re.sub(r"<[^>]+>", "", body or "")[:600]
         user = _USER_TMPL.format(
@@ -88,6 +100,12 @@ def analyse_article(
             temperature=0,
             system=_SYSTEM,
             messages=[{"role": "user", "content": user}],
+        )
+        _ut.record_call(
+            msg.usage.input_tokens,
+            msg.usage.output_tokens,
+            call_type="article_intelligence",
+            headline=(title or "")[:120],
         )
         raw = _STRIP_MD.sub("", msg.content[0].text.strip())
         data = json.loads(raw)

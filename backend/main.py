@@ -257,7 +257,9 @@ if not _api_key:
 
 client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
 
-CLAUDE_BUDGET_USD = float(os.getenv("CLAUDE_BUDGET_USD", "5.40"))
+CLAUDE_BUDGET_USD             = float(os.getenv("CLAUDE_BUDGET_USD",             "5.40"))
+CLAUDE_DAILY_HARD_CAP_USD     = float(os.getenv("CLAUDE_DAILY_HARD_CAP_USD",     "0.65"))
+MAX_LLM_ARTICLE_CALLS_PER_DAY = int(  os.getenv("MAX_LLM_ARTICLE_CALLS_PER_DAY", "200"))
 
 _COPERNICUS_CLIENT_ID = os.getenv("COPERNICUS_CLIENT_ID", "").strip()
 _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
@@ -1006,6 +1008,14 @@ def get_health_detailed():
     ]
 
     usage = usage_tracker.get_stats(CLAUDE_BUDGET_USD)
+    _today_spend = usage_tracker.get_today_cost()
+    _article_calls_today = usage_tracker.get_calls_today_by_type("article_intelligence")
+    usage["today_cost_usd"]       = round(_today_spend, 4)
+    usage["daily_cap_usd"]        = CLAUDE_DAILY_HARD_CAP_USD
+    usage["cap_remaining_usd"]    = round(max(0.0, CLAUDE_DAILY_HARD_CAP_USD - _today_spend), 4)
+    usage["cap_pct_used"]         = round(_today_spend / CLAUDE_DAILY_HARD_CAP_USD * 100) if CLAUDE_DAILY_HARD_CAP_USD > 0 else 0
+    usage["article_calls_today"]  = _article_calls_today
+    usage["article_calls_cap"]    = MAX_LLM_ARTICLE_CALLS_PER_DAY
 
     return {
         "backend": {
@@ -6264,6 +6274,16 @@ def _merge_conflict_markers(new_markers: list[dict]) -> None:
     _NEWS_CONFLICT_MARKERS = deduped
 
 
+def _claude_budget_ok() -> bool:
+    """Return False and log if today's Claude spend has reached the daily hard cap."""
+    today_spend = usage_tracker.get_today_cost()
+    if today_spend >= CLAUDE_DAILY_HARD_CAP_USD:
+        print(f"[claude] Daily cap hit: ${today_spend:.3f} >= "
+              f"${CLAUDE_DAILY_HARD_CAP_USD} — skipping call")
+        return False
+    return True
+
+
 _GATE1_SYSTEM = (
     "You are an intelligence relevance analyst. Score each article 1-5 for operational "
     "relevance to the active mission profile. 5=directly relevant, 3=tangentially relevant, "
@@ -6279,6 +6299,8 @@ def _gate1_filter_markers(markers: list[dict]) -> None:
     Stores relevance_score + relevance_reason on each surviving marker.
     """
     if not markers or not _ACTIVE_PROFILE or not client:
+        return
+    if not _claude_budget_ok():
         return
 
     batch = markers[:30]
@@ -6402,8 +6424,8 @@ def _run_news_conflict_extraction_sync():
         except Exception:
             pass
 
-    MAX_NOM_CALLS = 100       # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS = 300       # cap LLM calls per feed cycle (raised from 20 — 20 was too low)
+    MAX_NOM_CALLS         = 100   # hard cap per cycle (only counts uncached HTTP calls)
+    MAX_LLM_CALLS_PER_CYCLE = 15   # LLM calls per feed cycle (cost control)
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
@@ -6546,7 +6568,14 @@ def _run_news_conflict_extraction_sync():
             _clean_body = re.sub(r'<[^>]+>', '', summary or '')
             _intel = None
             _intel_llm_called = False
-            if client and llm_calls_this_cycle < MAX_LLM_CALLS:
+            _article_calls_today = usage_tracker.get_calls_today_by_type("article_intelligence")
+            _can_call_llm = (
+                client
+                and llm_calls_this_cycle < MAX_LLM_CALLS_PER_CYCLE
+                and _article_calls_today < MAX_LLM_ARTICLE_CALLS_PER_DAY
+                and _claude_budget_ok()
+            )
+            if _can_call_llm:
                 try:
                     print(f"[article_intel] Calling Haiku for: {title[:60]}")
                     _intel = analyse_article(title, _clean_body, source_name)
@@ -6563,9 +6592,12 @@ def _run_news_conflict_extraction_sync():
             elif not client:
                 if llm_calls_this_cycle == 0:
                     print("[article_intel] SKIPPED — Anthropic client is None (ANTHROPIC_API_KEY not set?)")
-            else:
-                if llm_calls_this_cycle == MAX_LLM_CALLS:
-                    print(f"[article_intel] Cap reached ({MAX_LLM_CALLS}) — remaining articles use fallback")
+            elif _article_calls_today >= MAX_LLM_ARTICLE_CALLS_PER_DAY:
+                if llm_calls_this_cycle == 0:
+                    print(f"[article_intel] Daily cap hit ({_article_calls_today}/{MAX_LLM_ARTICLE_CALLS_PER_DAY}) — remaining articles use fallback")
+            elif llm_calls_this_cycle >= MAX_LLM_CALLS_PER_CYCLE:
+                if llm_calls_this_cycle == MAX_LLM_CALLS_PER_CYCLE:
+                    print(f"[article_intel] Cycle cap reached ({MAX_LLM_CALLS_PER_CYCLE}) — remaining articles use fallback")
             if _intel is None:
                 _intel = {
                     "location": None, "location_country": None, "location_confidence": "none",
