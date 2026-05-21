@@ -3129,7 +3129,7 @@ from services.vessel_photo_service   import get_photo  as _get_vessel_photo
 import services.director_service as _director_svc
 
 import regional_scanner as _rscan_mod
-from regional_scanner import tile_scanner as _tile_scanner, load_detection_models as _load_detection_models
+from regional_scanner import tile_scanner as _tile_scanner
 from database import (
     RegionalScanJob as _RegionalScanJob,
     RegionalScanDetection as _RegionalScanDetection,
@@ -11036,7 +11036,6 @@ async def startup_event():
     asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_regional_scan_scheduler_loop())
-    asyncio.get_running_loop().run_in_executor(None, _load_detection_models)
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())

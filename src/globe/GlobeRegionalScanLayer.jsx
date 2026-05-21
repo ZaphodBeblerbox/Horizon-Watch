@@ -30,6 +30,7 @@ const DET_CONFIG = {
     INFRASTRUCTURE:         { color: "#FF9500", label: "Infrastructure",        icon: "🏙",  category: "infrastructure" },
     CONSTRUCTION:           { color: "#F59E0B", label: "Construction",          icon: "🏗",  category: "infrastructure" },
     MILITARY_ACTIVITY:      { color: "#FF3B30", label: "Military Activity",     icon: "🎯",  category: "military" },
+    OBJECT_DETECTED:        { color: "#8E8E93", label: "Object Detected",       icon: "📍",  category: "infrastructure" },
 }
 
 const FILTER_CATEGORIES = [
