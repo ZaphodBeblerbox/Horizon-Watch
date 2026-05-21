@@ -1,6 +1,9 @@
 // BottomNav — swipable mobile bottom tab bar (< 768px)
 // Horizontally scrollable so all items fit; scroll-snap keeps taps precise.
 
+import { useState } from "react"
+import NewsReels from "./NewsReels.jsx"
+
 const BOTTOM_NAV_STYLES = `
 @keyframes director-nav-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -34,6 +37,8 @@ export default function BottomNav({
     directorActive = false,
     onDirectorTap = null,
 }) {
+    const [showReels, setShowReels] = useState(false)
+
     const items = [
         {
             id:    "map",
@@ -61,6 +66,23 @@ export default function BottomNav({
             ),
             onClick: onSwitchToNews,
             active: activeTabType === "news",
+        },
+        {
+            id:    "reels",
+            label: "Reels",
+            icon:  (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <rect x="2"  y="3" width="6" height="18" rx="2" fill="currentColor" opacity="0.9"/>
+                    <rect x="9"  y="3" width="6" height="18" rx="2" fill="currentColor" opacity="0.6"/>
+                    <rect x="16" y="3" width="6" height="18" rx="2" fill="currentColor" opacity="0.3"/>
+                    <circle cx="5"  cy="8"  r="1.5" fill="white" opacity="0.6"/>
+                    <circle cx="5"  cy="12" r="1.5" fill="white" opacity="0.6"/>
+                    <circle cx="5"  cy="16" r="1.5" fill="white" opacity="0.6"/>
+                </svg>
+            ),
+            onClick:     () => setShowReels(true),
+            active:      showReels,
+            activeColor: "#FF3B30",
         },
         {
             id:    "briefings",
@@ -174,6 +196,7 @@ export default function BottomNav({
     return (
         <>
         <style>{BOTTOM_NAV_STYLES}</style>
+        {showReels && <NewsReels onClose={() => setShowReels(false)} />}
         <nav style={{
             position:       "fixed",
             bottom:         0,

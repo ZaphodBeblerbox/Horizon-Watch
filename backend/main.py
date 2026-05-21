@@ -4858,6 +4858,121 @@ async def get_news_reels(current_user=Depends(get_optional_user)):
     }
 
 
+# ── YouTube Shorts news feed ──────────────────────────────────────────────────
+
+SHORTS_CHANNELS = [
+    {"name": "Al Jazeera",      "channel_id": "UCNye-wNBqNL5ZzHSJdYkf3A", "playlist_id": "UUSHNye-wNBqNL5ZzHSJdYkf3A",  "color": "#FF6B00"},
+    {"name": "BBC News",        "channel_id": "UC16niRr50-MSBwiO3YDb3RA", "playlist_id": "UUSH16niRr50-MSBwiO3YDb3RA",  "color": "#BB1919"},
+    {"name": "France 24",       "channel_id": "UCQfwfsi5VrQ8yKZ-UWmAoBw", "playlist_id": "UUSHQfwfsi5VrQ8yKZ-UWmAoBw",  "color": "#003F7F"},
+    {"name": "DW News",         "channel_id": "UCknLrEdhRCp1aegoMqRaCZg", "playlist_id": "UUSHknLrEdhRCp1aegoMqRaCZg", "color": "#C8002D"},
+    {"name": "Reuters",         "channel_id": "UChqUTb7kYRX8-EiaN3XFrSQ", "playlist_id": "UUSHhqUTb7kYRX8-EiaN3XFrSQ", "color": "#FF8000"},
+    {"name": "Sky News",        "channel_id": "UCoMdktPbSTixAyNGwb-UYkQ", "playlist_id": "UUSHoMdktPbSTixAyNGwb-UYkQ", "color": "#E4003B"},
+    {"name": "TRT World",       "channel_id": "UC7_gcs09iThXybpVgjHZ_7g", "playlist_id": "UUSH7_gcs09iThXybpVgjHZ_7g",  "color": "#E30613"},
+    {"name": "Bloomberg",       "channel_id": "UCIALMKvObZNtJ6AmdCLP7Lg", "playlist_id": "UUSHIALMKvObZNtJ6AmdCLP7Lg", "color": "#5B9BD5"},
+    {"name": "CNN International","channel_id": "UCupvZG-5ko_eiXAupbDfxWw", "playlist_id": "UUSHupvZG-5ko_eiXAupbDfxWw", "color": "#CC0000"},
+]
+
+_shorts_cache: list         = []
+_shorts_cache_ts: datetime | None = None
+_SHORTS_TTL = 1800
+
+
+async def _fetch_shorts_feed() -> list:
+    import httpx
+    from xml.etree import ElementTree as ET
+
+    ns = {
+        "atom":  "http://www.w3.org/2005/Atom",
+        "yt":    "http://www.youtube.com/xml/schemas/2015",
+        "media": "http://search.yahoo.com/mrss/",
+    }
+    by_channel: dict = {}
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        for ch in SHORTS_CHANNELS:
+            # Try Shorts playlist first, fall back to regular channel feed
+            urls = [
+                f"https://www.youtube.com/feeds/videos.xml?playlist_id={ch['playlist_id']}",
+                f"https://www.youtube.com/feeds/videos.xml?channel_id={ch['channel_id']}",
+            ]
+            for url in urls:
+                try:
+                    r = await client.get(url)
+                    if r.status_code != 200 or "<entry>" not in r.text:
+                        continue
+                    root    = ET.fromstring(r.text)
+                    entries = root.findall("atom:entry", ns)
+                    shorts  = []
+                    for entry in entries[:5]:
+                        vid_el   = entry.find("yt:videoId", ns)
+                        title_el = entry.find("atom:title", ns)
+                        pub_el   = entry.find("atom:published", ns)
+                        thumb_el = entry.find(".//media:thumbnail", ns)
+                        if vid_el is None:
+                            continue
+                        vid = vid_el.text
+                        shorts.append({
+                            "video_id":      vid,
+                            "title":         title_el.text if title_el is not None else "",
+                            "channel":       ch["name"],
+                            "channel_color": ch["color"],
+                            "published":     pub_el.text if pub_el is not None else "",
+                            "thumbnail":     (thumb_el.get("url") if thumb_el is not None
+                                              else f"https://img.youtube.com/vi/{vid}/mqdefault.jpg"),
+                            "embed_url":     (f"https://www.youtube.com/embed/{vid}"
+                                              f"?autoplay=1&mute=1&controls=0&rel=0"
+                                              f"&modestbranding=1&playsinline=1&loop=1&playlist={vid}"),
+                            "shorts_url":    f"https://youtube.com/shorts/{vid}",
+                        })
+                    if shorts:
+                        by_channel[ch["name"]] = shorts
+                        break
+                except Exception as e:
+                    print(f"[shorts] {ch['name']} {url}: {e}")
+
+    # Round-robin interleave so feed isn't all one channel
+    interleaved: list = []
+    max_len = max((len(v) for v in by_channel.values()), default=0)
+    for i in range(max_len):
+        for ch_shorts in by_channel.values():
+            if i < len(ch_shorts):
+                interleaved.append(ch_shorts[i])
+    return interleaved
+
+
+async def _shorts_refresh_loop():
+    global _shorts_cache, _shorts_cache_ts
+    while True:
+        try:
+            videos = await _fetch_shorts_feed()
+            if videos:
+                _shorts_cache    = videos
+                _shorts_cache_ts = datetime.utcnow()
+                print(f"[shorts] Refreshed: {len(videos)} shorts")
+        except Exception as e:
+            print(f"[shorts] Refresh error: {e}")
+        await asyncio.sleep(_SHORTS_TTL)
+
+
+@app.get("/api/news/shorts")
+async def get_news_shorts(current_user=Depends(get_optional_user)):
+    """Return cached YouTube Shorts news feed. Fetches immediately if cache empty."""
+    global _shorts_cache, _shorts_cache_ts
+    if not _shorts_cache:
+        try:
+            videos = await _fetch_shorts_feed()
+            if videos:
+                _shorts_cache    = videos
+                _shorts_cache_ts = datetime.utcnow()
+        except Exception as e:
+            print(f"[shorts] On-demand fetch failed: {e}")
+    return {
+        "shorts":       _shorts_cache,
+        "count":        len(_shorts_cache),
+        "last_updated": _shorts_cache_ts.isoformat() if _shorts_cache_ts else None,
+        "channels":     len(SHORTS_CHANNELS),
+    }
+
+
 # ── Director image search (Wikimedia Commons) ────────────────────────────────
 
 _IMG_SEARCH_CACHE: dict = {}      # query → {result, ts}
@@ -10734,6 +10849,7 @@ async def startup_event():
         except Exception:
             print("[forge] using default threat weights")
         asyncio.create_task(_youtube_reels_loop())
+    asyncio.create_task(_shorts_refresh_loop())
     asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_regional_scan_scheduler_loop())
