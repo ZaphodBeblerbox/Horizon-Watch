@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ALERT_ICONS } from "../constants/alertIcons.js"
+import { ALERT_ICONS, FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
 import { safeArray } from "../utils/safeArray.js"
 
 const SEV_COLOR = {
@@ -25,9 +25,11 @@ export default function GlobeAssessmentPopup({ data, onClose }) {
     const iconDef  = ALERT_ICONS[a.icon_type || ""] || {}
     const typeColor = iconDef.color || sevColor
 
-    const keySignals  = safeArray(a.key_signals)
-    const evidence    = safeArray(a.evidence_items)
-    const confidence  = typeof a.confidence === "number" ? a.confidence : null
+    const keySignals   = safeArray(a.key_signals)
+    const evidence     = safeArray(a.evidence_items)
+    const confidence   = typeof a.confidence === "number" ? a.confidence : null
+    const iconKey      = a.icon_type || a.pattern_type || ""
+    const explanation  = FORGE_EXPLANATIONS[iconKey] || null
 
     return (
         <div style={{ padding: "12px 14px", fontFamily: "system-ui, sans-serif", minWidth: 260, maxWidth: 340 }}>
@@ -82,9 +84,21 @@ export default function GlobeAssessmentPopup({ data, onClose }) {
                 )}
             </div>
 
+            {/* What this means */}
+            {explanation && (
+                <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 4 }}>
+                        What this means
+                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                        {explanation}
+                    </div>
+                </div>
+            )}
+
             {/* Summary */}
             {a.message && (
-                <div style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.55, marginBottom: 8 }}>
+                <div style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.55, marginBottom: 8, borderTop: explanation ? "1px solid rgba(255,255,255,0.06)" : "none", paddingTop: explanation ? 8 : 0 }}>
                     {a.message}
                 </div>
             )}

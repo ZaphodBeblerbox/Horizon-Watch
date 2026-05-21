@@ -1,6 +1,7 @@
 import { useState } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
+import { FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
 
 const SEV_COLOR = {
     critical: "#f87171",
@@ -63,6 +64,7 @@ export default function GlobeFusionPopup({ data, onClose }) {
     const keySignals        = safeArray(f.key_signals)
     const threatIndicators  = safeArray(f.threat_indicators)
     const contribSignals    = safeArray(f.resolved_signals)
+    const explanation       = FORGE_EXPLANATIONS[f.icon_type || f.pattern_type || "FUSION_EVENT"] || FORGE_EXPLANATIONS.FUSION_EVENT
 
     const handleSaveNote = async () => {
         setNoteSaving(true)
@@ -152,9 +154,19 @@ export default function GlobeFusionPopup({ data, onClose }) {
                 <ConfidenceBar value={f.confidence} color={fusColor} />
             </div>
 
+            {/* What this means */}
+            <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 4 }}>
+                    What this means
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                    {explanation}
+                </div>
+            </div>
+
             {/* Narrative */}
             {f.narrative && (
-                <div style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.55, marginBottom: 8 }}>
+                <div style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.55, marginBottom: 8, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>
                     {f.narrative}
                 </div>
             )}

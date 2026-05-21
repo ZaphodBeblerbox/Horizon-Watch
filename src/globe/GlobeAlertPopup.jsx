@@ -1,8 +1,15 @@
+import { ALERT_ICONS, FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
+
 export default function GlobeAlertPopup({ data, onClose }) {
     const a = data || {}
     const sevColor = a.severity === "critical" ? "#f87171" : a.severity === "high" ? "#fb923c" : a.severity === "medium" ? "#fbbf24" : "#60a5fa"
     const sevBg    = a.severity === "critical" ? "rgba(248,113,113,0.12)" : a.severity === "high" ? "rgba(251,146,60,0.12)" : a.severity === "medium" ? "rgba(251,191,36,0.12)" : "rgba(96,165,250,0.12)"
     const srcColor = a.source === "AIS" ? "#0ea5e9" : a.source === "ADSB" ? "#a78bfa" : "#34d399"
+
+    const iconKey   = a.icon_type || a.rule_type || ""
+    const iconDef   = ALERT_ICONS[iconKey] || {}
+    const typeColor = iconDef.color || sevColor
+    const explanation = FORGE_EXPLANATIONS[iconKey] || null
 
     return (
         <div style={{ padding: "12px 14px", fontFamily: "system-ui, sans-serif", minWidth: 240 }}>
@@ -21,6 +28,17 @@ export default function GlobeAlertPopup({ data, onClose }) {
             </div>
 
             <div style={{ color: "#e2e8f0", fontSize: 12, lineHeight: 1.55, marginBottom: 10 }}>{a.message || "—"}</div>
+
+            {explanation && (
+                <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 4 }}>
+                        What triggered this
+                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
+                        {explanation}
+                    </div>
+                </div>
+            )}
 
             {a.rule_name && (
                 <div style={{ color: "#334155", fontSize: 10, marginBottom: 6 }}>
