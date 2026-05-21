@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import BottomSheet from "./BottomSheet.jsx"
+import API_BASE from "../apiBase.js"
 
 function Toggle({ value, onChange }) {
     return (
@@ -116,6 +117,17 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
     const showRegionalScan = active.showRegionalScan ?? false
     const [scanEssentialOnly, setScanEssentialOnly] = useState(active.scanEssentialOnly ?? false)
     const [scanCategories,    setScanCategories]    = useState(() => active.scanCategories ?? ALL_SCAN_CATEGORIES)
+    const [detectionCounts,   setDetectionCounts]   = useState({})
+    const countsFetchedRef = useRef(false)
+
+    useEffect(() => {
+        if (!showRegionalScan || countsFetchedRef.current) return
+        countsFetchedRef.current = true
+        fetch(`${API_BASE}/api/regional-scans/latest/detections/summary?region_name=UAE`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d?.by_category) setDetectionCounts(d.by_category) })
+            .catch(() => {})
+    }, [showRegionalScan])
 
     const toggleScanCategory = (key) => {
         setScanCategories(prev => {
@@ -294,6 +306,14 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
                                         }}
                                     >
                                         {icon} {label}
+                                        {detectionCounts[label.toUpperCase()] != null && (
+                                            <span style={{
+                                                marginLeft: 3,
+                                                fontSize: 9,
+                                                opacity: 0.7,
+                                                fontWeight: 700,
+                                            }}>({detectionCounts[label.toUpperCase()]})</span>
+                                        )}
                                     </div>
                                 )
                             })}

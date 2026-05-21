@@ -227,95 +227,195 @@ class TileByTileScanner:
 
         return current, baseline or None
 
+    # ── Sub-tile bbox extraction ──────────────────────────────────────────────
+
+    def _mask_to_geo_bboxes(
+        self, mask, tile_bbox: dict, min_pixels: int = 4, max_boxes: int = 20
+    ) -> list:
+        """Divide mask into 32×32 coarse blocks → return geo bboxes of active blocks."""
+        try:
+            import numpy as np
+            h, w = mask.shape
+            bh = max(1, h // 32)
+            bw = max(1, w // 32)
+            boxes = []
+            for r0 in range(0, h, bh):
+                for c0 in range(0, w, bw):
+                    r1 = min(r0 + bh, h)
+                    c1 = min(c0 + bw, w)
+                    px = int(np.sum(mask[r0:r1, c0:c1]))
+                    if px < min_pixels:
+                        continue
+                    min_lon = tile_bbox["min_lon"] + (c0 / w) * (tile_bbox["max_lon"] - tile_bbox["min_lon"])
+                    max_lon = tile_bbox["min_lon"] + (c1 / w) * (tile_bbox["max_lon"] - tile_bbox["min_lon"])
+                    max_lat = tile_bbox["max_lat"] - (r0 / h) * (tile_bbox["max_lat"] - tile_bbox["min_lat"])
+                    min_lat = tile_bbox["max_lat"] - (r1 / h) * (tile_bbox["max_lat"] - tile_bbox["min_lat"])
+                    boxes.append({
+                        "min_lon": round(min_lon, 5), "min_lat": round(min_lat, 5),
+                        "max_lon": round(max_lon, 5), "max_lat": round(max_lat, 5),
+                        "centroid_lon": round((min_lon + max_lon) / 2, 5),
+                        "centroid_lat": round((min_lat + max_lat) / 2, 5),
+                        "pixel_count": px,
+                    })
+                    if len(boxes) >= max_boxes:
+                        return boxes
+            return boxes
+        except Exception:
+            return []
+
     # ── Full spectral analysis ─────────────────────────────────────────────────
 
     def _analyse_spectral_full(self, current: dict, baseline: Optional[dict], region: dict) -> dict:
-        """Multi-spectral analysis across all fetched band combinations."""
+        """Multi-spectral analysis. Returns spectral_detections with per-pixel masks."""
         try:
             import numpy as np
             from PIL import Image
 
-            change_types: list[str] = []
-            scores: dict[str, float] = {}
+            spectral_detections: list[dict] = []
+            water_mask = None
+            baseline_available = False
+            max_score = 0.0
 
-            def _to_arr(b64: str) -> Optional[np.ndarray]:
+            def _to_arr(b64: str):
                 try:
-                    img_bytes = base64.b64decode(b64)
-                    return np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"), dtype=float) / 255.0
+                    return np.array(
+                        Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB"),
+                        dtype=float,
+                    ) / 255.0
                 except Exception:
                     return None
 
-            # ── True-colour: fire + smoke ────────────────────────────────────
+            # ── True-colour array ─────────────────────────────────────────────
+            tc_arr = None
             if tc := current.get("true-colour"):
-                arr = _to_arr(tc["b64"])
-                if arr is not None:
-                    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-                    fire_mask  = (r > 0.72) & (g < 0.35) & (b < 0.25)
-                    fire_score = float(np.mean(fire_mask))
-                    if fire_score > 0.008:
-                        change_types.append("FIRE")
-                        scores["FIRE"] = min(fire_score * 60, 1.0)
-                    smoke_mask  = (np.abs(r - g) < 0.08) & (np.abs(g - b) < 0.08) & (r > 0.45) & (r < 0.75)
-                    smoke_score = float(np.mean(smoke_mask))
-                    if smoke_score > 0.06:
-                        change_types.append("SMOKE")
-                        scores["SMOKE"] = min(smoke_score * 10, 1.0)
-                    curr_tc_arr = arr
+                tc_arr = _to_arr(tc["b64"])
+            if tc_arr is None:
+                return {"spectral_detections": [], "water_mask": None,
+                        "baseline_available": False, "max_score": 0.0,
+                        "flagged": False, "change_types": [], "scores": {}}
 
-            # ── SWIR: enhanced fire detection ────────────────────────────────
-            if sw := current.get("swir"):
-                arr = _to_arr(sw["b64"])
-                if arr is not None:
-                    swir_fire = arr[:, :, 0] > 0.6
-                    sf = float(np.mean(swir_fire))
-                    if sf > 0.005 and "FIRE" not in change_types:
-                        change_types.append("FIRE")
-                        scores["FIRE"] = min(sf * 80, 1.0)
+            h, w = tc_arr.shape[:2]
+            r, g, b_ch = tc_arr[:, :, 0], tc_arr[:, :, 1], tc_arr[:, :, 2]
 
-            # ── NDWI: water body presence ────────────────────────────────────
-            water_mask = None
+            # ── NDWI: water bodies (absolute) ────────────────────────────────
             if nw := current.get("ndwi"):
-                arr = _to_arr(nw["b64"])
-                if arr is not None:
+                nw_arr = _to_arr(nw["b64"])
+                if nw_arr is not None:
                     eps = 1e-6
-                    ndwi_val = (arr[:, :, 0] - arr[:, :, 1]) / (arr[:, :, 0] + arr[:, :, 1] + eps)
-                    water_mask = ndwi_val > 0.0
-                    scores["WATER_FRACTION"] = float(np.mean(water_mask))
+                    ndwi_val = (nw_arr[:, :, 0] - nw_arr[:, :, 1]) / (nw_arr[:, :, 0] + nw_arr[:, :, 1] + eps)
+                    water_mask = ndwi_val > 0.1
+                    wf = float(np.mean(water_mask))
+                    if wf > 0.008:
+                        spectral_detections.append({
+                            "type": "WATER_BODY", "category": "environmental",
+                            "confidence": round(min(0.5 + wf * 3, 0.95), 3),
+                            "is_change": False, "_mask": water_mask,
+                        })
+                        max_score = max(max_score, wf)
 
-            # ── NDBI: built-up / construction ────────────────────────────────
+            land_mask = (~water_mask if water_mask is not None else np.ones((h, w), bool))
+
+            # ── False-colour: vegetation (absolute) ─────────────────────────
+            if fc := current.get("false-colour"):
+                fc_arr = _to_arr(fc["b64"])
+                if fc_arr is not None:
+                    eps = 1e-6
+                    ndvi_val = (fc_arr[:, :, 0] - fc_arr[:, :, 1]) / (fc_arr[:, :, 0] + fc_arr[:, :, 1] + eps)
+                    veg_mask = (ndvi_val > 0.2) & land_mask
+                    vf = float(np.mean(veg_mask))
+                    if vf > 0.005:
+                        spectral_detections.append({
+                            "type": "VEGETATION", "category": "environmental",
+                            "confidence": round(min(0.6 + vf * 2, 0.92), 3),
+                            "is_change": False, "_mask": veg_mask,
+                        })
+
+            # ── NDBI: built-up infrastructure (absolute) ─────────────────────
+            ndbi_val_global = None
             if nb := current.get("ndbi"):
-                arr = _to_arr(nb["b64"])
-                if arr is not None:
+                nb_arr = _to_arr(nb["b64"])
+                if nb_arr is not None:
                     eps = 1e-6
-                    ndbi_val = (arr[:, :, 0] - arr[:, :, 1]) / (arr[:, :, 0] + arr[:, :, 1] + eps)
-                    scores["NDBI_MAX"] = float(np.max(ndbi_val))
-                    scores["BUILT_FRACTION"] = float(np.mean(ndbi_val > 0.1))
+                    ndbi_val_global = (nb_arr[:, :, 0] - nb_arr[:, :, 1]) / (nb_arr[:, :, 0] + nb_arr[:, :, 1] + eps)
+                    infra_mask = (ndbi_val_global > 0.15) & land_mask
+                    inf_f = float(np.mean(infra_mask))
+                    if inf_f > 0.005:
+                        spectral_detections.append({
+                            "type": "INFRASTRUCTURE_CHANGE", "category": "infrastructure",
+                            "confidence": round(min(0.55 + inf_f * 2, 0.88), 3),
+                            "is_change": False, "_mask": infra_mask,
+                        })
 
-            # ── Baseline comparison ───────────────────────────────────────────
-            baseline_available = False
-            if baseline and (tc_bl := baseline.get("true-colour")) and current.get("true-colour"):
-                tc_curr = current["true-colour"]
-                curr_arr = _to_arr(tc_curr["b64"])
+            # ── True-colour: fire (tightened to reduce desert false positives) ─
+            fire_mask_tc = (r > 0.85) & (g < 0.30) & (b_ch < 0.22)
+            fs = float(np.mean(fire_mask_tc))
+            if fs > 0.003:
+                spectral_detections.append({
+                    "type": "FIRE", "category": "environmental",
+                    "confidence": round(min(fs * 80, 0.95), 3),
+                    "is_change": False, "_mask": fire_mask_tc,
+                })
+                max_score = max(max_score, fs)
+
+            # ── SWIR: fire via B11/B08 ratio (ratio avoids desert false positives) ─
+            if sw := current.get("swir"):
+                sw_arr = _to_arr(sw["b64"])
+                if sw_arr is not None:
+                    eps = 1e-6
+                    swir_ratio = sw_arr[:, :, 0] / (sw_arr[:, :, 1] + eps)
+                    fire_swir = (swir_ratio > 1.9) & (sw_arr[:, :, 0] > 0.75)
+                    sf2 = float(np.mean(fire_swir))
+                    already_fire = any(d["type"] == "FIRE" for d in spectral_detections)
+                    if sf2 > 0.002 and not already_fire:
+                        spectral_detections.append({
+                            "type": "FIRE", "category": "environmental",
+                            "confidence": round(min(sf2 * 100, 0.92), 3),
+                            "is_change": False, "_mask": fire_swir,
+                        })
+
+            # ── Smoke ─────────────────────────────────────────────────────────
+            smoke_mask = (np.abs(r - g) < 0.08) & (np.abs(g - b_ch) < 0.08) & (r > 0.45) & (r < 0.75)
+            sms = float(np.mean(smoke_mask))
+            if sms > 0.04:
+                spectral_detections.append({
+                    "type": "SMOKE", "category": "environmental",
+                    "confidence": round(min(sms * 12, 0.85), 3),
+                    "is_change": False, "_mask": smoke_mask,
+                })
+
+            # ── Baseline comparisons ──────────────────────────────────────────
+            if baseline and (tc_bl := baseline.get("true-colour")):
                 base_arr = _to_arr(tc_bl["b64"])
-                if curr_arr is not None and base_arr is not None and base_arr.shape == curr_arr.shape:
+                if base_arr is not None and base_arr.shape == tc_arr.shape:
                     baseline_available = True
-                    diff = np.abs(curr_arr - base_arr)
-                    mean_diff = float(np.mean(diff))
+                    diff3 = np.abs(tc_arr - base_arr)
+                    mean_diff = float(np.mean(diff3))
                     threshold = region.get("spectral_change_threshold", 0.12)
-                    if mean_diff > threshold:
-                        change_types.append("CHANGE")
-                        scores["CHANGE"] = min(mean_diff * 5, 1.0)
-                    burn_mask = (
-                        (base_arr[:, :, 0] - curr_arr[:, :, 0] > 0.18) &
-                        (base_arr[:, :, 1] - curr_arr[:, :, 1] > 0.12) &
-                        (curr_arr[:, :, 0] < 0.25)
-                    )
-                    burn_score = float(np.mean(burn_mask))
-                    if burn_score > 0.015:
-                        change_types.append("BURN_SCAR")
-                        scores["BURN_SCAR"] = min(burn_score * 30, 1.0)
 
-                    # NDVI change (vegetation loss) from false-colour
+                    # General change
+                    if mean_diff > threshold * 0.7:
+                        change_mask = np.mean(diff3, axis=2) > threshold * 0.75
+                        spectral_detections.append({
+                            "type": "INFRASTRUCTURE_CHANGE", "category": "infrastructure",
+                            "confidence": round(min(mean_diff * 5, 0.90), 3),
+                            "is_change": True, "_mask": change_mask,
+                        })
+                        max_score = max(max_score, mean_diff * 5)
+
+                    # Burn scar
+                    burn_mask = (
+                        (base_arr[:, :, 0] - tc_arr[:, :, 0] > 0.15) &
+                        (base_arr[:, :, 1] - tc_arr[:, :, 1] > 0.10) &
+                        (tc_arr[:, :, 0] < 0.30)
+                    )
+                    if float(np.mean(burn_mask)) > 0.008:
+                        spectral_detections.append({
+                            "type": "BURN_SCAR", "category": "environmental",
+                            "confidence": round(min(float(np.mean(burn_mask)) * 30, 0.9), 3),
+                            "is_change": True, "_mask": burn_mask,
+                        })
+
+                    # Vegetation loss
                     if (fc_c := current.get("false-colour")) and (fc_b := baseline.get("false-colour")):
                         fc_curr = _to_arr(fc_c["b64"])
                         fc_base = _to_arr(fc_b["b64"])
@@ -323,30 +423,40 @@ class TileByTileScanner:
                             eps = 1e-6
                             ndvi_c = (fc_curr[:, :, 0] - fc_curr[:, :, 1]) / (fc_curr[:, :, 0] + fc_curr[:, :, 1] + eps)
                             ndvi_b = (fc_base[:, :, 0] - fc_base[:, :, 1]) / (fc_base[:, :, 0] + fc_base[:, :, 1] + eps)
-                            ndvi_loss = float(np.mean((ndvi_b - ndvi_c) > 0.15))
-                            if ndvi_loss > 0.05:
-                                change_types.append("VEGETATION_LOSS")
-                                scores["VEGETATION_LOSS"] = min(ndvi_loss * 10, 1.0)
+                            ndvi_loss_mask = (ndvi_b - ndvi_c) > 0.12
+                            if float(np.mean(ndvi_loss_mask)) > 0.02:
+                                spectral_detections.append({
+                                    "type": "VEGETATION_LOSS", "category": "environmental",
+                                    "confidence": round(min(float(np.mean(ndvi_loss_mask)) * 10, 0.9), 3),
+                                    "is_change": True, "_mask": ndvi_loss_mask,
+                                })
 
-                    # NDBI change (new construction)
-                    if current.get("ndbi") and (nb_b64 := scores.get("BUILT_FRACTION", 0)) > 0.08:
-                        change_types.append("CONSTRUCTION")
-                        scores["CONSTRUCTION"] = min(float(nb_b64) * 5, 1.0)
+                    # Construction (NDBI increase vs baseline)
+                    if ndbi_val_global is not None and float(np.mean(ndbi_val_global > 0.1)) > 0.04:
+                        con_mask = (ndbi_val_global > 0.08) & land_mask
+                        spectral_detections.append({
+                            "type": "CONSTRUCTION", "category": "infrastructure",
+                            "confidence": 0.60, "is_change": True, "_mask": con_mask,
+                        })
 
-            max_score = max(scores.values()) if scores else 0.0
+            if max_score == 0.0 and spectral_detections:
+                max_score = max(d["confidence"] for d in spectral_detections)
+
             return {
-                "flagged":            bool(change_types),
-                "change_types":       change_types,
-                "scores":             scores,
-                "max_score":          max_score,
-                "baseline_available": baseline_available,
-                "water_mask":         water_mask,
+                "spectral_detections": spectral_detections,
+                "water_mask":          water_mask,
+                "baseline_available":  baseline_available,
+                "max_score":           round(max_score, 4),
+                "flagged":             bool(spectral_detections),
+                "change_types":        list({d["type"] for d in spectral_detections}),
+                "scores":              {d["type"]: d["confidence"] for d in spectral_detections},
             }
 
         except Exception as e:
             print(f"[scanner] spectral_full error: {e}")
-            return {"flagged": False, "change_types": [], "scores": {}, "max_score": 0.0,
-                    "baseline_available": False, "water_mask": None}
+            import traceback; traceback.print_exc()
+            return {"spectral_detections": [], "water_mask": None, "baseline_available": False,
+                    "max_score": 0.0, "flagged": False, "change_types": [], "scores": {}}
 
     # ── YOLO inference ─────────────────────────────────────────────────────────
 
@@ -387,7 +497,7 @@ class TileByTileScanner:
                         img_in = Image.fromarray(masked.astype(np.uint8))
                     else:
                         img_in = tc_pil
-                    results = model.predict(img_in, conf=0.3, verbose=False)
+                    results = model.predict(img_in, conf=0.2, verbose=False)
                     for res in results:
                         if not hasattr(res, "boxes") or res.boxes is None:
                             continue
@@ -530,12 +640,30 @@ class TileByTileScanner:
                     job.detections_total = (job.detections_total or 0) + len(detections)
                     db.commit()
 
+                    # Grab tile image b64 for live rendering (SSE consumers)
+                    _tile_img_b64 = None
+                    try:
+                        _trec = db.query(RegionalScanTile).filter_by(
+                            job_id=job_id, tile_index=tile["index"]
+                        ).first()
+                        if _trec:
+                            _tile_img_b64 = _trec.image_b64
+                    except Exception:
+                        pass
+
                     self._emit("scan_progress", {
-                        "job_id":         job_id,
-                        "tile_index":     tile["index"],
-                        "total_tiles":    len(tiles),
-                        "tiles_complete": job.tiles_complete,
-                        "pct":            round(job.tiles_complete / len(tiles) * 100),
+                        "job_id":           job_id,
+                        "tile_index":       tile["index"],
+                        "total_tiles":      len(tiles),
+                        "tiles_complete":   job.tiles_complete,
+                        "pct":              round(job.tiles_complete / len(tiles) * 100),
+                        "tile_image_b64":   _tile_img_b64,
+                        "tile_bbox": {
+                            "min_lon": tile["min_lon"],
+                            "min_lat": tile["min_lat"],
+                            "max_lon": tile["max_lon"],
+                            "max_lat": tile["max_lat"],
+                        },
                         "new_detections": [
                             {
                                 "detection_id":   d.detection_id,
@@ -544,21 +672,17 @@ class TileByTileScanner:
                                 "lat":            d.centroid_lat,
                                 "lon":            d.centroid_lon,
                                 "severity":       d.claude_severity or "medium",
-                                "tile_bbox": {
-                                    "min_lon": tile["min_lon"],
-                                    "min_lat": tile["min_lat"],
-                                    "max_lon": tile["max_lon"],
-                                    "max_lat": tile["max_lat"],
+                                "bbox": {
+                                    "min_lon": d.bbox_min_lon,
+                                    "min_lat": d.bbox_min_lat,
+                                    "max_lon": d.bbox_max_lon,
+                                    "max_lat": d.bbox_max_lat,
                                 },
+                                "category":  d.category,
+                                "importance": d.importance,
                             }
                             for d in detections
                         ],
-                        "tile_bbox": {
-                            "min_lon": tile["min_lon"],
-                            "min_lat": tile["min_lat"],
-                            "max_lon": tile["max_lon"],
-                            "max_lat": tile["max_lat"],
-                        },
                     })
 
                 except asyncio.TimeoutError:
@@ -640,12 +764,12 @@ class TileByTileScanner:
         if not current:
             return []
 
-        # 2. Full spectral analysis (CPU-bound numpy — run in executor to avoid blocking event loop)
+        # 2. Full spectral analysis (CPU-bound numpy — run in executor)
         spectral = await loop.run_in_executor(
             None, lambda: self._analyse_spectral_full(current, baseline, region)
         )
 
-        # 3. YOLO inference (runs in executor — CPU-bound)
+        # 3. YOLO inference (CPU-bound)
         water_mask = spectral.get("water_mask")
         yolo_dets  = await loop.run_in_executor(
             None, lambda: self._run_all_models(current, tile, water_mask)
@@ -654,66 +778,95 @@ class TileByTileScanner:
         if not spectral["flagged"] and not yolo_dets:
             return []
 
-        # 4. Context
+        # 4. Context (needed for importance scoring + Claude Vision)
         nearby  = await loop.run_in_executor(None, lambda: self._get_nearby_assets(tile_lat, tile_lon, 10, db))
         zone_id = await loop.run_in_executor(None, lambda: self._get_containing_zone(tile_lat, tile_lon, db))
 
         detections: list[RegionalScanDetection] = []
+        tile_bbox = {
+            "min_lon": tile["min_lon"], "min_lat": tile["min_lat"],
+            "max_lon": tile["max_lon"], "max_lat": tile["max_lat"],
+        }
 
-        # 5. Spectral detections
-        for change_type in spectral["change_types"]:
-            is_fire   = change_type in ("FIRE", "SMOKE", "BURN_SCAR")
-            relevant  = is_fire or bool(nearby) or bool(zone_id)
-            if not relevant:
-                continue
-            det_type   = self._map_change_type_full(change_type, nearby)
-            confidence = spectral["scores"].get(change_type, 0.5)
-            category   = self._spectral_to_category(det_type)
-            importance = self._importance(confidence, bool(nearby), bool(zone_id), is_fire)
-
-            claude_analysis = None
-            claude_severity = "medium"
-            if confidence > 0.45 or is_fire:
+        # ── Claude Vision: one call per unique high-confidence spectral type ──────
+        # Only for fire/smoke/burn — expensive to call for every bbox
+        vision_cache: dict[str, dict] = {}
+        for sd in spectral["spectral_detections"]:
+            dt = sd["type"]
+            is_fire = dt in ("FIRE", "SMOKE", "BURN_SCAR")
+            if is_fire and sd["confidence"] > 0.45 and dt not in vision_cache:
                 try:
-                    vision = await self._claude_vision(
-                        current.get("true-colour", {}), tile, det_type, nearby, zone_id
+                    vis = await self._claude_vision(
+                        current.get("true-colour", {}), tile, dt, nearby, zone_id
                     )
-                    claude_analysis = vision.get("description")
-                    claude_severity = vision.get("severity", "medium")
+                    vision_cache[dt] = vis
                 except Exception as ve:
                     print(f"[scanner] vision tile {tile['index']}: {ve}")
 
-            det = RegionalScanDetection(
-                detection_id              = f"RDET-{uuid.uuid4().hex[:6].upper()}",
-                job_id                    = job_id,
-                tile_index                = tile["index"],
-                region_name               = "UAE",
-                detection_type            = det_type,
-                confidence                = round(confidence, 3),
-                centroid_lat              = tile_lat,
-                centroid_lon              = tile_lon,
-                bbox_min_lon              = tile["min_lon"],
-                bbox_min_lat              = tile["min_lat"],
-                bbox_max_lon              = tile["max_lon"],
-                bbox_max_lat              = tile["max_lat"],
-                spectral_change_score     = round(spectral["max_score"], 4),
-                change_type               = "FIRE" if is_fire else "CHANGED",
-                nearest_asset_name        = nearby[0]["name"]           if nearby else None,
-                nearest_asset_type        = nearby[0]["type"]           if nearby else None,
-                nearest_asset_distance_km = round(nearby[0]["distance_km"], 2) if nearby else None,
-                in_strategic_zone         = zone_id,
-                claude_vision_analysis    = claude_analysis,
-                claude_severity           = claude_severity,
-                image_b64                 = current.get("true-colour", {}).get("b64") if is_fire else None,
-                category                  = category,
-                importance                = importance,
-                detection_source          = "spectral",
-                is_change                 = True,
-                baseline_available        = spectral.get("baseline_available", False),
-                created_at                = datetime.datetime.utcnow(),
-            )
-            db.add(det)
-            detections.append(det)
+        # 5. Spectral detections — expand mask to sub-tile geo bboxes
+        MAX_BOXES = {"FIRE": 5, "SMOKE": 5, "BURN_SCAR": 5, "VEGETATION_LOSS": 8,
+                     "WATER_BODY": 10, "VEGETATION": 15, "INFRASTRUCTURE_CHANGE": 20,
+                     "CONSTRUCTION": 15}
+        for sd in spectral["spectral_detections"]:
+            mask = sd.pop("_mask", None)
+            det_type   = sd["type"]
+            confidence = sd["confidence"]
+            is_change  = sd["is_change"]
+            category   = sd.get("category") or self._spectral_to_category(det_type)
+            is_fire    = det_type in ("FIRE", "SMOKE", "BURN_SCAR")
+            importance = self._importance(confidence, bool(nearby), bool(zone_id), is_fire)
+
+            vis_result     = vision_cache.get(det_type, {})
+            claude_analysis = vis_result.get("description")
+            claude_severity = vis_result.get("severity", "info" if not is_fire else "medium")
+
+            # Expand mask to sub-tile bboxes; fall back to tile-wide if mask unavailable
+            if mask is not None:
+                bboxes = self._mask_to_geo_bboxes(
+                    mask, tile_bbox,
+                    min_pixels=4,
+                    max_boxes=MAX_BOXES.get(det_type, 10),
+                )
+            else:
+                bboxes = []
+            if not bboxes:
+                bboxes = [{
+                    "min_lon": tile_bbox["min_lon"], "min_lat": tile_bbox["min_lat"],
+                    "max_lon": tile_bbox["max_lon"], "max_lat": tile_bbox["max_lat"],
+                    "centroid_lon": tile_lon, "centroid_lat": tile_lat, "pixel_count": 1,
+                }]
+
+            for bbox in bboxes:
+                det = RegionalScanDetection(
+                    detection_id              = f"RDET-{uuid.uuid4().hex[:6].upper()}",
+                    job_id                    = job_id,
+                    tile_index                = tile["index"],
+                    region_name               = "UAE",
+                    detection_type            = det_type,
+                    confidence                = confidence,
+                    centroid_lat              = bbox["centroid_lat"],
+                    centroid_lon              = bbox["centroid_lon"],
+                    bbox_min_lon              = bbox["min_lon"],
+                    bbox_min_lat              = bbox["min_lat"],
+                    bbox_max_lon              = bbox["max_lon"],
+                    bbox_max_lat              = bbox["max_lat"],
+                    spectral_change_score     = round(spectral["max_score"], 4),
+                    change_type               = "FIRE" if is_fire else ("CHANGED" if is_change else "DETECTED"),
+                    nearest_asset_name        = nearby[0]["name"]           if nearby else None,
+                    nearest_asset_type        = nearby[0]["type"]           if nearby else None,
+                    nearest_asset_distance_km = round(nearby[0]["distance_km"], 2) if nearby else None,
+                    in_strategic_zone         = zone_id,
+                    claude_vision_analysis    = claude_analysis,
+                    claude_severity           = claude_severity,
+                    category                  = category,
+                    importance                = importance,
+                    detection_source          = "spectral",
+                    is_change                 = is_change,
+                    baseline_available        = spectral.get("baseline_available", False),
+                    created_at                = datetime.datetime.utcnow(),
+                )
+                db.add(det)
+                detections.append(det)
 
         # 6. YOLO detections
         for yd in yolo_dets:

@@ -4119,6 +4119,46 @@ async def regional_scan_latest_detections(
         return {"type": "FeatureCollection", "features": [], "job": None, "error": str(e)}
 
 
+@app.get("/api/regional-scans/latest/detections/summary")
+async def regional_scan_latest_detections_summary(
+    region_name: str = Query("UAE"),
+    current_user=Depends(get_optional_user),
+):
+    """Detection counts by category for the latest scan job."""
+    try:
+        with get_db() as db:
+            job = (
+                db.query(_RegionalScanJob)
+                .filter(
+                    _RegionalScanJob.region_name == region_name.upper(),
+                    _RegionalScanJob.status.in_(["running", "complete"]),
+                )
+                .order_by(_RegionalScanJob.created_at.desc())
+                .first()
+            )
+            if not job:
+                return {"total": 0, "by_category": {}}
+            from sqlalchemy import func as _func
+            rows = (
+                db.query(
+                    _RegionalScanDetection.category,
+                    _func.count(_RegionalScanDetection.id).label("n"),
+                )
+                .filter_by(job_id=job.job_id, suppressed=False)
+                .group_by(_RegionalScanDetection.category)
+                .all()
+            )
+            by_cat = {(r.category or "infrastructure").upper(): r.n for r in rows}
+            return {
+                "total":       sum(by_cat.values()),
+                "by_category": by_cat,
+                "job_id":      job.job_id,
+                "job_status":  job.status,
+            }
+    except Exception as e:
+        return {"total": 0, "by_category": {}, "error": str(e)}
+
+
 @app.get("/api/regional-scans/latest/tiles")
 async def regional_scan_latest_tiles(
     region_name: str = Query("UAE"),

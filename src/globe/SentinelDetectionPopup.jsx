@@ -14,6 +14,9 @@ const SENTINEL_LABELS = {
     UNKNOWN_COMPOUND:       { label: "Unknown Compound",        icon: "🔲", color: "#f87171", category: "Military",      explanation: "Structured enclosure with no matching infrastructure label. Geometry and isolation are consistent with a controlled facility." },
     CHANGE:                 { label: "Spectral Change",         icon: "🔄", color: "#818cf8", category: "General",       explanation: "Mean pixel difference vs. 30-day baseline exceeds detection threshold. Change is co-located with a strategic asset or zone." },
     WATER_BODY_CHANGE:      { label: "Water Body Change",       icon: "💧", color: "#38bdf8", category: "Environmental", explanation: "NDWI indicates a change in water surface extent vs. baseline. May indicate flooding, drought, or reservoir management." },
+    WATER_BODY:             { label: "Water Body",              icon: "💧", color: "#34AADC", category: "Environmental", explanation: "Water body or wetland detected via NDWI index (> 0.1). No baseline required." },
+    VEGETATION:             { label: "Vegetation",              icon: "🌿", color: "#30D158", category: "Environmental", explanation: "Vegetated area detected via NDVI index (> 0.2). Includes parks, farms, and natural vegetation." },
+    INFRASTRUCTURE:         { label: "Built-up Infrastructure", icon: "🏙️", color: "#FF9500", category: "Infrastructure", explanation: "Built-up area detected via NDBI index (> 0.15). Includes buildings, roads, and urban surfaces." },
 }
 
 const SEV_COLORS = {

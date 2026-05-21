@@ -17,6 +17,8 @@ const DET_CONFIG = {
     SMOKE:                  { color: "#8E8E93", label: "Smoke Plume",           icon: "💨", category: "environmental" },
     BURN_SCAR:              { color: "#FF6B35", label: "Burn Scar",             icon: "🔶", category: "environmental" },
     VEGETATION_LOSS:        { color: "#34C759", label: "Vegetation Loss",       icon: "🌿", category: "environmental" },
+    VEGETATION:             { color: "#30D158", label: "Vegetation",            icon: "🌿", category: "environmental" },
+    WATER_BODY:             { color: "#34AADC", label: "Water Body",            icon: "💧", category: "environmental" },
     WATER_BODY_CHANGE:      { color: "#34AADC", label: "Water Body Change",     icon: "💧", category: "environmental" },
     RUNWAY_CHANGE:          { color: "#5856D6", label: "Runway Change",         icon: "✈",  category: "aviation" },
     PORT_CHANGE:            { color: "#34AADC", label: "Port / Vessel",         icon: "⚓",  category: "maritime" },
@@ -25,6 +27,8 @@ const DET_CONFIG = {
     VEHICLE_CLUSTER:        { color: "#FF9500", label: "Vehicle Cluster",       icon: "🚗",  category: "military" },
     EXCAVATION:             { color: "#8B6914", label: "Excavation",            icon: "🟫",  category: "infrastructure" },
     INFRASTRUCTURE_CHANGE:  { color: "#FF9500", label: "Infrastructure Change", icon: "🏗",  category: "infrastructure" },
+    INFRASTRUCTURE:         { color: "#FF9500", label: "Infrastructure",        icon: "🏙",  category: "infrastructure" },
+    CONSTRUCTION:           { color: "#F59E0B", label: "Construction",          icon: "🏗",  category: "infrastructure" },
     MILITARY_ACTIVITY:      { color: "#FF3B30", label: "Military Activity",     icon: "🎯",  category: "military" },
 }
 
@@ -217,64 +221,74 @@ export default function GlobeRegionalScanLayer({ enabled, categories, essentialO
     const { viewer }            = useCesium()
     const [detections, setDets] = useState([])
     const [tiles, setTiles]     = useState([])
+    const [jobStatus, setJobStatus] = useState(null)
     const [selDet, setSelDet]   = useState(null)
     const [tooltipPos, setTPos] = useState({ x: 0, y: 0 })
     const [tooltipVis, setTVis] = useState(false)
     const centroidRef           = useRef(null)
     const knownIdsRef           = useRef(new Set())
     const imageryLayersRef      = useRef([])
+    const loadedTileIds         = useRef(new Set())
 
-    // Fetch latest detections + tiles
+    // Fetch latest detections + tiles; poll while scan is running
     useEffect(() => {
         if (!enabled) return
-        fetch(`${API_BASE}/api/regional-scans/latest/detections`)
-            .then(r => r.ok ? r.json() : null)
-            .then(d => {
-                if (!d) return
-                const feats = d.features || []
-                feats.forEach(f => knownIdsRef.current.add(f.properties?.detection_id))
-                setDets(feats)
-            })
-            .catch(() => {})
+        let cancelled = false
 
-        fetch(`${API_BASE}/api/regional-scans/latest/tiles`)
-            .then(r => r.ok ? r.json() : null)
-            .then(d => { if (d?.tiles) setTiles(d.tiles) })
-            .catch(() => {})
-    }, [enabled])
+        const loadAll = () => {
+            fetch(`${API_BASE}/api/regional-scans/latest/detections`)
+                .then(r => r.ok ? r.json() : null)
+                .then(d => {
+                    if (!d || cancelled) return
+                    const feats = d.features || []
+                    feats.forEach(f => knownIdsRef.current.add(f.properties?.detection_id))
+                    setDets(feats)
+                    setJobStatus(d.job?.status ?? null)
+                })
+                .catch(() => {})
 
-    // Add Sentinel tile imagery layers via viewer.imageryLayers
+            fetch(`${API_BASE}/api/regional-scans/latest/tiles`)
+                .then(r => r.ok ? r.json() : null)
+                .then(d => {
+                    if (!d || cancelled) return
+                    if (d?.tiles) setTiles(d.tiles)
+                    setJobStatus(d.job?.status ?? null)
+                })
+                .catch(() => {})
+        }
+
+        loadAll()
+        // Poll every 8 s while scan running so new tiles appear live
+        const iv = setInterval(() => {
+            if (jobStatus === "running") loadAll()
+        }, 8_000)
+        return () => { cancelled = true; clearInterval(iv) }
+    }, [enabled, jobStatus])
+
+    // Add Sentinel tile imagery layers via fetch → blob URL → SingleTileImageryProvider
     useEffect(() => {
         if (!viewer || !enabled) return
-        // Remove old layers
-        imageryLayersRef.current.forEach(l => {
-            try { viewer.imageryLayers.remove(l) } catch { /* ok */ }
-        })
-        imageryLayersRef.current = []
 
-        const tilesWithImage = tiles.filter(t => t.has_image && t.image_url)
+        const tilesWithImage = tiles.filter(t => t.has_image && t.image_url && !loadedTileIds.current.has(t.tile_id))
+        if (!tilesWithImage.length) return
+
         tilesWithImage.forEach(t => {
-            try {
-                const rect = CesiumRectangle.fromDegrees(t.min_lon, t.min_lat, t.max_lon, t.max_lat)
-                const provider = new SingleTileImageryProvider({
-                    url:       `${API_BASE}${t.image_url}`,
-                    rectangle: rect,
+            loadedTileIds.current.add(t.tile_id)
+            const rect = CesiumRectangle.fromDegrees(t.min_lon, t.min_lat, t.max_lon, t.max_lat)
+            fetch(`${API_BASE}${t.image_url}`)
+                .then(r => r.ok ? r.blob() : null)
+                .then(blob => {
+                    if (!blob) return
+                    const blobUrl = URL.createObjectURL(blob)
+                    return SingleTileImageryProvider.fromUrl(blobUrl, { rectangle: rect })
+                        .then(provider => {
+                            const layer = viewer.imageryLayers.addImageryProvider(provider)
+                            layer.alpha = 0.72
+                            imageryLayersRef.current.push(layer)
+                        })
+                        .catch(() => {})
                 })
-                const layer = viewer.imageryLayers.addImageryProvider(provider)
-                layer.alpha = 0.7
-                imageryLayersRef.current.push(layer)
-            } catch (e) {
-                // SingleTileImageryProvider may be async in newer Cesium
-                try {
-                    SingleTileImageryProvider.fromUrl(`${API_BASE}${t.image_url}`, {
-                        rectangle: CesiumRectangle.fromDegrees(t.min_lon, t.min_lat, t.max_lon, t.max_lat),
-                    }).then(provider => {
-                        const layer = viewer.imageryLayers.addImageryProvider(provider)
-                        layer.alpha = 0.7
-                        imageryLayersRef.current.push(layer)
-                    }).catch(() => {})
-                } catch { /* skip */ }
-            }
+                .catch(() => {})
         })
 
         return () => {
@@ -282,6 +296,7 @@ export default function GlobeRegionalScanLayer({ enabled, categories, essentialO
                 try { viewer.imageryLayers.remove(l) } catch { /* ok */ }
             })
             imageryLayersRef.current = []
+            loadedTileIds.current    = new Set()
         }
     }, [viewer, tiles, enabled])
 
