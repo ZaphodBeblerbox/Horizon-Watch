@@ -4760,6 +4760,104 @@ async def get_market_indices(current_user=Depends(get_optional_user)):
     return {"indices": results}
 
 
+# ── YouTube news reels ────────────────────────────────────────────────────────
+
+YOUTUBE_NEWS_CHANNELS = [
+    {"name": "Al Jazeera English", "id": "UCNye-wNBqNL5ZzHSJdYkf3A"},
+    {"name": "BBC News",            "id": "UC16niRr50-MSBwiO3YDb3RA"},
+    {"name": "France 24 English",   "id": "UCQfwfsi5VrQ8yKZ-UWmAoBw"},
+    {"name": "DW News",             "id": "UCknLrEdhRCp1aegoMqRaCZg"},
+    {"name": "Reuters",             "id": "UChqUTb7kYRX8-EiaN3XFrSQ"},
+    {"name": "Sky News",            "id": "UCoMdktPbSTixAyNGwb-UYkQ"},
+    {"name": "TRT World",           "id": "UC7_gcs09iThXybpVgjHZ_7g"},
+    {"name": "Bloomberg",           "id": "UCIALMKvObZNtJ6AmdCLP7Lg"},
+    {"name": "CNN International",   "id": "UCupvZG-5ko_eiXAupbDfxWw"},
+]
+
+_youtube_reels_cache: list = []
+_youtube_reels_last_fetch: datetime | None = None
+
+
+async def _fetch_youtube_reels() -> list:
+    import httpx
+    from xml.etree import ElementTree as ET
+
+    ns = {
+        "atom":  "http://www.w3.org/2005/Atom",
+        "yt":    "http://www.youtube.com/xml/schemas/2015",
+        "media": "http://search.yahoo.com/mrss/",
+    }
+    videos = []
+    async with httpx.AsyncClient(timeout=10) as client:
+        for channel in YOUTUBE_NEWS_CHANNELS:
+            try:
+                url = (f"https://www.youtube.com/feeds/videos.xml"
+                       f"?channel_id={channel['id']}")
+                r = await client.get(url)
+                if r.status_code != 200:
+                    continue
+                root    = ET.fromstring(r.text)
+                entries = root.findall("atom:entry", ns)
+                for entry in entries[:3]:
+                    video_id  = entry.find("yt:videoId", ns)
+                    title     = entry.find("atom:title", ns)
+                    published = entry.find("atom:published", ns)
+                    thumbnail = entry.find(".//media:thumbnail", ns)
+                    if video_id is None:
+                        continue
+                    vid = video_id.text
+                    videos.append({
+                        "video_id":  vid,
+                        "title":     title.text if title is not None else "",
+                        "channel":   channel["name"],
+                        "channel_id": channel["id"],
+                        "published": published.text if published is not None else "",
+                        "thumbnail": (thumbnail.get("url") if thumbnail is not None
+                                      else f"https://img.youtube.com/vi/{vid}/mqdefault.jpg"),
+                        "embed_url": (f"https://www.youtube.com/embed/{vid}"
+                                      f"?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1"),
+                    })
+            except Exception as e:
+                print(f"[youtube] Failed {channel['name']}: {e}")
+
+    videos.sort(key=lambda x: x.get("published", ""), reverse=True)
+    return videos
+
+
+async def _youtube_reels_loop():
+    global _youtube_reels_cache, _youtube_reels_last_fetch
+    while True:
+        try:
+            videos = await _fetch_youtube_reels()
+            if videos:
+                _youtube_reels_cache     = videos
+                _youtube_reels_last_fetch = datetime.utcnow()
+                print(f"[youtube] Refreshed {len(videos)} videos")
+        except Exception as e:
+            print(f"[youtube] Refresh failed: {e}")
+        await asyncio.sleep(1800)
+
+
+@app.get("/api/news/reels")
+async def get_news_reels(current_user=Depends(get_optional_user)):
+    """Return cached YouTube news reels. Fetches immediately if cache is empty."""
+    global _youtube_reels_cache, _youtube_reels_last_fetch
+    if not _youtube_reels_cache:
+        try:
+            videos = await _fetch_youtube_reels()
+            if videos:
+                _youtube_reels_cache     = videos
+                _youtube_reels_last_fetch = datetime.utcnow()
+        except Exception as e:
+            print(f"[youtube] On-demand fetch failed: {e}")
+    return {
+        "videos":       _youtube_reels_cache,
+        "count":        len(_youtube_reels_cache),
+        "last_updated": _youtube_reels_last_fetch.isoformat() if _youtube_reels_last_fetch else None,
+        "channels":     len(YOUTUBE_NEWS_CHANNELS),
+    }
+
+
 # ── Director image search (Wikimedia Commons) ────────────────────────────────
 
 _IMG_SEARCH_CACHE: dict = {}      # query → {result, ts}
@@ -10635,7 +10733,8 @@ async def startup_event():
             print(f"[forge] loaded saved weights: {_threat_engine.weights}")
         except Exception:
             print("[forge] using default threat weights")
-        asyncio.create_task(_forge_detection_cycle())
+        asyncio.create_task(_youtube_reels_loop())
+    asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_regional_scan_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
