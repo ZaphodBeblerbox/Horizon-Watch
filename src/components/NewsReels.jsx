@@ -72,7 +72,7 @@ export default function NewsReels({ onClose }) {
                 playerVars: {
                     autoplay:       1,
                     mute:           1,
-                    controls:       0,
+                    controls:       1,
                     disablekb:      1,
                     fs:             0,
                     iv_load_policy: 3,
@@ -178,6 +178,16 @@ export default function NewsReels({ onClose }) {
             {!loading && shorts.length > 0 && (
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                     <div ref={playerDivRef} style={{ width: "100%", height: "100%" }} />
+                    {/* Hide YouTube controls bar at bottom */}
+                    <div style={{
+                        position: "absolute", bottom: 0, left: 0, right: 0,
+                        height: "15%", background: "#000", zIndex: 2,
+                    }} />
+                    {/* Hide YouTube title/branding at top */}
+                    <div style={{
+                        position: "absolute", top: 0, left: 0, right: 0,
+                        height: "10%", background: "#000", zIndex: 2,
+                    }} />
                 </div>
             )}
 
