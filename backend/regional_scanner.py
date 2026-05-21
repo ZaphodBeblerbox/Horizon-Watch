@@ -180,7 +180,7 @@ class TileByTileScanner:
         """Fetch 5 current bands + 2 baseline bands concurrently.
         Returns (current_bands, baseline_bands) keyed by band name, or (None, None) on failure.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         w = tile["min_lon"]; s = tile["min_lat"]
         e = tile["max_lon"]; n = tile["max_lat"]
         max_days  = region.get("scan_interval_days", 5)
@@ -609,7 +609,7 @@ class TileByTileScanner:
     async def _process_single_tile(
         self, tile: dict, region: dict, job_id: str, db
     ) -> list[RegionalScanDetection]:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         tile_lat = (tile["min_lat"] + tile["max_lat"]) / 2
         tile_lon = (tile["min_lon"] + tile["max_lon"]) / 2
         tile_id  = f"RTILE-{uuid.uuid4().hex[:6].upper()}"
@@ -630,14 +630,20 @@ class TileByTileScanner:
             image_b64   = current.get("true-colour", {}).get("b64") if current else None,
             image_date  = current.get("true-colour", {}).get("date") if current else None,
         )
-        db.add(tile_row)
-        db.commit()
+        try:
+            db.add(tile_row)
+            db.commit()
+        except Exception as _te:
+            db.rollback()
+            print(f"[scanner] tile_row persist error: {_te}")
 
         if not current:
             return []
 
-        # 2. Full spectral analysis
-        spectral = self._analyse_spectral_full(current, baseline, region)
+        # 2. Full spectral analysis (CPU-bound numpy — run in executor to avoid blocking event loop)
+        spectral = await loop.run_in_executor(
+            None, lambda: self._analyse_spectral_full(current, baseline, region)
+        )
 
         # 3. YOLO inference (runs in executor — CPU-bound)
         water_mask = spectral.get("water_mask")
@@ -742,8 +748,12 @@ class TileByTileScanner:
             db.add(det)
             detections.append(det)
 
-        tile_row.detections_count = len(detections)
-        db.commit()
+        try:
+            tile_row.detections_count = len(detections)
+            db.commit()
+        except Exception as _ce:
+            db.rollback()
+            print(f"[scanner] detections commit error: {_ce}")
         return detections
 
     # ── Spectral analysis ──────────────────────────────────────────────────────

@@ -80,8 +80,29 @@ export default function GlobeAlertsLayer({ enabled }) {
         const ids = []
         alerts.forEach((a, i) => {
             const id = `alert-forge-${a.id || i}`
-            const entityType = NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "") ? "assessment" : "alert"
-            setEntity(id, entityType, { ...a, _idx: i })
+            let entityType
+            if (a.source === "SENTINEL") {
+                entityType = "sentinel_detection"
+            } else if (NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")) {
+                entityType = "assessment"
+            } else {
+                entityType = "alert"
+            }
+            setEntity(id, entityType, {
+                ...a,
+                _idx:           i,
+                // Normalise sentinel fields so SentinelDetectionPopup finds them
+                detection_type:            a.detection_type || a.rule_type,
+                confidence:                a.confidence,
+                claude_severity:           a.severity,
+                claude_vision_analysis:    a.claude_analysis || a.description,
+                centroid_lat:              a.lat,
+                centroid_lon:              a.lng ?? a.lon,
+                nearest_asset_name:        a.nearest_asset_name,
+                nearest_asset_distance_km: a.nearest_asset_distance_km,
+                in_strategic_zone:         a.in_strategic_zone,
+                created_at:                a.timestamp,
+            })
             ids.push(id)
         })
         return () => ids.forEach(deleteEntity)

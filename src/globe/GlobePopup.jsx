@@ -16,8 +16,9 @@ import GlobeAlertPopup      from "./GlobeAlertPopup.jsx"
 import GlobeAssessmentPopup from "./GlobeAssessmentPopup.jsx"
 import GlobeFusionPopup     from "./GlobeFusionPopup.jsx"
 import GlobeAirportPopup  from "./GlobeAirportPopup.jsx"
-import GlobePortPopup     from "./GlobePortPopup.jsx"
-import API_BASE           from "../apiBase.js"
+import GlobePortPopup            from "./GlobePortPopup.jsx"
+import SentinelDetectionPopup    from "./SentinelDetectionPopup.jsx"
+import API_BASE                  from "../apiBase.js"
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
 const THREAT_COLORS = { critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }
@@ -327,6 +328,8 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                         <ThreatRegionPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "port" ? (
                         <GlobePortPopup data={popup.data} onClose={handleClose} />
+                    ) : popup.type === "sentinel_detection" ? (
+                        <SentinelDetectionPopup data={popup.data} onClose={handleClose} />
                     ) : (
                         <>
                             <button

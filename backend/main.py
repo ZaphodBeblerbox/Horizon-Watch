@@ -4084,29 +4084,39 @@ async def regional_scan_latest_detections(
     current_user=Depends(get_optional_user),
 ):
     """Detections from the most recent running or complete scan — used by globe layer."""
-    with get_db() as db:
-        job = (
-            db.query(_RegionalScanJob)
-            .filter(
-                _RegionalScanJob.region_name == region_name.upper(),
-                _RegionalScanJob.status.in_(["running", "complete"]),
+    try:
+        with get_db() as db:
+            job = (
+                db.query(_RegionalScanJob)
+                .filter(
+                    _RegionalScanJob.region_name == region_name.upper(),
+                    _RegionalScanJob.status.in_(["running", "complete"]),
+                )
+                .order_by(_RegionalScanJob.created_at.desc())
+                .first()
             )
-            .order_by(_RegionalScanJob.created_at.desc())
-            .first()
-        )
-        if not job:
-            return {"type": "FeatureCollection", "features": [], "job": None}
-        dets = (
-            db.query(_RegionalScanDetection)
-            .filter_by(job_id=job.job_id, suppressed=False)
-            .order_by(_RegionalScanDetection.confidence.desc())
-            .all()
-        )
-        return {
-            "type":     "FeatureCollection",
-            "features": [_rsdet_to_geojson_feature(d) for d in dets],
-            "job":      _rscan_to_dict(job),
-        }
+            if not job:
+                return {"type": "FeatureCollection", "features": [], "job": None}
+            dets = (
+                db.query(_RegionalScanDetection)
+                .filter_by(job_id=job.job_id, suppressed=False)
+                .order_by(_RegionalScanDetection.confidence.desc())
+                .all()
+            )
+            features = []
+            for d in dets:
+                try:
+                    features.append(_rsdet_to_geojson_feature(d))
+                except Exception:
+                    pass
+            return {
+                "type":     "FeatureCollection",
+                "features": features,
+                "job":      _rscan_to_dict(job),
+            }
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return {"type": "FeatureCollection", "features": [], "job": None, "error": str(e)}
 
 
 @app.get("/api/regional-scans/latest/tiles")
@@ -10833,6 +10843,33 @@ async def startup_event():
         except Exception as _e:
             print(f"[startup] stale scan cancel error: {_e}")
 
+        # Add missing columns to regional_scan_detections (idempotent — ignore if column exists)
+        try:
+            from database import engine as _scan_engine
+            from sqlalchemy import text as _sql_text
+            _new_cols = [
+                ("regional_scan_detections", "category",           "TEXT"),
+                ("regional_scan_detections", "importance",         "INTEGER DEFAULT 3"),
+                ("regional_scan_detections", "detection_source",   "TEXT"),
+                ("regional_scan_detections", "class_name",         "TEXT"),
+                ("regional_scan_detections", "is_change",          "BOOLEAN DEFAULT FALSE"),
+                ("regional_scan_detections", "baseline_available", "BOOLEAN DEFAULT FALSE"),
+                ("regional_scan_detections", "bbox_min_lon",       "FLOAT"),
+                ("regional_scan_detections", "bbox_min_lat",       "FLOAT"),
+                ("regional_scan_detections", "bbox_max_lon",       "FLOAT"),
+                ("regional_scan_detections", "bbox_max_lat",       "FLOAT"),
+            ]
+            with _scan_engine.connect() as _conn:
+                for _tbl, _col, _typ in _new_cols:
+                    try:
+                        _conn.execute(_sql_text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
+                        _conn.commit()
+                        print(f"[startup] migration: added {_tbl}.{_col}")
+                    except Exception:
+                        pass  # column already exists
+        except Exception as _me:
+            print(f"[startup] column migration error: {_me}")
+
     except Exception as _e:
         print(f"[startup] database init failed: {_e}")
 
@@ -10959,7 +10996,7 @@ async def startup_event():
     asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_regional_scan_scheduler_loop())
-    asyncio.create_task(asyncio.to_thread(_load_detection_models))
+    asyncio.get_running_loop().run_in_executor(None, _load_detection_models)
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())

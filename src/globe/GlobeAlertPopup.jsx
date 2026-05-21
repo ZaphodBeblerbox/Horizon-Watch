@@ -1,10 +1,23 @@
 import { ALERT_ICONS, FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
 
+const DOMAIN_LABELS = {
+    SENTINEL:    "Satellite",
+    AIS:         "AIS",
+    ADSB:        "ADS-B",
+    FUSION:      "Fusion",
+    NEWS:        "News",
+    OREF:        "Civil Alert",
+    USGS:        "Seismic",
+    GDACS:       "Disaster",
+    OVERWATCH:   "Overwatch",
+}
+
 export default function GlobeAlertPopup({ data, onClose }) {
     const a = data || {}
     const sevColor = a.severity === "critical" ? "#f87171" : a.severity === "high" ? "#fb923c" : a.severity === "medium" ? "#fbbf24" : "#60a5fa"
     const sevBg    = a.severity === "critical" ? "rgba(248,113,113,0.12)" : a.severity === "high" ? "rgba(251,146,60,0.12)" : a.severity === "medium" ? "rgba(251,191,36,0.12)" : "rgba(96,165,250,0.12)"
     const srcColor = a.source === "AIS" ? "#0ea5e9" : a.source === "ADSB" ? "#a78bfa" : "#34d399"
+    const srcLabel = DOMAIN_LABELS[a.source] || a.source
 
     const iconKey   = a.icon_type || a.rule_type || ""
     const iconDef   = ALERT_ICONS[iconKey] || {}
@@ -20,7 +33,7 @@ export default function GlobeAlertPopup({ data, onClose }) {
                     </span>
                     {a.source && (
                         <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 3, background: "rgba(148,163,184,0.08)", color: srcColor, fontWeight: 600 }}>
-                            {a.source}
+                            {srcLabel}
                         </span>
                     )}
                 </div>
