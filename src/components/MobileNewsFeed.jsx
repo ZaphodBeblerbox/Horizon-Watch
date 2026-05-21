@@ -5,6 +5,7 @@
  */
 import { useState, useEffect, useRef } from "react"
 import API_BASE from "../apiBase.js"
+import NewsReels from "./NewsReels.jsx"
 
 // ── Endpoint mapping ──────────────────────────────────────────────────────────
 const ENDPOINTS = {
@@ -227,10 +228,11 @@ function LiveNewsReels() {
 // ── Main feed component ───────────────────────────────────────────────────────
 
 export default function MobileNewsFeed({ tab = "world" }) {
-  const [articles, setArticles] = useState([])
-  const [idx,      setIdx]      = useState(0)
-  const [loading,  setLoading]  = useState(true)
-  const [err,      setErr]      = useState(null)
+  const [articles,   setArticles]   = useState([])
+  const [idx,        setIdx]        = useState(0)
+  const [loading,    setLoading]    = useState(true)
+  const [err,        setErr]        = useState(null)
+  const [showReels,  setShowReels]  = useState(false)
   const yStart = useRef(0)
   const tStart = useRef(0)
 
@@ -317,8 +319,37 @@ export default function MobileNewsFeed({ tab = "world" }) {
   return (
     <div style={{ position:"fixed", inset:0, background:"#000", zIndex:100, overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
 
-      {/* ── LIVE NEWS reels section ─────────────────────────────────── */}
+      {/* ── Full-screen reels overlay ───────────────────────────────── */}
+      {showReels && <NewsReels onClose={() => setShowReels(false)} />}
+
+      {/* ── LIVE NEWS entry button + inline reels section ──────────── */}
       <div style={{ padding: "calc(max(16px, env(safe-area-inset-top)) + 8px) 16px 0" }}>
+        {/* Entry button → full-screen TikTok-style view */}
+        <button
+          onClick={() => setShowReels(true)}
+          style={{
+            width: "100%", background: "rgba(255,59,48,0.08)",
+            border: "1px solid rgba(255,59,48,0.25)", borderRadius: 10,
+            padding: "10px 16px", display: "flex", alignItems: "center",
+            gap: 10, cursor: "pointer", marginBottom: 12, fontFamily: "inherit",
+          }}
+        >
+          <div style={{
+            width: 8, height: 8, borderRadius: "50%",
+            background: "#FF3B30", boxShadow: "0 0 8px #FF3B30",
+            animation: "mf-pulse 1.5s infinite", flexShrink: 0,
+          }} />
+          <div style={{ textAlign: "left" }}>
+            <div style={{ color: "#FF3B30", fontSize: 12, fontWeight: 700, letterSpacing: 0.8 }}>
+              LIVE NEWS REELS
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, marginTop: 1 }}>
+              Al Jazeera · BBC · France 24 · DW · Reuters
+            </div>
+          </div>
+          <div style={{ marginLeft: "auto", color: "rgba(255,255,255,0.3)", fontSize: 16 }}>›</div>
+        </button>
+
         <LiveNewsReels />
       </div>
 
@@ -421,6 +452,7 @@ export default function MobileNewsFeed({ tab = "world" }) {
         @keyframes mf-slide  { from { transform:translateY(28px); opacity:0; } to { transform:translateY(0); opacity:1; } }
         @keyframes mf-bounce { 0%,100% { transform:translateY(0); opacity:0.45; } 50% { transform:translateY(-7px); opacity:1; } }
         @keyframes mf-spin   { to { transform:rotate(360deg); } }
+        @keyframes mf-pulse  { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
       `}</style>
     </div>
   )
