@@ -4266,6 +4266,87 @@ async def regional_scan_suppress(detection_id: str, current_user=Depends(get_opt
     return {"suppressed": True, "detection_id": detection_id}
 
 
+@app.delete("/api/regional-scans/cleanup/old")
+async def cleanup_old_scans(db=Depends(get_db)):
+    """Delete all scan jobs except the most recent complete one."""
+    try:
+        import gc as _gc
+        latest = (
+            db.query(_RegionalScanJob)
+            .filter(_RegionalScanJob.status == "complete")
+            .order_by(_RegionalScanJob.completed_at.desc())
+            .first()
+        )
+        keep_id = latest.job_id if latest else None
+        query = db.query(_RegionalScanJob)
+        if keep_id:
+            query = query.filter(_RegionalScanJob.job_id != keep_id)
+        job_ids = [j.job_id for j in query.all()]
+        if not job_ids:
+            return {"deleted_jobs": 0, "kept": keep_id}
+        det_count = (
+            db.query(_RegionalScanDetection)
+            .filter(_RegionalScanDetection.job_id.in_(job_ids))
+            .delete(synchronize_session=False)
+        )
+        tile_count = 0
+        try:
+            tile_count = (
+                db.query(_RegionalScanTile)
+                .filter(_RegionalScanTile.job_id.in_(job_ids))
+                .delete(synchronize_session=False)
+            )
+        except Exception:
+            pass
+        db.query(_RegionalScanJob).filter(
+            _RegionalScanJob.job_id.in_(job_ids)
+        ).delete(synchronize_session=False)
+        db.commit()
+        _gc.collect()
+        return {
+            "deleted_jobs":       len(job_ids),
+            "deleted_detections": det_count,
+            "deleted_tiles":      tile_count,
+            "kept":               keep_id,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.delete("/api/regional-scans/{job_id}")
+async def delete_scan(job_id: str, db=Depends(get_db)):
+    """Delete a specific scan job and all its detections/tiles."""
+    try:
+        import gc as _gc
+        det_count = (
+            db.query(_RegionalScanDetection)
+            .filter(_RegionalScanDetection.job_id == job_id)
+            .delete()
+        )
+        tile_count = 0
+        try:
+            tile_count = (
+                db.query(_RegionalScanTile)
+                .filter(_RegionalScanTile.job_id == job_id)
+                .delete()
+            )
+        except Exception:
+            pass
+        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
+        if not job:
+            return {"error": "Job not found"}
+        db.delete(job)
+        db.commit()
+        _gc.collect()
+        return {
+            "deleted":            job_id,
+            "detections_deleted": det_count,
+            "tiles_deleted":      tile_count,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/regional-scans/{job_id}/generate-report")
 async def regional_scan_generate_report(job_id: str, current_user=Depends(get_optional_user)):
     """Re-trigger report generation for a completed scan job."""

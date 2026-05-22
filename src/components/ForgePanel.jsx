@@ -4065,6 +4065,45 @@ function RegionalScansSection({ onViewOnGlobe }) {
         }
     }
 
+    const deleteScan = async (jobId) => {
+        if (!confirm(`Delete scan ${jobId}? This cannot be undone.`)) return
+        try {
+            const r = await fetch(`${API}/api/regional-scans/${jobId}`, {
+                method: "DELETE", headers: forgeHeaders(),
+            })
+            const data = await r.json()
+            if (data.deleted) {
+                setToast(`Deleted ${jobId} · ${data.detections_deleted} detections removed`)
+                setTimeout(() => setToast(""), 4000)
+                load()
+            } else {
+                setToast(data.error || "Delete failed")
+                setTimeout(() => setToast(""), 3000)
+            }
+        } catch (e) {
+            setToast("Delete failed")
+            setTimeout(() => setToast(""), 3000)
+        }
+    }
+
+    const cleanupOldScans = async () => {
+        if (!confirm("Delete all old scans? Only the most recent complete scan will be kept.")) return
+        try {
+            const r = await fetch(`${API}/api/regional-scans/cleanup/old`, {
+                method: "DELETE", headers: forgeHeaders(),
+            })
+            const data = await r.json()
+            const msg = `Cleaned up ${data.deleted_jobs ?? 0} scans · ${data.deleted_detections ?? 0} detections removed`
+                + (data.kept ? ` · kept ${data.kept}` : "")
+            setToast(msg)
+            setTimeout(() => setToast(""), 6000)
+            load()
+        } catch (e) {
+            setToast("Cleanup failed")
+            setTimeout(() => setToast(""), 3000)
+        }
+    }
+
     const openReport = () => setShowReport(true)
     const viewOnGlobe = () => {
         if (onViewOnGlobe) onViewOnGlobe()
@@ -4094,9 +4133,22 @@ function RegionalScansSection({ onViewOnGlobe }) {
                 display: "flex", alignItems: "center", justifyContent: "space-between",
             }}>
                 <span>Regional Scans</span>
-                <span style={{ color: "#334155", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                    Automated 5-day Sentinel-2 analysis
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: "#334155", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                        Automated 5-day Sentinel-2 analysis
+                    </span>
+                    {scans.length > 1 && (
+                        <button onClick={cleanupOldScans} style={{
+                            background: "rgba(255,59,48,0.08)",
+                            border: "1px solid rgba(255,59,48,0.2)",
+                            borderRadius: 5, color: "rgba(255,59,48,0.7)",
+                            fontSize: 9, padding: "2px 8px", cursor: "pointer",
+                            fontWeight: 600, letterSpacing: 0.3,
+                        }}>
+                            🗑 Clean Up Old Scans
+                        </button>
+                    )}
+                </div>
             </div>
 
             {toast && (
@@ -4215,7 +4267,7 @@ function RegionalScansSection({ onViewOnGlobe }) {
             {/* Past scans list (collapsed) */}
             {scans.length > 1 && (
                 <div style={{ marginTop: 6 }}>
-                    {scans.slice(1, 4).map(s => (
+                    {scans.slice(1).map(s => (
                         <div key={s.job_id} style={{
                             display: "flex", alignItems: "center", gap: 8,
                             padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)",
@@ -4227,6 +4279,18 @@ function RegionalScansSection({ onViewOnGlobe }) {
                             <span style={{ color: "#334155" }}>
                                 {s.detections_total ?? "—"} det
                             </span>
+                            <button
+                                onClick={() => deleteScan(s.job_id)}
+                                title="Delete this scan"
+                                style={{
+                                    background: "none",
+                                    border: "1px solid rgba(255,59,48,0.25)",
+                                    borderRadius: 4, color: "rgba(255,59,48,0.55)",
+                                    fontSize: 9, padding: "1px 6px", cursor: "pointer",
+                                }}
+                            >
+                                Delete
+                            </button>
                         </div>
                     ))}
                 </div>
