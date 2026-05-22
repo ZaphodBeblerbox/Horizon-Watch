@@ -4269,81 +4269,85 @@ async def regional_scan_suppress(detection_id: str, current_user=Depends(get_opt
 @app.delete("/api/regional-scans/cleanup/old")
 async def cleanup_old_scans(db=Depends(get_db)):
     """Delete all scan jobs except the most recent complete one."""
+    import gc as _gc, traceback as _tb
     try:
-        import gc as _gc
-        latest = (
+        latest_complete = (
             db.query(_RegionalScanJob)
             .filter(_RegionalScanJob.status == "complete")
             .order_by(_RegionalScanJob.completed_at.desc())
             .first()
         )
-        keep_id = latest.job_id if latest else None
-        query = db.query(_RegionalScanJob)
-        if keep_id:
-            query = query.filter(_RegionalScanJob.job_id != keep_id)
-        job_ids = [j.job_id for j in query.all()]
-        if not job_ids:
-            return {"deleted_jobs": 0, "kept": keep_id}
-        det_count = (
-            db.query(_RegionalScanDetection)
-            .filter(_RegionalScanDetection.job_id.in_(job_ids))
-            .delete(synchronize_session=False)
-        )
-        tile_count = 0
-        try:
-            tile_count = (
-                db.query(_RegionalScanTile)
-                .filter(_RegionalScanTile.job_id.in_(job_ids))
-                .delete(synchronize_session=False)
-            )
-        except Exception:
-            pass
-        db.query(_RegionalScanJob).filter(
-            _RegionalScanJob.job_id.in_(job_ids)
-        ).delete(synchronize_session=False)
+        keep_id = latest_complete.job_id if latest_complete else None
+        all_jobs  = db.query(_RegionalScanJob).all()
+        to_delete = [j for j in all_jobs if j.job_id != keep_id]
+        if not to_delete:
+            return {"deleted_jobs": 0, "deleted_detections": 0, "kept": keep_id, "message": "Nothing to clean up"}
+
+        total_dets = total_tiles = 0
+        for job in to_delete:
+            try:
+                dets = db.query(_RegionalScanDetection).filter_by(job_id=job.job_id).all()
+                total_dets += len(dets)
+                for d in dets:
+                    db.delete(d)
+            except Exception as _e:
+                print(f"[cleanup] dets {job.job_id}: {_e}")
+            try:
+                tiles = db.query(_RegionalScanTile).filter_by(job_id=job.job_id).all()
+                total_tiles += len(tiles)
+                for t in tiles:
+                    db.delete(t)
+            except Exception:
+                pass
+            db.flush()
+        for job in to_delete:
+            db.delete(job)
         db.commit()
         _gc.collect()
         return {
-            "deleted_jobs":       len(job_ids),
-            "deleted_detections": det_count,
-            "deleted_tiles":      tile_count,
+            "deleted_jobs":       len(to_delete),
+            "deleted_detections": total_dets,
+            "deleted_tiles":      total_tiles,
             "kept":               keep_id,
         }
     except Exception as e:
+        print(f"[cleanup] ERROR: {e}"); _tb.print_exc()
+        db.rollback()
         return {"error": str(e)}
 
 
 @app.delete("/api/regional-scans/{job_id}")
 async def delete_scan(job_id: str, db=Depends(get_db)):
     """Delete a specific scan job and all its detections/tiles."""
+    import gc as _gc, traceback as _tb
     try:
-        import gc as _gc
-        det_count = (
-            db.query(_RegionalScanDetection)
-            .filter(_RegionalScanDetection.job_id == job_id)
-            .delete()
-        )
-        tile_count = 0
+        det_count = tile_count = 0
         try:
-            tile_count = (
-                db.query(_RegionalScanTile)
-                .filter(_RegionalScanTile.job_id == job_id)
-                .delete()
-            )
+            dets = db.query(_RegionalScanDetection).filter_by(job_id=job_id).all()
+            det_count = len(dets)
+            for d in dets:
+                db.delete(d)
+            db.flush()
+        except Exception as _e:
+            print(f"[delete_scan] dets: {_e}")
+        try:
+            tiles = db.query(_RegionalScanTile).filter_by(job_id=job_id).all()
+            tile_count = len(tiles)
+            for t in tiles:
+                db.delete(t)
+            db.flush()
         except Exception:
             pass
         job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
         if not job:
-            return {"error": "Job not found"}
+            return {"error": "Not found", "job_id": job_id}
         db.delete(job)
         db.commit()
         _gc.collect()
-        return {
-            "deleted":            job_id,
-            "detections_deleted": det_count,
-            "tiles_deleted":      tile_count,
-        }
+        return {"deleted": job_id, "detections_deleted": det_count, "tiles_deleted": tile_count}
     except Exception as e:
+        print(f"[delete_scan] ERROR: {e}"); _tb.print_exc()
+        db.rollback()
         return {"error": str(e)}
 
 
