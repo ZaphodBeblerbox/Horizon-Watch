@@ -5,7 +5,7 @@ import { useCesium } from "resium"
 import {
     Cartesian3, Color, Rectangle,
     NearFarScalar, DistanceDisplayCondition,
-    SceneTransforms, SingleTileImageryProvider,
+    SceneTransforms, UrlTemplateImageryProvider,
     Rectangle as CesiumRectangle,
 } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -229,7 +229,6 @@ export default function GlobeRegionalScanLayer({ enabled, categories, essentialO
     const centroidRef           = useRef(null)
     const knownIdsRef           = useRef(new Set())
     const imageryLayersRef      = useRef([])
-    const loadedTileIds         = useRef(new Set())
 
     // Fetch latest detections + tiles; poll while scan is running
     useEffect(() => {
@@ -266,40 +265,28 @@ export default function GlobeRegionalScanLayer({ enabled, categories, essentialO
         return () => { cancelled = true; clearInterval(iv) }
     }, [enabled, jobStatus])
 
-    // Add Sentinel tile imagery layers via fetch → blob URL → SingleTileImageryProvider
+    // Seamless Sentinel satellite imagery via UrlTemplateImageryProvider over UAE bbox
     useEffect(() => {
         if (!viewer || !enabled) return
 
-        const tilesWithImage = tiles.filter(t => t.has_image && t.image_url && !loadedTileIds.current.has(t.tile_id))
-        if (!tilesWithImage.length) return
-
-        tilesWithImage.forEach(t => {
-            loadedTileIds.current.add(t.tile_id)
-            const rect = CesiumRectangle.fromDegrees(t.min_lon, t.min_lat, t.max_lon, t.max_lat)
-            fetch(`${API_BASE}${t.image_url}`)
-                .then(r => r.ok ? r.blob() : null)
-                .then(blob => {
-                    if (!blob) return
-                    const blobUrl = URL.createObjectURL(blob)
-                    return SingleTileImageryProvider.fromUrl(blobUrl, { rectangle: rect })
-                        .then(provider => {
-                            const layer = viewer.imageryLayers.addImageryProvider(provider)
-                            layer.alpha = 0.72
-                            imageryLayersRef.current.push(layer)
-                        })
-                        .catch(() => {})
-                })
-                .catch(() => {})
+        const uaeRect = CesiumRectangle.fromDegrees(51.5, 22.5, 56.5, 26.2)
+        const provider = new UrlTemplateImageryProvider({
+            url: `${API_BASE}/satellite/tile/{z}/{x}/{y}.png`,
+            rectangle: uaeRect,
+            minimumLevel: 8,
+            maximumLevel: 18,
         })
+        const layer = viewer.imageryLayers.addImageryProvider(provider)
+        layer.alpha = 1.0
+        imageryLayersRef.current.push(layer)
 
         return () => {
             imageryLayersRef.current.forEach(l => {
                 try { viewer.imageryLayers.remove(l) } catch { /* ok */ }
             })
             imageryLayersRef.current = []
-            loadedTileIds.current    = new Set()
         }
-    }, [viewer, tiles, enabled])
+    }, [viewer, enabled])
 
     // Clear on disable
     useEffect(() => {
