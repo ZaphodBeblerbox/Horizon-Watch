@@ -560,9 +560,6 @@ _ANOMALY_ALERTS: list = []
 _ADSB_LAST_RECORDED: dict = {}   # icao24 → last record timestamp (float)
 _AIS_LAST_RECORDED:  dict = {}   # mmsi   → last record timestamp (float)
 
-# ── Emergency kill switch — set True to re-enable automated scanning ──────────
-SCANNING_ENABLED = False
-
 # ── News conflict extraction state ────────────────────────────────────────────
 _NEWS_CONFLICT_MARKERS: list = []
 _NEWS_ARTICLE_STORE: dict[str, dict] = {}   # url -> enriched article snapshot (may have lat/lon None)
@@ -3131,17 +3128,6 @@ from services.aircraft_photo_service import get_photo  as _get_photo
 from services.vessel_photo_service   import get_photo  as _get_vessel_photo
 import services.director_service as _director_svc
 
-import regional_scanner as _rscan_mod
-from regional_scanner import tile_scanner as _tile_scanner
-from database import (
-    RegionalScanJob as _RegionalScanJob,
-    RegionalScanDetection as _RegionalScanDetection,
-    RegionalScanTile as _RegionalScanTile,
-)
-
-# Wire SSE push into scanner so detections are streamed to connected clients
-_rscan_mod.sse_push_fn = lambda msg: _graph_sse_push(msg)
-
 @app.get("/api/aviation/test")
 async def aviation_test():
     """Smoke-test endpoint — confirms aviation routes are registered."""
@@ -3946,427 +3932,6 @@ async def director_transcript(seq_id: str):
     text = _director_svc.sequence_to_transcript(seq)
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse(text)
-
-
-# ── Regional Intelligence Scans ──────────────────────────────────────────────
-
-def _rscan_to_dict(job: "_RegionalScanJob") -> dict:
-    total = max(job.total_tiles or 1, 1)
-    done  = job.tiles_complete or 0
-    return {
-        "job_id":             job.job_id,
-        "region_name":        job.region_name,
-        "status":             job.status,
-        "created_at":         job.created_at.isoformat()   if job.created_at   else None,
-        "started_at":         job.started_at.isoformat()   if job.started_at   else None,
-        "completed_at":       job.completed_at.isoformat() if job.completed_at else None,
-        "total_tiles":        job.total_tiles or 0,
-        "tiles_complete":     done,
-        "tiles_failed":       job.tiles_failed or 0,
-        "current_tile_index": job.current_tile_index or 0,
-        "detections_total":   job.detections_total or 0,
-        "pct_complete":       (round(done / total * 100) if job.status == "running"
-                               else (100 if job.status == "complete" else 0)),
-        "report_summary":     job.report_summary,
-        "error_message":      job.error_message,
-        "cancelled":          job.cancelled or False,
-    }
-
-
-def _rsdet_to_geojson_feature(d: "_RegionalScanDetection") -> dict:
-    return {
-        "type": "Feature",
-        "geometry": {"type": "Point", "coordinates": [d.centroid_lon, d.centroid_lat]},
-        "properties": {
-            "detection_id":              d.detection_id,
-            "job_id":                    d.job_id,
-            "tile_index":                getattr(d, "tile_index", None),
-            "region_name":               d.region_name,
-            "detection_type":            d.detection_type,
-            "change_type":               d.change_type,
-            "confidence":                d.confidence,
-            "centroid_lat":              d.centroid_lat,
-            "centroid_lon":              d.centroid_lon,
-            "bbox_min_lon":              d.bbox_min_lon,
-            "bbox_min_lat":              d.bbox_min_lat,
-            "bbox_max_lon":              d.bbox_max_lon,
-            "bbox_max_lat":              d.bbox_max_lat,
-            # legacy field names kept for backward compat
-            "tile_min_lon":              d.bbox_min_lon,
-            "tile_min_lat":              d.bbox_min_lat,
-            "tile_max_lon":              d.bbox_max_lon,
-            "tile_max_lat":              d.bbox_max_lat,
-            "nearest_asset_type":        d.nearest_asset_type,
-            "nearest_asset_name":        d.nearest_asset_name,
-            "nearest_asset_distance_km": d.nearest_asset_distance_km,
-            "in_strategic_zone":         d.in_strategic_zone,
-            "spectral_change_score":     d.spectral_change_score,
-            "claude_vision_analysis":    d.claude_vision_analysis,
-            "claude_severity":           d.claude_severity,
-            "suppressed":                d.suppressed,
-            "category":                  getattr(d, "category", None),
-            "importance":                getattr(d, "importance", 3),
-            "detection_source":          getattr(d, "detection_source", "spectral"),
-            "class_name":                getattr(d, "class_name", None),
-            "is_change":                 getattr(d, "is_change", False),
-            "baseline_available":        getattr(d, "baseline_available", False),
-        },
-    }
-
-
-@app.post("/api/regional-scans/trigger")
-async def regional_scan_trigger(
-    request: Request,
-    current_user=Depends(get_optional_user),
-):
-    """Start tile-by-tile UAE scan. Returns immediately; detections stream via SSE."""
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    region_name = (body.get("region_name") or "UAE").strip().upper()
-    region = _tile_scanner.REGIONS.get(region_name)
-    if not region:
-        raise HTTPException(400, f"Unknown region: {region_name!r}")
-
-    with get_db() as db:
-        running = (
-            db.query(_RegionalScanJob)
-            .filter_by(region_name=region_name, status="running")
-            .first()
-        )
-        if running:
-            return {
-                "job_id":      running.job_id,
-                "status":      "running",
-                "message":     "Scan already in progress",
-                "total_tiles": running.total_tiles,
-            }
-        job = await _tile_scanner.start_scan(region_name, db)
-
-    tiles         = _tile_scanner.generate_tiles(region)
-    est_mins      = round(len(tiles) * 4 / 3 / 60 + 5)
-    return {
-        "job_id":            job.job_id,
-        "status":            "running",
-        "total_tiles":       len(tiles),
-        "estimated_minutes": est_mins,
-        "message":           f"Scan started. ~{est_mins} minutes estimated. Results appear on map as tiles complete.",
-    }
-
-
-@app.post("/api/regional-scans/{job_id}/cancel")
-async def regional_scan_cancel(job_id: str, current_user=Depends(get_optional_user)):
-    """Set job.cancelled = True — background task checks this flag each tile."""
-    with get_db() as db:
-        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
-        if not job:
-            raise HTTPException(404, f"Scan {job_id!r} not found")
-        if job.status != "running":
-            return {"status": job.status, "message": "Scan is not currently running"}
-        job.cancelled = True
-        db.commit()
-    return {"status": "cancellation_requested", "job_id": job_id}
-
-
-@app.get("/api/regional-scans")
-async def regional_scans_list(current_user=Depends(get_optional_user)):
-    with get_db() as db:
-        jobs = (
-            db.query(_RegionalScanJob)
-            .order_by(_RegionalScanJob.created_at.desc())
-            .limit(50)
-            .all()
-        )
-        return [_rscan_to_dict(j) for j in jobs]
-
-
-@app.get("/api/regional-scans/latest/detections")
-async def regional_scan_latest_detections(
-    region_name: str = Query("UAE"),
-    current_user=Depends(get_optional_user),
-):
-    """Detections from the most recent running or complete scan — used by globe layer."""
-    try:
-        with get_db() as db:
-            job = (
-                db.query(_RegionalScanJob)
-                .filter(
-                    _RegionalScanJob.region_name == region_name.upper(),
-                    _RegionalScanJob.status.in_(["running", "complete"]),
-                )
-                .order_by(_RegionalScanJob.created_at.desc())
-                .first()
-            )
-            if not job:
-                return {"type": "FeatureCollection", "features": [], "job": None}
-            dets = (
-                db.query(_RegionalScanDetection)
-                .filter_by(job_id=job.job_id, suppressed=False)
-                .order_by(_RegionalScanDetection.confidence.desc())
-                .all()
-            )
-            features = []
-            for d in dets:
-                try:
-                    features.append(_rsdet_to_geojson_feature(d))
-                except Exception:
-                    pass
-            return {
-                "type":     "FeatureCollection",
-                "features": features,
-                "job":      _rscan_to_dict(job),
-            }
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return {"type": "FeatureCollection", "features": [], "job": None, "error": str(e)}
-
-
-@app.get("/api/regional-scans/latest/detections/summary")
-async def regional_scan_latest_detections_summary(
-    region_name: str = Query("UAE"),
-    current_user=Depends(get_optional_user),
-):
-    """Detection counts by category for the latest scan job."""
-    try:
-        with get_db() as db:
-            job = (
-                db.query(_RegionalScanJob)
-                .filter(
-                    _RegionalScanJob.region_name == region_name.upper(),
-                    _RegionalScanJob.status.in_(["running", "complete"]),
-                )
-                .order_by(_RegionalScanJob.created_at.desc())
-                .first()
-            )
-            if not job:
-                return {"total": 0, "by_category": {}}
-            from sqlalchemy import func as _func
-            rows = (
-                db.query(
-                    _RegionalScanDetection.category,
-                    _func.count(_RegionalScanDetection.id).label("n"),
-                )
-                .filter_by(job_id=job.job_id, suppressed=False)
-                .group_by(_RegionalScanDetection.category)
-                .all()
-            )
-            by_cat = {(r.category or "infrastructure").upper(): r.n for r in rows}
-            return {
-                "total":       sum(by_cat.values()),
-                "by_category": by_cat,
-                "job_id":      job.job_id,
-                "job_status":  job.status,
-            }
-    except Exception as e:
-        return {"total": 0, "by_category": {}, "error": str(e)}
-
-
-@app.get("/api/regional-scans/latest/tiles")
-async def regional_scan_latest_tiles(
-    region_name: str = Query("UAE"),
-    current_user=Depends(get_optional_user),
-):
-    """Tile metadata (bbox + status + detection count) for the latest scan."""
-    with get_db() as db:
-        job = (
-            db.query(_RegionalScanJob)
-            .filter(
-                _RegionalScanJob.region_name == region_name.upper(),
-                _RegionalScanJob.status.in_(["running", "complete"]),
-            )
-            .order_by(_RegionalScanJob.created_at.desc())
-            .first()
-        )
-        if not job:
-            return {"tiles": [], "job": None}
-        tiles = (
-            db.query(_RegionalScanTile)
-            .filter_by(job_id=job.job_id)
-            .order_by(_RegionalScanTile.tile_index)
-            .all()
-        )
-        return {
-            "job": _rscan_to_dict(job),
-            "tiles": [
-                {
-                    "tile_id":          t.tile_id,
-                    "tile_index":       t.tile_index,
-                    "min_lon":          t.min_lon,
-                    "min_lat":          t.min_lat,
-                    "max_lon":          t.max_lon,
-                    "max_lat":          t.max_lat,
-                    "status":           t.status,
-                    "has_image":        bool(t.image_b64),
-                    "detections_count": t.detections_count or 0,
-                    "image_url":        f"/api/regional-scans/tiles/{t.tile_id}/image" if t.image_b64 else None,
-                }
-                for t in tiles
-            ],
-        }
-
-
-@app.get("/api/regional-scans/tiles/{tile_id}/image")
-async def regional_scan_tile_image(tile_id: str):
-    """Return the true-color Sentinel-2 PNG for a specific tile."""
-    import base64 as _b64
-    from fastapi.responses import Response
-    with get_db() as db:
-        tile = db.query(_RegionalScanTile).filter_by(tile_id=tile_id).first()
-        if not tile or not tile.image_b64:
-            raise HTTPException(404, "Tile image not found")
-        img_bytes = _b64.b64decode(tile.image_b64)
-        return Response(content=img_bytes, media_type="image/png", headers={
-            "Cache-Control": "public, max-age=86400",
-        })
-
-
-@app.get("/api/regional-scans/{job_id}")
-async def regional_scan_detail(job_id: str, current_user=Depends(get_optional_user)):
-    with get_db() as db:
-        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
-        if not job:
-            raise HTTPException(404, f"Scan {job_id!r} not found")
-        d = _rscan_to_dict(job)
-        d["claude_report"] = job.claude_report
-        return d
-
-
-@app.get("/api/regional-scans/{job_id}/detections")
-@app.get("/api/regional-scans/{job_id}/detections/geojson")
-async def regional_scan_detections(
-    job_id: str,
-    detection_type: Optional[str] = Query(None),
-    min_confidence: float = Query(0.0),
-    severity: Optional[str] = Query(None),
-    current_user=Depends(get_optional_user),
-):
-    with get_db() as db:
-        q = db.query(_RegionalScanDetection).filter(
-            _RegionalScanDetection.job_id == job_id,
-            _RegionalScanDetection.suppressed == False,
-            _RegionalScanDetection.confidence >= min_confidence,
-        )
-        if detection_type:
-            q = q.filter(_RegionalScanDetection.detection_type == detection_type.upper())
-        if severity:
-            q = q.filter(_RegionalScanDetection.claude_severity == severity.lower())
-        dets = q.order_by(_RegionalScanDetection.confidence.desc()).all()
-        return {"type": "FeatureCollection", "features": [_rsdet_to_geojson_feature(d) for d in dets]}
-
-
-@app.delete("/api/regional-scans/detections/{detection_id}/suppress")
-async def regional_scan_suppress(detection_id: str, current_user=Depends(get_optional_user)):
-    with get_db() as db:
-        det = db.query(_RegionalScanDetection).filter_by(detection_id=detection_id).first()
-        if not det:
-            raise HTTPException(404, f"Detection {detection_id!r} not found")
-        det.suppressed = True
-        db.commit()
-    return {"suppressed": True, "detection_id": detection_id}
-
-
-@app.delete("/api/regional-scans/cleanup/old")
-async def cleanup_old_scans():
-    """Delete all scan jobs except the most recent complete one."""
-    import gc as _gc, traceback as _tb
-    with get_db() as db:
-        try:
-            latest_complete = (
-                db.query(_RegionalScanJob)
-                .filter(_RegionalScanJob.status == "complete")
-                .order_by(_RegionalScanJob.completed_at.desc())
-                .first()
-            )
-            keep_id   = latest_complete.job_id if latest_complete else None
-            all_jobs  = db.query(_RegionalScanJob).all()
-            to_delete = [j for j in all_jobs if j.job_id != keep_id]
-            if not to_delete:
-                return {"deleted_jobs": 0, "deleted_detections": 0, "kept": keep_id, "message": "Nothing to clean up"}
-
-            total_dets = total_tiles = 0
-            for job in to_delete:
-                try:
-                    dets = db.query(_RegionalScanDetection).filter_by(job_id=job.job_id).all()
-                    total_dets += len(dets)
-                    for d in dets:
-                        db.delete(d)
-                except Exception as _e:
-                    print(f"[cleanup] dets {job.job_id}: {_e}")
-                try:
-                    tiles = db.query(_RegionalScanTile).filter_by(job_id=job.job_id).all()
-                    total_tiles += len(tiles)
-                    for t in tiles:
-                        db.delete(t)
-                except Exception:
-                    pass
-                db.flush()
-            for job in to_delete:
-                db.delete(job)
-            db.commit()
-            _gc.collect()
-            return {
-                "deleted_jobs":       len(to_delete),
-                "deleted_detections": total_dets,
-                "deleted_tiles":      total_tiles,
-                "kept":               keep_id,
-            }
-        except Exception as e:
-            print(f"[cleanup] ERROR: {e}"); _tb.print_exc()
-            db.rollback()
-            return {"error": str(e)}
-
-
-@app.delete("/api/regional-scans/{job_id}")
-async def delete_scan(job_id: str):
-    """Delete a specific scan job and all its detections/tiles."""
-    import gc as _gc, traceback as _tb
-    with get_db() as db:
-        try:
-            det_count = tile_count = 0
-            try:
-                dets = db.query(_RegionalScanDetection).filter_by(job_id=job_id).all()
-                det_count = len(dets)
-                for d in dets:
-                    db.delete(d)
-                db.flush()
-            except Exception as _e:
-                print(f"[delete_scan] dets: {_e}")
-            try:
-                tiles = db.query(_RegionalScanTile).filter_by(job_id=job_id).all()
-                tile_count = len(tiles)
-                for t in tiles:
-                    db.delete(t)
-                db.flush()
-            except Exception:
-                pass
-            job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
-            if not job:
-                return {"error": "Not found", "job_id": job_id}
-            db.delete(job)
-            db.commit()
-            _gc.collect()
-            return {"deleted": job_id, "detections_deleted": det_count, "tiles_deleted": tile_count}
-        except Exception as e:
-            print(f"[delete_scan] ERROR: {e}"); _tb.print_exc()
-            db.rollback()
-            return {"error": str(e)}
-
-
-@app.post("/api/regional-scans/{job_id}/generate-report")
-async def regional_scan_generate_report(job_id: str, current_user=Depends(get_optional_user)):
-    """Re-trigger report generation for a completed scan job."""
-    with get_db() as db:
-        job = db.query(_RegionalScanJob).filter_by(job_id=job_id).first()
-        if not job:
-            raise HTTPException(404, f"Job {job_id!r} not found")
-
-    async def _run():
-        with get_db() as _db:
-            await _tile_scanner._generate_report(job_id, _db)
-
-    asyncio.create_task(_run())
-    return {"job_id": job_id, "status": "report_requested"}
 
 
 @app.post("/api/admin/reset-zone-intervals")
@@ -8908,10 +8473,6 @@ async def _on_threat_dirty(payload: dict):
         print(f"[event-bus] threat_dirty handler error: {_td_e}")
 
 
-async def _on_regional_scan_complete(payload: dict):
-    _graph_sse_push({"event": "regional_scan_complete", "payload": payload})
-
-
 def normalize_signal(domain: str, source_obj: dict, alert_id: str = None) -> dict:
     """Normalize any alert/event into a standard signal dict for fusion_engine.on_signal()."""
     import uuid as _uuidn
@@ -9455,9 +9016,6 @@ async def _global_adsb_cache_loop():
     global _GLOBAL_ADSB_CACHE
     await asyncio.sleep(30)
     while True:
-        if not SCANNING_ENABLED:
-            await asyncio.sleep(3600)
-            continue
         try:
             loop = asyncio.get_event_loop()
             for region in GLOBAL_ADSB_REGIONS:
@@ -10386,63 +9944,19 @@ def _convert_overwatch_detections(raw_dets: list, band_type: str = "TRUE_COLOR")
 
 def _run_overwatch_detection_sync(bbox: dict, band_type: str = "TRUE_COLOR",
                                    confidence: float = 0.15) -> list:
-    """
-    Unified blocking detection function for surveillance zone scanning.
-
-    band_type:
-      TRUE_COLOR → fetch ESRI satellite tiles → DOTA OBB YOLO (vessel/object detection)
-      SWIR       → fetch Sentinel-2 SWIR → fire pixel analysis (sentinel_ml.run_fire_detection)
-      FALSE_COLOR→ fetch Sentinel-2 SWIR + true-colour → smoke pixel analysis
-
-    Returns list of dicts conforming to SentinelDetection schema.
-    """
+    """Blocking detection for TRUE_COLOR band via ESRI DOTA YOLO."""
     west  = float(bbox["min_lon"])
     south = float(bbox["min_lat"])
     east  = float(bbox["max_lon"])
     north = float(bbox["max_lat"])
     bounds = {"north": north, "south": south, "east": east, "west": west}
 
-    if band_type == "TRUE_COLOR":
-        result = _run_overwatch_inference(bounds, zoom=17, confidence=confidence,
-                                          enhance=False, model_key="dota")
-        if result.get("error"):
-            print(f"[overwatch_detection] ESRI error: {result['error']}")
-            return []
-        return _convert_overwatch_detections(result.get("detections", []), "TRUE_COLOR")
-
-    # Sentinel-2 paths — lazy import to avoid circular dependency
-    from sentinel_scanner import _fetch_sentinel_image, _bytes_to_pil as _s_b2p
-    img_w = min(2048, max(512, int(abs(east - west) * 11100)))
-    img_h = min(2048, max(512, int(abs(north - south) * 11100)))
-
-    if band_type == "SWIR":
-        from sentinel_ml import run_fire_detection
-        swir_b = _fetch_sentinel_image(west, south, east, north, "swir",
-                                        max_cloud=30, width=img_w, height=img_h)
-        swir_pil = _s_b2p(swir_b)
-        if swir_pil is None:
-            print("[overwatch_detection] Sentinel SWIR fetch failed")
-            return []
-        nir_b   = _fetch_sentinel_image(west, south, east, north, "false-colour",
-                                         max_cloud=30, width=img_w, height=img_h)
-        nir_pil = _s_b2p(nir_b)
-        return run_fire_detection({"swir": swir_pil, "nir": nir_pil}, bbox)
-
-    elif band_type == "FALSE_COLOR":
-        from sentinel_ml import run_smoke_plume_detection
-        swir_b = _fetch_sentinel_image(west, south, east, north, "swir",
-                                        max_cloud=30, width=img_w, height=img_h)
-        swir_pil = _s_b2p(swir_b)
-        if swir_pil is None:
-            print("[overwatch_detection] Sentinel SWIR fetch failed (smoke)")
-            return []
-        tc_b   = _fetch_sentinel_image(west, south, east, north, "true-colour",
-                                        max_cloud=30, width=img_w, height=img_h)
-        tc_pil = _s_b2p(tc_b)
-        return run_smoke_plume_detection({"swir": swir_pil, "true_colour": tc_pil}, bbox)
-
-    print(f"[overwatch_detection] unknown band_type={band_type}")
-    return []
+    result = _run_overwatch_inference(bounds, zoom=17, confidence=confidence,
+                                      enhance=False, model_key="dota")
+    if result.get("error"):
+        print(f"[overwatch_detection] ESRI error: {result['error']}")
+        return []
+    return _convert_overwatch_detections(result.get("detections", []), "TRUE_COLOR")
 
 
 @app.post("/api/overwatch/detect")
@@ -10550,42 +10064,6 @@ Write in intelligence briefing style — 3–4 paragraphs maximum."""
         return JSONResponse({"error": str(e)})
 
 
-async def _regional_scan_scheduler_loop():
-    """Check every 24h whether UAE regional scan is due (5-day cadence)."""
-    await asyncio.sleep(60)   # allow startup to settle
-    while True:
-        try:
-            with get_db() as _db:
-                latest = (
-                    _db.query(_RegionalScanJob)
-                    .filter_by(region_name="UAE", status="complete")
-                    .order_by(_RegionalScanJob.completed_at.desc())
-                    .first()
-                )
-                is_running = (
-                    _db.query(_RegionalScanJob)
-                    .filter_by(region_name="UAE", status="running")
-                    .first()
-                ) is not None
-
-            if not is_running:
-                days_since = None
-                if latest and latest.completed_at:
-                    days_since = (datetime.utcnow() - latest.completed_at).days
-                if days_since is None or days_since >= 5:
-                    print("[regional-scheduler] UAE scan due — triggering tile-by-tile scan")
-                    async def _bg():
-                        try:
-                            with get_db() as _sched_db:
-                                await _tile_scanner.start_scan("UAE", _sched_db)
-                        except Exception as _e:
-                            print(f"[regional-scheduler] scan failed: {_e}")
-                    asyncio.create_task(_bg())
-        except Exception as _e:
-            print(f"[regional-scheduler] loop error: {_e}")
-        await asyncio.sleep(86400)   # check again in 24 hours
-
-
 async def _sentinel_zone_scheduler_loop():
     """Background loop: every 15 minutes, trigger scans for due WatchZones."""
     import asyncio as _asyncio_sched
@@ -10594,8 +10072,6 @@ async def _sentinel_zone_scheduler_loop():
     while True:
         try:
             await _asyncio_sched.sleep(_sched_interval)
-            if not SCANNING_ENABLED:
-                continue
             from database import WatchZone, get_db as _gdb
             now_sched = datetime.now(timezone.utc).replace(tzinfo=None)
             with _gdb() as _db:
@@ -10961,66 +10437,6 @@ async def startup_event():
         await asyncio.wait_for(loop.run_in_executor(_executor, _init_db), timeout=30)
         print("[startup] database initialised")
 
-        # Cancel any scan jobs that were left running before restart
-        try:
-            from database import RegionalScanJob as _RSJ
-            from datetime import datetime as _dt
-            with get_db() as _sdb:
-                _stuck = _sdb.query(_RSJ).filter(_RSJ.status == "running").all()
-                for _j in _stuck:
-                    _j.status        = "cancelled"
-                    _j.cancelled     = True
-                    _j.completed_at  = _dt.utcnow()
-                    _j.error_message = "Auto-cancelled stale job on restart"
-                _sdb.commit()
-            if _stuck:
-                print(f"[startup] Cancelled {len(_stuck)} stale scan job(s)")
-        except Exception as _e:
-            print(f"[startup] stale scan cancel error: {_e}")
-
-        # Clear any stored scan imagery from DB (volume/memory emergency fix)
-        try:
-            from database import engine as _scan_engine
-            from sqlalchemy import text as _sql_text2
-            with _scan_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as _vconn:
-                for _img_tbl in ("regional_scan_tiles", "regional_scan_detections"):
-                    try:
-                        _vconn.execute(_sql_text2(
-                            f"UPDATE {_img_tbl} SET image_b64 = NULL WHERE image_b64 IS NOT NULL"
-                        ))
-                    except Exception:
-                        pass
-            print("[startup] Cleared stored scan imagery from DB")
-        except Exception as _ie:
-            print(f"[startup] imagery clear: {_ie}")
-
-        # Add missing columns to regional_scan_detections (idempotent — ignore if column exists)
-        try:
-            from database import engine as _scan_engine
-            from sqlalchemy import text as _sql_text
-            _new_cols = [
-                ("regional_scan_detections", "category",           "TEXT"),
-                ("regional_scan_detections", "importance",         "INTEGER DEFAULT 3"),
-                ("regional_scan_detections", "detection_source",   "TEXT"),
-                ("regional_scan_detections", "class_name",         "TEXT"),
-                ("regional_scan_detections", "is_change",          "BOOLEAN DEFAULT FALSE"),
-                ("regional_scan_detections", "baseline_available", "BOOLEAN DEFAULT FALSE"),
-                ("regional_scan_detections", "bbox_min_lon",       "FLOAT"),
-                ("regional_scan_detections", "bbox_min_lat",       "FLOAT"),
-                ("regional_scan_detections", "bbox_max_lon",       "FLOAT"),
-                ("regional_scan_detections", "bbox_max_lat",       "FLOAT"),
-            ]
-            with _scan_engine.connect() as _conn:
-                for _tbl, _col, _typ in _new_cols:
-                    try:
-                        _conn.execute(_sql_text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
-                        _conn.commit()
-                        print(f"[startup] migration: added {_tbl}.{_col}")
-                    except Exception:
-                        pass  # column already exists
-        except Exception as _me:
-            print(f"[startup] column migration error: {_me}")
-
     except Exception as _e:
         print(f"[startup] database init failed: {_e}")
 
@@ -11146,8 +10562,6 @@ async def startup_event():
     asyncio.create_task(_shorts_refresh_loop())
     asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
-    # DISABLED — manual-only until memory/cost controls confirmed stable
-    # asyncio.create_task(_regional_scan_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
@@ -11170,7 +10584,6 @@ async def startup_event():
     event_bus.subscribe(Events.FUSION_CREATED,         _on_fusion_created)
     event_bus.subscribe(Events.SURGE_CREATED,          _on_surge_created)
     event_bus.subscribe(Events.THREAT_REGION_DIRTY,    _on_threat_dirty)
-    event_bus.subscribe(Events.REGIONAL_SCAN_COMPLETE, _on_regional_scan_complete)
     asyncio.create_task(event_bus.start())
     print("[startup] event bus started")
 
@@ -17666,9 +17079,6 @@ async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
     global _forge_alerts, _correlation_assessments, _last_cycle_stats
     while True:
-        if not SCANNING_ENABLED:
-            await asyncio.sleep(3600)
-            continue
         try:
             cycle_start = datetime.now(timezone.utc)
 

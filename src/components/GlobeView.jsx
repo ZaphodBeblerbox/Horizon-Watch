@@ -22,7 +22,6 @@ import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
-import GlobeRegionalScanLayer   from "../globe/GlobeRegionalScanLayer.jsx"
 import GlobeSurgeLayer          from "../globe/GlobeSurgeLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
@@ -96,6 +95,7 @@ export default function GlobeView({
     overwatchDetections = [],
     overwatchDrawActive = false,
     onOverwatchBounds   = null,
+    overwatchSentinelOverlay = null,
     // Satellite imagery overlay (Sentinel-2)
     satelliteEnabled = false,
     // Infrastructure layers
@@ -107,9 +107,6 @@ export default function GlobeView({
     eventsMinRelevance = 4,
     precisionEventsEnabled = true,
     autoModeEnabled = false,
-    regionalScanEnabled = false,
-    scanCategories = null,
-    scanEssentialOnly = false,
     // Director Mode scene (null when inactive)
     directorScene = null,
     // Data props (optional — GlobeView fetches internally when null)
@@ -418,7 +415,7 @@ export default function GlobeView({
                 {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} />}
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
-                <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} />
+                <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />
 
                 {/* ── Overwatch draw mode: two-click rectangle selection on globe ── */}
                 <GlobeOverwatchDrawLayer active={overwatchDrawActive} onBounds={onOverwatchBounds} />
@@ -432,13 +429,6 @@ export default function GlobeView({
 
                 {/* ── Threat heatmap layer ─────────────────────────────────────── */}
                 <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />
-
-                {/* ── UAE Regional Scan detections ─────────────────────────────── */}
-                <GlobeRegionalScanLayer
-                    enabled={regionalScanEnabled}
-                    categories={scanCategories}
-                    essentialOnly={scanEssentialOnly}
-                />
 
                 {/* ── Passive auto mode ────────────────────────────────────────── */}
                 <GlobeAutoMode enabled={autoModeEnabled} isMobile={isMobile} />

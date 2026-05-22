@@ -1395,7 +1395,7 @@ function ForgeLandingNav({ brainStatus, onNavigate, onPipeline }) {
     )
 }
 
-function WorkspaceRouter({ workspace, node, brainStatus, onEnableRegionalScan }) {
+function WorkspaceRouter({ workspace, node, brainStatus }) {
     switch (workspace) {
         case "ais-source":      return <AISSourceWorkspace />
         case "adsb-source":     return <ADSBSourceWorkspace />
@@ -1407,7 +1407,7 @@ function WorkspaceRouter({ workspace, node, brainStatus, onEnableRegionalScan })
         case "adsb-detector":   return <DetectorWorkspace source="ADSB" />
         case "news-detector":   return <DetectorWorkspace source="NEWS" />
         case "ml-detector":     return <MLDetectorWorkspace />
-        case "surveillance-zones": return <SurveillanceZonesWorkspace onEnableRegionalScan={onEnableRegionalScan} />
+        case "surveillance-zones": return <SurveillanceZonesWorkspace />
         case "strategic-zones":    return <StrategicZonesWorkspace />
         case "correlation-engine": return <CorrelationEngineWorkspace />
         case "brain":           return <BrainWorkspace brainStatus={brainStatus} />
@@ -3639,7 +3639,7 @@ function ScanDetailPanel({ zone, scan, onClose }) {
     )
 }
 
-function SurveillanceZonesWorkspace({ onEnableRegionalScan }) {
+function SurveillanceZonesWorkspace() {
     const [zones, setZones] = useState([])
     const [showCreate, setShowCreate] = useState(false)
     const [expandedZone, setExpandedZone] = useState(null)
@@ -3725,7 +3725,6 @@ function SurveillanceZonesWorkspace({ onEnableRegionalScan }) {
                         </div>
                     )}
 
-                    <RegionalScansSection onViewOnGlobe={onEnableRegionalScan} />
 
                     {zones.map(zone => {
                         const priColor = PRIORITY_COLORS[zone.priority] || "#94a3b8"
@@ -3913,422 +3912,6 @@ function SurveillanceZonesWorkspace({ onEnableRegionalScan }) {
             )}
         </div>
     )
-}
-
-// ── Regional Scans ────────────────────────────────────────────────────────────
-
-const PHASE_STEPS = ["acquisition", "spectral", "detection", "vision", "report"]
-function ScanStatusBadge({ status }) {
-    if (status === "complete")  return <span style={sBadge("#34C759")}>COMPLETE</span>
-    if (status === "failed")    return <span style={sBadge("#FF3B30")}>FAILED</span>
-    if (status === "running")   return <span style={sBadge("#FFCC00", true)}>RUNNING</span>
-    return <span style={sBadge("#94a3b8")}>PENDING</span>
-}
-
-function sBadge(color, pulse = false) {
-    return {
-        padding: "1px 7px", borderRadius: 3,
-        fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
-        background: `rgba(${hexRgbF(color)},0.15)`,
-        border: `1px solid rgba(${hexRgbF(color)},0.4)`,
-        color,
-        animation: pulse ? "rscan-pulse 1.5s ease-in-out infinite" : "none",
-    }
-}
-
-function hexRgbF(hex) {
-    const h = hex.replace("#", "")
-    const n = parseInt(h, 16)
-    return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`
-}
-
-function ScanReportModal({ report, jobMeta, onClose }) {
-    const det_count = jobMeta?.detections_total ?? 0
-    return (
-        <div style={{
-            position: "fixed", inset: 0, zIndex: 12000,
-            background: "rgba(0,0,0,0.72)", display: "flex",
-            alignItems: "center", justifyContent: "center",
-        }} onClick={onClose}>
-            <div style={{
-                background: "#0d1627", borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.1)",
-                width: "min(760px, 94vw)", maxHeight: "82vh",
-                display: "flex", flexDirection: "column",
-                boxShadow: "0 24px 60px rgba(0,0,0,0.7)",
-            }} onClick={e => e.stopPropagation()}>
-                {/* Header */}
-                <div style={{
-                    padding: "14px 18px 12px",
-                    borderBottom: "1px solid rgba(255,255,255,0.08)",
-                    display: "flex", alignItems: "center", gap: 10,
-                }}>
-                    <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#e8edf2" }}>
-                            UAE Intelligence Report
-                        </div>
-                        <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>
-                            {det_count} flagged detections · {jobMeta?.image_date?.slice(0, 10) || ""}
-                        </div>
-                    </div>
-                    <button onClick={onClose} style={{
-                        background: "none", border: "none", color: "rgba(255,255,255,0.4)",
-                        cursor: "pointer", fontSize: 18, lineHeight: 1,
-                    }}>×</button>
-                </div>
-                {/* Report body */}
-                <div style={{
-                    flex: 1, overflowY: "auto", padding: "16px 20px 20px",
-                    fontSize: 12, lineHeight: 1.7, color: "rgba(232,237,242,0.82)",
-                    whiteSpace: "pre-wrap", fontFamily: "monospace",
-                }}>
-                    {report || "No report available."}
-                </div>
-            </div>
-        </div>
-    )
-}
-
-function RegionalScansSection({ onViewOnGlobe }) {
-    const [scans, setScans]           = useState([])
-    const [triggering, setTriggering] = useState(false)
-    const [cancelling, setCancelling] = useState(false)
-    const [showReport, setShowReport] = useState(false)
-    const [toast, setToast]           = useState("")
-    const [liveTiles, setLiveTiles]   = useState(null)  // {complete, total, detections} from SSE
-
-    const load = () =>
-        fetch(`${API}/api/regional-scans`, { headers: forgeHeaders() })
-            .then(r => r.ok ? r.json() : [])
-            .then(d => setScans(Array.isArray(d) ? d : []))
-            .catch(() => {})
-
-    useEffect(() => {
-        load()
-        const id = setInterval(load, 15000)
-        return () => clearInterval(id)
-    }, [])
-
-    // SSE disabled — graph/stream endpoint temporarily disabled for backend stability
-
-    const latest  = scans[0] || null
-    const running = latest?.status === "running"
-
-    const tilesComplete = liveTiles?.complete ?? latest?.tiles_complete ?? 0
-    const totalTiles    = liveTiles?.total    ?? latest?.total_tiles    ?? 0
-    const pct = running
-        ? (totalTiles > 0 ? Math.round(tilesComplete / totalTiles * 100) : 5)
-        : (latest?.status === "complete" ? 100 : 0)
-
-    const [eta, setEta] = useState(null)   // { tiles, minutes, completion }
-
-    const triggerScan = async () => {
-        setTriggering(true)
-        try {
-            const r = await fetch(`${API}/api/regional-scans/trigger`, {
-                method: "POST",
-                headers: { ...forgeHeaders(), "Content-Type": "application/json" },
-                body: JSON.stringify({ region_name: "UAE" }),
-            })
-            const d = await r.json()
-            if (d.estimated_tiles) {
-                setEta({ tiles: d.estimated_tiles, minutes: d.estimated_minutes, completion: d.estimated_completion })
-                setToast(`Scan started · ~${d.estimated_tiles} tiles · ETA ~${d.estimated_minutes} min`)
-            } else {
-                setToast(d.message || `Scan triggered: ${d.job_id}`)
-            }
-            setTimeout(() => setToast(""), 5000)
-            load()
-        } catch (e) {
-            setToast("Trigger failed")
-            setTimeout(() => setToast(""), 3000)
-        } finally {
-            setTriggering(false)
-        }
-    }
-
-    const cancelScan = async () => {
-        if (!latest?.job_id) return
-        setCancelling(true)
-        try {
-            await fetch(`${API}/api/regional-scans/${latest.job_id}/cancel`, {
-                method: "POST", headers: forgeHeaders(),
-            })
-            setToast("Cancellation requested — scan will stop at next batch boundary")
-            setTimeout(() => setToast(""), 5000)
-            setTimeout(load, 3000)
-        } catch (_e) {
-            setToast("Cancel request failed")
-            setTimeout(() => setToast(""), 3000)
-        } finally {
-            setCancelling(false)
-        }
-    }
-
-    const deleteScan = async (jobId) => {
-        if (!confirm(`Delete scan ${jobId}? This cannot be undone.`)) return
-        try {
-            const r = await fetch(`${API}/api/regional-scans/${jobId}`, {
-                method: "DELETE", headers: forgeHeaders(),
-            })
-            const data = await r.json()
-            if (data.deleted) {
-                setToast(`Deleted ${jobId} · ${data.detections_deleted} detections removed`)
-                setTimeout(() => setToast(""), 4000)
-                load()
-            } else {
-                setToast(data.error || "Delete failed")
-                setTimeout(() => setToast(""), 3000)
-            }
-        } catch (e) {
-            setToast("Delete failed")
-            setTimeout(() => setToast(""), 3000)
-        }
-    }
-
-    const cleanupOldScans = async () => {
-        if (!confirm("Delete all old scans? Only the most recent complete scan will be kept.")) return
-        try {
-            const r = await fetch(`${API}/api/regional-scans/cleanup/old`, {
-                method: "DELETE", headers: forgeHeaders(),
-            })
-            const data = await r.json()
-            const msg = `Cleaned up ${data.deleted_jobs ?? 0} scans · ${data.deleted_detections ?? 0} detections removed`
-                + (data.kept ? ` · kept ${data.kept}` : "")
-            setToast(msg)
-            setTimeout(() => setToast(""), 6000)
-            load()
-        } catch (e) {
-            setToast("Cleanup failed")
-            setTimeout(() => setToast(""), 3000)
-        }
-    }
-
-    const openReport = () => setShowReport(true)
-    const viewOnGlobe = () => {
-        if (onViewOnGlobe) onViewOnGlobe()
-        window.dispatchEvent(new CustomEvent("akili:fly-to", {
-            detail: { lat: 24.3, lon: 54.0, zoom: 6, duration: 2500 },
-        }))
-    }
-
-    const relTime = (iso) => {
-        if (!iso) return "—"
-        const diff = Date.now() - new Date(iso).getTime()
-        const h    = Math.floor(diff / 3600000)
-        const d    = Math.floor(h / 24)
-        if (d > 0)  return `${d}d ago`
-        if (h > 0)  return `${h}h ago`
-        return "just now"
-    }
-
-    return (
-        <div style={{ marginTop: 18 }}>
-            {/* Section header */}
-            <div style={{
-                fontSize: 10, fontWeight: 700, letterSpacing: "0.1em",
-                color: "#4A9EE0", textTransform: "uppercase",
-                borderBottom: "1px solid rgba(45,110,181,0.25)",
-                paddingBottom: 5, marginBottom: 10,
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-            }}>
-                <span>Regional Scans</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ color: "#334155", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                        Automated 5-day Sentinel-2 analysis
-                    </span>
-                    {scans.length > 1 && (
-                        <button onClick={cleanupOldScans} style={{
-                            background: "rgba(255,59,48,0.08)",
-                            border: "1px solid rgba(255,59,48,0.2)",
-                            borderRadius: 5, color: "rgba(255,59,48,0.7)",
-                            fontSize: 9, padding: "2px 8px", cursor: "pointer",
-                            fontWeight: 600, letterSpacing: 0.3,
-                        }}>
-                            🗑 Clean Up Old Scans
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            {toast && (
-                <div style={{
-                    fontSize: 10, color: "#4ade80", background: "rgba(74,222,128,0.08)",
-                    border: "1px solid rgba(74,222,128,0.2)", borderRadius: 5,
-                    padding: "5px 10px", marginBottom: 8,
-                }}>
-                    {toast}
-                </div>
-            )}
-
-            {/* Scan card */}
-            <div style={{
-                background: "#0d1627",
-                border: `1px solid ${running ? "rgba(255,204,0,0.25)" : "rgba(255,255,255,0.07)"}`,
-                borderRadius: 7, padding: "11px 13px",
-            }}>
-                {/* Row 1: region + status */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: "#e8edf2", flex: 1 }}>
-                        UAE
-                    </span>
-                    {latest ? <ScanStatusBadge status={latest.status} phase={latest.phase} /> : (
-                        <span style={{ fontSize: 9, color: "#475569" }}>No scans yet</span>
-                    )}
-                </div>
-
-                {/* Progress bar when running */}
-                {running && (
-                    <div style={{ marginBottom: 8 }}>
-                        <div style={{
-                            height: 3, borderRadius: 2,
-                            background: "rgba(255,255,255,0.06)", overflow: "hidden",
-                        }}>
-                            <div style={{
-                                height: "100%", borderRadius: 2,
-                                width: `${pct}%`,
-                                background: "linear-gradient(90deg, #FFCC00, #FF9500)",
-                                transition: "width 0.8s ease",
-                            }} />
-                        </div>
-                        <div style={{ fontSize: 9, color: "#FFCC00", marginTop: 4, textTransform: "uppercase" }}>
-                            {totalTiles > 0
-                                ? `${tilesComplete} / ${totalTiles} tiles · ${liveTiles?.detections ?? latest?.detections_total ?? 0} detections`
-                                : eta ? `~${eta.tiles} tiles · ETA ~${eta.minutes} min` : "Acquiring tiles…"
-                            }
-                        </div>
-                    </div>
-                )}
-
-                {/* Meta */}
-                {latest && (
-                    <div style={{ fontSize: 10, color: "#475569", display: "flex", gap: 12, marginBottom: 7 }}>
-                        <span>Last scan: {relTime(latest.completed_at || latest.started_at)}</span>
-                        {latest.status === "complete" && (
-                            <span style={{ color: "#64748b" }}>
-                                {latest.detections_total ?? 0} detections
-                            </span>
-                        )}
-                    </div>
-                )}
-
-                {/* Summary */}
-                {latest?.report_summary && (
-                    <div style={{
-                        fontSize: 11, lineHeight: 1.5, color: "rgba(232,237,242,0.6)",
-                        marginBottom: 9,
-                        display: "-webkit-box", WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical", overflow: "hidden",
-                    }}>
-                        {latest.report_summary}
-                    </div>
-                )}
-
-                {/* Error */}
-                {latest?.status === "failed" && latest?.error_message && (
-                    <div style={{ fontSize: 10, color: "#FF3B30", marginBottom: 8 }}>
-                        Error: {latest.error_message.slice(0, 80)}
-                    </div>
-                )}
-
-                {/* Actions */}
-                <div style={{ display: "flex", gap: 5 }}>
-                    {latest?.status === "complete" && latest?.claude_report !== null && (
-                        <button onClick={openReport} style={scanActionBtn("#4A9EE0")}>
-                            View Report
-                        </button>
-                    )}
-                    {latest?.status === "complete" && (
-                        <button onClick={viewOnGlobe} style={scanActionBtn("#34C759")}>
-                            View on Globe
-                        </button>
-                    )}
-                    {running && (
-                        <button
-                            onClick={cancelScan}
-                            disabled={cancelling}
-                            style={scanActionBtn(cancelling ? "#334155" : "#FF3B30")}
-                        >
-                            {cancelling ? "Stopping…" : "Stop Scan"}
-                        </button>
-                    )}
-                    {!running && (
-                        <button
-                            onClick={triggerScan}
-                            disabled={triggering}
-                            style={scanActionBtn(triggering ? "#334155" : "#5856D6")}
-                        >
-                            {triggering ? "Starting…" : latest?.status === "failed" || latest?.status === "cancelled" ? "Restart Scan" : "Scan Now"}
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            {/* Past scans list (collapsed) */}
-            {scans.length > 1 && (
-                <div style={{ marginTop: 6 }}>
-                    {scans.slice(1).map(s => (
-                        <div key={s.job_id} style={{
-                            display: "flex", alignItems: "center", gap: 8,
-                            padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)",
-                            fontSize: 10, color: "#475569",
-                        }}>
-                            <span style={{ flex: 1 }}>{s.job_id}</span>
-                            <ScanStatusBadge status={s.status} />
-                            <span>{relTime(s.completed_at)}</span>
-                            <span style={{ color: "#334155" }}>
-                                {s.detections_total ?? "—"} det
-                            </span>
-                            <button
-                                onClick={() => deleteScan(s.job_id)}
-                                title="Delete this scan"
-                                style={{
-                                    background: "none",
-                                    border: "1px solid rgba(255,59,48,0.25)",
-                                    borderRadius: 4, color: "rgba(255,59,48,0.55)",
-                                    fontSize: 9, padding: "1px 6px", cursor: "pointer",
-                                }}
-                            >
-                                Delete
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {showReport && latest && (
-                <ReportModalLoader jobId={latest.job_id} jobMeta={latest} onClose={() => setShowReport(false)} />
-            )}
-
-            <style>{`
-                @keyframes rscan-pulse {
-                    0%,100% { opacity: 1 }
-                    50% { opacity: 0.5 }
-                }
-            `}</style>
-        </div>
-    )
-}
-
-function ReportModalLoader({ jobId, jobMeta, onClose }) {
-    const [report, setReport] = useState(null)
-    useEffect(() => {
-        fetch(`${API}/api/regional-scans/${jobId}`, { headers: forgeHeaders() })
-            .then(r => r.ok ? r.json() : null)
-            .then(d => setReport(d?.claude_report ?? "No report available."))
-            .catch(() => setReport("Failed to load report."))
-    }, [jobId])
-    return <ScanReportModal report={report} jobMeta={jobMeta} onClose={onClose} />
-}
-
-function scanActionBtn(color) {
-    return {
-        flex: 1, padding: "5px 0", borderRadius: 5, fontSize: 10, fontWeight: 500,
-        background: `rgba(${hexRgbF(color)},0.12)`,
-        border: `1px solid rgba(${hexRgbF(color)},0.28)`,
-        color, cursor: "pointer", fontFamily: "inherit",
-        opacity: 1, transition: "opacity 0.15s",
-    }
 }
 
 function MLDetectorWorkspace() {
@@ -5886,7 +5469,7 @@ function ForgeMobileView({ onClose }) {
     )
 }
 
-export default function ForgePanel({ user, isMobile = false, onClose, onEnableRegionalScan }) {
+export default function ForgePanel({ user, isMobile = false, onClose }) {
     const [brainStatus, setBrainStatus]   = useState(null)
     const [activeWorkspace, setActiveWorkspace] = useState(null)
     const [activeNode, setActiveNode]     = useState(null)
@@ -5945,7 +5528,7 @@ export default function ForgePanel({ user, isMobile = false, onClose, onEnableRe
             <ForgeHeader brainStatus={brainStatus} activeNode={activeNode} onBack={goBack} />
             {activeWorkspace ? (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <WorkspaceRouter workspace={activeWorkspace} node={activeNode} brainStatus={brainStatus} onEnableRegionalScan={onEnableRegionalScan} />
+                    <WorkspaceRouter workspace={activeWorkspace} node={activeNode} brainStatus={brainStatus} />
                 </div>
             ) : showPipeline ? (
                 <div style={{ flex: 1, position: "relative" }}>

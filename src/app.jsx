@@ -165,6 +165,8 @@ export default function App() {
     const [owAnalysis,   setOwAnalysis]   = useState(null)
     const [owAnalyzing,  setOwAnalyzing]  = useState(false)
     const [owBounds,     setOwBounds]     = useState(null)
+    const [owSentinelOverlay,  setOwSentinelOverlay]  = useState(null)  // {image_b64, bounds}
+    const [owSentinelLoading,  setOwSentinelLoading]  = useState(false)
     const [showLoginModal,    setShowLoginModal]    = useState(false)
 
     // ── Director Mode ──────────────────────────────────────────────────────────
@@ -791,13 +793,6 @@ export default function App() {
         })
     }, [activeWorkspaceId])
 
-    const handleEnableRegionalScan = useCallback(() => {
-        handleLayersChange({
-            ...(activeWorkspace?.layers ?? {}),
-            showRegionalScan: true,
-        })
-    }, [handleLayersChange, activeWorkspace])
-
     // ── Tab management ────────────────────────────────────────────────────────
     const switchTab = useCallback((id) => {
         setActiveTabId(prev => {
@@ -967,6 +962,47 @@ export default function App() {
             setOwMode("idle")
         }
     }, [owMinConf, owEnhance]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handleCesiumSentinelLoad = useCallback(async (imageType) => {
+        if (!owBounds) return
+        setOwSentinelLoading(true)
+        try {
+            const tok = localStorage.getItem("hw-auth-token")
+            const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
+            const res = await fetch(`${API}/api/sentinel/imagery`, {
+                method: "POST", headers,
+                body: JSON.stringify({ bounds: owBounds, image_type: imageType, max_cloud: 30, days_back: 60 }),
+            })
+            if (res.ok) {
+                const data = await res.json()
+                if (data.image) setOwSentinelOverlay({ image_b64: data.image, bounds: owBounds })
+            }
+        } catch (e) { console.error("[Sentinel load]", e) }
+        finally { setOwSentinelLoading(false) }
+    }, [owBounds]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handleCesiumRunML = useCallback(async () => {
+        if (!owSentinelOverlay || !owBounds) return
+        setOwMode("analyzing")
+        try {
+            const tok = localStorage.getItem("hw-auth-token")
+            const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
+            const res = await fetch(`${API}/api/overwatch/detect-image`, {
+                method: "POST", headers,
+                body: JSON.stringify({ image: owSentinelOverlay.image_b64, bounds: owBounds, confidence: owMinConf, enhance: false }),
+            })
+            if (res.ok) {
+                const data = await res.json()
+                const dets = data.detections || []
+                setOwDetections(dets)
+                setOverwatchDetections(dets)
+                const catCounts = {}
+                for (const d of dets) { const cat = d.category || d.class || "Object"; catCounts[cat] = (catCounts[cat] || 0) + 1 }
+                setOwStats({ total: dets.length, byCategory: catCounts, zoom: "Sentinel-2" })
+                setOwMode("results")
+            } else { setOwMode("idle") }
+        } catch (e) { console.error("[Sentinel ML]", e); setOwMode("idle") }
+    }, [owSentinelOverlay, owBounds, owMinConf]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleReplayBriefing = useCallback(async (briefing) => {
         if (!briefing?.actions?.length) return
@@ -1438,10 +1474,8 @@ export default function App() {
                             overwatchDetections={overwatchDetections}
                             overwatchDrawActive={overwatchDrawActive}
                             onOverwatchBounds={handleOverwatchBounds}
+                            overwatchSentinelOverlay={owSentinelOverlay}
                             satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
-                            regionalScanEnabled={activeWorkspace?.layers?.showRegionalScan ?? false}
-                            scanCategories={activeWorkspace?.layers?.scanCategories ?? null}
-                            scanEssentialOnly={activeWorkspace?.layers?.scanEssentialOnly ?? false}
                             directorScene={directorScene}
                             autoModeEnabled={showAutoMode}
                         />
@@ -1577,7 +1611,6 @@ export default function App() {
                                 user={currentUser}
                                 isMobile={isMobile}
                                 onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
-                                onEnableRegionalScan={handleEnableRegionalScan}
                             />
                         </ForgeGate>
                     </div>
@@ -1912,7 +1945,7 @@ export default function App() {
                         setOwAnalyzing(false)
                     }}
                     onDismissAnalysis={() => setOwAnalysis(null)}
-                    onClear={() => { setOwDetections([]); setOverwatchDetections([]); setOwStats(null); setOwAnalysis(null); setOwMode("idle") }}
+                    onClear={() => { setOwDetections([]); setOverwatchDetections([]); setOwStats(null); setOwAnalysis(null); setOwMode("idle"); setOwSentinelOverlay(null) }}
                     onRescan={() => { setOwMode("idle"); setOverwatchDrawActive(false) }}
                     savedScans={owSavedScans}
                     onSave={() => {
@@ -1927,6 +1960,11 @@ export default function App() {
                     selectedCats={new Set()}
                     onCatToggle={() => {}}
                     onFilterChange={() => {}}
+                    cesiumBounds={owBounds}
+                    onCesiumSentinelLoad={handleCesiumSentinelLoad}
+                    cesiumSentinelLoading={owSentinelLoading}
+                    cesiumSentinelLoaded={!!owSentinelOverlay}
+                    onCesiumRunML={handleCesiumRunML}
                 />
             )}
 

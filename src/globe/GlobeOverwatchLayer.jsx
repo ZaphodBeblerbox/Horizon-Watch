@@ -6,6 +6,7 @@ import { useCesium } from "resium"
 import {
     Cartesian3, Rectangle, Color, HeightReference,
     DistanceDisplayCondition, VerticalOrigin,
+    SingleTileImageryProvider,
 } from "cesium"
 
 const CLASS_COLORS = {
@@ -34,9 +35,54 @@ function colorForClass(cls) {
     return CLASS_COLORS[key] || CLASS_COLORS.unknown
 }
 
-export default function GlobeOverwatchLayer({ enabled, detections = [] }) {
+export default function GlobeOverwatchLayer({ enabled, detections = [], sentinelOverlay = null }) {
     const { viewer } = useCesium()
-    const entitiesRef = useRef([])
+    const entitiesRef  = useRef([])
+    const sentinelLayerRef = useRef(null)
+    const sentinelUrlRef   = useRef(null)
+
+    // Sentinel imagery layer
+    useEffect(() => {
+        if (!viewer || viewer.isDestroyed()) return
+
+        // Revoke previous blob URL
+        if (sentinelUrlRef.current) {
+            URL.revokeObjectURL(sentinelUrlRef.current)
+            sentinelUrlRef.current = null
+        }
+        // Remove previous layer
+        if (sentinelLayerRef.current) {
+            try { viewer.imageryLayers.remove(sentinelLayerRef.current, true) } catch (_) {}
+            sentinelLayerRef.current = null
+        }
+
+        if (!sentinelOverlay?.image_b64 || !sentinelOverlay?.bounds) return
+
+        const { image_b64, bounds } = sentinelOverlay
+        const bytes = Uint8Array.from(atob(image_b64), c => c.charCodeAt(0))
+        const blob  = new Blob([bytes], { type: "image/png" })
+        const url   = URL.createObjectURL(blob)
+        sentinelUrlRef.current = url
+
+        const provider = new SingleTileImageryProvider({
+            url,
+            rectangle: Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north),
+        })
+        const layer = viewer.imageryLayers.addImageryProvider(provider)
+        layer.alpha = 1.0
+        sentinelLayerRef.current = layer
+
+        return () => {
+            if (sentinelLayerRef.current) {
+                try { viewer.imageryLayers.remove(sentinelLayerRef.current, true) } catch (_) {}
+                sentinelLayerRef.current = null
+            }
+            if (sentinelUrlRef.current) {
+                URL.revokeObjectURL(sentinelUrlRef.current)
+                sentinelUrlRef.current = null
+            }
+        }
+    }, [viewer, sentinelOverlay])
 
     useEffect(() => {
         if (!viewer) return

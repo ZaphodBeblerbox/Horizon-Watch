@@ -482,6 +482,56 @@ function SentinelSection({
 }
 
 // ── Main sidebar content ──────────────────────────────────────────────────────
+// ── Cesium-path Sentinel overlay section ─────────────────────────────────────
+function CesiumSentinelSection({ bounds, loading, loaded, onLoad, onRunML, scanning }) {
+    const [imageType, setImageType] = useState("true-colour")
+
+    return (
+        <div style={{ marginTop: 4 }}>
+            <Rule />
+            <SectionHead label="Sentinel-2 Imagery" />
+
+            <select
+                value={imageType}
+                onChange={e => setImageType(e.target.value)}
+                style={{
+                    width: "100%", marginBottom: 6,
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 5, color: "var(--akili-text-primary)",
+                    fontSize: 11, padding: "4px 8px",
+                    fontFamily: "system-ui, -apple-system, sans-serif",
+                }}
+            >
+                {SENTINEL_TYPES.map(t => (
+                    <option key={t.key} value={t.key}>{t.label}</option>
+                ))}
+            </select>
+
+            <PanelBtn
+                wide
+                disabled={loading}
+                accent={loaded}
+                onClick={() => onLoad?.(imageType)}
+            >
+                {loading ? "Loading…" : loaded ? "Reload Sentinel" : "Load Sentinel Imagery"}
+            </PanelBtn>
+
+            {loaded && (
+                <div style={{ marginTop: 5 }}>
+                    <PanelBtn
+                        wide
+                        disabled={scanning}
+                        onClick={onRunML}
+                    >
+                        {scanning ? "Scanning…" : "Run ML on Sentinel"}
+                    </PanelBtn>
+                </div>
+            )}
+        </div>
+    )
+}
+
 function SidebarContent(props) {
     const {
         mode, vertCount, drawTarget,
@@ -494,6 +544,12 @@ function SidebarContent(props) {
         savedScans, onSave, onDeleteSaved, onRestoreSaved,
         savedImages, onDeleteSavedImage,
         isMobile,
+        // Cesium-path sentinel props
+        cesiumBounds,
+        onCesiumSentinelLoad,
+        cesiumSentinelLoading,
+        cesiumSentinelLoaded,
+        onCesiumRunML,
         // sentinel props passed through
         ...sentinelProps
     } = props
@@ -712,6 +768,18 @@ function SidebarContent(props) {
                     </div>
                     <PanelBtn onClick={onStartMLDraw} wide>New Region</PanelBtn>
                 </>
+            )}
+
+            {/* ── Cesium-path Sentinel overlay ─────────────────────────── */}
+            {cesiumBounds && (
+                <CesiumSentinelSection
+                    bounds={cesiumBounds}
+                    loading={cesiumSentinelLoading}
+                    loaded={cesiumSentinelLoaded}
+                    onLoad={onCesiumSentinelLoad}
+                    onRunML={onCesiumRunML}
+                    scanning={mode === "analyzing"}
+                />
             )}
 
             {/* ── Sentinel ─────────────────────────────────────────────── */}
