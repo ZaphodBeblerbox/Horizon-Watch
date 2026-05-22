@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import gc as _gc
 import base64
 import datetime
 import io
@@ -313,207 +314,166 @@ class TileByTileScanner:
     async def _process_single_tile(
         self, tile: dict, region: dict, job_id: str, db
     ) -> list:
-        loop     = asyncio.get_running_loop()
-        tile_lat = (tile["min_lat"] + tile["max_lat"]) / 2
-        tile_lon = (tile["min_lon"] + tile["max_lon"]) / 2
-        tile_id  = f"RTILE-{uuid.uuid4().hex[:6].upper()}"
+        tile_lat    = (tile["min_lat"] + tile["max_lat"]) / 2
+        tile_lon    = (tile["min_lon"] + tile["max_lon"]) / 2
+        tile_id     = f"RTILE-{uuid.uuid4().hex[:6].upper()}"
         detections: list[RegionalScanDetection] = []
+        esri_b64: Optional[str] = None
 
-        # ── PHASE A: Concurrent fetch — ESRI (YOLO) + Sentinel (globe) ─────────
-        (esri_pil, esri_w, esri_h), tc_result = await asyncio.gather(
-            loop.run_in_executor(None, lambda: self._fetch_esri_image(tile)),
-            loop.run_in_executor(None, lambda: _fetch_tile_sync(
-                tile["min_lon"], tile["min_lat"],
-                tile["max_lon"], tile["max_lat"],
-                max_age_days=10, band_key="true-colour",
-            )),
-        )
-
-        if not tc_result:
-            print(f"[scanner] Tile {tile['index']}: no Sentinel imagery, skipping")
-            return []
-
-        tc_b64 = tc_result["b64"]
-
-        # ── PHASE B: Store tile record + emit Sentinel imagery for globe ────────
-        tile_row = RegionalScanTile(
-            tile_id          = tile_id,
-            job_id           = job_id,
-            tile_index       = tile["index"],
-            min_lon          = tile["min_lon"],
-            min_lat          = tile["min_lat"],
-            max_lon          = tile["max_lon"],
-            max_lat          = tile["max_lat"],
-            status           = "fetched",
-            image_b64        = tc_b64,
-            image_date       = tc_result["date"],
-            detections_count = 0,
-        )
         try:
-            db.add(tile_row)
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            print(f"[scanner] tile record error: {e}")
+            # ── PHASE A: Fetch ESRI (hard cap 3×3 → 640×640 JPEG) ───────────────
+            esri_b64 = await asyncio.to_thread(self._fetch_esri_small, tile)
+            if not esri_b64:
+                print(f"[scanner] Tile {tile['index']}: no ESRI imagery, skipping")
+                return []
 
-        self._emit("scan_tile_image", {
-            "job_id":         job_id,
-            "tile_index":     tile["index"],
-            "tile_bbox":      {
-                "min_lon": tile["min_lon"], "min_lat": tile["min_lat"],
-                "max_lon": tile["max_lon"], "max_lat": tile["max_lat"],
-            },
-            "tile_image_b64": tc_b64,
-        })
+            # Emit tile started — bbox only, NO image ────────────────────────────
+            self._emit("scan_tile_started", {
+                "job_id":     job_id,
+                "tile_index": tile["index"],
+                "tile_bbox":  {
+                    "min_lon": tile["min_lon"], "min_lat": tile["min_lat"],
+                    "max_lon": tile["max_lon"], "max_lat": tile["max_lat"],
+                },
+            })
 
-        # Context for importance scoring
-        nearby  = await loop.run_in_executor(None, lambda: self._get_nearby_assets(tile_lat, tile_lon, 10, db))
-        zone_id = await loop.run_in_executor(None, lambda: self._get_containing_zone(tile_lat, tile_lon, db))
-
-        # ── PHASE C: YOLO on ESRI imagery (native resolution, pixel-space bbox) ─
-        yolo_count = 0
-        if esri_pil and esri_w > 0 and esri_h > 0:
+            # ── PHASE B: YOLO; delete ESRI b64 immediately after ────────────────
             try:
-                yolo_raw = await loop.run_in_executor(
-                    None, lambda: self._run_yolo_detection(esri_pil, tile)
-                )
-                for raw in yolo_raw:
-                    det_type, category, _ = self._dota_to_det(raw.get("class_name", ""))
-                    conf = float(raw.get("confidence", 0.5))
-                    if raw.get("bbox_px"):
-                        geo = self._px_to_geo(raw["bbox_px"], tile, esri_w, esri_h)
-                    else:
-                        geo = raw.get("_geo") or {
-                            "min_lon": tile_lon - 0.005, "max_lon": tile_lon + 0.005,
-                            "min_lat": tile_lat - 0.005, "max_lat": tile_lat + 0.005,
-                            "centroid_lon": tile_lon, "centroid_lat": tile_lat,
-                        }
-                    det = self._make_det(
-                        job_id=job_id, tile=tile, tile_id=tile_id,
-                        det_type=det_type, category=category,
-                        importance=self._importance(conf, bool(nearby), bool(zone_id), False),
-                        confidence=conf,
-                        geo=geo, class_name=raw.get("class_name", "object"),
-                        source="yolo_dota_esri",
-                        nearby=nearby, zone_id=zone_id,
-                        is_change=False,
-                    )
-                    db.add(det)
-                    detections.append(det)
-                    yolo_count += 1
-            except Exception as e:
-                print(f"[scanner] Tile {tile['index']} YOLO error: {e}")
+                yolo_raw = await asyncio.to_thread(self._run_yolo_detection, esri_b64, tile)
+            finally:
+                del esri_b64
+                esri_b64 = None
+                _gc.collect()
 
-        # ── PHASE D: SWIR fire detection ───────────────────────────────────────
-        fire_count = 0
-        try:
-            fire_raw = await loop.run_in_executor(
-                None, lambda: self._run_swir_sync(tile)
-            )
-            for fd in fire_raw:
-                conf = float(fd.get("confidence", 0.7))
-                geo  = self._parse_overwatch_geo(fd, tile)
-                det  = self._make_det(
+            # Context for importance scoring
+            nearby  = await asyncio.to_thread(self._get_nearby_assets, tile_lat, tile_lon, 10, db)
+            zone_id = await asyncio.to_thread(self._get_containing_zone, tile_lat, tile_lon, db)
+
+            # Persist YOLO detections ─────────────────────────────────────────────
+            yolo_count = 0
+            for raw in yolo_raw:
+                det_type, category, _ = self._dota_to_det(raw.get("class_name", ""))
+                conf = float(raw.get("confidence", 0.5))
+                if raw.get("bbox_px"):
+                    geo = self._px_to_geo(
+                        raw["bbox_px"], tile,
+                        raw.get("img_w", 640), raw.get("img_h", 640),
+                    )
+                else:
+                    geo = raw.get("_geo") or {
+                        "min_lon": tile_lon - 0.005, "max_lon": tile_lon + 0.005,
+                        "min_lat": tile_lat - 0.005, "max_lat": tile_lat + 0.005,
+                        "centroid_lon": tile_lon, "centroid_lat": tile_lat,
+                    }
+                det = self._make_det(
                     job_id=job_id, tile=tile, tile_id=tile_id,
-                    det_type="FIRE", category="environmental",
-                    importance=self._importance(conf, bool(nearby), bool(zone_id), True),
-                    confidence=conf,
-                    geo=geo, class_name="fire",
-                    source="swir_spectral",
+                    det_type=det_type, category=category,
+                    importance=self._importance(conf, bool(nearby), bool(zone_id), False),
+                    confidence=conf, geo=geo,
+                    class_name=raw.get("class_name", "object"),
+                    source="yolo_dota_esri",
                     nearby=nearby, zone_id=zone_id,
                     is_change=False,
                 )
                 db.add(det)
                 detections.append(det)
-                fire_count += 1
-        except Exception as e:
-            print(f"[scanner] Tile {tile['index']} SWIR error: {e}")
+                yolo_count += 1
 
-        # ── PHASE E: Change detection (only if baseline + near strategic asset) ─
-        change_count = 0
-        if nearby or zone_id:
-            has_bl = await loop.run_in_executor(None, lambda: self._has_baseline(tile, db))
-            if has_bl:
-                try:
-                    change_dets = await loop.run_in_executor(
-                        None, lambda: self._detect_changes_sync(tile, tc_b64, db)
-                    )
-                    for cd in change_dets:
-                        conf = float(cd["confidence"])
-                        det  = self._make_det(
-                            job_id=job_id, tile=tile, tile_id=tile_id,
-                            det_type="INFRASTRUCTURE_CHANGE", category="infrastructure",
-                            importance=self._importance(conf, bool(nearby), bool(zone_id), False),
-                            confidence=conf,
-                            geo=cd["geo"], class_name="change",
-                            source="change_detection",
-                            nearby=nearby, zone_id=zone_id,
-                            is_change=True,
-                        )
-                        db.add(det)
-                        detections.append(det)
-                        change_count += 1
-                except Exception as e:
-                    print(f"[scanner] Tile {tile['index']} change detection error: {e}")
-
-        # ── PHASE F: Claude Vision on fire detections ─────────────────────────
-        fire_dets = [d for d in detections if d.detection_type == "FIRE"]
-        if fire_dets:
+            # ── PHASE C: SWIR fire; gc immediately ───────────────────────────────
+            fire_count = 0
             try:
-                vis = await self._claude_vision({"b64": tc_b64}, tile, "FIRE", nearby, zone_id)
-                for fd in fire_dets:
-                    fd.claude_vision_analysis = vis.get("description")
-                    fd.claude_severity        = vis.get("severity", "high")
+                fire_raw = await asyncio.to_thread(self._run_swir_sync, tile)
+                for fd in fire_raw:
+                    conf = float(fd.get("confidence", 0.7))
+                    geo  = self._parse_overwatch_geo(fd, tile)
+                    det  = self._make_det(
+                        job_id=job_id, tile=tile, tile_id=tile_id,
+                        det_type="FIRE", category="environmental",
+                        importance=self._importance(conf, bool(nearby), bool(zone_id), True),
+                        confidence=conf, geo=geo, class_name="fire",
+                        source="swir_spectral",
+                        nearby=nearby, zone_id=zone_id,
+                        is_change=False,
+                    )
+                    db.add(det)
+                    detections.append(det)
+                    fire_count += 1
+                del fire_raw
             except Exception as e:
-                print(f"[scanner] Tile {tile['index']} Vision error: {e}")
+                print(f"[scanner] Tile {tile['index']} SWIR error: {e}")
+            finally:
+                _gc.collect()
 
-        # ── PHASE G: Commit + emit tile-complete event ─────────────────────────
-        try:
-            tile_row.detections_count = len(detections)
-            db.commit()
+            # ── PHASE D: Store tile metadata (no image) + commit ─────────────────
+            try:
+                tile_row = RegionalScanTile(
+                    tile_id          = tile_id,
+                    job_id           = job_id,
+                    tile_index       = tile["index"],
+                    min_lon          = tile["min_lon"],
+                    min_lat          = tile["min_lat"],
+                    max_lon          = tile["max_lon"],
+                    max_lat          = tile["max_lat"],
+                    status           = "fetched",
+                    image_b64        = None,   # NEVER store images
+                    detections_count = len(detections),
+                )
+                db.add(tile_row)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"[scanner] tile record error: {e}")
+
+            # ── PHASE E: Emit tile complete (metadata only, no images) ───────────
+            self._emit("scan_tile_complete", {
+                "job_id":          job_id,
+                "tile_index":      tile["index"],
+                "tile_bbox": {
+                    "min_lon": tile["min_lon"], "min_lat": tile["min_lat"],
+                    "max_lon": tile["max_lon"], "max_lat": tile["max_lat"],
+                },
+                "detection_count": len(detections),
+                "detections": [
+                    {
+                        "detection_id": d.detection_id,
+                        "type":         d.detection_type,
+                        "category":     d.category,
+                        "importance":   d.importance,
+                        "confidence":   d.confidence,
+                        "centroid_lat": d.centroid_lat,
+                        "centroid_lon": d.centroid_lon,
+                        "bbox": {
+                            "min_lon": d.bbox_min_lon, "min_lat": d.bbox_min_lat,
+                            "max_lon": d.bbox_max_lon, "max_lat": d.bbox_max_lat,
+                        },
+                        "class_name": d.class_name,
+                    }
+                    for d in detections
+                ],
+            })
+
+            print(
+                f"[scanner] Tile {tile['index']}: "
+                f"{len(detections)} detections "
+                f"({yolo_count} YOLO, {fire_count} fire)"
+            )
+            return detections
+
         except Exception as e:
-            db.rollback()
-            print(f"[scanner] commit error: {e}")
+            print(f"[scanner] Tile {tile['index']} error: {e}")
+            import traceback; traceback.print_exc()
+            return detections
 
-        self._emit("scan_tile_complete", {
-            "job_id":          job_id,
-            "tile_index":      tile["index"],
-            "tile_bbox": {
-                "min_lon": tile["min_lon"], "min_lat": tile["min_lat"],
-                "max_lon": tile["max_lon"], "max_lat": tile["max_lat"],
-            },
-            "detection_count": len(detections),
-            "detections": [
-                {
-                    "detection_id": d.detection_id,
-                    "type":         d.detection_type,
-                    "category":     d.category,
-                    "importance":   d.importance,
-                    "confidence":   d.confidence,
-                    "centroid_lat": d.centroid_lat,
-                    "centroid_lon": d.centroid_lon,
-                    "bbox": {
-                        "min_lon": d.bbox_min_lon, "min_lat": d.bbox_min_lat,
-                        "max_lon": d.bbox_max_lon, "max_lat": d.bbox_max_lat,
-                    },
-                }
-                for d in detections
-            ],
-        })
+        finally:
+            if esri_b64 is not None:
+                del esri_b64
+            _gc.collect()
 
-        print(
-            f"[scanner] Tile {tile['index']}: "
-            f"{len(detections)} detections "
-            f"({yolo_count} YOLO/ESRI, {fire_count} fire, {change_count} changes)"
-        )
-        return detections
+    # ── ESRI tile fetch (hard-capped, memory-safe) ────────────────────────────
 
-    # ── ESRI tile fetch + stitch ───────────────────────────────────────────────
-
-    def _fetch_esri_image(self, tile: dict, zoom: int = 15):
-        """Fetch ESRI World Imagery sub-tiles covering tile bbox, stitch to PIL.
-        Returns (pil_image, width_px, height_px) or (None, 0, 0).
-        Native resolution — no resize. Recurses with zoom-1 if > 200 sub-tiles.
+    def _fetch_esri_small(self, tile: dict, zoom: int = 15) -> Optional[str]:
+        """Fetch ESRI World Imagery capped at 3×3 sub-tiles → 640×640 JPEG b64.
+        Never allocates more than ~5 MB per tile. Returns None on failure.
         """
         def _deg2tile(lat_deg, lon_deg, z):
             n = 2 ** z
@@ -522,68 +482,79 @@ class TileByTileScanner:
             y = int((1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
             return x, y
 
-        x_min, y_min = _deg2tile(tile["max_lat"], tile["min_lon"], zoom)  # top-left
-        x_max, y_max = _deg2tile(tile["min_lat"], tile["max_lon"], zoom)  # bottom-right
-        n_x = x_max - x_min + 1
-        n_y = y_max - y_min + 1
+        # SW corner → (x_min, y_max); NE corner → (x_max, y_min)
+        x_min, y_max = _deg2tile(tile["min_lat"], tile["min_lon"], zoom)
+        x_max, y_min = _deg2tile(tile["max_lat"], tile["max_lon"], zoom)
 
-        if n_x * n_y > 200:
-            if zoom <= 8:
-                return None, 0, 0
-            return self._fetch_esri_image(tile, zoom - 1)
-        if n_x <= 0 or n_y <= 0:
-            return None, 0, 0
+        # HARD CAP: max 3×3 = 9 sub-tiles
+        x_count = min(x_max - x_min + 1, 3)
+        y_count = min(y_max - y_min + 1, 3)
+        if x_count <= 0 or y_count <= 0:
+            return None
 
         try:
             from main import _fetch_esri_tile
             from PIL import Image as _PILImage
         except ImportError as e:
-            print(f"[scanner] _fetch_esri_image import: {e}")
-            return None, 0, 0
+            print(f"[scanner] _fetch_esri_small import: {e}")
+            return None
 
-        coords = [(x, y) for y in range(y_min, y_max + 1) for x in range(x_min, x_max + 1)]
-        tile_imgs: dict = {}
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
-            futs = {pool.submit(_fetch_esri_tile, zoom, x, y): (x, y) for x, y in coords}
-            for fut in concurrent.futures.as_completed(futs):
-                xy = futs[fut]
+        canvas = _PILImage.new("RGB", (x_count * 256, y_count * 256))
+        for i, tx in enumerate(range(x_min, x_min + x_count)):
+            for j, ty in enumerate(range(y_min, y_min + y_count)):
                 try:
-                    img = fut.result(timeout=15)
-                    if img:
-                        tile_imgs[xy] = img
+                    sub = _fetch_esri_tile(zoom, tx, ty)
+                    if sub:
+                        canvas.paste(sub.convert("RGB"), (i * 256, j * 256))
+                        del sub  # free immediately
                 except Exception:
                     pass
 
-        if not tile_imgs:
-            return None, 0, 0
+        # Fixed 640×640 output as JPEG (3× smaller than PNG)
+        canvas = canvas.resize((640, 640), _PILImage.LANCZOS)
+        buf = io.BytesIO()
+        canvas.save(buf, format="JPEG", quality=85)
+        b64 = base64.b64encode(buf.getvalue()).decode()
 
-        out_w, out_h = n_x * 256, n_y * 256
-        canvas = _PILImage.new("RGB", (out_w, out_h))
-        for (x, y), img in tile_imgs.items():
-            canvas.paste(img.convert("RGB"), ((x - x_min) * 256, (y - y_min) * 256))
+        del canvas
+        del buf
+        _gc.collect()
+        return b64
 
-        return canvas, out_w, out_h
+    # ── YOLO via Overwatch ONNX model (ESRI b64 input, pixel-space bbox out) ────
 
-    # ── YOLO via Overwatch ONNX model (ESRI imagery, pixel-space bbox) ─────────
-
-    def _run_yolo_detection(self, pil_img, tile: dict, conf_threshold: float = 0.20) -> list:
-        """Run DOTA ONNX on ESRI PIL image with keep_px=True for pixel-space bboxes.
-        Returns [{class_name, confidence, bbox_px: {x1,y1,x2,y2}, _geo}].
+    def _run_yolo_detection(self, esri_b64: str, tile: dict, conf_threshold: float = 0.20) -> list:
+        """Decode ESRI b64 → PIL, run DOTA ONNX with keep_px=True, delete PIL immediately.
+        Returns [{class_name, confidence, bbox_px, img_w, img_h}].
         """
+        pil = None
         try:
             from main import _run_inference_on_image
+            from PIL import Image as _PILImage
+
+            raw_bytes = base64.b64decode(esri_b64)
+            pil = _PILImage.open(io.BytesIO(raw_bytes)).convert("RGB")
+            img_w, img_h = pil.size
+            del raw_bytes
+
             bounds = {
                 "north": tile["max_lat"], "south": tile["min_lat"],
                 "east":  tile["max_lon"], "west":  tile["min_lon"],
             }
-            result = _run_inference_on_image(
-                pil_img, bounds, confidence=conf_threshold,
-                model_key="dota", keep_px=True,
-            )
+            try:
+                result = _run_inference_on_image(
+                    pil, bounds, confidence=conf_threshold,
+                    model_key="dota", keep_px=True,
+                )
+            finally:
+                del pil
+                pil = None
+                _gc.collect()
+
             if result.get("error"):
-                print(f"[scanner] YOLO (tile {tile['index']}): {result['error']}")
+                print(f"[scanner] YOLO tile {tile['index']}: {result['error']}")
                 return []
+
             out = []
             for det in result.get("detections", []):
                 px = det.get("_px")
@@ -592,6 +563,8 @@ class TileByTileScanner:
                         "class_name": det.get("class", "unknown"),
                         "confidence": float(det.get("confidence", 0.5)),
                         "bbox_px":    {"x1": int(px[0]), "y1": int(px[1]), "x2": int(px[2]), "y2": int(px[3])},
+                        "img_w":      img_w,
+                        "img_h":      img_h,
                         "_geo":       None,
                     })
                 else:
@@ -599,10 +572,15 @@ class TileByTileScanner:
                         "class_name": det.get("class", "unknown"),
                         "confidence": float(det.get("confidence", 0.5)),
                         "bbox_px":    None,
+                        "img_w":      img_w,
+                        "img_h":      img_h,
                         "_geo":       self._corners_to_geo(det, tile),
                     })
             return out
         except Exception as e:
+            if pil is not None:
+                del pil
+                _gc.collect()
             print(f"[scanner] _run_yolo_detection: {e}")
             return []
 

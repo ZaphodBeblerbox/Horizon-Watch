@@ -10883,6 +10883,22 @@ async def startup_event():
         except Exception as _e:
             print(f"[startup] stale scan cancel error: {_e}")
 
+        # Clear any stored scan imagery from DB (volume/memory emergency fix)
+        try:
+            from database import engine as _scan_engine
+            from sqlalchemy import text as _sql_text2
+            with _scan_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as _vconn:
+                for _img_tbl in ("regional_scan_tiles", "regional_scan_detections"):
+                    try:
+                        _vconn.execute(_sql_text2(
+                            f"UPDATE {_img_tbl} SET image_b64 = NULL WHERE image_b64 IS NOT NULL"
+                        ))
+                    except Exception:
+                        pass
+            print("[startup] Cleared stored scan imagery from DB")
+        except Exception as _ie:
+            print(f"[startup] imagery clear: {_ie}")
+
         # Add missing columns to regional_scan_detections (idempotent — ignore if column exists)
         try:
             from database import engine as _scan_engine
@@ -11035,7 +11051,8 @@ async def startup_event():
     asyncio.create_task(_shorts_refresh_loop())
     asyncio.create_task(_forge_detection_cycle())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
-    asyncio.create_task(_regional_scan_scheduler_loop())
+    # DISABLED — manual-only until memory/cost controls confirmed stable
+    # asyncio.create_task(_regional_scan_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
