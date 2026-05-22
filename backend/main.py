@@ -560,6 +560,9 @@ _ANOMALY_ALERTS: list = []
 _ADSB_LAST_RECORDED: dict = {}   # icao24 → last record timestamp (float)
 _AIS_LAST_RECORDED:  dict = {}   # mmsi   → last record timestamp (float)
 
+# ── Emergency kill switch — set True to re-enable automated scanning ──────────
+SCANNING_ENABLED = False
+
 # ── News conflict extraction state ────────────────────────────────────────────
 _NEWS_CONFLICT_MARKERS: list = []
 _NEWS_ARTICLE_STORE: dict[str, dict] = {}   # url -> enriched article snapshot (may have lat/lon None)
@@ -9365,6 +9368,9 @@ async def _global_adsb_cache_loop():
     global _GLOBAL_ADSB_CACHE
     await asyncio.sleep(30)
     while True:
+        if not SCANNING_ENABLED:
+            await asyncio.sleep(3600)
+            continue
         try:
             loop = asyncio.get_event_loop()
             for region in GLOBAL_ADSB_REGIONS:
@@ -10501,6 +10507,8 @@ async def _sentinel_zone_scheduler_loop():
     while True:
         try:
             await _asyncio_sched.sleep(_sched_interval)
+            if not SCANNING_ENABLED:
+                continue
             from database import WatchZone, get_db as _gdb
             now_sched = datetime.now(timezone.utc).replace(tzinfo=None)
             with _gdb() as _db:
@@ -17571,6 +17579,9 @@ async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
     global _forge_alerts, _correlation_assessments, _last_cycle_stats
     while True:
+        if not SCANNING_ENABLED:
+            await asyncio.sleep(3600)
+            continue
         try:
             cycle_start = datetime.now(timezone.utc)
 
