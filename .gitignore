@@ -23,3 +23,7 @@ backend/article_preview_cache.json
 .vite/
 backend/documents/
 backend/data/akili.db
+# Large model files — downloaded at startup on Railway
+backend/yolov8m-obb.onnx
+backend/yolov8m-obb.pt
+backend/runs/

@@ -2,13 +2,13 @@
  * GlobeOverwatchDrawLayer — rectangle or polygon selection on the Cesium globe.
  *
  * Rectangle mode: two clicks define opposite corners, fires onBounds({north,south,east,west}).
- * After a rectangle is confirmed the handler resets and waits for the next draw.
- *
  * Polygon mode: click to add vertices, double-click to close. Fires
  * onPolygon({vertices:[[lat,lon],...], bounds:{north,south,east,west}}).
+ *
+ * Cursor is crosshair only while a draw is in progress (first click → completion/cancel).
  */
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useCesium } from "resium"
 import {
     ScreenSpaceEventHandler,
@@ -36,8 +36,17 @@ export default function GlobeOverwatchDrawLayer({
     const finalEntityRef  = useRef(null)
     const polyVerticesRef = useRef([])
     const polyEntitiesRef = useRef([])
-    // Shared mutable corners for the CallbackProperty preview rectangle
     const cornersRef      = useRef({ a: null, b: null })
+
+    const [isDrawing, setIsDrawing] = useState(false)
+
+    // ── Cursor: crosshair only while mid-draw ─────────────────────────────────
+    useEffect(() => {
+        const canvas = viewer?.scene?.canvas
+        if (!canvas) return
+        canvas.style.cursor = isDrawing ? "crosshair" : "default"
+        return () => { if (canvas) canvas.style.cursor = "default" }
+    }, [isDrawing, viewer])
 
     function _clearAllEntities() {
         if (!viewer || viewer.isDestroyed()) return
@@ -70,18 +79,17 @@ export default function GlobeOverwatchDrawLayer({
             if (handlerRef.current) { handlerRef.current.destroy(); handlerRef.current = null }
             _clearAllEntities()
             firstPointRef.current = null
-            viewer.canvas.style.cursor = ""
+            setIsDrawing(false)
             return
         }
 
-        viewer.canvas.style.cursor = "crosshair"
-
-        // Reset rectangle draw state
+        // Reset draw state when mode changes or panel opens
         const corners = cornersRef.current
         corners.a = null
         corners.b = null
         firstPointRef.current = null
         polyVerticesRef.current = []
+        setIsDrawing(false)
 
         // Live preview rectangle (only visible in rectangle mode)
         const previewColor = Color.fromCssColorString("#22d3ee")
@@ -126,6 +134,7 @@ export default function GlobeOverwatchDrawLayer({
                     firstPointRef.current = pt
                     corners.a = pt
                     corners.b = pt
+                    setIsDrawing(true)
                 } else {
                     const a = firstPointRef.current
                     const bounds = {
@@ -134,7 +143,6 @@ export default function GlobeOverwatchDrawLayer({
                         east:  Math.max(a.lng, pt.lng),
                         west:  Math.min(a.lng, pt.lng),
                     }
-                    // Swap live preview for confirmed rectangle
                     try { viewer.entities.remove(previewEntity) } catch (_) {}
                     previewRef.current = null
                     if (finalEntityRef.current) {
@@ -151,15 +159,16 @@ export default function GlobeOverwatchDrawLayer({
                             height:       0,
                         },
                     })
-                    // Reset for next draw without destroying the handler
                     firstPointRef.current = null
                     corners.a = null
                     corners.b = null
+                    setIsDrawing(false)
                     if (onBounds) onBounds(bounds)
                 }
             } else if (drawMode === "polygon") {
                 const newVerts = [...polyVerticesRef.current, [pt.lat, pt.lng]]
                 polyVerticesRef.current = newVerts
+                if (newVerts.length === 1) setIsDrawing(true)
 
                 const dot = viewer.entities.add({
                     position: Cartesian3.fromDegrees(pt.lng, pt.lat),
@@ -195,7 +204,6 @@ export default function GlobeOverwatchDrawLayer({
         // ── Double click: close polygon ───────────────────────────────────────
         handler.setInputAction(() => {
             if (drawMode !== "polygon") return
-            // The preceding LEFT_CLICK already added a duplicate vertex — strip it
             const verts = polyVerticesRef.current.slice(0, -1)
             if (verts.length < 3) return
 
@@ -208,12 +216,10 @@ export default function GlobeOverwatchDrawLayer({
                 west:  Math.min(...lons),
             }
 
-            // Clear intermediate dot/line entities
             polyEntitiesRef.current.forEach(e => { try { viewer.entities.remove(e) } catch (_) {} })
             polyEntitiesRef.current = []
             polyVerticesRef.current = []
 
-            // Draw final closed polygon
             if (finalEntityRef.current) {
                 try { viewer.entities.remove(finalEntityRef.current) } catch (_) {}
             }
@@ -229,6 +235,7 @@ export default function GlobeOverwatchDrawLayer({
                 },
             })
 
+            setIsDrawing(false)
             if (onPolygon) onPolygon({ vertices: verts, bounds })
         }, ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
 
@@ -240,11 +247,11 @@ export default function GlobeOverwatchDrawLayer({
             polyEntitiesRef.current.forEach(e => { try { viewer.entities.remove(e) } catch (_) {} })
             polyEntitiesRef.current = []
             polyVerticesRef.current = []
+            setIsDrawing(false)
         }, ScreenSpaceEventType.RIGHT_CLICK)
 
         return () => {
             if (handlerRef.current) { handlerRef.current.destroy(); handlerRef.current = null }
-            viewer.canvas.style.cursor = ""
         }
     }, [viewer, active, drawMode]) // eslint-disable-line react-hooks/exhaustive-deps
 

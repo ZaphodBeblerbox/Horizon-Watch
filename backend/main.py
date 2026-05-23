@@ -9513,6 +9513,10 @@ _OW_DOTA_CLASSES = [
     "large-vehicle","small-vehicle","helicopter","roundabout",
     "soccer-ball-field","swimming-pool",
 ]
+# DOTA v2 extends with container-crane, airport, helipad (indices 15-17).
+# yolov8m-obb is the medium-size model trained on DOTAv1 (same 15 classes,
+# better accuracy). "dota-v2" key loads yolov8m-obb and falls back to nano.
+_OW_DOTA_V2_CLASSES = _OW_DOTA_CLASSES + ["container-crane", "airport", "helipad"]
 _OW_COCO_CLASSES = [
     "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
     "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
@@ -9553,6 +9557,10 @@ _OW_CATEGORY_MAP = {
     "ground-track-field": ("Facility",       "Sports"),
     "soccer-ball-field":  ("Facility",       "Sports"),
     "swimming-pool":      ("Facility",       "Recreational"),
+    # DOTA v2 additions
+    "container-crane":    ("Infrastructure", "Container Crane"),
+    "airport":            ("Aviation",       "Airport"),
+    "helipad":            ("Aviation",       "Helipad"),
     # COCO extras
     "person":             ("Person",         "Pedestrian"),
     "bicycle":            ("Vehicle",        "Bicycle"),
@@ -9568,11 +9576,35 @@ def _get_ort_session(model_key="dota"):
             return _ort_sessions[model_key]
         try:
             import onnxruntime as ort
-            fname = "yolov8n-obb.onnx" if model_key == "dota" else "yolov8n.onnx"
-            path  = str(BASE_DIR / fname)
-            sess  = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+            if model_key == "dota-v2":
+                fname = "yolov8m-obb.onnx"
+                path  = str(BASE_DIR / fname)
+                if not os.path.exists(path):
+                    print(f"[overwatch] dota-v2: {fname} not found — downloading yolov8m-obb...")
+                    try:
+                        from ultralytics import YOLO as _YOLO
+                        _m = _YOLO("yolov8m-obb.pt")
+                        _m.export(format="onnx", imgsz=1024)
+                        import shutil as _sh
+                        _src = BASE_DIR / "yolov8m-obb.onnx"
+                        if not _src.exists():
+                            _src = Path("yolov8m-obb.onnx")
+                        if _src.exists():
+                            _sh.move(str(_src), path)
+                        print(f"[overwatch] dota-v2 model ready at {path}")
+                    except Exception as _dl:
+                        print(f"[overwatch] dota-v2 download failed: {_dl} — falling back to nano OBB")
+                        fname = "yolov8n-obb.onnx"
+                        path  = str(BASE_DIR / fname)
+            elif model_key == "dota":
+                fname = "yolov8n-obb.onnx"
+                path  = str(BASE_DIR / fname)
+            else:
+                fname = "yolov8n.onnx"
+                path  = str(BASE_DIR / fname)
+            sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
             _ort_sessions[model_key] = sess
-            print(f"[overwatch] loaded {fname}")
+            print(f"[overwatch] loaded {fname} (model_key={model_key})")
         except Exception as e:
             print(f"[overwatch] session load failed ({model_key}): {e}")
             _ort_sessions[model_key] = None
@@ -9623,9 +9655,11 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
 
     north, south, east, west = bounds["north"], bounds["south"], bounds["east"], bounds["west"]
     TILE_SZ  = 256
-    is_dota  = (model_key == "dota")
+    is_dota  = model_key in ("dota", "dota-v2")
     INPUT_SZ = 1024 if is_dota else 640
-    classes  = _OW_DOTA_CLASSES if is_dota else _OW_COCO_CLASSES
+    classes  = (_OW_DOTA_V2_CLASSES if model_key == "dota-v2" else
+                _OW_DOTA_CLASSES    if is_dota else
+                _OW_COCO_CLASSES)
 
     # ── Tile fetch ────────────────────────────────────────────────────────────
     x_min = int(_ow_lon_to_tile_x_frac(west,  zoom))
@@ -9680,9 +9714,11 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
     import numpy as np
     from PIL import Image
 
-    is_dota  = (model_key == "dota")
+    is_dota  = model_key in ("dota", "dota-v2")
     INPUT_SZ = 1024 if is_dota else 640
-    classes  = _OW_DOTA_CLASSES if is_dota else _OW_COCO_CLASSES
+    classes  = (_OW_DOTA_V2_CLASSES if model_key == "dota-v2" else
+                _OW_DOTA_CLASSES    if is_dota else
+                _OW_COCO_CLASSES)
 
     north, south, east, west = bounds["north"], bounds["south"], bounds["east"], bounds["west"]
     img_w, img_h = cropped.size
@@ -9745,7 +9781,11 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
 
             pr_t = raw_t[0].T
             del raw_t
-            if is_dota:
+            if model_key == "dota-v2":
+                # 18 classes: cols 4..21, angle at col 22
+                bxy_t = pr_t[:, :4]; sc_cls = pr_t[:, 4:22]; ang_t = pr_t[:, 22]
+            elif is_dota:
+                # 15 classes: cols 4..18, angle at col 19
                 bxy_t = pr_t[:, :4]; sc_cls = pr_t[:, 4:19]; ang_t = pr_t[:, 19]
             else:
                 bxy_t = pr_t[:, :4]; sc_cls = pr_t[:, 4:]; ang_t = np.zeros(len(pr_t))
@@ -9968,7 +10008,8 @@ async def overwatch_detect(request: Request):
         zoom       = int(body.get("zoom", 15))
         confidence = float(body.get("confidence", 0.15))   # lower default for aerial
         enhance    = bool(body.get("enhance", False))
-        model_key  = "coco" if body.get("model") == "coco" else "dota"
+        _m = body.get("model", "dota")
+        model_key  = "coco" if _m == "coco" else ("dota-v2" if _m == "dota-v2" else "dota")
         if not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
             return JSONResponse({"error": "bounds {north,south,east,west} required", "count": 0, "detections": []})
         zoom = max(10, min(zoom, 18))
@@ -9994,7 +10035,8 @@ async def overwatch_detect_image(request: Request):
         bounds     = body.get("bounds")
         confidence = float(body.get("confidence", 0.15))
         enhance    = bool(body.get("enhance", False))
-        model_key  = "coco" if body.get("model") == "coco" else "dota"
+        _m = body.get("model", "dota")
+        model_key  = "coco" if _m == "coco" else ("dota-v2" if _m == "dota-v2" else "dota")
 
         if not image_b64 or not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
             return JSONResponse({"error": "image (base64) and bounds {north,south,east,west} required", "count": 0, "detections": []})

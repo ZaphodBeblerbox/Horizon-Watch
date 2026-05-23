@@ -17,11 +17,12 @@ export function IconOverwatch({ size = 18, color = "currentColor" }) {
 }
 
 export const TAXONOMY = {
-    Aircraft:       { color: "#60b4d8", classes: ["plane","airplane","helicopter"] },
-    Vessel:         { color: "#c9943a", classes: ["ship","boat"] },
-    Vehicle:        { color: "#5aad68", classes: ["large-vehicle","small-vehicle","large vehicle","small vehicle","car","truck","bus","motorcycle","bicycle"] },
-    Infrastructure: { color: "#9b72cc", classes: ["bridge","harbor","train"] },
-    Structure:      { color: "#cc5252", classes: ["storage-tank","storage tank","roundabout"] },
+    Aircraft:       { color: "#5856D6", classes: ["plane","airplane","helicopter"] },
+    Aviation:       { color: "#5856D6", classes: ["airport","helipad"] },
+    Vessel:         { color: "#34AADC", classes: ["ship","boat"] },
+    Vehicle:        { color: "#FF9500", classes: ["large-vehicle","small-vehicle","large vehicle","small vehicle","car","truck","bus","motorcycle","bicycle"] },
+    Infrastructure: { color: "#9b72cc", classes: ["bridge","harbor","train","container-crane","roundabout"] },
+    Energy:         { color: "#FFCC00", classes: ["storage-tank","storage tank"] },
     Facility:       { color: "#b88440", classes: ["baseball-diamond","tennis-court","basketball-court","ground-track-field","soccer-ball-field","swimming-pool"] },
     Person:         { color: "#cc6080", classes: ["person"] },
 }
@@ -55,24 +56,61 @@ export const SENTINEL_TYPES = [
     { key: "ndsi",        label: "NDSI — Snow" },
 ]
 
-// ── Colours / icons by category ───────────────────────────────────────────────
+// ── Colours / icons / readable labels by category and class ──────────────────
 const CATEGORY_COLORS = {
-    Aircraft:  "#5856D6",
-    Vessel:    "#34AADC",
-    Ship:      "#34AADC",
-    Vehicle:   "#FF9500",
-    Building:  "#FF9500",
-    Military:  "#FF3B30",
-    default:   "#FFCC00",
+    Aircraft:       "#5856D6",
+    Aviation:       "#5856D6",
+    Vessel:         "#34AADC",
+    Ship:           "#34AADC",
+    Vehicle:        "#FF9500",
+    Infrastructure: "#9b72cc",
+    Energy:         "#FFCC00",
+    Facility:       "#b88440",
+    Building:       "#FF9500",
+    Military:       "#FF3B30",
+    default:        "#FFCC00",
 }
 const CATEGORY_ICONS = {
-    Aircraft:  "✈",
-    Vessel:    "⚓",
-    Ship:      "⚓",
-    Vehicle:   "🚛",
-    Building:  "🏗",
-    Military:  "🎯",
-    default:   "◉",
+    Aircraft:       "✈",
+    Aviation:       "🛩",
+    Vessel:         "⚓",
+    Ship:           "⚓",
+    Vehicle:        "🚛",
+    Infrastructure: "🏗",
+    Energy:         "⚡",
+    Facility:       "🏟",
+    Building:       "🏗",
+    Military:       "🎯",
+    default:        "◉",
+}
+const READABLE_LABELS = {
+    "plane":               "Fixed-wing aircraft",
+    "helicopter":          "Rotary aircraft",
+    "ship":                "Maritime vessel",
+    "large-vehicle":       "Large vehicle / truck",
+    "large vehicle":       "Large vehicle / truck",
+    "small-vehicle":       "Small vehicle / car",
+    "small vehicle":       "Small vehicle / car",
+    "storage-tank":        "Storage tank (oil/chemical)",
+    "storage tank":        "Storage tank (oil/chemical)",
+    "harbor":              "Harbor / port facility",
+    "bridge":              "Bridge / overpass",
+    "airport":             "Airport / airfield",
+    "helipad":             "Helipad",
+    "container-crane":     "Container crane",
+    "roundabout":          "Traffic roundabout",
+    "baseball-diamond":    "Baseball diamond",
+    "baseball diamond":    "Baseball diamond",
+    "tennis-court":        "Tennis court",
+    "tennis court":        "Tennis court",
+    "basketball-court":    "Basketball court",
+    "basketball court":    "Basketball court",
+    "ground-track-field":  "Athletic track",
+    "ground track field":  "Athletic track",
+    "soccer-ball-field":   "Sports field",
+    "soccer ball field":   "Sports field",
+    "swimming-pool":       "Swimming pool",
+    "swimming pool":       "Swimming pool",
 }
 
 function hexToRgb(hex) {
@@ -405,7 +443,8 @@ export default function OverwatchSidebar({
                         <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginBottom: 3 }}>Model</div>
                             <select value={model} onChange={e => setModel(e.target.value)} style={S.select}>
-                                <option value="dota">DOTA OBB</option>
+                                <option value="dota">DOTA OBB (nano)</option>
+                                <option value="dota-v2">DOTA OBB (medium — higher accuracy)</option>
                                 <option value="coco">COCO General</option>
                             </select>
                         </div>
@@ -498,7 +537,7 @@ export default function OverwatchSidebar({
                                         >
                                             <span style={{ fontSize: 10 }}>{icon}</span>
                                             <span style={{ fontSize: 10, flex: 1, color: "rgba(255,255,255,0.7)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                                {det.specific_type || det.class}
+                                                {READABLE_LABELS[det.class] || det.specific_type || det.class}
                                             </span>
                                             <span style={{ fontSize: 10, color, fontWeight: 600, flexShrink: 0 }}>
                                                 {Math.round(det.confidence * 100)}%
