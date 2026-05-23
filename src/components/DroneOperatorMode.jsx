@@ -1,549 +1,442 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback } from 'react'
 
-const MOCK_CLASSES = ["small-vehicle", "large-vehicle", "plane", "helicopter", "ship", "person", "storage-tank"]
-const CLASS_COLORS = {
-    "small-vehicle": "#22d3ee",
-    "large-vehicle": "#f59e0b",
-    "plane":         "#a78bfa",
-    "helicopter":    "#a78bfa",
-    "ship":          "#34d399",
-    "person":        "#f87171",
-    "storage-tank":  "#fb923c",
-}
-const READABLE = {
-    "small-vehicle": "Vehicle (sm)",
-    "large-vehicle": "Vehicle (lg)",
-    "plane":         "Aircraft",
-    "helicopter":    "Helicopter",
-    "ship":          "Vessel",
-    "person":        "Personnel",
-    "storage-tank":  "Storage Tank",
+const DETECTION_COLORS = {
+    person:     '#FF3B30',
+    car:        '#FF9500',
+    truck:      '#FF9500',
+    motorcycle: '#FF9500',
+    bicycle:    '#FF9500',
+    bus:        '#FF9500',
+    boat:       '#34AADC',
+    dog:        '#30D158',
+    cat:        '#30D158',
+    bird:       '#30D158',
+    default:    '#FFCC00',
 }
 
-function randomBetween(a, b) { return a + Math.random() * (b - a) }
-
-function generateBox() {
-    const cls = MOCK_CLASSES[Math.floor(Math.random() * MOCK_CLASSES.length)]
-    const w = randomBetween(40, 120)
-    const h = randomBetween(30, 80)
-    return {
-        id:   Math.random().toString(36).slice(2),
-        cls,
-        x:    randomBetween(0.05, 0.85),
-        y:    randomBetween(0.05, 0.85),
-        w:    w,
-        h:    h,
-        conf: randomBetween(0.62, 0.98),
-        life: randomBetween(2000, 6000),
-        born: Date.now(),
-    }
+const DETECTION_ICONS = {
+    person:     '👤',
+    car:        '🚗',
+    truck:      '🚛',
+    motorcycle: '🏍',
+    bicycle:    '🚲',
+    bus:        '🚌',
+    boat:       '⛵',
+    dog:        '🐕',
+    cat:        '🐈',
+    bird:       '🐦',
+    default:    '◉',
 }
 
-function DroneCanvas({ running }) {
-    const canvasRef = useRef(null)
-    const boxesRef  = useRef([])
-    const rafRef    = useRef(null)
-    const noiseRef  = useRef(null)
+const MOCK_DETECTIONS = [
+    { id: 1, class: 'person',    confidence: 0.94, bbox: [120, 80,  180, 220], timestamp: Date.now() },
+    { id: 2, class: 'truck',     confidence: 0.87, bbox: [320, 180, 520, 300], timestamp: Date.now() - 2000 },
+    { id: 3, class: 'car',       confidence: 0.91, bbox: [580, 240, 720, 340], timestamp: Date.now() - 4000 },
+    { id: 4, class: 'person',    confidence: 0.79, bbox: [240, 300, 290, 440], timestamp: Date.now() - 6000 },
+]
 
-    // Pre-generate noise texture
-    useEffect(() => {
-        const off = document.createElement("canvas")
-        off.width = 256; off.height = 256
-        const ctx = off.getContext("2d")
-        const img = ctx.createImageData(256, 256)
-        for (let i = 0; i < img.data.length; i += 4) {
-            const v = Math.random() * 40
-            img.data[i] = v; img.data[i+1] = v; img.data[i+2] = v; img.data[i+3] = 255
-        }
-        ctx.putImageData(img, 0, 0)
-        noiseRef.current = off
-    }, [])
+export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
+    const videoRef   = useRef(null)
+    const canvasRef  = useRef(null)
+    const intervalRef = useRef(null)
 
-    useEffect(() => {
-        if (!running) {
-            cancelAnimationFrame(rafRef.current)
-            const canvas = canvasRef.current
-            if (!canvas) return
-            const ctx = canvas.getContext("2d")
-            ctx.fillStyle = "#000"
-            ctx.fillRect(0, 0, canvas.width, canvas.height)
-            ctx.fillStyle = "rgba(148,163,184,0.35)"
-            ctx.font = "13px monospace"
-            ctx.textAlign = "center"
-            ctx.fillText("FEED OFFLINE", canvas.width / 2, canvas.height / 2)
-            return
-        }
+    const [streamStatus, setStreamStatus] = useState('idle')
+    const [rtmpUrl,      setRtmpUrl]      = useState('rtmp://localhost:1935/live/horizon')
+    const [showUrlInput, setShowUrlInput] = useState(false)
+    const [detections,   setDetections]   = useState([])
+    const [totalDetections, setTotalDetections] = useState(0)
+    const [fps,          setFps]          = useState(0)
+    const [aiActive,     setAiActive]     = useState(true)
+    const videoDims = { w: 1280, h: 720 }
 
-        // Seed initial boxes
-        boxesRef.current = Array.from({ length: 3 }, generateBox)
+    const drawDetections = useCallback((dets) => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const ctx = canvas.getContext('2d')
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        if (!aiActive) return
 
-        let frame = 0
-        function draw() {
-            const canvas = canvasRef.current
-            if (!canvas) return
-            const W = canvas.width
-            const H = canvas.height
-            const ctx = canvas.getContext("2d")
-            const now = Date.now()
-            frame++
+        for (const det of dets) {
+            const [x1, y1, x2, y2] = det.bbox
+            const color = DETECTION_COLORS[det.class] || DETECTION_COLORS.default
+            const label = `${det.class} ${Math.round(det.confidence * 100)}%`
 
-            // Background — dark terrain gradient
-            const grad = ctx.createLinearGradient(0, 0, 0, H)
-            grad.addColorStop(0,   "#0a1628")
-            grad.addColorStop(0.4, "#0d1f1a")
-            grad.addColorStop(1,   "#060e14")
-            ctx.fillStyle = grad
-            ctx.fillRect(0, 0, W, H)
+            const scaleX = canvas.width  / videoDims.w
+            const scaleY = canvas.height / videoDims.h
+            const sx1 = x1 * scaleX, sy1 = y1 * scaleY
+            const sx2 = x2 * scaleX, sy2 = y2 * scaleY
 
-            // Noise overlay (subtle)
-            if (noiseRef.current) {
-                ctx.globalAlpha = 0.04
-                for (let tx = 0; tx < W; tx += 256) for (let ty = 0; ty < H; ty += 256)
-                    ctx.drawImage(noiseRef.current, tx, ty)
-                ctx.globalAlpha = 1
-            }
+            ctx.strokeStyle = color
+            ctx.lineWidth   = 2
+            ctx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1)
 
-            // Scanlines
-            ctx.fillStyle = "rgba(0,0,0,0.12)"
-            for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1)
-
-            // Grid overlay (faint)
-            ctx.strokeStyle = "rgba(34,211,238,0.04)"
-            ctx.lineWidth   = 1
-            const gridStep = 60
-            for (let x = 0; x < W; x += gridStep) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke() }
-            for (let y = 0; y < H; y += gridStep) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() }
-
-            // Crosshair center
-            const cx = W / 2, cy = H / 2
-            const ch = 24
-            ctx.strokeStyle = "rgba(34,211,238,0.6)"
-            ctx.lineWidth   = 1
-            ctx.beginPath(); ctx.moveTo(cx - ch, cy); ctx.lineTo(cx - 6, cy); ctx.stroke()
-            ctx.beginPath(); ctx.moveTo(cx + 6, cy); ctx.lineTo(cx + ch, cy); ctx.stroke()
-            ctx.beginPath(); ctx.moveTo(cx, cy - ch); ctx.lineTo(cx, cy - 6); ctx.stroke()
-            ctx.beginPath(); ctx.moveTo(cx, cy + 6); ctx.lineTo(cx, cy + ch); ctx.stroke()
-            ctx.strokeStyle = "rgba(34,211,238,0.3)"
-            ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2); ctx.stroke()
-
-            // Tick compass heading bar (top center)
-            const headingBase = (frame * 0.18) % 360
-            ctx.font = "10px monospace"
-            ctx.fillStyle = "rgba(34,211,238,0.55)"
-            ctx.textAlign  = "center"
-            for (let d = -5; d <= 5; d++) {
-                const deg = Math.round((headingBase + d * 5)) % 360
-                const xp  = cx + d * 18
-                ctx.fillStyle = d === 0 ? "rgba(34,211,238,0.9)" : "rgba(34,211,238,0.35)"
-                ctx.fillText(deg < 0 ? deg + 360 : deg, xp, 18)
-            }
-            ctx.fillStyle = "#22d3ee"
-            ctx.fillText("▼", cx, 27)
-
-            // Altitude / speed left column
-            ctx.textAlign  = "left"
-            ctx.font       = "10px monospace"
-            ctx.fillStyle  = "rgba(34,211,238,0.7)"
-            const alt = (120 + Math.sin(frame * 0.01) * 5).toFixed(1)
-            const spd = (38  + Math.cos(frame * 0.008) * 3).toFixed(1)
-            ctx.fillText(`ALT  ${alt} m`, 10, H - 40)
-            ctx.fillText(`SPD  ${spd} m/s`, 10, H - 26)
-            ctx.fillText(`HDG  ${Math.round(headingBase).toString().padStart(3,"0")}°`, 10, H - 12)
-
-            // Lat / lon right column
-            ctx.textAlign = "right"
-            const lat = (25.2048 + Math.sin(frame * 0.005) * 0.001).toFixed(5)
-            const lon = (55.2708 + Math.cos(frame * 0.007) * 0.001).toFixed(5)
-            ctx.fillText(`${lat}N`, W - 10, H - 26)
-            ctx.fillText(`${lon}E`, W - 10, H - 12)
-
-            // REC indicator
-            if (Math.floor(now / 800) % 2 === 0) {
-                ctx.fillStyle = "#ef4444"
-                ctx.beginPath(); ctx.arc(W - 20, 14, 5, 0, Math.PI * 2); ctx.fill()
-                ctx.textAlign = "right"
-                ctx.fillStyle = "rgba(239,68,68,0.85)"
-                ctx.font      = "10px monospace"
-                ctx.fillText("REC", W - 28, 18)
-            }
-
-            // Expire + spawn boxes
-            boxesRef.current = boxesRef.current.filter(b => now - b.born < b.life)
-            while (boxesRef.current.length < 4) boxesRef.current.push(generateBox())
-
-            // Draw detection boxes
-            boxesRef.current.forEach(b => {
-                const age    = now - b.born
-                const fade   = Math.min(1, age / 300) * Math.min(1, (b.life - age) / 300)
-                const color  = CLASS_COLORS[b.cls] || "#22d3ee"
-                const bx     = b.x * W
-                const by     = b.y * H
-                // Subtle drift
-                const dx     = Math.sin(age * 0.0008 + b.id.charCodeAt(0)) * 6
-                const dy     = Math.cos(age * 0.0006 + b.id.charCodeAt(1)) * 4
-
-                ctx.globalAlpha = fade * 0.85
-                ctx.strokeStyle = color
-                ctx.lineWidth   = 1.5
-
-                // Corner bracket style box
-                const bw = b.w, bh = b.h
-                const cs = 10
-                ctx.beginPath()
-                ctx.moveTo(bx + dx, by + dy + cs)
-                ctx.lineTo(bx + dx, by + dy)
-                ctx.lineTo(bx + dx + cs, by + dy)
-                ctx.stroke()
-                ctx.beginPath()
-                ctx.moveTo(bx + dx + bw - cs, by + dy)
-                ctx.lineTo(bx + dx + bw, by + dy)
-                ctx.lineTo(bx + dx + bw, by + dy + cs)
-                ctx.stroke()
-                ctx.beginPath()
-                ctx.moveTo(bx + dx, by + dy + bh - cs)
-                ctx.lineTo(bx + dx, by + dy + bh)
-                ctx.lineTo(bx + dx + cs, by + dy + bh)
-                ctx.stroke()
-                ctx.beginPath()
-                ctx.moveTo(bx + dx + bw - cs, by + dy + bh)
-                ctx.lineTo(bx + dx + bw, by + dy + bh)
-                ctx.lineTo(bx + dx + bw, by + dy + bh - cs)
-                ctx.stroke()
-
-                // Label
-                ctx.globalAlpha = fade
-                ctx.fillStyle   = color
-                ctx.font        = "9px monospace"
-                ctx.textAlign   = "left"
-                ctx.fillText(
-                    `${READABLE[b.cls] || b.cls}  ${(b.conf * 100).toFixed(0)}%`,
-                    bx + dx, by + dy - 4
-                )
-                ctx.globalAlpha = 1
+            // Corner accents
+            const cs = 8
+            ctx.lineWidth = 3
+            ;[[sx1, sy1+cs, sx1, sy1, sx1+cs, sy1],
+              [sx2-cs, sy1, sx2, sy1, sx2, sy1+cs],
+              [sx1, sy2-cs, sx1, sy2, sx1+cs, sy2],
+              [sx2-cs, sy2, sx2, sy2, sx2, sy2-cs]].forEach(([ax, ay, bx, by, cx2, cy2]) => {
+                ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(cx2, cy2); ctx.stroke()
             })
 
-            rafRef.current = requestAnimationFrame(draw)
+            ctx.font      = 'bold 11px -apple-system, sans-serif'
+            const labelW  = ctx.measureText(label).width + 10
+            ctx.fillStyle = color + 'CC'
+            ctx.fillRect(sx1, sy1 - 20, labelW, 20)
+            ctx.fillStyle = 'white'
+            ctx.fillText(label, sx1 + 5, sy1 - 6)
         }
+    }, [aiActive, videoDims.w, videoDims.h])
 
-        draw()
-        return () => cancelAnimationFrame(rafRef.current)
-    }, [running])
+    const startMockMode = useCallback(() => {
+        setStreamStatus('mock')
+        clearInterval(intervalRef.current)
+        intervalRef.current = setInterval(() => {
+            const subset = MOCK_DETECTIONS.slice(0, Math.floor(Math.random() * 4) + 1)
+            const jittered = subset.map(d => ({
+                ...d,
+                bbox:       d.bbox.map(v => v + Math.floor(Math.random() * 10) - 5),
+                confidence: Math.min(0.99, d.confidence + (Math.random() * 0.06 - 0.03)),
+                timestamp:  Date.now(),
+            }))
+            setDetections(jittered)
+            setTotalDetections(t => t + jittered.length)
+        }, 1000)
+    }, [])
 
-    return (
-        <canvas
-            ref={canvasRef}
-            width={880}
-            height={540}
-            style={{ width: "100%", height: "100%", display: "block", imageRendering: "pixelated" }}
-        />
-    )
-}
+    const stopFeed = useCallback(() => {
+        clearInterval(intervalRef.current)
+        setStreamStatus('idle')
+        setDetections([])
+        setTotalDetections(0)
+        const canvas = canvasRef.current
+        if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+    }, [])
 
-export default function DroneOperatorMode({ onClose }) {
-    const [layout,       setLayout]       = useState("split")   // "split" | "full"
-    const [rtmpUrl,      setRtmpUrl]       = useState("")
-    const [connected,    setConnected]     = useState(false)
-    const [detections,   setDetections]    = useState([])
-    const [showConfig,   setShowConfig]    = useState(false)
+    useEffect(() => { drawDetections(detections) }, [detections, drawDetections])
 
-    // Simulate detections while connected
-    useEffect(() => {
-        if (!connected) return
-        const spawn = () => {
-            const cls = MOCK_CLASSES[Math.floor(Math.random() * MOCK_CLASSES.length)]
-            setDetections(prev => [{
-                id:   Math.random().toString(36).slice(2),
-                cls,
-                conf: randomBetween(0.62, 0.98),
-                ts:   Date.now(),
-            }, ...prev].slice(0, 40))
-        }
-        spawn()
-        const iv = setInterval(spawn, randomBetween(800, 2400))
-        return () => clearInterval(iv)
-    }, [connected])
+    useEffect(() => () => clearInterval(intervalRef.current), [])
 
-    const handleConnect = useCallback(() => {
-        if (!rtmpUrl.trim() && !connected) return
-        setConnected(v => !v)
-        if (connected) setDetections([])
-    }, [rtmpUrl, connected])
-
-    const formatAge = (ts) => {
-        const s = Math.floor((Date.now() - ts) / 1000)
-        if (s < 60) return `${s}s ago`
-        return `${Math.floor(s / 60)}m ago`
-    }
+    const isSplit = mode === 'split'
+    const statusColor = { idle: '#636366', connecting: '#FF9500', live: '#30D158', mock: '#5856D6', error: '#FF3B30' }[streamStatus]
+    const statusLabel = { idle: 'NO FEED', connecting: 'CONNECTING', live: 'LIVE', mock: 'DEMO MODE', error: 'ERROR' }[streamStatus]
 
     return (
         <div style={{
-            display:        "flex",
-            flexDirection:  "column",
-            height:         "100%",
-            background:     "#060e1a",
-            color:          "#e2e8f0",
-            fontFamily:     "monospace",
-            overflow:       "hidden",
+            width: '100%', height: '100%',
+            background: 'rgba(6,10,20,0.98)',
+            display: 'flex', flexDirection: isSplit ? 'column' : 'row',
+            fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+            color: 'white', overflow: 'hidden', position: 'relative',
         }}>
-            {/* Header bar */}
+            {/* Header */}
             <div style={{
-                display:        "flex",
-                alignItems:     "center",
-                gap:            10,
-                padding:        "0 14px",
-                height:         40,
-                background:     "rgba(8,15,30,0.95)",
-                borderBottom:   "1px solid rgba(34,211,238,0.12)",
-                flexShrink:     0,
+                position: 'absolute', top: 0, left: 0, right: 0, height: 40,
+                background: 'rgba(6,10,20,0.95)',
+                borderBottom: '1px solid rgba(255,255,255,0.06)',
+                display: 'flex', alignItems: 'center',
+                padding: '0 14px', gap: 12, zIndex: 10, flexShrink: 0,
             }}>
-                {/* Drone icon */}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="2"/>
-                    <path d="M5 5l3 3M16 5l-3 3M5 19l3-3M16 19l-3-3"/>
-                    <path d="M3 5a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM17 5a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM3 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM17 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0z"/>
-                </svg>
-                <span style={{ fontSize: 11, letterSpacing: "0.1em", fontWeight: 700, color: "#22d3ee", textTransform: "uppercase" }}>Drone Operator</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: statusColor,
+                        boxShadow: streamStatus === 'live' ? `0 0 8px ${statusColor}` : 'none',
+                    }}/>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, letterSpacing: 1 }}>
+                        {statusLabel}
+                    </span>
+                </div>
+                <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)' }}/>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.8)', letterSpacing: 0.5 }}>
+                    DRONE OPERATOR MODE
+                </span>
 
-                {/* Connection status */}
-                <div style={{ display: "flex", alignItems: "center", gap: 5, marginLeft: 8 }}>
-                    <span style={{
-                        width: 7, height: 7, borderRadius: "50%",
-                        background: connected ? "#22c55e" : "#4b5563",
-                        boxShadow: connected ? "0 0 6px #22c55e" : "none",
-                    }} />
-                    <span style={{ fontSize: 10, color: connected ? "#86efac" : "#6b7280", letterSpacing: "0.06em" }}>
-                        {connected ? "LIVE" : "OFFLINE"}
+                <div onClick={() => setAiActive(v => !v)} style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    padding: '3px 8px',
+                    background: aiActive ? 'rgba(48,209,88,0.1)' : 'rgba(255,255,255,0.05)',
+                    border: `1px solid ${aiActive ? 'rgba(48,209,88,0.3)' : 'rgba(255,255,255,0.1)'}`,
+                    borderRadius: 20, cursor: 'pointer',
+                }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: aiActive ? '#30D158' : '#636366' }}/>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: aiActive ? '#30D158' : 'rgba(255,255,255,0.4)' }}>
+                        AI SURVEILLANCE {aiActive ? 'ON' : 'OFF'}
                     </span>
                 </div>
 
-                <div style={{ flex: 1 }} />
+                {streamStatus === 'live' && (
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{fps} fps</span>
+                )}
 
-                {/* Layout toggle */}
-                <div style={{ display: "flex", gap: 2 }}>
-                    {["split", "full"].map(m => (
-                        <button key={m} onClick={() => setLayout(m)} style={{
-                            padding:      "3px 10px",
-                            background:   layout === m ? "rgba(34,211,238,0.15)" : "none",
-                            border:       `1px solid ${layout === m ? "rgba(34,211,238,0.4)" : "rgba(255,255,255,0.08)"}`,
-                            borderRadius: 4,
-                            color:        layout === m ? "#22d3ee" : "#64748b",
-                            fontSize:     10,
-                            cursor:       "pointer",
-                            letterSpacing:"0.06em",
-                            textTransform:"uppercase",
-                        }}>
-                            {m === "split" ? "⊞ Split" : "⊡ Full"}
-                        </button>
-                    ))}
-                </div>
+                <div style={{ flex: 1 }}/>
 
-                {/* Config toggle */}
-                <button onClick={() => setShowConfig(v => !v)} title="RTMP Configuration" style={{
-                    width: 28, height: 28,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    background: showConfig ? "rgba(34,211,238,0.12)" : "none",
-                    border: "1px solid rgba(34,211,238,0.15)", borderRadius: 4,
-                    cursor: "pointer",
-                    color: showConfig ? "#22d3ee" : "#64748b",
-                }}>
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="8" cy="8" r="2.5"/>
-                        <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.9 11.9l1.05 1.05M3.05 12.95l1.06-1.06M11.9 4.1l1.05-1.05"/>
-                    </svg>
-                </button>
+                <button onClick={() => setShowUrlInput(v => !v)} style={{
+                    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 6, color: 'rgba(255,255,255,0.5)', fontSize: 10, padding: '3px 8px', cursor: 'pointer',
+                }}>⚙ RTMP</button>
 
-                {onClose && (
-                    <button onClick={onClose} style={{
-                        width: 28, height: 28,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        color: "#64748b",
-                        fontSize: 16,
-                    }}>×</button>
+                {(onMinimize || onExpand) && (
+                    <button onClick={isSplit ? onExpand : onMinimize} style={{
+                        background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: 6, color: 'rgba(255,255,255,0.5)', fontSize: 10, padding: '3px 8px', cursor: 'pointer',
+                    }}>
+                        {isSplit ? '⤢ Expand' : '⤡ Split View'}
+                    </button>
                 )}
             </div>
 
-            {/* RTMP config strip */}
-            {showConfig && (
+            {/* RTMP dropdown */}
+            {showUrlInput && (
                 <div style={{
-                    display:      "flex",
-                    alignItems:   "center",
-                    gap:          10,
-                    padding:      "8px 14px",
-                    background:   "rgba(8,15,30,0.9)",
-                    borderBottom: "1px solid rgba(34,211,238,0.08)",
-                    flexShrink:   0,
+                    position: 'absolute', top: 40, right: 14, zIndex: 20,
+                    background: 'rgba(10,18,35,0.98)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 8, padding: 12, width: 320,
                 }}>
-                    <span style={{ fontSize: 10, color: "#64748b", letterSpacing: "0.08em", flexShrink: 0 }}>RTMP URL</span>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                        RTMP Stream URL
+                    </div>
                     <input
                         value={rtmpUrl}
                         onChange={e => setRtmpUrl(e.target.value)}
-                        placeholder="rtmp://host:1935/live/streamkey"
                         style={{
-                            flex:        1,
-                            background:  "rgba(255,255,255,0.04)",
-                            border:      "1px solid rgba(34,211,238,0.2)",
-                            borderRadius: 4,
-                            padding:     "4px 8px",
-                            color:       "#e2e8f0",
-                            fontSize:    11,
-                            fontFamily:  "monospace",
-                            outline:     "none",
+                            width: '100%', background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6,
+                            color: 'white', fontSize: 11, padding: '6px 8px', outline: 'none',
+                            boxSizing: 'border-box', marginBottom: 8,
                         }}
-                        onKeyDown={e => e.key === "Enter" && handleConnect()}
                     />
-                    <button onClick={handleConnect} style={{
-                        padding:      "4px 14px",
-                        background:   connected ? "rgba(239,68,68,0.15)" : "rgba(34,211,238,0.15)",
-                        border:       `1px solid ${connected ? "rgba(239,68,68,0.4)" : "rgba(34,211,238,0.4)"}`,
-                        borderRadius: 4,
-                        color:        connected ? "#fca5a5" : "#22d3ee",
-                        fontSize:     10,
-                        cursor:       "pointer",
-                        letterSpacing:"0.08em",
-                        textTransform:"uppercase",
-                        flexShrink:   0,
-                    }}>
-                        {connected ? "Disconnect" : "Connect"}
-                    </button>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginBottom: 8, lineHeight: 1.5 }}>
+                        Enter your RTMP server URL.<br/>
+                        DJI Fly → Transmission → Live Streaming → RTMP
+                    </div>
+                    <button
+                        onClick={() => {
+                            setStreamStatus('connecting')
+                            setShowUrlInput(false)
+                            setTimeout(() => setStreamStatus('error'), 3000)
+                        }}
+                        style={{
+                            width: '100%', padding: '6px 0',
+                            background: 'rgba(52,170,220,0.15)',
+                            border: '1px solid rgba(52,170,220,0.3)',
+                            borderRadius: 6, color: '#34AADC',
+                            fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                        }}
+                    >Connect</button>
                 </div>
             )}
 
             {/* Body */}
-            <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
-                {/* Video feed */}
+            <div style={{
+                display: 'flex', flexDirection: isSplit ? 'column' : 'row',
+                flex: 1, marginTop: 40, overflow: 'hidden',
+            }}>
+                {/* Video panel */}
                 <div style={{
-                    flex:     layout === "split" ? "0 0 62%" : 1,
-                    minWidth: 0,
-                    position: "relative",
-                    background: "#000",
-                    borderRight: layout === "split" ? "1px solid rgba(34,211,238,0.1)" : "none",
+                    flex: isSplit ? '0 0 60%' : '1 1 70%',
+                    position: 'relative', background: '#000',
+                    overflow: 'hidden', minHeight: isSplit ? 200 : 0,
                 }}>
-                    <DroneCanvas running={connected} />
-
-                    {/* Offline connect overlay */}
-                    {!connected && !showConfig && (
+                    {streamStatus === 'idle' && (
                         <div style={{
-                            position:  "absolute", inset: 0,
-                            display:   "flex", flexDirection: "column",
-                            alignItems:"center", justifyContent: "center",
-                            gap: 12,
+                            position: 'absolute', inset: 0,
+                            display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', justifyContent: 'center', gap: 16,
                         }}>
-                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(34,211,238,0.3)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                            <svg width="64" height="64" viewBox="0 0 24 24"
+                                fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1">
                                 <circle cx="12" cy="12" r="2"/>
-                                <path d="M5 5l3 3M16 5l-3 3M5 19l3-3M16 19l-3-3"/>
-                                <path d="M3 5a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM17 5a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM3 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM17 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0z"/>
+                                <path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/>
+                                <circle cx="4" cy="4" r="1.5" fill="rgba(255,255,255,0.15)"/>
+                                <circle cx="20" cy="4" r="1.5" fill="rgba(255,255,255,0.15)"/>
+                                <circle cx="4" cy="20" r="1.5" fill="rgba(255,255,255,0.15)"/>
+                                <circle cx="20" cy="20" r="1.5" fill="rgba(255,255,255,0.15)"/>
                             </svg>
-                            <p style={{ margin: 0, fontSize: 11, color: "rgba(148,163,184,0.5)", letterSpacing: "0.1em" }}>NO FEED</p>
-                            <button onClick={() => setShowConfig(true)} style={{
-                                padding:      "5px 16px",
-                                background:   "rgba(34,211,238,0.1)",
-                                border:       "1px solid rgba(34,211,238,0.3)",
-                                borderRadius: 4,
-                                color:        "#22d3ee",
-                                fontSize:     10,
-                                cursor:       "pointer",
-                                letterSpacing:"0.08em",
-                            }}>Configure RTMP</button>
+                            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', textAlign: 'center', lineHeight: 1.6 }}>
+                                No drone feed connected<br/>
+                                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>
+                                    Configure RTMP above or run demo mode
+                                </span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                <button onClick={() => setShowUrlInput(true)} style={{
+                                    padding: '7px 16px',
+                                    background: 'rgba(52,170,220,0.1)', border: '1px solid rgba(52,170,220,0.3)',
+                                    borderRadius: 6, color: '#34AADC', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                                }}>⚙ Connect RTMP</button>
+                                <button onClick={startMockMode} style={{
+                                    padding: '7px 16px',
+                                    background: 'rgba(88,86,214,0.1)', border: '1px solid rgba(88,86,214,0.3)',
+                                    borderRadius: 6, color: '#5856D6', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                                }}>▶ Demo Mode</button>
+                            </div>
                         </div>
+                    )}
+
+                    {streamStatus === 'mock' && (
+                        <div style={{
+                            position: 'absolute', inset: 0,
+                            background: 'linear-gradient(135deg, #0a1628 0%, #0d2137 50%, #0a1628 100%)',
+                        }}>
+                            <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.07 }}>
+                                <defs>
+                                    <pattern id="drone-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="0.5"/>
+                                    </pattern>
+                                </defs>
+                                <rect width="100%" height="100%" fill="url(#drone-grid)"/>
+                            </svg>
+                            <div style={{
+                                position: 'absolute', top: '50%', left: '50%',
+                                transform: 'translate(-50%,-50%)', textAlign: 'center',
+                            }}>
+                                <div style={{ fontSize: 11, color: 'rgba(88,86,214,0.6)', fontWeight: 700, letterSpacing: 2, marginBottom: 8 }}>
+                                    DEMO MODE ACTIVE
+                                </div>
+                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>
+                                    Connect RTMP stream to show live feed
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <video ref={videoRef} autoPlay muted playsInline
+                        style={{ width: '100%', height: '100%', objectFit: 'contain', display: streamStatus === 'live' ? 'block' : 'none' }}
+                    />
+
+                    <canvas ref={canvasRef} width={videoDims.w} height={videoDims.h}
+                        style={{
+                            position: 'absolute', inset: 0, width: '100%', height: '100%',
+                            pointerEvents: 'none',
+                            display: (streamStatus === 'mock' || streamStatus === 'live') ? 'block' : 'none',
+                        }}
+                    />
+
+                    {(streamStatus === 'live' || streamStatus === 'mock') && (
+                        <>
+                            <div style={{
+                                position: 'absolute', top: 12, left: 12,
+                                background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: 6, padding: '4px 10px', fontSize: 11, color: 'white',
+                            }}>
+                                <span style={{ color: '#30D158', fontWeight: 700 }}>{detections.length}</span> objects in frame
+                            </div>
+                            <div style={{
+                                position: 'absolute', top: 12, right: 12,
+                                background: aiActive ? 'rgba(48,209,88,0.15)' : 'rgba(0,0,0,0.6)',
+                                backdropFilter: 'blur(8px)',
+                                border: `1px solid ${aiActive ? 'rgba(48,209,88,0.3)' : 'rgba(255,255,255,0.1)'}`,
+                                borderRadius: 6, padding: '4px 10px', fontSize: 10,
+                                color: aiActive ? '#30D158' : 'rgba(255,255,255,0.4)',
+                                fontWeight: 600, letterSpacing: 0.5,
+                            }}>
+                                {aiActive ? '◉ AI ACTIVE' : '○ AI OFF'}
+                            </div>
+                        </>
                     )}
                 </div>
 
-                {/* Detections panel */}
-                {layout === "split" && (
-                    <div style={{
-                        flex:          "0 0 38%",
-                        display:       "flex",
-                        flexDirection: "column",
-                        overflow:      "hidden",
-                        background:    "#060e1a",
-                    }}>
-                        <div style={{
-                            padding:      "8px 12px 6px",
-                            borderBottom: "1px solid rgba(34,211,238,0.08)",
-                            flexShrink:   0,
-                        }}>
-                            <span style={{ fontSize: 10, letterSpacing: "0.1em", color: "#64748b", textTransform: "uppercase" }}>
-                                Detections
-                            </span>
-                            {detections.length > 0 && (
-                                <span style={{
-                                    marginLeft: 8,
-                                    background: "rgba(34,211,238,0.15)",
-                                    color:      "#22d3ee",
-                                    fontSize:   9,
-                                    padding:    "1px 6px",
-                                    borderRadius: 3,
-                                    fontWeight: 700,
-                                }}>
-                                    {detections.length}
-                                </span>
-                            )}
-                        </div>
+                {/* Intelligence panel */}
+                <div style={{
+                    flex: isSplit ? '0 0 40%' : '0 0 300px',
+                    borderLeft:  isSplit ? 'none' : '1px solid rgba(255,255,255,0.06)',
+                    borderTop:   isSplit ? '1px solid rgba(255,255,255,0.06)' : 'none',
+                    display: 'flex', flexDirection: 'column',
+                    overflow: 'hidden', background: 'rgba(8,14,28,0.98)',
+                }}>
+                    {/* Stats row */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        {[
+                            { label: 'DETECTIONS', value: totalDetections,  color: '#30D158' },
+                            { label: 'IN FRAME',   value: detections.length, color: '#34AADC' },
+                            { label: 'CONFIDENCE',
+                                value: detections.length > 0
+                                    ? Math.round(detections.reduce((a, d) => a + d.confidence, 0) / detections.length * 100) + '%'
+                                    : '—',
+                                color: '#FF9500' },
+                        ].map(({ label, value, color }) => (
+                            <div key={label} style={{
+                                flex: 1, padding: '10px 12px',
+                                borderRight: '1px solid rgba(255,255,255,0.06)', textAlign: 'center',
+                            }}>
+                                <div style={{ fontSize: 18, fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
+                                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', marginTop: 3, letterSpacing: 0.8 }}>{label}</div>
+                            </div>
+                        ))}
+                    </div>
 
-                        <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
-                            {detections.length === 0 && (
-                                <div style={{ padding: "20px 12px", fontSize: 11, color: "#374151", textAlign: "center" }}>
-                                    {connected ? "Waiting for detections…" : "Connect feed to begin"}
-                                </div>
-                            )}
-                            {detections.map(d => {
-                                const color = CLASS_COLORS[d.cls] || "#22d3ee"
+                    <div style={{ padding: '8px 14px 4px', fontSize: 9, color: 'rgba(255,255,255,0.3)', letterSpacing: 1, textTransform: 'uppercase', fontWeight: 600 }}>
+                        Live Detections
+                    </div>
+
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '0 10px 10px' }}>
+                        {detections.length === 0 ? (
+                            <div style={{ padding: '20px 14px', textAlign: 'center', fontSize: 11, color: 'rgba(255,255,255,0.2)', lineHeight: 1.6 }}>
+                                {streamStatus === 'idle' ? 'No feed connected' : 'No objects detected'}
+                            </div>
+                        ) : (
+                            [...detections].sort((a, b) => b.confidence - a.confidence).map((det, i) => {
+                                const color = DETECTION_COLORS[det.class] || DETECTION_COLORS.default
+                                const icon  = DETECTION_ICONS[det.class]  || DETECTION_ICONS.default
+                                const age   = Math.round((Date.now() - det.timestamp) / 1000)
                                 return (
-                                    <div key={d.id} style={{
-                                        display:     "flex",
-                                        alignItems:  "center",
-                                        gap:         8,
-                                        padding:     "5px 12px",
-                                        borderBottom:"1px solid rgba(255,255,255,0.03)",
+                                    <div key={det.id || i} style={{
+                                        display: 'flex', alignItems: 'center', gap: 10,
+                                        padding: '8px 10px',
+                                        background: 'rgba(255,255,255,0.03)',
+                                        border: '1px solid rgba(255,255,255,0.06)',
+                                        borderRadius: 8, marginBottom: 6,
                                     }}>
-                                        <span style={{
-                                            width: 8, height: 8, borderRadius: "50%",
-                                            background: color, flexShrink: 0,
-                                            boxShadow: `0 0 5px ${color}66`,
-                                        }} />
-                                        <span style={{ flex: 1, fontSize: 11, color: "#cbd5e1" }}>
-                                            {READABLE[d.cls] || d.cls}
-                                        </span>
-                                        <span style={{ fontSize: 10, color, fontWeight: 700 }}>
-                                            {(d.conf * 100).toFixed(0)}%
-                                        </span>
-                                        <span style={{ fontSize: 9, color: "#374151", minWidth: 42, textAlign: "right" }}>
-                                            {formatAge(d.ts)}
-                                        </span>
+                                        <div style={{
+                                            width: 32, height: 32, borderRadius: 8,
+                                            background: color + '22', border: `1px solid ${color}44`,
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            fontSize: 16, flexShrink: 0,
+                                        }}>{icon}</div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: 12, fontWeight: 600, color: 'white', textTransform: 'capitalize' }}>{det.class}</div>
+                                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 1 }}>{age}s ago</div>
+                                        </div>
+                                        <div style={{ textAlign: 'right' }}>
+                                            <div style={{ fontSize: 14, fontWeight: 700, color }}>{Math.round(det.confidence * 100)}%</div>
+                                            <div style={{ width: 40, height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2, marginTop: 3, overflow: 'hidden' }}>
+                                                <div style={{ width: `${det.confidence * 100}%`, height: '100%', background: color, borderRadius: 2 }}/>
+                                            </div>
+                                        </div>
                                     </div>
                                 )
-                            })}
-                        </div>
-
-                        {/* Stats footer */}
-                        {detections.length > 0 && (
-                            <div style={{
-                                padding:   "6px 12px",
-                                borderTop: "1px solid rgba(34,211,238,0.08)",
-                                flexShrink: 0,
-                                display:   "flex",
-                                gap:       16,
-                            }}>
-                                {Object.entries(
-                                    detections.reduce((acc, d) => {
-                                        acc[d.cls] = (acc[d.cls] || 0) + 1; return acc
-                                    }, {})
-                                ).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([cls, n]) => (
-                                    <div key={cls} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-                                        <span style={{ fontSize: 13, fontWeight: 700, color: CLASS_COLORS[cls] || "#22d3ee" }}>{n}</span>
-                                        <span style={{ fontSize: 8, color: "#4b5563", letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                                            {READABLE[cls]?.split(" ")[0] || cls}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
+                            })
                         )}
                     </div>
-                )}
+
+                    <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                        {streamStatus === 'idle' && (
+                            <button onClick={startMockMode} style={{
+                                width: '100%', padding: '8px 0',
+                                background: 'rgba(88,86,214,0.12)', border: '1px solid rgba(88,86,214,0.3)',
+                                borderRadius: 8, color: '#5856D6', fontSize: 11, fontWeight: 700,
+                                cursor: 'pointer', letterSpacing: 0.5,
+                            }}>▶ Start Demo Mode</button>
+                        )}
+                        {(streamStatus === 'mock' || streamStatus === 'live') && (
+                            <button onClick={stopFeed} style={{
+                                width: '100%', padding: '8px 0',
+                                background: 'rgba(255,59,48,0.08)', border: '1px solid rgba(255,59,48,0.2)',
+                                borderRadius: 8, color: 'rgba(255,59,48,0.7)', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                            }}>◼ Stop Feed</button>
+                        )}
+                    </div>
+                </div>
             </div>
+
+            <style>{`
+                @keyframes drone-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+                @keyframes drone-scanline { 0% { transform: translateY(-100%) } 100% { transform: translateY(100vh) } }
+            `}</style>
         </div>
     )
 }

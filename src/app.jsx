@@ -153,6 +153,7 @@ export default function App() {
     const [currentUser,  setCurrentUser]  = useState(null)
     const [showAdmin,         setShowAdmin]         = useState(false)
     const [showChat,          setShowChat]          = useState(false)
+    const [droneMode,           setDroneMode]           = useState("full") // "full" | "split"
     const [overwatchActive,     setOverwatchActive]     = useState(false)
     const [overwatchDrawActive, setOverwatchDrawActive] = useState(false)
     // Overwatch panel state (managed here, fed to OverwatchSidebar)
@@ -1641,7 +1642,9 @@ export default function App() {
                         flexDirection: "column",
                     }}>
                         <DroneOperatorMode
-                            onClose={() => closeTab(tabs.find(t => t.type === "drone")?.id)}
+                            mode={droneMode}
+                            onMinimize={() => { setDroneMode("split"); openTab("map") }}
+                            onExpand={() => setDroneMode("full")}
                         />
                     </div>
                 )}
@@ -1726,6 +1729,26 @@ export default function App() {
                         currentUser={currentUser}
                         onClose={() => setShowChat(false)}
                     />
+                )}
+
+                {/* Drone PiP overlay — shown on map tab when drone is minimized to split */}
+                {tabs.some(t => t.type === "drone") && droneMode === "split" && activeTabType === "map" && (
+                    <div style={{
+                        position: "fixed",
+                        bottom: 0, right: 0,
+                        width: 480, height: 320,
+                        zIndex: 50,
+                        borderRadius: "12px 0 0 0",
+                        overflow: "hidden",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        boxShadow: "0 -4px 32px rgba(0,0,0,0.6)",
+                    }}>
+                        <DroneOperatorMode
+                            mode="split"
+                            onExpand={() => { openTab("drone"); setDroneMode("full") }}
+                            onMinimize={() => setDroneMode("full")}
+                        />
+                    </div>
                 )}
 
             </div>
