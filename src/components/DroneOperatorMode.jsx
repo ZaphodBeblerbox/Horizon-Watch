@@ -115,6 +115,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                 liveMaxLatencyDurationCount: 5,
                 enableWorker:              true,
                 lowLatencyMode:            true,
+                xhrSetup: (xhr) => { xhr.withCredentials = true },
             })
             hls.loadSource(url)
             hls.attachMedia(video)
@@ -166,7 +167,9 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
             attempts++
             try {
                 const r = await fetch(hlsUrl, {
-                    method: 'HEAD',
+                    method: 'GET',
+                    credentials: 'include',
+                    redirect: 'follow',
                     signal: AbortSignal.timeout(3000),
                 })
                 console.log(`[drone] Poll ${attempts}: HTTP ${r.status}`)
