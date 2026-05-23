@@ -1,9 +1,24 @@
 # MediaMTX config for Horizon Watch drone streaming
 # Start with: mediamtx mediamtx.yml
 
+logLevel: info
+logDestinations: [stdout]
+
+# RTMP ingest — DJI streams here
 rtmpAddress: :1935
+
+# HLS output — browser plays from here
 hlsAddress: :8888
-hlsAllowOrigin: '*'
+hlsAllowOrigins: ['*']
+hlsAlwaysRemux: yes
+
+# Disable unused protocols to avoid port conflicts
+webrtcAddress: :8889
+srtAddress: :8890
+
+# API for status checks
+api: yes
+apiAddress: :9997
 
 paths:
   all:

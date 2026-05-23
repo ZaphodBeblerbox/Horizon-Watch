@@ -150,13 +150,15 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
 
         let url
         try {
-            const parsed   = new URL(rtmpUrl)
-            const segments = parsed.pathname.split('/').filter(Boolean)
-            // rtmp://host/drone     → streamName=drone
-            // rtmp://host/live/drone → streamName=drone (last segment)
+            const parsed     = new URL(rtmpUrl)
+            const segments   = parsed.pathname.split('/').filter(Boolean)
             const streamName = segments[segments.length - 1] || 'stream'
-            // MediaMTX HLS path: http://host:8888/STREAMNAME/index.m3u8
-            url = `http://${parsed.hostname}:8888/${streamName}/index.m3u8`
+            const isLocal    = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+            // On local dev: route through Vite proxy (/hls-proxy/*) to avoid CORS + cookie-check.
+            // On production or remote access: connect directly to mediamtx HLS port.
+            url = isLocal
+                ? `/hls-proxy/${streamName}/index.m3u8`
+                : `http://${parsed.hostname}:8888/${streamName}/index.m3u8`
             setHlsUrl(url)
         } catch {
             setStreamStatus('error')
@@ -174,7 +176,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
 
             if (attempts >= 15) {
                 setStreamStatus('error')
-                setStreamError('Stream not found — is the drone streaming and nginx running on port 8080?')
+                setStreamError('Stream not found — is the drone streaming and mediamtx running? (mediamtx mediamtx.yml)')
                 return
             }
             pollTimerRef.current = setTimeout(poll, 1000)
