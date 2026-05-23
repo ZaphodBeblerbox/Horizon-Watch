@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import API_BASE from '../apiBase.js'
 
 const DETECTION_COLORS = {
     person:     '#FF3B30',
@@ -36,18 +37,24 @@ const MOCK_DETECTIONS = [
 ]
 
 export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
-    const videoRef   = useRef(null)
-    const canvasRef  = useRef(null)
-    const intervalRef = useRef(null)
+    const videoRef      = useRef(null)
+    const canvasRef     = useRef(null)
+    const hlsRef        = useRef(null)
+    const mockTimerRef  = useRef(null)
+    const pollTimerRef  = useRef(null)
 
-    const [streamStatus, setStreamStatus] = useState('idle')
-    const [rtmpUrl,      setRtmpUrl]      = useState('rtmp://localhost:1935/live/horizon')
-    const [showUrlInput, setShowUrlInput] = useState(false)
-    const [detections,   setDetections]   = useState([])
+    const [streamStatus,    setStreamStatus]    = useState('idle')
+    const [streamError,     setStreamError]     = useState(null)
+    const [rtmpUrl,         setRtmpUrl]         = useState('rtmp://localhost:1935/live/horizon')
+    const [hlsUrl,          setHlsUrl]          = useState(null)
+    const [showUrlInput,    setShowUrlInput]    = useState(false)
+    const [detections,      setDetections]      = useState([])
     const [totalDetections, setTotalDetections] = useState(0)
-    const [fps,          setFps]          = useState(0)
-    const [aiActive,     setAiActive]     = useState(true)
+    const [fps,             setFps]             = useState(0)
+    const [aiActive,        setAiActive]        = useState(true)
     const videoDims = { w: 1280, h: 720 }
+
+    // ── Canvas detection overlay ──────────────────────────────────────────────
 
     const drawDetections = useCallback((dets) => {
         const canvas = canvasRef.current
@@ -70,14 +77,14 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
             ctx.lineWidth   = 2
             ctx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1)
 
-            // Corner accents
             const cs = 8
             ctx.lineWidth = 3
             ;[[sx1, sy1+cs, sx1, sy1, sx1+cs, sy1],
               [sx2-cs, sy1, sx2, sy1, sx2, sy1+cs],
               [sx1, sy2-cs, sx1, sy2, sx1+cs, sy2],
-              [sx2-cs, sy2, sx2, sy2, sx2, sy2-cs]].forEach(([ax, ay, bx, by, cx2, cy2]) => {
-                ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(cx2, cy2); ctx.stroke()
+              [sx2-cs, sy2, sx2, sy2, sx2, sy2-cs]
+            ].forEach(([ax, ay, bx, by, ex, ey]) => {
+                ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(ex, ey); ctx.stroke()
             })
 
             ctx.font      = 'bold 11px -apple-system, sans-serif'
@@ -89,11 +96,108 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         }
     }, [aiActive, videoDims.w, videoDims.h])
 
+    useEffect(() => { drawDetections(detections) }, [detections, drawDetections])
+
+    // ── HLS stream loading ────────────────────────────────────────────────────
+
+    const loadHLSStream = useCallback((url) => {
+        const video = videoRef.current
+        if (!video) return
+
+        if (hlsRef.current) {
+            hlsRef.current.destroy()
+            hlsRef.current = null
+        }
+
+        if (window.Hls && window.Hls.isSupported()) {
+            const hls = new window.Hls({
+                liveSyncDurationCount:     2,
+                liveMaxLatencyDurationCount: 5,
+                enableWorker:              true,
+                lowLatencyMode:            true,
+            })
+            hls.loadSource(url)
+            hls.attachMedia(video)
+            hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+                video.play().catch(() => {})
+                setStreamStatus('live')
+                setStreamError(null)
+            })
+            hls.on(window.Hls.Events.ERROR, (_e, data) => {
+                if (data.fatal) {
+                    setStreamStatus('error')
+                    setStreamError('Stream lost')
+                }
+            })
+            hlsRef.current = hls
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = url
+            video.play().catch(() => {})
+            setStreamStatus('live')
+            setStreamError(null)
+        } else {
+            setStreamStatus('error')
+            setStreamError('HLS not supported in this browser')
+        }
+    }, [])
+
+    // ── Connect: derive HLS URL from RTMP, poll until m3u8 appears ───────────
+
+    const handleConnect = useCallback(async () => {
+        setStreamStatus('connecting')
+        setStreamError(null)
+        clearTimeout(pollTimerRef.current)
+
+        let url
+        try {
+            const parsed = new URL(rtmpUrl)
+            const key    = parsed.pathname.split('/').pop() || 'horizon'
+            url = `http://${parsed.hostname}:8080/hls/${key}.m3u8`
+            setHlsUrl(url)
+        } catch {
+            setStreamStatus('error')
+            setStreamError('Invalid RTMP URL — expected rtmp://host:1935/live/key')
+            return
+        }
+
+        let attempts = 0
+        const poll = async () => {
+            attempts++
+            try {
+                const r = await fetch(url, { method: 'HEAD' })
+                if (r.ok) { loadHLSStream(url); return }
+            } catch { /* not ready yet */ }
+
+            if (attempts >= 15) {
+                setStreamStatus('error')
+                setStreamError('Stream not found — is the drone streaming and nginx running on port 8080?')
+                return
+            }
+            pollTimerRef.current = setTimeout(poll, 1000)
+        }
+        poll()
+    }, [rtmpUrl, loadHLSStream])
+
+    // ── Disconnect ────────────────────────────────────────────────────────────
+
+    const handleDisconnect = useCallback(() => {
+        clearTimeout(pollTimerRef.current)
+        if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
+        const video = videoRef.current
+        if (video) { video.src = ''; video.load() }
+        setStreamStatus('idle')
+        setDetections([])
+        setHlsUrl(null)
+        setStreamError(null)
+    }, [])
+
+    // ── Demo / mock mode ──────────────────────────────────────────────────────
+
     const startMockMode = useCallback(() => {
         setStreamStatus('mock')
-        clearInterval(intervalRef.current)
-        intervalRef.current = setInterval(() => {
-            const subset = MOCK_DETECTIONS.slice(0, Math.floor(Math.random() * 4) + 1)
+        clearInterval(mockTimerRef.current)
+        mockTimerRef.current = setInterval(() => {
+            const subset   = MOCK_DETECTIONS.slice(0, Math.floor(Math.random() * 4) + 1)
             const jittered = subset.map(d => ({
                 ...d,
                 bbox:       d.bbox.map(v => v + Math.floor(Math.random() * 10) - 5),
@@ -106,21 +210,60 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
     }, [])
 
     const stopFeed = useCallback(() => {
-        clearInterval(intervalRef.current)
-        setStreamStatus('idle')
-        setDetections([])
+        clearInterval(mockTimerRef.current)
+        handleDisconnect()
         setTotalDetections(0)
         const canvas = canvasRef.current
         if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+    }, [handleDisconnect])
+
+    // ── SSE: receive real YOLO detections from drone_worker ──────────────────
+
+    useEffect(() => {
+        if (streamStatus !== 'live') return
+        const src = new EventSource(`${API_BASE}/api/drone/events`)
+        src.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data)
+                if (msg.type !== 'drone_detections') return
+                const canvas = canvasRef.current
+                if (!canvas) return
+                const scaled = (msg.detections || []).map((d, i) => ({
+                    ...d,
+                    id:        i,
+                    timestamp: (msg.timestamp || Date.now() / 1000) * 1000,
+                    bbox: d.bbox_normalized
+                        ? [
+                            d.bbox_normalized[0] * videoDims.w,
+                            d.bbox_normalized[1] * videoDims.h,
+                            d.bbox_normalized[2] * videoDims.w,
+                            d.bbox_normalized[3] * videoDims.h,
+                          ]
+                        : (d.bbox || [0, 0, 0, 0]),
+                }))
+                setDetections(scaled)
+                setTotalDetections(t => t + scaled.length)
+            } catch { /* ignore parse errors */ }
+        }
+        return () => src.close()
+    }, [streamStatus, videoDims.w, videoDims.h])
+
+    // ── Cleanup on unmount ────────────────────────────────────────────────────
+
+    useEffect(() => {
+        return () => {
+            clearInterval(mockTimerRef.current)
+            clearTimeout(pollTimerRef.current)
+            if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
+        }
     }, [])
 
-    useEffect(() => { drawDetections(detections) }, [detections, drawDetections])
+    // ── Derived UI state ──────────────────────────────────────────────────────
 
-    useEffect(() => () => clearInterval(intervalRef.current), [])
-
-    const isSplit = mode === 'split'
+    const isSplit    = mode === 'split'
     const statusColor = { idle: '#636366', connecting: '#FF9500', live: '#30D158', mock: '#5856D6', error: '#FF3B30' }[streamStatus]
-    const statusLabel = { idle: 'NO FEED', connecting: 'CONNECTING', live: 'LIVE', mock: 'DEMO MODE', error: 'ERROR' }[streamStatus]
+    const statusLabel = { idle: 'NO FEED', connecting: 'CONNECTING…', live: 'LIVE', mock: 'DEMO MODE', error: 'ERROR' }[streamStatus]
+    const feedVisible = streamStatus === 'live' || streamStatus === 'mock'
 
     return (
         <div style={{
@@ -130,7 +273,8 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
             fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
             color: 'white', overflow: 'hidden', position: 'relative',
         }}>
-            {/* Header */}
+
+            {/* ── Header ── */}
             <div style={{
                 position: 'absolute', top: 0, left: 0, right: 0, height: 40,
                 background: 'rgba(6,10,20,0.95)',
@@ -162,19 +306,21 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                 }}>
                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: aiActive ? '#30D158' : '#636366' }}/>
                     <span style={{ fontSize: 10, fontWeight: 600, color: aiActive ? '#30D158' : 'rgba(255,255,255,0.4)' }}>
-                        AI SURVEILLANCE {aiActive ? 'ON' : 'OFF'}
+                        AI {aiActive ? 'ON' : 'OFF'}
                     </span>
                 </div>
 
-                {streamStatus === 'live' && (
+                {streamStatus === 'live' && fps > 0 && (
                     <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{fps} fps</span>
                 )}
 
                 <div style={{ flex: 1 }}/>
 
                 <button onClick={() => setShowUrlInput(v => !v)} style={{
-                    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 6, color: 'rgba(255,255,255,0.5)', fontSize: 10, padding: '3px 8px', cursor: 'pointer',
+                    background: showUrlInput ? 'rgba(52,170,220,0.12)' : 'rgba(255,255,255,0.06)',
+                    border: `1px solid ${showUrlInput ? 'rgba(52,170,220,0.3)' : 'rgba(255,255,255,0.1)'}`,
+                    borderRadius: 6, color: showUrlInput ? '#34AADC' : 'rgba(255,255,255,0.5)',
+                    fontSize: 10, padding: '3px 8px', cursor: 'pointer',
                 }}>⚙ RTMP</button>
 
                 {(onMinimize || onExpand) && (
@@ -187,59 +333,66 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                 )}
             </div>
 
-            {/* RTMP dropdown */}
+            {/* ── RTMP config dropdown ── */}
             {showUrlInput && (
                 <div style={{
                     position: 'absolute', top: 40, right: 14, zIndex: 20,
                     background: 'rgba(10,18,35,0.98)',
                     border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8, padding: 12, width: 320,
+                    borderRadius: 8, padding: 14, width: 320,
                 }}>
                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8 }}>
-                        RTMP Stream URL
+                        DJI Fly RTMP URL
                     </div>
                     <input
                         value={rtmpUrl}
                         onChange={e => setRtmpUrl(e.target.value)}
+                        placeholder="rtmp://192.168.x.x:1935/live/horizon"
                         style={{
                             width: '100%', background: 'rgba(255,255,255,0.06)',
                             border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6,
                             color: 'white', fontSize: 11, padding: '6px 8px', outline: 'none',
-                            boxSizing: 'border-box', marginBottom: 8,
+                            boxSizing: 'border-box', marginBottom: 6,
                         }}
                     />
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginBottom: 8, lineHeight: 1.5 }}>
-                        Enter your RTMP server URL.<br/>
-                        DJI Fly → Transmission → Live Streaming → RTMP
+                    {hlsUrl && (
+                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginBottom: 6, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                            HLS: {hlsUrl}
+                        </div>
+                    )}
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginBottom: 10, lineHeight: 1.5 }}>
+                        DJI Fly: Transmission → Live Streaming → RTMP<br/>
+                        nginx must be running on port 8080 (see nginx-rtmp.conf)
                     </div>
                     <button
-                        onClick={() => {
-                            setStreamStatus('connecting')
-                            setShowUrlInput(false)
-                            setTimeout(() => setStreamStatus('error'), 3000)
-                        }}
+                        onClick={streamStatus === 'live' ? handleDisconnect : handleConnect}
                         style={{
-                            width: '100%', padding: '6px 0',
-                            background: 'rgba(52,170,220,0.15)',
-                            border: '1px solid rgba(52,170,220,0.3)',
-                            borderRadius: 6, color: '#34AADC',
+                            width: '100%', padding: '7px 0',
+                            background: streamStatus === 'live' ? 'rgba(255,59,48,0.12)' : 'rgba(52,170,220,0.12)',
+                            border: `1px solid ${streamStatus === 'live' ? 'rgba(255,59,48,0.3)' : 'rgba(52,170,220,0.3)'}`,
+                            borderRadius: 6,
+                            color: streamStatus === 'live' ? '#FF3B30' : '#34AADC',
                             fontSize: 11, fontWeight: 600, cursor: 'pointer',
                         }}
-                    >Connect</button>
+                    >
+                        {streamStatus === 'live' ? '◼ Disconnect' : streamStatus === 'connecting' ? '⟳ Connecting…' : '▶ Connect'}
+                    </button>
                 </div>
             )}
 
-            {/* Body */}
+            {/* ── Body ── */}
             <div style={{
                 display: 'flex', flexDirection: isSplit ? 'column' : 'row',
                 flex: 1, marginTop: 40, overflow: 'hidden',
             }}>
+
                 {/* Video panel */}
                 <div style={{
                     flex: isSplit ? '0 0 60%' : '1 1 70%',
                     position: 'relative', background: '#000',
                     overflow: 'hidden', minHeight: isSplit ? 200 : 0,
                 }}>
+                    {/* Idle placeholder */}
                     {streamStatus === 'idle' && (
                         <div style={{
                             position: 'absolute', inset: 0,
@@ -250,9 +403,9 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                                 fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1">
                                 <circle cx="12" cy="12" r="2"/>
                                 <path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/>
-                                <circle cx="4" cy="4" r="1.5" fill="rgba(255,255,255,0.15)"/>
-                                <circle cx="20" cy="4" r="1.5" fill="rgba(255,255,255,0.15)"/>
-                                <circle cx="4" cy="20" r="1.5" fill="rgba(255,255,255,0.15)"/>
+                                <circle cx="4"  cy="4"  r="1.5" fill="rgba(255,255,255,0.15)"/>
+                                <circle cx="20" cy="4"  r="1.5" fill="rgba(255,255,255,0.15)"/>
+                                <circle cx="4"  cy="20" r="1.5" fill="rgba(255,255,255,0.15)"/>
                                 <circle cx="20" cy="20" r="1.5" fill="rgba(255,255,255,0.15)"/>
                             </svg>
                             <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', textAlign: 'center', lineHeight: 1.6 }}>
@@ -276,6 +429,20 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                         </div>
                     )}
 
+                    {/* Connecting spinner */}
+                    {streamStatus === 'connecting' && (
+                        <div style={{
+                            position: 'absolute', inset: 0,
+                            display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', justifyContent: 'center', gap: 12,
+                        }}>
+                            <div style={{ fontSize: 22, color: '#FF9500' }}>⟳</div>
+                            <div style={{ fontSize: 12, color: 'rgba(255,149,0,0.8)' }}>Waiting for stream…</div>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)' }}>Polling for HLS manifest</div>
+                        </div>
+                    )}
+
+                    {/* Mock background */}
                     {streamStatus === 'mock' && (
                         <div style={{
                             position: 'absolute', inset: 0,
@@ -303,19 +470,22 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                         </div>
                     )}
 
+                    {/* Real video element */}
                     <video ref={videoRef} autoPlay muted playsInline
                         style={{ width: '100%', height: '100%', objectFit: 'contain', display: streamStatus === 'live' ? 'block' : 'none' }}
                     />
 
+                    {/* Detection canvas overlay */}
                     <canvas ref={canvasRef} width={videoDims.w} height={videoDims.h}
                         style={{
                             position: 'absolute', inset: 0, width: '100%', height: '100%',
                             pointerEvents: 'none',
-                            display: (streamStatus === 'mock' || streamStatus === 'live') ? 'block' : 'none',
+                            display: feedVisible ? 'block' : 'none',
                         }}
                     />
 
-                    {(streamStatus === 'live' || streamStatus === 'mock') && (
+                    {/* HUD overlays */}
+                    {feedVisible && (
                         <>
                             <div style={{
                                 position: 'absolute', top: 12, left: 12,
@@ -331,12 +501,32 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                                 backdropFilter: 'blur(8px)',
                                 border: `1px solid ${aiActive ? 'rgba(48,209,88,0.3)' : 'rgba(255,255,255,0.1)'}`,
                                 borderRadius: 6, padding: '4px 10px', fontSize: 10,
-                                color: aiActive ? '#30D158' : 'rgba(255,255,255,0.4)',
-                                fontWeight: 600, letterSpacing: 0.5,
+                                color: aiActive ? '#30D158' : 'rgba(255,255,255,0.4)', fontWeight: 600,
                             }}>
                                 {aiActive ? '◉ AI ACTIVE' : '○ AI OFF'}
                             </div>
                         </>
+                    )}
+
+                    {/* Error message */}
+                    {streamStatus === 'error' && streamError && (
+                        <div style={{
+                            position: 'absolute', bottom: 20, left: '50%',
+                            transform: 'translateX(-50%)',
+                            background: 'rgba(255,59,48,0.15)',
+                            border: '1px solid rgba(255,59,48,0.3)',
+                            borderRadius: 8, padding: '8px 16px',
+                            fontSize: 11, color: '#FF3B30',
+                            textAlign: 'center', maxWidth: 280, zIndex: 10,
+                        }}>
+                            ⚠ {streamError}
+                            <div style={{ marginTop: 8 }}>
+                                <button onClick={() => { setStreamStatus('idle'); setStreamError(null) }} style={{
+                                    background: 'rgba(255,59,48,0.1)', border: '1px solid rgba(255,59,48,0.3)',
+                                    borderRadius: 4, color: '#FF3B30', fontSize: 10, padding: '3px 10px', cursor: 'pointer',
+                                }}>Dismiss</button>
+                            </div>
+                        </div>
                     )}
                 </div>
 
@@ -351,7 +541,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                     {/* Stats row */}
                     <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                         {[
-                            { label: 'DETECTIONS', value: totalDetections,  color: '#30D158' },
+                            { label: 'DETECTIONS', value: totalDetections, color: '#30D158' },
                             { label: 'IN FRAME',   value: detections.length, color: '#34AADC' },
                             { label: 'CONFIDENCE',
                                 value: detections.length > 0
@@ -382,9 +572,9 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                             [...detections].sort((a, b) => b.confidence - a.confidence).map((det, i) => {
                                 const color = DETECTION_COLORS[det.class] || DETECTION_COLORS.default
                                 const icon  = DETECTION_ICONS[det.class]  || DETECTION_ICONS.default
-                                const age   = Math.round((Date.now() - det.timestamp) / 1000)
+                                const age   = Math.round((Date.now() - (det.timestamp || Date.now())) / 1000)
                                 return (
-                                    <div key={det.id || i} style={{
+                                    <div key={det.id ?? i} style={{
                                         display: 'flex', alignItems: 'center', gap: 10,
                                         padding: '8px 10px',
                                         background: 'rgba(255,255,255,0.03)',
@@ -429,14 +619,23 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                                 borderRadius: 8, color: 'rgba(255,59,48,0.7)', fontSize: 11, fontWeight: 600, cursor: 'pointer',
                             }}>◼ Stop Feed</button>
                         )}
+                        {streamStatus === 'connecting' && (
+                            <button onClick={handleDisconnect} style={{
+                                width: '100%', padding: '8px 0',
+                                background: 'rgba(255,149,0,0.08)', border: '1px solid rgba(255,149,0,0.2)',
+                                borderRadius: 8, color: 'rgba(255,149,0,0.7)', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                            }}>✕ Cancel</button>
+                        )}
+                        {streamStatus === 'error' && (
+                            <button onClick={() => { setStreamStatus('idle'); setStreamError(null) }} style={{
+                                width: '100%', padding: '8px 0',
+                                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: 8, color: 'rgba(255,255,255,0.5)', fontSize: 11, cursor: 'pointer',
+                            }}>↩ Reset</button>
+                        )}
                     </div>
                 </div>
             </div>
-
-            <style>{`
-                @keyframes drone-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
-                @keyframes drone-scanline { 0% { transform: translateY(-100%) } 100% { transform: translateY(100vh) } }
-            `}</style>
         </div>
     )
 }

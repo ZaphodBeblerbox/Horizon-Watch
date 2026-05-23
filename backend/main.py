@@ -20452,6 +20452,86 @@ async def api_refresh_zone_images(zone_id: str):
     return {"zone_id": zone_id, "images": images}
 
 
+# ── Drone Operator — SSE, detection ingest, stream status ──────────────────
+
+_drone_sse_queues:        list = []
+_drone_detections_latest: list = []
+
+
+def _drone_sse_push(msg: dict) -> None:
+    import json as _js
+    data = _js.dumps(msg, default=str)
+    for q in list(_drone_sse_queues):
+        try:
+            q.put_nowait(data)
+        except Exception:
+            pass
+
+
+@app.get("/api/drone/events")
+async def drone_sse_stream():
+    """SSE stream — pushes drone_detections events to the browser."""
+    import asyncio
+    q: asyncio.Queue = asyncio.Queue()
+    _drone_sse_queues.append(q)
+
+    async def _gen():
+        try:
+            while True:
+                data = await q.get()
+                yield f"data: {data}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                _drone_sse_queues.remove(q)
+            except ValueError:
+                pass
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/drone/detections")
+async def receive_drone_detections(body: dict):
+    """Receive detections from drone_worker.py and push via SSE."""
+    global _drone_detections_latest
+    dets = body.get("detections", [])
+    ts   = body.get("timestamp",   0)
+    _drone_detections_latest = dets
+    _drone_sse_push({
+        "type":           "drone_detections",
+        "detections":     dets,
+        "timestamp":      ts,
+        "total_in_frame": len(dets),
+    })
+    return {"received": len(dets)}
+
+
+@app.get("/api/drone/detections/latest")
+async def get_latest_drone_detections():
+    return {"detections": _drone_detections_latest, "count": len(_drone_detections_latest)}
+
+
+@app.get("/api/drone/stream/status")
+async def drone_stream_status():
+    """Check whether an nginx-rtmp HLS stream is active."""
+    import httpx
+    try:
+        r = httpx.get("http://localhost:8080/stat", timeout=2)
+        active = "horizon" in r.text
+        return {
+            "active":   active,
+            "hls_url":  "http://localhost:8080/hls/horizon.m3u8",
+            "rtmp_url": "rtmp://localhost:1935/live/horizon",
+        }
+    except Exception:
+        return {"active": False}
+
+
 def _sz_to_dict(z) -> dict:
     if z is None:
         return {}
