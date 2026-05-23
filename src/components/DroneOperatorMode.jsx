@@ -148,15 +148,13 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         setStreamError(null)
         clearTimeout(pollTimerRef.current)
 
-        let url
+        let hlsUrl
         try {
-            const parsed     = new URL(rtmpUrl)
-            const segments   = parsed.pathname.split('/').filter(Boolean)
-            const streamName = segments[segments.length - 1] || 'drone'
-            // Route through FastAPI (/api/drone/hls/…) — httpx follows the mediamtx
-            // cookie-check redirect server-side, so CORS and Secure-cookie issues vanish.
-            url = `/api/drone/hls/${streamName}/index.m3u8`
-            setHlsUrl(url)
+            const url        = new URL(rtmpUrl)
+            const streamName = url.pathname.split('/').filter(Boolean).pop() || 'drone'
+            hlsUrl = `http://${url.hostname}:8888/${streamName}/index.m3u8`
+            console.log('[drone] HLS URL:', hlsUrl)
+            setHlsUrl(hlsUrl)
         } catch {
             setStreamStatus('error')
             setStreamError('Invalid RTMP URL — expected rtmp://host:1935/streamname')
@@ -167,13 +165,19 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         const poll = async () => {
             attempts++
             try {
-                const r = await fetch(url, { method: 'HEAD' })
-                if (r.ok) { loadHLSStream(url); return }
-            } catch { /* not ready yet */ }
+                const r = await fetch(hlsUrl, {
+                    method: 'HEAD',
+                    signal: AbortSignal.timeout(3000),
+                })
+                console.log(`[drone] Poll ${attempts}: HTTP ${r.status}`)
+                if (r.ok) { loadHLSStream(hlsUrl); return }
+            } catch (e) {
+                console.log(`[drone] Poll ${attempts} error: ${e.message}`)
+            }
 
-            if (attempts >= 15) {
+            if (attempts >= 20) {
                 setStreamStatus('error')
-                setStreamError('Stream not found — is the drone streaming and mediamtx running? (mediamtx mediamtx.yml)')
+                setStreamError('Stream not found. Is mediamtx running and drone streaming?')
                 return
             }
             pollTimerRef.current = setTimeout(poll, 1000)

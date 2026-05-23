@@ -20454,28 +20454,6 @@ async def api_refresh_zone_images(zone_id: str):
 
 # ── Drone Operator — HLS proxy, SSE, detection ingest, stream status ────────
 
-@app.get("/api/drone/hls/{path:path}")
-async def drone_hls_proxy(path: str, request: Request):
-    """Proxy MediaMTX HLS to the browser.
-    httpx follows the cookie-check redirect server-side so the browser never
-    sees it. Forwards query params (session=…) so segment requests validate."""
-    qs = request.url.query
-    mediamtx = f"http://127.0.0.1:8888/{path}" + (f"?{qs}" if qs else "")
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=8) as client:
-            r = await client.get(mediamtx)
-        if r.status_code != 200:
-            return FastAPIResponse(status_code=r.status_code)
-        content_type = r.headers.get("content-type", "application/octet-stream")
-        return FastAPIResponse(
-            content=r.content,
-            media_type=content_type,
-            headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"},
-        )
-    except Exception:
-        return FastAPIResponse(status_code=502)
-
-
 # ── Drone Operator — SSE, detection ingest, stream status ──────────────────
 
 _drone_sse_queues:        list = []
