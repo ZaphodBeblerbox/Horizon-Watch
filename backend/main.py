@@ -10019,6 +10019,67 @@ async def overwatch_detect_image(request: Request):
         return JSONResponse({"error": str(e), "count": 0, "detections": []})
 
 
+@app.post("/api/overwatch/scans")
+async def overwatch_scans_create(request: Request):
+    """Persist a completed Overwatch scan record for analytics."""
+    import json as _json
+    try:
+        from backend.database import OverwatchScanRecord
+    except ImportError:
+        from database import OverwatchScanRecord
+    try:
+        body = await request.json()
+        with get_db() as db:
+            rec = OverwatchScanRecord(
+                zone_name      = body.get("zone_name"),
+                bounds_json    = _json.dumps(body.get("bounds")) if body.get("bounds") else None,
+                polygon_json   = _json.dumps(body.get("polygon")) if body.get("polygon") else None,
+                total          = int(body.get("total", 0)),
+                by_category    = _json.dumps(body.get("by_category", {})),
+                avg_confidence = body.get("avg_confidence"),
+                imagery_source = body.get("imagery_source"),
+                imagery_type   = body.get("imagery_type"),
+                model_used     = body.get("model_used"),
+            )
+            db.add(rec)
+            db.commit()
+            db.refresh(rec)
+            return JSONResponse({"id": rec.id, "created_at": rec.created_at.isoformat()})
+    except Exception as e:
+        print(f"[overwatch/scans POST] error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/overwatch/scans")
+async def overwatch_scans_list(request: Request, limit: int = 50):
+    """Return recent Overwatch scan records for analytics charts."""
+    import json as _json
+    try:
+        from backend.database import OverwatchScanRecord
+    except ImportError:
+        from database import OverwatchScanRecord
+    try:
+        with get_db() as db:
+            rows = db.query(OverwatchScanRecord).order_by(OverwatchScanRecord.created_at.desc()).limit(limit).all()
+            records = []
+            for r in rows:
+                records.append({
+                    "id":             r.id,
+                    "zone_name":      r.zone_name,
+                    "total":          r.total,
+                    "by_category":    _json.loads(r.by_category) if r.by_category else {},
+                    "avg_confidence": r.avg_confidence,
+                    "imagery_source": r.imagery_source,
+                    "imagery_type":   r.imagery_type,
+                    "model_used":     r.model_used,
+                    "created_at":     r.created_at.isoformat() if r.created_at else None,
+                })
+            return JSONResponse({"scans": records})
+    except Exception as e:
+        print(f"[overwatch/scans GET] error: {e}")
+        return JSONResponse({"scans": [], "error": str(e)})
+
+
 @app.post("/api/overwatch/analyze")
 async def overwatch_analyze(request: Request):
     """Claude intelligence assessment of Overwatch detection results."""
@@ -11730,10 +11791,10 @@ async def sentinel_imagery(request: Request):
         west  = bounds.get("west");  east  = bounds.get("east")
         south = bounds.get("south"); north = bounds.get("north")
         if None in (west, east, south, north):
-            return JSONResponse({"error": "bounds {north,south,east,west} required"}, status_code=400)
+            return JSONResponse({"error": "bounds {north,south,east,west} required"})
 
         if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
-            return JSONResponse({"error": "Copernicus credentials not configured"}, status_code=503)
+            return JSONResponse({"error": "Copernicus credentials not configured"})
 
         evalscript = _EVALSCRIPTS.get(image_type, _EVALSCRIPT_TRUE_COLOUR)
 
@@ -11793,7 +11854,7 @@ async def sentinel_imagery(request: Request):
         async with httpx.AsyncClient(timeout=60.0) as client_h:
             token, err = await _get_copernicus_access_token(client_h)
             if not token:
-                return JSONResponse({"error": f"Sentinel Hub auth failed: {err}"}, status_code=502)
+                return JSONResponse({"error": f"Sentinel Hub auth failed: {err}"})
 
             resp = await client_h.post(
                 _SH_PROCESS_URL,
@@ -11817,13 +11878,10 @@ async def sentinel_imagery(request: Request):
         else:
             detail = resp.text[:500]
             print(f"[sentinel/imagery] Process API {resp.status_code}: {detail}")
-            return JSONResponse(
-                {"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail},
-                status_code=resp.status_code,
-            )
+            return JSONResponse({"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail})
     except Exception as e:
         print(f"[sentinel/imagery] error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": str(e)})
 
 
 @app.post("/api/sentinel/dates")

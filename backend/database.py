@@ -306,6 +306,23 @@ class SentinelDetection(Base):
     created_at               = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class OverwatchScanRecord(Base):
+    """Persisted record of each manual Overwatch scan for analytics."""
+    __tablename__ = "overwatch_scan_records"
+
+    id             = Column(Integer, primary_key=True)
+    zone_name      = Column(String, nullable=True)
+    bounds_json    = Column(Text, nullable=True)   # JSON {north,south,east,west}
+    polygon_json   = Column(Text, nullable=True)   # JSON [[lat,lon],...]
+    total          = Column(Integer, default=0)
+    by_category    = Column(Text, nullable=True)   # JSON {category: count}
+    avg_confidence = Column(Float, nullable=True)
+    imagery_source = Column(String, nullable=True) # "Sentinel-2" | "ESRI"
+    imagery_type   = Column(String, nullable=True) # "true_color" etc
+    model_used     = Column(String, nullable=True)
+    created_at     = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class ThreatMatrixSnapshot(Base):
     __tablename__ = "threat_matrix_snapshots"
 

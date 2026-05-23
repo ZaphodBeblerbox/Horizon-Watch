@@ -431,7 +431,7 @@ export default function OverwatchSidebar({
                             {scanning ? "⟳ Scanning…" : "▶ Scan ESRI"}
                         </button>
                         <button
-                            onClick={() => onScanSentinel?.({ confidence: minConf, enhance, model })}
+                            onClick={() => onScanSentinel?.({ confidence: minConf, enhance, model, sentinelType })}
                             disabled={!sentinelLoaded || scanning}
                             style={{ ...modeBtn("#30D158", sentinelLoaded && !scanning), opacity: !sentinelLoaded ? 0.4 : 1 }}
                         >

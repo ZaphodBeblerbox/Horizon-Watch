@@ -943,6 +943,14 @@ export default function App() {
         setOwPolygon({ vertices, bounds })
     }, [])
 
+    // ── Fire-and-forget scan record save ─────────────────────────────────────
+    const _saveScanRecord = useCallback((payload) => {
+        const tok = localStorage.getItem("hw-auth-token")
+        const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
+        fetch(`${API}/api/overwatch/scans`, { method: "POST", headers, body: JSON.stringify(payload) })
+            .catch(e => console.warn("[Overwatch] scan record save failed:", e))
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
     // ── Overwatch scan: called from sidebar ───────────────────────────────────
     const handleOverwatchScan = useCallback(async ({ bounds: scanBounds, confidence, enhance }) => {
         const bounds = scanBounds || owBounds
@@ -965,8 +973,10 @@ export default function App() {
                     const cat = d.category || d.class || "Object"
                     catCounts[cat] = (catCounts[cat] || 0) + 1
                 }
+                const avgConf = dets.length ? dets.reduce((s, d) => s + (d.confidence || 0), 0) / dets.length : null
                 setOwStats({ total: dets.length, byCategory: catCounts })
                 setOwMode("results")
+                _saveScanRecord({ bounds, total: dets.length, by_category: catCounts, avg_confidence: avgConf, imagery_source: "ESRI" })
             } else {
                 setOwMode("idle")
             }
@@ -974,7 +984,7 @@ export default function App() {
             console.error("[Overwatch]", e)
             setOwMode("idle")
         }
-    }, [owBounds]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [owBounds, _saveScanRecord]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Sentinel overlay loaded from sidebar ──────────────────────────────────
     const handleSentinelLoaded = useCallback(({ image_b64, bounds }) => {
@@ -982,7 +992,7 @@ export default function App() {
     }, [])
 
     // ── Sentinel ML scan: called from sidebar after overlay loaded ────────────
-    const handleSentinelScan = useCallback(async ({ confidence, enhance }) => {
+    const handleSentinelScan = useCallback(async ({ confidence, enhance, sentinelType }) => {
         if (!owSentinelOverlay || !owBounds) return
         setOwMode("analyzing")
         try {
@@ -999,11 +1009,13 @@ export default function App() {
                 setOverwatchDetections(dets)
                 const catCounts = {}
                 for (const d of dets) { const cat = d.category || d.class || "Object"; catCounts[cat] = (catCounts[cat] || 0) + 1 }
+                const avgConf = dets.length ? dets.reduce((s, d) => s + (d.confidence || 0), 0) / dets.length : null
                 setOwStats({ total: dets.length, byCategory: catCounts, zoom: "Sentinel-2" })
                 setOwMode("results")
+                _saveScanRecord({ bounds: owBounds, total: dets.length, by_category: catCounts, avg_confidence: avgConf, imagery_source: "Sentinel-2", imagery_type: sentinelType })
             } else { setOwMode("idle") }
         } catch (e) { console.error("[Sentinel ML]", e); setOwMode("idle") }
-    }, [owSentinelOverlay, owBounds]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [owSentinelOverlay, owBounds, _saveScanRecord]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleReplayBriefing = useCallback(async (briefing) => {
         if (!briefing?.actions?.length) return

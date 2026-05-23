@@ -5,6 +5,7 @@ import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.
 import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ForceGraph from "./forge/ForceGraph.jsx"
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts"
 
 const API = API_BASE
 
@@ -3639,8 +3640,70 @@ function ScanDetailPanel({ zone, scan, onClose }) {
     )
 }
 
+const OW_CAT_COLORS = { Aircraft: "#5856D6", Vessel: "#34AADC", Ship: "#34AADC", Vehicle: "#FF9500", Building: "#FF9500", Military: "#FF3B30", Other: "#FFCC00" }
+const OW_CATS = ["Aircraft", "Vessel", "Vehicle", "Military", "Building", "Other"]
+
+function OwScanChart({ scans }) {
+    if (!scans?.length) return null
+    const chartData = [...scans].reverse().slice(-20).map(s => {
+        const cats = s.by_category || {}
+        const row = { date: s.created_at ? new Date(s.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—" }
+        let other = s.total || 0
+        for (const cat of OW_CATS.filter(c => c !== "Other")) {
+            const v = cats[cat] || 0
+            row[cat] = v
+            other -= v
+        }
+        row["Other"] = Math.max(0, other)
+        return row
+    })
+    const latest = scans[0]
+    const prev   = scans[1]
+    const delta  = prev ? (latest?.total || 0) - (prev?.total || 0) : null
+    const topCat = Object.entries(latest?.by_category || {}).sort((a, b) => b[1] - a[1])[0]
+    return (
+        <div style={{ background: "#0f1827", borderRadius: 6, padding: "12px 10px", marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 20, marginBottom: 8, flexWrap: "wrap" }}>
+                <div>
+                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>Latest scan</div>
+                    <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700 }}>{latest?.total ?? "—"}</div>
+                </div>
+                {delta !== null && (
+                    <div>
+                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>vs previous</div>
+                        <div style={{ color: delta > 0 ? "#f87171" : delta < 0 ? "#4ade80" : "#475569", fontSize: 16, fontWeight: 700 }}>
+                            {delta > 0 ? `+${delta}` : delta}
+                        </div>
+                    </div>
+                )}
+                {topCat && (
+                    <div>
+                        <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>top category</div>
+                        <div style={{ color: OW_CAT_COLORS[topCat[0]] || "#94a3b8", fontSize: 13, fontWeight: 700 }}>{topCat[0]} ({topCat[1]})</div>
+                    </div>
+                )}
+                <div>
+                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>source</div>
+                    <div style={{ color: "#64748b", fontSize: 11 }}>{latest?.imagery_source || "—"}</div>
+                </div>
+            </div>
+            <ResponsiveContainer width="100%" height={120}>
+                <BarChart data={chartData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+                    <XAxis dataKey="date" tick={{ fill: "#334155", fontSize: 9 }} />
+                    <YAxis tick={{ fill: "#334155", fontSize: 9 }} allowDecimals={false} />
+                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 4, fontSize: 11 }} />
+                    {OW_CATS.map(cat => (
+                        <Bar key={cat} dataKey={cat} stackId="a" fill={OW_CAT_COLORS[cat]} maxBarSize={32} />
+                    ))}
+                </BarChart>
+            </ResponsiveContainer>
+        </div>
+    )
+}
+
 function SurveillanceZonesWorkspace() {
     const [zones, setZones] = useState([])
+    const [owScans, setOwScans] = useState([])
     const [showCreate, setShowCreate] = useState(false)
     const [expandedZone, setExpandedZone] = useState(null)
     const [zoneScans, setZoneScans] = useState({})   // system_id → scans[]
@@ -3655,7 +3718,13 @@ function SurveillanceZonesWorkspace() {
             .then(d => setZones(Array.isArray(d) ? d : []))
             .catch(() => {})
 
-    useEffect(() => { reload() }, [])
+    const reloadOwScans = () =>
+        fetch(`${API}/api/overwatch/scans?limit=30`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : { scans: [] })
+            .then(d => setOwScans(d.scans || []))
+            .catch(() => {})
+
+    useEffect(() => { reload(); reloadOwScans() }, [])
 
     const loadScans = (zone) => {
         fetch(`${API}/api/watch-zones/${zone.system_id}/scans`, { headers: forgeHeaders() })
@@ -3719,12 +3788,20 @@ function SurveillanceZonesWorkspace() {
             </Toolbar>
             <WorkspaceBody>
                 <div style={{ maxWidth: 760 }}>
-                    {zones.length === 0 && (
+                    {owScans.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                                Manual Overwatch scans ({owScans.length})
+                            </div>
+                            <OwScanChart scans={owScans} />
+                        </div>
+                    )}
+
+                    {zones.length === 0 && owScans.length === 0 && (
                         <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 40 }}>
                             No surveillance zones configured. Create one to start scheduled Sentinel-2 scanning.
                         </div>
                     )}
-
 
                     {zones.map(zone => {
                         const priColor = PRIORITY_COLORS[zone.priority] || "#94a3b8"

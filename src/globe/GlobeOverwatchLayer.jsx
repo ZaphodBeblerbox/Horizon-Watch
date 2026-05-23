@@ -43,6 +43,8 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
 
         if (!sentinelOverlay?.image_b64 || !sentinelOverlay?.bounds) return
 
+        let cancelled = false
+
         try {
             const { image_b64, bounds } = sentinelOverlay
             const byteChars = atob(image_b64)
@@ -52,19 +54,24 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
             const url  = URL.createObjectURL(blob)
             sentinelUrlRef.current = url
 
-            const provider = new SingleTileImageryProvider({
-                url,
+            // Cesium 1.109+ removed the sync constructor — must use static fromUrl()
+            SingleTileImageryProvider.fromUrl(url, {
                 rectangle: Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north),
+            }).then(provider => {
+                if (cancelled || viewer.isDestroyed()) return
+                const layer = viewer.imageryLayers.addImageryProvider(provider)
+                layer.alpha = 1.0
+                sentinelLayerRef.current = layer
+                console.log("[overwatch] Sentinel overlay rendered")
+            }).catch(e => {
+                console.error("[overwatch] Sentinel overlay failed:", e)
             })
-            const layer = viewer.imageryLayers.addImageryProvider(provider)
-            layer.alpha = 1.0
-            sentinelLayerRef.current = layer
-            console.log("[overwatch] Sentinel overlay rendered")
         } catch (e) {
-            console.error("[overwatch] Sentinel overlay failed:", e)
+            console.error("[overwatch] Sentinel decode failed:", e)
         }
 
         return () => {
+            cancelled = true
             if (sentinelLayerRef.current) {
                 try { viewer.imageryLayers.remove(sentinelLayerRef.current, true) } catch (_) {}
                 sentinelLayerRef.current = null
