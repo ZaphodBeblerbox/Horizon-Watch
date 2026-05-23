@@ -180,14 +180,26 @@ export default function OverwatchSidebar({
         if (!bounds || !zoneName.trim()) return
         setSavingZone(true)
         try {
+            // Build GeoJSON polygon — API requires this format (lon,lat order, closed ring)
+            let polygon_geojson
+            if (polygon?.vertices?.length >= 3) {
+                const coords = polygon.vertices.map(([lat, lon]) => [lon, lat])
+                coords.push(coords[0])
+                polygon_geojson = { type: "Polygon", coordinates: [coords] }
+            } else {
+                const { north, south, east, west } = bounds
+                polygon_geojson = {
+                    type: "Polygon",
+                    coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]],
+                }
+            }
             const tok = localStorage.getItem("hw-auth-token")
             const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
             const res = await fetch(`${API_BASE}/api/watch-zones`, {
                 method: "POST", headers,
                 body: JSON.stringify({
                     name: zoneName,
-                    bounds,
-                    polygon_coords: polygon?.vertices || null,
+                    polygon_geojson,
                     scan_interval_hours: zoneInterval * 24,
                     priority: "medium",
                     description: `Overwatch zone — ${sentinelType}`,

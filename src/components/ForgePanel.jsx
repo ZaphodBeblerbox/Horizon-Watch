@@ -3759,7 +3759,7 @@ function SurveillanceZonesWorkspace() {
     }
 
     const deleteZone = async (zone) => {
-        if (!confirm(`Disable zone "${zone.name}"? Scan history will be preserved.`)) return
+        if (!confirm(`Delete zone "${zone.name}" and all scan history? This cannot be undone.`)) return
         await fetch(`${API}/api/watch-zones/${zone.system_id}`, {
             method: "DELETE", headers: forgeHeaders(),
         })

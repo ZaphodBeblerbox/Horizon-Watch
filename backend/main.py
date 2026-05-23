@@ -15656,15 +15656,19 @@ def api_watch_zone_update(system_id: str, body: dict):
 
 @app.delete("/api/watch-zones/{system_id}")
 def api_watch_zone_delete(system_id: str):
-    """Soft delete — sets enabled=false, preserves scan history."""
-    from database import WatchZone, get_db
+    """Hard delete — removes zone and all associated scans/detections."""
+    from database import WatchZone, SentinelScan, SentinelDetection, get_db
     with get_db() as db:
         zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
         if not zone:
             raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
-        zone.enabled = False
+        scans = db.query(SentinelScan).filter(SentinelScan.zone_id == zone.id).all()
+        for scan in scans:
+            db.query(SentinelDetection).filter(SentinelDetection.scan_id == scan.scan_id).delete()
+        db.query(SentinelScan).filter(SentinelScan.zone_id == zone.id).delete()
+        db.delete(zone)
         db.commit()
-        return {"deleted": system_id, "note": "soft delete — scan history preserved"}
+        return {"deleted": system_id, "scans_purged": len(scans)}
 
 
 @app.get("/api/watch-zones/{system_id}/scans")
