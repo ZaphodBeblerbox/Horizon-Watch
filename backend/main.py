@@ -11715,7 +11715,16 @@ async def sentinel_imagery(request: Request):
         bounds     = body.get("bounds", {})
         max_cloud  = int(body.get("max_cloud", 20))
         days_back  = int(body.get("days_back", 90))
-        image_type = body.get("image_type", "true-colour")
+        # Accept both "type" (new sidebar) and "image_type" (legacy)
+        image_type = body.get("image_type") or body.get("type", "true-colour")
+        # Normalise underscore variants to dash variants used by _EVALSCRIPTS
+        _TYPE_ALIASES = {
+            "true_color":   "true-colour",
+            "false_color":  "false-colour",
+            "true_colour":  "true-colour",
+            "false_colour": "false-colour",
+        }
+        image_type = _TYPE_ALIASES.get(image_type, image_type)
         date_str   = body.get("date")   # optional YYYY-MM-DD for exact scene
 
         west  = bounds.get("west");  east  = bounds.get("east")
@@ -11728,7 +11737,7 @@ async def sentinel_imagery(request: Request):
 
         evalscript = _EVALSCRIPTS.get(image_type, _EVALSCRIPT_TRUE_COLOUR)
 
-        # ── Cap image size at 2500×2500 ───────────────────────────────────────
+        # ── Stepped size based on bbox span ──────────────────────────────────
         lat_span = abs(north - south)
         lng_span = abs(east  - west)
         req_w = body.get("width");  req_h = body.get("height")
@@ -11736,8 +11745,13 @@ async def sentinel_imagery(request: Request):
             width  = min(2500, max(32, int(req_w)))
             height = min(2500, max(32, int(req_h)))
         else:
-            width  = min(2500, max(256, int(lng_span * 11100)))
-            height = min(2500, max(256, int(lat_span * 11100)))
+            max_span = max(lat_span, lng_span)
+            if max_span < 0.1:
+                width = height = 512
+            elif max_span < 0.5:
+                width = height = 1024
+            else:
+                width = height = 2048
 
         now = datetime.now(timezone.utc)
         if date_str:
@@ -11790,14 +11804,15 @@ async def sentinel_imagery(request: Request):
         if resp.status_code == 200:
             img_b64 = _b64.b64encode(resp.content).decode()
             return JSONResponse({
-                "image":      img_b64,
-                "width":      width,
-                "height":     height,
-                "bounds":     bounds,
-                "cloud_max":  max_cloud,
-                "days_back":  days_back,
-                "image_type": image_type,
-                "date":       date_str,
+                "image":       img_b64,
+                "width":       width,
+                "height":      height,
+                "bounds":      bounds,
+                "cloud_cover": max_cloud,
+                "days_back":   days_back,
+                "type":        image_type,
+                "image_type":  image_type,
+                "date":        date_str,
             })
         else:
             detail = resp.text[:500]

@@ -1,12 +1,11 @@
 /**
- * GlobeOverwatchDrawLayer — two-click rectangle selection on the Cesium globe.
+ * GlobeOverwatchDrawLayer — rectangle or polygon selection on the Cesium globe.
  *
- * When `active` is true, captures two LEFT_CLICK positions on the ellipsoid,
- * draws a live preview rectangle while the user picks the second corner, then
- * fires `onBounds({ north, south, east, west })` with the final selection.
+ * Rectangle mode: two clicks define opposite corners, fires onBounds({north,south,east,west}).
+ * After a rectangle is confirmed the handler resets and waits for the next draw.
  *
- * The rectangle entity is scene-local and removed when `active` becomes false
- * or when a new selection is started.
+ * Polygon mode: click to add vertices, double-click to close. Fires
+ * onPolygon({vertices:[[lat,lon],...], bounds:{north,south,east,west}}).
  */
 
 import { useEffect, useRef } from "react"
@@ -19,29 +18,38 @@ import {
     Color,
     CallbackProperty,
     Rectangle,
-    PolylineDashMaterialProperty,
     Cartesian3,
+    ColorMaterialProperty,
+    ClassificationType,
 } from "cesium"
 
-export default function GlobeOverwatchDrawLayer({ active, onBounds }) {
+export default function GlobeOverwatchDrawLayer({
+    active,
+    drawMode = "rectangle",
+    onBounds,
+    onPolygon,
+}) {
     const { viewer } = useCesium()
     const handlerRef      = useRef(null)
     const firstPointRef   = useRef(null)
-    const previewRef      = useRef(null)   // { outline, fill } entity refs
-    const finalEntityRef  = useRef(null)   // confirmed rectangle entity
+    const previewRef      = useRef(null)
+    const finalEntityRef  = useRef(null)
+    const polyVerticesRef = useRef([])
+    const polyEntitiesRef = useRef([])
+    // Shared mutable corners for the CallbackProperty preview rectangle
+    const cornersRef      = useRef({ a: null, b: null })
 
-    // Clear all drawn entities
-    function _clearEntities() {
-        if (viewer && !viewer.isDestroyed()) {
-            if (previewRef.current) {
-                try { viewer.entities.remove(previewRef.current) } catch (_) {}
-                previewRef.current = null
+    function _clearAllEntities() {
+        if (!viewer || viewer.isDestroyed()) return
+        ;[previewRef, finalEntityRef].forEach(r => {
+            if (r.current) {
+                try { viewer.entities.remove(r.current) } catch (_) {}
+                r.current = null
             }
-            if (finalEntityRef.current) {
-                try { viewer.entities.remove(finalEntityRef.current) } catch (_) {}
-                finalEntityRef.current = null
-            }
-        }
+        })
+        polyEntitiesRef.current.forEach(e => { try { viewer.entities.remove(e) } catch (_) {} })
+        polyEntitiesRef.current = []
+        polyVerticesRef.current = []
     }
 
     function _pickLatLng(windowPos) {
@@ -58,28 +66,29 @@ export default function GlobeOverwatchDrawLayer({ active, onBounds }) {
     useEffect(() => {
         if (!viewer || viewer.isDestroyed()) return
 
-        // Tear down on deactivation
         if (!active) {
             if (handlerRef.current) { handlerRef.current.destroy(); handlerRef.current = null }
-            _clearEntities()
+            _clearAllEntities()
             firstPointRef.current = null
-            // Restore cursor
             viewer.canvas.style.cursor = ""
             return
         }
 
         viewer.canvas.style.cursor = "crosshair"
 
-        // Shared mutable corner refs used by CallbackProperty for live preview
-        const corners = { a: null, b: null }
+        // Reset rectangle draw state
+        const corners = cornersRef.current
+        corners.a = null
+        corners.b = null
+        firstPointRef.current = null
+        polyVerticesRef.current = []
 
-        // Live preview rectangle — redrawn via CallbackProperty each frame
+        // Live preview rectangle (only visible in rectangle mode)
         const previewColor = Color.fromCssColorString("#22d3ee")
-
         const previewEntity = viewer.entities.add({
             rectangle: {
                 coordinates: new CallbackProperty(() => {
-                    if (!corners.a || !corners.b) return null
+                    if (!corners.a || !corners.b || drawMode !== "rectangle") return null
                     return Rectangle.fromDegrees(
                         Math.min(corners.a.lng, corners.b.lng),
                         Math.min(corners.a.lat, corners.b.lat),
@@ -87,11 +96,11 @@ export default function GlobeOverwatchDrawLayer({ active, onBounds }) {
                         Math.max(corners.a.lat, corners.b.lat),
                     )
                 }, false),
-                material:      previewColor.withAlpha(0.08),
-                outline:       true,
-                outlineColor:  previewColor.withAlpha(0.75),
-                outlineWidth:  2,
-                height:        0,
+                material:     previewColor.withAlpha(0.08),
+                outline:      true,
+                outlineColor: previewColor.withAlpha(0.75),
+                outlineWidth: 2,
+                height:       0,
             },
         })
         previewRef.current = previewEntity
@@ -99,77 +108,148 @@ export default function GlobeOverwatchDrawLayer({ active, onBounds }) {
         const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
         handlerRef.current = handler
 
-        // Track mouse for live preview after first click
+        // ── Mouse move: update rectangle preview ──────────────────────────────
         handler.setInputAction((move) => {
-            if (!firstPointRef.current) return
-            const pt = _pickLatLng(move.endPosition)
-            if (pt) corners.b = pt
+            if (drawMode === "rectangle" && firstPointRef.current) {
+                const pt = _pickLatLng(move.endPosition)
+                if (pt) corners.b = pt
+            }
         }, ScreenSpaceEventType.MOUSE_MOVE)
 
+        // ── Left click: add point ─────────────────────────────────────────────
         handler.setInputAction((click) => {
             const pt = _pickLatLng(click.position)
             if (!pt) return
 
-            if (!firstPointRef.current) {
-                // First click — set anchor corner
-                firstPointRef.current = pt
-                corners.a = pt
-                corners.b = pt
-            } else {
-                // Second click — finalise selection
-                const a = firstPointRef.current
-                const bounds = {
-                    north: Math.max(a.lat, pt.lat),
-                    south: Math.min(a.lat, pt.lat),
-                    east:  Math.max(a.lng, pt.lng),
-                    west:  Math.min(a.lng, pt.lng),
+            if (drawMode === "rectangle") {
+                if (!firstPointRef.current) {
+                    firstPointRef.current = pt
+                    corners.a = pt
+                    corners.b = pt
+                } else {
+                    const a = firstPointRef.current
+                    const bounds = {
+                        north: Math.max(a.lat, pt.lat),
+                        south: Math.min(a.lat, pt.lat),
+                        east:  Math.max(a.lng, pt.lng),
+                        west:  Math.min(a.lng, pt.lng),
+                    }
+                    // Swap live preview for confirmed rectangle
+                    try { viewer.entities.remove(previewEntity) } catch (_) {}
+                    previewRef.current = null
+                    if (finalEntityRef.current) {
+                        try { viewer.entities.remove(finalEntityRef.current) } catch (_) {}
+                    }
+                    const cyan = Color.fromCssColorString("#22d3ee")
+                    finalEntityRef.current = viewer.entities.add({
+                        rectangle: {
+                            coordinates: Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north),
+                            material:     cyan.withAlpha(0.12),
+                            outline:      true,
+                            outlineColor: cyan.withAlpha(0.9),
+                            outlineWidth: 2,
+                            height:       0,
+                        },
+                    })
+                    // Reset for next draw without destroying the handler
+                    firstPointRef.current = null
+                    corners.a = null
+                    corners.b = null
+                    if (onBounds) onBounds(bounds)
                 }
+            } else if (drawMode === "polygon") {
+                const newVerts = [...polyVerticesRef.current, [pt.lat, pt.lng]]
+                polyVerticesRef.current = newVerts
 
-                // Replace live preview with a solid confirmed rectangle
-                viewer.entities.remove(previewEntity)
-                previewRef.current = null
-
-                const cyan = Color.fromCssColorString("#22d3ee")
-                finalEntityRef.current = viewer.entities.add({
-                    rectangle: {
-                        coordinates: Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north),
-                        material:    cyan.withAlpha(0.12),
-                        outline:     true,
-                        outlineColor: cyan.withAlpha(0.9),
-                        outlineWidth: 2,
-                        height:      0,
+                const dot = viewer.entities.add({
+                    position: Cartesian3.fromDegrees(pt.lng, pt.lat),
+                    point: {
+                        pixelSize: 8,
+                        color: Color.CYAN,
+                        outlineColor: Color.WHITE,
+                        outlineWidth: 1,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
                     },
                 })
+                polyEntitiesRef.current.push(dot)
 
-                // Tear down handler — one selection per activation
-                handler.destroy()
-                handlerRef.current = null
-                firstPointRef.current = null
-                viewer.canvas.style.cursor = ""
-
-                if (onBounds) onBounds(bounds)
+                if (newVerts.length >= 2) {
+                    const prev = newVerts[newVerts.length - 2]
+                    const line = viewer.entities.add({
+                        polyline: {
+                            positions: [
+                                Cartesian3.fromDegrees(prev[1], prev[0]),
+                                Cartesian3.fromDegrees(pt.lng, pt.lat),
+                            ],
+                            width: 2,
+                            material: new ColorMaterialProperty(Color.CYAN.withAlpha(0.8)),
+                            clampToGround: true,
+                            classificationType: ClassificationType.TERRAIN,
+                        },
+                    })
+                    polyEntitiesRef.current.push(line)
+                }
             }
         }, ScreenSpaceEventType.LEFT_CLICK)
 
-        // RIGHT_CLICK cancels
+        // ── Double click: close polygon ───────────────────────────────────────
         handler.setInputAction(() => {
-            handler.destroy()
-            handlerRef.current = null
+            if (drawMode !== "polygon") return
+            // The preceding LEFT_CLICK already added a duplicate vertex — strip it
+            const verts = polyVerticesRef.current.slice(0, -1)
+            if (verts.length < 3) return
+
+            const lats = verts.map(v => v[0])
+            const lons = verts.map(v => v[1])
+            const bounds = {
+                north: Math.max(...lats),
+                south: Math.min(...lats),
+                east:  Math.max(...lons),
+                west:  Math.min(...lons),
+            }
+
+            // Clear intermediate dot/line entities
+            polyEntitiesRef.current.forEach(e => { try { viewer.entities.remove(e) } catch (_) {} })
+            polyEntitiesRef.current = []
+            polyVerticesRef.current = []
+
+            // Draw final closed polygon
+            if (finalEntityRef.current) {
+                try { viewer.entities.remove(finalEntityRef.current) } catch (_) {}
+            }
+            const positions = verts.map(([lat, lng]) => Cartesian3.fromDegrees(lng, lat))
+            positions.push(positions[0])
+            finalEntityRef.current = viewer.entities.add({
+                polyline: {
+                    positions,
+                    width: 2,
+                    material: new ColorMaterialProperty(Color.CYAN.withAlpha(0.9)),
+                    clampToGround: true,
+                    classificationType: ClassificationType.TERRAIN,
+                },
+            })
+
+            if (onPolygon) onPolygon({ vertices: verts, bounds })
+        }, ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
+
+        // ── Right click: cancel ───────────────────────────────────────────────
+        handler.setInputAction(() => {
             firstPointRef.current = null
             corners.a = null
             corners.b = null
-            viewer.canvas.style.cursor = ""
+            polyEntitiesRef.current.forEach(e => { try { viewer.entities.remove(e) } catch (_) {} })
+            polyEntitiesRef.current = []
+            polyVerticesRef.current = []
         }, ScreenSpaceEventType.RIGHT_CLICK)
 
         return () => {
             if (handlerRef.current) { handlerRef.current.destroy(); handlerRef.current = null }
             viewer.canvas.style.cursor = ""
         }
-    }, [viewer, active]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [viewer, active, drawMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Cleanup final entity when component unmounts
     useEffect(() => {
-        return () => _clearEntities()
+        return () => _clearAllEntities()
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     return null

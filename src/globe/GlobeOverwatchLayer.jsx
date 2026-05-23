@@ -1,56 +1,41 @@
-// 3D overwatch detection layer — renders ground-clamped rectangle bounding boxes
-// using the same detection data produced by the 2D OverwatchLayer pipeline.
+// Overwatch detection layer — polygon outlines from YOLO OBB corners + Sentinel imagery overlay
 
 import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import {
     Cartesian3, Rectangle, Color, HeightReference,
-    DistanceDisplayCondition, VerticalOrigin,
-    SingleTileImageryProvider,
+    SingleTileImageryProvider, ColorMaterialProperty,
+    ClassificationType,
 } from "cesium"
 
-const CLASS_COLORS = {
-    vessel:               "#5BC97F",
-    ship:                 "#5BC97F",
-    harbor:               "#5BC97F",
-    aircraft:             "#4A9EE0",
-    plane:                "#4A9EE0",
-    helicopter:           "#4A9EE0",
-    "helicopter-pad":     "#4A9EE0",
-    vehicle:              "#E8B23A",
-    "large-vehicle":      "#E8B23A",
-    "small-vehicle":      "#E8B23A",
-    car:                  "#E8B23A",
-    truck:                "#E8B23A",
-    "storage-tank":       "#E8B23A",
-    building:             "#9AA4B5",
-    bridge:               "#9AA4B5",
-    roundabout:           "#9AA4B5",
-    "swimming-pool":      "#22d3ee",
-    unknown:              "#666666",
+const CATEGORY_COLORS = {
+    Aircraft:  "#5856D6",
+    Vessel:    "#34AADC",
+    Ship:      "#34AADC",
+    Vehicle:   "#FF9500",
+    Building:  "#FF9500",
+    Military:  "#FF3B30",
+    default:   "#FFCC00",
 }
 
-function colorForClass(cls) {
-    const key = (cls || "").toLowerCase()
-    return CLASS_COLORS[key] || CLASS_COLORS.unknown
+function colorForDet(det) {
+    return CATEGORY_COLORS[det.category] || CATEGORY_COLORS.default
 }
 
 export default function GlobeOverwatchLayer({ enabled, detections = [], sentinelOverlay = null }) {
     const { viewer } = useCesium()
-    const entitiesRef  = useRef([])
+    const entitiesRef     = useRef([])
     const sentinelLayerRef = useRef(null)
     const sentinelUrlRef   = useRef(null)
 
-    // Sentinel imagery layer
+    // ── Sentinel imagery overlay ──────────────────────────────────────────────
     useEffect(() => {
         if (!viewer || viewer.isDestroyed()) return
 
-        // Revoke previous blob URL
         if (sentinelUrlRef.current) {
             URL.revokeObjectURL(sentinelUrlRef.current)
             sentinelUrlRef.current = null
         }
-        // Remove previous layer
         if (sentinelLayerRef.current) {
             try { viewer.imageryLayers.remove(sentinelLayerRef.current, true) } catch (_) {}
             sentinelLayerRef.current = null
@@ -58,19 +43,26 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
 
         if (!sentinelOverlay?.image_b64 || !sentinelOverlay?.bounds) return
 
-        const { image_b64, bounds } = sentinelOverlay
-        const bytes = Uint8Array.from(atob(image_b64), c => c.charCodeAt(0))
-        const blob  = new Blob([bytes], { type: "image/png" })
-        const url   = URL.createObjectURL(blob)
-        sentinelUrlRef.current = url
+        try {
+            const { image_b64, bounds } = sentinelOverlay
+            const byteChars = atob(image_b64)
+            const byteNums  = new Uint8Array(byteChars.length)
+            for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i)
+            const blob = new Blob([byteNums], { type: "image/png" })
+            const url  = URL.createObjectURL(blob)
+            sentinelUrlRef.current = url
 
-        const provider = new SingleTileImageryProvider({
-            url,
-            rectangle: Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north),
-        })
-        const layer = viewer.imageryLayers.addImageryProvider(provider)
-        layer.alpha = 1.0
-        sentinelLayerRef.current = layer
+            const provider = new SingleTileImageryProvider({
+                url,
+                rectangle: Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north),
+            })
+            const layer = viewer.imageryLayers.addImageryProvider(provider)
+            layer.alpha = 1.0
+            sentinelLayerRef.current = layer
+            console.log("[overwatch] Sentinel overlay rendered")
+        } catch (e) {
+            console.error("[overwatch] Sentinel overlay failed:", e)
+        }
 
         return () => {
             if (sentinelLayerRef.current) {
@@ -84,6 +76,7 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
         }
     }, [viewer, sentinelOverlay])
 
+    // ── Detection entities ────────────────────────────────────────────────────
     useEffect(() => {
         if (!viewer) return
 
@@ -99,63 +92,94 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
 
         const added = []
 
-        detections.forEach((det, idx) => {
-            let west, south, east, north
-            if (det.bbox_geo) {
-                ;[west, south, east, north] = det.bbox_geo
-            } else if (det.polygon?.length >= 3) {
-                const lats = det.polygon.map(v => v[0])
-                const lons = det.polygon.map(v => v[1])
-                south = Math.min(...lats); north = Math.max(...lats)
-                west  = Math.min(...lons); east  = Math.max(...lons)
-            } else if (det.corners?.length >= 3) {
-                const lats = det.corners.map(v => v[0])
-                const lons = det.corners.map(v => v[1])
-                south = Math.min(...lats); north = Math.max(...lats)
-                west  = Math.min(...lons); east  = Math.max(...lons)
-            } else if (det.center?.length === 2 && det.north != null) {
-                // Explicit NSEW bounds on the detection itself
-                north = det.north; south = det.south; east = det.east; west = det.west
+        for (const det of detections) {
+            const hex   = colorForDet(det)
+            const color = Color.fromCssColorString(hex)
+
+            if (det.corners && det.corners.length >= 3) {
+                // Rotated polygon outline from YOLO OBB corners [[lat,lon],...]
+                const positions = det.corners.map(([lat, lon]) => Cartesian3.fromDegrees(lon, lat))
+                positions.push(positions[0])  // close
+
+                added.push(viewer.entities.add({
+                    id: `ow-poly-${Math.random()}`,
+                    polyline: {
+                        positions,
+                        width: 2,
+                        material: new ColorMaterialProperty(color.withAlpha(0.9)),
+                        clampToGround: true,
+                        classificationType: ClassificationType.TERRAIN,
+                    },
+                }))
+            } else if (det.bbox_geo) {
+                // Axis-aligned rectangle fallback from [W,S,E,N]
+                const [W, S, E, N] = det.bbox_geo
+                const corners = [
+                    Cartesian3.fromDegrees(W, S),
+                    Cartesian3.fromDegrees(E, S),
+                    Cartesian3.fromDegrees(E, N),
+                    Cartesian3.fromDegrees(W, N),
+                    Cartesian3.fromDegrees(W, S),
+                ]
+                added.push(viewer.entities.add({
+                    id: `ow-rect-${Math.random()}`,
+                    polyline: {
+                        positions: corners,
+                        width: 2,
+                        material: new ColorMaterialProperty(color.withAlpha(0.9)),
+                        clampToGround: true,
+                        classificationType: ClassificationType.TERRAIN,
+                    },
+                }))
             } else {
-                return
+                // Try polygon / NSEW bounds as last resort
+                let west, south, east, north
+                if (det.polygon?.length >= 3) {
+                    const lats = det.polygon.map(v => v[0])
+                    const lons = det.polygon.map(v => v[1])
+                    south = Math.min(...lats); north = Math.max(...lats)
+                    west  = Math.min(...lons); east  = Math.max(...lons)
+                } else if (det.north != null) {
+                    north = det.north; south = det.south; east = det.east; west = det.west
+                } else {
+                    continue
+                }
+                const pts = [
+                    Cartesian3.fromDegrees(west, south),
+                    Cartesian3.fromDegrees(east, south),
+                    Cartesian3.fromDegrees(east, north),
+                    Cartesian3.fromDegrees(west, north),
+                    Cartesian3.fromDegrees(west, south),
+                ]
+                added.push(viewer.entities.add({
+                    id: `ow-bounds-${Math.random()}`,
+                    polyline: {
+                        positions: pts,
+                        width: 2,
+                        material: new ColorMaterialProperty(color.withAlpha(0.9)),
+                        clampToGround: true,
+                        classificationType: ClassificationType.TERRAIN,
+                    },
+                }))
             }
 
-            const hex   = colorForClass(det.class)
-            const fill  = Color.fromCssColorString(hex).withAlpha(0.25)
-            const line  = Color.fromCssColorString(hex).withAlpha(0.90)
-            const label = `${det.specific_type || det.class || "?"} ${Math.round((det.confidence ?? 0) * 100)}%`
-            const centerPos = Cartesian3.fromDegrees((west + east) / 2, south)
-
-            const entity = viewer.entities.add({
-                id:       `overwatch-det-${idx}-${det.run_id || ""}`,
-                position: centerPos,
-                rectangle: {
-                    coordinates:     Rectangle.fromDegrees(west, south, east, north),
-                    material:        fill,
-                    outline:         true,
-                    outlineColor:    line,
-                    outlineWidth:    2,
-                    heightReference: HeightReference.CLAMP_TO_GROUND,
-                },
-                label: {
-                    text:          label,
-                    font:          "bold 12px system-ui, sans-serif",
-                    fillColor:     Color.WHITE,
-                    outlineColor:  Color.BLACK,
-                    outlineWidth:  2,
-                    style:         2,
-                    verticalOrigin: VerticalOrigin.BOTTOM,
-                    pixelOffset:   { x: 0, y: -8 },
-                    showBackground: true,
-                    backgroundColor: Color.fromCssColorString(hex).withAlpha(0.82),
-                    backgroundPadding: { x: 5, y: 3 },
-                    distanceDisplayCondition: new DistanceDisplayCondition(0, 80_000),
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                },
-            })
-
-            added.push(entity)
-        })
+            // Center dot for click targeting
+            if (det.center?.length === 2) {
+                const [clat, clon] = det.center
+                added.push(viewer.entities.add({
+                    id: `ow-dot-${Math.random()}`,
+                    position: Cartesian3.fromDegrees(clon, clat),
+                    point: {
+                        pixelSize: 6,
+                        color,
+                        outlineColor: Color.WHITE,
+                        outlineWidth: 1,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        heightReference: HeightReference.CLAMP_TO_GROUND,
+                    },
+                }))
+            }
+        }
 
         entitiesRef.current = added
         return cleanup

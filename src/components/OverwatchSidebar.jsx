@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
 
-// ── Icon ──────────────────────────────────────────────────────────────────────
+// ── Named exports preserved for app.jsx imports ───────────────────────────────
 export function IconOverwatch({ size = 18, color = "currentColor" }) {
     return (
         <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke={color}
@@ -16,7 +16,6 @@ export function IconOverwatch({ size = 18, color = "currentColor" }) {
     )
 }
 
-// ── Taxonomy ──────────────────────────────────────────────────────────────────
 export const TAXONOMY = {
     Aircraft:       { color: "#60b4d8", classes: ["plane","airplane","helicopter"] },
     Vessel:         { color: "#c9943a", classes: ["ship","boat"] },
@@ -26,7 +25,6 @@ export const TAXONOMY = {
     Facility:       { color: "#b88440", classes: ["baseball-diamond","tennis-court","basketball-court","ground-track-field","soccer-ball-field","swimming-pool"] },
     Person:         { color: "#cc6080", classes: ["person"] },
 }
-
 export function catForClass(cls) {
     const c = (cls || "").toLowerCase().trim()
     for (const [cat, info] of Object.entries(TAXONOMY)) {
@@ -37,7 +35,6 @@ export function catForClass(cls) {
 export function colorForCat(cat) { return TAXONOMY[cat]?.color || "rgba(200,210,220,0.6)" }
 export function colorForClass(cls) { return colorForCat(catForClass(cls)) }
 
-// ── Persistence ───────────────────────────────────────────────────────────────
 const SCANS_KEY  = "ow-saved-scans-v1"
 const IMAGES_KEY = "ow-saved-images-v1"
 export function loadSavedScans()  { try { const p = JSON.parse(localStorage.getItem(SCANS_KEY));  return Array.isArray(p) ? p : [] } catch { return [] } }
@@ -49,929 +46,531 @@ export function persistSavedImages(arr) {
     }
 }
 
-// ── Sentinel image types ──────────────────────────────────────────────────────
 export const SENTINEL_TYPES = [
-    { key: "true-colour",        label: "True Colour" },
-    { key: "false-colour",       label: "False Colour" },
-    { key: "highlight-optimized",label: "Highlight Opt." },
-    { key: "ndvi",               label: "NDVI" },
-    { key: "false-colour-urban", label: "Urban" },
-    { key: "moisture-index",     label: "Moisture" },
-    { key: "swir",               label: "SWIR" },
-    { key: "ndwi",               label: "NDWI" },
-    { key: "ndsi",               label: "NDSI" },
+    { key: "true_color",  label: "True Colour (RGB)" },
+    { key: "false_color", label: "False Colour (NIR)" },
+    { key: "swir",        label: "SWIR — Fire/Burn" },
+    { key: "ndvi",        label: "NDVI — Vegetation" },
+    { key: "ndwi",        label: "NDWI — Water" },
+    { key: "ndsi",        label: "NDSI — Snow" },
 ]
 
-// ── Shared micro-styles ───────────────────────────────────────────────────────
-const S = {
-    row: { display: "flex", alignItems: "center", gap: 8 },
-    btn: {
-        cursor: "pointer", fontFamily: "inherit", lineHeight: 1,
-        border: "none", background: "none",
-    },
+// ── Colours / icons by category ───────────────────────────────────────────────
+const CATEGORY_COLORS = {
+    Aircraft:  "#5856D6",
+    Vessel:    "#34AADC",
+    Ship:      "#34AADC",
+    Vehicle:   "#FF9500",
+    Building:  "#FF9500",
+    Military:  "#FF3B30",
+    default:   "#FFCC00",
+}
+const CATEGORY_ICONS = {
+    Aircraft:  "✈",
+    Vessel:    "⚓",
+    Ship:      "⚓",
+    Vehicle:   "🚛",
+    Building:  "🏗",
+    Military:  "🎯",
+    default:   "◉",
 }
 
-function fmtDate(iso) {
-    if (!iso) return ""
-    try {
-        return new Date(iso).toLocaleString(undefined, {
-            month: "short", day: "numeric",
-            hour: "2-digit", minute: "2-digit",
-        })
-    } catch { return "" }
-}
-function fmtShortDate(iso) {
-    if (!iso) return ""
-    try {
-        return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" })
-    } catch { return "" }
+function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1, 3), 16)
+    const g = parseInt(hex.slice(3, 5), 16)
+    const b = parseInt(hex.slice(5, 7), 16)
+    return `${r},${g},${b}`
 }
 
-// ── Shared UI atoms ───────────────────────────────────────────────────────────
-function SectionHead({ label, action, onAction }) {
-    return (
-        <div style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase",
-            color: "var(--akili-text-muted)", padding: "13px 0 5px",
-        }}>
-            {label}
-            {action && (
-                <button onClick={onAction} style={{ ...S.btn, fontSize: 9, color: "var(--akili-accent)", letterSpacing: "0.04em" }}>
-                    {action}
-                </button>
-            )}
-        </div>
-    )
+function safeArray(data) {
+    if (Array.isArray(data)) return data
+    if (data?.zones) return Array.isArray(data.zones) ? data.zones : []
+    if (data?.items) return Array.isArray(data.items) ? data.items : []
+    return []
 }
 
-function Rule() {
-    return <div style={{ height: 1, background: "var(--akili-border)", margin: "10px 0 4px" }} />
-}
-
-function PanelBtn({ onClick, children, danger, disabled, wide, accent }) {
-    return (
-        <button onClick={disabled ? undefined : onClick} style={{
-            ...S.btn,
-            width: wide ? "100%" : undefined,
-            flex: wide ? undefined : 1,
-            display: "block", textAlign: "center",
-            padding: "7px 10px",
-            fontSize: 11, fontWeight: 600, borderRadius: 5,
-            background: accent
-                ? "var(--akili-accent)"
-                : "rgba(255,255,255,0.04)",
-            border: `1px solid ${
-                danger  ? "rgba(200,60,60,0.35)"  :
-                accent  ? "transparent"            :
-                "var(--akili-border)"
-            }`,
-            color: accent
-                ? "#fff"
-                : danger
-                    ? "rgba(220,80,80,0.8)"
-                    : disabled
-                        ? "var(--akili-text-muted)"
-                        : "var(--akili-text-secondary)",
-            opacity: disabled ? 0.45 : 1,
-        }}>
-            {children}
-        </button>
-    )
-}
-
-function SlimToggle({ on, onToggle, label, hint, disabled }) {
-    return (
-        <div onClick={disabled ? undefined : onToggle} style={{
-            display: "flex", alignItems: "center", gap: 10,
-            padding: "7px 10px", borderRadius: 6, marginBottom: 4,
-            background: on ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)",
-            border: `1px solid ${on ? "rgba(255,255,255,0.13)" : "var(--akili-border)"}`,
-            cursor: disabled ? "default" : "pointer",
-            opacity: disabled ? 0.4 : 1,
-        }}>
-            <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: on ? "var(--akili-text-primary)" : "var(--akili-text-secondary)" }}>{label}</div>
-                {hint && <div style={{ fontSize: 9, color: "var(--akili-text-muted)", marginTop: 1 }}>{hint}</div>}
-            </div>
-            <div style={{
-                width: 30, height: 17, borderRadius: 9, flexShrink: 0,
-                background: on ? "var(--akili-accent)" : "rgba(255,255,255,0.12)",
-                display: "flex", alignItems: "center",
-                padding: "0 2px", justifyContent: on ? "flex-end" : "flex-start",
-                transition: "background 0.18s",
-            }}>
-                <div style={{ width: 13, height: 13, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.4)" }} />
-            </div>
-        </div>
-    )
-}
-
-// ── Scene history with thumbnail previews ─────────────────────────────────────
-function HistorySection({
-    sentinelBounds, sentinelImageType, sentinelMaxCloud,
-    sentinelCurrentImg, sentinelDates, sentinelDatesLoading,
-    onFetchDates, onLoadDate,
+// ── Main component ────────────────────────────────────────────────────────────
+export default function OverwatchSidebar({
+    bounds,
+    polygon,
+    detections = [],
+    scanning   = false,
+    onScan,
+    onScanSentinel,
+    onSentinelLoaded,
+    onAssessArea,
+    onClear,
+    drawMode = "rectangle",
+    onDrawModeChange,
+    isMobile = false,
 }) {
-    const [showHistory, setShowHistory] = useState(false)
-    const [thumbs, setThumbs] = useState({})   // date → { loading, src, error }
-    const fetchingRef = useRef({})             // prevent duplicate fetches
+    const [sentinelType,    setSentinelType]    = useState("true_color")
+    const [sentinelCloud,   setSentinelCloud]   = useState(30)
+    const [sentinelDays,    setSentinelDays]    = useState(10)
+    const [sentinelLoading, setSentinelLoading] = useState(false)
+    const [sentinelLoaded,  setSentinelLoaded]  = useState(false)
+    const [sentinelError,   setSentinelError]   = useState(null)
+    const [minConf,         setMinConf]         = useState(0.20)
+    const [enhance,         setEnhance]         = useState(false)
+    const [model,           setModel]           = useState("dota")
+    const [filterCat,       setFilterCat]       = useState("All")
+    const [savedZones,      setSavedZones]      = useState([])
+    const [savingZone,      setSavingZone]      = useState(false)
+    const [zoneName,        setZoneName]        = useState("")
+    const [zoneInterval,    setZoneInterval]    = useState(5)
 
-    // Auto-fetch thumbnails when dates arrive and history is open
+    // Reset loaded flag when type changes
+    useEffect(() => { setSentinelLoaded(false); setSentinelError(null) }, [sentinelType])
+    // Reset loaded flag when bounds change
+    useEffect(() => { setSentinelLoaded(false); setSentinelError(null) }, [bounds])
+
+    // Load saved watch zones
     useEffect(() => {
-        if (!showHistory || !sentinelDates?.length || !sentinelBounds) return
-        sentinelDates.forEach(d => {
-            if (thumbs[d.date] || fetchingRef.current[d.date]) return
-            fetchingRef.current[d.date] = true
-            setThumbs(prev => ({ ...prev, [d.date]: { loading: true, src: null, error: null } }))
-            fetch(`${API_BASE}/api/sentinel/imagery`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    bounds: sentinelBounds,
-                    max_cloud: sentinelMaxCloud,
-                    days_back: 365,
-                    image_type: sentinelImageType,
-                    date: d.date,
-                    width: 96, height: 64,
-                }),
-            })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.image) {
-                        setThumbs(prev => ({ ...prev, [d.date]: { loading: false, src: `data:image/png;base64,${data.image}`, error: null } }))
-                    } else {
-                        setThumbs(prev => ({ ...prev, [d.date]: { loading: false, src: null, error: "no image" } }))
-                    }
-                })
-                .catch(() => {
-                    setThumbs(prev => ({ ...prev, [d.date]: { loading: false, src: null, error: "failed" } }))
-                })
-        })
-    }, [showHistory, sentinelDates, sentinelBounds, sentinelImageType, sentinelMaxCloud])
+        fetch(`${API_BASE}/api/watch-zones`)
+            .then(r => r.ok ? r.json() : [])
+            .then(data => setSavedZones(safeArray(data)))
+            .catch(() => {})
+    }, [])
 
-    // Reset thumbs when bounds/type change
-    useEffect(() => {
-        setThumbs({})
-        fetchingRef.current = {}
-    }, [sentinelBounds, sentinelImageType])
-
-    const toggleHistory = () => {
-        const next = !showHistory
-        setShowHistory(next)
-        if (next && !sentinelDates?.length) onFetchDates()
+    // Group filtered detections by category
+    const filtered = detections.filter(d => {
+        if (filterCat !== "All" && (d.category || "default") !== filterCat) return false
+        return (d.confidence ?? 0) >= minConf
+    })
+    const byCategory = {}
+    for (const d of filtered) {
+        const cat = d.category || "default"
+        if (!byCategory[cat]) byCategory[cat] = []
+        byCategory[cat].push(d)
     }
 
+    const loadSentinel = async () => {
+        if (!bounds) return
+        setSentinelLoading(true)
+        setSentinelLoaded(false)
+        setSentinelError(null)
+        try {
+            const tok = localStorage.getItem("hw-auth-token")
+            const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
+            const res = await fetch(`${API_BASE}/api/sentinel/imagery`, {
+                method: "POST", headers,
+                body: JSON.stringify({
+                    bounds,
+                    type: sentinelType,
+                    max_cloud: sentinelCloud,
+                    days_back: sentinelDays,
+                }),
+            })
+            const data = await res.json()
+            if (data.error) { setSentinelError(data.error); return }
+            if (data.image) {
+                setSentinelLoaded(true)
+                onSentinelLoaded?.({ image_b64: data.image, bounds })
+            } else {
+                setSentinelError("No imagery found for this region/date range")
+            }
+        } catch (e) {
+            setSentinelError("Failed to load imagery")
+        } finally {
+            setSentinelLoading(false)
+        }
+    }
+
+    const saveZone = async () => {
+        if (!bounds || !zoneName.trim()) return
+        setSavingZone(true)
+        try {
+            const tok = localStorage.getItem("hw-auth-token")
+            const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
+            const res = await fetch(`${API_BASE}/api/watch-zones`, {
+                method: "POST", headers,
+                body: JSON.stringify({
+                    name: zoneName,
+                    bounds,
+                    polygon_coords: polygon?.vertices || null,
+                    scan_interval_hours: zoneInterval * 24,
+                    priority: "medium",
+                    description: `Overwatch zone — ${sentinelType}`,
+                }),
+            })
+            const data = await res.json()
+            if (data.zone_id || data.id || data.system_id) {
+                setSavedZones(z => [...z, data])
+                setZoneName("")
+            }
+        } finally {
+            setSavingZone(false)
+        }
+    }
+
+    // ── Styles ────────────────────────────────────────────────────────────────
+    const S = {
+        container: {
+            position:       "fixed",
+            top:            40,
+            right:          0,
+            bottom:         isMobile ? 56 : 0,
+            width:          280,
+            background:     "rgba(8,14,28,0.97)",
+            backdropFilter: "blur(20px)",
+            WebkitBackdropFilter: "blur(20px)",
+            borderLeft:     "1px solid rgba(255,255,255,0.06)",
+            display:        "flex",
+            flexDirection:  "column",
+            fontFamily:     "-apple-system, BlinkMacSystemFont, sans-serif",
+            color:          "white",
+            overflow:       "hidden",
+            zIndex:         1150,
+            boxShadow:      "-4px 0 20px rgba(0,0,0,0.4)",
+        },
+        header: {
+            padding:        "14px 16px 10px",
+            borderBottom:   "1px solid rgba(255,255,255,0.06)",
+            display:        "flex",
+            alignItems:     "center",
+            justifyContent: "space-between",
+            flexShrink:     0,
+        },
+        section: {
+            padding:        "10px 14px",
+            borderBottom:   "1px solid rgba(255,255,255,0.05)",
+        },
+        label: {
+            fontSize:      9,
+            color:         "rgba(255,255,255,0.3)",
+            textTransform: "uppercase",
+            letterSpacing: 1.2,
+            marginBottom:  8,
+            fontWeight:    600,
+        },
+        select: {
+            width:        "100%",
+            background:   "rgba(255,255,255,0.06)",
+            border:       "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 6,
+            color:        "white",
+            fontSize:     11,
+            padding:      "5px 8px",
+            cursor:       "pointer",
+            outline:      "none",
+        },
+        input: {
+            width:        "100%",
+            background:   "rgba(255,255,255,0.06)",
+            border:       "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 6,
+            color:        "white",
+            fontSize:     11,
+            padding:      "5px 8px",
+            outline:      "none",
+            boxSizing:    "border-box",
+        },
+    }
+
+    const modeBtn = (color, active) => ({
+        flex:         1,
+        padding:      "7px 0",
+        background:   active ? `rgba(${hexToRgb(color)},0.12)` : "rgba(255,255,255,0.04)",
+        border:       `1px solid rgba(${hexToRgb(color)},${active ? 0.35 : 0.1})`,
+        borderRadius: 6,
+        color:        active ? color : "rgba(255,255,255,0.3)",
+        fontSize:     11,
+        fontWeight:   600,
+        cursor:       "pointer",
+        letterSpacing: 0.3,
+    })
+
     return (
-        <>
-            <button onClick={toggleHistory} style={{
-                cursor: "pointer", fontFamily: "inherit", lineHeight: 1,
-                border: "1px solid var(--akili-border)", background: "rgba(255,255,255,0.02)",
-                width: "100%", display: "flex", alignItems: "center",
-                justifyContent: "space-between",
-                padding: "6px 10px", borderRadius: 6,
-                color: "var(--akili-text-muted)", fontSize: 9,
-                textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2,
-            }}>
-                <span>Scene History</span>
-                <span>{showHistory ? "▲" : "▼"}</span>
-            </button>
+        <div style={S.container}>
 
-            {showHistory && (
-                <div style={{ marginTop: 4 }}>
-                    {sentinelDatesLoading && (
-                        <div style={{ fontSize: 9, color: "var(--akili-text-muted)", padding: "6px 0" }}>Searching scenes…</div>
-                    )}
-                    {!sentinelDatesLoading && sentinelDates?.length === 0 && (
-                        <div style={{ fontSize: 9, color: "var(--akili-text-muted)", padding: "6px 0" }}>No scenes found</div>
-                    )}
-                    {(sentinelDates || []).map(d => {
-                        const thumb = thumbs[d.date]
-                        const active = sentinelCurrentImg?.date === d.date
-                        return (
-                            <div key={d.date}
-                                onClick={() => onLoadDate(d.date)}
-                                style={{
-                                    display: "flex", alignItems: "center", gap: 8,
-                                    padding: "6px 8px", borderRadius: 6, marginBottom: 4,
-                                    background: active ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.02)",
-                                    border: `1px solid ${active ? "rgba(255,255,255,0.16)" : "var(--akili-border)"}`,
-                                    cursor: "pointer",
-                                }}>
-                                {/* Thumbnail */}
-                                <div style={{
-                                    width: 64, height: 42, flexShrink: 0,
-                                    borderRadius: 4, overflow: "hidden",
-                                    background: "rgba(255,255,255,0.04)",
-                                    border: "1px solid rgba(255,255,255,0.08)",
-                                    display: "flex", alignItems: "center", justifyContent: "center",
-                                }}>
-                                    {thumb?.loading && (
-                                        <div style={{
-                                            width: 12, height: 12,
-                                            border: "2px solid rgba(255,255,255,0.08)",
-                                            borderTop: "2px solid var(--akili-accent)",
-                                            borderRadius: "50%", animation: "ow-spin 0.8s linear infinite",
-                                        }} />
-                                    )}
-                                    {thumb?.src && (
-                                        <img src={thumb.src} alt={d.date}
-                                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                                    )}
-                                    {!thumb && (
-                                        <span style={{ fontSize: 7, color: "var(--akili-text-muted)" }}>IMG</span>
-                                    )}
-                                </div>
-                                {/* Meta */}
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{
-                                        fontSize: 10, fontWeight: active ? 600 : 400,
-                                        color: "var(--akili-text-primary)",
-                                    }}>
-                                        {fmtShortDate(d.date + "T12:00:00Z")}
-                                    </div>
-                                    {d.cloud_cover != null && (
-                                        <div style={{ fontSize: 8, color: "var(--akili-text-muted)", marginTop: 1 }}>
-                                            ☁ {d.cloud_cover.toFixed(0)}%
-                                        </div>
-                                    )}
-                                    {active && (
-                                        <div style={{ fontSize: 8, color: "var(--akili-accent)", marginTop: 1, fontWeight: 600 }}>
-                                            ✓ Loaded
-                                        </div>
-                                    )}
-                                </div>
-                                <span style={{ fontSize: 9, color: active ? "var(--akili-text-muted)" : "var(--akili-accent)", flexShrink: 0 }}>
-                                    {active ? "●" : "Load"}
-                                </span>
-                            </div>
-                        )
-                    })}
-                </div>
-            )}
-        </>
-    )
-}
-
-// ── Sentinel imagery section ──────────────────────────────────────────────────
-function SentinelSection({
-    sentinelMode, onStartSentinelDraw, onCancelSentinelDraw,
-    sentinelImageType, onImageTypeChange,
-    sentinelMaxCloud, onMaxCloudChange,
-    sentinelDaysBack, onDaysBackChange,
-    sentinelLoading, sentinelCurrentImg, onLoadImagery, onClearImagery,
-    sentinelDates, sentinelDatesLoading, onFetchDates,
-    onLoadDate,
-    onPinImagery,
-    onRunMLOnSentinel, sentinelBounds,
-    sentinel2Active, onToggleSentinel2,
-    isMobile,
-}) {
-    const [showTypeGrid, setShowTypeGrid] = useState(false)
-
-    const currentTypeLabel = SENTINEL_TYPES.find(t => t.key === sentinelImageType)?.label || sentinelImageType
-
-    return (
-        <div>
-            <SectionHead label="Sentinel-2 Imagery" />
-
-            {/* Draw region button */}
-            {!sentinelMode && !sentinelCurrentImg && (
-                <PanelBtn onClick={onStartSentinelDraw} wide>
-                    Draw Region on Map
-                </PanelBtn>
-            )}
-            {sentinelMode && (
-                <div style={{
-                    padding: "9px 11px", borderRadius: 6, marginBottom: 5,
-                    background: "rgba(255,255,255,0.04)",
-                    border: "1px solid var(--akili-border)",
-                }}>
-                    <div style={{ fontSize: 10, color: "var(--akili-text-primary)", fontWeight: 600, marginBottom: 3 }}>
-                        Drawing region…
+            {/* ── Header ────────────────────────────────────────────────────── */}
+            <div style={S.header}>
+                <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.5, display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{
+                            width: 8, height: 8, borderRadius: "50%",
+                            background: scanning ? "#FF9500" : "#30D158",
+                            boxShadow: `0 0 6px ${scanning ? "#FF9500" : "#30D158"}`,
+                        }}/>
+                        OVERWATCH
                     </div>
-                    <div style={{ fontSize: 9, color: "var(--akili-text-secondary)", lineHeight: 1.5 }}>
-                        Click vertices on the map · click near start to close
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginTop: 1, letterSpacing: 0.5 }}>
+                        ML Object Detection System
                     </div>
-                    <button onClick={onCancelSentinelDraw} style={{
-                        ...S.btn, marginTop: 7, fontSize: 9,
-                        color: "rgba(200,70,70,0.75)", textDecoration: "underline",
-                        textDecorationColor: "rgba(200,70,70,0.3)",
-                    }}>
-                        Cancel
-                    </button>
                 </div>
-            )}
+                <button onClick={onClear} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 16, cursor: "pointer" }}>×</button>
+            </div>
 
-            {/* Image type selector */}
-            <div style={{ marginBottom: 5 }}>
-                <button onClick={() => setShowTypeGrid(v => !v)} style={{
-                    ...S.btn,
-                    width: "100%", display: "flex", alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "7px 10px", borderRadius: 6,
-                    background: "rgba(255,255,255,0.03)",
-                    border: "1px solid var(--akili-border)",
-                    color: "var(--akili-text-secondary)", fontSize: 10,
-                }}>
-                    <span style={{ fontSize: 9, color: "var(--akili-text-muted)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                        Type
-                    </span>
-                    <span style={{ fontWeight: 600, color: "var(--akili-text-primary)" }}>
-                        {currentTypeLabel} {showTypeGrid ? "▲" : "▼"}
-                    </span>
-                </button>
-                {showTypeGrid && (
-                    <div style={{
-                        display: "grid", gridTemplateColumns: "1fr 1fr 1fr",
-                        gap: 4, padding: "6px 0",
-                    }}>
-                        {SENTINEL_TYPES.map(t => (
-                            <button key={t.key} onClick={() => { onImageTypeChange(t.key); setShowTypeGrid(false) }} style={{
-                                ...S.btn,
-                                padding: "5px 4px", borderRadius: 5, fontSize: 9, fontWeight: 600,
-                                textAlign: "center",
-                                background: sentinelImageType === t.key ? "var(--akili-accent)" : "rgba(255,255,255,0.04)",
-                                border: `1px solid ${sentinelImageType === t.key ? "transparent" : "var(--akili-border)"}`,
-                                color: sentinelImageType === t.key ? "#fff" : "var(--akili-text-secondary)",
-                            }}>
-                                {t.label}
+            {/* ── Scrollable body ───────────────────────────────────────────── */}
+            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+
+                {/* Draw Mode */}
+                <div style={S.section}>
+                    <div style={S.label}>Draw Mode</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        {[
+                            { key: "rectangle", label: "▭ Rectangle" },
+                            { key: "polygon",   label: "⬡ Polygon" },
+                        ].map(({ key, label }) => (
+                            <button key={key} onClick={() => onDrawModeChange?.(key)} style={modeBtn("#34AADC", drawMode === key)}>
+                                {label}
                             </button>
                         ))}
                     </div>
-                )}
-            </div>
-
-            {/* Cloud & days sliders */}
-            <div style={{ marginBottom: 5 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, marginBottom: 3 }}>
-                    <span style={{ color: "var(--akili-text-muted)" }}>Max cloud</span>
-                    <span style={{ color: "var(--akili-text-secondary)", fontWeight: 600 }}>{sentinelMaxCloud}%</span>
-                </div>
-                <input type="range" min={0} max={100} step={5} value={sentinelMaxCloud}
-                    onChange={e => onMaxCloudChange(Number(e.target.value))}
-                    style={{ width: "100%", accentColor: "var(--akili-accent)", cursor: "pointer" }}
-                />
-            </div>
-            <div style={{ marginBottom: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, marginBottom: 3 }}>
-                    <span style={{ color: "var(--akili-text-muted)" }}>Look-back</span>
-                    <span style={{ color: "var(--akili-text-secondary)", fontWeight: 600 }}>{sentinelDaysBack}d</span>
-                </div>
-                <input type="range" min={7} max={365} step={7} value={sentinelDaysBack}
-                    onChange={e => onDaysBackChange(Number(e.target.value))}
-                    style={{ width: "100%", accentColor: "var(--akili-accent)", cursor: "pointer" }}
-                />
-            </div>
-
-            {/* Load / current image status */}
-            {sentinelBounds && !sentinelCurrentImg && !sentinelLoading && (
-                <PanelBtn onClick={onLoadImagery} wide accent>Load Imagery</PanelBtn>
-            )}
-            {sentinelLoading && (
-                <div style={{ ...S.row, padding: "8px 0", fontSize: 10, color: "var(--akili-text-secondary)" }}>
-                    <div style={{
-                        width: 14, height: 14, flexShrink: 0,
-                        border: "2px solid rgba(255,255,255,0.08)",
-                        borderTop: `2px solid var(--akili-accent)`,
-                        borderRadius: "50%", animation: "ow-spin 0.8s linear infinite",
-                    }} />
-                    Fetching imagery…
-                </div>
-            )}
-            {sentinelCurrentImg && !sentinelLoading && (
-                <div style={{
-                    padding: "8px 10px", borderRadius: 6, marginBottom: 5,
-                    background: "rgba(255,255,255,0.03)",
-                    border: "1px solid var(--akili-border)",
-                }}>
-                    <div style={{ fontSize: 9, color: "var(--akili-text-muted)", marginBottom: 2 }}>
-                        {sentinelCurrentImg.date
-                            ? `Scene: ${fmtShortDate(sentinelCurrentImg.date)}`
-                            : fmtDate(sentinelCurrentImg.capturedAt)}
-                        {" · "}{currentTypeLabel}
-                    </div>
-                    <div style={{ display: "flex", gap: 5, marginTop: 6 }}>
-                        <PanelBtn onClick={onClearImagery}>Clear</PanelBtn>
-                        <PanelBtn onClick={() => onStartSentinelDraw()}>New Region</PanelBtn>
-                        {onPinImagery && <PanelBtn onClick={onPinImagery}>Pin</PanelBtn>}
-                    </div>
-                    {onRunMLOnSentinel && (
-                        <PanelBtn onClick={onRunMLOnSentinel} wide accent>
-                            Run ML Detection on This Image
-                        </PanelBtn>
+                    {!bounds && (
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", marginTop: 6 }}>
+                            {drawMode === "rectangle" ? "Click two points on globe" : "Click vertices · double-click to close"}
+                        </div>
                     )}
                 </div>
-            )}
 
-            {/* History */}
-            {sentinelBounds && (
-                <HistorySection
-                    sentinelBounds={sentinelBounds}
-                    sentinelImageType={sentinelImageType}
-                    sentinelMaxCloud={sentinelMaxCloud}
-                    sentinelCurrentImg={sentinelCurrentImg}
-                    sentinelDates={sentinelDates}
-                    sentinelDatesLoading={sentinelDatesLoading}
-                    onFetchDates={onFetchDates}
-                    onLoadDate={onLoadDate}
-                />
-            )}
-        </div>
-    )
-}
-
-// ── Main sidebar content ──────────────────────────────────────────────────────
-// ── Cesium-path Sentinel overlay section ─────────────────────────────────────
-function CesiumSentinelSection({ bounds, loading, loaded, onLoad, onRunML, scanning }) {
-    const [imageType, setImageType] = useState("true-colour")
-
-    return (
-        <div style={{ marginTop: 4 }}>
-            <Rule />
-            <SectionHead label="Sentinel-2 Imagery" />
-
-            <select
-                value={imageType}
-                onChange={e => setImageType(e.target.value)}
-                style={{
-                    width: "100%", marginBottom: 6,
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 5, color: "var(--akili-text-primary)",
-                    fontSize: 11, padding: "4px 8px",
-                    fontFamily: "system-ui, -apple-system, sans-serif",
-                }}
-            >
-                {SENTINEL_TYPES.map(t => (
-                    <option key={t.key} value={t.key}>{t.label}</option>
-                ))}
-            </select>
-
-            <PanelBtn
-                wide
-                disabled={loading}
-                accent={loaded}
-                onClick={() => onLoad?.(imageType)}
-            >
-                {loading ? "Loading…" : loaded ? "Reload Sentinel" : "Load Sentinel Imagery"}
-            </PanelBtn>
-
-            {loaded && (
-                <div style={{ marginTop: 5 }}>
-                    <PanelBtn
-                        wide
-                        disabled={scanning}
-                        onClick={onRunML}
-                    >
-                        {scanning ? "Scanning…" : "Run ML on Sentinel"}
-                    </PanelBtn>
-                </div>
-            )}
-        </div>
-    )
-}
-
-function SidebarContent(props) {
-    const {
-        mode, vertCount, drawTarget,
-        onStartMLDraw, onCancelDraw,
-        stats, detections, visible,
-        minConf, onMinConfChange,
-        enhance, onEnhanceToggle, enhanced,
-        analysis, analyzing, onAnalyze, onDismissAnalysis,
-        onClear, onRescan,
-        savedScans, onSave, onDeleteSaved, onRestoreSaved,
-        savedImages, onDeleteSavedImage,
-        isMobile,
-        // Cesium-path sentinel props
-        cesiumBounds,
-        onCesiumSentinelLoad,
-        cesiumSentinelLoading,
-        cesiumSentinelLoaded,
-        onCesiumRunML,
-        // sentinel props passed through
-        ...sentinelProps
-    } = props
-
-    const [showDetList, setShowDetList] = useState(false)
-    const [showSaved,   setShowSaved]   = useState(false)
-
-    const catCounts = {}
-    for (const d of detections) {
-        const cat = d.category || catForClass(d.class)
-        catCounts[cat] = (catCounts[cat] || 0) + 1
-    }
-    const allCats = Object.keys(catCounts).sort()
-
-    const isDrawingML       = mode === "drawing" && drawTarget === "ml"
-    const isDrawingSentinel = mode === "drawing" && drawTarget === "sentinel"
-
-    return (
-        <div style={{ padding: "0 14px 16px" }}>
-
-            {/* ── ML Analysis ─────────────────────────────────────────── */}
-            <SectionHead label="ML Object Detection" />
-            {isDrawingML ? (
-                <div style={{
-                    padding: "9px 11px", borderRadius: 6, marginBottom: 5,
-                    background: "rgba(255,255,255,0.04)",
-                    border: "1px solid var(--akili-border)",
-                }}>
-                    <div style={{ fontSize: 10, color: "var(--akili-text-primary)", fontWeight: 600, marginBottom: 3 }}>
-                        Drawing region…
-                    </div>
-                    <div style={{ fontSize: 9, color: "var(--akili-text-secondary)", lineHeight: 1.5 }}>
-                        {vertCount} {vertCount === 1 ? "vertex" : "vertices"}
-                        {vertCount >= 3 ? " · hover start point to close" : " · click to add vertices"}
-                    </div>
-                    <button onClick={onCancelDraw} style={{
-                        ...S.btn, marginTop: 7, fontSize: 9,
-                        color: "rgba(200,70,70,0.75)", textDecoration: "underline",
-                        textDecorationColor: "rgba(200,70,70,0.3)",
-                    }}>Cancel</button>
-                </div>
-            ) : (
-                <PanelBtn onClick={onStartMLDraw} wide
-                    disabled={mode === "analyzing" || isDrawingSentinel}>
-                    {mode === "analyzing" ? "Analyzing…" : "Draw Region & Analyze"}
-                </PanelBtn>
-            )}
-
-            {/* AI Classification toggle */}
-            <SlimToggle
-                on={enhance}
-                onToggle={onEnhanceToggle}
-                label="AI Classification"
-                hint={enhance ? "Claude vision — slower, more specific" : "Enable Claude vision labelling"}
-            />
-
-            {/* Results */}
-            {mode === "results" && stats && (
-                <>
-                    <div style={{ paddingTop: 8, marginBottom: 8 }}>
-                        <span style={{ fontSize: 22, fontWeight: 700, color: "var(--akili-text-primary)", lineHeight: 1 }}>
-                            {stats.total ?? 0}
-                        </span>
-                        <span style={{ fontSize: 11, color: "var(--akili-text-muted)", marginLeft: 7 }}>
-                            {(stats.total ?? 0) === 1 ? "object" : "objects"} detected
-                        </span>
-                        {stats.zoom && (
-                            <div style={{ fontSize: 9, color: "var(--akili-text-muted)", marginTop: 2 }}>
-                                {stats.zoom === "Sentinel-2" ? "Sentinel-2" : `zoom ${stats.zoom}`}
-                                {enhanced && <span style={{ marginLeft: 5 }}>· AI</span>}
-                            </div>
+                {/* Sentinel-2 Imagery */}
+                <div style={S.section}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <div style={S.label}>Sentinel-2 Imagery</div>
+                        {sentinelLoaded && (
+                            <div style={{ fontSize: 9, color: "#30D158", fontWeight: 600 }}>✓ LOADED</div>
                         )}
                     </div>
 
-                    {/* Category filter chips */}
-                    {allCats.length > 0 && (
-                        <>
-                            <SectionHead label="Filter by Category"
-                                action={props.selectedCats?.size > 0 ? "Clear" : null}
-                                onAction={props.onClearCatFilter}
-                            />
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 5px", marginBottom: 8 }}>
-                                {allCats.map(cat => {
-                                    const active = !props.selectedCats?.size || props.selectedCats.has(cat)
-                                    const color  = colorForCat(cat)
+                    <select value={sentinelType} onChange={e => setSentinelType(e.target.value)} style={{ ...S.select, marginBottom: 6 }}>
+                        {SENTINEL_TYPES.map(t => (
+                            <option key={t.key} value={t.key}>{t.label}</option>
+                        ))}
+                    </select>
+
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginBottom: 3 }}>Cloud %</div>
+                            <select value={sentinelCloud} onChange={e => setSentinelCloud(Number(e.target.value))} style={S.select}>
+                                <option value={10}>≤10%</option>
+                                <option value={20}>≤20%</option>
+                                <option value={30}>≤30%</option>
+                                <option value={50}>≤50%</option>
+                            </select>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginBottom: 3 }}>Days back</div>
+                            <select value={sentinelDays} onChange={e => setSentinelDays(Number(e.target.value))} style={S.select}>
+                                <option value={5}>5 days</option>
+                                <option value={10}>10 days</option>
+                                <option value={20}>20 days</option>
+                                <option value={30}>30 days</option>
+                                <option value={60}>60 days</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {sentinelError && (
+                        <div style={{ fontSize: 10, color: "#FF3B30", marginBottom: 6, padding: "4px 8px", background: "rgba(255,59,48,0.1)", borderRadius: 4 }}>
+                            ⚠ {sentinelError}
+                        </div>
+                    )}
+
+                    <button
+                        onClick={loadSentinel}
+                        disabled={!bounds || sentinelLoading}
+                        style={{
+                            width: "100%", padding: "7px 0",
+                            background:   sentinelLoaded ? "rgba(48,209,88,0.1)" : "rgba(52,170,220,0.1)",
+                            border:       `1px solid ${sentinelLoaded ? "rgba(48,209,88,0.3)" : "rgba(52,170,220,0.3)"}`,
+                            borderRadius: 6,
+                            color:        sentinelLoaded ? "#30D158" : "#34AADC",
+                            fontSize: 11, fontWeight: 600,
+                            cursor: (!bounds || sentinelLoading) ? "not-allowed" : "pointer",
+                            opacity: !bounds ? 0.4 : 1,
+                        }}
+                    >
+                        {sentinelLoading ? "⟳ Fetching imagery…" : sentinelLoaded ? "🛰 Sentinel Loaded — Reload" : "🛰 Load Sentinel Imagery"}
+                    </button>
+                </div>
+
+                {/* ML Detection */}
+                <div style={S.section}>
+                    <div style={S.label}>ML Detection</div>
+
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginBottom: 3 }}>Model</div>
+                            <select value={model} onChange={e => setModel(e.target.value)} style={S.select}>
+                                <option value="dota">DOTA OBB</option>
+                                <option value="coco">COCO General</option>
+                            </select>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginBottom: 3 }}>Min Confidence</div>
+                            <select value={minConf} onChange={e => setMinConf(Number(e.target.value))} style={S.select}>
+                                <option value={0.15}>15%</option>
+                                <option value={0.20}>20%</option>
+                                <option value={0.25}>25%</option>
+                                <option value={0.35}>35%</option>
+                                <option value={0.50}>50%</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* AI Classification toggle */}
+                    <div onClick={() => setEnhance(v => !v)} style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        padding: "5px 8px", borderRadius: 6, cursor: "pointer", marginBottom: 8,
+                        background: enhance ? "rgba(88,86,214,0.1)" : "rgba(255,255,255,0.03)",
+                        border: `1px solid ${enhance ? "rgba(88,86,214,0.3)" : "rgba(255,255,255,0.06)"}`,
+                    }}>
+                        <span style={{ fontSize: 11, color: enhance ? "#5856D6" : "rgba(255,255,255,0.5)" }}>AI Classification</span>
+                        <div style={{ width: 28, height: 16, borderRadius: 8, background: enhance ? "#5856D6" : "rgba(255,255,255,0.1)", position: "relative", transition: "background 0.2s" }}>
+                            <div style={{ position: "absolute", top: 2, left: enhance ? 14 : 2, width: 12, height: 12, borderRadius: "50%", background: "white", transition: "left 0.2s" }}/>
+                        </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                            onClick={() => onScan?.({ bounds, confidence: minConf, enhance, model })}
+                            disabled={!bounds || scanning}
+                            style={{ ...modeBtn("#34AADC", !!bounds && !scanning), opacity: !bounds ? 0.4 : 1 }}
+                        >
+                            {scanning ? "⟳ Scanning…" : "▶ Scan ESRI"}
+                        </button>
+                        <button
+                            onClick={() => onScanSentinel?.({ confidence: minConf, enhance, model })}
+                            disabled={!sentinelLoaded || scanning}
+                            style={{ ...modeBtn("#30D158", sentinelLoaded && !scanning), opacity: !sentinelLoaded ? 0.4 : 1 }}
+                        >
+                            🛰 Scan Sentinel
+                        </button>
+                    </div>
+                </div>
+
+                {/* Results */}
+                {detections.length > 0 && (
+                    <div style={S.section}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                            <div style={S.label}>Results — {filtered.length} objects</div>
+                            <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ ...S.select, width: "auto" }}>
+                                <option value="All">All</option>
+                                {Object.keys(byCategory).map(cat => (
+                                    <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Category summary bars */}
+                        {Object.entries(byCategory).map(([cat, dets]) => {
+                            const avgConf = dets.reduce((a, d) => a + d.confidence, 0) / dets.length
+                            const color = CATEGORY_COLORS[cat] || CATEGORY_COLORS.default
+                            const icon  = CATEGORY_ICONS[cat]  || CATEGORY_ICONS.default
+                            return (
+                                <div key={cat} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "4px 6px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
+                                    <span style={{ fontSize: 12, width: 16, textAlign: "center" }}>{icon}</span>
+                                    <span style={{ fontSize: 11, flex: 1, color: "rgba(255,255,255,0.8)" }}>{cat}</span>
+                                    <span style={{ fontSize: 11, color, fontWeight: 600, minWidth: 20, textAlign: "right" }}>{dets.length}</span>
+                                    <div style={{ width: 40, height: 4, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden" }}>
+                                        <div style={{ width: `${avgConf * 100}%`, height: "100%", background: color, borderRadius: 2 }}/>
+                                    </div>
+                                    <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", minWidth: 28 }}>{Math.round(avgConf * 100)}%</span>
+                                </div>
+                            )
+                        })}
+
+                        {/* Detection list */}
+                        <div style={{ marginTop: 8, maxHeight: 200, overflowY: "auto" }}>
+                            {filtered
+                                .sort((a, b) => b.confidence - a.confidence)
+                                .map((det, i) => {
+                                    const color = CATEGORY_COLORS[det.category] || CATEGORY_COLORS.default
+                                    const icon  = CATEGORY_ICONS[det.category]  || CATEGORY_ICONS.default
                                     return (
-                                        <button key={cat} onClick={() => props.onToggleCat?.(cat)} style={{
-                                            ...S.btn,
-                                            fontSize: 9, padding: "3px 8px", borderRadius: 10, fontWeight: 600,
-                                            background: active ? `${color}1a` : "rgba(255,255,255,0.03)",
-                                            border: `1px solid ${active ? `${color}55` : "var(--akili-border)"}`,
-                                            color: active ? color : "var(--akili-text-muted)",
-                                            transition: "all 0.1s",
-                                        }}>
-                                            {cat} <span style={{ opacity: 0.65, fontWeight: 400 }}>{catCounts[cat]}</span>
-                                        </button>
+                                        <div key={i}
+                                            style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 4px", borderRadius: 4, cursor: "pointer", marginBottom: 1 }}
+                                            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
+                                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                                        >
+                                            <span style={{ fontSize: 10 }}>{icon}</span>
+                                            <span style={{ fontSize: 10, flex: 1, color: "rgba(255,255,255,0.7)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                {det.specific_type || det.class}
+                                            </span>
+                                            <span style={{ fontSize: 10, color, fontWeight: 600, flexShrink: 0 }}>
+                                                {Math.round(det.confidence * 100)}%
+                                            </span>
+                                        </div>
                                     )
                                 })}
-                            </div>
-                        </>
-                    )}
-
-                    {/* Confidence */}
-                    <SectionHead label="Confidence" />
-                    <div style={{ marginBottom: 8 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, marginBottom: 3 }}>
-                            <span style={{ color: "var(--akili-text-muted)" }}>Min confidence</span>
-                            <span style={{ color: "var(--akili-text-secondary)", fontWeight: 600 }}>{Math.round(minConf * 100)}%</span>
                         </div>
-                        <input type="range" min={0} max={0.9} step={0.05} value={minConf}
-                            onChange={e => onMinConfChange(parseFloat(e.target.value))}
-                            style={{ width: "100%", accentColor: "var(--akili-accent)", cursor: "pointer" }}
+
+                        <button
+                            onClick={() => onAssessArea?.(filtered, bounds)}
+                            style={{
+                                width: "100%", marginTop: 8, padding: "6px 0",
+                                background: "rgba(191,90,242,0.1)",
+                                border: "1px solid rgba(191,90,242,0.3)",
+                                borderRadius: 6, color: "#BF5AF2",
+                                fontSize: 11, fontWeight: 600, cursor: "pointer",
+                            }}
+                        >
+                            ◈ Assess Area with AI
+                        </button>
+                    </div>
+                )}
+
+                {/* Save Zone */}
+                {bounds && (
+                    <div style={S.section}>
+                        <div style={S.label}>Save Zone</div>
+                        <input
+                            value={zoneName}
+                            onChange={e => setZoneName(e.target.value)}
+                            placeholder="Zone name…"
+                            style={{ ...S.input, marginBottom: 6 }}
                         />
-                        <div style={{ fontSize: 9, color: "var(--akili-text-muted)", marginTop: 2 }}>
-                            {visible.length} of {detections.length} shown
+                        <div style={{ marginBottom: 8 }}>
+                            <select value={zoneInterval} onChange={e => setZoneInterval(Number(e.target.value))} style={S.select}>
+                                <option value={1}>Every 1 day</option>
+                                <option value={3}>Every 3 days</option>
+                                <option value={5}>Every 5 days</option>
+                                <option value={7}>Every 7 days</option>
+                                <option value={14}>Every 14 days</option>
+                            </select>
                         </div>
-                    </div>
-
-                    {/* Detection list (collapsible) */}
-                    {detections.length > 0 && (
-                        <>
-                            <button onClick={() => setShowDetList(v => !v)} style={{
-                                ...S.btn, width: "100%", display: "flex", alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "6px 10px", borderRadius: 6, marginBottom: 4,
-                                background: "rgba(255,255,255,0.02)",
-                                border: "1px solid var(--akili-border)",
-                                color: "var(--akili-text-muted)", fontSize: 9,
-                            }}>
-                                <span style={{ textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                                    Detections ({visible.length})
-                                </span>
-                                <span>{showDetList ? "▲" : "▼"}</span>
-                            </button>
-                            {showDetList && (
-                                <div style={{
-                                    maxHeight: 200, overflowY: "auto",
-                                    borderRadius: 6,
-                                    border: "1px solid var(--akili-border)",
-                                    marginBottom: 6,
-                                }}>
-                                    {visible.map((det, i) => {
-                                        const cat   = det.category || catForClass(det.class)
-                                        const color = colorForCat(cat)
-                                        const label = det.specific_type
-                                            ? det.specific_type.charAt(0).toUpperCase() + det.specific_type.slice(1)
-                                            : det.class
-                                        return (
-                                            <div key={i} style={{
-                                                display: "flex", alignItems: "center", gap: 8,
-                                                padding: "5px 10px",
-                                                borderBottom: i < visible.length - 1 ? "1px solid var(--akili-border)" : "none",
-                                            }}>
-                                                <div style={{ width: 5, height: 5, borderRadius: "50%", background: color, flexShrink: 0 }} />
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ fontSize: 10, color: "var(--akili-text-primary)", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                        {label}
-                                                    </div>
-                                                    <div style={{ fontSize: 8, color: "var(--akili-text-muted)" }}>
-                                                        {cat}{det.subcategory ? ` · ${det.subcategory}` : ""}
-                                                    </div>
-                                                </div>
-                                                <span style={{ fontSize: 9, color, flexShrink: 0, fontWeight: 600 }}>
-                                                    {Math.round(det.confidence * 100)}%
-                                                </span>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                        </>
-                    )}
-
-                    {/* Intelligence */}
-                    <SectionHead label="Intelligence" />
-                    <PanelBtn onClick={onAnalyze} wide disabled={analyzing || !detections.length}>
-                        {analyzing ? "Running assessment…" : "Assess Area"}
-                    </PanelBtn>
-                    {analysis && (
-                        <div style={{
-                            marginTop: 6, padding: "10px 12px",
-                            background: "rgba(255,255,255,0.02)",
-                            border: "1px solid var(--akili-border)",
-                            borderRadius: 6,
-                        }}>
-                            <div style={{ fontSize: 8, fontWeight: 700, color: "var(--akili-text-muted)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6 }}>
-                                Assessment
-                            </div>
-                            {analysis.summary && (
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 4px", marginBottom: 7 }}>
-                                    {Object.entries(analysis.summary).sort(([,a],[,b]) => b - a).map(([cls, n]) => (
-                                        <span key={cls} style={{
-                                            fontSize: 9, padding: "2px 6px", borderRadius: 10,
-                                            background: "rgba(255,255,255,0.05)",
-                                            border: "1px solid var(--akili-border)",
-                                            color: "var(--akili-text-secondary)",
-                                        }}>{n} {cls}</span>
-                                    ))}
-                                </div>
-                            )}
-                            <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--akili-text-secondary)", whiteSpace: "pre-wrap" }}>
-                                {analysis.analysis}
-                            </div>
-                            <button onClick={onDismissAnalysis} style={{
-                                ...S.btn, marginTop: 6, fontSize: 9, color: "var(--akili-text-muted)",
-                            }}>Dismiss</button>
-                        </div>
-                    )}
-
-                    {/* Save & Actions */}
-                    <SectionHead label="Actions" />
-                    <div style={{ display: "flex", gap: 5, marginBottom: 4 }}>
-                        <PanelBtn onClick={onClear} danger>Clear</PanelBtn>
-                        <PanelBtn onClick={onRescan}>Re-scan</PanelBtn>
-                        <PanelBtn onClick={onSave} disabled={!detections.length}>Save</PanelBtn>
-                    </div>
-                    <PanelBtn onClick={onStartMLDraw} wide>New Region</PanelBtn>
-                </>
-            )}
-
-            {/* ── Cesium-path Sentinel overlay ─────────────────────────── */}
-            {cesiumBounds && (
-                <CesiumSentinelSection
-                    bounds={cesiumBounds}
-                    loading={cesiumSentinelLoading}
-                    loaded={cesiumSentinelLoaded}
-                    onLoad={onCesiumSentinelLoad}
-                    onRunML={onCesiumRunML}
-                    scanning={mode === "analyzing"}
-                />
-            )}
-
-            {/* ── Sentinel ─────────────────────────────────────────────── */}
-            <Rule />
-            <SentinelSection {...sentinelProps} isMobile={isMobile} />
-
-            {/* ── Saved items ───────────────────────────────────────────── */}
-            {(savedScans.length > 0 || savedImages.length > 0) && (
-                <>
-                    <Rule />
-                    <button onClick={() => setShowSaved(v => !v)} style={{
-                        ...S.btn, width: "100%", display: "flex",
-                        justifyContent: "space-between", padding: "5px 0",
-                        fontSize: 9, color: "var(--akili-text-muted)",
-                        textTransform: "uppercase", letterSpacing: "0.12em",
-                    }}>
-                        <span>Saved ({savedScans.length + savedImages.length})</span>
-                        <span>{showSaved ? "▲" : "▼"}</span>
-                    </button>
-                    {showSaved && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
-                            {savedScans.map(scan => (
-                                <div key={scan.id} style={{
-                                    display: "flex", alignItems: "center", gap: 8,
-                                    padding: "6px 10px", borderRadius: 6,
-                                    background: "rgba(255,255,255,0.02)",
-                                    border: "1px solid var(--akili-border)",
-                                }}>
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontSize: 10, color: "var(--akili-text-primary)", fontWeight: 600 }}>
-                                            {scan.stats?.total ?? 0} objects
-                                        </div>
-                                        <div style={{ fontSize: 8, color: "var(--akili-text-muted)", marginTop: 1 }}>
-                                            {fmtDate(scan.timestamp)}
-                                        </div>
-                                    </div>
-                                    <button onClick={() => onRestoreSaved(scan)} style={{
-                                        ...S.btn, fontSize: 9, padding: "3px 8px", borderRadius: 4,
-                                        background: "rgba(255,255,255,0.05)",
-                                        border: "1px solid var(--akili-border)",
-                                        color: "var(--akili-text-secondary)",
-                                    }}>Load</button>
-                                    <button onClick={() => onDeleteSaved(scan.id)} style={{
-                                        ...S.btn, fontSize: 12, padding: "2px 6px", borderRadius: 4,
-                                        background: "rgba(200,60,60,0.07)",
-                                        border: "1px solid rgba(200,60,60,0.2)",
-                                        color: "rgba(200,60,60,0.65)",
-                                    }}>✕</button>
-                                </div>
-                            ))}
-                            {savedImages.map(img => (
-                                <div key={img.id} style={{
-                                    display: "flex", alignItems: "center", gap: 8,
-                                    padding: "6px 10px", borderRadius: 6,
-                                    background: "rgba(255,255,255,0.02)",
-                                    border: "1px solid var(--akili-border)",
-                                }}>
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontSize: 10, color: "var(--akili-text-secondary)", fontWeight: 600 }}>
-                                            Sentinel-2
-                                        </div>
-                                        <div style={{ fontSize: 8, color: "var(--akili-text-muted)", marginTop: 1 }}>
-                                            {fmtDate(img.capturedAt || img.timestamp)}
-                                            {!img.src && " · image not stored"}
-                                        </div>
-                                    </div>
-                                    <button onClick={() => onDeleteSavedImage(img.id)} style={{
-                                        ...S.btn, fontSize: 12, padding: "2px 6px", borderRadius: 4,
-                                        background: "rgba(200,60,60,0.07)",
-                                        border: "1px solid rgba(200,60,60,0.2)",
-                                        color: "rgba(200,60,60,0.65)",
-                                    }}>✕</button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </>
-            )}
-        </div>
-    )
-}
-
-// ── Panel header (shared) ─────────────────────────────────────────────────────
-function PanelHeader({ onClose, stats, mode }) {
-    return (
-        <div style={{
-            flexShrink: 0, display: "flex", alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 14px", height: 42,
-            borderBottom: "1px solid var(--akili-border)",
-            background: "var(--akili-surface)",
-        }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <IconOverwatch size={13} color="var(--akili-accent)" />
-                <span style={{
-                    fontSize: 10, fontWeight: 700, letterSpacing: "0.14em",
-                    textTransform: "uppercase", color: "var(--akili-accent)",
-                    fontFamily: "system-ui, -apple-system, sans-serif",
-                }}>Overwatch</span>
-                {mode === "results" && stats && (
-                    <span style={{ fontSize: 9, color: "var(--akili-text-muted)", marginLeft: 2 }}>
-                        · {stats.total} detected
-                    </span>
-                )}
-            </div>
-            <button onClick={onClose} style={{
-                ...S.btn, padding: "4px 8px",
-                color: "var(--akili-text-muted)", fontSize: 18,
-            }}>✕</button>
-        </div>
-    )
-}
-
-// ── Desktop sidebar ───────────────────────────────────────────────────────────
-function DesktopSidebar({ open, onClose, mode, stats, ...rest }) {
-    if (!open) return null
-    return (
-        <>
-            <div style={{
-                position: "fixed", top: 40, right: 0, bottom: 0, width: 340, zIndex: 1150,
-                background: "rgba(8,20,58,0.82)",
-                backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
-                borderLeft: "1px solid var(--akili-border)",
-                display: "flex", flexDirection: "column",
-                boxShadow: "-6px 0 30px rgba(0,0,0,0.4)",
-                fontFamily: "system-ui, -apple-system, sans-serif",
-                color: "var(--akili-text-primary)",
-            }}>
-                <PanelHeader onClose={onClose} stats={stats} mode={mode} />
-                <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
-                    <SidebarContent {...rest} mode={mode} stats={stats} isMobile={false} />
-                </div>
-            </div>
-        </>
-    )
-}
-
-// ── Mobile bottom panel ───────────────────────────────────────────────────────
-function MobileSidebar({ open, onClose, mode, stats, ...rest }) {
-    const [collapsed, setCollapsed] = useState(false)
-    if (!open) return null
-    return (
-        <>
-            <div style={{
-                position: "fixed", left: 0, right: 0, bottom: 56, zIndex: 1451,
-                maxHeight: collapsed ? 48 : "72vh",
-                background: "rgba(8,20,58,0.82)",
-                backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
-                borderRadius: "12px 12px 0 0",
-                borderTop: "1px solid var(--akili-border)",
-                display: "flex", flexDirection: "column",
-                transition: "max-height 0.3s cubic-bezier(0.32,0.72,0,1)",
-                overflow: "hidden",
-                boxShadow: "0 -4px 24px rgba(0,0,0,0.45)",
-                fontFamily: "system-ui, -apple-system, sans-serif",
-                color: "var(--akili-text-primary)",
-            }}>
-                <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 7, cursor: "pointer" }}
-                    onClick={() => setCollapsed(v => !v)}>
-                    <div style={{ width: 30, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.18)", marginBottom: 7 }} />
-                    <div style={{
-                        width: "100%", display: "flex", alignItems: "center",
-                        justifyContent: "space-between", padding: "0 14px 7px",
-                        borderBottom: "1px solid var(--akili-border)",
-                    }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                            <IconOverwatch size={13} color="var(--akili-accent)" />
-                            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--akili-accent)" }}>
-                                Overwatch
-                            </span>
-                            {mode === "results" && stats && (
-                                <span style={{ fontSize: 9, color: "var(--akili-text-muted)", marginLeft: 2 }}>· {stats.total}</span>
-                            )}
-                        </div>
-                        <button onClick={e => { e.stopPropagation(); onClose() }} style={{
-                            ...S.btn, color: "var(--akili-text-muted)", fontSize: 18, padding: "4px 8px",
-                        }}>✕</button>
-                    </div>
-                </div>
-                {!collapsed && (
-                    <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch" }}>
-                        <SidebarContent {...rest} mode={mode} stats={stats} isMobile />
+                        <button
+                            onClick={saveZone}
+                            disabled={!zoneName.trim() || savingZone}
+                            style={{
+                                width: "100%", padding: "6px 0",
+                                background:   zoneName.trim() ? "rgba(255,204,0,0.1)"     : "rgba(255,255,255,0.04)",
+                                border:       `1px solid ${zoneName.trim() ? "rgba(255,204,0,0.3)" : "rgba(255,255,255,0.06)"}`,
+                                borderRadius: 6,
+                                color:        zoneName.trim() ? "#FFCC00" : "rgba(255,255,255,0.2)",
+                                fontSize: 11, fontWeight: 600,
+                                cursor:       zoneName.trim() ? "pointer" : "not-allowed",
+                            }}
+                        >
+                            {savingZone ? "⟳ Saving…" : "📍 Save Zone + Schedule Scan"}
+                        </button>
                     </div>
                 )}
-            </div>
-        </>
-    )
-}
 
-// ── Public export ─────────────────────────────────────────────────────────────
-export default function OverwatchSidebar({ isMobile, ...props }) {
-    return isMobile
-        ? <MobileSidebar {...props} />
-        : <DesktopSidebar {...props} />
+                {/* Saved Zones */}
+                {savedZones.length > 0 && (
+                    <div style={S.section}>
+                        <div style={S.label}>Saved Zones ({savedZones.length})</div>
+                        {savedZones.map((zone, i) => (
+                            <div key={zone.system_id || zone.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", background: "rgba(255,255,255,0.03)", borderRadius: 6, marginBottom: 4 }}>
+                                <span style={{ fontSize: 10 }}>📍</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {zone.name}
+                                    </div>
+                                    {zone.next_scan_at && (
+                                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginTop: 1 }}>
+                                            Next: {new Date(zone.next_scan_at).toLocaleDateString()}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+            </div>
+        </div>
+    )
 }

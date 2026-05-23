@@ -94,7 +94,9 @@ export default function GlobeView({
     overwatchEnabled    = false,
     overwatchDetections = [],
     overwatchDrawActive = false,
+    overwatchDrawMode   = "rectangle",
     onOverwatchBounds   = null,
+    onOverwatchPolygon  = null,
     overwatchSentinelOverlay = null,
     // Satellite imagery overlay (Sentinel-2)
     satelliteEnabled = false,
@@ -417,8 +419,13 @@ export default function GlobeView({
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />
 
-                {/* ── Overwatch draw mode: two-click rectangle selection on globe ── */}
-                <GlobeOverwatchDrawLayer active={overwatchDrawActive} onBounds={onOverwatchBounds} />
+                {/* ── Overwatch draw mode: rectangle or polygon selection on globe ── */}
+                <GlobeOverwatchDrawLayer
+                    active={overwatchDrawActive}
+                    drawMode={overwatchDrawMode}
+                    onBounds={onOverwatchBounds}
+                    onPolygon={onOverwatchPolygon}
+                />
 
                 {/* ── Infrastructure layers (viewport-culled) ─────────────────── */}
                 <GlobeAirportLayer enabled={airportsEnabled} viewBounds={viewBounds} />

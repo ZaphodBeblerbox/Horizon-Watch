@@ -166,7 +166,9 @@ export default function App() {
     const [owAnalyzing,  setOwAnalyzing]  = useState(false)
     const [owBounds,     setOwBounds]     = useState(null)
     const [owSentinelOverlay,  setOwSentinelOverlay]  = useState(null)  // {image_b64, bounds}
-    const [owSentinelLoading,  setOwSentinelLoading]  = useState(false)
+    const [owSentinelLoading,  setOwSentinelLoading]  = useState(false) // kept for legacy compat
+    const [overwatchDrawMode,  setOverwatchDrawMode]  = useState("rectangle")
+    const [owPolygon,          setOwPolygon]          = useState(null)
     const [showLoginModal,    setShowLoginModal]    = useState(false)
 
     // ── Director Mode ──────────────────────────────────────────────────────────
@@ -930,17 +932,28 @@ export default function App() {
         setDirectorScene(null)
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Overwatch scan handler (called from GlobeOverwatchDrawLayer bounds callback) ──
-    const handleOverwatchBounds = useCallback(async (bounds) => {
-        setOverwatchDrawActive(false)
-        setOwMode("analyzing")
+    // ── Overwatch draw callbacks ───────────────────────────────────────────────
+    const handleOverwatchBounds = useCallback((bounds) => {
         setOwBounds(bounds)
+        setOwPolygon(null)
+    }, [])
+
+    const handleOverwatchPolygon = useCallback(({ vertices, bounds }) => {
+        setOwBounds(bounds)
+        setOwPolygon({ vertices, bounds })
+    }, [])
+
+    // ── Overwatch scan: called from sidebar ───────────────────────────────────
+    const handleOverwatchScan = useCallback(async ({ bounds: scanBounds, confidence, enhance }) => {
+        const bounds = scanBounds || owBounds
+        if (!bounds) return
+        setOwMode("analyzing")
         try {
             const tok = localStorage.getItem("hw-auth-token")
             const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
             const res = await fetch(`${API}/api/overwatch/detect`, {
                 method: "POST", headers,
-                body: JSON.stringify({ bounds, zoom: 15, confidence: owMinConf, enhance: owEnhance }),
+                body: JSON.stringify({ bounds, zoom: 15, confidence, enhance }),
             })
             if (res.ok) {
                 const data = await res.json()
@@ -961,27 +974,15 @@ export default function App() {
             console.error("[Overwatch]", e)
             setOwMode("idle")
         }
-    }, [owMinConf, owEnhance]) // eslint-disable-line react-hooks/exhaustive-deps
-
-    const handleCesiumSentinelLoad = useCallback(async (imageType) => {
-        if (!owBounds) return
-        setOwSentinelLoading(true)
-        try {
-            const tok = localStorage.getItem("hw-auth-token")
-            const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
-            const res = await fetch(`${API}/api/sentinel/imagery`, {
-                method: "POST", headers,
-                body: JSON.stringify({ bounds: owBounds, image_type: imageType, max_cloud: 30, days_back: 60 }),
-            })
-            if (res.ok) {
-                const data = await res.json()
-                if (data.image) setOwSentinelOverlay({ image_b64: data.image, bounds: owBounds })
-            }
-        } catch (e) { console.error("[Sentinel load]", e) }
-        finally { setOwSentinelLoading(false) }
     }, [owBounds]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    const handleCesiumRunML = useCallback(async () => {
+    // ── Sentinel overlay loaded from sidebar ──────────────────────────────────
+    const handleSentinelLoaded = useCallback(({ image_b64, bounds }) => {
+        setOwSentinelOverlay({ image_b64, bounds })
+    }, [])
+
+    // ── Sentinel ML scan: called from sidebar after overlay loaded ────────────
+    const handleSentinelScan = useCallback(async ({ confidence, enhance }) => {
         if (!owSentinelOverlay || !owBounds) return
         setOwMode("analyzing")
         try {
@@ -989,7 +990,7 @@ export default function App() {
             const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
             const res = await fetch(`${API}/api/overwatch/detect-image`, {
                 method: "POST", headers,
-                body: JSON.stringify({ image: owSentinelOverlay.image_b64, bounds: owBounds, confidence: owMinConf, enhance: false }),
+                body: JSON.stringify({ image: owSentinelOverlay.image_b64, bounds: owBounds, confidence, enhance }),
             })
             if (res.ok) {
                 const data = await res.json()
@@ -1002,7 +1003,7 @@ export default function App() {
                 setOwMode("results")
             } else { setOwMode("idle") }
         } catch (e) { console.error("[Sentinel ML]", e); setOwMode("idle") }
-    }, [owSentinelOverlay, owBounds, owMinConf]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [owSentinelOverlay, owBounds]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleReplayBriefing = useCallback(async (briefing) => {
         if (!briefing?.actions?.length) return
@@ -1472,8 +1473,10 @@ export default function App() {
                             heatmapHours={heatmapHours}
                             overwatchEnabled={overwatchActive}
                             overwatchDetections={overwatchDetections}
-                            overwatchDrawActive={overwatchDrawActive}
+                            overwatchDrawActive={overwatchActive}
+                            overwatchDrawMode={overwatchDrawMode}
                             onOverwatchBounds={handleOverwatchBounds}
+                            onOverwatchPolygon={handleOverwatchPolygon}
                             overwatchSentinelOverlay={owSentinelOverlay}
                             satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
                             directorScene={directorScene}
@@ -1906,65 +1909,43 @@ export default function App() {
                 </div>
             )}
 
-            {/* ── Overwatch panel — shown when overwatchActive, no Leaflet dependency ── */}
+            {/* ── Overwatch panel — professional ML detection sidebar ── */}
             {overwatchActive && (
                 <OverwatchSidebar
-                    isMobile={isMobile}
-                    open={true}
-                    onClose={() => { setOverwatchActive(false); setOverwatchDrawActive(false); setOwMode("idle") }}
-                    mode={owMode}
-                    drawTarget="ml"
-                    vertCount={0}
-                    onStartMLDraw={() => {
-                        setOwMode("drawing")
-                        setOverwatchDrawActive(true)
-                    }}
-                    onCancelDraw={() => { setOwMode("idle"); setOverwatchDrawActive(false) }}
-                    stats={owStats}
+                    bounds={owBounds}
+                    polygon={owPolygon}
                     detections={owDetections}
-                    visible={new Set()}
-                    minConf={owMinConf}
-                    onMinConfChange={setOwMinConf}
-                    enhance={owEnhance}
-                    onEnhanceToggle={() => setOwEnhance(v => !v)}
-                    enhanced={false}
-                    analysis={owAnalysis}
-                    analyzing={owAnalyzing}
-                    onAnalyze={async () => {
-                        if (!owBounds || !owDetections.length) return
+                    scanning={owMode === "analyzing"}
+                    onScan={handleOverwatchScan}
+                    onScanSentinel={handleSentinelScan}
+                    onSentinelLoaded={handleSentinelLoaded}
+                    onAssessArea={async (dets, bounds) => {
+                        if (!bounds || !dets?.length) return
                         setOwAnalyzing(true)
                         try {
                             const tok = localStorage.getItem("hw-auth-token")
                             const headers = { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
                             const res = await fetch(`${API}/api/overwatch/analyze`, {
                                 method: "POST", headers,
-                                body: JSON.stringify({ detections: owDetections, bounds: owBounds }),
+                                body: JSON.stringify({ detections: dets, bounds }),
                             })
                             if (res.ok) setOwAnalysis((await res.json()).analysis || null)
                         } catch (_) {}
                         setOwAnalyzing(false)
                     }}
-                    onDismissAnalysis={() => setOwAnalysis(null)}
-                    onClear={() => { setOwDetections([]); setOverwatchDetections([]); setOwStats(null); setOwAnalysis(null); setOwMode("idle"); setOwSentinelOverlay(null) }}
-                    onRescan={() => { setOwMode("idle"); setOverwatchDrawActive(false) }}
-                    savedScans={owSavedScans}
-                    onSave={() => {
-                        const entry = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), bounds: owBounds, detections: owDetections, stats: owStats }
-                        const next = [entry, ...owSavedScans].slice(0, 20)
-                        setOwSavedScans(next); persistSavedScans(next)
+                    onClear={() => {
+                        setOwDetections([])
+                        setOverwatchDetections([])
+                        setOwStats(null)
+                        setOwAnalysis(null)
+                        setOwMode("idle")
+                        setOwSentinelOverlay(null)
+                        setOwPolygon(null)
+                        setOwBounds(null)
                     }}
-                    onDeleteSaved={(id) => { const next = owSavedScans.filter(s => s.id !== id); setOwSavedScans(next); persistSavedScans(next) }}
-                    onRestoreSaved={(scan) => { setOwDetections(scan.detections || []); setOverwatchDetections(scan.detections || []); setOwStats(scan.stats || null); setOwBounds(scan.bounds || null); setOwMode("results") }}
-                    savedImages={owSavedImages}
-                    onDeleteSavedImage={(id) => { const next = owSavedImages.filter(i => i.id !== id); setOwSavedImages(next); persistSavedImages(next) }}
-                    selectedCats={new Set()}
-                    onCatToggle={() => {}}
-                    onFilterChange={() => {}}
-                    cesiumBounds={owBounds}
-                    onCesiumSentinelLoad={handleCesiumSentinelLoad}
-                    cesiumSentinelLoading={owSentinelLoading}
-                    cesiumSentinelLoaded={!!owSentinelOverlay}
-                    onCesiumRunML={handleCesiumRunML}
+                    drawMode={overwatchDrawMode}
+                    onDrawModeChange={setOverwatchDrawMode}
+                    isMobile={isMobile}
                 />
             )}
 
