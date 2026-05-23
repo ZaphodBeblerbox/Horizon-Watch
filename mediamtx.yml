@@ -1,0 +1,10 @@
+# MediaMTX config for Horizon Watch drone streaming
+# Start with: mediamtx mediamtx.yml
+
+rtmpAddress: :1935
+hlsAddress: :8888
+hlsAllowOrigin: '*'
+
+paths:
+  all:
+    source: publisher

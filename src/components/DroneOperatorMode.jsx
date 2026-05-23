@@ -152,14 +152,15 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         try {
             const parsed   = new URL(rtmpUrl)
             const segments = parsed.pathname.split('/').filter(Boolean)
-            // rtmp://host/live/drone → key=drone
-            // rtmp://host/drone     → single segment, key=drone (app name = stream name)
-            const key = segments[segments.length - 1] || 'stream'
-            url = `http://${parsed.hostname}:8080/hls/${key}.m3u8`
+            // rtmp://host/drone     → streamName=drone
+            // rtmp://host/live/drone → streamName=drone (last segment)
+            const streamName = segments[segments.length - 1] || 'stream'
+            // MediaMTX HLS path: http://host:8888/STREAMNAME/index.m3u8
+            url = `http://${parsed.hostname}:8888/${streamName}/index.m3u8`
             setHlsUrl(url)
         } catch {
             setStreamStatus('error')
-            setStreamError('Invalid RTMP URL — expected rtmp://host:1935/app or rtmp://host:1935/app/key')
+            setStreamError('Invalid RTMP URL — expected rtmp://host:1935/streamname')
             return
         }
 
@@ -363,9 +364,11 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                             HLS: {hlsUrl}
                         </div>
                     )}
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginBottom: 10, lineHeight: 1.5 }}>
-                        DJI Fly: Transmission → Live Streaming → RTMP<br/>
-                        nginx must be running on port 8080 (see nginx-rtmp.conf)
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginBottom: 10, lineHeight: 1.6 }}>
+                        1. Run: <code style={{ color: '#34AADC' }}>mediamtx mediamtx.yml</code><br/>
+                        2. DJI Fly: Transmission → Live Streaming → RTMP<br/>
+                        3. Stream name: <code style={{ color: '#34AADC' }}>drone</code><br/>
+                        HLS auto-detected from RTMP URL
                     </div>
                     <button
                         onClick={streamStatus === 'live' ? handleDisconnect : handleConnect}
