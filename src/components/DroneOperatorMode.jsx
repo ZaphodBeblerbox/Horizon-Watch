@@ -45,7 +45,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
 
     const [streamStatus,    setStreamStatus]    = useState('idle')
     const [streamError,     setStreamError]     = useState(null)
-    const [rtmpUrl,         setRtmpUrl]         = useState('rtmp://localhost:1935/live/horizon')
+    const [rtmpUrl,         setRtmpUrl]         = useState('rtmp://192.168.1.20:1935/drone')
     const [hlsUrl,          setHlsUrl]          = useState(null)
     const [showUrlInput,    setShowUrlInput]    = useState(false)
     const [detections,      setDetections]      = useState([])
@@ -150,13 +150,16 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
 
         let url
         try {
-            const parsed = new URL(rtmpUrl)
-            const key    = parsed.pathname.split('/').pop() || 'horizon'
+            const parsed   = new URL(rtmpUrl)
+            const segments = parsed.pathname.split('/').filter(Boolean)
+            // rtmp://host/live/drone → key=drone
+            // rtmp://host/drone     → single segment, key=drone (app name = stream name)
+            const key = segments[segments.length - 1] || 'stream'
             url = `http://${parsed.hostname}:8080/hls/${key}.m3u8`
             setHlsUrl(url)
         } catch {
             setStreamStatus('error')
-            setStreamError('Invalid RTMP URL — expected rtmp://host:1935/live/key')
+            setStreamError('Invalid RTMP URL — expected rtmp://host:1935/app or rtmp://host:1935/app/key')
             return
         }
 
