@@ -39,6 +39,7 @@ import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
 import LayersPanel from "./components/LayersPanel.jsx"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
 import ForgePanel, { ForgeGate } from "./components/ForgePanel.jsx"
+import DroneOperatorMode from "./components/DroneOperatorMode.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -805,7 +806,7 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge" }
+        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge", drone: "Drone Ops" }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
         const newId = crypto.randomUUID()
@@ -1448,6 +1449,7 @@ export default function App() {
                             }
                         }}
                         onOpenForge={() => openTab("forge")}
+                        onOpenDrone={() => openTab("drone")}
                     />
                 )}
 
@@ -1628,6 +1630,19 @@ export default function App() {
                                 onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
                             />
                         </ForgeGate>
+                    </div>
+                )}
+
+                {/* Drone Operator Mode — full-screen feed + detections tab */}
+                {tabs.some(t => t.type === "drone") && (
+                    <div style={{
+                        flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
+                        display: activeTabType === "drone" ? "flex" : "none",
+                        flexDirection: "column",
+                    }}>
+                        <DroneOperatorMode
+                            onClose={() => closeTab(tabs.find(t => t.type === "drone")?.id)}
+                        />
                     </div>
                 )}
 

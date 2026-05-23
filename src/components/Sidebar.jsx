@@ -238,6 +238,7 @@ export default function Sidebar({
     directorActive   = false,
     onDirectorClick  = null,
     onOpenForge      = null,
+    onOpenDrone      = null,
 }) {
     const isAdmin    = true
     const isAnalyst  = true
@@ -260,7 +261,8 @@ export default function Sidebar({
                        (id === "notif"      && notifOpen)                      ||
                        (id === "chat"       && chatOpen)                       ||
                        (id === "overwatch"  && overwatchActive)  ||
-                       (id === "forge"      && activeTabType === "forge")
+                       (id === "forge"      && activeTabType === "forge")  ||
+                       (id === "drone"      && activeTabType === "drone")
         if (active)         return "var(--akili-accent)"
         if (hovered === id) return "var(--akili-text-secondary)"
         return "var(--akili-text-muted)"
@@ -504,6 +506,37 @@ export default function Sidebar({
                         <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M2 14L7.5 8.5"/>
                             <rect x="6.5" y="1.5" width="5" height="5" rx="1" transform="rotate(-45 8 4)"/>
+                        </svg>
+                    </button>
+                )}
+                {/* Drone Operator Mode */}
+                {onOpenDrone && (
+                    <button
+                        onMouseEnter={() => setHovered("drone")}
+                        onMouseLeave={() => setHovered(null)}
+                        onClick={onOpenDrone}
+                        title="Drone Operator Mode"
+                        style={{
+                            width:          48,
+                            height:         40,
+                            display:        "flex",
+                            alignItems:     "center",
+                            justifyContent: "center",
+                            background:     activeTabType === "drone" ? "rgba(56,189,248,0.1)" : "none",
+                            border:         "none",
+                            borderLeft:     activeTabType === "drone" ? "2px solid #38bdf8" : "2px solid transparent",
+                            cursor:         "pointer",
+                            color:          iconColor("drone"),
+                            fontSize:       15,
+                            lineHeight:     1,
+                            transition:     "color 0.12s, background 0.12s",
+                            flexShrink:     0,
+                        }}
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="2"/>
+                            <path d="M5 5l3 3M16 5l-3 3M5 19l3-3M16 19l-3-3"/>
+                            <path d="M3 5a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM17 5a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM3 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM17 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0z"/>
                         </svg>
                     </button>
                 )}
