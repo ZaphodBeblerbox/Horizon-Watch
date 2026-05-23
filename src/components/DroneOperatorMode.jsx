@@ -152,13 +152,10 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         try {
             const parsed     = new URL(rtmpUrl)
             const segments   = parsed.pathname.split('/').filter(Boolean)
-            const streamName = segments[segments.length - 1] || 'stream'
-            const isLocal    = ['localhost', '127.0.0.1'].includes(window.location.hostname)
-            // On local dev: route through Vite proxy (/hls-proxy/*) to avoid CORS + cookie-check.
-            // On production or remote access: connect directly to mediamtx HLS port.
-            url = isLocal
-                ? `/hls-proxy/${streamName}/index.m3u8`
-                : `http://${parsed.hostname}:8888/${streamName}/index.m3u8`
+            const streamName = segments[segments.length - 1] || 'drone'
+            // Route through FastAPI (/api/drone/hls/…) — httpx follows the mediamtx
+            // cookie-check redirect server-side, so CORS and Secure-cookie issues vanish.
+            url = `/api/drone/hls/${streamName}/index.m3u8`
             setHlsUrl(url)
         } catch {
             setStreamStatus('error')
@@ -361,11 +358,15 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                             boxSizing: 'border-box', marginBottom: 6,
                         }}
                     />
-                    {hlsUrl && (
-                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginBottom: 6, fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                            HLS: {hlsUrl}
-                        </div>
-                    )}
+                    {rtmpUrl && (() => {
+                        try {
+                            const p = new URL(rtmpUrl)
+                            const key = p.pathname.split('/').filter(Boolean).pop() || 'drone'
+                            return <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginBottom: 6, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                                HLS: {`http://${p.hostname}:8888/${key}/index.m3u8`}
+                            </div>
+                        } catch { return null }
+                    })()}
                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginBottom: 10, lineHeight: 1.6 }}>
                         1. Run: <code style={{ color: '#34AADC' }}>mediamtx mediamtx.yml</code><br/>
                         2. DJI Fly: Transmission → Live Streaming → RTMP<br/>

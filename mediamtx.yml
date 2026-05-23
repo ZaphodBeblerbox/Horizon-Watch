@@ -7,16 +7,12 @@ logDestinations: [stdout]
 # RTMP ingest — DJI streams here
 rtmpAddress: :1935
 
-# HLS output — browser plays from here
+# HLS output — FastAPI proxy at /api/drone/hls/* handles cookie-check server-side
 hlsAddress: :8888
 hlsAllowOrigins: ['*']
 hlsAlwaysRemux: yes
 
-# Disable unused protocols to avoid port conflicts
-webrtcAddress: :8889
-srtAddress: :8890
-
-# API for status checks
+# API for path status checks
 api: yes
 apiAddress: :9997
 

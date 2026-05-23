@@ -59,25 +59,6 @@ export default defineConfig({
     },
     server: {
         proxy: {
-            // HLS proxy — forwards /hls-proxy/* to mediamtx :8888
-            // configure() rewrites the Location header on the cookie-check 302 so the
-            // redirect stays inside the proxy path instead of falling through to the SPA.
-            "/hls-proxy": {
-                target: "http://127.0.0.1:8888",
-                rewrite: (path) => path.replace(/^\/hls-proxy/, ""),
-                changeOrigin: true,
-                configure: (proxy) => {
-                    proxy.on("proxyRes", (proxyRes) => {
-                        if (proxyRes.statusCode === 302) {
-                            const loc = proxyRes.headers["location"]
-                            if (loc) {
-                                proxyRes.headers["location"] =
-                                    "/hls-proxy" + (loc.startsWith("/") ? loc : "/" + loc)
-                            }
-                        }
-                    })
-                },
-            },
             "/api": "http://127.0.0.1:8000",
             "/geocode": "http://127.0.0.1:8000",
             "/events": "http://127.0.0.1:8000",
