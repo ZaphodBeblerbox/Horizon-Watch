@@ -18743,9 +18743,25 @@ def _enrich_alert(alert: dict) -> dict:
 
 # ── Forge alerts ──────────────────────────────────────────────────────────────
 
+def _dedup_alerts(alerts: list) -> list:
+    """Keep only the most recent alert per source entity (vessel/aircraft).
+    News/surge alerts without a source_id are always kept."""
+    seen: dict = {}
+    for a in sorted(alerts,
+                    key=lambda x: x.get("created_at") or x.get("timestamp") or "",
+                    reverse=True):
+        sid = a.get("source_id") or a.get("entity_id")
+        if sid and sid not in seen:
+            seen[sid] = a
+        elif not sid:
+            seen[id(a)] = a
+    return list(seen.values())
+
+
 @app.get("/api/forge/alerts")
 def forge_get_alerts(_forge=Depends(_require_forge)):
-    return [_enrich_alert(dict(a)) for a in _forge_alerts]
+    enriched = [_enrich_alert(dict(a)) for a in _forge_alerts]
+    return _dedup_alerts(enriched)
 
 
 # ── Persistence API endpoints ──────────────────────────────────────────────────

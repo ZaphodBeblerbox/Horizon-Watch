@@ -22,6 +22,15 @@ import API_BASE                  from "../apiBase.js"
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
 const THREAT_COLORS = { critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }
+function sigColor(sig) {
+    const s = (sig || "").toLowerCase()
+    if (s.includes("ais") || s.includes("vessel") || s.includes("maritime")) return "#0ea5e9"
+    if (s.includes("adsb") || s.includes("aircraft") || s.includes("aviation")) return "#a78bfa"
+    if (s.includes("news") || s.includes("article") || s.includes("surge")) return "#f59e0b"
+    if (s.includes("sentinel") || s.includes("satellite") || s.includes("ndvi")) return "#22c55e"
+    if (s.includes("fusion")) return "#8b5cf6"
+    return "#64748b"
+}
 function ThreatRegionPopup({ data, onClose }) {
     const [explain,   setExplain]   = useState(null)
     const [expLoad,   setExpLoad]   = useState(false)
@@ -73,8 +82,16 @@ function ThreatRegionPopup({ data, onClose }) {
                 </div>
                 {/* Signals */}
                 {(data.signals || []).length > 0 && (
-                    <div style={{ fontSize: 9, color: "#475569", marginBottom: 10 }}>
-                        {data.signals.slice(0, 4).join(" · ")}
+                    <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Active signals</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {data.signals.slice(0, 6).map((sig, i) => (
+                                <span key={i} style={{
+                                    fontSize: 9, padding: "2px 6px", borderRadius: 3,
+                                    background: sigColor(sig) + "1a", color: sigColor(sig), fontWeight: 600,
+                                }}>{sig}</span>
+                            ))}
+                        </div>
                     </div>
                 )}
                 {/* Explain section */}

@@ -106,6 +106,25 @@ ADDITIONAL_SCAN_FEEDS = [
     ("Bellingcat", "https://www.bellingcat.com/feed/"),
     ("ACLED Data", "https://acleddata.com/feed/"),
     ("DW World English", "https://rss.dw.com/rdf/rss-en-world"),
+
+    # ----------------
+    # AFRICA (priority conflict monitoring — added for better coverage)
+    # ----------------
+    ("BBC Africa", "https://feeds.bbci.co.uk/news/world/africa/rss.xml"),
+    ("Reuters Africa", "https://feeds.reuters.com/reuters/AFRICANews"),
+    ("RFI English Africa", "https://www.rfi.fr/en/africa/rss"),
+    ("RFI French Africa", "https://www.rfi.fr/fr/afrique/rss"),
+    ("AP News Africa", "https://apnews.com/hub/africa/feed"),
+    ("VOA Africa", "https://www.voanews.com/api/zkorqommkqv"),
+    ("Radio Tamazuj", "https://radiotamazuj.org/en/feed"),
+    ("Malijet", "https://www.malijet.com/rss/feed.xml"),
+    ("Punch Nigeria", "https://punchng.com/feed/"),
+    ("Crisis Group Africa", "https://www.crisisgroup.org/rss-feeds/crisisgroup-africa"),
+    ("Sudan Tribune", "https://sudantribune.com/feed/"),
+    ("Garowe Online", "https://www.garoweonline.com/en/rss"),
+    ("The Africa Report", "https://www.theafricareport.com/feed/"),
+    ("Africa Intelligence", "https://www.africa-intelligence.com/rss.xml"),
+    ("Addis Standard", "https://addisstandard.com/feed/"),
 ]
 
 # City-specific feeds. Each entry: (source_name, url, country, city, default_lat, default_lon)
@@ -625,4 +644,18 @@ _register_region(EUROPE_EXPANDED_FEEDS, "europe")
 _register_region(ASIA_EXPANDED_FEEDS, "asia")
 _register_region(AMERICAS_EXPANDED_FEEDS, "americas")
 _register_region(GLOBAL_EXPANDED_FEEDS, "global")
+
+# Wire all regional expanded sets into ADDITIONAL_SCAN_FEEDS so they participate
+# in the main security scan. main.py deduplicates by URL — overlaps are harmless.
+ADDITIONAL_SCAN_FEEDS = list(ADDITIONAL_SCAN_FEEDS)
+_seen_expand = {url for _, url in ADDITIONAL_SCAN_FEEDS if url}
+for _feed_set in [AFRICA_EXPANDED_FEEDS, MIDDLE_EAST_EXPANDED_FEEDS,
+                  EUROPE_EXPANDED_FEEDS, ASIA_EXPANDED_FEEDS,
+                  AMERICAS_EXPANDED_FEEDS, GLOBAL_EXPANDED_FEEDS]:
+    for entry in _feed_set:
+        url  = entry[1] if isinstance(entry, tuple) else entry.get("url", "")
+        name = entry[0] if isinstance(entry, tuple) else entry.get("name", "")
+        if url and url not in _seen_expand:
+            ADDITIONAL_SCAN_FEEDS.append((name, url))
+            _seen_expand.add(url)
 _register_region(SPACE_FEEDS, "space")

@@ -535,6 +535,29 @@ class Signal(Base):
     )
 
 
+class FusionSignal(Base):
+    """Fusion engine active signals — persisted so signals survive restarts."""
+    __tablename__ = "fusion_signals"
+
+    id              = Column(Integer, primary_key=True)
+    signal_id       = Column(String, unique=True, index=True, nullable=False)
+    domain          = Column(String, nullable=False, index=True)
+    geo_key         = Column(String, nullable=False, index=True)
+    severity        = Column(String, nullable=True)
+    confidence      = Column(Float, nullable=True)
+    relevance_score = Column(Float, nullable=True)
+    lat             = Column(Float, nullable=True)
+    lon             = Column(Float, nullable=True)
+    location_name   = Column(String, nullable=True)
+    region_id       = Column(String, nullable=True)
+    country         = Column(String, nullable=True)
+    rule_name       = Column(String, nullable=True)
+    summary         = Column(String, nullable=True)
+    payload         = Column(Text, nullable=True)   # full signal JSON
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at      = Column(DateTime, nullable=False)
+
+
 class NewsArticle(Base):
     """Persisted news article with LLM intelligence fields."""
     __tablename__ = "news_articles"

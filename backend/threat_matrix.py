@@ -19,51 +19,61 @@ REGIONS: dict = {
         "region_ids": ["REG-NORSEA"],
         "bbox": {"min_lat": 53.0, "max_lat": 66.0, "min_lon": 10.0, "max_lon": 30.0},
         "countries": ["Finland", "Estonia", "Latvia", "Lithuania", "Poland", "Germany", "Sweden", "Denmark", "Russia", "Belarus"],
+        "country_codes": ["FI", "EE", "LV", "LT", "PL", "DE", "SE", "DK", "RU", "BY"],
     },
     "East Mediterranean": {
         "region_ids": ["REG-MED"],
         "bbox": {"min_lat": 30.0, "max_lat": 37.0, "min_lon": 25.0, "max_lon": 37.0},
         "countries": ["Greece", "Turkey", "Cyprus", "Lebanon", "Israel", "Syria", "Egypt", "Libya", "Palestine"],
+        "country_codes": ["GR", "TR", "CY", "LB", "IL", "PS", "SY", "EG", "LY"],
     },
     "Black Sea / Ukraine": {
         "region_ids": [],
         "bbox": {"min_lat": 40.0, "max_lat": 50.0, "min_lon": 27.0, "max_lon": 42.0},
         "countries": ["Ukraine", "Romania", "Bulgaria", "Georgia", "Turkey", "Russia", "Moldova"],
+        "country_codes": ["UA", "RO", "BG", "GE", "TR", "RU", "MD"],
     },
     "Persian Gulf": {
         "region_ids": ["REG-REDSEA"],
         "bbox": {"min_lat": 23.0, "max_lat": 30.0, "min_lon": 48.0, "max_lon": 60.0},
         "countries": ["Iran", "Iraq", "Kuwait", "Saudi Arabia", "Qatar", "United Arab Emirates", "Oman", "Bahrain"],
+        "country_codes": ["IR", "IQ", "KW", "SA", "QA", "AE", "OM", "BH"],
     },
     "Red Sea / Bab el-Mandeb": {
         "region_ids": ["REG-REDSEA"],
         "bbox": {"min_lat": 12.0, "max_lat": 22.0, "min_lon": 32.0, "max_lon": 45.0},
         "countries": ["Yemen", "Djibouti", "Eritrea", "Somalia", "Ethiopia", "Saudi Arabia", "Egypt", "Sudan"],
+        "country_codes": ["YE", "DJ", "ER", "SO", "ET", "SA", "EG", "SD"],
     },
     "Sahel": {
         "region_ids": [],
         "bbox": {"min_lat": 10.0, "max_lat": 20.0, "min_lon": -15.0, "max_lon": 15.0},
         "countries": ["Mali", "Niger", "Burkina Faso", "Nigeria", "Chad", "Mauritania", "Senegal", "Guinea", "Gambia"],
+        "country_codes": ["ML", "NE", "BF", "NG", "TD", "MR", "SN", "GN", "GM"],
     },
     "Horn of Africa": {
         "region_ids": [],
         "bbox": {"min_lat": -5.0, "max_lat": 15.0, "min_lon": 35.0, "max_lon": 55.0},
         "countries": ["Somalia", "Ethiopia", "Djibouti", "Eritrea", "Kenya", "South Sudan"],
+        "country_codes": ["SO", "ET", "DJ", "ER", "KE", "SS"],
     },
     "South China Sea": {
         "region_ids": ["REG-SEASIA"],
         "bbox": {"min_lat": 5.0, "max_lat": 25.0, "min_lon": 105.0, "max_lon": 125.0},
         "countries": ["China", "Vietnam", "Philippines", "Malaysia", "Brunei", "Taiwan", "Indonesia"],
+        "country_codes": ["CN", "VN", "PH", "MY", "BN", "TW", "ID"],
     },
     "Taiwan Strait": {
         "region_ids": ["REG-SEASIA"],
         "bbox": {"min_lat": 22.0, "max_lat": 28.0, "min_lon": 116.0, "max_lon": 125.0},
         "countries": ["China", "Taiwan"],
+        "country_codes": ["CN", "TW"],
     },
     "Indian Ocean": {
         "region_ids": ["REG-IND"],
         "bbox": {"min_lat": -10.0, "max_lat": 15.0, "min_lon": 55.0, "max_lon": 80.0},
         "countries": ["India", "Sri Lanka", "Maldives", "Pakistan", "Iran", "Oman", "Mozambique", "Tanzania"],
+        "country_codes": ["IN", "LK", "MV", "PK", "IR", "OM", "MZ", "TZ"],
     },
 }
 
@@ -184,22 +194,45 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
     except Exception:
         pass
 
-    # ── 6. Surge bonus ────────────────────────────────────────────────────────
+    # ── 6. Surge bonus (DB-first, fallback to in-memory) ─────────────────────
     surge_bonus = 0
     try:
-        from surge_engine import _surge_scores
+        from database import SurgeEvent
         region_countries_lower = {c.lower() for c in region.get("countries", [])}
-        region_ids_set = set(region.get("region_ids", []))
-        for (country, surge_region_id), data in list(_surge_scores.items()):
-            if data["expires_at"] < now:
-                continue
-            if surge_region_id and surge_region_id in region_ids_set:
-                surge_bonus += data["score_bonus"]
-            elif country and country.lower() in region_countries_lower:
-                surge_bonus += data["score_bonus"]
-        surge_bonus = min(surge_bonus, 25)
-    except ImportError:
-        pass
+        region_codes_upper     = {c.upper() for c in region.get("country_codes", [])}
+        surges = (db.query(SurgeEvent)
+                  .filter(SurgeEvent.status == "active",
+                          SurgeEvent.expires_at > now)
+                  .all())
+        for s in surges:
+            in_region = False
+            if s.lat and s.lon:
+                in_region = _in_bbox(s.lat, s.lon, bbox)
+            if not in_region and s.location_country:
+                lc = s.location_country.lower()
+                in_region = lc in region_countries_lower
+            if not in_region and s.location_country and region_codes_upper:
+                in_region = s.location_country.upper() in region_codes_upper
+            if in_region:
+                sev_pts = {"critical": 20, "high": 12, "medium": 6, "low": 3}
+                surge_bonus += sev_pts.get(s.severity or "medium", 6)
+        surge_bonus = min(surge_bonus, 30)
+    except Exception:
+        # Fallback to in-memory surge scores
+        try:
+            from surge_engine import _surge_scores
+            region_countries_lower = {c.lower() for c in region.get("countries", [])}
+            region_ids_set = set(region.get("region_ids", []))
+            for (country, surge_region_id), data in list(_surge_scores.items()):
+                if data["expires_at"] < now:
+                    continue
+                if surge_region_id and surge_region_id in region_ids_set:
+                    surge_bonus += data["score_bonus"]
+                elif country and country.lower() in region_countries_lower:
+                    surge_bonus += data["score_bonus"]
+            surge_bonus = min(surge_bonus, 25)
+        except ImportError:
+            pass
 
     # ── 7. Composite score ────────────────────────────────────────────────────
     base           = min(weighted_alert_score * 2, 40)

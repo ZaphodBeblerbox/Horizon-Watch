@@ -37,6 +37,35 @@ def _new_fusion_id() -> str:
     return f"FUSION-{uuid.uuid4().hex[:8].upper()}"
 
 
+# ── Zone bbox cache for geo key resolution (loaded once from DB) ──────────────
+_zone_bboxes: list = []
+_zone_bboxes_loaded: bool = False
+
+
+def _maybe_load_zone_bboxes():
+    global _zone_bboxes, _zone_bboxes_loaded
+    if _zone_bboxes_loaded:
+        return
+    try:
+        from database import SessionLocal, StrategicZone
+        db = SessionLocal()
+        try:
+            zones = db.query(StrategicZone).filter_by(enabled=True).all()
+            _zone_bboxes = [{
+                "zone_id": z.zone_id,
+                "min_lat": z.bbox_min_lat, "max_lat": z.bbox_max_lat,
+                "min_lon": z.bbox_min_lon, "max_lon": z.bbox_max_lon,
+                "area": (z.bbox_max_lat - z.bbox_min_lat) * (z.bbox_max_lon - z.bbox_min_lon),
+            } for z in zones]
+            _zone_bboxes.sort(key=lambda z: z["area"])  # smallest zone first → most specific
+            _zone_bboxes_loaded = True
+            print(f"[fusion] Loaded {len(_zone_bboxes)} zone bboxes for geo key resolution")
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[fusion] Zone bbox load error: {e}")
+
+
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     R = 6371.0
     dlat = math.radians(lat2 - lat1)
@@ -89,6 +118,43 @@ class FusionEngine:
         print(f"[FUSION] Signal received: {signal.get('domain')} | "
               f"{signal.get('signal_id')} | geo_key={geo_key} | relevance={signal.get('relevance_score', 0)}")
         self._add_signal(geo_key, signal)
+
+        # Persist to DB so signals survive restarts
+        try:
+            from database import SessionLocal, FusionSignal
+            import json as _json
+            _db = SessionLocal()
+            try:
+                sig_id = signal.get("signal_id") or str(uuid.uuid4())
+                expires = datetime.datetime.utcnow() + timedelta(hours=max(self.fusion_window_hours, 12))
+                existing = _db.query(FusionSignal).filter_by(signal_id=sig_id).first()
+                if existing:
+                    existing.expires_at = expires
+                    existing.payload    = _json.dumps(signal, default=str)
+                else:
+                    _db.add(FusionSignal(
+                        signal_id=sig_id,
+                        domain=signal.get("domain", ""),
+                        geo_key=geo_key,
+                        severity=signal.get("severity", "medium"),
+                        confidence=float(signal.get("confidence", 0.8)),
+                        relevance_score=float(signal.get("relevance_score", 0)),
+                        lat=signal.get("lat"),
+                        lon=signal.get("lon"),
+                        location_name=signal.get("location_name"),
+                        region_id=signal.get("region_id"),
+                        country=signal.get("country"),
+                        rule_name=signal.get("rule_name"),
+                        summary=str(signal.get("summary", ""))[:500],
+                        payload=_json.dumps(signal, default=str),
+                        expires_at=expires,
+                    ))
+                _db.commit()
+            finally:
+                _db.close()
+        except Exception as _pe:
+            print(f"[fusion] Signal persist error: {_pe}")
+
         current = self.active_signals.get(geo_key, [])
         domains_now = set(s["domain"] for s in current)
         print(f"[FUSION] Active signals for {geo_key}: {len(current)} | domains={domains_now}")
@@ -138,10 +204,17 @@ class FusionEngine:
     def _resolve_geo_key(self, signal: dict) -> str:
         if signal.get("region_id"):
             return f"REG:{signal['region_id']}"
-        if signal.get("country"):
-            return f"CTY:{signal['country'].lower()}"
         lat = signal.get("lat")
         lon = signal.get("lon")
+        if lat is not None and lon is not None:
+            # Zone bbox lookup — signals in the same strategic zone always fuse
+            _maybe_load_zone_bboxes()
+            for zb in _zone_bboxes:
+                if (zb["min_lat"] <= lat <= zb["max_lat"] and
+                        zb["min_lon"] <= lon <= zb["max_lon"]):
+                    return f"zone:{zb['zone_id']}"
+        if signal.get("country"):
+            return f"CTY:{signal['country'].lower()}"
         if lat is not None and lon is not None:
             return f"GEO:{round(lat, 1)},{round(lon, 1)}"
         return "GEO:unknown"
@@ -472,6 +545,42 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
             suppressed_alert_ids = [s["alert_id"] for s in signals if s.get("alert_id") and s["signal_id"] not in self.signal_to_fusion]
             self._fire_callback(existing, suppressed_alert_ids)
 
+    def _reload_signals_from_db(self):
+        """Reload non-expired fusion signals from DB on startup."""
+        try:
+            from database import SessionLocal, FusionSignal
+            import json as _json
+            _db = SessionLocal()
+            try:
+                now = datetime.datetime.utcnow()
+                rows = _db.query(FusionSignal).filter(FusionSignal.expires_at > now).all()
+                reloaded = 0
+                for row in rows:
+                    try:
+                        payload = _json.loads(row.payload or "{}")
+                        if not payload.get("signal_id"):
+                            payload["signal_id"] = row.signal_id
+                        if not isinstance(payload.get("timestamp"), datetime.datetime):
+                            payload["timestamp"] = row.created_at
+                        geo_key = row.geo_key
+                        if geo_key not in self.active_signals:
+                            self.active_signals[geo_key] = []
+                        existing_ids = {s["signal_id"] for s in self.active_signals[geo_key]}
+                        if row.signal_id not in existing_ids:
+                            self.active_signals[geo_key].append(payload)
+                            reloaded += 1
+                    except Exception:
+                        pass
+                print(f"[fusion] Reloaded {reloaded} signals from DB "
+                      f"({len(self.active_signals)} geo keys)")
+                # Re-evaluate fusion for any geo key that now meets thresholds
+                for geo_key in list(self.active_signals.keys()):
+                    self._evaluate_fusion(geo_key)
+            finally:
+                _db.close()
+        except Exception as e:
+            print(f"[fusion] Signal reload error: {e}")
+
     def _suppress_assessments(self, db, assessment_ids: list):
         if not assessment_ids:
             return
@@ -487,3 +596,4 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
 
 # Module-level singleton
 fusion_engine = FusionEngine()
+fusion_engine._reload_signals_from_db()

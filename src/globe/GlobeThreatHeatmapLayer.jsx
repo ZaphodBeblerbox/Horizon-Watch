@@ -10,6 +10,14 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 
 const CesiumMath = { toRadians: (d) => d * Math.PI / 180 }
 
+// Deterministic per-cell noise — eliminates flicker on re-render
+function cellNoise(lat, lon) {
+    let h = (Math.round(lat * 10) * 1000003 + Math.round(lon * 10)) | 0
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
+    return ((h ^ (h >>> 16)) >>> 0) / 0xffffffff  // 0..1
+}
+
 // Region bbox definitions (must match backend threat_matrix.py REGIONS)
 const REGION_BBOXES = {
     "Baltic":                  { west: 10,   south: 53,  east: 30,  north: 66  },
@@ -107,8 +115,8 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                     // 1° grid cells within the region
                     for (let lat = bbox.south; lat < bbox.north; lat += 1) {
                         for (let lon = bbox.west; lon < bbox.east; lon += 1) {
-                            const cellScore = Math.max(0, score + (Math.random() - 0.5) * 10)
-                            const alpha = 0.04 + (cellScore / 100) * 0.22
+                            const cellScore = Math.max(0, score + (cellNoise(lat, lon) - 0.5) * 10)
+                            const alpha = 0.05 + Math.pow(cellScore / 100, 0.7) * 0.40
                             const color = scoreToRgba(cellScore, alpha)
                             const id    = `hm-${s.region_name}-${lat}-${lon}`
                             const ent   = viewer.entities.add({
@@ -158,6 +166,26 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                         region_name: s.region_name, threat_score: score, threat_level: s.threat_level,
                     })
                     added.push(labelEnt)
+
+                    // Glow rings for high/critical regions give visual weight without animation
+                    if (score >= 55) {
+                        const scales = score >= 80 ? [1.04, 1.09] : [1.04]
+                        scales.forEach((scale, ri) => {
+                            const dLat = (bbox.north - bbox.south) * (scale - 1) / 2
+                            const dLon = (bbox.east  - bbox.west)  * (scale - 1) / 2
+                            const ringAlpha = score >= 80 ? 0.10 - ri * 0.04 : 0.07
+                            const ringId  = `hm-ring-${s.region_name}-${ri}`
+                            const ringEnt = viewer.entities.add({
+                                id: ringId,
+                                rectangle: {
+                                    coordinates:     Rectangle.fromDegrees(bbox.west - dLon, bbox.south - dLat, bbox.east + dLon, bbox.north + dLat),
+                                    material:        scoreToRgba(score, ringAlpha),
+                                    heightReference: HeightReference.CLAMP_TO_GROUND,
+                                },
+                            })
+                            added.push(ringEnt)
+                        })
+                    }
                 })
 
                 entitiesRef.current = added
@@ -187,14 +215,15 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                         position: Cartesian3.fromDegrees(lon, lat, 0),
                         point: {
                             color:              col,
-                            pixelSize:          sev === "critical" ? 8 : sev === "high" ? 6 : 4,
-                            outlineColor:       Color.WHITE.withAlpha(0.3),
-                            outlineWidth:       1,
+                            pixelSize:          sev === "critical" ? 9 : sev === "high" ? 7 : 5,
+                            outlineColor:       Color.WHITE.withAlpha(0.35),
+                            outlineWidth:       1.5,
                             heightReference:    HeightReference.CLAMP_TO_GROUND,
                             disableDepthTestDistance: Number.POSITIVE_INFINITY,
                             scaleByDistance:    new NearFarScalar(1e4, 1.8, 2e6, 0.6),
                         },
                     })
+                    setEntity(id, "alert", a)
                     added.push(ent)
                 })
                 alertEntRef.current = added
