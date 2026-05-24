@@ -1,114 +1,356 @@
+import { useState, useEffect, useRef } from "react"
+import { Color, PolylineDashMaterialProperty, Cartesian3 } from "cesium"
+import API_BASE from "../apiBase.js"
 import { ALERT_ICONS, FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
 
-const DOMAIN_LABELS = {
-    SENTINEL:    "Satellite",
-    AIS:         "AIS",
-    ADSB:        "ADS-B",
-    FUSION:      "Fusion",
-    NEWS:        "News",
-    OREF:        "Civil Alert",
-    USGS:        "Seismic",
-    GDACS:       "Disaster",
-    OVERWATCH:   "Overwatch",
+const SEV_COLOR = {
+    critical: "#f87171",
+    high:     "#fb923c",
+    medium:   "#fbbf24",
+    info:     "#60a5fa",
+}
+const SEV_BG = {
+    critical: "rgba(248,113,113,0.12)",
+    high:     "rgba(251,146,60,0.12)",
+    medium:   "rgba(251,191,36,0.12)",
+    info:     "rgba(96,165,250,0.12)",
+}
+const SRC_COLOR = { AIS: "#0ea5e9", ADSB: "#a78bfa", NEWS: "#34d399", FUSION: "#BF5AF2" }
+
+const WHAT_TO_WATCH = {
+    "Cable Loiterer":       "Monitor vessel destination and AIS pattern over next 6h. Note any sister vessels in the area. Cross-check against known cable maintenance schedules.",
+    "Dark Ship":            "Check vessel last known position, destination, and cargo type. Cross-reference with port entry logs. Watch for re-emergence at a different location.",
+    "Chokepoint Loitering": "Assess vessel type and ownership. Verify against scheduled transits. Monitor for any communication with shore facilities or other vessels.",
+    "Ship-to-Ship Transfer":"Identify both vessels. Check ownership chains and recent port calls. Note the geographic context — proximity to sanctioned ports or EEZs.",
+    "Military Squawk":      "Identify aircraft type and origin. Correlate with any active military exercises in the region. Monitor for secondary squawk changes.",
+    "Transponder Anomaly":  "Treat as potential emergency until confirmed otherwise. Check last known route and destination. Notify relevant authorities if squawk 7700 persists.",
 }
 
-export default function GlobeAlertPopup({ data, onClose }) {
-    const a = data || {}
-    const sevColor = a.severity === "critical" ? "#f87171" : a.severity === "high" ? "#fb923c" : a.severity === "medium" ? "#fbbf24" : "#60a5fa"
-    const sevBg    = a.severity === "critical" ? "rgba(248,113,113,0.12)" : a.severity === "high" ? "rgba(251,146,60,0.12)" : a.severity === "medium" ? "rgba(251,191,36,0.12)" : "rgba(96,165,250,0.12)"
-    const srcColor = a.source === "AIS" ? "#0ea5e9" : a.source === "ADSB" ? "#a78bfa" : "#34d399"
-    const srcLabel = DOMAIN_LABELS[a.source] || a.source
+function timeAgo(ts) {
+    if (!ts) return ""
+    try {
+        const m = Math.floor((Date.now() - new Date(ts).getTime()) / 60000)
+        if (m < 1)    return "just now"
+        if (m < 60)   return `${m}m ago`
+        if (m < 1440) return `${Math.floor(m / 60)}h ago`
+        return `${Math.floor(m / 1440)}d ago`
+    } catch { return "" }
+}
 
-    const iconKey   = a.icon_type || a.rule_type || ""
-    const iconDef   = ALERT_ICONS[iconKey] || {}
-    const typeColor = iconDef.color || sevColor
-    const explanation = FORGE_EXPLANATIONS[iconKey] || null
+function FlagImg({ url, emoji, size = 20 }) {
+    const [err, setErr] = useState(false)
+    if (!url || err) return <span style={{ fontSize: size * 0.8 }}>{emoji || "🏳"}</span>
+    return (
+        <img
+            src={url}
+            alt=""
+            style={{ width: size * 1.4, height: size, objectFit: "cover", borderRadius: 2, flexShrink: 0 }}
+            onError={() => setErr(true)}
+        />
+    )
+}
+
+function TrackSummary({ track }) {
+    if (!track?.length) return null
+    const first = track[0]
+    const last  = track[track.length - 1]
+    const startTime = first?.timestamp ? new Date(first.timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) + " UTC" : null
+
+    let distNm = null
+    if (track.length >= 2) {
+        let total = 0
+        for (let i = 1; i < track.length; i++) {
+            const a = track[i - 1], b = track[i]
+            const dLat = (b.lat - a.lat) * Math.PI / 180
+            const dLon = (b.lon - a.lon) * Math.PI / 180
+            const sin1 = Math.sin(dLat / 2), sin2 = Math.sin(dLon / 2)
+            const c    = sin1 * sin1 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * sin2 * sin2
+            total += 6371 * 2 * Math.atan2(Math.sqrt(c), Math.sqrt(1 - c))
+        }
+        distNm = (total * 0.539957).toFixed(1)
+    }
 
     return (
-        <div style={{ padding: "12px 14px", fontFamily: "system-ui, sans-serif", minWidth: 240 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, gap: 8 }}>
-                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 3, background: sevBg, color: sevColor, fontWeight: 700 }}>
-                        {(a.severity || "MEDIUM").toUpperCase()}
-                    </span>
-                    {a.source && (
-                        <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 3, background: "rgba(148,163,184,0.08)", color: srcColor, fontWeight: 600 }}>
-                            {srcLabel}
-                        </span>
-                    )}
+        <div style={{ fontSize: 10, color: "#64748b", marginTop: 4, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {startTime && <span>Started {startTime}</span>}
+            {distNm && <span>Distance: {distNm} nm</span>}
+            <span>{track.length} points</span>
+        </div>
+    )
+}
+
+export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
+    const [trackData,   setTrackData]   = useState(null)
+    const [forgeLinks,  setForgeLinks]  = useState([])
+    const [photoErr,    setPhotoErr]    = useState(false)
+    const trackEntityRef = useRef(null)
+
+    const sev      = a.severity || "medium"
+    const sevColor = SEV_COLOR[sev]  || "#fbbf24"
+    const sevBg    = SEV_BG[sev]     || "rgba(251,191,36,0.12)"
+    const srcColor = SRC_COLOR[a.source] || "#94a3b8"
+    const src      = (a.source || "").toUpperCase()
+
+    const mmsi = a.mmsi  || a.vessel_mmsi || ""
+    const icao = a.icao  || a.hex         || a.icao_hex || ""
+    const alertId = a.id || a.alert_id    || ""
+
+    const explanation  = a.explanation || FORGE_EXPLANATIONS[a.icon_type || a.rule_type || ""] || null
+    const watchNote    = Object.keys(WHAT_TO_WATCH).find(k => (a.rule_name || a.message || "").includes(k))
+    const watchText    = watchNote ? WHAT_TO_WATCH[watchNote] : null
+
+    // Fetch track
+    useEffect(() => {
+        if (!mmsi && !icao) return
+        let cancelled = false
+        const url = mmsi
+            ? `${API_BASE}/api/vessels/${mmsi}/track?hours=24`
+            : `${API_BASE}/api/aircraft/${icao}/track?hours=12`
+        fetch(url)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && d) setTrackData(d) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [mmsi, icao])
+
+    // Render Cesium track polyline
+    useEffect(() => {
+        const viewer = viewerRef?.current?.cesiumElement
+        if (!viewer || !trackData?.track?.length) return
+
+        // Remove previous track
+        if (trackEntityRef.current) {
+            try { viewer.entities.remove(trackEntityRef.current) } catch {}
+            trackEntityRef.current = null
+        }
+
+        const positions = trackData.track
+            .filter(p => p.lat != null && p.lon != null)
+            .map(p => Cartesian3.fromDegrees(p.lon, p.lat))
+        if (positions.length < 2) return
+
+        const trackColor = src === "ADSB" ? "#a78bfa" : "#0ea5e9"
+        trackEntityRef.current = viewer.entities.add({
+            polyline: {
+                positions,
+                width: 2,
+                material: new PolylineDashMaterialProperty({
+                    color:      Color.fromCssColorString(trackColor).withAlpha(0.7),
+                    dashLength: 16,
+                }),
+                clampToGround: true,
+            },
+        })
+
+        return () => {
+            if (trackEntityRef.current) {
+                try { viewer.entities.remove(trackEntityRef.current) } catch {}
+                trackEntityRef.current = null
+            }
+        }
+    }, [trackData, viewerRef, src])
+
+    // Fetch forge connections (ontology links for this alert)
+    useEffect(() => {
+        if (!alertId) return
+        let cancelled = false
+        fetch(`${API_BASE}/api/ontology-links?source_type=alert&source_id=${encodeURIComponent(alertId)}&limit=8`)
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { if (!cancelled) setForgeLinks(Array.isArray(d) ? d : []) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [alertId])
+
+    // Clean up track on unmount
+    useEffect(() => {
+        return () => {
+            const viewer = viewerRef?.current?.cesiumElement
+            if (viewer && trackEntityRef.current) {
+                try { viewer.entities.remove(trackEntityRef.current) } catch {}
+                trackEntityRef.current = null
+            }
+        }
+    }, [viewerRef])
+
+    const flagUrl  = a.vessel_flag_url  || a.aircraft_flag_url  || null
+    const flagEmoji= a.vessel_flag      || a.aircraft_flag      || null
+    const country  = a.vessel_country   || a.aircraft_country   || null
+    const isMilitary = a.aircraft_military
+
+    // Identity header line
+    const entityName = a.vessel || a.aircraft || a.entity_name || null
+    const entityId   = mmsi || icao || null
+
+    return (
+        <div style={{ fontFamily: "system-ui, sans-serif", overflow: "hidden" }}>
+
+            {/* Aircraft image (planespotters) */}
+            {src === "ADSB" && icao && !photoErr && (
+                <div style={{ position: "relative", background: "#070d17" }}>
+                    <img
+                        src={`${API_BASE}/api/aviation/photo/${icao}`}
+                        alt=""
+                        style={{ width: "100%", height: 130, objectFit: "cover", display: "block" }}
+                        onError={() => setPhotoErr(true)}
+                    />
+                    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 40, background: "linear-gradient(transparent, rgba(7,13,23,0.9))" }} />
                 </div>
-                <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0 }}>✕</button>
+            )}
+
+            {/* Header */}
+            <div style={{
+                padding: "10px 12px 8px",
+                borderBottom: `1px solid ${sevColor}30`,
+                background: "rgba(10,15,26,0.6)",
+            }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        {/* Flag + country + entity name */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+                            {flagUrl && <FlagImg url={flagUrl} emoji={flagEmoji} size={16} />}
+                            {country && <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500 }}>{country}</span>}
+                            {isMilitary && (
+                                <span style={{ fontSize: 9, fontWeight: 700, background: "#ef444422", color: "#f87171", padding: "1px 5px", borderRadius: 3, border: "1px solid #f8717140" }}>
+                                    MILITARY
+                                </span>
+                            )}
+                            {a.aircraft_service && (
+                                <span style={{ fontSize: 9, color: "#64748b" }}>{a.aircraft_service}</span>
+                            )}
+                        </div>
+                        {/* Entity name + id */}
+                        {(entityName || entityId) && (
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {entityName || ""}
+                                {entityId && <span style={{ fontSize: 10, color: "#475569", fontWeight: 400, marginLeft: 6 }}>{entityId}</span>}
+                            </div>
+                        )}
+                        {/* Severity + source badges */}
+                        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, background: sevBg, color: sevColor, fontWeight: 700 }}>
+                                {sev.toUpperCase()}
+                            </span>
+                            {src && (
+                                <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, background: "rgba(148,163,184,0.08)", color: srcColor, fontWeight: 600 }}>
+                                    {src}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                    <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: 0 }}>✕</button>
+                </div>
             </div>
 
-            <div style={{ color: "#e2e8f0", fontSize: 12, lineHeight: 1.55, marginBottom: 10 }}>{a.message || "—"}</div>
-
-            {explanation && (
-                <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 4 }}>
-                        What triggered this
-                    </div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
-                        {explanation}
-                    </div>
+            {/* Alert message */}
+            <div style={{ padding: "8px 12px 6px" }}>
+                <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.55, marginBottom: 8 }}>
+                    {a.message || a.title || "—"}
                 </div>
-            )}
 
-            {a.rule_name && (
-                <div style={{ color: "#334155", fontSize: 10, marginBottom: 6 }}>
-                    Rule: <span style={{ color: "#64748b" }}>{a.rule_name}</span>
-                </div>
-            )}
-
-            {a.timestamp && (
-                <div style={{ color: "#334155", fontSize: 10, marginBottom: 8 }}>
-                    {new Date(a.timestamp).toLocaleString()}
-                </div>
-            )}
-
-            {a.source === "AIS" && (a.vessel || a.mmsi || a.speed != null || a.flag) && (
-                <div style={{ borderTop: "1px solid rgba(148,163,184,0.06)", paddingTop: 8, marginBottom: 4 }}>
-                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Vessel</div>
-                    {[["Name", a.vessel], ["MMSI", a.mmsi], ["Speed", a.speed != null ? `${a.speed} kn` : null], ["Flag", a.flag], ["Dest", a.destination]].filter(([, v]) => v).map(([k, v]) => (
-                        <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
-                            <span style={{ color: "#475569", fontSize: 11 }}>{k}</span>
-                            <span style={{ color: "#94a3b8", fontSize: 11 }}>{v}</span>
+                {/* What is this */}
+                {explanation && (
+                    <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 3 }}>
+                            What is this
                         </div>
-                    ))}
-                </div>
-            )}
-
-            {a.source === "ADSB" && (a.aircraft || a.hex) && (
-                <div style={{ borderTop: "1px solid rgba(148,163,184,0.06)", paddingTop: 8, marginBottom: 4 }}>
-                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Aircraft</div>
-                    {[["Callsign", a.aircraft], ["ICAO24", a.hex]].filter(([, v]) => v).map(([k, v]) => (
-                        <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
-                            <span style={{ color: "#475569", fontSize: 11 }}>{k}</span>
-                            <span style={{ color: "#94a3b8", fontSize: 11 }}>{v}</span>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                            {explanation}
                         </div>
-                    ))}
-                </div>
-            )}
+                    </div>
+                )}
 
-            {(a.provenance?.source_entity || a.provenance?.trigger_reason) && (
-                <div style={{ borderTop: "1px solid rgba(148,163,184,0.06)", paddingTop: 8, marginBottom: 4 }}>
-                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Provenance</div>
-                    {a.provenance.source_entity && (
-                        <div style={{ color: "#64748b", fontSize: 10, marginBottom: 3, wordBreak: "break-word" }}>{a.provenance.source_entity}</div>
-                    )}
-                    {a.provenance.trigger_reason && (
-                        <div style={{ color: "#334155", fontSize: 10 }}>{a.provenance.trigger_reason}</div>
-                    )}
-                    {a.provenance.detection_rule && (
-                        <div style={{ color: "#334155", fontSize: 10 }}>Trigger: {a.provenance.detection_rule}</div>
-                    )}
-                </div>
-            )}
+                {/* What to watch */}
+                {watchText && (
+                    <div style={{ marginBottom: 8, padding: "6px 8px", background: "rgba(251,191,36,0.06)", borderRadius: 4, borderLeft: "2px solid rgba(251,191,36,0.35)" }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 3 }}>
+                            What to watch
+                        </div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
+                            {watchText}
+                        </div>
+                    </div>
+                )}
 
-            {a.lat != null && (
-                <div style={{ color: "#1e293b", fontSize: 10, marginTop: 6, textAlign: "right" }}>
-                    {Number(a.lat).toFixed(4)}, {Number(a.lng ?? a.lon ?? 0).toFixed(4)}
+                {/* Track section */}
+                {(mmsi || icao) && (
+                    <div style={{ marginBottom: 8, padding: "6px 8px", background: "rgba(14,165,233,0.06)", borderRadius: 4, border: "1px solid rgba(14,165,233,0.12)" }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 2 }}>
+                            {src === "ADSB" ? "Aircraft Track (last 12h)" : "Vessel Track (last 24h)"}
+                        </div>
+                        {trackData
+                            ? (trackData.point_count > 0
+                                ? <>
+                                    <div style={{ fontSize: 10, color: "#0ea5e9" }}>Track rendered on globe · {trackData.point_count} points</div>
+                                    <TrackSummary track={trackData.track} />
+                                  </>
+                                : <div style={{ fontSize: 10, color: "#475569" }}>No track data in window</div>
+                              )
+                            : <div style={{ fontSize: 10, color: "#475569" }}>Loading track…</div>
+                        }
+                    </div>
+                )}
+
+                {/* AIS vessel detail rows */}
+                {src === "AIS" && (a.vessel || mmsi || a.speed != null || a.flag) && (
+                    <div style={{ marginBottom: 8 }}>
+                        {[["Name", a.vessel], ["MMSI", mmsi || null], ["Speed", a.speed != null ? `${a.speed} kn` : null], ["Flag", a.flag], ["Dest", a.destination]]
+                            .filter(([, v]) => v)
+                            .map(([k, v]) => (
+                            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px solid rgba(148,163,184,0.04)", fontSize: 11 }}>
+                                <span style={{ color: "#475569" }}>{k}</span>
+                                <span style={{ color: "#94a3b8" }}>{v}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* ADSB aircraft detail rows */}
+                {src === "ADSB" && (a.aircraft || icao) && (
+                    <div style={{ marginBottom: 8 }}>
+                        {[["Callsign", a.aircraft], ["ICAO24", icao || null], ["Squawk", a.squawk], ["Alt", a.altitude != null ? `${a.altitude} ft` : null]]
+                            .filter(([, v]) => v)
+                            .map(([k, v]) => (
+                            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px solid rgba(148,163,184,0.04)", fontSize: 11 }}>
+                                <span style={{ color: "#475569" }}>{k}</span>
+                                <span style={{ color: "#94a3b8" }}>{v}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Forge connections */}
+                {forgeLinks.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 5 }}>
+                            Forge Connections
+                        </div>
+                        {forgeLinks.map((link, i) => (
+                            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 5, marginBottom: 3, fontSize: 11 }}>
+                                <span style={{ color: "rgba(255,255,255,0.2)", flexShrink: 0, marginTop: 1 }}>→</span>
+                                <span style={{ color: "rgba(255,255,255,0.75)", fontWeight: 500, flex: 1 }}>
+                                    {link.entity_name || link.entity_id}
+                                </span>
+                                <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", fontStyle: "italic", flexShrink: 0 }}>
+                                    {(link.link_type || link.relationship_type || "").toLowerCase().replace(/_/g, " ")}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Footer */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                    <div style={{ fontSize: 10, color: "#334155" }}>
+                        {a.lat != null && `${Number(a.lat).toFixed(3)}°, ${Number(a.lng ?? a.lon ?? 0).toFixed(3)}°`}
+                        {a.timestamp && <span style={{ marginLeft: 6 }}>{timeAgo(a.timestamp)}</span>}
+                    </div>
+                    {a.rule_name && (
+                        <div style={{ fontSize: 9, color: "#1e293b", textAlign: "right", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {a.rule_name}
+                        </div>
+                    )}
                 </div>
-            )}
+            </div>
         </div>
     )
 }

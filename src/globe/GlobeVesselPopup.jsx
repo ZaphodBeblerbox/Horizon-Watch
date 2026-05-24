@@ -2,8 +2,15 @@ import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
 import { VESSEL_COLORS, vesselShipType } from "./iconUtils.js"
 
+function FlagImg({ url, emoji }) {
+    const [err, setErr] = useState(false)
+    if (!url || err) return <span style={{ fontSize: 14 }}>{emoji || "🏳"}</span>
+    return <img src={url} alt="" style={{ width: 22, height: 15, objectFit: "cover", borderRadius: 2 }} onError={() => setErr(true)} />
+}
+
 export default function GlobeVesselPopup({ data: v, onClose, onFollow }) {
-    const [photo, setPhoto] = useState(null)  // null=loading, false=none, {...}=loaded
+    const [photo,    setPhoto]    = useState(null)
+    const [identity, setIdentity] = useState(null)
 
     const mmsi     = v.mmsi ?? ""
     const name     = v.name || "Unknown Vessel"
@@ -13,6 +20,16 @@ export default function GlobeVesselPopup({ data: v, onClose, onFollow }) {
     const hdg      = isFinite(Number(v.heading)) && Number(v.heading) !== 511
         ? Number(v.heading)
         : (v.cog ?? null)
+
+    useEffect(() => {
+        if (!mmsi) return
+        let cancelled = false
+        fetch(`${API_BASE}/api/vessels/${mmsi}/track?hours=1`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && d?.identity) setIdentity(d.identity) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [mmsi])
 
     useEffect(() => {
         if (!mmsi) { setPhoto(false); return }
@@ -57,9 +74,12 @@ export default function GlobeVesselPopup({ data: v, onClose, onFollow }) {
             }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
-                        <div style={{ fontSize: 16, fontWeight: 700, color: accent }}>{name}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {identity?.flag_url && <FlagImg url={identity.flag_url} emoji={identity.flag_emoji} />}
+                            <div style={{ fontSize: 16, fontWeight: 700, color: accent }}>{name}</div>
+                        </div>
                         <div style={{ fontSize: 11, color: "#9AA4B5", marginTop: 2 }}>
-                            {[v.ship_type || shipType, sog != null ? `${Number(sog).toFixed(1)} kn` : null]
+                            {[identity?.flag_country, v.ship_type || shipType, sog != null ? `${Number(sog).toFixed(1)} kn` : null]
                                 .filter(Boolean).join(" · ")}
                         </div>
                     </div>

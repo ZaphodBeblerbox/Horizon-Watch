@@ -8881,6 +8881,72 @@ async def get_aircraft_history(
     }
 
 
+@app.get("/api/vessels/{mmsi}/track")
+def get_vessel_track(mmsi: str, hours: int = 24):
+    """Last N hours of position points for a vessel, with MMSI → flag identity."""
+    from database import VesselHistory, get_db as _gdb_t
+    from mmsi_lookup import lookup_mmsi
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    with _gdb_t() as db:
+        points = (
+            db.query(VesselHistory)
+            .filter(VesselHistory.mmsi == mmsi, VesselHistory.timestamp >= cutoff)
+            .order_by(VesselHistory.timestamp.asc())
+            .limit(500)
+            .all()
+        )
+    identity = lookup_mmsi(mmsi)
+    return {
+        "mmsi":        mmsi,
+        "identity":    identity,
+        "point_count": len(points),
+        "track": [
+            {
+                "lat":       p.lat,
+                "lon":       p.lon,
+                "speed":     p.speed,
+                "heading":   p.heading,
+                "timestamp": p.timestamp.isoformat(),
+            }
+            for p in points
+        ],
+    }
+
+
+@app.get("/api/aircraft/{icao_hex}/track")
+def get_aircraft_track(icao_hex: str, hours: int = 12):
+    """Last N hours of position points for an aircraft, with ICAO → military identity."""
+    from database import AircraftHistory, get_db as _gdb_t
+    from icao_lookup import lookup_icao_hex
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    with _gdb_t() as db:
+        points = (
+            db.query(AircraftHistory)
+            .filter(AircraftHistory.icao24 == icao_hex.lower(), AircraftHistory.timestamp >= cutoff)
+            .order_by(AircraftHistory.timestamp.asc())
+            .limit(500)
+            .all()
+        )
+    identity = lookup_icao_hex(icao_hex)
+    return {
+        "icao_hex":    icao_hex,
+        "identity":    identity,
+        "callsign":    points[-1].callsign if points else None,
+        "point_count": len(points),
+        "track": [
+            {
+                "lat":       p.lat,
+                "lon":       p.lon,
+                "altitude":  p.altitude,
+                "speed":     p.speed,
+                "heading":   p.heading,
+                "timestamp": p.timestamp.isoformat(),
+            }
+            for p in points
+        ],
+    }
+
+
 @app.get("/api/history/vessels")
 async def get_vessel_history(
     mmsi: str = Query(None),
@@ -18614,7 +18680,6 @@ def _get_alert_explanation(alert_type: str, title: str = "") -> str:
     """Return an explanation string for an alert, matched by alert_type or title substring."""
     if alert_type in ALERT_EXPLANATIONS:
         return ALERT_EXPLANATIONS[alert_type]
-    # Try partial match on title
     title_lower = (title or "").lower()
     for key, explanation in ALERT_EXPLANATIONS.items():
         if key.lower() in title_lower:
@@ -18622,11 +18687,65 @@ def _get_alert_explanation(alert_type: str, title: str = "") -> str:
     return ""
 
 
+def _enrich_alert(alert: dict) -> dict:
+    """Inject flag, military allegiance, and explanation into a forge alert dict."""
+    import json as _j
+    src = (alert.get("source") or "").upper()
+
+    if src == "AIS":
+        mmsi = str(alert.get("mmsi") or "")
+        if not mmsi:
+            raw = alert.get("payload") or alert.get("raw_json") or "{}"
+            if isinstance(raw, str):
+                try: raw = _j.loads(raw)
+                except: raw = {}
+            mmsi = str(raw.get("mmsi") or "")
+        if mmsi:
+            try:
+                from mmsi_lookup import lookup_mmsi
+                ident = lookup_mmsi(mmsi)
+                alert["vessel_flag"]      = ident["flag_emoji"]
+                alert["vessel_country"]   = ident["flag_country"]
+                alert["vessel_flag_url"]  = ident["flag_url"]
+                alert["vessel_flag_iso2"] = ident["flag_iso2"]
+            except Exception:
+                pass
+
+    elif src == "ADSB":
+        icao = (alert.get("icao") or alert.get("hex") or "").strip()
+        if not icao:
+            raw = alert.get("payload") or alert.get("raw_json") or "{}"
+            if isinstance(raw, str):
+                try: raw = _j.loads(raw)
+                except: raw = {}
+            icao = str(raw.get("icao_hex") or raw.get("hex") or "")
+        if icao:
+            try:
+                from icao_lookup import lookup_icao_hex
+                ident = lookup_icao_hex(icao)
+                alert["aircraft_military"]  = ident.get("military", False)
+                alert["aircraft_country"]   = ident.get("country")
+                alert["aircraft_service"]   = ident.get("service")
+                alert["aircraft_flag"]      = ident.get("flag_emoji")
+                alert["aircraft_flag_url"]  = ident.get("flag_url")
+                alert["aircraft_flag_iso2"] = ident.get("flag_iso2")
+                # Planespotters thumbnail (no auth required)
+                alert["aircraft_image_url"] = f"https://api.planespotters.net/pub/photos/hex/{icao}"
+            except Exception:
+                pass
+
+    rule_name = alert.get("rule_name") or alert.get("rule") or alert.get("rule_type") or ""
+    if not alert.get("explanation"):
+        alert["explanation"] = _get_alert_explanation(rule_name, alert.get("message") or alert.get("title") or "")
+
+    return alert
+
+
 # ── Forge alerts ──────────────────────────────────────────────────────────────
 
 @app.get("/api/forge/alerts")
 def forge_get_alerts(_forge=Depends(_require_forge)):
-    return _forge_alerts
+    return [_enrich_alert(dict(a)) for a in _forge_alerts]
 
 
 # ── Persistence API endpoints ──────────────────────────────────────────────────
@@ -18785,6 +18904,7 @@ def api_get_ontology_links(
     entity_type: str = None,
     entity_id: str = None,
     source_type: str = None,
+    source_id: str = None,
     limit: int = 100,
     current_user=Depends(get_optional_user),
 ):
@@ -18797,6 +18917,8 @@ def api_get_ontology_links(
             q = q.filter(_OLModel.entity_id == entity_id)
         if source_type:
             q = q.filter(_OLModel.source_type == source_type)
+        if source_id:
+            q = q.filter(_OLModel.source_id == source_id)
         rows = q.order_by(_OLModel.created_at.desc()).limit(limit).all()
         return [
             {

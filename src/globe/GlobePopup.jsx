@@ -317,7 +317,7 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                     ) : popup.type === "heatmap_cell" ? (
                         <GlobeHeatmapPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "alert" ? (
-                        <GlobeAlertPopup data={popup.data} onClose={handleClose} />
+                        <GlobeAlertPopup data={popup.data} onClose={handleClose} viewerRef={viewerRef} />
                     ) : popup.type === "assessment" ? (
                         <GlobeAssessmentPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "fusion" ? (

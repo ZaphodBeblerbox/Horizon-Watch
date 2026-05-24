@@ -1,8 +1,15 @@
 import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
 
+function FlagImg({ url, emoji }) {
+    const [err, setErr] = useState(false)
+    if (!url || err) return <span style={{ fontSize: 14 }}>{emoji || "🏳"}</span>
+    return <img src={url} alt="" style={{ width: 22, height: 15, objectFit: "cover", borderRadius: 2 }} onError={() => setErr(true)} />
+}
+
 export default function GlobeAircraftPopup({ data: ac, onClose, onFollow }) {
-    const [photo, setPhoto] = useState(null)  // null=loading, false=none, {thumbnail_url,...}=loaded
+    const [photo,    setPhoto]    = useState(null)
+    const [identity, setIdentity] = useState(null)
 
     const icao = ac.icao ?? ac.icao24 ?? ""
     const cs   = (ac.flight || ac.callsign || "").trim() || icao
@@ -10,6 +17,16 @@ export default function GlobeAircraftPopup({ data: ac, onClose, onFollow }) {
     const gs   = ac.gs ?? ac.velocity ?? ac.ground_speed
     const isMil = !!(ac.military || ac.interesting)
     const isEmergency = ["7500","7600","7700"].includes(ac.squawk)
+
+    useEffect(() => {
+        if (!icao) return
+        let cancelled = false
+        fetch(`${API_BASE}/api/aircraft/${icao}/track?hours=1`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && d?.identity?.military) setIdentity(d.identity) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [icao])
 
     useEffect(() => {
         if (!icao) { setPhoto(false); return }
@@ -64,9 +81,12 @@ export default function GlobeAircraftPopup({ data: ac, onClose, onFollow }) {
             }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
-                        <div style={{ fontSize: 16, fontWeight: 700, color: accent }}>{cs}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {identity?.flag_url && <FlagImg url={identity.flag_url} emoji={identity.flag_emoji} />}
+                            <div style={{ fontSize: 16, fontWeight: 700, color: accent }}>{cs}</div>
+                        </div>
                         <div style={{ fontSize: 11, color: "#9AA4B5", marginTop: 2 }}>
-                            {[altText, spdText].filter(Boolean).join(" · ")}
+                            {[identity?.service || identity?.country, altText, spdText].filter(Boolean).join(" · ")}
                         </div>
                     </div>
                     <button
