@@ -41,6 +41,8 @@ import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, p
 import ForgePanel, { ForgeGate } from "./components/ForgePanel.jsx"
 import DroneOperatorMode from "./components/DroneOperatorMode.jsx"
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
+import NewsTicker from "./components/NewsTicker.jsx"
+import WorldClocksBar from "./components/WorldClocksBar.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -1458,7 +1460,7 @@ export default function App() {
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
 
                 {/* Map — exclusive: only one renderer alive at a time */}
-                <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", display: activeTabType === "map" ? "block" : "none" }}>
+                <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", display: activeTabType === "map" ? "block" : "none", paddingTop: showAutoMode ? 36 : 0, paddingBottom: showAutoMode ? 32 : 0 }}>
                     <Suspense fallback={
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "#050c1c", color: "rgba(148,163,184,0.7)", fontFamily: "system-ui", fontSize: 14 }}>
                             Loading 3D Globe…
@@ -2011,6 +2013,10 @@ export default function App() {
                 onOpen={openToast}
                 toastDuration={appSettings.toastDuration}
             />
+
+            {/* Autoplay overlays — world clocks + news ticker */}
+            <WorldClocksBar visible={showAutoMode} />
+            <NewsTicker     visible={showAutoMode} />
 
             {/* Auto mode exit button — visible on all screen sizes */}
             {showAutoMode && (

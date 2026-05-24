@@ -436,3 +436,9 @@ textarea::placeholder {
 @keyframes infra-spin {
     to { transform: rotate(360deg); }
 }
+
+/* ── News ticker live dot pulse ─────────────────────────────────────────── */
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+}

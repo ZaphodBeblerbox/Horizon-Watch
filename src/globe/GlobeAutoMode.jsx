@@ -1,277 +1,133 @@
-// Passive globe auto-mode.
-// Fetches news events, flies to each one, shows a minimal tooltip,
-// then moves to the next. Runs a continuous loop while enabled.
-// Must be rendered inside a resium <Viewer> so useCesium() works.
+// Intelligent autoplay — camera routes only to active intelligence signals.
+// Priority: escalating zones → fusion events → sanctions/STS → surges → tier 1 news
+// Replaces the old random-event globe spin.
 
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useCesium } from "resium"
-import {
-    Cartesian3, EasingFunction, SceneTransforms, Math as CesiumMath,
-} from "cesium"
+import { Cartesian3, EasingFunction, Math as CesiumMath } from "cesium"
+import { buildAutoplayQueue, AUTOPLAY_SEGMENT_DURATION } from "../services/autoplayer.js"
+import AutoplayInfoCard from "../components/AutoplayInfoCard.jsx"
 import API_BASE from "../apiBase.js"
 
-const SEV_COLORS = {
-    critical: "#FF3B30",
-    high:     "#FF9500",
-    medium:   "#FFCC00",
-    low:      "#8E8E93",
-}
-
-function relTime(iso) {
-    if (!iso) return ""
-    const diff = Date.now() - new Date(iso).getTime()
-    if (diff < 60_000)    return "just now"
-    if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`
-    if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`
-    return `${Math.round(diff / 86_400_000)}d ago`
-}
-
-function shuffle(arr) {
-    const a = [...arr]
-    for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1))
-        ;[a[i], a[j]] = [a[j], a[i]]
-    }
-    return a
-}
-
-function buildSequence(events) {
-    // Bucket into 10 longitude slices (west → east), pick ≤ 2 per bucket
-    const buckets = Array.from({ length: 10 }, () => [])
-    events.forEach(ev => {
-        const lon = ev.lon ?? ev.lng ?? ev.longitude ?? 0
-        const idx = Math.min(9, Math.max(0, Math.floor(((lon + 180) / 360) * 10)))
-        buckets[idx].push(ev)
-    })
-    const seq = []
-    buckets.forEach(b => seq.push(...shuffle(b).slice(0, 2)))
-    return seq.filter(ev => {
-        const lat = ev.lat ?? ev.latitude
-        const lon = ev.lon ?? ev.longitude ?? ev.lng
-        return lat != null && lon != null && isFinite(lat) && isFinite(lon)
-    })
-}
-
-function sleep(ms, cancelRef) {
-    return new Promise(resolve => {
-        let done = false
-        const finish = () => { if (!done) { done = true; resolve() } }
-        const t = setTimeout(finish, ms)
-        const chk = setInterval(() => { if (cancelRef.current) { clearTimeout(t); clearInterval(chk); finish() } }, 80)
-        setTimeout(() => clearInterval(chk), ms + 300)
-    })
-}
-
-export default function GlobeAutoMode({ enabled, isMobile = false }) {
+export default function GlobeAutoMode({ enabled }) {
     const { viewer } = useCesium()
-    const cancelRef   = useRef(false)
-    const rotateRef   = useRef(false)
-    const evRef       = useRef(null)  // current event (for position updates)
-    const frameRef    = useRef(null)
 
-    const [tooltip, setTooltip] = useState(null)
-    // { ev, x, y, opacity }
+    const cancelRef = useRef(false)
+    const timerRef  = useRef(null)
+    const queueRef  = useRef([])
+    const indexRef  = useRef(0)
+    const viewerRef = useRef(null)
 
-    // ── Gentle rotation during hold ──────────────────────────────────────────
-    useEffect(() => {
-        if (!viewer) return
-        const cb = () => { if (rotateRef.current) viewer.scene.camera.rotateRight(0.00003) }
-        viewer.scene.postRender.addEventListener(cb)
-        return () => { try { viewer.scene.postRender.removeEventListener(cb) } catch (_) {} }
-    }, [viewer])
+    const [queue,   setQueue]   = useState([])
+    const [index,   setIndex]   = useState(0)
+    const [loading, setLoading] = useState(false)
 
-    // ── Track tooltip screen position every frame ────────────────────────────
-    useEffect(() => {
-        if (frameRef.current) { cancelAnimationFrame(frameRef.current); frameRef.current = null }
-        if (!viewer || !tooltip) return
+    // Keep a stable ref to the viewer so the interval callback can access it
+    useEffect(() => { viewerRef.current = viewer }, [viewer])
 
-        const tick = () => {
-            const ev = evRef.current
-            if (!ev) return
-            const lat = ev.lat ?? ev.latitude
-            const lon = ev.lon ?? ev.longitude ?? ev.lng
-            try {
-                const sp = SceneTransforms.worldToWindowCoordinates(
-                    viewer.scene,
-                    Cartesian3.fromDegrees(lon, lat)
-                )
-                if (sp) setTooltip(prev => prev ? { ...prev, x: sp.x, y: sp.y } : prev)
-            } catch (_) {}
-            frameRef.current = requestAnimationFrame(tick)
-        }
-        frameRef.current = requestAnimationFrame(tick)
-        return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current) }
-    }, [viewer, !!tooltip])
+    const flyToSegment = (seg, vwr) => {
+        if (!seg || !vwr) return
+        try {
+            vwr.camera.flyTo({
+                destination: Cartesian3.fromDegrees(seg.lon, seg.lat, seg.altitude),
+                orientation: {
+                    heading: CesiumMath.toRadians(0),
+                    pitch:   seg.altitude > 5_000_000
+                        ? CesiumMath.toRadians(-90)
+                        : CesiumMath.toRadians(-75),
+                    roll: 0,
+                },
+                duration:      2.8,
+                easingFunction: EasingFunction.SINUSOIDAL_IN_OUT,
+            })
+        } catch (_) {}
+    }
 
-    // ── Main sequence loop ───────────────────────────────────────────────────
     useEffect(() => {
         if (!enabled || !viewer) {
-            setTooltip(null); evRef.current = null; rotateRef.current = false; return
+            clearInterval(timerRef.current)
+            cancelRef.current = true
+            setQueue([])
+            setIndex(0)
+            indexRef.current = 0
+            return
         }
+
         cancelRef.current = false
+        setLoading(true)
 
-        async function run() {
-            let events = []
-            try {
-                const r = await fetch(`${API_BASE}/api/v2/events?mode=events&max_age_hours=168&limit=300`)
-                if (r.ok) { const d = await r.json(); events = d?.events ?? [] }
-            } catch (_) {}
+        buildAutoplayQueue(API_BASE).then(q => {
+            if (cancelRef.current) { setLoading(false); return }
+            if (!q.length) { setLoading(false); return }
 
-            if (cancelRef.current || !events.length) return
+            queueRef.current  = q
+            indexRef.current  = 0
+            setQueue(q)
+            setIndex(0)
+            setLoading(false)
 
-            let seq = buildSequence(events)
-            if (!seq.length) return
+            flyToSegment(q[0], viewer)
 
-            while (!cancelRef.current) {
-                for (const ev of seq) {
-                    if (cancelRef.current) break
-                    const lat = ev.lat ?? ev.latitude
-                    const lon = ev.lon ?? ev.longitude ?? ev.lng
-                    if (lat == null || lon == null) continue
+            clearInterval(timerRef.current)
+            timerRef.current = setInterval(() => {
+                if (cancelRef.current) return
+                const cur  = queueRef.current
+                const i    = indexRef.current
+                const next = (i + 1) % cur.length
 
-                    // 1. Fly
-                    rotateRef.current = false
-                    // city-level: 400km; regional (country only, no specific city): 800km
-                    const hasCity = !!(ev.city || ev.location_name || ev.location)
-                    const alt     = hasCity ? 400_000 : 800_000
-                    await new Promise(res => {
-                        viewer.camera.flyTo({
-                            destination:    Cartesian3.fromDegrees(lon, lat, alt),
-                            orientation: {
-                                heading: CesiumMath.toRadians(Math.random() * 30),
-                                pitch:   CesiumMath.toRadians(-75),
-                                roll:    0,
-                            },
-                            duration:       4.0,
-                            easingFunction: EasingFunction.SINUSOIDAL_IN_OUT,
-                            complete: res, cancel: res,
-                        })
-                    })
-                    if (cancelRef.current) break
+                indexRef.current = next
+                setIndex(next)
+                flyToSegment(cur[next], viewerRef.current)
 
-                    // 2. Initial screen position
-                    let sp = null
-                    try {
-                        sp = SceneTransforms.worldToWindowCoordinates(
-                            viewer.scene, Cartesian3.fromDegrees(lon, lat)
-                        )
-                    } catch (_) {}
-
-                    evRef.current = ev
-                    setTooltip({ ev, x: sp?.x ?? 0, y: sp?.y ?? 0, opacity: 1 })
-                    rotateRef.current = true
-
-                    // 3. Hold 20–30s
-                    await sleep(20_000 + Math.random() * 10_000, cancelRef)
-                    if (cancelRef.current) break
-
-                    // 4. Fade out
-                    setTooltip(prev => prev ? { ...prev, opacity: 0 } : null)
-                    await sleep(550, cancelRef)
-                    setTooltip(null); evRef.current = null; rotateRef.current = false
-
-                    // 5. Brief pause before next
-                    await sleep(1000, cancelRef)
+                // Rebuild the queue every full cycle so data stays fresh
+                if (next === 0) {
+                    buildAutoplayQueue(API_BASE).then(newQ => {
+                        if (!cancelRef.current && newQ.length) {
+                            queueRef.current = newQ
+                            setQueue(newQ)
+                        }
+                    }).catch(() => {})
                 }
-                if (!cancelRef.current) seq = buildSequence(events) // reshuffle
-            }
-            setTooltip(null); evRef.current = null; rotateRef.current = false
-        }
+            }, AUTOPLAY_SEGMENT_DURATION)
+        }).catch(() => setLoading(false))
 
-        run()
         return () => {
             cancelRef.current = true
-            setTooltip(null); evRef.current = null; rotateRef.current = false
-            if (frameRef.current) { cancelAnimationFrame(frameRef.current); frameRef.current = null }
+            clearInterval(timerRef.current)
         }
-    }, [enabled, viewer, isMobile])
+    }, [enabled, viewer]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (!tooltip) return null
+    if (!enabled) return null
 
-    const { ev, x, y, opacity } = tooltip
-    const sev   = (ev?.severity || "low").toLowerCase()
-    const color = SEV_COLORS[sev] || SEV_COLORS.low
-    const title = ev?.title || ev?.headline || ev?.summary || "Intelligence Event"
-    const loc   = ev?.country || ev?.location || ev?.theater || ev?.region || ""
-    const ts    = ev?.published_at || ev?.created_at || ev?.timestamp
-
-    // Position: tooltip floats above-right of the screen point
-    // Mobile: pin to bottom centre
-    const TW = 240
-    const tipX = isMobile ? "50%" : Math.min(x + 48, window.innerWidth - TW - 12)
-    const tipY = isMobile ? "auto"  : Math.max(8, y - 88)
-    const tipB = isMobile ? 76     : "auto"
-    const xform = isMobile ? "translateX(-50%)" : "none"
-
-    // Line from event screen point to tooltip left-centre
-    const lineX2 = isMobile ? window.innerWidth / 2 - TW / 2 : tipX
-    const lineY2 = isMobile ? window.innerHeight - 76 - 40    : (y - 88) + 40
+    const currentSeg = queue[index] || null
 
     return createPortal(
         <>
-            {/* Connector line */}
-            {!isMobile && (
-                <svg style={{
-                    position: "fixed", inset: 0, width: "100%", height: "100%",
-                    zIndex: 1999, pointerEvents: "none", overflow: "visible",
+            {loading && (
+                <div style={{
+                    position:       'fixed',
+                    bottom:         48,
+                    right:          16,
+                    color:          'rgba(0,212,255,0.75)',
+                    fontFamily:     '"IBM Plex Mono", monospace',
+                    fontSize:       11,
+                    background:     'rgba(5,10,20,0.88)',
+                    padding:        '8px 14px',
+                    borderRadius:   4,
+                    border:         '1px solid rgba(0,212,255,0.2)',
+                    zIndex:         190,
                 }}>
-                    <line
-                        x1={x} y1={y}
-                        x2={lineX2} y2={lineY2}
-                        stroke={color}
-                        strokeWidth={1.5}
-                        strokeOpacity={opacity * 0.4}
-                    />
-                </svg>
+                    ⟳ Building intelligence queue…
+                </div>
             )}
-
-            {/* Tooltip card */}
-            <div style={{
-                position:        "fixed",
-                left:            tipX,
-                top:             tipY,
-                bottom:          tipB,
-                transform:       xform,
-                maxWidth:        TW,
-                minWidth:        180,
-                background:      "rgba(8,12,22,0.90)",
-                border:          "1px solid rgba(255,255,255,0.07)",
-                borderLeft:      `3px solid ${color}`,
-                borderRadius:    7,
-                padding:         "10px 12px",
-                zIndex:          2000,
-                opacity,
-                transition:      "opacity 0.5s ease",
-                pointerEvents:   "none",
-                fontFamily:      "system-ui, -apple-system, sans-serif",
-                backdropFilter:  "blur(10px)",
-                WebkitBackdropFilter: "blur(10px)",
-                boxShadow:       "0 6px 28px rgba(0,0,0,0.55)",
-            }}>
-                <div style={{
-                    color: "#f1f5f9", fontSize: 12, fontWeight: 600,
-                    lineHeight: 1.45, marginBottom: 4,
-                    overflow: "hidden", display: "-webkit-box",
-                    WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                }}>
-                    {title}
-                </div>
-                {loc && (
-                    <div style={{ color: "#475569", fontSize: 10, marginBottom: 2 }}>{loc}</div>
-                )}
-                {ts && (
-                    <div style={{ color: "#334155", fontSize: 10 }}>{relTime(ts)}</div>
-                )}
-                <div style={{
-                    marginTop: 6, display: "inline-block",
-                    background: `${color}1a`, color, fontSize: 8,
-                    fontWeight: 700, letterSpacing: "0.08em",
-                    padding: "1px 5px", borderRadius: 3,
-                }}>
-                    {sev.toUpperCase()}
-                </div>
-            </div>
+            {!loading && currentSeg && (
+                <AutoplayInfoCard
+                    segment={currentSeg}
+                    index={index}
+                    total={queue.length}
+                />
+            )}
         </>,
         document.body
     )
