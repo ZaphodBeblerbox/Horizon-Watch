@@ -30,11 +30,72 @@ const DETECTION_ICONS = {
 }
 
 const MOCK_DETECTIONS = [
-    { id: 1, class: 'person',    confidence: 0.94, bbox: [120, 80,  180, 220], timestamp: Date.now() },
-    { id: 2, class: 'truck',     confidence: 0.87, bbox: [320, 180, 520, 300], timestamp: Date.now() - 2000 },
-    { id: 3, class: 'car',       confidence: 0.91, bbox: [580, 240, 720, 340], timestamp: Date.now() - 4000 },
-    { id: 4, class: 'person',    confidence: 0.79, bbox: [240, 300, 290, 440], timestamp: Date.now() - 6000 },
+    { id: 1, class: 'person',  confidence: 0.94, bbox: [120, 80,  180, 220], bbox_normalized: [0.094, 0.111, 0.141, 0.306], timestamp: Date.now() },
+    { id: 2, class: 'truck',   confidence: 0.87, bbox: [320, 180, 520, 300], bbox_normalized: [0.250, 0.250, 0.406, 0.417], timestamp: Date.now() - 2000 },
+    { id: 3, class: 'car',     confidence: 0.91, bbox: [580, 240, 720, 340], bbox_normalized: [0.453, 0.333, 0.563, 0.472], timestamp: Date.now() - 4000 },
+    { id: 4, class: 'person',  confidence: 0.79, bbox: [240, 300, 290, 440], bbox_normalized: [0.188, 0.417, 0.227, 0.611], timestamp: Date.now() - 6000 },
 ]
+
+// ── Canvas helpers (module-level, no closure deps) ────────────────────────────
+
+function drawDetectionBox(ctx, det, W, H) {
+    const COLORS = {
+        person: '#FF3B30', car: '#FF9500', truck: '#FF9500',
+        motorcycle: '#FF9500', bicycle: '#FF9500', bus: '#FF9500',
+        boat: '#34AADC', dog: '#30D158', cat: '#30D158', default: '#FFCC00',
+    }
+    const color = COLORS[det.class] || COLORS.default
+    const [nx1, ny1, nx2, ny2] = det.bbox_normalized
+    const x1 = nx1 * W, y1 = ny1 * H
+    const x2 = nx2 * W, y2 = ny2 * H
+    const bw = x2 - x1, bh = y2 - y1
+
+    ctx.fillStyle = color + '18'
+    ctx.fillRect(x1, y1, bw, bh)
+
+    const cs = Math.min(bw, bh) * 0.2
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2
+    for (const [cx, cy, dx, dy] of [[x1,y1,1,1],[x2,y1,-1,1],[x1,y2,1,-1],[x2,y2,-1,-1]]) {
+        ctx.beginPath()
+        ctx.moveTo(cx + dx * cs, cy)
+        ctx.lineTo(cx, cy)
+        ctx.lineTo(cx, cy + dy * cs)
+        ctx.stroke()
+    }
+
+    const label = `${det.class.toUpperCase()}  ${Math.round(det.confidence * 100)}%`
+    ctx.font = 'bold 11px monospace'
+    const lw = ctx.measureText(label).width + 10
+    ctx.fillStyle = color + 'CC'
+    ctx.fillRect(x1, y1 - 20, lw, 18)
+    ctx.fillStyle = 'white'
+    ctx.fillText(label, x1 + 5, y1 - 7)
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath()
+    ctx.moveTo(x + r, y)
+    ctx.lineTo(x + w - r, y)
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+    ctx.lineTo(x + w, y + h - r)
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+    ctx.lineTo(x + r, y + h)
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+    ctx.lineTo(x, y + r)
+    ctx.quadraticCurveTo(x, y, x + r, y)
+    ctx.closePath()
+}
+
+function formatDuration(ms) {
+    const s = Math.floor(ms / 1000)
+    const h = Math.floor(s / 3600)
+    const m = Math.floor((s % 3600) / 60)
+    const sec = s % 60
+    return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
     const videoRef      = useRef(null)
@@ -42,6 +103,8 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
     const hlsRef        = useRef(null)
     const mockTimerRef  = useRef(null)
     const pollTimerRef  = useRef(null)
+    const recStartRef   = useRef(null)
+    const hudAnimRef    = useRef(null)
 
     const [streamStatus,    setStreamStatus]    = useState('idle')
     const [streamError,     setStreamError]     = useState(null)
@@ -54,49 +117,152 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
     const [aiActive,        setAiActive]        = useState(true)
     const videoDims = { w: 1280, h: 720 }
 
-    // ── Canvas detection overlay ──────────────────────────────────────────────
+    // ── Tactical HUD drawn on canvas rAF loop ────────────────────────────────
 
-    const drawDetections = useCallback((dets) => {
+    const drawHUD = useCallback((dets) => {
         const canvas = canvasRef.current
         if (!canvas) return
         const ctx = canvas.getContext('2d')
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
-        if (!aiActive) return
+        const W = canvas.width
+        const H = canvas.height
 
-        for (const det of dets) {
-            const [x1, y1, x2, y2] = det.bbox
-            const color = DETECTION_COLORS[det.class] || DETECTION_COLORS.default
-            const label = `${det.class} ${Math.round(det.confidence * 100)}%`
+        ctx.clearRect(0, 0, W, H)
 
-            const scaleX = canvas.width  / videoDims.w
-            const scaleY = canvas.height / videoDims.h
-            const sx1 = x1 * scaleX, sy1 = y1 * scaleY
-            const sx2 = x2 * scaleX, sy2 = y2 * scaleY
-
-            ctx.strokeStyle = color
-            ctx.lineWidth   = 2
-            ctx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1)
-
-            const cs = 8
-            ctx.lineWidth = 3
-            ;[[sx1, sy1+cs, sx1, sy1, sx1+cs, sy1],
-              [sx2-cs, sy1, sx2, sy1, sx2, sy1+cs],
-              [sx1, sy2-cs, sx1, sy2, sx1+cs, sy2],
-              [sx2-cs, sy2, sx2, sy2, sx2, sy2-cs]
-            ].forEach(([ax, ay, bx, by, ex, ey]) => {
-                ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(ex, ey); ctx.stroke()
-            })
-
-            ctx.font      = 'bold 11px -apple-system, sans-serif'
-            const labelW  = ctx.measureText(label).width + 10
-            ctx.fillStyle = color + 'CC'
-            ctx.fillRect(sx1, sy1 - 20, labelW, 20)
-            ctx.fillStyle = 'white'
-            ctx.fillText(label, sx1 + 5, sy1 - 6)
+        // Rule-of-thirds grid
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+        ctx.lineWidth = 1
+        for (let i = 1; i < 3; i++) {
+            ctx.beginPath(); ctx.moveTo(W * i/3, 0); ctx.lineTo(W * i/3, H); ctx.stroke()
         }
-    }, [aiActive, videoDims.w, videoDims.h])
+        for (let i = 1; i < 3; i++) {
+            ctx.beginPath(); ctx.moveTo(0, H * i/3); ctx.lineTo(W, H * i/3); ctx.stroke()
+        }
 
-    useEffect(() => { drawDetections(detections) }, [detections, drawDetections])
+        // Centre crosshair
+        const cx = W/2, cy = H/2, cs = 20, cg = 6
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(cx - cs - cg, cy); ctx.lineTo(cx - cg, cy)
+        ctx.moveTo(cx + cg, cy);      ctx.lineTo(cx + cs + cg, cy)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(cx, cy - cs - cg); ctx.lineTo(cx, cy - cg)
+        ctx.moveTo(cx, cy + cg);      ctx.lineTo(cx, cy + cs + cg)
+        ctx.stroke()
+        ctx.fillStyle = 'rgba(255,255,255,0.6)'
+        ctx.beginPath(); ctx.arc(cx, cy, 1.5, 0, Math.PI * 2); ctx.fill()
+
+        // Corner brackets
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+        ctx.lineWidth = 2
+        for (const [x, y, dx, dy] of [[20,20,1,1],[W-20,20,-1,1],[20,H-20,1,-1],[W-20,H-20,-1,-1]]) {
+            ctx.beginPath()
+            ctx.moveTo(x + dx*40, y); ctx.lineTo(x, y); ctx.lineTo(x, y + dy*40)
+            ctx.stroke()
+        }
+
+        // Top bar
+        ctx.fillStyle = 'rgba(0,0,0,0.45)'
+        ctx.fillRect(0, 0, W, 36)
+
+        ctx.fillStyle = 'rgba(52,170,220,0.9)'
+        ctx.font = 'bold 11px monospace'
+        if ('letterSpacing' in ctx) ctx.letterSpacing = '2px'
+        ctx.fillText('◈ HORIZON WATCH', 16, 22)
+        if ('letterSpacing' in ctx) ctx.letterSpacing = '0px'
+
+        // Blinking REC dot
+        if (Math.floor(Date.now() / 1000) % 2 === 0) {
+            ctx.fillStyle = '#FF3B30'
+            ctx.beginPath(); ctx.arc(W/2 - 42, 18, 4, 0, Math.PI * 2); ctx.fill()
+        }
+        const recTime = recStartRef.current ? formatDuration(Date.now() - recStartRef.current) : '00:00:00'
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'
+        ctx.font = '11px monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText(`REC  ${recTime}`, W/2, 22)
+
+        ctx.textAlign = 'right'
+        ctx.fillStyle = 'rgba(255,255,255,0.6)'
+        ctx.font = '11px monospace'
+        ctx.fillText(`${new Date().toUTCString().slice(-12, -4)} UTC`, W - 16, 22)
+        ctx.textAlign = 'left'
+
+        // Bottom bar
+        ctx.fillStyle = 'rgba(0,0,0,0.45)'
+        ctx.fillRect(0, H - 32, W, 32)
+
+        ctx.fillStyle = 'rgba(255,255,255,0.4)'
+        ctx.font = '10px monospace'
+        ctx.fillText('DRONE-01', 16, H - 11)
+
+        const detCount = (dets || []).length
+        ctx.textAlign = 'center'
+        ctx.fillStyle = detCount > 0 ? '#30D158' : 'rgba(255,255,255,0.3)'
+        ctx.font = 'bold 11px monospace'
+        ctx.fillText(`${detCount} object${detCount !== 1 ? 's' : ''} in frame`, W/2, H - 11)
+
+        ctx.textAlign = 'right'
+        ctx.fillStyle = aiActive ? '#30D158' : 'rgba(255,255,255,0.3)'
+        ctx.font = 'bold 10px monospace'
+        ctx.fillText(aiActive ? '◉ AI ACTIVE' : '○ AI OFF', W - 16, H - 11)
+        ctx.textAlign = 'left'
+
+        // Telemetry panel (top-right)
+        ctx.fillStyle = 'rgba(0,0,0,0.5)'
+        roundRect(ctx, W - 110, 50, 96, 90, 4)
+        ctx.fill()
+        for (const [[label, value], i] of [['ZOOM','1.0×'],['ALT','—  m'],['SPD','—  km/h'],['HDG','—  °']].map((v,i)=>[v,i])) {
+            const ty = 70 + i * 20
+            ctx.fillStyle = 'rgba(255,255,255,0.35)'
+            ctx.font = '9px monospace'
+            ctx.fillText(label, W - 104, ty)
+            ctx.fillStyle = 'rgba(255,255,255,0.8)'
+            ctx.font = '10px monospace'
+            ctx.textAlign = 'right'
+            ctx.fillText(value, W - 18, ty)
+            ctx.textAlign = 'left'
+        }
+
+        // Heading bar (below top bar, centred)
+        const barY = 44, barW = 200, barX = W/2 - barW/2
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+        ctx.lineWidth = 1
+        ctx.strokeRect(barX, barY, barW, 10)
+        for (let i = 0; i <= 10; i++) {
+            const tx = barX + (i/10) * barW
+            ctx.strokeStyle = i === 5 ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.2)'
+            ctx.lineWidth  = i === 5 ? 2 : 1
+            ctx.beginPath(); ctx.moveTo(tx, barY); ctx.lineTo(tx, barY + 10); ctx.stroke()
+        }
+        ctx.fillStyle = 'rgba(255,255,255,0.5)'
+        ctx.font = '9px monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText('N', W/2, barY + 22)
+        ctx.textAlign = 'left'
+
+        // Detection bounding boxes
+        if (aiActive) {
+            for (const det of (dets || [])) {
+                if (det.bbox_normalized) drawDetectionBox(ctx, det, W, H)
+            }
+        }
+    }, [aiActive])
+
+    // rAF loop — runs whenever feed is visible (live or mock)
+    useEffect(() => {
+        if (streamStatus !== 'live' && streamStatus !== 'mock') {
+            if (hudAnimRef.current) cancelAnimationFrame(hudAnimRef.current)
+            return
+        }
+        const loop = () => {
+            drawHUD(detections)
+            hudAnimRef.current = requestAnimationFrame(loop)
+        }
+        hudAnimRef.current = requestAnimationFrame(loop)
+        return () => { if (hudAnimRef.current) cancelAnimationFrame(hudAnimRef.current) }
+    }, [streamStatus, detections, drawHUD])
 
     // ── HLS stream loading ────────────────────────────────────────────────────
 
@@ -111,10 +277,10 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
 
         if (window.Hls && window.Hls.isSupported()) {
             const hls = new window.Hls({
-                liveSyncDurationCount:     2,
+                liveSyncDurationCount:      2,
                 liveMaxLatencyDurationCount: 5,
-                enableWorker:              true,
-                lowLatencyMode:            true,
+                enableWorker:               true,
+                lowLatencyMode:             true,
                 xhrSetup: (xhr) => { xhr.withCredentials = true },
             })
             hls.loadSource(url)
@@ -123,6 +289,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                 video.play().catch(() => {})
                 setStreamStatus('live')
                 setStreamError(null)
+                recStartRef.current = Date.now()
             })
             hls.on(window.Hls.Events.ERROR, (_e, data) => {
                 if (data.fatal) {
@@ -136,6 +303,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
             video.play().catch(() => {})
             setStreamStatus('live')
             setStreamError(null)
+            recStartRef.current = Date.now()
         } else {
             setStreamStatus('error')
             setStreamError('HLS not supported in this browser')
@@ -199,21 +367,27 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         setDetections([])
         setHlsUrl(null)
         setStreamError(null)
+        recStartRef.current = null
     }, [])
 
     // ── Demo / mock mode ──────────────────────────────────────────────────────
 
     const startMockMode = useCallback(() => {
         setStreamStatus('mock')
+        recStartRef.current = Date.now()
         clearInterval(mockTimerRef.current)
         mockTimerRef.current = setInterval(() => {
             const subset   = MOCK_DETECTIONS.slice(0, Math.floor(Math.random() * 4) + 1)
-            const jittered = subset.map(d => ({
-                ...d,
-                bbox:       d.bbox.map(v => v + Math.floor(Math.random() * 10) - 5),
-                confidence: Math.min(0.99, d.confidence + (Math.random() * 0.06 - 0.03)),
-                timestamp:  Date.now(),
-            }))
+            const jittered = subset.map(d => {
+                const jBbox = d.bbox.map(v => v + Math.floor(Math.random() * 10) - 5)
+                return {
+                    ...d,
+                    bbox:            jBbox,
+                    bbox_normalized: [jBbox[0]/1280, jBbox[1]/720, jBbox[2]/1280, jBbox[3]/720],
+                    confidence:      Math.min(0.99, d.confidence + (Math.random() * 0.06 - 0.03)),
+                    timestamp:       Date.now(),
+                }
+            })
             setDetections(jittered)
             setTotalDetections(t => t + jittered.length)
         }, 1000)
@@ -236,27 +410,17 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
             try {
                 const msg = JSON.parse(e.data)
                 if (msg.type !== 'drone_detections') return
-                const canvas = canvasRef.current
-                if (!canvas) return
-                const scaled = (msg.detections || []).map((d, i) => ({
+                const dets = (msg.detections || []).map((d, i) => ({
                     ...d,
                     id:        i,
                     timestamp: (msg.timestamp || Date.now() / 1000) * 1000,
-                    bbox: d.bbox_normalized
-                        ? [
-                            d.bbox_normalized[0] * videoDims.w,
-                            d.bbox_normalized[1] * videoDims.h,
-                            d.bbox_normalized[2] * videoDims.w,
-                            d.bbox_normalized[3] * videoDims.h,
-                          ]
-                        : (d.bbox || [0, 0, 0, 0]),
                 }))
-                setDetections(scaled)
-                setTotalDetections(t => t + scaled.length)
+                setDetections(dets)
+                setTotalDetections(t => t + dets.length)
             } catch { /* ignore parse errors */ }
         }
         return () => src.close()
-    }, [streamStatus, videoDims.w, videoDims.h])
+    }, [streamStatus])
 
     // ── Cleanup on unmount ────────────────────────────────────────────────────
 
@@ -264,6 +428,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         return () => {
             clearInterval(mockTimerRef.current)
             clearTimeout(pollTimerRef.current)
+            if (hudAnimRef.current) cancelAnimationFrame(hudAnimRef.current)
             if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
         }
     }, [])
@@ -472,17 +637,6 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                                 </defs>
                                 <rect width="100%" height="100%" fill="url(#drone-grid)"/>
                             </svg>
-                            <div style={{
-                                position: 'absolute', top: '50%', left: '50%',
-                                transform: 'translate(-50%,-50%)', textAlign: 'center',
-                            }}>
-                                <div style={{ fontSize: 11, color: 'rgba(88,86,214,0.6)', fontWeight: 700, letterSpacing: 2, marginBottom: 8 }}>
-                                    DEMO MODE ACTIVE
-                                </div>
-                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>
-                                    Connect RTMP stream to show live feed
-                                </div>
-                            </div>
                         </div>
                     )}
 
@@ -491,7 +645,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                         style={{ width: '100%', height: '100%', objectFit: 'contain', display: streamStatus === 'live' ? 'block' : 'none' }}
                     />
 
-                    {/* Detection canvas overlay */}
+                    {/* HUD canvas — drawn by drawHUD rAF loop */}
                     <canvas ref={canvasRef} width={videoDims.w} height={videoDims.h}
                         style={{
                             position: 'absolute', inset: 0, width: '100%', height: '100%',
@@ -499,30 +653,6 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
                             display: feedVisible ? 'block' : 'none',
                         }}
                     />
-
-                    {/* HUD overlays */}
-                    {feedVisible && (
-                        <>
-                            <div style={{
-                                position: 'absolute', top: 12, left: 12,
-                                background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                borderRadius: 6, padding: '4px 10px', fontSize: 11, color: 'white',
-                            }}>
-                                <span style={{ color: '#30D158', fontWeight: 700 }}>{detections.length}</span> objects in frame
-                            </div>
-                            <div style={{
-                                position: 'absolute', top: 12, right: 12,
-                                background: aiActive ? 'rgba(48,209,88,0.15)' : 'rgba(0,0,0,0.6)',
-                                backdropFilter: 'blur(8px)',
-                                border: `1px solid ${aiActive ? 'rgba(48,209,88,0.3)' : 'rgba(255,255,255,0.1)'}`,
-                                borderRadius: 6, padding: '4px 10px', fontSize: 10,
-                                color: aiActive ? '#30D158' : 'rgba(255,255,255,0.4)', fontWeight: 600,
-                            }}>
-                                {aiActive ? '◉ AI ACTIVE' : '○ AI OFF'}
-                            </div>
-                        </>
-                    )}
 
                     {/* Error message */}
                     {streamStatus === 'error' && streamError && (

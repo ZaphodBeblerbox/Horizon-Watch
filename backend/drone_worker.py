@@ -1,104 +1,120 @@
 #!/usr/bin/env python3
 """
-Drone surveillance worker.
-Run locally: python3 backend/drone_worker.py
+Horizon Watch Drone Surveillance Worker
+Run: python3 backend/drone_worker.py
 
-Reads RTMP stream, runs YOLO every second,
-posts detections to Horizon Watch API.
-Requires: pip install ultralytics opencv-python pillow requests
+Reads live RTMP stream from mediamtx, runs YOLOv8 inference every N seconds,
+pushes detections to Horizon Watch via SSE.
 """
 import cv2
 import time
 import requests
-import base64
-import io
-import os
+import argparse
+import sys
 
-RTMP_URL  = os.environ.get("DRONE_RTMP_URL",  "rtmp://localhost:1935/live/horizon")
-HW_API    = os.environ.get("DRONE_API_URL",   "https://horizon-watch-production.up.railway.app")
-INTERVAL  = float(os.environ.get("DRONE_INTERVAL", "1.0"))   # seconds between inferences
-CONF      = float(os.environ.get("DRONE_CONF",     "0.40"))  # confidence threshold
+parser = argparse.ArgumentParser(description='Horizon Watch drone worker')
+parser.add_argument('--rtmp',     default='rtmp://127.0.0.1:1935/drone',
+                    help='RTMP stream URL')
+parser.add_argument('--api',      default='https://horizon-watch-production.up.railway.app',
+                    help='Horizon Watch API base URL')
+parser.add_argument('--conf',     type=float, default=0.35,
+                    help='Detection confidence threshold')
+parser.add_argument('--interval', type=float, default=0.5,
+                    help='Seconds between inferences (0.5 = 2fps)')
+parser.add_argument('--model',    default='yolov8n.pt',
+                    help='YOLO model: yolov8n.pt (fast) or yolov8s.pt (better)')
+args = parser.parse_args()
 
-def frame_to_b64(frame):
-    from PIL import Image
-    img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=70)
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-def main():
+print(f"Loading {args.model}...")
+try:
     from ultralytics import YOLO
-    model = YOLO("yolov8n.pt")   # downloads ~6 MB automatically; COCO classes
+    model = YOLO(args.model)
+    print(f"Model ready — {len(model.names)} classes")
+except ImportError:
+    print("ERROR: pip install ultralytics")
+    sys.exit(1)
 
-    print(f"Connecting to {RTMP_URL}...")
-    cap = cv2.VideoCapture(RTMP_URL)
+print(f"Connecting to {args.rtmp}...")
+cap = cv2.VideoCapture(args.rtmp)
 
-    if not cap.isOpened():
-        print("ERROR: failed to open stream — is the drone streaming?")
-        return
+for i in range(15):
+    if cap.isOpened():
+        break
+    print(f"  Waiting for stream... {i+1}/15")
+    time.sleep(1)
+    cap = cv2.VideoCapture(args.rtmp)
 
-    print("Stream connected. Starting inference loop...")
-    last_inference = 0.0
+if not cap.isOpened():
+    print(f"ERROR: Cannot connect to {args.rtmp}")
+    print("Is mediamtx running? Is drone streaming?")
+    sys.exit(1)
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            print("Stream ended or lost")
-            break
+print("Stream connected. Starting inference...")
+print(f"Conf: {args.conf} | Interval: {args.interval}s")
+print("")
 
-        now = time.time()
-        if now - last_inference < INTERVAL:
+last_inference  = 0
+frame_count     = 0
+detection_count = 0
+session         = requests.Session()
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        print("Stream lost — reconnecting...")
+        time.sleep(2)
+        cap = cv2.VideoCapture(args.rtmp)
+        continue
+
+    frame_count += 1
+    now = time.time()
+    if now - last_inference < args.interval:
+        continue
+    last_inference = now
+
+    h, w = frame.shape[:2]
+
+    try:
+        results = model(frame, conf=args.conf, verbose=False, stream=False)
+    except Exception as e:
+        print(f"Inference error: {e}")
+        continue
+
+    dets = []
+    for result in results:
+        if result.boxes is None:
             continue
-        last_inference = now
+        for box in result.boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            conf     = float(box.conf[0])
+            cls_id   = int(box.cls[0])
+            cls_name = model.names.get(cls_id, 'unknown')
+            dets.append({
+                "class":           cls_name,
+                "confidence":      round(conf, 3),
+                "bbox_normalized": [
+                    round(x1/w, 4), round(y1/h, 4),
+                    round(x2/w, 4), round(y2/h, 4),
+                ],
+            })
 
-        results = model(frame, conf=CONF, verbose=False)
+    detection_count += len(dets)
 
-        detections = []
-        for result in results:
-            if result.boxes is None:
-                continue
-            h, w = frame.shape[:2]
-            for box in result.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                conf     = float(box.conf[0])
-                cls_id   = int(box.cls[0])
-                cls_name = model.names[cls_id]
-                detections.append({
-                    "class":      cls_name,
-                    "confidence": round(conf, 3),
-                    "bbox":       [x1, y1, x2, y2],
-                    "bbox_normalized": [
-                        round(x1 / w, 4),
-                        round(y1 / h, 4),
-                        round(x2 / w, 4),
-                        round(y2 / h, 4),
-                    ],
-                    "frame_width":  w,
-                    "frame_height": h,
-                })
+    if frame_count % 10 == 0:
+        classes = [f"{d['class']} {d['confidence']:.0%}" for d in dets]
+        summary = ', '.join(classes) if classes else 'none'
+        print(f"  frame={frame_count} dets={len(dets)} [{summary}]")
 
-        if detections:
-            summary = ", ".join(
-                f"{d['class']} {d['confidence']:.0%}" for d in detections
-            )
-            print(f"  {len(detections)} detections: {summary}")
+    try:
+        resp = session.post(
+            f"{args.api}/api/drone/detections",
+            json={"detections": dets, "timestamp": now},
+            timeout=2,
+        )
+        if resp.status_code != 200:
+            print(f"  API error: {resp.status_code}")
+    except Exception:
+        pass
 
-        try:
-            requests.post(
-                f"{HW_API}/api/drone/detections",
-                json={
-                    "detections": detections,
-                    "timestamp":  now,
-                },
-                timeout=3,
-            )
-        except Exception as e:
-            print(f"  Push failed: {e}")
-
-    cap.release()
-    print("Worker stopped")
-
-
-if __name__ == "__main__":
-    main()
+cap.release()
+print(f"Worker stopped. frames={frame_count} total_detections={detection_count}")
