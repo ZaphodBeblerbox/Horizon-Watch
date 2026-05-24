@@ -558,6 +558,23 @@ class FusionSignal(Base):
     expires_at      = Column(DateTime, nullable=False)
 
 
+class SanctionedEntity(Base):
+    """Vessel or entity appearing on international sanctions lists (OpenSanctions)."""
+    __tablename__ = "sanctioned_entities"
+
+    id           = Column(Integer, primary_key=True)
+    entity_id    = Column(String, index=True)
+    entity_name  = Column(String, index=True)
+    mmsi         = Column(String, nullable=True, index=True)
+    imo          = Column(String, nullable=True, index=True)
+    flag         = Column(String, nullable=True)
+    datasets     = Column(String, nullable=True)   # comma-sep list: us_ofac_sdn, eu_fsf, etc.
+    owner_chain  = Column(Text, nullable=True)
+    topics       = Column(Text, nullable=True)
+    loaded_at    = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at   = Column(DateTime, nullable=True)
+
+
 class NewsArticle(Base):
     """Persisted news article with LLM intelligence fields."""
     __tablename__ = "news_articles"

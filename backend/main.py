@@ -89,6 +89,7 @@ import event_store as es
 import event_bridge
 import threat_matrix
 from alert_writer import write_alert, write_news_article
+from sanctions_loader import sanctions_loader
 from entity_linker import entity_linker
 from event_bus import event_bus, Events
 
@@ -8240,6 +8241,8 @@ async def _startup_warmup_tasks():
 _AISSTREAM_KEY   = os.getenv("AISSTREAM_API_KEY", "")
 _AIS_VESSELS:    dict = {}   # keyed by MMSI string
 _AIS_LOCK        = threading.Lock()
+_sanctions_alerted: dict = {}   # mmsi → epoch of last sanctions alert (in-memory cooldown)
+_sts_candidates:    dict = {}   # (mmsi_a, mmsi_b) → proximity tracking state
 
 # ── Forge detection engine instances ─────────────────────────────────────────
 if _HAS_DETECTORS:
@@ -8553,6 +8556,294 @@ _AIS_SHIP_TYPE_MAP = {
 def _ais_ship_type(type_code: int) -> str:
     return _AIS_SHIP_TYPE_MAP.get(type_code, "other")
 
+
+# ── Sanctions check (fired on every new AIS position, O(1) in-memory) ────────
+
+async def _check_sanctions_on_update(vessel: dict) -> None:
+    """Check if a vessel is on a sanctions list; write critical alert if so."""
+    global _sanctions_alerted
+    mmsi = str(vessel.get("mmsi", ""))
+    name = vessel.get("name", "")
+    if not mmsi:
+        return
+
+    hit = sanctions_loader.check_vessel(mmsi=mmsi, name=name)
+    if not hit:
+        return
+
+    # In-memory cooldown — skip if alerted within last 6 hours
+    now_epoch = time.time()
+    if now_epoch - _sanctions_alerted.get(mmsi, 0) < 21600:
+        return
+
+    # DB cooldown — avoid duplicate alerts even across restarts
+    try:
+        from database import get_db as _gdb, Alert as _Alert
+        with _gdb() as _db:
+            existing = _db.query(_Alert).filter(
+                _Alert.entity_id == mmsi,
+                _Alert.alert_type == "Sanctioned Vessel",
+                _Alert.created_at >= datetime.utcnow() - timedelta(hours=6),
+            ).first()
+            if existing:
+                _sanctions_alerted[mmsi] = now_epoch
+                return
+    except Exception:
+        pass
+
+    explanation = sanctions_loader.get_sanction_explanation(hit)
+    vessel_name = hit.get("name") or name or mmsi
+
+    alert_dict = {
+        "domain":         "AIS",
+        "source":         "AIS",
+        "alert_type":     "Sanctioned Vessel",
+        "rule_id":        "AIS-SANCTIONS",
+        "rule_name":      "Sanctioned Vessel",
+        "title":          f"⚠ SANCTIONED: {vessel_name} detected",
+        "message":        (
+            f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected. "
+            f"Listed by: {', '.join(explanation['sanction_lists'][:2])}."
+        ),
+        "severity":       "critical",
+        "confidence":     0.95,
+        "relevance_score": 100,
+        "lat":            vessel.get("lat"),
+        "lon":            vessel.get("lon"),
+        "mmsi":           mmsi,
+        "imo":            hit.get("imo"),
+        "vessel_name":    vessel_name,
+        "vessel":         vessel_name,
+        "source_id":      mmsi,
+        "entity_id":      mmsi,
+        "entity_name":    vessel_name,
+        "timestamp":      datetime.utcnow().isoformat(),
+        "payload": {
+            "mmsi":           mmsi,
+            "imo":            hit.get("imo"),
+            "vessel_name":    vessel_name,
+            "sanction_lists": explanation["sanction_lists"],
+            "flag":           hit.get("flag"),
+            "owner":          hit.get("owner"),
+            "speed":          vessel.get("speed"),
+            "heading":        vessel.get("heading"),
+            "rule_name":      "Sanctioned Vessel",
+            "explanation":    explanation,
+        },
+    }
+
+    write_alert(alert_dict)
+    global _forge_alerts
+    _forge_alerts.append(alert_dict)
+    _sanctions_alerted[mmsi] = now_epoch
+    print(f"[sanctions] CRITICAL: Sanctioned vessel {vessel_name} (MMSI {mmsi}) at "
+          f"{vessel.get('lat')}, {vessel.get('lon')}")
+
+
+# ── Ship-to-Ship transfer detection ──────────────────────────────────────────
+
+STS_PROXIMITY_M      = 500     # max distance between vessels (metres)
+STS_SPEED_KNOTS      = 2.0    # both vessels must be at or below this speed
+STS_MIN_DURATION_MIN = 30     # minimum tracked proximity before alert fires
+STS_OFFSHORE_MIN_KM  = 5.0    # must be this far from any port
+STS_COOLDOWN_HOURS   = 12     # re-alert cooldown per unique pair
+
+
+async def _run_sts_detection() -> None:
+    """
+    Spatial O(n²) scan across all slow-moving vessels.
+    n ≤ 2000, so worst case ~2M comparisons. Runs every 5 minutes.
+    """
+    global _sts_candidates
+
+    with _AIS_LOCK:
+        vessels = [
+            dict(v) for v in _AIS_VESSELS.values()
+            if v.get("lat") and v.get("lon") and v.get("speed", 99) <= STS_SPEED_KNOTS
+        ]
+
+    now = datetime.utcnow()
+    n = len(vessels)
+    new_candidates: dict = {}
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = vessels[i], vessels[j]
+
+            # Skip pure fishing pairs — not indicative of STS evasion
+            type_a = (a.get("ship_type") or "").upper()
+            type_b = (b.get("ship_type") or "").upper()
+            if "FISHING" in type_a and "FISHING" in type_b:
+                continue
+
+            dist = _haversine_m(a["lat"], a["lon"], b["lat"], b["lon"])
+            if dist > STS_PROXIMITY_M:
+                continue
+
+            pair_key = tuple(sorted([str(a.get("mmsi", "")), str(b.get("mmsi", ""))]))
+
+            if pair_key in _sts_candidates:
+                existing = _sts_candidates[pair_key]
+                existing["last_seen"] = now
+                existing["min_dist"]  = min(existing.get("min_dist", dist), dist)
+                existing["positions"].append({
+                    "lat": (a["lat"] + b["lat"]) / 2,
+                    "lon": (a["lon"] + b["lon"]) / 2,
+                    "dist_m": dist,
+                    "timestamp": now.isoformat(),
+                })
+                new_candidates[pair_key] = existing
+            else:
+                new_candidates[pair_key] = {
+                    "mmsi_a":     str(a.get("mmsi", "")),
+                    "mmsi_b":     str(b.get("mmsi", "")),
+                    "vessel_a":   a,
+                    "vessel_b":   b,
+                    "first_seen": now,
+                    "last_seen":  now,
+                    "min_dist":   dist,
+                    "positions":  [{
+                        "lat": (a["lat"] + b["lat"]) / 2,
+                        "lon": (a["lon"] + b["lon"]) / 2,
+                        "dist_m": dist,
+                        "timestamp": now.isoformat(),
+                    }],
+                    "alerted": False,
+                }
+
+    _sts_candidates = new_candidates
+
+    # Evaluate candidates that have been tracked long enough
+    for pair_key, candidate in list(_sts_candidates.items()):
+        if candidate.get("alerted"):
+            continue
+
+        duration_min = (candidate["last_seen"] - candidate["first_seen"]).total_seconds() / 60
+        if duration_min < STS_MIN_DURATION_MIN:
+            continue
+
+        midlat = candidate["positions"][-1]["lat"]
+        midlon = candidate["positions"][-1]["lon"]
+
+        dist_to_port = _distance_to_nearest_port_km(midlat, midlon)
+        if dist_to_port < STS_OFFSHORE_MIN_KM:
+            continue  # in port/anchorage — expected behaviour
+
+        mmsi_a  = candidate["mmsi_a"]
+        mmsi_b  = candidate["mmsi_b"]
+        pair_id = f"{mmsi_a}_{mmsi_b}"
+
+        # DB cooldown
+        try:
+            from database import get_db as _gdb, Alert as _AlertM
+            with _gdb() as _db:
+                existing_alert = _db.query(_AlertM).filter(
+                    _AlertM.entity_id == pair_id,
+                    _AlertM.alert_type == "Ship-to-Ship Transfer",
+                    _AlertM.created_at >= now - timedelta(hours=STS_COOLDOWN_HOURS),
+                ).first()
+                if existing_alert:
+                    candidate["alerted"] = True
+                    continue
+        except Exception:
+            pass
+
+        a_v = candidate["vessel_a"]
+        b_v = candidate["vessel_b"]
+        sanction_a = sanctions_loader.check_vessel(mmsi=mmsi_a, name=a_v.get("name", ""))
+        sanction_b = sanctions_loader.check_vessel(mmsi=mmsi_b, name=b_v.get("name", ""))
+        is_sanctions_related = bool(sanction_a or sanction_b)
+        severity = "critical" if is_sanctions_related else "high"
+
+        name_a = a_v.get("name") or mmsi_a
+        name_b = b_v.get("name") or mmsi_b
+
+        sanction_context = ""
+        if sanction_a:
+            exp = sanctions_loader.get_sanction_explanation(sanction_a)
+            sanction_context += f"\n⚠ {name_a} is SANCTIONED by {', '.join(exp['sanction_lists'][:2])}."
+        if sanction_b:
+            exp = sanctions_loader.get_sanction_explanation(sanction_b)
+            sanction_context += f"\n⚠ {name_b} is SANCTIONED by {', '.join(exp['sanction_lists'][:2])}."
+
+        alert_dict = {
+            "domain":         "AIS",
+            "source":         "AIS",
+            "alert_type":     "Ship-to-Ship Transfer",
+            "rule_id":        "AIS-STS",
+            "rule_name":      "Ship-to-Ship Transfer",
+            "title":          f"STS: {name_a} ↔ {name_b} ({int(duration_min)}min, {int(candidate['min_dist'])}m)",
+            "message":        (
+                f"Possible ship-to-ship transfer detected. "
+                f"{name_a} (MMSI {mmsi_a}) and {name_b} (MMSI {mmsi_b}) have been within "
+                f"{int(candidate['min_dist'])}m of each other for {int(duration_min)} minutes, "
+                f"{dist_to_port:.1f}km from nearest port.{sanction_context}"
+            ),
+            "severity":       severity,
+            "confidence":     min(0.9, 0.5 + duration_min / 200),
+            "relevance_score": 100 if is_sanctions_related else 70,
+            "lat":            midlat,
+            "lon":            midlon,
+            "mmsi":           mmsi_a,
+            "source_id":      pair_id,
+            "entity_id":      pair_id,
+            "entity_name":    f"{name_a} / {name_b}",
+            "timestamp":      now.isoformat(),
+            "payload": {
+                "rule_name":           "Ship-to-Ship Transfer",
+                "mmsi_a":              mmsi_a,
+                "mmsi_b":              mmsi_b,
+                "vessel_a_name":       name_a,
+                "vessel_b_name":       name_b,
+                "vessel_a_flag":       a_v.get("flag"),
+                "vessel_b_flag":       b_v.get("flag"),
+                "vessel_a_type":       a_v.get("ship_type"),
+                "vessel_b_type":       b_v.get("ship_type"),
+                "duration_min":        int(duration_min),
+                "min_distance_m":      int(candidate["min_dist"]),
+                "distance_to_port_km": round(dist_to_port, 1),
+                "is_sanctions_related": is_sanctions_related,
+                "sanctioned_vessel":   sanction_a or sanction_b,
+                "track_positions":     candidate["positions"][-10:],
+                "explanation": {
+                    "what": (
+                        "Two vessels have been in extremely close proximity "
+                        "offshore for an extended period."
+                    ),
+                    "why": (
+                        "Offshore STS transfers are a primary mechanism for "
+                        "sanctions evasion — Iranian crude oil, Russian petroleum, "
+                        "North Korean arms. The receiving vessel typically has no "
+                        "connection to the sanctioned cargo origin."
+                    ),
+                    "watch": (
+                        "Track both vessels after separation. Note destination ports. "
+                        "Check cargo declarations. Cross-reference flag states and "
+                        "ownership chains against sanctions lists."
+                    ),
+                },
+            },
+        }
+
+        write_alert(alert_dict)
+        global _forge_alerts
+        _forge_alerts.append(alert_dict)
+        candidate["alerted"] = True
+        print(f"[ais] STS ALERT: {name_a} ↔ {name_b} "
+              f"({int(duration_min)}min, {'SANCTIONED' if is_sanctions_related else 'clean'})")
+
+
+async def _sts_detection_loop() -> None:
+    """Run STS proximity scan every 5 minutes."""
+    await asyncio.sleep(120)   # let AIS buffer fill first
+    while True:
+        try:
+            await _run_sts_detection()
+        except Exception as _sts_err:
+            print(f"[sts] scan error: {_sts_err}")
+        await asyncio.sleep(300)
+
+
 async def _ais_websocket_loop():
     """Persistent WebSocket connection to aisstream.io. Reconnects on disconnect."""
     global _AIS_STATUS, _AIS_MSG_COUNTER, _AIS_LAST_LOG_T
@@ -8639,6 +8930,13 @@ async def _ais_websocket_loop():
                             if len(_AIS_VESSELS) > 2000:
                                 oldest = min(_AIS_VESSELS, key=lambda k: _AIS_VESSELS[k].get("last_update", 0))
                                 del _AIS_VESSELS[oldest]
+                        # Sanctions check — fast O(1) in-memory pre-filter, async task only on hit
+                        if (mtype == "PositionReport"
+                                and sanctions_loader._sanctions_by_mmsi
+                                and (mmsi in sanctions_loader._sanctions_by_mmsi
+                                     or (vessel.get("name", "").upper().strip()
+                                         in sanctions_loader._sanctions_by_name))):
+                            asyncio.create_task(_check_sanctions_on_update(dict(vessel)))
                         _AIS_STATUS["vessel_count"] = len(_AIS_VESSELS)
                         _AIS_STATUS["last_msg"]     = time.strftime("%H:%M:%S", time.gmtime())
                         _AIS_STATUS["last_poll"]    = datetime.now(timezone.utc).isoformat()
@@ -9055,6 +9353,32 @@ def _haversine(lat1, lon1, lat2, lon2):
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _haversine_m(lat1, lon1, lat2, lon2) -> float:
+    """Distance in metres between two lat/lon points."""
+    return _haversine(lat1, lon1, lat2, lon2) * 1000.0
+
+
+def _distance_to_nearest_port_km(lat, lon) -> float:
+    """Returns km distance to nearest PortBoundary (pre-filtered within 0.5°)."""
+    try:
+        from database import PortBoundary as _PB, get_db as _gdb
+        deg_r = 0.5
+        with _gdb() as _db:
+            ports = _db.query(_PB).filter(
+                _PB.latitude.between(lat - deg_r, lat + deg_r),
+                _PB.longitude.between(lon - deg_r, lon + deg_r),
+            ).all()
+        if not ports:
+            return 999.0
+        dists = [
+            _haversine(lat, lon, p.latitude, p.longitude)
+            for p in ports if p.latitude and p.longitude
+        ]
+        return min(dists) if dists else 999.0
+    except Exception:
+        return 999.0
 
 
 def _is_military_callsign(callsign):
@@ -10741,11 +11065,25 @@ async def startup_event():
         asyncio.create_task(_youtube_reels_loop())
     asyncio.create_task(_shorts_refresh_loop())
     asyncio.create_task(_forge_detection_cycle())
+    asyncio.create_task(_sts_detection_loop())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
     asyncio.create_task(_dirty_region_refresh_loop())
+
+    # Load OpenSanctions vessel list in background (non-blocking)
+    async def _load_sanctions_bg():
+        await asyncio.sleep(15)   # let DB settle first
+        try:
+            from database import SessionLocal as _SL
+            with _SL() as _sdb:
+                stats = await sanctions_loader.load_or_refresh(_sdb)
+            print(f"[startup] Sanctions list: {stats.get('vessels', 0)} vessels loaded "
+                  f"({stats.get('by_mmsi', 0)} by MMSI)")
+        except Exception as _se:
+            print(f"[startup] Sanctions load failed: {_se}")
+    asyncio.create_task(_load_sanctions_bg())
 
     async def _director_auto_prepare():
         await asyncio.sleep(120)
@@ -18665,7 +19003,26 @@ ALERT_EXPLANATIONS = {
     "Cable Loiterer":           "A vessel has been stationary or slow-moving over a subsea cable route for an extended period. This behaviour is associated with cable tapping, maintenance reconnaissance, or pre-sabotage positioning.",
     "Dark Ship":                "A vessel has disabled or is not transmitting its AIS transponder. This is a common technique used to conceal illicit cargo transfers, sanctions evasion, and covert military operations.",
     "Chokepoint Loitering":     "A vessel is lingering without clear purpose in or near a major maritime chokepoint (Strait of Hormuz, Bab-el-Mandeb, Suez Canal, etc.). This can indicate surveillance, blockade preparation, or pre-positioning.",
-    "Ship-to-Ship Transfer":    "Two vessels have been detected in close proximity at sea, suggesting an at-sea cargo transfer. This is a known method for sanctions evasion, particularly for oil and arms shipments.",
+    "Ship-to-Ship Transfer": (
+        "Two vessels have been in extremely close proximity (under 500m) offshore for 30+ minutes, "
+        "moving slowly or stopped. Offshore STS transfers are the primary mechanism for sanctions "
+        "evasion — transferring Iranian crude oil, Russian petroleum, or North Korean arms between "
+        "vessels so the receiving ship has no connection to the sanctioned origin. This method has "
+        "increased 400% since 2022 due to expanded sanctions regimes. "
+        "Track both vessels after separation. Note destination ports and cargo declarations. "
+        "Check both flag states and ownership chains against sanctions lists. "
+        "Look for AIS gaps before or after the transfer."
+    ),
+    "Sanctioned Vessel": (
+        "A vessel appearing on international sanctions lists has been detected at this position. "
+        "Sanctioned vessels are prohibited from port access, insurance, financial services, and "
+        "flag registration in signatory countries. Their continued operation despite sanctions "
+        "indicates active evasion — they may use multiple MMSIs, false flags, identity changes, "
+        "or intermediary ownership structures. "
+        "Note current flag state vs registered flag. Check for recent AIS gaps (going dark). "
+        "Look for nearby vessels that may be facilitating transfer or supply. "
+        "Report to relevant authorities if within national jurisdiction."
+    ),
     "Military Squawk":          "An aircraft is broadcasting a military transponder code. This indicates the aircraft is operating under military rules or has declared an emergency relevant to military operations.",
     "Transponder Anomaly":      "An aircraft's transponder has exhibited unusual behaviour — including sudden code changes, squawk 7700 (emergency), 7600 (radio failure), or 7500 (hijack). Warrants immediate monitoring.",
     "Vessel Speed Anomaly":     "A vessel's speed is significantly outside the normal range for its vessel type and location. May indicate mechanical issues, evasion, or rendezvous with another vessel.",
@@ -18762,6 +19119,67 @@ def _dedup_alerts(alerts: list) -> list:
 def forge_get_alerts(_forge=Depends(_require_forge)):
     enriched = [_enrich_alert(dict(a)) for a in _forge_alerts]
     return _dedup_alerts(enriched)
+
+
+# ── Sanctions API endpoints ────────────────────────────────────────────────────
+
+@app.get("/api/sanctions/stats")
+def sanctions_stats(_=Depends(get_optional_user)):
+    return sanctions_loader.stats()
+
+
+@app.post("/api/sanctions/check")
+async def sanctions_check(body: dict, _=Depends(get_optional_user)):
+    mmsi = str(body.get("mmsi") or "").strip() or None
+    imo  = str(body.get("imo")  or "").strip() or None
+    name = str(body.get("name") or "").strip() or None
+    hit  = sanctions_loader.check_vessel(mmsi=mmsi, imo=imo, name=name)
+    if not hit:
+        return {"hit": False}
+    return {
+        "hit":         True,
+        "sanction":    hit,
+        "explanation": sanctions_loader.get_sanction_explanation(hit),
+    }
+
+
+@app.get("/api/sanctions/hits")
+def sanctions_hits(hours: int = 24, _=Depends(get_optional_user)):
+    from database import Alert as _AM, get_db as _gdb
+    with _gdb() as _db:
+        rows = (
+            _db.query(_AM)
+            .filter(
+                _AM.alert_type == "Sanctioned Vessel",
+                _AM.created_at >= datetime.utcnow() - timedelta(hours=hours),
+            )
+            .order_by(_AM.created_at.desc())
+            .limit(200)
+            .all()
+        )
+    import json as _jh
+    results = []
+    for row in rows:
+        try:
+            d = _jh.loads(row.raw_json or "{}")
+        except Exception:
+            d = {}
+        d.setdefault("id",       row.alert_id)
+        d.setdefault("title",    row.title)
+        d.setdefault("severity", row.severity)
+        d.setdefault("lat",      row.lat)
+        d.setdefault("lon",      row.lon)
+        results.append(d)
+    return {"hits": results, "count": len(results), "hours": hours}
+
+
+@app.post("/api/sanctions/refresh")
+async def sanctions_refresh(_=Depends(get_optional_user)):
+    from database import SessionLocal as _SL
+    sanctions_loader._last_loaded = None   # force refresh
+    with _SL() as _db:
+        stats = await sanctions_loader.load_or_refresh(_db)
+    return stats
 
 
 # ── Persistence API endpoints ──────────────────────────────────────────────────

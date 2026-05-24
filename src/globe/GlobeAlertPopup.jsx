@@ -79,6 +79,80 @@ function TrackSummary({ track }) {
     )
 }
 
+function SanctionedVesselPanel({ payload }) {
+    const lists = payload?.sanction_lists || []
+    const flag  = payload?.flag
+    const owner = payload?.owner
+    return (
+        <div style={{
+            margin: "8px 0",
+            padding: "10px",
+            background: "rgba(255,45,45,0.08)",
+            border: "1px solid rgba(255,45,45,0.3)",
+            borderRadius: 6,
+        }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#FF2D2D", letterSpacing: 1.5, marginBottom: 6 }}>
+                ⚠ SANCTIONS MATCH
+            </div>
+            {lists.map((list, i) => (
+                <div key={i} style={{ fontSize: 11, color: "rgba(255,80,80,0.85)", marginBottom: 2 }}>
+                    • {list}
+                </div>
+            ))}
+            {(flag || owner) && (
+                <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                    {flag && `Flag: ${flag}`}
+                    {flag && owner && " · "}
+                    {owner && `Owner: ${owner}`}
+                </div>
+            )}
+        </div>
+    )
+}
+
+function StsPanel({ payload }) {
+    const vessels = [
+        { mmsi: payload?.mmsi_a, name: payload?.vessel_a_name, flag: payload?.vessel_a_flag, type: payload?.vessel_a_type },
+        { mmsi: payload?.mmsi_b, name: payload?.vessel_b_name, flag: payload?.vessel_b_flag, type: payload?.vessel_b_type },
+    ]
+    return (
+        <div style={{ margin: "8px 0" }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                {vessels.map((v, i) => (
+                    <div key={i} style={{
+                        flex: 1, padding: "6px 8px",
+                        background: "rgba(255,255,255,0.04)",
+                        borderRadius: 4, fontSize: 10,
+                    }}>
+                        <div style={{ fontWeight: 700, color: "rgba(255,255,255,0.85)", marginBottom: 2 }}>
+                            {v.name || v.mmsi}
+                        </div>
+                        <div style={{ color: "rgba(255,255,255,0.35)" }}>MMSI {v.mmsi}</div>
+                        {v.flag && <div style={{ color: "rgba(255,255,255,0.35)" }}>Flag: {v.flag}</div>}
+                        {v.type && <div style={{ color: "rgba(255,255,255,0.3)" }}>{v.type}</div>}
+                    </div>
+                ))}
+            </div>
+            <div style={{ display: "flex", gap: 12, fontSize: 10, color: "rgba(255,255,255,0.5)", marginBottom: 8, flexWrap: "wrap" }}>
+                {payload?.duration_min    != null && <span>⏱ {payload.duration_min}min</span>}
+                {payload?.min_distance_m  != null && <span>📏 {payload.min_distance_m}m proximity</span>}
+                {payload?.distance_to_port_km != null && <span>🌊 {payload.distance_to_port_km}km offshore</span>}
+            </div>
+            {payload?.is_sanctions_related && (
+                <div style={{
+                    padding: "6px 10px",
+                    background: "rgba(255,45,45,0.1)",
+                    border: "1px solid rgba(255,45,45,0.3)",
+                    borderRadius: 4, fontSize: 11,
+                    color: "#FF2D2D", fontWeight: 700,
+                }}>
+                    ⚠ SANCTIONED VESSEL INVOLVED
+                </div>
+            )}
+        </div>
+    )
+}
+
 export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
     const [trackData,   setTrackData]   = useState(null)
     const [forgeLinks,  setForgeLinks]  = useState([])
@@ -98,6 +172,18 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
     const explanation  = a.explanation || FORGE_EXPLANATIONS[a.icon_type || a.rule_type || ""] || null
     const watchNote    = Object.keys(WHAT_TO_WATCH).find(k => (a.rule_name || a.message || "").includes(k))
     const watchText    = watchNote ? WHAT_TO_WATCH[watchNote] : null
+
+    // Parsed payload for specialised panels
+    const payload = (() => {
+        try {
+            const raw = a.payload || a.raw_json || null
+            if (!raw) return {}
+            if (typeof raw === "object") return raw
+            return JSON.parse(raw)
+        } catch { return {} }
+    })()
+    const isSanctioned = a.rule_name === "Sanctioned Vessel"
+    const isSts        = a.rule_name === "Ship-to-Ship Transfer"
 
     // Fetch track
     useEffect(() => {
@@ -270,6 +356,12 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
                         </div>
                     </div>
                 )}
+
+                {/* Sanctioned vessel panel */}
+                {isSanctioned && <SanctionedVesselPanel payload={payload} />}
+
+                {/* Ship-to-ship transfer panel */}
+                {isSts && <StsPanel payload={payload} />}
 
                 {/* Track section */}
                 {(mmsi || icao) && (
