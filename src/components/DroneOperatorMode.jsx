@@ -45,7 +45,9 @@ function drawDetectionBox(ctx, det, W, H) {
         boat: '#34AADC', dog: '#30D158', cat: '#30D158', default: '#FFCC00',
     }
     const color = COLORS[det.class] || COLORS.default
-    const [nx1, ny1, nx2, ny2] = det.bbox_normalized
+    const bn = det.bbox_normalized || det.bbox
+    if (!bn) return
+    const [nx1, ny1, nx2, ny2] = bn
     const x1 = nx1 * W, y1 = ny1 * H
     const x2 = nx2 * W, y2 = ny2 * H
     const bw = x2 - x1, bh = y2 - y1
@@ -103,8 +105,9 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
     const hlsRef        = useRef(null)
     const mockTimerRef  = useRef(null)
     const pollTimerRef  = useRef(null)
-    const recStartRef   = useRef(null)
-    const hudAnimRef    = useRef(null)
+    const recStartRef    = useRef(null)
+    const hudAnimRef     = useRef(null)
+    const detectionsRef  = useRef([])
 
     const [streamStatus,    setStreamStatus]    = useState('idle')
     const [streamError,     setStreamError]     = useState(null)
@@ -250,6 +253,9 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         }
     }, [aiActive])
 
+    // Keep ref in sync so rAF always reads latest detections without stale closure
+    useEffect(() => { detectionsRef.current = detections }, [detections])
+
     // rAF loop — runs whenever feed is visible (live or mock)
     useEffect(() => {
         if (streamStatus !== 'live' && streamStatus !== 'mock') {
@@ -257,12 +263,12 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
             return
         }
         const loop = () => {
-            drawHUD(detections)
+            drawHUD(detectionsRef.current)
             hudAnimRef.current = requestAnimationFrame(loop)
         }
         hudAnimRef.current = requestAnimationFrame(loop)
         return () => { if (hudAnimRef.current) cancelAnimationFrame(hudAnimRef.current) }
-    }, [streamStatus, detections, drawHUD])
+    }, [streamStatus, drawHUD])
 
     // ── HLS stream loading ────────────────────────────────────────────────────
 
@@ -405,20 +411,27 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
 
     useEffect(() => {
         if (streamStatus !== 'live') return
+        console.log('[drone] SSE connecting to:', `${API_BASE}/api/drone/events`)
         const src = new EventSource(`${API_BASE}/api/drone/events`)
         src.onmessage = (e) => {
             try {
                 const msg = JSON.parse(e.data)
+                console.log('[drone SSE]', msg.type, msg.detections?.length)
                 if (msg.type !== 'drone_detections') return
+                console.log('[drone] detections received:', msg.detections)
                 const dets = (msg.detections || []).map((d, i) => ({
                     ...d,
                     id:        i,
                     timestamp: (msg.timestamp || Date.now() / 1000) * 1000,
                 }))
+                console.log('[drone] setting detections:', dets)
                 setDetections(dets)
                 setTotalDetections(t => t + dets.length)
-            } catch { /* ignore parse errors */ }
+            } catch (err) {
+                console.error('[drone SSE parse error]', err)
+            }
         }
+        src.onerror = (e) => console.error('[drone SSE error]', e)
         return () => src.close()
     }, [streamStatus])
 
