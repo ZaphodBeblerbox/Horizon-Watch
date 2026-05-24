@@ -108,6 +108,7 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
     const recStartRef    = useRef(null)
     const hudAnimRef     = useRef(null)
     const detectionsRef  = useRef([])
+    const frameCountRef  = useRef(0)
 
     const [streamStatus,    setStreamStatus]    = useState('idle')
     const [streamError,     setStreamError]     = useState(null)
@@ -248,8 +249,13 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
         // Detection bounding boxes
         if (aiActive) {
             for (const det of (dets || [])) {
-                if (det.bbox_normalized) drawDetectionBox(ctx, det, W, H)
+                drawDetectionBox(ctx, det, W, H)
             }
+        }
+
+        // DEBUG: draw test box when no real detections so we can confirm canvas works
+        if ((dets || []).length === 0) {
+            drawDetectionBox(ctx, { class: 'TEST', confidence: 0.99, bbox_normalized: [0.3, 0.3, 0.7, 0.7] }, W, H)
         }
     }, [aiActive])
 
@@ -263,6 +269,10 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
             return
         }
         const loop = () => {
+            if (frameCountRef.current % 60 === 0) {
+                console.log('[drone rAF] running, dets:', detectionsRef.current.length)
+            }
+            frameCountRef.current = (frameCountRef.current || 0) + 1
             drawHUD(detectionsRef.current)
             hudAnimRef.current = requestAnimationFrame(loop)
         }
@@ -411,24 +421,25 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
 
     useEffect(() => {
         if (streamStatus !== 'live') return
-        console.log('[drone] SSE connecting to:', `${API_BASE}/api/drone/events`)
-        const src = new EventSource(`${API_BASE}/api/drone/events`)
+        const RAILWAY = 'https://horizon-watch-production.up.railway.app'
+        console.log('[drone] SSE connecting to Railway:', RAILWAY)
+        const src = new EventSource(`${RAILWAY}/api/drone/events`)
         src.onmessage = (e) => {
             try {
                 const msg = JSON.parse(e.data)
-                console.log('[drone SSE]', msg.type, msg.detections?.length)
+                console.log('[drone SSE]', msg.type, msg.detections?.length ?? '')
                 if (msg.type !== 'drone_detections') return
-                console.log('[drone] detections received:', msg.detections)
+                console.log('[drone] got detections:', msg.detections)
                 const dets = (msg.detections || []).map((d, i) => ({
                     ...d,
                     id:        i,
-                    timestamp: (msg.timestamp || Date.now() / 1000) * 1000,
+                    timestamp: Date.now(),
                 }))
-                console.log('[drone] setting detections:', dets)
+                detectionsRef.current = dets
                 setDetections(dets)
                 setTotalDetections(t => t + dets.length)
             } catch (err) {
-                console.error('[drone SSE parse error]', err)
+                console.error('[drone SSE parse]', err)
             }
         }
         src.onerror = (e) => console.error('[drone SSE error]', e)
