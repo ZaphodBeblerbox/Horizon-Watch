@@ -342,6 +342,18 @@ class ThreatMatrixSnapshot(Base):
     __table_args__ = (UniqueConstraint("snapshot_date", "region_id", name="uq_tm_date_region"),)
 
 
+class ThreatSnapshotHourly(Base):
+    """One row per region per hour — used for 24h trend computation."""
+    __tablename__ = "threat_snapshots_hourly"
+
+    id           = Column(Integer, primary_key=True)
+    region_name  = Column(String, nullable=False, index=True)
+    region_id    = Column(String, nullable=True)
+    score        = Column(Float, default=0.0)
+    threat_level = Column(String, default="LOW")
+    snapshot_at  = Column(DateTime, nullable=False, index=True)
+
+
 class WeeklySnapshot(Base):
     __tablename__ = 'weekly_snapshots'
 

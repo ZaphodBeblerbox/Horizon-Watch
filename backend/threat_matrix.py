@@ -7,9 +7,47 @@ refresh_cache()   — called hourly from the scheduler
 """
 
 import json
+import math
 import datetime
 
 _threat_cache_history: dict = {}   # region_name → {"score": float}
+
+
+def _get_trend_delta(region_name: str, current_score: float, db) -> float:
+    """Return score delta vs 24h ago from ThreatSnapshotHourly. Returns 0 if no data."""
+    try:
+        from database import ThreatSnapshotHourly
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+        row = (db.query(ThreatSnapshotHourly)
+               .filter(ThreatSnapshotHourly.region_name == region_name,
+                       ThreatSnapshotHourly.snapshot_at <= cutoff)
+               .order_by(ThreatSnapshotHourly.snapshot_at.desc())
+               .first())
+        if row:
+            return round(current_score - row.score, 1)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _build_narrative(region_name: str, score: float, trend: str, drivers: dict) -> str:
+    level = _threat_level(score)
+    parts = []
+    if drivers.get("fusion_events", 0) > 0:
+        parts.append(f"{drivers['fusion_events']} active intelligence fusion event(s)")
+    if drivers.get("forge_alert_count", 0) > 0:
+        parts.append(f"{drivers['forge_alert_count']} sensor-triggered alert(s)")
+    if drivers.get("surge_bonus", 0) > 0:
+        parts.append("surge-level news activity")
+    if drivers.get("sentinel_score", 0) > 0:
+        parts.append("satellite detections")
+    if drivers.get("alert_count", 0) > 0 and drivers.get("forge_alert_count", 0) == 0:
+        parts.append(f"{drivers['alert_count']} open alert(s)")
+    signal_str = (", ".join(parts[:3]) + ".") if parts else "Low signal activity."
+    trend_str = {"escalating": "Threat is escalating.",
+                 "de-escalating": "Situation de-escalating.",
+                 "stable": "Situation stable."}.get(trend, "")
+    return f"{region_name} — {level} threat ({score:.0f}/100). {signal_str} {trend_str}".strip()
 
 # ── Region definitions ────────────────────────────────────────────────────────
 # bbox keys: min_lat, max_lat, min_lon, max_lon
@@ -243,12 +281,33 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
     score = min(base + forge_bonus + sentinel_bonus + news_bonus
                 + fusion_bonus + surge_bonus + link_bonus, 100.0)
 
-    # ── 8. Trend vs last cached score ────────────────────────────────────────
+    # ── 8. Trend vs last cached score + 24h delta ─────────────────────────────
     prev_score = _threat_cache_history.get(region_name, {}).get("score", score)
     trend = ("escalating"    if score > prev_score + 5 else
              "de-escalating" if score < prev_score - 5 else
              "stable")
     _threat_cache_history.setdefault(region_name, {})["score"] = score
+
+    trend_delta = _get_trend_delta(region_name, score, db)
+    is_emerging   = trend == "escalating" and trend_delta >= 15 and score >= 35
+    is_escalating = trend == "escalating" and trend_delta >= 25 and score >= 55
+
+    # Centroid from bbox midpoint
+    lat = round((bbox["min_lat"] + bbox["max_lat"]) / 2, 2)
+    lon = round((bbox["min_lon"] + bbox["max_lon"]) / 2, 2)
+
+    drivers_dict = {
+        "alert_count":          alert_count,
+        "weighted_alert_score": round(weighted_alert_score, 1),
+        "forge_alert_count":    forge_alert_count,
+        "fusion_events":        fusion_count,
+        "surge_bonus":          surge_bonus,
+        "sentinel_score":       round(sentinel_weighted, 1),
+        "link_bonus":           link_bonus,
+    }
+
+    signal_count_24h = alert_count + forge_alert_count + sentinel_count + news_count + fusion_count
+    narrative = _build_narrative(region_name, score, trend, drivers_dict)
 
     signals = []
     if alert_count       > 0: signals.append("forge_alerts")
@@ -264,8 +323,16 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
         "region":                    region_name,
         "region_id":                 (region["region_ids"] or [""])[0],
         "threat_score":              round(score, 1),
+        "score":                     round(score, 1),
         "threat_level":              _threat_level(score),
         "trend":                     trend,
+        "trend_delta":               trend_delta,
+        "is_emerging":               is_emerging,
+        "is_escalating":             is_escalating,
+        "lat":                       lat,
+        "lon":                       lon,
+        "narrative":                 narrative,
+        "signal_count_24h":          signal_count_24h,
         "alert_count":               alert_count,
         "forge_alert_count":         forge_alert_count,
         "sentinel_detection_count":  sentinel_count,
@@ -273,15 +340,7 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
         "fusion_count":              fusion_count,
         "surge_bonus":               surge_bonus,
         "link_bonus":                link_bonus,
-        "drivers": {
-            "alert_count":           alert_count,
-            "weighted_alert_score":  round(weighted_alert_score, 1),
-            "forge_alert_count":     forge_alert_count,
-            "fusion_events":         fusion_count,
-            "surge_bonus":           surge_bonus,
-            "sentinel_score":        round(sentinel_weighted, 1),
-            "link_bonus":            link_bonus,
-        },
+        "drivers":                   drivers_dict,
         "score_drivers": [
             {"name": "forge_alerts",          "value": alert_count,                  "contribution": round(min(weighted_alert_score * 2, 40), 1)},
             {"name": "rule_triggers",         "value": forge_alert_count,            "contribution": round(min(forge_alert_count * 5, 25), 1)},
@@ -294,6 +353,37 @@ def compute_threat_score(region_name: str, db, forge_alerts: list = None,
         "active_signals":            len(signals),
         "contributing_signals":      signals,
     }
+
+
+def save_hourly_snapshot(db, forge_alerts: list = None,
+                          news_events: list = None) -> int:
+    """Write one ThreatSnapshotHourly row per region. Purges rows older than 30 days."""
+    from database import ThreatSnapshotHourly
+    now    = datetime.datetime.utcnow()
+    purge  = now - datetime.timedelta(days=30)
+    saved  = 0
+    try:
+        db.query(ThreatSnapshotHourly).filter(
+            ThreatSnapshotHourly.snapshot_at < purge
+        ).delete(synchronize_session=False)
+        db.commit()
+    except Exception:
+        pass
+    for region_name in REGIONS:
+        result = compute_threat_score(region_name, db, forge_alerts, news_events)
+        db.add(ThreatSnapshotHourly(
+            region_name  = region_name,
+            region_id    = result["region_id"],
+            score        = result["threat_score"],
+            threat_level = result["threat_level"],
+            snapshot_at  = now,
+        ))
+        saved += 1
+    try:
+        db.commit()
+    except Exception:
+        pass
+    return saved
 
 
 def save_daily_snapshot(db, forge_alerts: list = None,

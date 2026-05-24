@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { Entity } from "resium"
-import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
+import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
@@ -32,6 +32,33 @@ function alertIcon(a) {
     const key = `${a.source || "NEWS"}-${severity}`
     if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAlertCanvas(a.source || "NEWS", severity)
     return ICON_CACHE[key]
+}
+
+function isSanctioned(a) {
+    return (a.alert_type || a.rule_name || "").toLowerCase().includes("sanctioned vessel")
+}
+function isSts(a) {
+    return (a.alert_type || a.rule_name || "").toLowerCase().includes("ship-to-ship")
+}
+
+// Visual hierarchy scale based on alert type / severity / relevance
+function getMarkerScale(a) {
+    if (isSanctioned(a))                                       return 2.0
+    if (isSts(a))                                              return 1.6
+    const sev = (a.severity || "").toLowerCase()
+    const rel = a.relevance_score ?? 0
+    if (sev === "critical" || rel >= 80)                       return 1.6
+    if (sev === "high"     || rel >= 50)                       return 1.2
+    if (sev === "low"      || (rel > 0 && rel < 30))           return 0.8
+    return 1.0
+}
+
+function getMarkerOpacity(a) {
+    if (isSanctioned(a) || isSts(a)) return 1.0
+    const sev = (a.severity || "").toLowerCase()
+    if (sev === "critical" || sev === "high") return 1.0
+    if (sev === "medium")                     return 0.85
+    return 0.5
 }
 
 // Scale billboard by severity for assessment markers
@@ -134,7 +161,18 @@ export default function GlobeAlertsLayer({ enabled }) {
                 if (!icon) return null
                 const isAssessment = NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")
                 const baseSize = isAssessment ? 40 : 38
-                const scale    = isAssessment ? severityScale(a.severity) : 1.0
+                const assessScale = isAssessment ? severityScale(a.severity) : 1.0
+                const hierScale   = getMarkerScale(a)
+                const finalScale  = isAssessment ? assessScale : hierScale
+                const opacity     = getMarkerOpacity(a)
+                const billColor   = opacity < 1.0 ? Color.WHITE.withAlpha(opacity) : undefined
+
+                const sanctioned = isSanctioned(a)
+                const sts        = isSts(a)
+                const labelText  = sanctioned ? "⚠ SANCTIONED"
+                                 : sts        ? "STS DETECTED"
+                                 : null
+
                 return (
                     <Entity
                         id={`alert-forge-${a.id || i}`}
@@ -142,13 +180,27 @@ export default function GlobeAlertsLayer({ enabled }) {
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
                             image:           icon,
-                            width:           Math.round(baseSize * scale),
-                            height:          Math.round(baseSize * scale),
+                            width:           Math.round(baseSize * finalScale),
+                            height:          Math.round(baseSize * finalScale),
+                            color:           billColor,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             scaleByDistance: new NearFarScalar(1000, 1.3, 12_000_000, 0.28),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
                             eyeOffset: isAssessment ? new (Cartesian3)(0, 0, -60) : undefined,
                         }}
+                        label={labelText ? {
+                            text:            labelText,
+                            font:            "bold 9px Arial",
+                            fillColor:       sanctioned ? Color.fromCssColorString("#FF3B30") : Color.fromCssColorString("#FF9500"),
+                            outlineColor:    Color.fromCssColorString("#0F1721"),
+                            outlineWidth:    2,
+                            style:           2,
+                            showBackground:  true,
+                            backgroundColor: Color.fromCssColorString("#0F1721").withAlpha(0.85),
+                            pixelOffset:     new Cartesian2(0, -(Math.round(baseSize * finalScale) / 2 + 8)),
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, 8_000_000),
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        } : undefined}
                     />
                 )
             })}

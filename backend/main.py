@@ -5870,6 +5870,7 @@ def _make_news_marker(article: dict) -> Optional[dict]:
         "is_breaking":     article.get("is_breaking") or False,
         "llm_relevance_score": article.get("llm_relevance_score") or 0,
         "llm_extracted":   article.get("llm_extracted") or False,
+        "show_on_map":     article.get("location_confidence", "none") not in ("country", "none", "fallback_country"),
     }
 
 
@@ -10859,6 +10860,25 @@ def _tm_refresh_once():
         print(f"[threat-matrix] refresh error: {_tm_e}")
 
 
+async def _threat_snapshot_loop():
+    """Write hourly ThreatSnapshotHourly rows for trend computation."""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            from database import get_db as _gdb_ts
+            active_events = []
+            try:
+                active_events = es.get_active_events()
+            except Exception:
+                pass
+            with _gdb_ts() as _ts_db:
+                n = threat_matrix.save_hourly_snapshot(_ts_db, list(_forge_alerts), active_events)
+            print(f"[threat-snapshot] wrote {n} hourly rows")
+        except Exception as _tse:
+            print(f"[threat-snapshot] error: {_tse}")
+        await asyncio.sleep(3600)
+
+
 async def _threat_matrix_loop():
     """Hourly threat-matrix cache refresh + midnight daily snapshot."""
     # Immediate first run — don't wait an hour for data
@@ -11070,6 +11090,7 @@ async def startup_event():
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
+    asyncio.create_task(_threat_snapshot_loop())
     asyncio.create_task(_dirty_region_refresh_loop())
 
     # Load OpenSanctions vessel list in background (non-blocking)

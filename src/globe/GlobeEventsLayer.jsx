@@ -203,11 +203,16 @@ export default function GlobeEventsLayer({
     // - precisionEnabled only → precision events at full opacity, no relevance filter
     // - enabled only (or both) → apply minRelevance filter; precision events always pass
     const filtered = events.filter(ev => {
+        // Never show country-level or unknown geocodes on the map
+        if (ev.show_on_map === false) return false
         const prec = isPrecision(ev)
         if (precisionEnabled && prec) return true      // always show precision events
         if (!enabled) return false                      // general layer off
-        // Numeric tier takes priority over legacy relevance_score filter
-        if (typeof ev.tier === "number") return ev.tier <= 3
+        // Numeric tier: tier 3 never shown; tier 1-2 pass through
+        if (typeof ev.tier === "number") {
+            if (ev.tier >= 3) return false
+            return true
+        }
         return (ev.relevance_score ?? 5) >= minRelevance
     })
 
@@ -253,6 +258,11 @@ export default function GlobeEventsLayer({
                     ? Color.fromAlpha(Color.WHITE, Math.min(alpha, isApprox ? 0.6 : 1.0) * alpha)
                     : undefined
 
+                // Tier 2 events hidden below 200km camera altitude (reduces clutter at street level)
+                const ddc = numTier >= 2
+                    ? new DistanceDisplayCondition(200_000, 15_000_000)
+                    : new DistanceDisplayCondition(0, 15_000_000)
+
                 return (
                     <Entity
                         id={`event-${ev.thread_id || ev.id}`}
@@ -265,7 +275,7 @@ export default function GlobeEventsLayer({
                             color:      cesiumColor,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
                             scaleByDistance:          new NearFarScalar(1000, 1.0, 8_000_000, 0.25),
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
+                            distanceDisplayCondition: ddc,
                             eyeOffset:  new Cartesian3(0, 0, -50),
                         }}
                     />

@@ -58,6 +58,12 @@ _USER_TMPL = (
     "}}"
 )
 
+HIGH_CONFLICT_COUNTRIES = frozenset({
+    "sd", "ss", "ml", "bf", "ne", "td", "cd", "cf", "so", "et",
+    "er", "mm", "af", "ye", "sy", "iq", "ua", "ru", "ps", "lb",
+    "ly", "mr", "gn", "gw", "ng", "ht", "mx",
+})
+
 _FALLBACK: dict = {
     "location": None,
     "location_country": None,
@@ -138,6 +144,14 @@ def analyse_article(
             score = max(0.0, min(10.0, score))
         except (TypeError, ValueError):
             score = 0.0
+
+        # Conflict zone promotion: tier 3 → tier 2 for active conflict countries
+        _raw_country = (data.get("location_country") or "").lower().strip()[:2]
+        if _raw_country and _raw_country in HIGH_CONFLICT_COUNTRIES:
+            if tier == 3:
+                tier = 2
+            if tier == 2:
+                score = min(10.0, score * 1.4)
 
         event_title = data.get("event_title") or None
         if isinstance(event_title, str) and not event_title.strip():

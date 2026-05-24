@@ -254,6 +254,7 @@ export default function Sidebar({
                        (id === "profile"    && rightPanel === "profile")       ||
                        (id === "health"     && rightPanel === "health")        ||
                        (id === "analytics"  && rightPanel === "analytics")     ||
+                       (id === "threats"    && rightPanel === "threats")       ||
                        (id === "poi"        && activeTabType === "poi")        ||
                        (id === "map"        && activeTabType === "map")        ||
                        (id === "news"       && activeTabType === "news")       ||
@@ -545,6 +546,13 @@ export default function Sidebar({
                 )}
                 {isAnalyst && btn("poi", <IconPOI />, null, null)}
                 {isAnalyst && btn("analytics", <IconAnalytics />, null, null)}
+                {isAnalyst && btn("threats",
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                        <polygon points="8,2 14,13 2,13"/>
+                        <line x1="8" y1="7" x2="8" y2="10"/>
+                        <circle cx="8" cy="12" r="0.6" fill="currentColor"/>
+                    </svg>,
+                    null, null)}
                 {isAdmin   && btn("health", <IconHealth />, null, null)}
 
                 {/* Chat — analyst + admin only */}

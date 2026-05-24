@@ -40,6 +40,7 @@ import LayersPanel from "./components/LayersPanel.jsx"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
 import ForgePanel, { ForgeGate } from "./components/ForgePanel.jsx"
 import DroneOperatorMode from "./components/DroneOperatorMode.jsx"
+import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -1480,7 +1481,7 @@ export default function App() {
                             precisionEventsEnabled={activeWorkspace?.layers?.precisionEvents ?? true}
                             eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 0}
                             alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? false}
-                            threatHeatmapEnabled={activeWorkspace?.layers?.threatHeatmap ?? false}
+                            threatHeatmapEnabled={activeWorkspace?.layers?.threatHeatmap ?? true}
                             airportsEnabled={activeWorkspace?.layers?.airports ?? false}
                             portsEnabled={activeWorkspace?.layers?.ports ?? false}
                             aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
@@ -1699,6 +1700,10 @@ export default function App() {
                             onExpand={() => { setRightPanel(null); openTab("analytics") }}
                         />
                     </div>
+                )}
+
+                {rightPanel === "threats" && (
+                    <EmergingConflictsPanel onClose={() => setRightPanel(null)} />
                 )}
 
                 {rightPanel === "workspaces" && (
