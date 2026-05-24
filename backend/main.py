@@ -6602,7 +6602,18 @@ def _run_news_conflict_extraction_sync():
                 except Exception:
                     pass
 
-            # Feed surge engine (tiers 1-3)
+            # Feed surge engine — keyword path (all articles, no LLM required)
+            if _surge_engine:
+                try:
+                    _surge_engine.on_raw_article({
+                        "title":  article_record.get("title", ""),
+                        "source": article_record.get("source", ""),
+                        "url":    article_record.get("url", ""),
+                    })
+                except Exception:
+                    pass
+
+            # Feed surge engine — LLM-enriched path (tiers 1-3 with resolved country)
             if _surge_engine and article_record.get("location_country"):
                 try:
                     _surge_engine.on_article(article_record)
@@ -18548,6 +18559,9 @@ def api_surge_events(
                 "severity":                 r.severity,
                 "headline":                 r.headline,
                 "evidence_items":           evidence,
+                "keyword":                  r.keyword,
+                "context_summary":          r.context_summary,
+                "why_it_matters":           r.why_it_matters,
                 "status":                   r.status,
             })
         return result
@@ -18577,6 +18591,35 @@ def api_surge_stats():
             "hottest_location": hottest_location,
             "buffer_stats":     buf_stats,
         }
+
+
+# ── Alert explanations ────────────────────────────────────────────────────────
+
+ALERT_EXPLANATIONS = {
+    "Cable Loiterer":           "A vessel has been stationary or slow-moving over a subsea cable route for an extended period. This behaviour is associated with cable tapping, maintenance reconnaissance, or pre-sabotage positioning.",
+    "Dark Ship":                "A vessel has disabled or is not transmitting its AIS transponder. This is a common technique used to conceal illicit cargo transfers, sanctions evasion, and covert military operations.",
+    "Chokepoint Loitering":     "A vessel is lingering without clear purpose in or near a major maritime chokepoint (Strait of Hormuz, Bab-el-Mandeb, Suez Canal, etc.). This can indicate surveillance, blockade preparation, or pre-positioning.",
+    "Ship-to-Ship Transfer":    "Two vessels have been detected in close proximity at sea, suggesting an at-sea cargo transfer. This is a known method for sanctions evasion, particularly for oil and arms shipments.",
+    "Military Squawk":          "An aircraft is broadcasting a military transponder code. This indicates the aircraft is operating under military rules or has declared an emergency relevant to military operations.",
+    "Transponder Anomaly":      "An aircraft's transponder has exhibited unusual behaviour — including sudden code changes, squawk 7700 (emergency), 7600 (radio failure), or 7500 (hijack). Warrants immediate monitoring.",
+    "Vessel Speed Anomaly":     "A vessel's speed is significantly outside the normal range for its vessel type and location. May indicate mechanical issues, evasion, or rendezvous with another vessel.",
+    "Port Entry Anomaly":       "A vessel with unusual or high-risk flags has entered a monitored port. May indicate sanctions circumvention or dual-use cargo.",
+    "Loitering":                "An asset has remained stationary or slow-moving in a location of strategic interest beyond expected operational parameters.",
+    "surge_velocity_spike":     "A rapid burst of news reporting has been detected from multiple sources about a single location or topic. Velocity spikes often precede major escalation events.",
+    "surge_volume_surge":       "The volume of news reporting about this region has significantly exceeded the 7-day baseline, indicating sustained elevated activity or an ongoing developing situation.",
+    "surge_keyword_surge":      "Multiple independent news sources have published articles containing a high-priority intelligence keyword. This keyword-triggered alert fires without LLM enrichment to ensure zero latency on emerging events.",
+}
+
+def _get_alert_explanation(alert_type: str, title: str = "") -> str:
+    """Return an explanation string for an alert, matched by alert_type or title substring."""
+    if alert_type in ALERT_EXPLANATIONS:
+        return ALERT_EXPLANATIONS[alert_type]
+    # Try partial match on title
+    title_lower = (title or "").lower()
+    for key, explanation in ALERT_EXPLANATIONS.items():
+        if key.lower() in title_lower:
+            return explanation
+    return ""
 
 
 # ── Forge alerts ──────────────────────────────────────────────────────────────
@@ -18619,6 +18662,7 @@ def api_get_alerts(
                 "zone_ids":    r.zone_ids, "tags": r.tags, "status": r.status,
                 "created_at":  r.created_at.isoformat() if r.created_at else None,
                 "expires_at":  r.expires_at.isoformat() if r.expires_at else None,
+                "explanation": _get_alert_explanation(r.alert_type, r.title),
             }
             for r in rows
         ]

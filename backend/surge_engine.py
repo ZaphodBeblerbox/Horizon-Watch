@@ -1,9 +1,12 @@
 """
 surge_engine.py — Article surge detection.
 
-Tracks per-(country, article_type) article volumes and detects:
-  VOLUME_SURGE   — rolling count exceeds N× 7-day baseline
-  VELOCITY_SPIKE — N articles arrive within a short burst window
+Two detection modes:
+  1. LLM-enriched path (on_article): requires resolved country + article_type
+       VOLUME_SURGE   — rolling count exceeds N× 7-day baseline
+       VELOCITY_SPIKE — N articles arrive within a short burst window
+  2. Keyword path (on_raw_article): fires on raw title text, no LLM needed
+       KEYWORD_SURGE  — threshold articles matching a keyword in a time window
 
 On detection, creates a SurgeEvent in the DB, feeds the fusion engine
 as a NEWS domain signal, and updates _surge_scores for threat heatmap.
@@ -21,6 +24,16 @@ ELIGIBLE_TYPES_DEFAULT = [
 
 SEV_TO_BONUS = {"medium": 10, "high": 18, "critical": 25}
 
+SURGE_KEYWORDS = [
+    "missile", "airstrike", "attack", "explosion", "killed", "dead",
+    "strike", "invasion", "ceasefire", "sanctions", "nuclear", "coup",
+    "earthquake", "flood", "Hormuz", "Gaza", "Ukraine", "Taiwan",
+    "Iran", "Russia", "China", "Israel", "Houthi", "Red Sea", "Baltic",
+    "warship", "blockade", "evacuate", "evacuation", "offensive",
+]
+KEYWORD_SURGE_THRESHOLD  = 3
+KEYWORD_SURGE_WINDOW_HOURS = 3.0
+
 # Module-level cache: (country, region_id) → {score_bonus, expires_at}
 # Read by threat_matrix.py to add surge_bonus to region scores.
 _surge_scores: dict = {}
@@ -28,6 +41,48 @@ _surge_scores: dict = {}
 
 def _gen_id() -> str:
     return uuid.uuid4().hex[:6].upper()
+
+
+def _match_keywords(text: str) -> list[str]:
+    """Return list of SURGE_KEYWORDS found (case-insensitive) in text."""
+    lower = text.lower()
+    return [kw for kw in SURGE_KEYWORDS if kw.lower() in lower]
+
+
+def _generate_surge_explanation(keyword: str, evidence_titles: list[str]) -> dict:
+    """Call claude-haiku-4-5 to generate context_summary + why_it_matters for a keyword surge.
+    Returns {"headline": str, "context_summary": str, "why_it_matters": str} or empty dict on failure."""
+    try:
+        import os
+        import anthropic as _ant
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            return {}
+        client = _ant.Anthropic(api_key=api_key)
+        sample = "\n".join(f"- {t}" for t in evidence_titles[:6])
+        prompt = (
+            f'Multiple news headlines contain the keyword "{keyword}". '
+            f'Sample headlines:\n{sample}\n\n'
+            "In 2-3 sentences, write:\n"
+            "1. context_summary: What is happening and where (be specific, based on the headlines).\n"
+            "2. why_it_matters: Why this is strategically significant for global security or trade.\n"
+            "Reply as JSON only: {\"context_summary\": \"...\", \"why_it_matters\": \"...\"}"
+        )
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = (msg.content[0].text or "").strip()
+        # strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw)
+    except Exception as _e:
+        print(f"[surge] haiku explanation error: {_e}")
+        return {}
 
 
 class SurgeEngine:
@@ -38,6 +93,10 @@ class SurgeEngine:
         self.velocity_buffer: dict = {}
         # (country, article_type) → expires_at datetime
         self.cooldown: dict = {}
+        # keyword → [{"ts": datetime, "title": str, "source": str, "url": str}]
+        self.keyword_buffer: dict = {}
+        # keyword → expires_at datetime
+        self.keyword_cooldown: dict = {}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -93,6 +152,102 @@ class SurgeEngine:
         if self._in_cooldown(key, now):
             return
         self._check_volume(key, article, config, now)
+
+    def on_raw_article(self, article: dict):
+        """
+        Call for EVERY article, no LLM enrichment needed.
+        article must have: title, source (optional), url (optional).
+        Detects keyword surges independently of LLM country/type extraction.
+        """
+        title = (article.get("title") or "").strip()
+        if not title:
+            return
+        matched = _match_keywords(title)
+        if not matched:
+            return
+        now = datetime.datetime.utcnow()
+        cutoff = now - timedelta(hours=KEYWORD_SURGE_WINDOW_HOURS)
+        for kw in matched:
+            buf = self.keyword_buffer.setdefault(kw, [])
+            buf.append({
+                "ts":     now,
+                "title":  title[:120],
+                "source": (article.get("source") or "")[:50],
+                "url":    (article.get("url") or "")[:200],
+            })
+            # Prune to window
+            self.keyword_buffer[kw] = [e for e in buf if e["ts"] > cutoff]
+            # Check cooldown
+            exp = self.keyword_cooldown.get(kw)
+            if exp and now < exp:
+                continue
+            recent = self.keyword_buffer[kw]
+            if len(recent) >= KEYWORD_SURGE_THRESHOLD:
+                self._detect_keyword_surge(kw, recent, now)
+
+    def _detect_keyword_surge(self, keyword: str, recent: list, now: datetime.datetime):
+        """Fire a KEYWORD_SURGE for the given keyword + evidence window."""
+        titles = [e["title"] for e in recent]
+        evidence = [{"title": e["title"], "source": e["source"], "url": e["url"]} for e in recent[:10]]
+        severity = "critical" if len(recent) >= KEYWORD_SURGE_THRESHOLD * 3 else \
+                   "high"     if len(recent) >= KEYWORD_SURGE_THRESHOLD * 2 else "medium"
+        headline = f"Keyword surge: '{keyword}' — {len(recent)} articles in {KEYWORD_SURGE_WINDOW_HOURS:.0f}h"
+
+        explanation = _generate_surge_explanation(keyword, titles)
+        context_summary = explanation.get("context_summary") or ""
+        why_it_matters  = explanation.get("why_it_matters") or ""
+
+        surge_id = f"SURGE-{_gen_id()}"
+        try:
+            from database import get_db as _gdb, SurgeEvent
+            with _gdb() as db:
+                ev = SurgeEvent(
+                    surge_id=surge_id,
+                    expires_at=now + timedelta(hours=6),
+                    location_name=keyword,
+                    location_country=None,
+                    region_id=None,
+                    lat=None,
+                    lon=None,
+                    article_type="keyword",
+                    surge_type="KEYWORD_SURGE",
+                    article_count=len(recent),
+                    baseline_count=None,
+                    multiplier=None,
+                    time_window_description=f"{len(recent)} articles in {KEYWORD_SURGE_WINDOW_HOURS:.0f}h",
+                    severity=severity,
+                    headline=headline,
+                    evidence_items=json.dumps(evidence),
+                    keyword=keyword,
+                    context_summary=context_summary,
+                    why_it_matters=why_it_matters,
+                    status="active",
+                )
+                db.add(ev)
+                db.commit()
+            print(f"[surge] KEYWORD_SURGE: {headline} | sev={severity}")
+        except Exception as e:
+            print(f"[surge] keyword DB write error: {e}")
+            return
+
+        # Set cooldown (1 hour for keyword surges)
+        self.keyword_cooldown[keyword] = now + timedelta(hours=1)
+
+        # Publish event
+        try:
+            from event_bus import event_bus as _eb_s, Events as _Ev_s
+            _eb_s.publish_sync(_Ev_s.SURGE_CREATED, {
+                "surge_id":    surge_id, "headline": headline,
+                "article_type": "keyword", "lat": None, "lon": None,
+                "severity":    severity,
+            })
+        except Exception:
+            pass
+
+        _surge_scores[("keyword", keyword)] = {
+            "score_bonus": SEV_TO_BONUS.get(severity, 10),
+            "expires_at":  now + timedelta(hours=6),
+        }
 
     def expire_old_surges(self):
         """Mark expired SurgeEvents. Call every 15 minutes."""
@@ -200,7 +355,8 @@ class SurgeEngine:
 
     def _fire_surge(self, *, surge_type, article, article_type, country,
                     article_count, baseline_count, multiplier, time_window,
-                    severity, config, now):
+                    severity, config, now,
+                    keyword=None, context_summary=None, why_it_matters=None):
         location_name = article.get("location_name") or country
         region_id     = article.get("region_id")
         lat           = article.get("lat")
@@ -235,6 +391,9 @@ class SurgeEngine:
                     severity=severity,
                     headline=headline,
                     evidence_items=json.dumps(evidence),
+                    keyword=keyword,
+                    context_summary=context_summary,
+                    why_it_matters=why_it_matters,
                     status="active",
                 )
                 db.add(ev)

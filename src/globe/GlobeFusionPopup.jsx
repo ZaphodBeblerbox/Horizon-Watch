@@ -164,6 +164,15 @@ export default function GlobeFusionPopup({ data, onClose }) {
                 </div>
             </div>
 
+            {/* Multi-domain corroboration note */}
+            {domains.length >= 2 && (
+                <div style={{ marginBottom: 8, padding: "6px 9px", background: "rgba(191,90,242,0.07)", borderRadius: 4, borderLeft: "2px solid rgba(191,90,242,0.4)" }}>
+                    <div style={{ fontSize: 10, color: "rgba(191,90,242,0.85)", lineHeight: 1.5 }}>
+                        This event has been corroborated across {domains.length} independent intelligence domains ({domains.join(", ")}). Multi-domain convergence significantly raises confidence and reduces the likelihood of false positives from any single feed.
+                    </div>
+                </div>
+            )}
+
             {/* Narrative */}
             {f.narrative && (
                 <div style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.55, marginBottom: 8, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>

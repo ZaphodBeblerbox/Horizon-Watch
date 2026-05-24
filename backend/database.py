@@ -454,6 +454,8 @@ class SurgeEvent(Base):
     id                      = Column(Integer, primary_key=True)
     surge_id                = Column(String, unique=True, index=True, nullable=False)
     created_at              = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at              = Column(DateTime, default=datetime.datetime.utcnow,
+                                    onupdate=datetime.datetime.utcnow)
     expires_at              = Column(DateTime, nullable=False)
     location_name           = Column(String, nullable=True)
     location_country        = Column(String, nullable=True)
@@ -461,14 +463,17 @@ class SurgeEvent(Base):
     lat                     = Column(Float, nullable=True)
     lon                     = Column(Float, nullable=True)
     article_type            = Column(String, nullable=False)
-    surge_type              = Column(String, nullable=False)   # VOLUME_SURGE | VELOCITY_SPIKE
+    surge_type              = Column(String, nullable=False)   # VOLUME_SURGE | VELOCITY_SPIKE | KEYWORD_SURGE
     article_count           = Column(Integer, default=0)
     baseline_count          = Column(Float, nullable=True)
     multiplier              = Column(Float, nullable=True)
     time_window_description = Column(String, nullable=True)
     severity                = Column(String, nullable=False, default="medium", index=True)
     headline                = Column(String, nullable=False)
-    evidence_items          = Column(Text, default="[]")       # JSON array {title, source}
+    evidence_items          = Column(Text, default="[]")       # JSON array {title, source, url}
+    keyword                 = Column(String, nullable=True)
+    context_summary         = Column(Text, nullable=True)
+    why_it_matters          = Column(Text, nullable=True)
     status                  = Column(String, default="active", index=True)  # active | expired
 
 
@@ -683,6 +688,20 @@ def migrate_db():
             if col not in rsd_existing:
                 cur.execute(f'ALTER TABLE regional_scan_detections ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] regional_scan_detections: added column {col}')
+
+    # surge_events new columns
+    surge_new_cols = [
+        ('keyword',         'TEXT'),
+        ('context_summary', 'TEXT'),
+        ('why_it_matters',  'TEXT'),
+        ('updated_at',      'DATETIME'),
+    ]
+    if 'surge_events' in tables:
+        se_existing = [row[1] for row in cur.execute('PRAGMA table_info(surge_events)').fetchall()]
+        for col, typ in surge_new_cols:
+            if col not in se_existing:
+                cur.execute(f'ALTER TABLE surge_events ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] surge_events: added column {col}')
 
     conn.commit()
     conn.close()

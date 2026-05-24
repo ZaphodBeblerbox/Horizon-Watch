@@ -121,11 +121,36 @@ export default function GlobeEventPopup({ data: ev, onClose }) {
                 </div>
             </div>
 
-            {/* Summary */}
-            {(ev.body || ev.summary) && (
+            {/* Zone context warning */}
+            {ev.zone_context && (
+                <div style={{ padding: "5px 14px", background: "rgba(234,179,8,0.08)", borderBottom: "1px solid rgba(234,179,8,0.2)", display: "flex", gap: 6, alignItems: "flex-start" }}>
+                    <span style={{ fontSize: 11, flexShrink: 0, marginTop: 1 }}>⚠</span>
+                    <div style={{ fontSize: 10, color: "#eab308", lineHeight: 1.4 }}>
+                        {ev.zone_context}
+                    </div>
+                </div>
+            )}
+
+            {/* Context summary */}
+            {ev.context_summary && (
+                <div style={{ padding: "7px 14px 2px", fontSize: 11, color: "#94a3b8", lineHeight: 1.55, borderLeft: "2px solid rgba(56,189,248,0.35)", margin: "6px 14px 0", background: "rgba(56,189,248,0.04)", borderRadius: "0 4px 4px 0", paddingLeft: 10 }}>
+                    {ev.context_summary}
+                </div>
+            )}
+
+            {/* Summary (fallback body if no context_summary) */}
+            {!ev.context_summary && (ev.body || ev.summary) && (
                 <div style={{ padding: "8px 14px 6px", fontSize: 11, color: "#C8D0DB", lineHeight: 1.55 }}>
                     {(ev.body || ev.summary || "").slice(0, 280)}
                     {(ev.body || ev.summary || "").length > 280 ? "…" : ""}
+                </div>
+            )}
+
+            {/* Body excerpt (when context_summary shown) */}
+            {ev.context_summary && (ev.body || ev.summary) && (
+                <div style={{ padding: "4px 14px 4px", fontSize: 10, color: "#64748b", lineHeight: 1.5 }}>
+                    {(ev.body || ev.summary || "").slice(0, 180)}
+                    {(ev.body || ev.summary || "").length > 180 ? "…" : ""}
                 </div>
             )}
 

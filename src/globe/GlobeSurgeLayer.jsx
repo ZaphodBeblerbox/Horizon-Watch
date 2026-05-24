@@ -220,6 +220,30 @@ function SurgePopup({ surge, x, y, visible, onClose }) {
                     </div>
                 </div>
 
+                {/* Context summary (Haiku-generated) */}
+                {surge.context_summary && (
+                    <div style={{ marginBottom: 10, padding: "7px 9px", background: "rgba(255,255,255,0.04)", borderRadius: 5, borderLeft: `2px solid rgba(${sevRgb},0.5)` }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 3 }}>
+                            Context
+                        </div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", lineHeight: 1.5 }}>
+                            {surge.context_summary}
+                        </div>
+                    </div>
+                )}
+
+                {/* Why it matters */}
+                {surge.why_it_matters && (
+                    <div style={{ marginBottom: 10, padding: "7px 9px", background: `rgba(${sevRgb},0.06)`, borderRadius: 5, borderLeft: `2px solid rgba(${sevRgb},0.3)` }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 3 }}>
+                            Why it matters
+                        </div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
+                            {surge.why_it_matters}
+                        </div>
+                    </div>
+                )}
+
                 {/* Evidence */}
                 {evidence.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
@@ -227,13 +251,24 @@ function SurgePopup({ surge, x, y, visible, onClose }) {
                             Top sources
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                            {evidence.map((ev, i) => (
-                                <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.3, paddingLeft: 10, position: "relative" }}>
-                                    <span style={{ position: "absolute", left: 0, color: sevCol }}>•</span>
-                                    {ev.source && <span style={{ color: "rgba(255,255,255,0.4)", marginRight: 4 }}>{ev.source} —</span>}
-                                    <span>{ev.title || ev.headline || ""}</span>
-                                </div>
-                            ))}
+                            {evidence.map((ev, i) => {
+                                const title = ev.title || ev.headline || ""
+                                const inner = (
+                                    <>
+                                        {ev.source && <span style={{ color: "rgba(255,255,255,0.4)", marginRight: 4 }}>{ev.source} —</span>}
+                                        <span>{title}</span>
+                                    </>
+                                )
+                                return (
+                                    <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.3, paddingLeft: 10, position: "relative" }}>
+                                        <span style={{ position: "absolute", left: 0, color: sevCol }}>•</span>
+                                        {ev.url
+                                            ? <a href={ev.url} target="_blank" rel="noopener noreferrer" style={{ color: "inherit", textDecoration: "none" }} onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{inner}</a>
+                                            : inner
+                                        }
+                                    </div>
+                                )
+                            })}
                         </div>
                     </div>
                 )}
