@@ -17,6 +17,27 @@ OPENSANCTIONS_VESSELS_URL = (
     "https://data.opensanctions.org/datasets/latest/vessels/targets.simple.csv"
 )
 
+# Generic words that appear in many legitimate vessel names — never match on these alone
+_GENERIC_VESSEL_WORDS = frozenset({
+    "STAR", "PACIFIC", "ATLANTIC", "OCEAN", "MARINE", "SHIPPING",
+    "TRADER", "CARRIER", "TANKER", "VESSEL", "SHIP", "LINE", "LINES",
+    "MARITIME", "GLOBAL", "INTERNATIONAL", "ENTERPRISE", "TRADE",
+    "CARGO", "NAVIGATOR", "EXPRESS", "PIONEER", "VOYAGER", "EXPLORER",
+})
+
+
+def _is_valid_partial_match(key: str, sname: str) -> bool:
+    """Return True only if the partial name match is substantial enough to trust."""
+    if len(key) < 8 or len(sname) < 8:
+        return False
+    shorter = min(len(key), len(sname))
+    longer  = max(len(key), len(sname))
+    if shorter / longer < 0.6:
+        return False
+    if key in _GENERIC_VESSEL_WORDS or sname in _GENERIC_VESSEL_WORDS:
+        return False
+    return True
+
 
 class SanctionsLoader:
 
@@ -181,10 +202,10 @@ class SanctionsLoader:
             key = name.upper().strip()
             if key in self._sanctions_by_name:
                 return self._sanctions_by_name[key]
-            # Partial match for names > 5 chars
-            if len(key) > 5:
+            # Partial match: both strings must be >= 8 chars, overlap >= 60%, non-generic
+            if len(key) > 7:
                 for sname, svessel in self._sanctions_by_name.items():
-                    if key in sname or sname in key:
+                    if (key in sname or sname in key) and _is_valid_partial_match(key, sname):
                         return svessel
 
         return None

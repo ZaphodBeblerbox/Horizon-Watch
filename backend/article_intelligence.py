@@ -150,7 +150,7 @@ def analyse_article(
         if _raw_country and _raw_country in HIGH_CONFLICT_COUNTRIES:
             if tier == 3:
                 tier = 2
-            if tier == 2:
+            elif tier == 2:
                 score = min(10.0, score * 1.4)
 
         event_title = data.get("event_title") or None

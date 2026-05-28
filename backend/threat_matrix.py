@@ -14,10 +14,13 @@ _threat_cache_history: dict = {}   # region_name → {"score": float}
 
 
 def _get_trend_delta(region_name: str, current_score: float, db) -> float:
-    """Return score delta vs 24h ago from ThreatSnapshotHourly. Returns 0 if no data."""
+    """Return score delta vs 24h ago from ThreatSnapshotHourly.
+    On cold start (no rows yet), seeds a baseline row 25h ago so that
+    trend computation works immediately rather than waiting 24h."""
     try:
         from database import ThreatSnapshotHourly
-        cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+        now    = datetime.datetime.utcnow()
+        cutoff = now - datetime.timedelta(hours=24)
         row = (db.query(ThreatSnapshotHourly)
                .filter(ThreatSnapshotHourly.region_name == region_name,
                        ThreatSnapshotHourly.snapshot_at <= cutoff)
@@ -25,6 +28,27 @@ def _get_trend_delta(region_name: str, current_score: float, db) -> float:
                .first())
         if row:
             return round(current_score - row.score, 1)
+
+        # Cold start: no 24h-old row exists — seed a neutral baseline so
+        # genuinely hot regions can surface as EMERGING/ESCALATING immediately.
+        any_row = (db.query(ThreatSnapshotHourly)
+                   .filter(ThreatSnapshotHourly.region_name == region_name)
+                   .first())
+        if not any_row:
+            seed_score = max(0.0, current_score * 0.6)  # baseline = 60% of current
+            seed = ThreatSnapshotHourly(
+                region_name = region_name,
+                region_id   = None,
+                score       = seed_score,
+                threat_level = "LOW",
+                snapshot_at = now - datetime.timedelta(hours=25),
+            )
+            try:
+                db.add(seed)
+                db.commit()
+            except Exception:
+                db.rollback()
+            return round(current_score - seed_score, 1)
     except Exception:
         pass
     return 0.0

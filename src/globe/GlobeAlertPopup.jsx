@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react"
-import { Color, PolylineDashMaterialProperty, Cartesian3 } from "cesium"
 import API_BASE from "../apiBase.js"
 import { ALERT_ICONS, FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
 
@@ -154,10 +153,8 @@ function StsPanel({ payload }) {
 }
 
 export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
-    const [trackData,   setTrackData]   = useState(null)
     const [forgeLinks,  setForgeLinks]  = useState([])
     const [photoErr,    setPhotoErr]    = useState(false)
-    const trackEntityRef = useRef(null)
 
     const sev      = a.severity || "medium"
     const sevColor = SEV_COLOR[sev]  || "#fbbf24"
@@ -185,57 +182,6 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
     const isSanctioned = a.rule_name === "Sanctioned Vessel"
     const isSts        = a.rule_name === "Ship-to-Ship Transfer"
 
-    // Fetch track
-    useEffect(() => {
-        if (!mmsi && !icao) return
-        let cancelled = false
-        const url = mmsi
-            ? `${API_BASE}/api/vessels/${mmsi}/track?hours=24`
-            : `${API_BASE}/api/aircraft/${icao}/track?hours=12`
-        fetch(url)
-            .then(r => r.ok ? r.json() : null)
-            .then(d => { if (!cancelled && d) setTrackData(d) })
-            .catch(() => {})
-        return () => { cancelled = true }
-    }, [mmsi, icao])
-
-    // Render Cesium track polyline
-    useEffect(() => {
-        const viewer = viewerRef?.current?.cesiumElement
-        if (!viewer || !trackData?.track?.length) return
-
-        // Remove previous track
-        if (trackEntityRef.current) {
-            try { viewer.entities.remove(trackEntityRef.current) } catch {}
-            trackEntityRef.current = null
-        }
-
-        const positions = trackData.track
-            .filter(p => p.lat != null && p.lon != null)
-            .map(p => Cartesian3.fromDegrees(p.lon, p.lat))
-        if (positions.length < 2) return
-
-        const trackColor = src === "ADSB" ? "#a78bfa" : "#0ea5e9"
-        trackEntityRef.current = viewer.entities.add({
-            polyline: {
-                positions,
-                width: 2,
-                material: new PolylineDashMaterialProperty({
-                    color:      Color.fromCssColorString(trackColor).withAlpha(0.7),
-                    dashLength: 16,
-                }),
-                clampToGround: true,
-            },
-        })
-
-        return () => {
-            if (trackEntityRef.current) {
-                try { viewer.entities.remove(trackEntityRef.current) } catch {}
-                trackEntityRef.current = null
-            }
-        }
-    }, [trackData, viewerRef, src])
-
     // Fetch forge connections (ontology links for this alert)
     useEffect(() => {
         if (!alertId) return
@@ -246,17 +192,6 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
             .catch(() => {})
         return () => { cancelled = true }
     }, [alertId])
-
-    // Clean up track on unmount
-    useEffect(() => {
-        return () => {
-            const viewer = viewerRef?.current?.cesiumElement
-            if (viewer && trackEntityRef.current) {
-                try { viewer.entities.remove(trackEntityRef.current) } catch {}
-                trackEntityRef.current = null
-            }
-        }
-    }, [viewerRef])
 
     const flagUrl  = a.vessel_flag_url  || a.aircraft_flag_url  || null
     const flagEmoji= a.vessel_flag      || a.aircraft_flag      || null

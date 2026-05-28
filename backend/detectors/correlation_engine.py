@@ -537,10 +537,94 @@ class DarkShipDetector:
                 "alerted_at": self._last_seen.get(str(mmsi), {}).get("alerted_at"),
             }
 
+    @staticmethod
+    def _qualify_dark_ship(mmsi: str, lat: float, lon: float) -> tuple:
+        """
+        Returns (should_fire, reason). Only True when the dark ship event is
+        genuinely suspicious:
+          A — vessel is on the sanctions list
+          B — vessel was last seen inside a strategic zone
+              (CONFLICT_ACTIVE / CHOKEPOINT_EXTENDED / MILITARY_SENSITIVE / NUCLEAR_SENSITIVE)
+          C — vessel was near a submarine cable segment (within ~5 km)
+          D — vessel is in isolated open ocean far from any port (> 200 km)
+        Routine AIS gaps in busy coastal / shipping-lane areas are suppressed.
+        """
+        try:
+            from sanctions_loader import sanctions_loader as _sl
+            hit = _sl.check_vessel(mmsi=mmsi)
+            if hit:
+                return True, f"sanctioned:{hit.get('name', mmsi)}"
+        except Exception:
+            pass
+
+        try:
+            from database import StrategicZone, get_db as _gdb
+            from shapely.geometry import Point, shape as _shape
+            import json as _json_dz
+            point = Point(lon, lat)
+            _QUALIFYING_ZONE_TYPES = {
+                "CONFLICT_ACTIVE", "CHOKEPOINT_EXTENDED",
+                "MILITARY_SENSITIVE", "NUCLEAR_SENSITIVE",
+            }
+            with _gdb() as _db:
+                zones = (
+                    _db.query(StrategicZone)
+                    .filter(
+                        StrategicZone.enabled == True,
+                        StrategicZone.zone_type.in_(list(_QUALIFYING_ZONE_TYPES)),
+                    )
+                    .all()
+                )
+            for z in zones:
+                try:
+                    if _shape(_json_dz.loads(z.polygon_geojson)).contains(point):
+                        return True, f"strategic_zone:{z.name}"
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            from database import CableSegment, get_db as _gdb_c
+            deg_r = 0.045  # ~5 km
+            with _gdb_c() as _cdb:
+                cable = (
+                    _cdb.query(CableSegment)
+                    .filter(
+                        CableSegment.lat.between(lat - deg_r, lat + deg_r),
+                        CableSegment.lon.between(lon - deg_r, lon + deg_r),
+                    )
+                    .first()
+                )
+            if cable:
+                return True, "near_cable"
+        except Exception:
+            pass
+
+        try:
+            from database import PortBoundary, get_db as _gdb_p
+            deg_port = 1.8  # ~200 km
+            with _gdb_p() as _pdb:
+                nearby = (
+                    _pdb.query(PortBoundary)
+                    .filter(
+                        PortBoundary.latitude.between(lat - deg_port, lat + deg_port),
+                        PortBoundary.longitude.between(lon - deg_port, lon + deg_port),
+                    )
+                    .first()
+                )
+            if not nearby:
+                return True, "isolated_open_ocean"
+        except Exception:
+            pass
+
+        return False, "suppressed_routine"
+
     def scan(self, rules: list, now: datetime, active_mmsis: set) -> list:
         """
         Scan for vessels absent from the live feed for >= min_gap_minutes.
         active_mmsis: set of mmsi strings currently visible in AIS feed.
+        Only fires when sanctioned / in strategic zone / near cable / isolated ocean.
         """
         alerts: list = []
 
@@ -576,6 +660,13 @@ class DarkShipDetector:
                 if alerted_at and (now - alerted_at).total_seconds() / 60.0 < min_gap_min * 2:
                     continue
 
+                # Qualify: only fire if contextually suspicious
+                lat = state["lat"]
+                lon = state["lon"]
+                should_fire, reason = self._qualify_dark_ship(mmsi, lat, lon)
+                if not should_fire:
+                    continue
+
                 self._last_seen[mmsi]["alerted_at"] = now
                 alerts.append({
                     "id":           f"dark_{int(now.timestamp()*1000)}_{mmsi}",
@@ -587,21 +678,22 @@ class DarkShipDetector:
                     "icon_type":    "DARK_SHIP",
                     "vessel":       state["name"],
                     "mmsi":         mmsi,
-                    "lat":          state["lat"],
-                    "lng":          state["lon"],
+                    "lat":          lat,
+                    "lng":          lon,
                     "speed":        state["speed"],
                     "message": (
                         f"Dark ship: {state['name']} — no AIS signal for {gap_min:.0f} min. "
-                        f"Last position: {state['lat']:.3f}, {state['lon']:.3f} "
+                        f"Last position: {lat:.3f}, {lon:.3f} "
                         f"(region {state.get('region_id', '?')}). "
-                        f"Last speed: {state['speed']:.1f} kn."
+                        f"Last speed: {state['speed']:.1f} kn. Trigger: {reason}."
                     ),
                     "timestamp":    now.isoformat(),
                     "gap_minutes":  round(gap_min, 1),
+                    "dark_ship_trigger": reason,
                     "provenance": {
                         "source_type":    "AIS",
                         "detection_rule": "AIS_DARK_SHIP",
-                        "trigger_reason": "AIS_DARK_SHIP",
+                        "trigger_reason": reason,
                     },
                 })
 

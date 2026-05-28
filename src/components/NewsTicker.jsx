@@ -46,6 +46,7 @@ export default function NewsTicker({ visible }) {
     // Smooth scroll
     useEffect(() => {
         if (!visible || !articles.length) return
+        setOffset(0) // reset position when article list changes to prevent snap
 
         const SPEED = 0.4 // px per frame
 

@@ -24,7 +24,7 @@ export default function GlobeVesselPopup({ data: v, onClose, onFollow }) {
     useEffect(() => {
         if (!mmsi) return
         let cancelled = false
-        fetch(`${API_BASE}/api/vessels/${mmsi}/track?hours=1`)
+        fetch(`${API_BASE}/api/vessels/${mmsi}/identity`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (!cancelled && d?.identity) setIdentity(d.identity) })
             .catch(() => {})

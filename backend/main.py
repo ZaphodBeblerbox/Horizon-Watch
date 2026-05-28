@@ -6034,6 +6034,10 @@ def _upsert_news_article(article: dict) -> None:
     url = article.get("url")
     if not url:
         return
+    # Strip raw HTML body before storing — context_summary is the useful part
+    if "body" in article:
+        import re as _re_html
+        article["body"] = _re_html.sub(r'<[^>]+>', '', article.get("body") or "")[:500]
     with _NEWS_STORE_LOCK:
         existing = _NEWS_ARTICLE_STORE.get(url, {})
         merged = {**existing, **article}
@@ -8315,7 +8319,7 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
             "relevance_score": a.get("relevance_score", 0),
             "url":            a.get("url", ""),
         }
-        for a in matching_articles[:10]
+        for a in matching_articles[:3]
     ]
 
     lat = trigger_article.get("lat")
@@ -8664,6 +8668,15 @@ async def _run_sts_detection() -> None:
         ]
 
     now = datetime.utcnow()
+
+    # Expire candidates not updated in 90 minutes (handles pairs that leave proximity
+    # and never return — they are already dropped by new_candidates logic, but
+    # this guards against edge-cases where _sts_candidates retains orphaned entries)
+    _sts_candidates = {
+        k: v for k, v in _sts_candidates.items()
+        if (now - v.get("last_seen", now)).total_seconds() < 5400
+    }
+
     n = len(vessels)
     new_candidates: dict = {}
 
@@ -8687,12 +8700,16 @@ async def _run_sts_detection() -> None:
                 existing = _sts_candidates[pair_key]
                 existing["last_seen"] = now
                 existing["min_dist"]  = min(existing.get("min_dist", dist), dist)
-                existing["positions"].append({
+                pos_entry = {
                     "lat": (a["lat"] + b["lat"]) / 2,
                     "lon": (a["lon"] + b["lon"]) / 2,
                     "dist_m": dist,
                     "timestamp": now.isoformat(),
-                })
+                }
+                existing["positions"].append(pos_entry)
+                # Cap positions list — only last/first 10 needed for alert payload
+                if len(existing["positions"]) > 20:
+                    existing["positions"] = existing["positions"][-20:]
                 new_candidates[pair_key] = existing
             else:
                 new_candidates[pair_key] = {
@@ -9180,70 +9197,18 @@ async def get_aircraft_history(
     }
 
 
-@app.get("/api/vessels/{mmsi}/track")
-def get_vessel_track(mmsi: str, hours: int = 24):
-    """Last N hours of position points for a vessel, with MMSI → flag identity."""
-    from database import VesselHistory, get_db as _gdb_t
+@app.get("/api/vessels/{mmsi}/identity")
+def get_vessel_identity(mmsi: str):
+    """MMSI → flag/country identity (lightweight, no DB query)."""
     from mmsi_lookup import lookup_mmsi
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
-    with _gdb_t() as db:
-        points = (
-            db.query(VesselHistory)
-            .filter(VesselHistory.mmsi == mmsi, VesselHistory.timestamp >= cutoff)
-            .order_by(VesselHistory.timestamp.asc())
-            .limit(500)
-            .all()
-        )
-    identity = lookup_mmsi(mmsi)
-    return {
-        "mmsi":        mmsi,
-        "identity":    identity,
-        "point_count": len(points),
-        "track": [
-            {
-                "lat":       p.lat,
-                "lon":       p.lon,
-                "speed":     p.speed,
-                "heading":   p.heading,
-                "timestamp": p.timestamp.isoformat(),
-            }
-            for p in points
-        ],
-    }
+    return {"mmsi": mmsi, "identity": lookup_mmsi(mmsi)}
 
 
-@app.get("/api/aircraft/{icao_hex}/track")
-def get_aircraft_track(icao_hex: str, hours: int = 12):
-    """Last N hours of position points for an aircraft, with ICAO → military identity."""
-    from database import AircraftHistory, get_db as _gdb_t
+@app.get("/api/aircraft/{icao_hex}/identity")
+def get_aircraft_identity(icao_hex: str):
+    """ICAO hex → military/service identity (lightweight, no DB query)."""
     from icao_lookup import lookup_icao_hex
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
-    with _gdb_t() as db:
-        points = (
-            db.query(AircraftHistory)
-            .filter(AircraftHistory.icao24 == icao_hex.lower(), AircraftHistory.timestamp >= cutoff)
-            .order_by(AircraftHistory.timestamp.asc())
-            .limit(500)
-            .all()
-        )
-    identity = lookup_icao_hex(icao_hex)
-    return {
-        "icao_hex":    icao_hex,
-        "identity":    identity,
-        "callsign":    points[-1].callsign if points else None,
-        "point_count": len(points),
-        "track": [
-            {
-                "lat":       p.lat,
-                "lon":       p.lon,
-                "altitude":  p.altitude,
-                "speed":     p.speed,
-                "heading":   p.heading,
-                "timestamp": p.timestamp.isoformat(),
-            }
-            for p in points
-        ],
-    }
+    return {"icao_hex": icao_hex, "identity": lookup_icao_hex(icao_hex)}
 
 
 @app.get("/api/history/vessels")
@@ -10860,6 +10825,45 @@ def _tm_refresh_once():
         print(f"[threat-matrix] refresh error: {_tm_e}")
 
 
+async def _daily_db_purge_loop():
+    """Run once daily (at 03:00 UTC) to prune old rows and keep the DB lean."""
+    await asyncio.sleep(120)  # let startup settle
+    while True:
+        now = datetime.now(timezone.utc)
+        # Run at 03:xx UTC
+        if now.hour == 3:
+            try:
+                from database import get_db as _gdb_purge, Alert, SurgeEvent, FusionSignal, ThreatMatrixSnapshot, OntologyLink
+                cutoff_7d  = datetime.now(timezone.utc) - timedelta(days=7)
+                cutoff_30d = datetime.now(timezone.utc) - timedelta(days=30)
+                cutoff_48h = datetime.now(timezone.utc) - timedelta(hours=48)
+                deleted = {}
+                with _gdb_purge() as _pdb:
+                    deleted["old_alerts"] = _pdb.query(Alert).filter(
+                        Alert.created_at < cutoff_7d, Alert.status != "active"
+                    ).delete(synchronize_session=False)
+                    deleted["expired_surges"] = _pdb.query(SurgeEvent).filter(
+                        SurgeEvent.expires_at < cutoff_48h
+                    ).delete(synchronize_session=False)
+                    deleted["expired_fusions"] = _pdb.query(FusionSignal).filter(
+                        FusionSignal.expires_at < datetime.now(timezone.utc)
+                    ).delete(synchronize_session=False)
+                    deleted["old_snapshots"] = _pdb.query(ThreatMatrixSnapshot).filter(
+                        ThreatMatrixSnapshot.snapshot_at < cutoff_30d
+                    ).delete(synchronize_session=False)
+                    deleted["old_links"] = _pdb.query(OntologyLink).filter(
+                        OntologyLink.created_at < cutoff_30d
+                    ).delete(synchronize_session=False)
+                    _pdb.commit()
+                print(f"[purge] Daily DB purge complete: {deleted}")
+            except Exception as _pe:
+                print(f"[purge] Daily DB purge error: {_pe}")
+            # Sleep 23h to avoid running twice in the same 03:xx window
+            await asyncio.sleep(82800)
+        else:
+            await asyncio.sleep(1800)
+
+
 async def _threat_snapshot_loop():
     """Write hourly ThreatSnapshotHourly rows for trend computation."""
     await asyncio.sleep(60)
@@ -11056,6 +11060,10 @@ async def startup_event():
 
         _fusion_engine.set_fire_callback(_fusion_fire_callback)
         print("[startup] FusionEngine fire callback registered")
+        # Reload persisted signals NOW that the callback is wired,
+        # so any fusions that re-cross their threshold can actually fire.
+        _fusion_engine._reload_signals_from_db()
+        print("[startup] FusionEngine signals reloaded from DB")
         asyncio.create_task(_fusion_expire_loop())
 
     asyncio.create_task(_extract_news_conflicts_loop())
@@ -11092,6 +11100,7 @@ async def startup_event():
     asyncio.create_task(_threat_matrix_loop())
     asyncio.create_task(_threat_snapshot_loop())
     asyncio.create_task(_dirty_region_refresh_loop())
+    asyncio.create_task(_daily_db_purge_loop())
 
     # Load OpenSanctions vessel list in background (non-blocking)
     async def _load_sanctions_bg():
@@ -14760,16 +14769,7 @@ def _port_feature(row) -> dict:
 
 
 import math as _math_ports
-
-def _haversine_m(lat1, lon1, lat2, lon2) -> float:
-    R = 6_371_000
-    dlat = _math_ports.radians(lat2 - lat1)
-    dlon = _math_ports.radians(lon2 - lon1)
-    a = (_math_ports.sin(dlat / 2) ** 2
-         + _math_ports.cos(_math_ports.radians(lat1))
-         * _math_ports.cos(_math_ports.radians(lat2))
-         * _math_ports.sin(dlon / 2) ** 2)
-    return R * 2 * _math_ports.asin(_math_ports.sqrt(min(a, 1.0)))
+# _haversine_m is defined once above (canonical definition — see def _haversine_m near _haversine)
 
 
 @app.get("/api/ports")
@@ -18109,7 +18109,7 @@ async def _forge_detection_cycle():
                 if key not in seen:
                     seen.add(key)
                     deduped.append(a)
-            _forge_alerts = list(reversed(deduped))[:500]
+            _forge_alerts = list(reversed(deduped))[:200]
             _correlation_assessments = _correlation_assessments[-200:]
 
             cycle_s = (datetime.now(timezone.utc) - cycle_start).total_seconds()
