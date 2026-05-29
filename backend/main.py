@@ -3360,8 +3360,8 @@ async def director_generate(
 
     def _call_claude():
         msg = client.messages.create(
-            model="claude-opus-4-8",
-            max_tokens=16000,
+            model="claude-sonnet-4-5-20251015",
+            max_tokens=1500,
             timeout=180,
             system=_BRIEFING_SYSTEM,
             messages=[{"role": "user", "content": _BRIEFING_USER}],

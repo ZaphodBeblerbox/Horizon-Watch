@@ -1278,24 +1278,27 @@ def generate_sequence(
     )
 
     logger.info("[DIRECTOR] Calling Claude for intent: %s", intent[:80])
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=20000,
-        timeout=180,  # 3-minute hard timeout — prevents indefinite hang
+    raw = ""
+    with client.messages.stream(
+        model="claude-sonnet-4-5-20251015",
+        max_tokens=1500,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
-    )
+    ) as stream:
+        for chunk in stream.text_stream:
+            raw += chunk
+    final = stream.get_final_message()
     logger.info(
         "[DIRECTOR] Claude responded: %d input tokens, %d output tokens",
-        message.usage.input_tokens, message.usage.output_tokens,
+        final.usage.input_tokens, final.usage.output_tokens,
     )
     usage_tracker.record_call(
-        message.usage.input_tokens,
-        message.usage.output_tokens,
+        final.usage.input_tokens,
+        final.usage.output_tokens,
         call_type="director_generate",
         headline=f"Director: {intent[:60]}",
     )
-    raw = message.content[0].text.strip()
+    raw = raw.strip()
     logger.info("[DIRECTOR] Raw response length: %d chars, first 200: %s", len(raw), raw[:200])
 
     # Parse JSON with tolerant fallbacks
