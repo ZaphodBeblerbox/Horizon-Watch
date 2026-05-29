@@ -258,7 +258,7 @@ async def run_foresight_analysis(
 
     intel = _gather_zone_intelligence(zone_id, zone_name, db)
 
-    model = "claude-opus-4-5" if current_score >= 55 else "claude-sonnet-4-6"
+    model = "claude-opus-4-8" if current_score >= 55 else "claude-sonnet-4-6"
 
     intel_str = json.dumps(intel, indent=2)
     if len(intel_str) > 28_000:

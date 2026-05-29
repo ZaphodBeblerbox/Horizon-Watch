@@ -3356,7 +3356,7 @@ async def director_generate(
 
     def _call_claude():
         msg = client.messages.create(
-            model="claude-opus-4-7",
+            model="claude-opus-4-8",
             max_tokens=16000,
             timeout=180,
             system=_BRIEFING_SYSTEM,

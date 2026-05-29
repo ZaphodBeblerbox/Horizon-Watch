@@ -355,31 +355,34 @@ def prepare_intelligence_picture(
     }
 
 
-def _get_foresight_risks(db) -> list:
-    """Fetch top escalation risks from foresight assessments (last 24h, prob >= 0.40)."""
+def _get_foresight_risks(_unused_db) -> list:
+    """Fetch top escalation risks from foresight assessments (last 24h, prob >= 0.40).
+    Uses an isolated session to prevent a missing table from poisoning the caller's session."""
     try:
-        from database import ForesightAssessment
+        from database import ForesightAssessment, get_db
         cutoff = datetime.datetime.utcnow() - timedelta(hours=24)
-        rows = (
-            db.query(ForesightAssessment)
-            .filter(ForesightAssessment.generated_at >= cutoff,
-                    ForesightAssessment.escalation_probability_30d >= 0.40)
-            .order_by(ForesightAssessment.escalation_probability_30d.desc())
-            .limit(5)
-            .all()
-        )
-        return [
-            {
-                "zone":                    a.zone_name,
-                "escalation_probability":  float(a.escalation_probability_30d or 0),
-                "situation":               a.situation_summary or "",
-                "analyst_note":            a.analyst_note or "",
-                "confidence":              a.confidence or "low",
-                "scenarios":               _safe_json(a.likely_scenarios, [])[:2],
-            }
-            for a in rows
-        ]
-    except Exception:
+        with get_db() as _fdb:
+            rows = (
+                _fdb.query(ForesightAssessment)
+                .filter(ForesightAssessment.generated_at >= cutoff,
+                        ForesightAssessment.escalation_probability_30d >= 0.40)
+                .order_by(ForesightAssessment.escalation_probability_30d.desc())
+                .limit(5)
+                .all()
+            )
+            return [
+                {
+                    "zone":                   a.zone_name,
+                    "escalation_probability": float(a.escalation_probability_30d or 0),
+                    "situation":              a.situation_summary or "",
+                    "analyst_note":           a.analyst_note or "",
+                    "confidence":             a.confidence or "low",
+                    "scenarios":              _safe_json(a.likely_scenarios, [])[:2],
+                }
+                for a in rows
+            ]
+    except Exception as _fe:
+        print(f"[briefing_prep] foresight_risks skipped: {_fe}")
         return []
 
 
