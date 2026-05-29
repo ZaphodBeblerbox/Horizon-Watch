@@ -3310,7 +3310,11 @@ async def director_generate(
             t["adsb_anomalies"] = t["adsb_anomalies"][:5]
         return t
 
-    pic_str = _json.dumps(_truncated_pic(pic), ensure_ascii=False, separators=(",", ":"))
+    def _json_default(obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return str(obj)
+    pic_str = _json.dumps(_truncated_pic(pic), ensure_ascii=False, separators=(",", ":"), default=_json_default)
     if len(pic_str) > 40000:
         pic_str = pic_str[:40000] + "..."
 

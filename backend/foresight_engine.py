@@ -143,7 +143,7 @@ def _gather_zone_intelligence(zone_id: str, zone_name: str, db) -> dict:
     # ── Tier 1+2 articles (30d) ───────────────────────────────────────────────
     raw_articles = (
         db.query(NewsArticle)
-        .filter(NewsArticle.created_at >= cutoff_30d,
+        .filter(NewsArticle.ingested_at >= cutoff_30d,
                 NewsArticle.tier.in_([1, 2]),
                 NewsArticle.lat.isnot(None))
         .order_by(NewsArticle.relevance_score.desc())
@@ -153,7 +153,7 @@ def _gather_zone_intelligence(zone_id: str, zone_name: str, db) -> dict:
         {"title":   (a.event_title or getattr(a, "headline", None) or "")[:150],
          "context": (a.context_summary or "")[:300],
          "source":  (a.source_name or "")[:60],
-         "date":    str(a.published_at or ""),
+         "date":    str(a.published or ""),
          "tier":    a.tier}
         for a in raw_articles
         if in_zone(a.lat, a.lon)
