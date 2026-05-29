@@ -351,7 +351,36 @@ def prepare_intelligence_picture(
             }
             for a in top_articles
         ],
+        "foresight_risks":    _get_foresight_risks(db),
     }
+
+
+def _get_foresight_risks(db) -> list:
+    """Fetch top escalation risks from foresight assessments (last 24h, prob >= 0.40)."""
+    try:
+        from database import ForesightAssessment
+        cutoff = datetime.datetime.utcnow() - timedelta(hours=24)
+        rows = (
+            db.query(ForesightAssessment)
+            .filter(ForesightAssessment.generated_at >= cutoff,
+                    ForesightAssessment.escalation_probability_30d >= 0.40)
+            .order_by(ForesightAssessment.escalation_probability_30d.desc())
+            .limit(5)
+            .all()
+        )
+        return [
+            {
+                "zone":                    a.zone_name,
+                "escalation_probability":  float(a.escalation_probability_30d or 0),
+                "situation":               a.situation_summary or "",
+                "analyst_note":            a.analyst_note or "",
+                "confidence":              a.confidence or "low",
+                "scenarios":               _safe_json(a.likely_scenarios, [])[:2],
+            }
+            for a in rows
+        ]
+    except Exception:
+        return []
 
 
 def _safe_json(value, default):

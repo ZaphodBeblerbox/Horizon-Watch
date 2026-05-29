@@ -10864,6 +10864,51 @@ async def _daily_db_purge_loop():
             await asyncio.sleep(1800)
 
 
+async def _trajectory_loop():
+    """Compute and persist ThreatTrajectory rows every hour."""
+    await asyncio.sleep(90)  # let DB and threat cache settle first
+    while True:
+        try:
+            from database import ThreatTrajectory
+            from threat_matrix import REGIONS, compute_trajectory
+            with get_db() as _tdb:
+                for region_name in REGIONS:
+                    try:
+                        t = compute_trajectory(region_name, _tdb)
+                        _tdb.add(ThreatTrajectory(
+                            zone_id      = region_name,
+                            zone_name    = region_name,
+                            score_now    = t["score_now"],
+                            threat_level = t["threat_level"],
+                            velocity_1d  = t["velocity_1d"],
+                            velocity_3d  = t["velocity_3d"],
+                            velocity_7d  = t["velocity_7d"],
+                            acceleration = t["acceleration"],
+                            trajectory   = t["trajectory"],
+                            computed_at  = datetime.utcnow(),
+                        ))
+                    except Exception as _te:
+                        print(f"[trajectory] {region_name}: {_te}")
+                _tdb.commit()
+            print(f"[trajectory] updated {len(REGIONS)} zones")
+        except Exception as _tl_err:
+            print(f"[trajectory] loop error: {_tl_err}")
+        await asyncio.sleep(3600)
+
+
+async def _foresight_loop():
+    """Run foresight analysis cycle every hour — analyses top 3 qualifying zones."""
+    await asyncio.sleep(300)  # 5-min delay after startup
+    while True:
+        try:
+            import foresight_engine
+            with get_db() as _fdb:
+                await foresight_engine.run_foresight_cycle(_fdb, list(_forge_alerts))
+        except Exception as _fl_err:
+            print(f"[foresight] loop error: {_fl_err}")
+        await asyncio.sleep(3600)
+
+
 async def _threat_snapshot_loop():
     """Write hourly ThreatSnapshotHourly rows for trend computation."""
     await asyncio.sleep(60)
@@ -11101,6 +11146,8 @@ async def startup_event():
     asyncio.create_task(_threat_snapshot_loop())
     asyncio.create_task(_dirty_region_refresh_loop())
     asyncio.create_task(_daily_db_purge_loop())
+    asyncio.create_task(_trajectory_loop())
+    asyncio.create_task(_foresight_loop())
 
     # Load OpenSanctions vessel list in background (non-blocking)
     async def _load_sanctions_bg():
@@ -18893,6 +18940,100 @@ def api_fusions_signals(fusion_id: str):
         "signal_count": len(signals),
         "signals":      signals,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FORESIGHT ENGINE — Escalation prediction endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/foresight/global/summary")
+async def api_foresight_global():
+    """Top escalation risks across all zones (last 24h assessments)."""
+    try:
+        from database import ForesightAssessment as _FA
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
+        with get_db() as _db:
+            rows = (
+                _db.query(_FA)
+                .filter(_FA.generated_at >= cutoff)
+                .order_by(_FA.escalation_probability_30d.desc())
+                .limit(10)
+                .all()
+            )
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "top_risks": [
+                {
+                    "zone_id":                     r.zone_id,
+                    "zone_name":                   r.zone_name,
+                    "escalation_probability_30d":  r.escalation_probability_30d,
+                    "confidence":                  r.confidence,
+                    "analyst_note":                r.analyst_note,
+                    "situation_summary":           r.situation_summary,
+                    "generated_at":                r.generated_at.isoformat() if r.generated_at else None,
+                }
+                for r in rows
+            ],
+        }
+    except Exception as e:
+        print(f"[foresight/global] error: {e}")
+        return {"generated_at": datetime.utcnow().isoformat(), "top_risks": []}
+
+
+@app.get("/api/foresight/{zone_id}")
+async def api_foresight_get(zone_id: str):
+    """Latest foresight assessment for a zone."""
+    try:
+        from database import ForesightAssessment as _FA
+        import json as _j
+        with get_db() as _db:
+            latest = (
+                _db.query(_FA)
+                .filter(_FA.zone_id == zone_id)
+                .order_by(_FA.generated_at.desc())
+                .first()
+            )
+        if not latest:
+            return {"zone_id": zone_id, "assessment": None}
+        a = latest
+        return {
+            "zone_id":                      a.zone_id,
+            "zone_name":                    a.zone_name,
+            "generated_at":                 a.generated_at.isoformat() if a.generated_at else None,
+            "score_at_generation":          a.score_at_generation,
+            "model_used":                   a.model_used,
+            "situation_summary":            a.situation_summary,
+            "trajectory_assessment":        a.trajectory_assessment,
+            "escalation_probability_30d":   a.escalation_probability_30d,
+            "probability_basis":            a.probability_basis,
+            "early_warning_indicators":     _j.loads(a.early_warning_indicators or "[]"),
+            "likely_scenarios":             _j.loads(a.likely_scenarios or "[]"),
+            "pattern_matches":              _j.loads(a.pattern_matches or "[]"),
+            "intelligence_gaps":            _j.loads(a.intelligence_gaps or "[]"),
+            "confidence":                   a.confidence,
+            "analyst_note":                 a.analyst_note,
+            "expires_at":                   a.expires_at.isoformat() if a.expires_at else None,
+        }
+    except Exception as e:
+        print(f"[foresight] get error for {zone_id}: {e}")
+        return {"zone_id": zone_id, "assessment": None, "error": str(e)}
+
+
+@app.post("/api/foresight/{zone_id}/trigger")
+async def api_foresight_trigger(zone_id: str):
+    """Force a fresh foresight assessment for a zone (bypasses cooldown)."""
+    try:
+        import foresight_engine
+        from threat_matrix import compute_threat_score
+        with get_db() as _db:
+            score = compute_threat_score(zone_id, _db).get("threat_score", 0.0)
+            assessment = await foresight_engine.run_foresight_analysis(
+                zone_id, zone_id, float(score), _db, force=True
+            )
+        return {"triggered": True, "zone_id": zone_id, "assessment": assessment}
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return {"triggered": False, "error": str(e)}
 
 
 @app.put("/api/fusions/{fusion_id}")

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { createPortal } from "react-dom"
 import API_BASE from "../apiBase.js"
+import ForesightPanel from "../components/ForesightPanel.jsx"
 
 const ZONE_TYPE_LABELS = {
     CONFLICT_ACTIVE:    "Active Conflict",
@@ -32,6 +33,7 @@ const TYPE_COLOURS = {
 }
 
 function Tooltip({ zone, x, y, visible, onClose }) {
+    const [activeTab,     setActiveTab]     = useState("overview")
     const [imgIdx,        setImgIdx]        = useState(0)
     const [imgFade,       setImgFade]       = useState(true)
     const [imgErrors,     setImgErrors]     = useState([])
@@ -39,6 +41,7 @@ function Tooltip({ zone, x, y, visible, onClose }) {
     const [imgsLoading,   setImgsLoading]   = useState(true)
     const [signals,       setSignals]       = useState([])
     const [watching,      setWatching]      = useState(false)
+    const [foresightSnap, setForesightSnap] = useState(null)
 
     // Fetch images from API on mount
     useEffect(() => {
@@ -76,6 +79,15 @@ function Tooltip({ zone, x, y, visible, onClose }) {
         fetch(`${API_BASE}/api/strategic-zones/${zone.zone_id}/signals`)
             .then(r => r.ok ? r.json() : { signals: [] })
             .then(d => setSignals((d.signals || d || []).slice(0, 5)))
+            .catch(() => {})
+    }, [zone.zone_id])
+
+    // Fetch foresight snapshot for overview tab
+    useEffect(() => {
+        if (!zone.zone_id) return
+        fetch(`${API_BASE}/api/foresight/${zone.zone_id}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d?.situation_summary) setForesightSnap(d) })
             .catch(() => {})
     }, [zone.zone_id])
 
@@ -217,56 +229,102 @@ function Tooltip({ zone, x, y, visible, onClose }) {
                 )}
             </div>
 
-            {/* Content */}
-            <div style={{ padding: "12px 14px 0" }}>
-                {/* Badges */}
-                <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-                    <span style={badgeStyle(typeColour)}>{typeLabel}</span>
-                    <span style={badgeStyle(severityColour)}>{zone.severity_baseline?.toUpperCase()}</span>
-                </div>
-
-                {/* Name */}
-                <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}>
-                    {zone.name}
-                </div>
-
-                {/* Description */}
-                {zone.description && (
-                    <div style={{
-                        fontSize: 12, lineHeight: 1.5, color: "rgba(255,255,255,0.62)",
-                        display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical",
-                        overflow: "hidden", marginBottom: 10,
+            {/* Tab bar */}
+            <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(10,18,35,0.6)" }}>
+                {["overview", "foresight"].map(tab => (
+                    <button key={tab} onClick={() => setActiveTab(tab)} style={{
+                        flex: 1, padding: "8px 0",
+                        background: "none", border: "none",
+                        borderBottom: `2px solid ${activeTab === tab ? "#007AFF" : "transparent"}`,
+                        color: activeTab === tab ? "#fff" : "rgba(255,255,255,0.4)",
+                        fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
+                        textTransform: "uppercase", cursor: "pointer",
+                        transition: "color 0.15s, border-color 0.15s",
+                        fontFamily: "inherit",
                     }}>
-                        {zone.description}
-                    </div>
-                )}
+                        {tab === "foresight" ? "Foresight" : "Overview"}
+                    </button>
+                ))}
+            </div>
 
-                {/* Active intelligence */}
-                <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 10, marginBottom: 10 }}>
-                    <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", marginBottom: 6 }}>
-                        Active Intelligence
-                    </div>
-                    {signals.length === 0 ? (
-                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>No active signals</div>
-                    ) : signals.map((s, i) => (
-                        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 5 }}>
-                            <span style={{ flexShrink: 0, marginTop: 2, width: 6, height: 6, borderRadius: "50%", background: signalDotColour(s) }} />
-                            <span style={{ fontSize: 11, lineHeight: 1.4, color: "rgba(255,255,255,0.75)" }}>
-                                {s.summary || s.title || s.rule_name || "Signal"}
-                                {s.domain && <span style={{ color: "rgba(255,255,255,0.35)", marginLeft: 4 }}>[{s.domain}]</span>}
-                            </span>
+            {activeTab === "overview" ? (
+                <>
+                    {/* Content */}
+                    <div style={{ padding: "12px 14px 0" }}>
+                        {/* Badges */}
+                        <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                            <span style={badgeStyle(typeColour)}>{typeLabel}</span>
+                            <span style={badgeStyle(severityColour)}>{zone.severity_baseline?.toUpperCase()}</span>
                         </div>
-                    ))}
-                </div>
-            </div>
 
-            {/* Buttons */}
-            <div style={{ display: "flex", gap: 6, padding: "0 14px 12px" }}>
-                <button onClick={handleOpenForge} style={btnStyle("#007AFF")}>Open in Forge</button>
-                <button onClick={() => setWatching(w => !w)} style={btnStyle(watching ? "#FF9500" : "#1C2539", watching)}>
-                    {watching ? "Watching" : "Watch"}
-                </button>
-            </div>
+                        {/* Name */}
+                        <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 6 }}>{zone.name}</div>
+
+                        {/* Description */}
+                        {zone.description && (
+                            <div style={{ fontSize: 12, lineHeight: 1.5, color: "rgba(255,255,255,0.62)", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", marginBottom: 10 }}>
+                                {zone.description}
+                            </div>
+                        )}
+
+                        {/* Foresight snapshot */}
+                        {foresightSnap && (
+                            <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 8, marginBottom: 8 }}>
+                                <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", marginBottom: 6 }}>
+                                    Escalation Forecast
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                    <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                                        <div style={{ width: `${(foresightSnap.escalation_probability_30d || 0) * 100}%`, height: "100%", background: foresightSnap.escalation_probability_30d >= 0.7 ? "#FF3B30" : foresightSnap.escalation_probability_30d >= 0.4 ? "#FF9500" : "#FFCC00" }} />
+                                    </div>
+                                    <span style={{ fontSize: 12, fontWeight: 700, color: foresightSnap.escalation_probability_30d >= 0.7 ? "#FF3B30" : foresightSnap.escalation_probability_30d >= 0.4 ? "#FF9500" : "#FFCC00" }}>
+                                        {Math.round((foresightSnap.escalation_probability_30d || 0) * 100)}%
+                                    </span>
+                                    <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase" }}>30d</span>
+                                </div>
+                                {foresightSnap.analyst_note && (
+                                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", lineHeight: 1.45, cursor: "pointer" }}
+                                        onClick={() => setActiveTab("foresight")}>
+                                        {foresightSnap.analyst_note.slice(0, 90)}{foresightSnap.analyst_note.length > 90 ? "…" : ""}
+                                        <span style={{ color: "#007AFF", marginLeft: 4 }}>View full &rsaquo;</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Active intelligence */}
+                        <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 10, marginBottom: 10 }}>
+                            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", marginBottom: 6 }}>
+                                Active Intelligence
+                            </div>
+                            {signals.length === 0 ? (
+                                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>No active signals</div>
+                            ) : signals.map((s, i) => (
+                                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 5 }}>
+                                    <span style={{ flexShrink: 0, marginTop: 2, width: 6, height: 6, borderRadius: "50%", background: signalDotColour(s) }} />
+                                    <span style={{ fontSize: 11, lineHeight: 1.4, color: "rgba(255,255,255,0.75)" }}>
+                                        {s.summary || s.title || s.rule_name || "Signal"}
+                                        {s.domain && <span style={{ color: "rgba(255,255,255,0.35)", marginLeft: 4 }}>[{s.domain}]</span>}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Buttons */}
+                    <div style={{ display: "flex", gap: 6, padding: "0 14px 12px" }}>
+                        <button onClick={handleOpenForge} style={btnStyle("#007AFF")}>Open in Forge</button>
+                        <button onClick={() => setWatching(w => !w)} style={btnStyle(watching ? "#FF9500" : "#1C2539", watching)}>
+                            {watching ? "Watching" : "Watch"}
+                        </button>
+                    </div>
+                </>
+            ) : (
+                /* Foresight tab */
+                <div style={{ height: 380, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                    <ForesightPanel zoneId={zone.zone_id} zoneName={zone.name} />
+                </div>
+            )}
 
             <style>{`
                 @keyframes sz-shimmer {

@@ -139,10 +139,14 @@ function RegionCard({ region, showBadge }) {
     )
 }
 
+const probColor = (p) =>
+    p >= 0.7 ? "#EF4444" : p >= 0.4 ? "#F59E0B" : p >= 0.2 ? "#3B82F6" : "#22C55E"
+
 export default function EmergingConflictsPanel({ onClose }) {
-    const [data,    setData]    = useState([])
-    const [loading, setLoading] = useState(true)
-    const [error,   setError]   = useState(null)
+    const [data,            setData]            = useState([])
+    const [loading,         setLoading]         = useState(true)
+    const [error,           setError]           = useState(null)
+    const [foresightRisks,  setForesightRisks]  = useState([])
 
     const load = useCallback(() => {
         setLoading(true)
@@ -156,6 +160,13 @@ export default function EmergingConflictsPanel({ onClose }) {
             })
             .catch(e => setError(`Failed to load: ${e}`))
             .finally(() => setLoading(false))
+    }, [])
+
+    useEffect(() => {
+        fetch(`${API_BASE}/api/foresight/global/summary`)
+            .then(r => r.ok ? r.json() : {})
+            .then(d => setForesightRisks(d.top_risks || []))
+            .catch(() => {})
     }, [])
 
     useEffect(() => {
@@ -262,6 +273,34 @@ export default function EmergingConflictsPanel({ onClose }) {
                     <p style={{ color: "#64748B", fontSize: 11, textAlign: "center", marginTop: 40 }}>
                         No elevated threat regions detected.
                     </p>
+                )}
+
+                {/* Foresight risks section */}
+                {foresightRisks.length > 0 && (
+                    <div style={{ marginTop: 16 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, paddingTop: 10, borderTop: "1px solid #1E293B" }}>
+                            <div style={{ width: 3, height: 12, background: "#8B5CF6", borderRadius: 2 }} />
+                            <span style={{ color: "#8B5CF6", fontSize: 9, fontWeight: 800, letterSpacing: "0.1em" }}>
+                                ESCALATION RISKS — 30 DAY
+                            </span>
+                        </div>
+                        {foresightRisks.map((risk, i) => (
+                            <div key={i} style={{ background: "#0F1721", borderRadius: 8, padding: "10px 12px", marginBottom: 6, border: "1px solid #1E293B" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                                    <span style={{ color: "#E2E8F0", fontWeight: 600, fontSize: 12 }}>{risk.zone_name}</span>
+                                    <span style={{ color: probColor(risk.escalation_probability_30d || 0), fontWeight: 800, fontSize: 16 }}>
+                                        {Math.round((risk.escalation_probability_30d || 0) * 100)}%
+                                    </span>
+                                </div>
+                                {risk.analyst_note && (
+                                    <div style={{ fontSize: 10, color: "#64748B", lineHeight: 1.5 }}>{risk.analyst_note}</div>
+                                )}
+                                <div style={{ marginTop: 4, fontSize: 9, color: "#334155" }}>
+                                    Confidence: {risk.confidence?.toUpperCase() || "LOW"}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 )}
             </div>
         </div>

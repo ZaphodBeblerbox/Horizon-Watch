@@ -483,3 +483,102 @@ def refresh_dirty_regions(dirty: set, db, forge_alerts: list = None,
     scores = list(updated.values())
     scores.sort(key=lambda x: x["threat_score"], reverse=True)
     _THREAT_CACHE = scores
+
+
+def _threat_level(score: float) -> str:
+    """Map score to threat level string (defined locally to avoid circular import)."""
+    if score >= 75: return "CRITICAL"
+    if score >= 50: return "HIGH"
+    if score >= 25: return "MEDIUM"
+    return "LOW"
+
+
+def compute_trajectory(region_name: str, db) -> dict:
+    """
+    Compute velocity and acceleration for a region using ThreatSnapshotHourly.
+    Returns a dict with score, velocities, acceleration, and trajectory classification.
+    """
+    from database import ThreatSnapshotHourly
+    now = datetime.datetime.utcnow()
+
+    def get_score_at(hours_ago: float):
+        window = datetime.timedelta(hours=3)
+        target = now - datetime.timedelta(hours=hours_ago)
+        row = (db.query(ThreatSnapshotHourly)
+               .filter(ThreatSnapshotHourly.region_name == region_name,
+                       ThreatSnapshotHourly.snapshot_at.between(target - window, target + window))
+               .order_by(ThreatSnapshotHourly.snapshot_at.desc())
+               .first())
+        return row.score if row else None
+
+    score_now = compute_threat_score(region_name, db).get("threat_score", 0.0)
+    score_24h = get_score_at(24)
+    score_72h = get_score_at(72)
+    score_7d  = get_score_at(168)
+
+    v1d = round(score_now - score_24h, 1) if score_24h is not None else 0.0
+    v3d = round((score_now - score_72h) / 3, 1) if score_72h is not None else 0.0
+    v7d = round((score_now - score_7d)  / 7, 1) if score_7d  is not None else 0.0
+
+    # Acceleration: today's daily velocity vs yesterday's
+    v1d_yesterday = round(
+        (score_24h if score_24h is not None else score_now)
+        - (score_72h if score_72h is not None else (score_24h or score_now)),
+        1,
+    )
+    acceleration = round(v1d - v1d_yesterday, 1)
+
+    if   v1d >= 15:                              trajectory = "rapid_escalation"
+    elif v1d >= 8:                               trajectory = "escalating"
+    elif v1d <= -15:                             trajectory = "rapid_de_escalation"
+    elif v1d <= -8:                              trajectory = "de_escalating"
+    elif score_now >= 60 and abs(v1d) < 5:       trajectory = "stable_high"
+    elif score_now < 30  and abs(v1d) < 5:       trajectory = "stable_low"
+    elif abs(v1d) > 5 and acceleration > 3:      trajectory = "volatile"
+    else:                                        trajectory = "stable"
+
+    return {
+        "zone_id":      region_name,
+        "zone_name":    region_name,
+        "score_now":    score_now,
+        "threat_level": _threat_level(score_now),
+        "velocity_1d":  v1d,
+        "velocity_3d":  v3d,
+        "velocity_7d":  v7d,
+        "acceleration": acceleration,
+        "trajectory":   trajectory,
+    }
+
+
+def compute_all_zone_scores(db, forge_alerts: list = None,
+                             news_events: list = None,
+                             fusion_events: list = None) -> list:
+    """
+    Compute full scores for all REGIONS and return as a list of dicts.
+    Each dict merges compute_threat_score output with trajectory data.
+    Tries to use cached trajectory data to keep it fast.
+    """
+    results = []
+    for region_name in REGIONS:
+        try:
+            score_dict = compute_threat_score(region_name, db, forge_alerts, news_events, fusion_events)
+            # Attempt lightweight trajectory lookup from recent trajectory rows
+            try:
+                from database import ThreatTrajectory
+                traj_row = (db.query(ThreatTrajectory)
+                            .filter(ThreatTrajectory.zone_id == region_name)
+                            .order_by(ThreatTrajectory.computed_at.desc())
+                            .first())
+                traj = traj_row.trajectory if traj_row else "stable"
+            except Exception:
+                traj = "stable"
+            results.append({
+                **score_dict,
+                "zone_id":   region_name,
+                "zone_name": region_name,
+                "trajectory": traj,
+            })
+        except Exception as e:
+            print(f"[trajectory] compute_all_zone_scores error for {region_name}: {e}")
+    results.sort(key=lambda x: x.get("threat_score", 0), reverse=True)
+    return results

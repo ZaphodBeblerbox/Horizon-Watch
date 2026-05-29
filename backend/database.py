@@ -354,6 +354,57 @@ class ThreatSnapshotHourly(Base):
     snapshot_at  = Column(DateTime, nullable=False, index=True)
 
 
+class ThreatTrajectory(Base):
+    """Velocity and acceleration of threat scores per zone — computed hourly."""
+    __tablename__ = "threat_trajectories"
+
+    id            = Column(Integer, primary_key=True)
+    zone_id       = Column(String, index=True, nullable=False)
+    zone_name     = Column(String, nullable=True)
+    computed_at   = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    score_now     = Column(Float, default=0.0)
+    threat_level  = Column(String, default="LOW")
+
+    velocity_1d   = Column(Float, default=0.0)   # pts/day vs 24h ago
+    velocity_3d   = Column(Float, default=0.0)   # pts/day vs 72h ago
+    velocity_7d   = Column(Float, default=0.0)   # pts/day vs 7d ago
+    acceleration  = Column(Float, default=0.0)   # velocity change (v1d - v1d_yesterday)
+
+    trajectory    = Column(String, default="stable")
+    # rapid_escalation | escalating | stable_high | stable_low |
+    # de_escalating | rapid_de_escalation | volatile | stable
+
+    dominant_domain = Column(String, nullable=True)
+    drivers_json    = Column(Text, nullable=True)   # JSON
+
+
+class ForesightAssessment(Base):
+    """Claude Opus escalation assessment per zone — generated every 6h when score >= 40."""
+    __tablename__ = "foresight_assessments"
+
+    id                    = Column(Integer, primary_key=True)
+    zone_id               = Column(String, index=True, nullable=False)
+    zone_name             = Column(String, nullable=True)
+    score_at_generation   = Column(Float, default=0.0)
+    model_used            = Column(String, nullable=True)
+
+    situation_summary           = Column(Text, nullable=True)
+    trajectory_assessment       = Column(Text, nullable=True)
+    escalation_probability_30d  = Column(Float, default=0.0)
+    probability_basis           = Column(Text, nullable=True)
+    early_warning_indicators    = Column(Text, default="[]")   # JSON
+    likely_scenarios            = Column(Text, default="[]")   # JSON
+    pattern_matches             = Column(Text, default="[]")   # JSON
+    intelligence_gaps           = Column(Text, default="[]")   # JSON
+    confidence                  = Column(String, default="low")
+    analyst_note                = Column(Text, nullable=True)
+    full_assessment             = Column(Text, nullable=True)  # full JSON
+
+    generated_at  = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    expires_at    = Column(DateTime, nullable=True)
+
+
 class WeeklySnapshot(Base):
     __tablename__ = 'weekly_snapshots'
 
