@@ -195,7 +195,18 @@ export default function App() {
     const [pendingJobIntent,   setPendingJobIntent]   = useState("")
     const [briefingProgress,   setBriefingProgress]   = useState("")
     const [briefingElapsed,    setBriefingElapsed]    = useState(0)
-    const [readyBriefing,      setReadyBriefing]       = useState(null)  // { result, intent }
+    const [readyBriefing,      setReadyBriefing]       = useState(() => {
+        // Restore pending briefing from localStorage (survives page refresh, < 2h old)
+        try {
+            const saved = localStorage.getItem("hw_ready_briefing")
+            if (saved) {
+                const parsed = JSON.parse(saved)
+                if (parsed && Date.now() - (parsed._saved_at || 0) < 7_200_000) return parsed
+                localStorage.removeItem("hw_ready_briefing")
+            }
+        } catch {}
+        return null
+    })  // { result, intent }
     const pollIntervalRef = useRef(null)
     const elapsedTimerRef = useRef(null)
     // Granular director items — what's individually visible on the map
@@ -510,6 +521,14 @@ export default function App() {
         localStorage.setItem(BRIEFING_READ_KEY, new Date().toISOString())
         setBriefingUnread(false)
     }, [])
+
+    // Persist readyBriefing to localStorage whenever it changes
+    useEffect(() => {
+        if (!readyBriefing) return
+        try {
+            localStorage.setItem("hw_ready_briefing", JSON.stringify({ ...readyBriefing, _saved_at: Date.now() }))
+        } catch {}
+    }, [readyBriefing])
 
     // Poll /api/briefing/latest every 30 min to detect new auto-generated briefings
     useEffect(() => {
@@ -1928,7 +1947,7 @@ export default function App() {
             {/* Director briefing ready notification */}
             {readyBriefing && (
                 <div
-                    onClick={() => { _startDirectorPlayback(readyBriefing.result, readyBriefing.intent); setReadyBriefing(null) }}
+                    onClick={() => { localStorage.removeItem("hw_ready_briefing"); _startDirectorPlayback(readyBriefing.result, readyBriefing.intent); setReadyBriefing(null) }}
                     style={{
                         position: "fixed",
                         bottom: isMobile ? 80 : 24,
@@ -1960,7 +1979,7 @@ export default function App() {
                         color: "#00aaff", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
                     }}>Watch ▶</div>
                     <button
-                        onClick={(e) => { e.stopPropagation(); setReadyBriefing(null) }}
+                        onClick={(e) => { e.stopPropagation(); localStorage.removeItem("hw_ready_briefing"); setReadyBriefing(null) }}
                         style={{ position: "absolute", top: 6, right: 8, background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 16, cursor: "pointer", padding: 4 }}
                     >×</button>
                 </div>

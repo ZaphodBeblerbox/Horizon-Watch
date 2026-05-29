@@ -3577,6 +3577,32 @@ async def director_submit(
             _DIRECTOR_JOBS[job_id]["progress"] = "Briefing ready!"
             _DIRECTOR_JOBS[job_id]["status"]   = "complete"
             _DIRECTOR_JOBS[job_id]["result"]   = result
+
+            # Auto-save to _BRIEFING_STORE so the result survives page refresh
+            try:
+                transcript = _director_svc.sequence_to_transcript(result) if hasattr(_director_svc, "sequence_to_transcript") else ""
+                _now_iso = datetime.now(timezone.utc).isoformat()
+                briefing_entry = {
+                    "id":           job_id,
+                    "type":         "director",
+                    "title":        intent[:120],
+                    "content":      transcript,
+                    "actions":      result.get("actions", []) if isinstance(result, dict) else [],
+                    "result":       result,
+                    "created_at":   _now_iso,
+                    "generated_at": _now_iso,
+                    "created_by":   "auto",
+                    "action_count": len(result.get("actions", [])) if isinstance(result, dict) else 0,
+                }
+                with _BRIEFING_LOCK:
+                    _BRIEFING_STORE.append(briefing_entry)
+                    if len(_BRIEFING_STORE) > 50:
+                        _BRIEFING_STORE[:] = _BRIEFING_STORE[-50:]
+                    _save_briefing_store(_BRIEFING_STORE)
+                print(f"[DIRECTOR] Auto-saved briefing '{intent[:60]}' to store")
+            except Exception as _save_exc:
+                print(f"[DIRECTOR] Auto-save failed (non-fatal): {_save_exc}")
+
         except Exception as exc:
             print(f"[DIRECTOR] Background generation failed: {exc}")
             _DIRECTOR_JOBS[job_id]["status"] = "error"
