@@ -530,6 +530,22 @@ export default function App() {
         } catch {}
     }, [readyBriefing])
 
+    // FIX 4: On mount, if readyBriefing is still null (nothing in localStorage), check
+    // the server for a recently auto-saved Director result so it survives page refresh.
+    useEffect(() => {
+        if (readyBriefing) return  // already have one — skip
+        fetch(`${API}/api/briefing/latest`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                if (!d?.briefing?.result) return
+                const entry = d.briefing
+                const age = Date.now() - new Date(entry.generated_at || entry.created_at || 0).getTime()
+                if (age > 7_200_000) return  // older than 2h — don't restore
+                setReadyBriefing({ result: entry.result, intent: entry.title || "Briefing" })
+            })
+            .catch(() => {})
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
     // Poll /api/briefing/latest every 30 min to detect new auto-generated briefings
     useEffect(() => {
         if (!profile) return

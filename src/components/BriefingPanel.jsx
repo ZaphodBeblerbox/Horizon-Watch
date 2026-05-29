@@ -181,9 +181,10 @@ export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) 
     const [saveMsg,      setSaveMsg]      = useState("")     // "Saved" flash
 
     // ── Briefing-specific state ───────────────────────────────────────────────
-    const [briefingMeta,  setBriefingMeta]  = useState(null)   // { can_regenerate, next_regen_secs }
-    const [generating,    setGenerating]    = useState(false)
-    const [countdown,     setCountdown]     = useState(0)
+    const [briefingMeta,    setBriefingMeta]    = useState(null)   // { can_regenerate, next_regen_secs }
+    const [generating,      setGenerating]      = useState(false)
+    const [generateError,   setGenerateError]   = useState(null)
+    const [countdown,       setCountdown]       = useState(0)
 
     // ── Sub-tab state — tracks open documents as sub-tabs ─────────────────────
     const [openDocIds,  setOpenDocIds]  = useState([])          // ordered list of open doc ids
@@ -327,8 +328,9 @@ export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) 
     // ── Briefing regenerate ───────────────────────────────────────────────────
     const handleGenerate = useCallback(() => {
         setGenerating(true)
+        setGenerateError(null)
         fetch(`${API}/api/briefing/generate`, { method: "POST" })
-            .then(r => r.ok ? r.json() : null)
+            .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e?.detail || `HTTP ${r.status}`)))
             .then(d => {
                 if (!d) return
                 setBriefingMeta(d)
@@ -339,7 +341,7 @@ export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) 
                 const date = new Date().toISOString().slice(0, 10)
                 setTimeout(() => loadDoc(`briefing-${date}`, "claude-briefings"), 500)
             })
-            .catch(() => {})
+            .catch(e => { setGenerateError(typeof e === "string" ? e : "Generation failed — check Anthropic credit balance") })
             .finally(() => setGenerating(false))
     }, [onMarkRead, refreshDocs, loadDoc])
 
@@ -609,6 +611,20 @@ export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) 
                                     {briefingMeta && !briefingMeta.briefing && <><br />No briefing yet for today.</>}
                                 </div>
                             </div>
+                            {generateError && (
+                                <div style={{
+                                    margin: "8px 0",
+                                    padding: "8px 12px",
+                                    background: "rgba(255,59,48,0.10)",
+                                    border: "1px solid rgba(255,59,48,0.35)",
+                                    borderRadius: 4,
+                                    color: "#ff6b6b",
+                                    fontSize: 11,
+                                    lineHeight: 1.45,
+                                }}>
+                                    {generateError}
+                                </div>
+                            )}
                             {canRegen && (
                                 <button
                                     onClick={handleGenerate}
