@@ -338,7 +338,7 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                     ) : popup.type === "assessment" ? (
                         <GlobeAssessmentPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "fusion" ? (
-                        <GlobeFusionPopup data={popup.data} onClose={handleClose} />
+                        <GlobeFusionPopup data={popup.data} onClose={handleClose} viewerRef={viewerRef} />
                     ) : popup.type === "airport" ? (
                         <GlobeAirportPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "threat_region" ? (

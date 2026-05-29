@@ -18765,26 +18765,107 @@ def api_fusions_get(fusion_id: str):
 
 @app.get("/api/fusions/{fusion_id}/signals")
 def api_fusions_signals(fusion_id: str):
+    """Return source signals for a fusion event, with lat/lon for globe rendering."""
     try:
-        from database import get_db as _gdb_f, FusionEvent as _FE
+        from database import get_db as _gdb_f, FusionEvent as _FE, FusionSignal as _FS, Alert as _AL
         import json as _json
     except ImportError:
         raise HTTPException(status_code=503, detail="Fusion engine not available")
+
     with _gdb_f() as _db:
-        r = _db.query(_FE).filter(_FE.fusion_id == fusion_id).first()
-        if not r:
+        fusion = _db.query(_FE).filter(_FE.fusion_id == fusion_id).first()
+        if not fusion:
             raise HTTPException(status_code=404, detail=f"Fusion {fusion_id} not found")
-        alert_ids = set(_json.loads(r.contributing_alert_ids or "[]"))
-    signals = []
-    if _fusion_engine:
-        for sig in _fusion_engine.get_recent_signals():
-            if sig.get("signal_id") in alert_ids:
-                ts = sig.get("timestamp")
+
+        signals = []
+
+        # Source 1: FusionSignal table by geo_key (most precise)
+        if fusion.geo_key:
+            db_sigs = (
+                _db.query(_FS)
+                .filter(_FS.geo_key == fusion.geo_key,
+                        _FS.expires_at > datetime.utcnow())
+                .order_by(_FS.created_at.desc())
+                .limit(20)
+                .all()
+            )
+            for s in db_sigs:
+                if not s.lat or not s.lon:
+                    continue
                 signals.append({
-                    **sig,
-                    "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    "signal_id":  s.signal_id,
+                    "domain":     s.domain,
+                    "rule_name":  s.rule_name,
+                    "summary":    s.summary,
+                    "severity":   s.severity,
+                    "confidence": s.confidence,
+                    "lat":        s.lat,
+                    "lon":        s.lon,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
                 })
-    return {"fusion_id": fusion_id, "signals": signals}
+
+        # Source 2: in-memory fusion engine recent signals matching contributing ids
+        if _fusion_engine:
+            alert_ids = set(_json.loads(fusion.contributing_alert_ids or "[]"))
+            seen_ids = {s["signal_id"] for s in signals}
+            for sig in _fusion_engine.get_recent_signals():
+                sid = sig.get("signal_id")
+                if sid and sid in alert_ids and sid not in seen_ids:
+                    if not sig.get("lat") or not sig.get("lon"):
+                        continue
+                    ts = sig.get("timestamp")
+                    signals.append({
+                        "signal_id":  sid,
+                        "domain":     sig.get("domain"),
+                        "rule_name":  sig.get("rule_name"),
+                        "summary":    str(sig.get("summary", ""))[:200],
+                        "severity":   sig.get("severity"),
+                        "confidence": sig.get("confidence", 0.8),
+                        "lat":        sig.get("lat"),
+                        "lon":        sig.get("lon"),
+                        "created_at": ts.isoformat() if hasattr(ts, "isoformat") else str(ts) if ts else None,
+                    })
+                    seen_ids.add(sid)
+
+        # Source 3: fallback — nearby active alerts when DB signals empty
+        if not signals and fusion.lat and fusion.lon:
+            cutoff = datetime.utcnow() - timedelta(hours=48)
+            deg = 2.0
+            nearby = (
+                _db.query(_AL)
+                .filter(
+                    _AL.lat.between(fusion.lat - deg, fusion.lat + deg),
+                    _AL.lon.between(fusion.lon - deg, fusion.lon + deg),
+                    _AL.created_at >= cutoff,
+                    _AL.status == "active",
+                )
+                .order_by(_AL.relevance_score.desc())
+                .limit(15)
+                .all()
+            )
+            for a in nearby:
+                if not a.lat or not a.lon:
+                    continue
+                signals.append({
+                    "signal_id":  a.alert_id,
+                    "domain":     a.domain,
+                    "rule_name":  a.rule_name,
+                    "summary":    (a.title or "")[:200],
+                    "severity":   a.severity,
+                    "confidence": a.confidence or 0.8,
+                    "lat":        a.lat,
+                    "lon":        a.lon,
+                    "created_at": a.created_at.isoformat() if a.created_at else None,
+                })
+
+        return {
+            "fusion_id":    fusion_id,
+            "fusion_lat":   fusion.lat,
+            "fusion_lon":   fusion.lon,
+            "geo_key":      fusion.geo_key,
+            "signal_count": len(signals),
+            "signals":      signals,
+        }
 
 
 @app.put("/api/fusions/{fusion_id}")

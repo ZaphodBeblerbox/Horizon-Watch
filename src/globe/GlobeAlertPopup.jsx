@@ -49,35 +49,6 @@ function FlagImg({ url, emoji, size = 20 }) {
     )
 }
 
-function TrackSummary({ track }) {
-    if (!track?.length) return null
-    const first = track[0]
-    const last  = track[track.length - 1]
-    const startTime = first?.timestamp ? new Date(first.timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) + " UTC" : null
-
-    let distNm = null
-    if (track.length >= 2) {
-        let total = 0
-        for (let i = 1; i < track.length; i++) {
-            const a = track[i - 1], b = track[i]
-            const dLat = (b.lat - a.lat) * Math.PI / 180
-            const dLon = (b.lon - a.lon) * Math.PI / 180
-            const sin1 = Math.sin(dLat / 2), sin2 = Math.sin(dLon / 2)
-            const c    = sin1 * sin1 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * sin2 * sin2
-            total += 6371 * 2 * Math.atan2(Math.sqrt(c), Math.sqrt(1 - c))
-        }
-        distNm = (total * 0.539957).toFixed(1)
-    }
-
-    return (
-        <div style={{ fontSize: 10, color: "#64748b", marginTop: 4, display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {startTime && <span>Started {startTime}</span>}
-            {distNm && <span>Distance: {distNm} nm</span>}
-            <span>{track.length} points</span>
-        </div>
-    )
-}
-
 function SanctionedVesselPanel({ payload }) {
     const lists = payload?.sanction_lists || []
     const flag  = payload?.flag
@@ -298,24 +269,6 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
                 {/* Ship-to-ship transfer panel */}
                 {isSts && <StsPanel payload={payload} />}
 
-                {/* Track section */}
-                {(mmsi || icao) && (
-                    <div style={{ marginBottom: 8, padding: "6px 8px", background: "rgba(14,165,233,0.06)", borderRadius: 4, border: "1px solid rgba(14,165,233,0.12)" }}>
-                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 2 }}>
-                            {src === "ADSB" ? "Aircraft Track (last 12h)" : "Vessel Track (last 24h)"}
-                        </div>
-                        {trackData
-                            ? (trackData.point_count > 0
-                                ? <>
-                                    <div style={{ fontSize: 10, color: "#0ea5e9" }}>Track rendered on globe · {trackData.point_count} points</div>
-                                    <TrackSummary track={trackData.track} />
-                                  </>
-                                : <div style={{ fontSize: 10, color: "#475569" }}>No track data in window</div>
-                              )
-                            : <div style={{ fontSize: 10, color: "#475569" }}>Loading track…</div>
-                        }
-                    </div>
-                )}
 
                 {/* AIS vessel detail rows */}
                 {src === "AIS" && (a.vessel || mmsi || a.speed != null || a.flag) && (

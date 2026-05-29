@@ -22,11 +22,22 @@ _USER_TMPL = (
     "Body: {body}\n\n"
     "Return a JSON object with exactly these fields:\n"
     '{{\n'
-    '  "location": "Specific place name (city/port/strait/region/country) where the physical event occurs. '
-    "null if no physical event — company news, stock prices, earnings, sports, celebrity, lifestyle.\",\n"
+    '  "location": "Extract the MOST SPECIFIC place name that is the primary geographic focus. '
+    "Rules: prefer specific city/district/neighbourhood/facility/port/strait/mountain/river/base over entire countries. "
+    "For conflict articles: the battle location, not the country capital. "
+    "For maritime: the strait, port, or sea area — not the country. "
+    "For aviation: the airport, airspace sector, or city. "
+    "Output the most specific English place name only. "
+    "GOOD examples: 'Khartoum', 'Rafah crossing', 'Bab el-Mandeb', 'Natanz nuclear facility', 'Bakhmut', 'Hodeidah port'. "
+    "BAD examples: 'Sudan', 'Gaza', 'Yemen', 'Iran' (too vague — use a specific place within). "
+    "null only if article has no physical geographic focus (company earnings, sports, celebrity).\",\n"
     '  "location_country": "ISO-3166-1 alpha-2 lowercase country code for the event location. '
     'null if uncertain, international waters, or multi-country.\",\n'
     '  "location_confidence": "city OR region OR country OR none",\n'
+    '  "location_precision": "facility OR district OR city OR region OR country OR none — '
+    "facility=named building/base/port/crossing; district=city district/neighbourhood; "
+    "city=named city or town; region=geographic region/sea/strait; "
+    "country=only if truly no specific place; none=no geographic content\",\n"
     '  "article_type": "conflict OR maritime OR aviation OR infrastructure OR energy OR cyber OR disaster OR political OR economic OR local_incident OR other",\n'
     '  "icon_type": "conflict OR maritime OR aviation OR infrastructure OR energy OR cyber OR disaster OR political OR local_incident OR economic OR other",\n'
     '  "tier": integer 1-4 where:\n'
@@ -163,10 +174,17 @@ def analyse_article(
             if isinstance(e, dict) and e.get("name")
         ][:8]
 
+        _precision = str(data.get("location_precision", "none")).lower()
+        # Downgrade confidence to 'country' when precision is country-level
+        _conf = str(data.get("location_confidence", "none")).lower()
+        if _precision in ("country", "none"):
+            _conf = _precision
+
         return {
             "location":             location,
             "location_country":     loc_country,
-            "location_confidence":  str(data.get("location_confidence", "none")).lower(),
+            "location_confidence":  _conf,
+            "location_precision":   _precision,
             "article_type":         str(data.get("article_type", "other")).lower(),
             "icon_type":            str(data.get("icon_type", "other")).lower(),
             "tier":                 tier,

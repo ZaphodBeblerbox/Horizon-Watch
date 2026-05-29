@@ -1,7 +1,109 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
+import * as Cesium from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
+
+const DOMAIN_SIGNAL_COLORS = {
+    AIS:      "#3366CC",
+    ADSB:     "#6644AA",
+    NEWS:     "#885522",
+    SENTINEL: "#226644",
+    SURGE:    "#AA5500",
+    FUSION:   "#4433AA",
+}
+
+function useFusionSignals(fusion, viewerRef) {
+    const entitiesRef = useRef([])
+
+    const clearEntities = () => {
+        const viewer = viewerRef?.current?.cesiumElement
+        if (!viewer) return
+        entitiesRef.current.forEach(e => { try { viewer.entities.remove(e) } catch {} })
+        entitiesRef.current = []
+    }
+
+    useEffect(() => {
+        const viewer = viewerRef?.current?.cesiumElement
+        if (!viewer || !fusion?.fusion_id) return
+
+        const fid = fusion.fusion_id
+        const fLat = fusion.lat
+        const fLon = fusion.lon
+
+        fetch(`${API_BASE}/api/fusions/${fid}/signals`)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (!data?.signals?.length) return
+                const fusionPos = fLat != null && fLon != null
+                    ? Cesium.Cartesian3.fromDegrees(fLon, fLat)
+                    : null
+
+                data.signals.forEach(sig => {
+                    if (!sig.lat || !sig.lon) return
+                    const sigPos = Cesium.Cartesian3.fromDegrees(sig.lon, sig.lat)
+                    const hexColor = DOMAIN_SIGNAL_COLORS[sig.domain] || "#336699"
+                    const color = Cesium.Color.fromCssColorString(hexColor)
+
+                    // Connecting line from signal to fusion centroid
+                    if (fusionPos) {
+                        entitiesRef.current.push(viewer.entities.add({
+                            polyline: {
+                                positions: [sigPos, fusionPos],
+                                width: 1,
+                                material: color.withAlpha(0.35),
+                                clampToGround: false,
+                            },
+                        }))
+                    }
+
+                    // Signal point
+                    entitiesRef.current.push(viewer.entities.add({
+                        position: sigPos,
+                        point: {
+                            pixelSize: 6,
+                            color: color.withAlpha(0.85),
+                            outlineColor: Cesium.Color.BLACK.withAlpha(0.5),
+                            outlineWidth: 1,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                        },
+                        label: {
+                            text: sig.domain || "",
+                            font: '500 9px "IBM Plex Mono", monospace',
+                            fillColor: color.withAlpha(0.9),
+                            outlineColor: Cesium.Color.BLACK,
+                            outlineWidth: 2,
+                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                            pixelOffset: new Cesium.Cartesian2(0, -10),
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2_000_000),
+                        },
+                    }))
+                })
+
+                // Fusion centroid marker
+                if (fusionPos) {
+                    entitiesRef.current.push(viewer.entities.add({
+                        position: fusionPos,
+                        point: {
+                            pixelSize: 10,
+                            color: Cesium.Color.fromCssColorString("#BF5AF2").withAlpha(0.9),
+                            outlineColor: Cesium.Color.WHITE.withAlpha(0.4),
+                            outlineWidth: 1.5,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        },
+                    }))
+                }
+            })
+            .catch(e => console.warn("[fusion] signal fetch failed:", e))
+
+        return clearEntities
+    }, [fusion?.fusion_id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    return clearEntities
+}
 
 const SEV_COLOR = {
     critical: "#f87171",
@@ -48,9 +150,10 @@ function ConfidenceBar({ value, color }) {
     )
 }
 
-export default function GlobeFusionPopup({ data, onClose }) {
+export default function GlobeFusionPopup({ data, onClose, viewerRef }) {
     const f = data || {}
     const [showSignals,  setShowSignals]  = useState(false)
+    useFusionSignals(f, viewerRef)
     const [noteOpen,     setNoteOpen]     = useState(false)
     const [noteText,     setNoteText]     = useState(f.analyst_notes || "")
     const [noteSaving,   setNoteSaving]   = useState(false)
