@@ -51,7 +51,7 @@ function useFusionSignals(fusion, viewerRef) {
                             polyline: {
                                 positions: [sigPos, fusionPos],
                                 width: 1,
-                                material: color.withAlpha(0.35),
+                                material: new Cesium.ColorMaterialProperty(color.withAlpha(0.35)),
                                 clampToGround: false,
                             },
                         }))

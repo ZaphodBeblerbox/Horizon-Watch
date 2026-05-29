@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import {
     Rectangle, Color, HeightReference, Cartesian3, NearFarScalar,
-    CallbackProperty, DistanceDisplayCondition,
+    CallbackProperty, ColorMaterialProperty, DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
@@ -75,11 +75,13 @@ function alertColor(severity) {
 
 // Pulse period: escalating = 1s, emerging = 2s
 function makePulseColor(score, minAlpha, maxAlpha, periodMs) {
+    // CallbackProperty for material must return a MaterialProperty, not a raw Color.
+    // Wrapping in ColorMaterialProperty satisfies Cesium's getType() requirement.
     return new CallbackProperty(() => {
         const t   = (Date.now() % periodMs) / periodMs
         const sin = Math.sin(t * Math.PI * 2) * 0.5 + 0.5
         const a   = minAlpha + (maxAlpha - minAlpha) * sin
-        return scoreToRgba(score, a)
+        return new ColorMaterialProperty(scoreToRgba(score, a))
     }, false)
 }
 
