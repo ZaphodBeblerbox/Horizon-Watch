@@ -250,31 +250,34 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
             for (const det of (dets || [])) drawDetectionBox(ctx, det, W, H)
         }
 
-        // DEBUG: test box when no real detections — confirms canvas pipeline
-        if ((dets || []).length === 0) {
-            drawDetectionBox(ctx, { class: 'TEST', confidence: 0.99, bbox_normalized: [0.3, 0.3, 0.7, 0.7] }, W, H)
-        }
     }, [aiActive])
 
     // Keep ref in sync — rAF reads ref, not state, to avoid stale closure
     useEffect(() => { detectionsRef.current = detections }, [detections])
 
-    // rAF loop
+    // rAF loop — detection boxes only, no HUD overlay
     useEffect(() => {
         if (streamStatus !== 'live' && streamStatus !== 'mock') {
             if (hudAnimRef.current) cancelAnimationFrame(hudAnimRef.current)
             return
         }
         const loop = () => {
-            if (frameCountRef.current % 60 === 0)
-                console.log('[drone rAF] running, dets:', detectionsRef.current.length)
-            frameCountRef.current = (frameCountRef.current || 0) + 1
-            drawHUD(detectionsRef.current)
+            syncCanvasToVideo()
+            const canvas = canvasRef.current
+            if (!canvas) { hudAnimRef.current = requestAnimationFrame(loop); return }
+            const ctx = canvas.getContext('2d')
+            const W = canvas.width, H = canvas.height
+            if (W === 0 || H === 0) { hudAnimRef.current = requestAnimationFrame(loop); return }
+            ctx.clearRect(0, 0, W, H)
+            if (aiActive) {
+                const dets = detectionsRef.current || []
+                dets.forEach(det => drawDetectionBox(ctx, det, W, H))
+            }
             hudAnimRef.current = requestAnimationFrame(loop)
         }
         hudAnimRef.current = requestAnimationFrame(loop)
         return () => { if (hudAnimRef.current) cancelAnimationFrame(hudAnimRef.current) }
-    }, [streamStatus, drawHUD])
+    }, [streamStatus, aiActive, syncCanvasToVideo])
 
     // ── HLS stream ────────────────────────────────────────────────────────────
 

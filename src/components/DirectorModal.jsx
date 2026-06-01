@@ -513,15 +513,16 @@ export default function DirectorModal({
                                     <option key={v.id} value={v.id}>{v.label} — {v.description}</option>
                                 ))}
                             </select>
+                        </div>
+
+                        <div className="director-modal-actions">
                             <button
                                 className="director-voice-test-btn"
                                 type="button"
                                 disabled={isTesting}
                                 onClick={handleTest}
-                            >{isTesting ? "…" : "▶ Test"}</button>
-                        </div>
-
-                        <div className="director-modal-actions">
+                                style={{ marginRight: "auto" }}
+                            >{isTesting ? "Testing…" : "▶ Test Voice"}</button>
                             <button
                                 style={{
                                     padding: "8px 14px",
