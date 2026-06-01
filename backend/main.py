@@ -88,7 +88,30 @@ from classifier import classify_event
 import event_store as es
 import event_bridge
 import threat_matrix
-from alert_writer import write_alert, write_news_article
+from alert_writer import write_alert as _write_alert_base, write_news_article
+
+def write_alert(alert_dict: dict):
+    """Write alert to DB and feed to fusion engine."""
+    result = _write_alert_base(alert_dict)
+    # Feed every alert to the fusion engine for multi-domain correlation
+    try:
+        if _fusion_engine:
+            _fusion_engine.on_signal({
+                "signal_id":     alert_dict.get("id") or result or "",
+                "domain":        (alert_dict.get("source") or alert_dict.get("domain") or "UNKNOWN").upper(),
+                "rule_name":     alert_dict.get("alert_type") or alert_dict.get("rule_name") or "",
+                "severity":      alert_dict.get("severity") or "medium",
+                "confidence":    float(alert_dict.get("confidence") or 0.8),
+                "relevance_score": float(alert_dict.get("relevance_score") or 50),
+                "lat":           alert_dict.get("lat"),
+                "lon":           alert_dict.get("lon"),
+                "country":       alert_dict.get("country_code") or alert_dict.get("country"),
+                "summary":       (alert_dict.get("title") or "")[:200],
+                "created_at":    datetime.now(timezone.utc).isoformat(),
+            })
+    except Exception:
+        pass
+    return result
 from sanctions_loader import sanctions_loader
 from entity_linker import entity_linker
 from event_bus import event_bus, Events
@@ -13735,7 +13758,12 @@ async def api_infrastructure_chokepoints():
     # Fire background auto-brief generation for newly elevated chokepoints
     asyncio.create_task(_run_auto_chokepoint_briefs(results))
 
-    # Attach any existing chokepoint briefs
+    # Attach any existing chokepoint briefs + satellite imagery
+    try:
+        from chokepoint_images import get_chokepoint_image as _cpimg
+    except ImportError:
+        _cpimg = None
+
     with _AUTO_BRIEF_LOCK:
         enriched = []
         for cp in results:
@@ -13745,6 +13773,13 @@ async def api_infrastructure_chokepoints():
             entry      = _CHOKEPOINT_BRIEF_STORE.get(store_key)
             if entry:
                 cp = {**cp, "auto_brief": entry["brief"], "auto_brief_at": entry["generated_at"]}
+            # Attach satellite image
+            if _cpimg:
+                try:
+                    img_url, img_caption = _cpimg(name)
+                    cp = {**cp, "image_url": img_url, "image_caption": img_caption}
+                except Exception:
+                    pass
             enriched.append(cp)
     return {"chokepoints": enriched}
 
@@ -19393,9 +19428,26 @@ def _enrich_alert(alert: dict) -> dict:
             except Exception:
                 pass
 
-    rule_name = alert.get("rule_name") or alert.get("rule") or alert.get("rule_type") or ""
+    rule_name = alert.get("rule_name") or alert.get("alert_type") or alert.get("rule") or alert.get("rule_type") or ""
     if not alert.get("explanation"):
         alert["explanation"] = _get_alert_explanation(rule_name, alert.get("message") or alert.get("title") or "")
+
+    # Expose correlation + dedup fields (populated from DB-backed alerts)
+    if "correlated_alert_ids" not in alert:
+        alert["correlated_alert_ids"] = []
+    elif isinstance(alert["correlated_alert_ids"], str):
+        try:
+            alert["correlated_alert_ids"] = _json.loads(alert["correlated_alert_ids"])
+        except Exception:
+            alert["correlated_alert_ids"] = []
+
+    alert["is_correlated"]      = bool(alert.get("correlated_alert_ids"))
+    alert["correlation_score"]  = alert.get("correlation_score") or 0
+    alert["correlation_domains"]= alert.get("correlation_domains") or ""
+    alert["analyst_note"]       = alert.get("analyst_note") or ""
+    alert["fire_count"]         = alert.get("fire_count") or 1
+    alert["dedup_key"]          = alert.get("dedup_key") or ""
+    alert["rule_name"]          = rule_name  # normalise field name
 
     return alert
 

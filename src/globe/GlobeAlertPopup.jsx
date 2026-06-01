@@ -269,6 +269,49 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
                 {/* Ship-to-ship transfer panel */}
                 {isSts && <StsPanel payload={payload} />}
 
+                {/* Analyst assessment */}
+                {a.analyst_note && (
+                    <div style={{ margin: "8px 0", padding: "8px 10px", background: "rgba(0,102,255,0.07)", borderLeft: "3px solid rgba(0,102,255,0.5)", fontSize: 11 }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(96,165,250,0.7)", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" }}>
+                            Analyst Assessment
+                        </div>
+                        <div style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
+                            {a.analyst_note}
+                        </div>
+                    </div>
+                )}
+
+                {/* Multi-domain correlation */}
+                {(a.correlated_alert_ids?.length > 0) && (
+                    <div style={{ margin: "8px 0", padding: "8px 10px", background: "rgba(102,68,170,0.08)", border: "1px solid rgba(102,68,170,0.25)", fontSize: 11 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(138,110,200,0.9)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                                Correlated Signals
+                            </span>
+                            <span style={{ fontSize: 9, color: "rgba(138,110,200,0.7)" }}>
+                                {a.correlation_domains}
+                            </span>
+                        </div>
+                        <div style={{ color: "rgba(255,255,255,0.5)", lineHeight: 1.5, marginBottom: 6 }}>
+                            {a.correlated_alert_ids.length} correlated alert{a.correlated_alert_ids.length !== 1 ? "s" : ""} within 300km — multi-domain activity indicates elevated operational significance.
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                                <div style={{ width: `${(a.correlation_score || 0) * 100}%`, height: "100%", background: "#8866CC" }} />
+                            </div>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#8866CC", minWidth: 32, textAlign: "right" }}>
+                                {Math.round((a.correlation_score || 0) * 100)}%
+                            </span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Fire count badge */}
+                {(a.fire_count || 1) > 1 && (
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 2, fontSize: 9, color: "rgba(255,255,255,0.4)", letterSpacing: 1, marginBottom: 6 }}>
+                        FIRED {a.fire_count}×
+                    </div>
+                )}
 
                 {/* AIS vessel detail rows */}
                 {src === "AIS" && (a.vessel || mmsi || a.speed != null || a.flag) && (

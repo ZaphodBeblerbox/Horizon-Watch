@@ -566,6 +566,18 @@ class Alert(Base):
     acknowledged_at = Column(DateTime, nullable=True)
     acknowledged_by = Column(String, nullable=True)
 
+    # ── Deduplication ──────────────────────────────────────────────────────
+    dedup_key       = Column(String, nullable=True, index=True)                # domain:entity_id:alert_type
+    fire_count      = Column(Integer, default=1, nullable=True)               # times this dedup key fired
+
+    # ── Correlation ────────────────────────────────────────────────────────
+    correlated_alert_ids  = Column(Text, nullable=True)                       # JSON list of related alert_ids
+    correlation_score     = Column(Float, nullable=True)                      # 0-1 multi-domain strength
+    correlation_domains   = Column(String, nullable=True)                     # "AIS+ADSB+NEWS"
+
+    # ── Enrichment ─────────────────────────────────────────────────────────
+    analyst_note    = Column(Text, nullable=True)                              # Haiku-generated analyst note
+
     __table_args__ = (
         Index("ix_alerts_region_created", "region", "created_at"),
         Index("ix_alerts_source_type",    "source",  "alert_type"),
@@ -805,6 +817,22 @@ def migrate_db():
             if col not in se_existing:
                 cur.execute(f'ALTER TABLE surge_events ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] surge_events: added column {col}')
+
+    # Alert correlation/dedup new columns
+    alert_new_cols = [
+        ('dedup_key',              'TEXT'),
+        ('fire_count',             'INTEGER'),
+        ('correlated_alert_ids',   'TEXT'),
+        ('correlation_score',      'FLOAT'),
+        ('correlation_domains',    'TEXT'),
+        ('analyst_note',           'TEXT'),
+    ]
+    if 'alerts' in tables:
+        al_existing = [row[1] for row in cur.execute('PRAGMA table_info(alerts)').fetchall()]
+        for col, typ in alert_new_cols:
+            if col not in al_existing:
+                cur.execute(f'ALTER TABLE alerts ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] alerts: added column {col}')
 
     conn.commit()
     conn.close()

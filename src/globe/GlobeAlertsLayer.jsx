@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
-import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
+import { useCesium } from "resium"
+import { Cartesian2, Cartesian3, Color, ColorMaterialProperty, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
@@ -41,24 +42,36 @@ function isSts(a) {
     return (a.alert_type || a.rule_name || "").toLowerCase().includes("ship-to-ship")
 }
 
-// Visual hierarchy scale based on alert type / severity / relevance
+// Visual hierarchy scale — correlation elevates markers
 function getMarkerScale(a) {
-    if (isSanctioned(a))                                       return 2.0
-    if (isSts(a))                                              return 1.6
+    if (isSanctioned(a)) return 2.0
+    if (isSts(a))        return 1.6
+    const nDomains = (a.correlation_domains || "").split("+").filter(Boolean).length
+    if (nDomains >= 3)   return 1.8  // triple-domain correlation: very prominent
+    if (nDomains >= 2 || a.is_correlated) return 1.4  // multi-domain
     const sev = (a.severity || "").toLowerCase()
     const rel = a.relevance_score ?? 0
-    if (sev === "critical" || rel >= 80)                       return 1.6
-    if (sev === "high"     || rel >= 50)                       return 1.2
-    if (sev === "low"      || (rel > 0 && rel < 30))           return 0.8
+    if (sev === "critical" || rel >= 80) return 1.6
+    if (sev === "high"     || rel >= 50) return 1.2
+    if (sev === "low"      || (rel > 0 && rel < 30)) return 0.8
     return 1.0
 }
 
 function getMarkerOpacity(a) {
     if (isSanctioned(a) || isSts(a)) return 1.0
+    if (a.is_correlated)             return 1.0
     const sev = (a.severity || "").toLowerCase()
     if (sev === "critical" || sev === "high") return 1.0
     if (sev === "medium")                     return 0.85
     return 0.5
+}
+
+// Label text for high-priority alerts
+function getCorrelationLabel(a) {
+    const nDomains = (a.correlation_domains || "").split("+").filter(Boolean).length
+    if (nDomains >= 3) return `◉ ${a.correlation_domains}`
+    if (nDomains >= 2) return `◈ ${a.correlation_domains}`
+    return null
 }
 
 // Scale billboard by severity for assessment markers
@@ -78,6 +91,8 @@ function fusionIcon(severity) {
 }
 
 export default function GlobeAlertsLayer({ enabled }) {
+    const { viewer }            = useCesium()
+    const corrLineEntities      = useRef([])
     const [alerts,  setAlerts]  = useState([])
     const [fusions, setFusions] = useState([])
 
@@ -101,6 +116,47 @@ export default function GlobeAlertsLayer({ enabled }) {
         const iv = setInterval(() => { loadAlerts(); loadFusions() }, 30_000)
         return () => { cancelled = true; clearInterval(iv) }
     }, [enabled])
+
+    // Draw Cesium correlation lines between correlated alerts
+    useEffect(() => {
+        if (!viewer) return
+        // Clear previous lines
+        corrLineEntities.current.forEach(e => { try { viewer.entities.remove(e) } catch {} })
+        corrLineEntities.current = []
+        if (!enabled || !alerts.length) return
+
+        const alertById = Object.fromEntries(alerts.map(a => [a.id || a.alert_id, a]))
+        const rendered  = new Set()
+
+        alerts.forEach(a => {
+            if (!a.is_correlated || !a.correlated_alert_ids?.length) return
+            if (!a.lat || !(a.lng ?? a.lon)) return
+            a.correlated_alert_ids.forEach(otherId => {
+                const pairKey = [a.id || a.alert_id, otherId].sort().join(":")
+                if (rendered.has(pairKey)) return
+                rendered.add(pairKey)
+                const other = alertById[otherId]
+                if (!other?.lat || !(other.lng ?? other.lon)) return
+                const e = viewer.entities.add({
+                    polyline: {
+                        positions: [
+                            Cartesian3.fromDegrees(Number(a.lng ?? a.lon), Number(a.lat)),
+                            Cartesian3.fromDegrees(Number(other.lng ?? other.lon), Number(other.lat)),
+                        ],
+                        width:         1,
+                        material:      new ColorMaterialProperty(Color.fromCssColorString("#6644AA").withAlpha(0.30)),
+                        clampToGround: true,
+                        distanceDisplayCondition: new DistanceDisplayCondition(0, 8_000_000),
+                    },
+                })
+                corrLineEntities.current.push(e)
+            })
+        })
+        return () => {
+            corrLineEntities.current.forEach(e => { try { viewer.entities.remove(e) } catch {} })
+            corrLineEntities.current = []
+        }
+    }, [alerts, viewer, enabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (!alerts.length) return
@@ -167,11 +223,16 @@ export default function GlobeAlertsLayer({ enabled }) {
                 const opacity     = getMarkerOpacity(a)
                 const billColor   = opacity < 1.0 ? Color.WHITE.withAlpha(opacity) : undefined
 
-                const sanctioned = isSanctioned(a)
-                const sts        = isSts(a)
-                const labelText  = sanctioned ? "⚠ SANCTIONED"
-                                 : sts        ? "STS DETECTED"
-                                 : null
+                const sanctioned   = isSanctioned(a)
+                const sts         = isSts(a)
+                const corrLabel   = getCorrelationLabel(a)
+                const labelText   = sanctioned ? "⚠ SANCTIONED"
+                                  : sts        ? "STS DETECTED"
+                                  : corrLabel  ? corrLabel
+                                  : null
+                const labelColor  = sanctioned ? "#FF3B30"
+                                  : sts        ? "#FF9500"
+                                  : "#8866CC"
 
                 return (
                     <Entity
@@ -191,7 +252,7 @@ export default function GlobeAlertsLayer({ enabled }) {
                         label={labelText ? {
                             text:            labelText,
                             font:            "bold 9px Arial",
-                            fillColor:       sanctioned ? Color.fromCssColorString("#FF3B30") : Color.fromCssColorString("#FF9500"),
+                            fillColor:       Color.fromCssColorString(labelColor),
                             outlineColor:    Color.fromCssColorString("#0F1721"),
                             outlineWidth:    2,
                             style:           2,
