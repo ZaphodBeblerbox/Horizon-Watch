@@ -3315,8 +3315,7 @@ async def director_generate(
             return obj.isoformat()
         return str(obj)
     pic_str = _json.dumps(_truncated_pic(pic), ensure_ascii=False, separators=(",", ":"), default=_json_default)
-    if len(pic_str) > 40000:
-        pic_str = pic_str[:40000] + "..."
+    pic_str = pic_str[:8000]  # hard cap — keeps prompt fast and avoids token blowout
 
     _BRIEFING_SYSTEM = (
         "You are a senior intelligence analyst presenting a classified briefing "
@@ -3359,20 +3358,23 @@ async def director_generate(
     )
 
     def _call_claude():
-        msg = client.messages.create(
+        raw = ""
+        with client.messages.stream(
             model="claude-sonnet-4-5-20251015",
             max_tokens=1500,
-            timeout=180,
             system=_BRIEFING_SYSTEM,
             messages=[{"role": "user", "content": _BRIEFING_USER}],
-        )
+        ) as stream:
+            for chunk in stream.text_stream:
+                raw += chunk
+        final = stream.get_final_message()
         usage_tracker.record_call(
-            msg.usage.input_tokens,
-            msg.usage.output_tokens,
+            final.usage.input_tokens,
+            final.usage.output_tokens,
             call_type="director_briefing",
             headline="Director: intelligence picture briefing",
         )
-        return msg.content[0].text.strip()
+        return raw.strip()
 
     try:
         raw = await asyncio.wait_for(

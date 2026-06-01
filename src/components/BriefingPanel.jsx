@@ -185,6 +185,15 @@ export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) 
     const [generating,      setGenerating]      = useState(false)
     const [generateError,   setGenerateError]   = useState(null)
     const [countdown,       setCountdown]       = useState(0)
+    const [lastBriefing,    setLastBriefing]    = useState(() => {
+        try {
+            const s = localStorage.getItem("hw_last_briefing")
+            if (!s) return null
+            const p = JSON.parse(s)
+            if (Date.now() - (p._saved_at || 0) < 7_200_000) return p
+        } catch {}
+        return null
+    })
 
     // ── Sub-tab state — tracks open documents as sub-tabs ─────────────────────
     const [openDocIds,  setOpenDocIds]  = useState([])          // ordered list of open doc ids
@@ -325,25 +334,47 @@ export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) 
             .catch(() => {})
     }, [activeDoc, refreshDocs])
 
-    // ── Briefing regenerate ───────────────────────────────────────────────────
-    const handleGenerate = useCallback(() => {
+    // ── Briefing regenerate — uses Director (Sonnet streaming) endpoint ──────────
+    const handleGenerate = useCallback(async () => {
         setGenerating(true)
         setGenerateError(null)
-        fetch(`${API}/api/briefing/generate`, { method: "POST" })
-            .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e?.detail || `HTTP ${r.status}`)))
-            .then(d => {
-                if (!d) return
-                setBriefingMeta(d)
-                setCountdown(d.next_regen_secs || 0)
-                onMarkRead?.()
-                refreshDocs()
-                // Auto-load the new briefing
-                const date = new Date().toISOString().slice(0, 10)
-                setTimeout(() => loadDoc(`briefing-${date}`, "claude-briefings"), 500)
+        try {
+            const res = await fetch(`${API}/api/director/generate`, {
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({
+                    intent: "Generate a comprehensive global intelligence briefing covering the most " +
+                        "significant maritime anomalies, aviation incidents, active fusion events, news surges, " +
+                        "and emerging conflict indicators from the past 24 hours. Lead with the highest-severity " +
+                        "signals and end with a threat trajectory summary.",
+                }),
             })
-            .catch(e => { setGenerateError(typeof e === "string" ? e : "Generation failed — check Anthropic credit balance") })
-            .finally(() => setGenerating(false))
-    }, [onMarkRead, refreshDocs, loadDoc])
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}))
+                throw new Error(err?.detail || err?.message || `HTTP ${res.status}`)
+            }
+            const d = await res.json()
+            if (!d || (!d.segments?.length && !d.actions?.length)) {
+                throw new Error("Generation returned empty result — check Anthropic credit balance")
+            }
+            const briefing = {
+                segments:     d.segments || d.actions || [],
+                title:        d.intent || "Intelligence Briefing",
+                generated_at: new Date().toISOString(),
+                statistics:   d.statistics,
+                threat_overview: d.threat_overview,
+                _saved_at:    Date.now(),
+            }
+            setLastBriefing(briefing)
+            try { localStorage.setItem("hw_last_briefing", JSON.stringify(briefing)) } catch {}
+            onMarkRead?.()
+            refreshDocs()
+        } catch (e) {
+            setGenerateError(e?.message || "Generation failed — check Anthropic credit balance")
+        } finally {
+            setGenerating(false)
+        }
+    }, [onMarkRead, refreshDocs])
 
     // ── Editor toolbar ────────────────────────────────────────────────────────
     const exec = useCallback((cmd, val = null) => {
@@ -595,8 +626,38 @@ export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) 
                 {/* ── Right: document area ── */}
                 <div style={S.content}>
 
-                    {/* Nothing selected */}
-                    {!activeDoc && !docLoading && (
+                    {/* Nothing selected — show last briefing if available */}
+                    {!activeDoc && !docLoading && lastBriefing && (
+                        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+                            <div style={{ fontSize: 10, color: "var(--akili-text-muted)", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <span style={{ fontWeight: 700, color: "var(--akili-text-secondary)" }}>{lastBriefing.title || "Intelligence Briefing"}</span>
+                                <span>{lastBriefing.generated_at ? new Date(lastBriefing.generated_at).toUTCString().slice(0, 22) + " UTC" : ""}</span>
+                            </div>
+                            {(lastBriefing.segments || []).map((seg, i) => (
+                                <div key={i} style={{ marginBottom: 18, paddingBottom: 16, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--akili-text-primary)", marginBottom: 4, letterSpacing: "0.04em" }}>
+                                        {seg.title || seg.heading || `Segment ${i + 1}`}
+                                    </div>
+                                    <div style={{ fontSize: 12, color: "var(--akili-text-secondary)", lineHeight: 1.65 }}>
+                                        {seg.narrative || seg.text || ""}
+                                    </div>
+                                </div>
+                            ))}
+                            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                                <button onClick={handleGenerate} disabled={generating}
+                                    style={{ padding: "6px 14px", fontSize: 11, fontWeight: 700, background: "var(--akili-accent)", color: "#fff", border: "none", borderRadius: 4, cursor: generating ? "default" : "pointer", opacity: generating ? 0.6 : 1 }}>
+                                    {generating ? "Generating…" : "Regenerate"}
+                                </button>
+                                <button onClick={() => { setLastBriefing(null); localStorage.removeItem("hw_last_briefing") }}
+                                    style={{ padding: "6px 14px", fontSize: 11, background: "transparent", color: "var(--akili-text-muted)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, cursor: "pointer" }}>
+                                    Dismiss
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Nothing selected, no cached briefing */}
+                    {!activeDoc && !docLoading && !lastBriefing && (
                         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--akili-text-muted)", padding: 32 }}>
                             <svg width="36" height="36" viewBox="0 0 36 36" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
                                 <rect x="5" y="3" width="26" height="30" rx="2"/>
@@ -640,7 +701,7 @@ export default function BriefingPanel({ onClose, onMarkRead, onReplay = null }) 
                                 </button>
                             )}
                         </div>
-                    )}
+                    )}  {/* end !lastBriefing */}
 
                     {/* Loading */}
                     {docLoading && (
