@@ -27,9 +27,8 @@ export async function buildAutoplayQueue(API) {
     const queue         = []
     const visitedCoords = new Set()
 
-    // 0.3° buckets (~33km) — fine enough to keep distinct incidents in dense regions
     const dedupeKey = (lat, lon) =>
-        `${(Number(lat) * 3.33).toFixed(0)},${(Number(lon) * 3.33).toFixed(0)}`
+        `${Math.round(Number(lat))},${Math.round(Number(lon))}`
 
     const addIfNew = (item) => {
         if (!isFinite(item.lat) || !isFinite(item.lon)) return

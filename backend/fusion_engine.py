@@ -219,8 +219,6 @@ class FusionEngine:
             return f"GEO:{round(lat, 1)},{round(lon, 1)}"
         return "GEO:unknown"
 
-    _MAX_SIGNALS_PER_GEO_KEY = 20
-
     def _add_signal(self, geo_key: str, signal: dict):
         bucket = self.active_signals.setdefault(geo_key, [])
         cutoff = datetime.datetime.utcnow() - timedelta(hours=self.fusion_window_hours)
@@ -229,9 +227,6 @@ class FusionEngine:
         existing_ids = {s["signal_id"] for s in bucket}
         if signal["signal_id"] not in existing_ids:
             bucket.append(signal)
-        # Hard cap: keep most recent signals only
-        if len(bucket) > self._MAX_SIGNALS_PER_GEO_KEY:
-            bucket = bucket[-self._MAX_SIGNALS_PER_GEO_KEY:]
         self.active_signals[geo_key] = bucket
 
     def _evaluate_fusion(self, geo_key: str):
@@ -600,7 +595,5 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
 
 
 # Module-level singleton
-# NOTE: _reload_signals_from_db() is NOT called here — it is called in
-# startup_event AFTER set_fire_callback() is wired, so reloaded fusions
-# can actually fire their callback.
 fusion_engine = FusionEngine()
+fusion_engine._reload_signals_from_db()

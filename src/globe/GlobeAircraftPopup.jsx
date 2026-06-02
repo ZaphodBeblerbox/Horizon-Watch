@@ -21,7 +21,7 @@ export default function GlobeAircraftPopup({ data: ac, onClose, onFollow }) {
     useEffect(() => {
         if (!icao) return
         let cancelled = false
-        fetch(`${API_BASE}/api/aircraft/${icao}/identity`)
+        fetch(`${API_BASE}/api/aircraft/${icao}/track?hours=1`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (!cancelled && d?.identity?.military) setIdentity(d.identity) })
             .catch(() => {})

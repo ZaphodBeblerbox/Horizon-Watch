@@ -3,9 +3,9 @@ import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
+import { makeTypedEventCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, EVENTS_CAP } from "./isMobile.js"
-import { markerProps, getCachedCanvas } from "./markerRenderer.js"
 
 // Colours for legacy event_type classifier (keyword-based)
 const TYPE_HEX = {
@@ -229,11 +229,36 @@ export default function GlobeEventsLayer({
                 const numTier = typeof ev.tier === "number" ? ev.tier
                     : ev.relevance_tier === "high" ? 1
                     : ev.relevance_tier === "medium" ? 2 : 3
-                const sev  = numTier === 1 ? "high" : numTier === 2 ? "medium" : "low"
-                const mp   = markerProps({ domain: "NEWS", severity: sev, rule_name: "", correlated_alert_ids: [] })
-                const icon = getCachedCanvas(mp.color, mp.size, false, 0)
+                const prec    = isPrecision(ev)
+                const baseHex = hexForEvent(ev)
+                const hex     = (!prec && numTier >= 3) ? mutedHex(baseHex) : baseHex
+                const type    = typeForEvent(ev)
+                const icon    = getIcon(type, hex, numTier, !!ev.is_breaking)
+                if (!icon || icon.width === 0 || icon.height === 0) return null
 
-                // Tier 2 events hidden below 200km altitude; tier 3 further restricted
+                // Base icon size from location confidence
+                const approxConf = ev.location_confidence || ""
+                const isApprox = approxConf === "fallback_region" || approxConf === "relaxed" || approxConf === "fallback_country"
+                const baseSize = isApprox ? 32 : 44
+
+                // Tier-based scale and opacity
+                let iconSize = baseSize
+                let alpha    = 1.0
+                if (!prec) {
+                    if (numTier === 2) { iconSize = Math.round(baseSize * 0.8);  alpha = 0.85 }
+                    if (numTier >= 3)  { iconSize = Math.round(baseSize * 0.55); alpha = 0.50 }
+                }
+                // Tier 1 icons get extra canvas space for the ring — account for it
+                if (numTier === 1) {
+                    const ring = ev.is_breaking ? 14 : 10
+                    iconSize = baseSize + ring * 2
+                }
+
+                const cesiumColor = (isApprox || (numTier >= 2 && !prec))
+                    ? Color.fromAlpha(Color.WHITE, Math.min(alpha, isApprox ? 0.6 : 1.0) * alpha)
+                    : undefined
+
+                // Tier 2 events hidden below 200km camera altitude (reduces clutter at street level)
                 const ddc = numTier >= 2
                     ? new DistanceDisplayCondition(200_000, 15_000_000)
                     : new DistanceDisplayCondition(0, 15_000_000)
@@ -245,10 +270,10 @@ export default function GlobeEventsLayer({
                         position={Cartesian3.fromDegrees(ev.lon, ev.lat, 0)}
                         billboard={{
                             image:      icon,
-                            width:      mp.size,
-                            height:     mp.size,
+                            width:      iconSize,
+                            height:     iconSize,
+                            color:      cesiumColor,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
-                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
                             scaleByDistance:          new NearFarScalar(1000, 1.0, 8_000_000, 0.25),
                             distanceDisplayCondition: ddc,
                             eyeOffset:  new Cartesian3(0, 0, -50),

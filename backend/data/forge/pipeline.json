@@ -1,0 +1,270 @@
+{
+  "nodes": [
+    {
+      "id": "src_ais",
+      "label": "AIS Vessel Feed",
+      "column": 0,
+      "type": "source",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "src_adsb",
+      "label": "ADS-B Aircraft",
+      "column": 0,
+      "type": "source",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "src_news",
+      "label": "RSS News Feeds",
+      "column": 0,
+      "type": "source",
+      "status": "active",
+      "config": {
+        "feeds": 277
+      }
+    },
+    {
+      "id": "src_satellite",
+      "label": "Sentinel-2 Imagery",
+      "column": 0,
+      "type": "source",
+      "status": "configured",
+      "config": {}
+    },
+    {
+      "id": "src_osint",
+      "label": "GDELT Events",
+      "column": 0,
+      "type": "source",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "src_uploads",
+      "label": "Custom Uploads",
+      "column": 0,
+      "type": "source",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "det_ais",
+      "label": "AIS Anomaly Detector",
+      "column": 1,
+      "type": "detector",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "det_adsb",
+      "label": "ADSB Pattern Detector",
+      "column": 1,
+      "type": "detector",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "det_news",
+      "label": "News Scorer",
+      "column": 1,
+      "type": "detector",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "det_overwatch",
+      "label": "Overwatch ML",
+      "column": 1,
+      "type": "detector",
+      "status": "active",
+      "config": {
+        "model": "yolov8n-obb.onnx"
+      }
+    },
+    {
+      "id": "det_sentinel",
+      "label": "Surveillance Zones",
+      "column": 1,
+      "type": "detector",
+      "status": "active",
+      "config": {},
+      "customX": 280,
+      "customY": 272
+    },
+    {
+      "id": "enr_correlation",
+      "label": "Correlation Engine",
+      "column": 2,
+      "type": "enrichment",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "enr_ontology",
+      "label": "Entity Ontology",
+      "column": 2,
+      "type": "enrichment",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "enr_geocode",
+      "label": "Geocoder",
+      "column": 2,
+      "type": "enrichment",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "int_threat",
+      "label": "Threat Scoring",
+      "column": 3,
+      "type": "intelligence",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "int_patterns",
+      "label": "Pattern Recognition",
+      "column": 3,
+      "type": "intelligence",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "int_escalation",
+      "label": "Escalation Detector",
+      "column": 3,
+      "type": "intelligence",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "out_alerts",
+      "label": "Alert System",
+      "column": 4,
+      "type": "output",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "out_briefings",
+      "label": "Director Briefings",
+      "column": 4,
+      "type": "output",
+      "status": "active",
+      "config": {}
+    },
+    {
+      "id": "out_reports",
+      "label": "Reports",
+      "column": 4,
+      "type": "output",
+      "status": "active",
+      "config": {}
+    }
+  ],
+  "edges": [
+    {
+      "from": "src_ais",
+      "to": "det_ais"
+    },
+    {
+      "from": "src_adsb",
+      "to": "det_adsb"
+    },
+    {
+      "from": "src_news",
+      "to": "det_news"
+    },
+    {
+      "from": "src_satellite",
+      "to": "det_overwatch"
+    },
+    {
+      "from": "src_satellite",
+      "to": "det_sentinel"
+    },
+    {
+      "from": "src_uploads",
+      "to": "enr_ontology"
+    },
+    {
+      "from": "src_osint",
+      "to": "det_news"
+    },
+    {
+      "from": "det_ais",
+      "to": "enr_correlation"
+    },
+    {
+      "from": "det_adsb",
+      "to": "enr_correlation"
+    },
+    {
+      "from": "det_news",
+      "to": "enr_correlation"
+    },
+    {
+      "from": "det_overwatch",
+      "to": "enr_correlation"
+    },
+    {
+      "from": "det_ais",
+      "to": "enr_ontology"
+    },
+    {
+      "from": "det_news",
+      "to": "enr_ontology"
+    },
+    {
+      "from": "enr_correlation",
+      "to": "int_threat"
+    },
+    {
+      "from": "enr_correlation",
+      "to": "int_patterns"
+    },
+    {
+      "from": "enr_ontology",
+      "to": "int_threat"
+    },
+    {
+      "from": "enr_ontology",
+      "to": "int_escalation"
+    },
+    {
+      "from": "enr_geocode",
+      "to": "int_threat"
+    },
+    {
+      "from": "int_threat",
+      "to": "out_alerts"
+    },
+    {
+      "from": "int_patterns",
+      "to": "out_alerts"
+    },
+    {
+      "from": "int_escalation",
+      "to": "out_alerts"
+    },
+    {
+      "from": "int_threat",
+      "to": "out_briefings"
+    },
+    {
+      "from": "int_patterns",
+      "to": "out_reports"
+    },
+    {
+      "from": "det_sentinel",
+      "to": "det_overwatch",
+      "id": "e_1778696126307"
+    }
+  ],
+  "saved_at": "2026-05-13T18:15:48.450049"
+}

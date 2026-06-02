@@ -1,0 +1,213 @@
+[
+  {
+    "id": "rule_001",
+    "name": "Cable Loiterer",
+    "description": "Vessel stationary within 10km of submarine cable",
+    "source": "AIS",
+    "trigger_type": "stationary_near_infrastructure",
+    "status": "active",
+    "params": {
+      "infra_type": "cable",
+      "max_speed_knots": 0.5,
+      "proximity_km": 10
+    },
+    "severity": "high",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "id": "rule_002",
+    "name": "Dark Ship — Hormuz",
+    "description": "AIS transponder gap >30 min near Strait of Hormuz",
+    "source": "AIS",
+    "trigger_type": "transponder_gap",
+    "status": "active",
+    "params": {
+      "gap_minutes": 30,
+      "proximity_km": 100,
+      "chokepoint": "Strait of Hormuz"
+    },
+    "severity": "high",
+    "regions": [
+      "Persian Gulf"
+    ]
+  },
+  {
+    "id": "rule_003",
+    "name": "Speed Anomaly",
+    "description": "Vessel exceeding 25 knots",
+    "source": "AIS",
+    "trigger_type": "speed_anomaly",
+    "status": "active",
+    "params": {
+      "max_speed_knots": 25
+    },
+    "severity": "medium",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "id": "rule_004",
+    "name": "Military Aircraft",
+    "description": "Known military callsign prefix active on ADS-B",
+    "source": "ADSB",
+    "trigger_type": "military_callsign",
+    "status": "active",
+    "params": {
+      "callsign_prefixes": [
+        "RCH",
+        "NAVY",
+        "RRR",
+        "GAF",
+        "RFR",
+        "IAM",
+        "CNV",
+        "PAT",
+        "AIO",
+        "FORTE",
+        "JAKE"
+      ]
+    },
+    "severity": "info",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "id": "rule_005",
+    "name": "Emergency Squawk",
+    "description": "Aircraft broadcasting 7500/7600/7700",
+    "source": "ADSB",
+    "trigger_type": "emergency_squawk",
+    "status": "active",
+    "params": {
+      "squawk_codes": [
+        "7500",
+        "7600",
+        "7700"
+      ]
+    },
+    "severity": "critical",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "id": "rule_006",
+    "name": "Ship-to-Ship Proximity",
+    "description": "Two vessels within 500m both at <2 knots (potential transfer)",
+    "source": "AIS",
+    "trigger_type": "ship_to_ship",
+    "status": "active",
+    "params": {
+      "proximity_meters": 500,
+      "max_speed_knots": 2
+    },
+    "severity": "high",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "id": "rule_007",
+    "name": "Chokepoint Transit — Bab el-Mandeb",
+    "description": "Vessel near Bab el-Mandeb with unusual heading",
+    "source": "AIS",
+    "trigger_type": "route_deviation",
+    "status": "active",
+    "params": {
+      "chokepoints": [
+        "Bab el-Mandeb"
+      ]
+    },
+    "severity": "medium",
+    "regions": [
+      "Red Sea"
+    ]
+  },
+  {
+    "id": "rule_010",
+    "name": "Conflict Event Surge",
+    "description": "High-severity conflict/military event detected in news feeds",
+    "source": "NEWS",
+    "trigger_type": "event_surge",
+    "status": "active",
+    "params": {
+      "keywords": [
+        "attack",
+        "strike",
+        "military",
+        "explosion",
+        "killed",
+        "missile",
+        "troops",
+        "invasion",
+        "bombing",
+        "airstrike"
+      ],
+      "multiplier": 2,
+      "window_days": 7
+    },
+    "severity": "high",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "id": "rule_011",
+    "name": "Maritime Threat Keywords",
+    "description": "News mentioning maritime threats, piracy, or naval confrontation",
+    "source": "NEWS",
+    "trigger_type": "event_surge",
+    "status": "active",
+    "params": {
+      "keywords": [
+        "piracy",
+        "hijack",
+        "tanker",
+        "naval",
+        "blockade",
+        "chokepoint",
+        "strait",
+        "IRGC",
+        "Houthi",
+        "maritime"
+      ],
+      "multiplier": 2,
+      "window_days": 7
+    },
+    "severity": "high",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "id": "rule_012",
+    "name": "Infrastructure Threat",
+    "description": "News mentioning infrastructure damage, sabotage, or disruption",
+    "source": "NEWS",
+    "trigger_type": "event_surge",
+    "status": "active",
+    "params": {
+      "keywords": [
+        "pipeline",
+        "cable",
+        "power plant",
+        "sabotage",
+        "infrastructure",
+        "dam",
+        "refinery",
+        "port closure",
+        "blackout"
+      ],
+      "multiplier": 2,
+      "window_days": 7
+    },
+    "severity": "medium",
+    "regions": [
+      "all"
+    ]
+  }
+]

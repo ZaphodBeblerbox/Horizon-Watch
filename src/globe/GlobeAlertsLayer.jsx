@@ -1,16 +1,80 @@
 import { useState, useEffect } from "react"
 import { Entity } from "resium"
-import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
+import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
+import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { markerProps, getCachedCanvas } from "./markerRenderer.js"
+import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 
 function forgeHeaders() {
     return {
         Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
         "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
     }
+}
+
+const ICON_CACHE = {}
+
+function alertIcon(a) {
+    const iconType = a.icon_type || ""
+    const severity = a.severity || "medium"
+
+    // News assessment — diamond icon with pattern colour
+    if (NEWS_PATTERN_ICON_KEYS.has(iconType)) {
+        const color = ALERT_ICONS[iconType]?.color || "#FF6B35"
+        const key   = `assess-${iconType}-${severity}`
+        if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAssessmentCanvas(color, severity)
+        return ICON_CACHE[key]
+    }
+
+    // Standard forge alert — source-coloured circle
+    const key = `${a.source || "NEWS"}-${severity}`
+    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAlertCanvas(a.source || "NEWS", severity)
+    return ICON_CACHE[key]
+}
+
+function isSanctioned(a) {
+    return (a.alert_type || a.rule_name || "").toLowerCase().includes("sanctioned vessel")
+}
+function isSts(a) {
+    return (a.alert_type || a.rule_name || "").toLowerCase().includes("ship-to-ship")
+}
+
+// Visual hierarchy scale based on alert type / severity / relevance
+function getMarkerScale(a) {
+    if (isSanctioned(a))                                       return 2.0
+    if (isSts(a))                                              return 1.6
+    const sev = (a.severity || "").toLowerCase()
+    const rel = a.relevance_score ?? 0
+    if (sev === "critical" || rel >= 80)                       return 1.6
+    if (sev === "high"     || rel >= 50)                       return 1.2
+    if (sev === "low"      || (rel > 0 && rel < 30))           return 0.8
+    return 1.0
+}
+
+function getMarkerOpacity(a) {
+    if (isSanctioned(a) || isSts(a)) return 1.0
+    const sev = (a.severity || "").toLowerCase()
+    if (sev === "critical" || sev === "high") return 1.0
+    if (sev === "medium")                     return 0.85
+    return 0.5
+}
+
+// Scale billboard by severity for assessment markers
+function severityScale(severity) {
+    if (severity === "critical") return 1.4
+    if (severity === "high")     return 1.2
+    if (severity === "medium")   return 1.0
+    return 0.85
+}
+
+const FUSION_SCALE = { critical: 1.8, high: 1.5, medium: 1.2 }
+
+function fusionIcon(severity) {
+    const key = `fusion-${severity}`
+    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeFusionCanvas(severity)
+    return ICON_CACHE[key]
 }
 
 export default function GlobeAlertsLayer({ enabled }) {
@@ -46,8 +110,8 @@ export default function GlobeAlertsLayer({ enabled }) {
             let entityType
             if (a.source === "SENTINEL") {
                 entityType = "sentinel_detection"
-            } else {
-                entityType = "alert"
+            } else if (NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")) {
+                entityType = "assessment"
             } else {
                 entityType = "alert"
             }
@@ -84,24 +148,7 @@ export default function GlobeAlertsLayer({ enabled }) {
 
     if (!enabled) return null
 
-    // ── AIS whitelist: only render alerts that matter ─────────────────────────
-    const AIS_WHITELIST = [
-        "Sanctioned Vessel", "Ship-to-Ship Transfer", "Cable Loiterer",
-        "Chokepoint Loitering", "Identity Change", "Vessel Cluster",
-        "Course Reversal", "Formation Sailing", "Dark Ship", "ISR Pattern",
-    ]
-    const shouldRender = (a) => {
-        if (!a.lat || !(a.lng ?? a.lon) || !isFinite(Number(a.lat))) return false
-        const domain = (a.domain || a.source || "").toUpperCase()
-        if (domain === "ADSB") return (a.relevance_score || 0) >= 70
-        if (domain !== "AIS") return true
-        const rule = a.rule_name || a.alert_type || ""
-        if (!AIS_WHITELIST.some(r => rule.toLowerCase().includes(r.toLowerCase()))) return false
-        if (rule.toLowerCase().includes("dark")) return (a.relevance_score || 0) >= 70
-        return (a.relevance_score || 0) >= 50
-    }
-
-    const visibleAlerts  = alerts.filter(shouldRender)
+    const visibleAlerts  = alerts.filter(a => a.lat != null && (a.lng ?? a.lon) != null && isFinite(Number(a.lat)))
     const visibleFusions = fusions.filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
     return (
@@ -110,44 +157,74 @@ export default function GlobeAlertsLayer({ enabled }) {
                 const lat = Number(a.lat)
                 const lon = Number(a.lng ?? a.lon)
                 if (!isFinite(lat) || !isFinite(lon)) return null
-                const mp  = markerProps({ ...a, domain: (a.domain || a.source || "").toUpperCase() })
-                const img = getCachedCanvas(mp.color, mp.size, mp.pulse, mp.signalCount)
+                const icon  = alertIcon(a)
+                if (!icon) return null
+                const isAssessment = NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")
+                const baseSize = isAssessment ? 40 : 38
+                const assessScale = isAssessment ? severityScale(a.severity) : 1.0
+                const hierScale   = getMarkerScale(a)
+                const finalScale  = isAssessment ? assessScale : hierScale
+                const opacity     = getMarkerOpacity(a)
+                const billColor   = opacity < 1.0 ? Color.WHITE.withAlpha(opacity) : undefined
+
+                const sanctioned = isSanctioned(a)
+                const sts        = isSts(a)
+                const labelText  = sanctioned ? "⚠ SANCTIONED"
+                                 : sts        ? "STS DETECTED"
+                                 : null
+
                 return (
                     <Entity
                         id={`alert-forge-${a.id || i}`}
                         key={a.id || i}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
-                            image:           img,
-                            width:           mp.size,
-                            height:          mp.size,
+                            image:           icon,
+                            width:           Math.round(baseSize * finalScale),
+                            height:          Math.round(baseSize * finalScale),
+                            color:           billColor,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                            scaleByDistance: new NearFarScalar(1000, 1.3, 12_000_000, 0.30),
+                            scaleByDistance: new NearFarScalar(1000, 1.3, 12_000_000, 0.28),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
+                            eyeOffset: isAssessment ? new (Cartesian3)(0, 0, -60) : undefined,
                         }}
+                        label={labelText ? {
+                            text:            labelText,
+                            font:            "bold 9px Arial",
+                            fillColor:       sanctioned ? Color.fromCssColorString("#FF3B30") : Color.fromCssColorString("#FF9500"),
+                            outlineColor:    Color.fromCssColorString("#0F1721"),
+                            outlineWidth:    2,
+                            style:           2,
+                            showBackground:  true,
+                            backgroundColor: Color.fromCssColorString("#0F1721").withAlpha(0.85),
+                            pixelOffset:     new Cartesian2(0, -(Math.round(baseSize * finalScale) / 2 + 8)),
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, 8_000_000),
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        } : undefined}
                     />
                 )
             })}
             {visibleFusions.map(f => {
-                const lat = Number(f.lat)
-                const lon = Number(f.lon)
+                const lat   = Number(f.lat)
+                const lon   = Number(f.lon)
                 if (!isFinite(lat) || !isFinite(lon)) return null
-                const mp  = markerProps({ ...f, domain: "FUSION", fusion_id: f.fusion_id })
-                const img = getCachedCanvas(mp.color, mp.size, mp.pulse, mp.signalCount)
+                const sev   = f.severity || "medium"
+                const scale = FUSION_SCALE[sev] || 1.2
+                const sz    = Math.round(56 * scale)
+                const icon  = fusionIcon(sev)
                 return (
                     <Entity
                         id={`fusion-${f.fusion_id}`}
                         key={f.fusion_id}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
-                            image:           img,
-                            width:           mp.size,
-                            height:          mp.size,
+                            image:           icon,
+                            width:           sz,
+                            height:          sz,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
                             scaleByDistance: new NearFarScalar(1000, 1.4, 12_000_000, 0.30),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 25_000_000),
+                            eyeOffset: new (Cartesian3)(0, 0, -80),
                         }}
                     />
                 )

@@ -528,98 +528,19 @@ class DarkShipDetector:
             lon = v.get("lng") or v.get("lon", 0)
             region_id = region_fn(lat, lon) if region_fn else None
             self._last_seen[str(mmsi)] = {
-                "timestamp":   now,
-                "lat":         lat,
-                "lon":         lon,
-                "speed":       float(v.get("speed") or 0),
-                "name":        v.get("name") or str(mmsi),
-                "region_id":   region_id,
-                "vessel_type": v.get("ship_type_name") or v.get("ship_type") or "",
-                "alerted_at":  self._last_seen.get(str(mmsi), {}).get("alerted_at"),
+                "timestamp": now,
+                "lat":       lat,
+                "lon":       lon,
+                "speed":     float(v.get("speed") or 0),
+                "name":      v.get("name") or str(mmsi),
+                "region_id": region_id,
+                "alerted_at": self._last_seen.get(str(mmsi), {}).get("alerted_at"),
             }
-
-    # ── Bbox-based suppress/qualify lists for dark ship ─────────────────────
-    # Suppress: routine high-traffic coastal/shipping-lane areas
-    _DARK_SUPPRESS: list[tuple] = [
-        (51.0, 57.0, -2.0, 10.0,  "North Sea/English Channel"),
-        (55.0, 60.0,  8.0, 15.0,  "Danish/Swedish coast"),
-        (48.0, 52.0, -6.0,  3.0,  "Bay of Biscay coast"),
-        (43.0, 46.0, 12.0, 18.0,  "Adriatic coast"),
-        (59.0, 62.0,  4.0, 12.0,  "Norwegian coast"),
-        ( 1.0,  5.0,100.0,110.0,  "Malacca/Singapore"),
-        (31.0, 33.0, 32.0, 35.0,  "Suez approaches"),
-        (29.0, 32.0, 48.0, 52.0,  "Kuwait/Bahrain port approaches"),
-    ]
-    # Qualify: strategic zones where dark ship IS suspicious
-    _DARK_QUALIFY: list[tuple] = [
-        (55.0, 60.5, 17.0, 30.0,  "Baltic cables zone"),
-        (36.0, 38.5, 27.0, 33.0,  "Black Sea west"),
-        (25.5, 27.5, 55.5, 57.5,  "Strait of Hormuz"),
-        (11.0, 14.0, 42.5, 46.0,  "Bab el-Mandeb"),
-        (35.0, 37.5,  9.0, 16.5,  "Sicily Channel"),
-        (22.0, 26.0,119.0,123.0,  "Taiwan Strait"),
-        (37.5, 39.0, 26.5, 30.0,  "Turkish Straits"),
-        (14.0, 16.0, 41.5, 44.0,  "Red Sea south"),
-    ]
-    # Vessel types that always trigger regardless of location
-    _DARK_ALWAYS_TYPES = frozenset({
-        "tanker", "lng tanker", "lpg tanker", "chemical tanker",
-        "military", "naval", "government", "coast guard",
-    })
-
-    @classmethod
-    def _qualify_dark_ship(cls, mmsi: str, lat: float, lon: float,
-                           vessel_type: str = "") -> tuple:
-        """
-        Fast bbox-based qualification. Returns (should_fire, reason).
-        Replaces the previous DB-heavy version — all checks are in-memory.
-        """
-        # Always fire for sanctioned vessels
-        try:
-            from sanctions_loader import sanctions_loader as _sl
-            hit = _sl.check_vessel(mmsi=mmsi)
-            if hit:
-                return True, f"sanctioned:{hit.get('name', mmsi)}"
-        except Exception:
-            pass
-
-        # Always fire for sensitive vessel types
-        vtype_lower = (vessel_type or "").lower()
-        for vt in cls._DARK_ALWAYS_TYPES:
-            if vt in vtype_lower:
-                return True, f"sensitive_type:{vt}"
-
-        # Suppress in routine high-traffic zones
-        for (mlat, xlat, mlon, xlon, reason) in cls._DARK_SUPPRESS:
-            if mlat <= lat <= xlat and mlon <= lon <= xlon:
-                return False, f"suppressed:{reason}"
-
-        # Fire in strategic qualification zones
-        for (mlat, xlat, mlon, xlon, name) in cls._DARK_QUALIFY:
-            if mlat <= lat <= xlat and mlon <= lon <= xlon:
-                return True, f"strategic:{name}"
-
-        # Open ocean: no port within ~200km (1.8° ≈ 200km)
-        try:
-            from database import PortBoundary, get_db as _gdb_p
-            deg = 1.8
-            with _gdb_p() as _pdb:
-                nearby = _pdb.query(PortBoundary).filter(
-                    PortBoundary.latitude.between(lat - deg, lat + deg),
-                    PortBoundary.longitude.between(lon - deg, lon + deg),
-                ).first()
-            if not nearby:
-                return True, "isolated_ocean"
-        except Exception:
-            pass
-
-        return False, "suppressed_routine"
 
     def scan(self, rules: list, now: datetime, active_mmsis: set) -> list:
         """
         Scan for vessels absent from the live feed for >= min_gap_minutes.
         active_mmsis: set of mmsi strings currently visible in AIS feed.
-        Only fires when sanctioned / in strategic zone / near cable / isolated ocean.
         """
         alerts: list = []
 
@@ -655,69 +576,32 @@ class DarkShipDetector:
                 if alerted_at and (now - alerted_at).total_seconds() / 60.0 < min_gap_min * 2:
                     continue
 
-                # Qualify: only fire if contextually suspicious
-                lat = state["lat"]
-                lon = state["lon"]
-                vessel_type = state.get("vessel_type", "")
-                should_fire, reason = self._qualify_dark_ship(mmsi, lat, lon, vessel_type)
-                if not should_fire:
-                    continue
-
-                # Relevance by strategic reason — only scores >= 70 render on globe
-                _DARK_RELEVANCE = {
-                    "sanctioned":                      100,
-                    "strategic:Strait of Hormuz":       90,
-                    "strategic:Bab el-Mandeb":          88,
-                    "strategic:Taiwan Strait":          87,
-                    "strategic:Red Sea south":          85,
-                    "strategic:Baltic cables zone":     85,
-                    "strategic:Turkish Straits":        83,
-                    "strategic:Black Sea west":         82,
-                    "strategic:Sicily Channel":         75,
-                    "isolated_ocean":                   72,
-                    "sensitive_type:military":          82,
-                    "sensitive_type:naval":             85,
-                    "sensitive_type:lng tanker":        70,
-                    "sensitive_type:lpg tanker":        70,
-                    "sensitive_type:tanker":            68,
-                }
-                reason_lower = reason.lower()
-                relevance = next(
-                    (v for k, v in _DARK_RELEVANCE.items() if reason_lower.startswith(k)),
-                    45,  # default: below render threshold, won't show on globe
-                )
-
                 self._last_seen[mmsi]["alerted_at"] = now
                 alerts.append({
-                    "id":              f"dark_{int(now.timestamp()*1000)}_{mmsi}",
-                    "rule_id":         rule.get("id"),
-                    "rule_name":       "Dark Ship",
-                    "alert_type":      "Dark Ship",
-                    "rule_trigger":    "AIS_DARK_SHIP",
-                    "source":          "AIS",
-                    "domain":          "AIS",
-                    "severity":        "high" if relevance >= 70 else "medium",
-                    "icon_type":       "DARK_SHIP",
-                    "relevance_score": relevance,
-                    "confidence":      0.85,
-                    "vessel":          state["name"],
-                    "mmsi":            mmsi,
-                    "lat":             lat,
-                    "lng":             lon,
-                    "speed":           state["speed"],
+                    "id":           f"dark_{int(now.timestamp()*1000)}_{mmsi}",
+                    "rule_id":      rule.get("id"),
+                    "rule_name":    "AIS_DARK_SHIP",
+                    "rule_trigger": "AIS_DARK_SHIP",
+                    "source":       "AIS",
+                    "severity":     "high",
+                    "icon_type":    "DARK_SHIP",
+                    "vessel":       state["name"],
+                    "mmsi":         mmsi,
+                    "lat":          state["lat"],
+                    "lng":          state["lon"],
+                    "speed":        state["speed"],
                     "message": (
                         f"Dark ship: {state['name']} — no AIS signal for {gap_min:.0f} min. "
-                        f"Last position: {lat:.3f}, {lon:.3f} "
+                        f"Last position: {state['lat']:.3f}, {state['lon']:.3f} "
                         f"(region {state.get('region_id', '?')}). "
-                        f"Last speed: {state['speed']:.1f} kn. Trigger: {reason}."
+                        f"Last speed: {state['speed']:.1f} kn."
                     ),
-                    "timestamp":        now.isoformat(),
-                    "gap_minutes":      round(gap_min, 1),
-                    "dark_ship_trigger": reason,
+                    "timestamp":    now.isoformat(),
+                    "gap_minutes":  round(gap_min, 1),
                     "provenance": {
                         "source_type":    "AIS",
                         "detection_rule": "AIS_DARK_SHIP",
-                        "trigger_reason": reason,
+                        "trigger_reason": "AIS_DARK_SHIP",
                     },
                 })
 

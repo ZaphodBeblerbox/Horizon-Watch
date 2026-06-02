@@ -414,7 +414,6 @@ export default function DirectorBar({
   indicators     = [],
   contextCards   = [],
   generating     = false,
-  error          = null,
   onGenerate     = () => {},
   onSave         = () => {},
   onClose        = () => {},
@@ -655,21 +654,6 @@ export default function DirectorBar({
                     ))}
                   </div>
                 )}
-              </div>
-            )}
-
-            {/* ── Error display ── */}
-            {error && (
-              <div style={{
-                margin: "6px 12px",
-                padding: "8px 12px",
-                background: "rgba(255,59,48,0.10)",
-                border: "1px solid rgba(255,59,48,0.35)",
-                color: "#ff6b6b",
-                fontSize: 12,
-                lineHeight: 1.4,
-              }}>
-                Generation failed: {error}
               </div>
             )}
 
