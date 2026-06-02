@@ -8936,6 +8936,30 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     print(f"[sanctions] CRITICAL: Sanctioned vessel {vessel_name} (MMSI {mmsi}) at "
           f"{vessel.get('lat')}, {vessel.get('lon')}")
 
+    # Rule A — Sanctioned Tanker (vessel type contains 'tanker')
+    vessel_type = vessel.get("ship_type", vessel.get("vessel_type_name", "")).lower()
+    if "tanker" in vessel_type and not _new_rule_cooldown(mmsi, "SANCTIONED_TANKER"):
+        _new_rule_mark(mmsi, "SANCTIONED_TANKER")
+        lat_a = vessel.get("lat") or vessel.get("lon") and vessel.get("lat")
+        lon_a = vessel.get("lon") or vessel.get("lng")
+        tanker_alert = {
+            "domain": "AIS", "source": "AIS",
+            "alert_type": "Sanctioned Tanker",
+            "rule_name":  "Sanctioned Tanker",
+            "alert_category": "SANCTIONS_VIOLATION",
+            "title":   f"Sanctioned Tanker: {vessel_name}",
+            "message": (f"{vessel_name} ({mmsi}) — sanctioned tanker transmitting AIS "
+                        f"at {lat_a:.3f}, {lon_a:.3f}. "
+                        f"Flag: {hit.get('flag', 'unknown')}. Last port: unknown."),
+            "severity": "critical", "confidence": 0.97, "relevance_score": 100,
+            "lat": lat_a, "lon": lon_a, "mmsi": mmsi, "vessel_name": vessel_name,
+            "source_id": f"tanker:{mmsi}", "entity_id": mmsi, "timestamp": datetime.utcnow().isoformat(),
+            "payload": {"rule_name": "Sanctioned Tanker", "mmsi": mmsi, "sanction_lists": explanation["sanction_lists"]},
+        }
+        write_alert(tanker_alert)
+        _forge_alerts.append(tanker_alert)
+        print(f"[rules] Rule A — Sanctioned Tanker: {vessel_name}")
+
 
 # ── Ship-to-Ship transfer detection ──────────────────────────────────────────
 
@@ -9141,6 +9165,36 @@ async def _run_sts_detection() -> None:
         candidate["alerted"] = True
         print(f"[ais] STS ALERT: {name_a} ↔ {name_b} "
               f"({int(duration_min)}min, {'SANCTIONED' if is_sanctions_related else 'clean'})")
+
+        # Rule B — Dark STS: vessel had AIS gap > 2h in the last 24h
+        try:
+            for _sts_mmsi, _sts_name in ((mmsi_a, name_a), (mmsi_b, name_b)):
+                if _new_rule_cooldown(_sts_mmsi, "DARK_STS"):
+                    continue
+                # Check last_seen gap: if _last_seen has no timestamp, skip
+                _ds = getattr(_dark_ship_detector, "_last_seen", {}).get(_sts_mmsi)
+                if _ds:
+                    _gap_h = (now - _ds.get("timestamp", now)).total_seconds() / 3600.0
+                    if _gap_h > 2.0:
+                        _new_rule_mark(_sts_mmsi, "DARK_STS")
+                        _dark_sts = {
+                            "domain": "AIS", "source": "AIS",
+                            "alert_type": "Dark STS Transfer", "rule_name": "Dark STS Transfer",
+                            "alert_category": "DARK_STS",
+                            "title": f"Dark STS Transfer: {_sts_name}",
+                            "message": (f"{_sts_name} ({_sts_mmsi}) conducted STS following "
+                                        f"AIS blackout of {_gap_h:.1f}h. Position: {midlat:.3f}, {midlon:.3f}."),
+                            "severity": "critical", "confidence": 0.88, "relevance_score": 90,
+                            "lat": midlat, "lon": midlon, "mmsi": _sts_mmsi,
+                            "source_id": f"darksts:{_sts_mmsi}", "entity_id": _sts_mmsi,
+                            "timestamp": now.isoformat(),
+                            "payload": {"rule_name": "Dark STS Transfer", "gap_hours": round(_gap_h, 1)},
+                        }
+                        write_alert(_dark_sts)
+                        _forge_alerts.append(_dark_sts)
+                        print(f"[rules] Rule B — Dark STS: {_sts_name} (gap {_gap_h:.1f}h)")
+        except Exception as _rb_err:
+            print(f"[rules] Rule B error: {_rb_err}")
 
 
 async def _sts_detection_loop() -> None:
@@ -9729,6 +9783,67 @@ async def _global_adsb_cache_loop():
         except Exception as e:
             print(f"[ADSB-GLOBAL] loop error: {e}")
         await asyncio.sleep(120)
+
+
+# ── Open-water guard for dark ships ──────────────────────────────────────────
+
+_INLAND_EXCLUDE = [
+    (47.0, 51.9,   6.0,   8.5, "Rhine"),
+    (44.5, 48.5,  13.5,  29.5, "Danube"),
+    (41.5, 49.0, -93.0, -75.0, "Great Lakes"),
+    (36.5, 47.5,  49.5,  54.5, "Caspian Sea"),
+    (29.0, 48.0, -97.0, -88.0, "Mississippi/Missouri"),
+    (22.0, 32.0, 105.0, 122.0, "Yangtze/Pearl inland"),
+]
+
+def _is_open_water(lat: float, lon: float) -> bool:
+    """Returns False for known inland waterway bboxes; True = open maritime water."""
+    for mlat, xlat, mlon, xlon, _ in _INLAND_EXCLUDE:
+        if mlat <= lat <= xlat and mlon <= lon <= xlon:
+            return False
+    return True
+
+
+# ── Cable reference points ────────────────────────────────────────────────────
+
+CABLE_REFERENCE_POINTS = [
+    ("FLAG Europe-Asia",      50.78,   1.08),
+    ("TAT-14",                50.64,  -1.32),
+    ("Apollo",                50.83,  -0.75),
+    ("SeaMeWe-3 Marseille",   43.30,   5.37),
+    ("SeaMeWe-3 Palermo",     38.12,  13.35),
+    ("AAE-1 Djibouti",        11.59,  43.14),
+    ("EASSy Mombasa",         -4.05,  39.67),
+    ("SEACOM Mtunzini",      -28.96,  31.76),
+    ("MAREA Virginia Beach",  36.83, -75.97),
+    ("Hibernia Nova Scotia",  44.65, -63.57),
+    ("Baltic Sea Cable Gotland", 57.50, 18.50),
+    ("NordLink Tonstad",      58.67,   6.73),
+    ("Baltic Cable Klaipeda", 55.71,  21.12),
+    ("Taiwan Strait Cable",   25.10, 121.55),
+    ("Luzon Strait Cable",    18.50, 121.00),
+    ("Persian Gulf Cable",    26.21,  56.34),
+    ("Red Sea Hub Jeddah",    21.48,  39.19),
+    ("Hormuz Cable",          26.56,  56.27),
+]
+
+def _nearest_cable(lat: float, lon: float) -> tuple:
+    best_name, best_dist = None, float("inf")
+    for name, clat, clon in CABLE_REFERENCE_POINTS:
+        d = _haversine_km(lat, lon, clat, clon)
+        if d < best_dist:
+            best_dist, best_name = d, name
+    return best_name, best_dist
+
+
+# ── New rule cooldown tracker ─────────────────────────────────────────────────
+_NEW_RULE_ALERTED: dict = {}   # "{mmsi}:{rule}" → epoch
+
+def _new_rule_cooldown(mmsi: str, rule: str, hours: float = 4.0) -> bool:
+    return (time.time() - _NEW_RULE_ALERTED.get(f"{mmsi}:{rule}", 0)) < hours * 3600
+
+def _new_rule_mark(mmsi: str, rule: str) -> None:
+    _NEW_RULE_ALERTED[f"{mmsi}:{rule}"] = time.time()
 
 
 def _cross_domain_correlation(now_iso: str) -> list:
@@ -19884,6 +19999,37 @@ def forge_get_alerts(_forge=Depends(_require_forge)):
 
 
 # ── Sanctions API endpoints ────────────────────────────────────────────────────
+
+@app.get("/api/adsb/military-track/{icao_hex}")
+async def get_military_track(icao_hex: str):
+    """Return rolling track + metadata for a military aircraft."""
+    from detectors.adsb_detector import _military_tracks, AIRCRAFT_TYPE_IMAGES, AIRCRAFT_IMAGE_FALLBACK, _resolve_aircraft_image
+    hex_upper = icao_hex.upper()
+    ac        = _GLOBAL_ADSB_CACHE.get(hex_upper, {})
+    track     = list(_military_tracks.get(hex_upper, []))
+    aircraft_type = ac.get("type") or ac.get("category") or None
+    callsign  = (ac.get("flight") or "").strip()
+    image_url = _resolve_aircraft_image(aircraft_type)
+    alert_active = any(
+        a.get("icao") == hex_upper and a.get("alert_category") == "MILITARY_AIRCRAFT"
+        for a in _forge_alerts[-50:]
+    )
+    return {
+        "icao_hex":          hex_upper,
+        "callsign":          callsign,
+        "aircraft_type":     aircraft_type,
+        "aircraft_image_url": image_url,
+        "track_points":      track,
+        "alert_active":      alert_active,
+    }
+
+
+@app.get("/api/sanctions/mmsi-list")
+def sanctions_mmsi_list():
+    """Return all MMSIs on the sanctions list (known vessels only)."""
+    mmsi_list = list(sanctions_loader._sanctions_by_mmsi.keys()) if hasattr(sanctions_loader, "_sanctions_by_mmsi") else []
+    return {"mmsi_list": mmsi_list, "count": len(mmsi_list)}
+
 
 @app.get("/api/sanctions/stats")
 def sanctions_stats(_=Depends(get_optional_user)):

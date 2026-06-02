@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -6,6 +6,7 @@ import { safeArray } from "../utils/safeArray.js"
 import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
+import { markerProps, getCachedCanvas } from "./markerRenderer.js"
 
 function forgeHeaders() {
     return {
@@ -80,6 +81,15 @@ function fusionIcon(severity) {
 export default function GlobeAlertsLayer({ enabled }) {
     const [alerts,  setAlerts]  = useState([])
     const [fusions, setFusions] = useState([])
+    const sanctionedMmsiRef = useRef(new Set())
+
+    // Load sanctions MMSI list once on mount
+    useEffect(() => {
+        fetch(`${API_BASE}/api/sanctions/mmsi-list`)
+            .then(r => r.ok ? r.json() : { mmsi_list: [] })
+            .then(d => { sanctionedMmsiRef.current = new Set(d.mmsi_list || []) })
+            .catch(() => {})
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (!enabled) { setAlerts([]); setFusions([]); return }
@@ -156,6 +166,13 @@ export default function GlobeAlertsLayer({ enabled }) {
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
+        // Dark ship markers only render if the vessel is on the sanctions list
+        const isDarkShip = (a.alert_category === "DARK_SHIP" || (a.alert_type || a.rule_name || "").toLowerCase().includes("dark ship"))
+        if (isDarkShip) {
+            const mmsi = a.mmsi || a.entity_id || ""
+            const onSanctions = a.sanctions_hit || a.on_sanctions_list || sanctionedMmsiRef.current.has(mmsi)
+            if (!onSanctions) return false
+        }
         return true
     })
     const visibleFusions = fusions.filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
@@ -166,47 +183,45 @@ export default function GlobeAlertsLayer({ enabled }) {
                 const lat = Number(a.lat)
                 const lon = Number(a.lng ?? a.lon)
                 if (!isFinite(lat) || !isFinite(lon)) return null
-                const icon  = alertIcon(a)
-                if (!icon) return null
-                const isAssessment = a.domain === "NEWS" && !!(a.icon_type && ALERT_ICONS[a.icon_type])
-                const baseSize = isAssessment ? 40 : 38
-                const assessScale = isAssessment ? severityScale(a.severity) : 1.0
-                const hierScale   = getMarkerScale(a)
-                const finalScale  = isAssessment ? assessScale : hierScale
-                const opacity     = getMarkerOpacity(a)
-                const billColor   = opacity < 1.0 ? Color.WHITE.withAlpha(opacity) : undefined
+
+                const mp  = markerProps({ ...a, domain: (a.domain || a.source || "").toUpperCase() })
+                const img = getCachedCanvas(mp.color, mp.size, mp.pulse, mp.signalCount, mp.shape)
+                if (!img) return null
 
                 const sanctioned = isSanctioned(a)
                 const sts        = isSts(a)
-                const labelText  = sanctioned ? "⚠ SANCTIONED"
+                const isMilitary = mp.shape === 'military'
+                const callsign   = (a.aircraft || a.callsign || "").slice(0, 8)
+                const labelText  = sanctioned ? "SANCTIONED"
                                  : sts        ? "STS DETECTED"
+                                 : isMilitary && callsign ? callsign
                                  : null
 
+                const labelColor = sanctioned ? "#FF3B30" : isMilitary ? "#FF4444" : "#FF9500"
                 return (
                     <Entity
                         id={`alert-forge-${a.id || i}`}
                         key={a.id || i}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
-                            image:           icon,
-                            width:           Math.round(baseSize * finalScale),
-                            height:          Math.round(baseSize * finalScale),
-                            color:           billColor,
+                            image:           img,
+                            width:           mp.size,
+                            height:          mp.size,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
                             scaleByDistance: new NearFarScalar(1000, 1.3, 12_000_000, 0.28),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
-                            eyeOffset: isAssessment ? new (Cartesian3)(0, 0, -60) : undefined,
                         }}
                         label={labelText ? {
                             text:            labelText,
                             font:            "bold 9px Arial",
-                            fillColor:       sanctioned ? Color.fromCssColorString("#FF3B30") : Color.fromCssColorString("#FF9500"),
+                            fillColor:       Color.fromCssColorString(labelColor),
                             outlineColor:    Color.fromCssColorString("#0F1721"),
                             outlineWidth:    2,
                             style:           2,
                             showBackground:  true,
                             backgroundColor: Color.fromCssColorString("#0F1721").withAlpha(0.85),
-                            pixelOffset:     new Cartesian2(0, -(Math.round(baseSize * finalScale) / 2 + 8)),
+                            pixelOffset:     new Cartesian2(0, -(mp.size / 2 + 8)),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 8_000_000),
                             disableDepthTestDistance: Number.POSITIVE_INFINITY,
                         } : undefined}
