@@ -148,7 +148,16 @@ export default function GlobeAlertsLayer({ enabled }) {
 
     if (!enabled) return null
 
-    const visibleAlerts  = alerts.filter(a => a.lat != null && (a.lng ?? a.lon) != null && isFinite(Number(a.lat)))
+    // Deduplicate by id before rendering — backend can return duplicates which
+    // cause Cesium "entity already exists" crashes and React duplicate-key warnings
+    const _seenIds = new Set()
+    const visibleAlerts = alerts.filter(a => {
+        if (a.lat == null || (a.lng ?? a.lon) == null || !isFinite(Number(a.lat))) return false
+        const id = a.id || a.alert_id
+        if (!id || _seenIds.has(id)) return false
+        _seenIds.add(id)
+        return true
+    })
     const visibleFusions = fusions.filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
     return (
