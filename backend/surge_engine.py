@@ -34,6 +34,21 @@ SURGE_KEYWORDS = [
 KEYWORD_SURGE_THRESHOLD  = 3
 KEYWORD_SURGE_WINDOW_HOURS = 3.0
 
+# Escalation language terms — presence upgrades surge severity
+ESCALATION_TERMS = [
+    "attack", "strike", "explosion", "killed", "casualties", "missile",
+    "bombed", "invasion", "offensive", "breakthrough", "collapsed", "coup",
+    "seized", "emergency", "siege", "shelling", "airstrike", "detonated",
+    "evacuated", "chemical weapon", "nuclear", "massacre",
+]
+
+def _count_escalation(texts: list[str]) -> int:
+    combined = " ".join(texts).lower()
+    return sum(1 for t in ESCALATION_TERMS if t in combined)
+
+def _source_diversity(evidence: list[dict]) -> int:
+    return len({e.get("source", "") for e in evidence if e.get("source")})
+
 # Module-level cache: (country, region_id) → {score_bonus, expires_at}
 # Read by threat_matrix.py to add surge_bonus to region scores.
 _surge_scores: dict = {}
@@ -370,6 +385,26 @@ class SurgeEngine:
             if e["ts"] > (now - timedelta(hours=max(config.volume_window_hours, 1)))
         ][:10]
 
+        # ── Severity upgrades: source diversity + escalation language ─────────
+        src_diversity  = _source_diversity(evidence)
+        esc_count      = _count_escalation([e["title"] for e in evidence])
+        sev_order      = ["medium", "high", "critical"]
+        sev_idx        = sev_order.index(severity) if severity in sev_order else 0
+        # 3+ distinct sources: upgrade one level
+        if src_diversity >= 3 and sev_idx < 2:
+            sev_idx += 1
+        # 2+ escalation terms: upgrade to at least high
+        if esc_count >= 2 and sev_idx < 1:
+            sev_idx = 1
+        # 4+ escalation terms: upgrade to critical
+        if esc_count >= 4 and sev_idx < 2:
+            sev_idx = 2
+        severity = sev_order[sev_idx]
+
+        # ── Geographic precision gate ─────────────────────────────────────────
+        location_confidence = article.get("location_confidence") or "none"
+        show_on_map = location_confidence not in ("country", "none", None)
+
         surge_id = f"SURGE-{_gen_id()}"
         try:
             from database import get_db as _gdb, SurgeEvent
@@ -380,8 +415,8 @@ class SurgeEngine:
                     location_name=location_name,
                     location_country=country,
                     region_id=region_id,
-                    lat=lat,
-                    lon=lon,
+                    lat=lat if show_on_map else None,
+                    lon=lon if show_on_map else None,
                     article_type=article_type,
                     surge_type=surge_type,
                     article_count=article_count,
@@ -398,7 +433,8 @@ class SurgeEngine:
                 )
                 db.add(ev)
                 db.commit()
-            print(f"[surge] {surge_type}: {headline} | {time_window} | sev={severity}")
+            print(f"[surge] {surge_type}: {headline} | {time_window} | "
+                  f"sev={severity} | srcs={src_diversity} | esc={esc_count}")
         except Exception as e:
             print(f"[surge] DB write error: {e}")
             return
@@ -419,15 +455,19 @@ class SurgeEngine:
             from alert_writer import write_alert as _write_alert, _mark_region_dirty as _mrd
             from entity_linker import entity_linker as _el
             _write_alert({
-                "id":         surge_id,
-                "source":     "surge",
-                "alert_type": f"surge_{surge_type.lower()}",
-                "title":      headline,
-                "severity":   severity,
-                "lat":        lat,
-                "lon":        lon,
-                "region":     region_id,
+                "id":           surge_id,
+                "source":       "surge",
+                "domain":       "NEWS",
+                "alert_type":   f"surge_{surge_type.lower()}",
+                "rule_name":    f"surge_{surge_type.lower()}",
+                "title":        headline,
+                "severity":     severity,
+                "lat":          lat if show_on_map else None,
+                "lon":          lon if show_on_map else None,
+                "region":       region_id,
                 "country_code": country,
+                "relevance_score": 60 + esc_count * 5 + src_diversity * 3,
+                "confidence":   min(1.0, 0.5 + src_diversity * 0.1),
             })
             _el.link_alert(surge_id, "surge", lat, lon, headline)
             _mrd(region_id)

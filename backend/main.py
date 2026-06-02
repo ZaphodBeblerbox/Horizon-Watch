@@ -3077,6 +3077,12 @@ def get_news_region():
 _adsb_cache: dict = {}
 _GLOBAL_ADSB_CACHE: dict = {}  # icao(upper) → aircraft dict with 'last_seen' float
 
+# ── ISR / circular pattern tracking ──────────────────────────────────────────
+_aircraft_tracks: dict = {}   # icao → [(lat, lon, timestamp), ...]
+_isr_alerted: dict     = {}   # icao → epoch of last ISR alert
+ISR_TRACK_MAX_AGE_MIN  = 120  # keep 2h of track
+ISR_COOLDOWN_HOURS     = 4
+
 GLOBAL_ADSB_REGIONS = [
     {"name": "Europe/Middle East", "lat": 40.0,  "lon": 22.5,  "dist": 3000},
     {"name": "East Asia",          "lat": 27.5,  "lon": 105.0, "dist": 3000},
@@ -8304,6 +8310,14 @@ _AIS_LOCK        = threading.Lock()
 _sanctions_alerted: dict = {}   # mmsi → epoch of last sanctions alert (in-memory cooldown)
 _sts_candidates:    dict = {}   # (mmsi_a, mmsi_b) → proximity tracking state
 
+# ── Identity change tracking ───────────────────────────────────────────────────
+_vessel_identity: dict = {}   # mmsi → {name, flag, last_seen}
+_identity_alerted: dict = {}  # mmsi → epoch of last identity-change alert
+
+# ── Vessel cluster tracking ────────────────────────────────────────────────────
+_cluster_alerted: dict = {}   # cluster_key → epoch of last cluster alert
+CLUSTER_COOLDOWN_HOURS = 3
+
 # ── Forge detection engine instances ─────────────────────────────────────────
 if _HAS_DETECTORS:
     _ais_detector        = _AISAnomalyDetector()
@@ -8524,6 +8538,8 @@ async def _on_fusion_created(payload: dict):
     }})
 
 
+_NEWS_DOMAIN_ALERTED: dict = {}  # rule_name:key → epoch of last fire
+
 async def _on_surge_created(payload: dict):
     _graph_sse_push({"event": "node_added", "payload": {
         "id": payload.get("surge_id"), "type": "surge",
@@ -8532,6 +8548,109 @@ async def _on_surge_created(payload: dict):
         "lat": payload.get("lat"), "lon": payload.get("lon"),
         "is_live": True,
     }})
+
+    # ── Forge alert bridge for high-impact news surges ─────────────────────
+    await _evaluate_news_forge_rules(payload)
+
+
+async def _evaluate_news_forge_rules(surge: dict) -> None:
+    """Convert high-severity surges into forge alerts for specific patterns."""
+    headline   = (surge.get("headline") or "").lower()
+    sev        = surge.get("severity") or "medium"
+    lat        = surge.get("lat")
+    lon        = surge.get("lon")
+    country    = surge.get("location_country", "")
+    surge_id   = surge.get("surge_id", "")
+    now_epoch  = time.time()
+
+    _HIGH_CONFLICT_COUNTRIES = frozenset({
+        "sd", "ss", "ua", "ru", "ps", "lb", "ye", "sy", "mm",
+        "ml", "bf", "ne", "td", "cd", "so", "et", "af",
+    })
+
+    _INFRA_KEYWORDS = {
+        "pipeline", "cable", "power grid", "refinery", "port", "dam",
+        "power station", "electricity", "gas pipeline", "oil terminal",
+    }
+    _ATTACK_KEYWORDS = {"attack", "explosion", "sabotage", "strike", "bombed", "damaged", "destroyed"}
+    _DIPLO_KEYWORDS = {
+        "expelled", "ambassador", "persona non grata", "suspended relations",
+        "broke off", "severed ties", "sanctions", "diplomatic crisis",
+    }
+
+    # ── Rule 1: Escalation Spike in conflict zone ──────────────────────────
+    if sev in ("high", "critical") and country in _HIGH_CONFLICT_COUNTRIES:
+        rkey = f"EscalationSpike:{country}"
+        if now_epoch - _NEWS_DOMAIN_ALERTED.get(rkey, 0) > 3600:
+            _NEWS_DOMAIN_ALERTED[rkey] = now_epoch
+            alert_dict = {
+                "source":          "NEWS",
+                "domain":          "NEWS",
+                "alert_type":      "Escalation Spike",
+                "rule_name":       "Escalation Spike",
+                "title":           surge.get("headline", "Escalation surge detected"),
+                "severity":        sev,
+                "confidence":      0.85,
+                "relevance_score": 85,
+                "lat":             lat, "lon": lon,
+                "country_code":    country,
+                "source_id":       surge_id,
+                "payload": {"rule_name": "Escalation Spike", "surge_id": surge_id, "country": country},
+            }
+            aid = write_alert(alert_dict)
+            if aid:
+                global _forge_alerts
+                _forge_alerts.append(alert_dict)
+                print(f"[news-forge] Escalation Spike — {country} [{sev}]")
+
+    # ── Rule 2: Infrastructure threat signal ───────────────────────────────
+    if (any(kw in headline for kw in _INFRA_KEYWORDS) and
+            any(kw in headline for kw in _ATTACK_KEYWORDS)):
+        rkey = f"InfraTheat:{headline[:40]}"
+        if now_epoch - _NEWS_DOMAIN_ALERTED.get(rkey, 0) > 7200:
+            _NEWS_DOMAIN_ALERTED[rkey] = now_epoch
+            alert_dict = {
+                "source":          "NEWS",
+                "domain":          "NEWS",
+                "alert_type":      "Infrastructure Threat Signal",
+                "rule_name":       "Infrastructure Threat Signal",
+                "title":           surge.get("headline", "Infrastructure threat detected"),
+                "severity":        "high",
+                "confidence":      0.80,
+                "relevance_score": 80,
+                "lat":             lat, "lon": lon,
+                "country_code":    country,
+                "source_id":       surge_id,
+                "payload": {"rule_name": "Infrastructure Threat Signal", "surge_id": surge_id},
+            }
+            aid = write_alert(alert_dict)
+            if aid:
+                _forge_alerts.append(alert_dict)
+                print(f"[news-forge] Infrastructure Threat — {headline[:60]}")
+
+    # ── Rule 3: Diplomatic incident signal ────────────────────────────────
+    if any(kw in headline for kw in _DIPLO_KEYWORDS):
+        rkey = f"Diplomatic:{headline[:40]}"
+        if now_epoch - _NEWS_DOMAIN_ALERTED.get(rkey, 0) > 14400:
+            _NEWS_DOMAIN_ALERTED[rkey] = now_epoch
+            alert_dict = {
+                "source":          "NEWS",
+                "domain":          "NEWS",
+                "alert_type":      "Diplomatic Incident",
+                "rule_name":       "Diplomatic Incident",
+                "title":           surge.get("headline", "Diplomatic incident detected"),
+                "severity":        "medium",
+                "confidence":      0.75,
+                "relevance_score": 65,
+                "lat":             lat, "lon": lon,
+                "country_code":    country,
+                "source_id":       surge_id,
+                "payload": {"rule_name": "Diplomatic Incident", "surge_id": surge_id},
+            }
+            aid = write_alert(alert_dict)
+            if aid:
+                _forge_alerts.append(alert_dict)
+                print(f"[news-forge] Diplomatic Incident — {headline[:60]}")
 
 
 async def _on_threat_dirty(payload: dict):
@@ -8617,6 +8736,46 @@ def _ais_ship_type(type_code: int) -> str:
     return _AIS_SHIP_TYPE_MAP.get(type_code, "other")
 
 
+# ── Identity change alert ────────────────────────────────────────────────────
+
+async def _fire_identity_change_alert(mmsi: str, vessel: dict, changes: list) -> None:
+    """Fire a high-priority alert when a vessel changes its name or flag."""
+    lat = vessel.get("lat")
+    lon = vessel.get("lon") or vessel.get("lng")
+    if not lat or not lon:
+        return
+    change_str = ", ".join(changes)
+    alert_dict = {
+        "source":          "AIS",
+        "domain":          "AIS",
+        "alert_type":      "Identity Change",
+        "rule_name":       "Identity Change",
+        "title":           f"Vessel identity change: {vessel.get('name') or mmsi}",
+        "body":            (f"MMSI {mmsi} changed identity: {change_str}. "
+                            "Identity changes are a primary sanctions evasion technique."),
+        "severity":        "high",
+        "confidence":      0.9,
+        "relevance_score": 70,
+        "lat":             float(lat),
+        "lon":             float(lon),
+        "entity_id":       mmsi,
+        "entity_type":     "vessel",
+        "entity_name":     vessel.get("name", ""),
+        "source_id":       f"identity:{mmsi}",
+        "payload": {
+            "rule_name":     "Identity Change",
+            "mmsi":          mmsi,
+            "changes":       changes,
+            "vessel_type":   vessel.get("ship_type", ""),
+        },
+    }
+    alert_id = write_alert(alert_dict)
+    if alert_id:
+        global _forge_alerts
+        _forge_alerts.append(alert_dict)
+        print(f"[identity] Change alert for MMSI {mmsi}: {change_str}")
+
+
 # ── Sanctions check (fired on every new AIS position, O(1) in-memory) ────────
 
 async def _check_sanctions_on_update(vessel: dict) -> None:
@@ -8698,6 +8857,105 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     _sanctions_alerted[mmsi] = now_epoch
     print(f"[sanctions] CRITICAL: Sanctioned vessel {vessel_name} (MMSI {mmsi}) at "
           f"{vessel.get('lat')}, {vessel.get('lon')}")
+
+
+# ── Vessel cluster detection (fleet rendezvous in open ocean) ────────────────
+
+CLUSTER_RADIUS_M     = 2000   # 2km cluster radius
+CLUSTER_MIN_VESSELS  = 3
+CLUSTER_MAX_SPEED    = 1.5    # knots — stopped/near-stopped
+
+async def _run_cluster_detection() -> None:
+    """Detect 3+ vessels clustered within 2km in open ocean."""
+    global _cluster_alerted
+    with _AIS_LOCK:
+        vessels = [
+            dict(v) for v in _AIS_VESSELS.values()
+            if v.get("lat") and v.get("lon") and (v.get("speed") or 99) <= CLUSTER_MAX_SPEED
+        ]
+    if len(vessels) < CLUSTER_MIN_VESSELS:
+        return
+
+    processed: set = set()
+    now = datetime.utcnow()
+
+    for i, anchor in enumerate(vessels):
+        amm = str(anchor.get("mmsi", ""))
+        if amm in processed:
+            continue
+        cluster = [anchor]
+        for j, other in enumerate(vessels):
+            if i == j:
+                continue
+            omm = str(other.get("mmsi", ""))
+            if omm in processed:
+                continue
+            dist = _haversine_m(anchor["lat"], anchor["lon"], other["lat"], other["lon"])
+            if dist <= CLUSTER_RADIUS_M:
+                cluster.append(other)
+
+        if len(cluster) < CLUSTER_MIN_VESSELS:
+            continue
+
+        mid_lat = sum(v["lat"] for v in cluster) / len(cluster)
+        mid_lon = sum(v["lon"] for v in cluster) / len(cluster)
+
+        # Suppress if near a port (~15km)
+        try:
+            from database import PortBoundary
+            deg = 0.14
+            with get_db() as _cdb:
+                near_port = _cdb.query(PortBoundary).filter(
+                    PortBoundary.latitude.between(mid_lat - deg, mid_lat + deg),
+                    PortBoundary.longitude.between(mid_lon - deg, mid_lon + deg),
+                ).first()
+            if near_port:
+                for v in cluster:
+                    processed.add(str(v.get("mmsi", "")))
+                continue
+        except Exception:
+            pass
+
+        cluster_key = ":".join(sorted(str(v.get("mmsi", "")) for v in cluster[:4]))
+        last = _cluster_alerted.get(cluster_key, 0)
+        if (now - datetime.utcfromtimestamp(last)).total_seconds() < CLUSTER_COOLDOWN_HOURS * 3600:
+            for v in cluster:
+                processed.add(str(v.get("mmsi", "")))
+            continue
+
+        vessel_list = ", ".join(v.get("vessel_name", v.get("name", str(v.get("mmsi", "")))) for v in cluster[:4])
+        sev = "high" if len(cluster) >= 5 else "medium"
+        alert_dict = {
+            "source":          "AIS",
+            "domain":          "AIS",
+            "alert_type":      "Vessel Cluster",
+            "rule_name":       "Vessel Cluster",
+            "title":           f"{len(cluster)} vessels clustered in open ocean",
+            "body":            (f"{len(cluster)} vessels stopped within {CLUSTER_RADIUS_M}m: "
+                               f"{vessel_list}. Possible fleet rendezvous or coordinated operation."),
+            "severity":        sev,
+            "confidence":      0.75,
+            "relevance_score": min(90, 55 + len(cluster) * 5),
+            "lat":             mid_lat,
+            "lon":             mid_lon,
+            "source_id":       f"cluster:{amm}",
+            "payload": {
+                "rule_name":     "Vessel Cluster",
+                "vessel_count":  len(cluster),
+                "vessel_mmsis":  [str(v.get("mmsi", "")) for v in cluster],
+                "vessel_names":  [v.get("vessel_name", v.get("name", "")) for v in cluster],
+                "radius_m":      CLUSTER_RADIUS_M,
+            },
+        }
+        aid = write_alert(alert_dict)
+        if aid:
+            global _forge_alerts
+            _forge_alerts.append(alert_dict)
+            _cluster_alerted[cluster_key] = time.time()
+            print(f"[cluster] {len(cluster)} vessels at {mid_lat:.3f},{mid_lon:.3f}")
+
+        for v in cluster:
+            processed.add(str(v.get("mmsi", "")))
 
 
 # ── Ship-to-Ship transfer detection ──────────────────────────────────────────
@@ -8907,13 +9165,17 @@ async def _run_sts_detection() -> None:
 
 
 async def _sts_detection_loop() -> None:
-    """Run STS proximity scan every 5 minutes."""
+    """Run STS proximity scan + vessel cluster detection every 5 minutes."""
     await asyncio.sleep(120)   # let AIS buffer fill first
     while True:
         try:
             await _run_sts_detection()
         except Exception as _sts_err:
             print(f"[sts] scan error: {_sts_err}")
+        try:
+            await _run_cluster_detection()
+        except Exception as _cl_err:
+            print(f"[cluster] scan error: {_cl_err}")
         await asyncio.sleep(300)
 
 
@@ -9003,6 +9265,42 @@ async def _ais_websocket_loop():
                             if len(_AIS_VESSELS) > 2000:
                                 oldest = min(_AIS_VESSELS, key=lambda k: _AIS_VESSELS[k].get("last_update", 0))
                                 del _AIS_VESSELS[oldest]
+                        # Identity change detection (ShipStaticData only — name/flag change)
+                        if mtype == "ShipStaticData":
+                            _new_name = vessel.get("name", "")
+                            _new_flag = vessel.get("flag", "")
+                            _prev     = _vessel_identity.get(mmsi)
+                            if _prev:
+                                _name_changed = (_prev["name"] != _new_name
+                                                 and _new_name and _prev["name"])
+                                _flag_changed = (_prev["flag"] != _new_flag
+                                                 and _new_flag and _prev["flag"])
+                                if _name_changed or _flag_changed:
+                                    _id_now = time.time()
+                                    _id_last = _identity_alerted.get(mmsi, 0)
+                                    if _id_now - _id_last > 86400:  # 24h cooldown
+                                        _identity_alerted[mmsi] = _id_now
+                                        _changes = []
+                                        if _name_changed:
+                                            _changes.append(f"name: '{_prev['name']}' → '{_new_name}'")
+                                        if _flag_changed:
+                                            _changes.append(f"flag: {_prev['flag']} → {_new_flag}")
+                                        asyncio.create_task(_fire_identity_change_alert(
+                                            mmsi, vessel, _changes))
+                            _vessel_identity[mmsi] = {
+                                "name":      _new_name,
+                                "flag":      _new_flag,
+                                "last_seen": datetime.utcnow().isoformat(),
+                            }
+                            # Cap dict size
+                            if len(_vessel_identity) > 5000:
+                                _oldest_ids = sorted(
+                                    _vessel_identity.items(),
+                                    key=lambda x: x[1].get("last_seen", ""),
+                                )[:1000]
+                                for _ok, _ in _oldest_ids:
+                                    del _vessel_identity[_ok]
+
                         # Sanctions check — fast O(1) in-memory pre-filter, async task only on hit
                         if (mtype == "PositionReport"
                                 and sanctions_loader._sanctions_by_mmsi
@@ -9482,6 +9780,61 @@ async def _global_adsb_cache_loop():
                     _record_adsb_history(mapped)
                 except Exception:
                     pass
+                # ── ISR track update ────────────────────────────────────────
+                track_cutoff = datetime.utcnow() - timedelta(minutes=ISR_TRACK_MAX_AGE_MIN)
+                for ac in aircraft_raw:
+                    _isr_hex = (ac.get("hex") or "").upper()
+                    _isr_lat = ac.get("lat")
+                    _isr_lon = ac.get("lon")
+                    _isr_mil = bool(int(ac.get("dbFlags") or 0) & 1)
+                    if not _isr_mil or not _isr_lat or not _isr_lon:
+                        continue
+                    _trk = _aircraft_tracks.setdefault(_isr_hex, [])
+                    _trk.append((_isr_lat, _isr_lon, datetime.utcnow()))
+                    # Prune old entries
+                    _aircraft_tracks[_isr_hex] = [
+                        p for p in _trk if p[2] > track_cutoff
+                    ][-60:]  # cap at 60 points
+                    # Check for circular/ISR pattern
+                    _pts = _aircraft_tracks[_isr_hex]
+                    if (len(_pts) >= 8
+                            and time.time() - _isr_alerted.get(_isr_hex, 0) > ISR_COOLDOWN_HOURS * 3600):
+                        _is_circular = _detect_isr_pattern(_pts)
+                        if _is_circular:
+                            _isr_alerted[_isr_hex] = time.time()
+                            _isr_ac = _GLOBAL_ADSB_CACHE.get(_isr_hex, {})
+                            _isr_svc = ""
+                            try:
+                                from icao_lookup import lookup_icao_hex as _ilook
+                                _isr_svc = _ilook(_isr_hex.lower()).get("service", "")
+                            except Exception:
+                                pass
+                            _isr_alert = {
+                                "source": "ADSB", "domain": "ADSB",
+                                "alert_type": "ISR Pattern Detected",
+                                "rule_name": "ISR Pattern Detected",
+                                "title": f"Military ISR pattern: {_isr_svc or _isr_hex}",
+                                "body": (f"Military aircraft {_isr_ac.get('flight','').strip() or _isr_hex} "
+                                         "detected in circular orbit pattern suggesting "
+                                         "ISR/surveillance operation. Orbit centre is likely target."),
+                                "severity": "high",
+                                "confidence": 0.8,
+                                "relevance_score": 75,
+                                "lat": _isr_lat, "lon": _isr_lon,
+                                "icao": _isr_hex,
+                                "source_id": f"isr:{_isr_hex}",
+                                "payload": {
+                                    "rule_name": "ISR Pattern Detected",
+                                    "icao": _isr_hex,
+                                    "callsign": (_isr_ac.get("flight") or "").strip(),
+                                    "service": _isr_svc,
+                                },
+                            }
+                            _aid = write_alert(_isr_alert)
+                            if _aid:
+                                _forge_alerts.append(_isr_alert)
+                                print(f"[isr] Pattern detected for {_isr_hex} at {_isr_lat:.3f},{_isr_lon:.3f}")
+
                 await asyncio.sleep(2)
             # Prune entries older than 10 minutes
             cutoff = time.time() - 600
@@ -9492,6 +9845,22 @@ async def _global_adsb_cache_loop():
         except Exception as e:
             print(f"[ADSB-GLOBAL] loop error: {e}")
         await asyncio.sleep(120)
+
+
+def _detect_isr_pattern(positions: list) -> bool:
+    """
+    Returns True if aircraft returns within 10km of its starting point
+    after 30+ minutes — classic ISR circular orbit signature.
+    """
+    if len(positions) < 8:
+        return False
+    start_lat, start_lon, start_time = positions[0]
+    for pos_lat, pos_lon, pos_time in positions[5:]:
+        dist_km = _haversine_m(start_lat, start_lon, pos_lat, pos_lon) / 1000.0
+        elapsed_min = (pos_time - start_time).total_seconds() / 60.0
+        if dist_km < 10.0 and elapsed_min >= 30.0:
+            return True
+    return False
 
 
 def _cross_domain_correlation(now_iso: str) -> list:
@@ -19396,6 +19765,51 @@ ALERT_EXPLANATIONS = {
     "surge_velocity_spike":     "A rapid burst of news reporting has been detected from multiple sources about a single location or topic. Velocity spikes often precede major escalation events.",
     "surge_volume_surge":       "The volume of news reporting about this region has significantly exceeded the 7-day baseline, indicating sustained elevated activity or an ongoing developing situation.",
     "surge_keyword_surge":      "Multiple independent news sources have published articles containing a high-priority intelligence keyword. This keyword-triggered alert fires without LLM enrichment to ensure zero latency on emerging events.",
+    "Identity Change": (
+        "This vessel has changed its AIS-reported name or flag within a 24-hour window. "
+        "Identity changes are the primary technique used for sanctions evasion — vessels on "
+        "OFAC/EU/UN sanctions lists frequently rotate names and re-flag under convenience "
+        "registries (Palau, Cameroon, Togo) to continue operating. "
+        "Cross-reference both old and new identities against all sanctions lists. "
+        "Check cargo declarations and port calls under both identities. "
+        "Look for matching IMO number (permanent identifier that cannot be changed)."
+    ),
+    "Vessel Cluster": (
+        "Multiple vessels are stopped within close proximity in open ocean, away from any port. "
+        "Offshore vessel clustering indicates possible ship-to-ship cargo transfer, fleet rendezvous, "
+        "or coordinated covert operation. STS transfers in open ocean leave no port record and are "
+        "the primary mechanism for moving sanctioned oil between vessels. "
+        "Identify all vessels in the cluster and their types — tanker + cargo vessel pairing is "
+        "most significant. Monitor for separation and track all destinations."
+    ),
+    "ISR Pattern Detected": (
+        "A military aircraft has been detected in a circular orbit pattern consistent with "
+        "intelligence, surveillance, and reconnaissance (ISR) operations. The orbit centre "
+        "point is the likely target of interest — it may be a vessel, facility, or ground asset. "
+        "Note the exact coordinates of the orbit centre. Cross-reference with known "
+        "infrastructure, vessels, or activities at that location. This pattern is used by "
+        "maritime patrol aircraft, UAVs, and SIGINT platforms."
+    ),
+    "Escalation Spike": (
+        "A rapid surge in news reporting with escalation language has been detected in an active "
+        "conflict zone. Multiple sources are simultaneously reporting events using terms "
+        "associated with kinetic activity. This pattern precedes or accompanies active incidents. "
+        "Cross-reference with AIS/ADSB activity in the same area. Monitor for follow-up reporting "
+        "from additional sources to confirm the event."
+    ),
+    "Infrastructure Threat Signal": (
+        "News reporting has converged on keywords suggesting a threat to critical infrastructure — "
+        "combining infrastructure terms (pipeline, cable, power grid, port) with attack language. "
+        "Infrastructure attacks have significant cascading effects on energy, communications, and "
+        "supply chains. Verify the specific asset named. Check for AIS/ADSB activity near the "
+        "reported location."
+    ),
+    "Diplomatic Incident": (
+        "News reporting indicates a significant diplomatic event — ambassador expulsion, "
+        "severed relations, or persona non grata declaration. These events often precede or "
+        "accompany escalating tensions that have operational implications. Track the bilateral "
+        "relationship and watch for follow-on military or economic measures."
+    ),
 }
 
 def _get_alert_explanation(alert_type: str, title: str = "") -> str:
