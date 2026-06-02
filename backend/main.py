@@ -6894,6 +6894,24 @@ async def _extract_news_conflicts_loop():
             await loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
             elapsed = asyncio.get_event_loop().time() - t0
             print(f"[news-conflicts] Cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
+            # Write news_points snapshot
+            try:
+                from database import NewsArticle
+                with get_db() as _sn_db:
+                    _pts = (_sn_db.query(NewsArticle)
+                                  .filter(NewsArticle.lat.isnot(None), NewsArticle.lon.isnot(None))
+                                  .order_by(NewsArticle.ingested_at.desc())
+                                  .limit(2000).all())
+                _news_snap = [
+                    {"id": n.id, "lat": n.lat, "lon": n.lon,
+                     "title": (n.event_title or n.title or "")[:150],
+                     "domain": "NEWS", "relevance": n.relevance_score or 0,
+                     "tier": n.tier, "ingested_at": n.ingested_at.isoformat() if n.ingested_at else ""}
+                    for n in _pts
+                ]
+                _write_snapshot_sync("news_points", _news_snap)
+            except Exception as _nse:
+                print(f"[SNAPSHOT] news_points error: {_nse}")
         except Exception as ex:
             print(f"[news-conflicts] loop error: {ex}")
 
@@ -7579,6 +7597,27 @@ async def _surface_pool_loop():
             if new_pool:
                 asyncio.create_task(_run_auto_cluster_briefs(new_pool))
                 loop.run_in_executor(_executor, _maybe_auto_enrich_batch, new_pool)
+                # Write surge_events snapshot alongside surface pool rebuild
+                try:
+                    from database import SurgeEvent as _SE
+                    with get_db() as _sedb:
+                        _se_rows = (_sedb.query(_SE)
+                                         .filter(_SE.status == "active")
+                                         .order_by(_SE.created_at.desc())
+                                         .limit(50).all())
+                    await _write_snapshot("surge_events", [
+                        {"surge_id": s.surge_id, "headline": s.headline,
+                         "severity": s.severity, "lat": s.lat, "lon": s.lon,
+                         "article_count": s.article_count,
+                         "location_name": s.location_name,
+                         "location_country": s.location_country,
+                         "context_summary": s.context_summary,
+                         "created_at": s.created_at.isoformat() if s.created_at else None,
+                         "expires_at": s.expires_at.isoformat() if s.expires_at else None}
+                        for s in _se_rows
+                    ])
+                except Exception as _ses:
+                    print(f"[SNAPSHOT] surge_events error: {_ses}")
         except Exception as ex:
             import traceback
             print(f"[surface] pool refresh error: {ex}")
@@ -7626,6 +7665,153 @@ def _surface_pool_cache_save(pool: list) -> None:
     except Exception as _e:
         print(f"[surface] cache save error: {_e}")
 
+# ── Horizon Snapshot: pre-built JSON cache for zero-latency cold starts ───────
+
+def _write_snapshot_sync(key: str, payload) -> None:
+    """Upsert a snapshot row. Called from executor threads or async contexts."""
+    try:
+        from database import HorizonSnapshot
+        data = _json.dumps(payload, default=str, ensure_ascii=False)
+        with get_db() as _db:
+            row = _db.query(HorizonSnapshot).filter_by(key=key).first()
+            if row:
+                row.payload  = data
+                row.built_at = datetime.utcnow()
+            else:
+                _db.add(HorizonSnapshot(key=key, payload=data, built_at=datetime.utcnow()))
+            _db.commit()
+        print(f"[SNAPSHOT] {key} written ({len(data)} bytes)")
+    except Exception as _se:
+        print(f"[SNAPSHOT] write error for {key}: {_se}")
+
+async def _write_snapshot(key: str, payload) -> None:
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(_executor, _write_snapshot_sync, key, payload)
+
+def _read_snapshot(key: str):
+    """Sync read for startup use. Returns parsed JSON or None."""
+    try:
+        from database import HorizonSnapshot
+        with get_db() as _db:
+            row = _db.query(HorizonSnapshot).filter_by(key=key).first()
+        if row:
+            return _json.loads(row.payload), row.built_at
+    except Exception as _se:
+        print(f"[SNAPSHOT] read error for {key}: {_se}")
+    return None, None
+
+
+async def _startup_snapshot_prefill() -> None:
+    """
+    On startup: build any missing or stale (>6h) snapshots directly from the DB.
+    No external calls, no Claude — pure DB reads. Completes in 2-3 seconds.
+    """
+    await asyncio.sleep(3)  # let DB init settle
+    cutoff = datetime.utcnow() - timedelta(hours=6)
+    written = 0
+    print("[STARTUP] snapshot prefill starting…")
+
+    def _age_ok(key: str) -> bool:
+        _, built_at = _read_snapshot(key)
+        return built_at is not None and built_at > cutoff
+
+    try:
+        from database import (
+            NewsArticle as _NAp, Alert as _ALp, FusionEvent as _FEp,
+            SurgeEvent as _SEp, ForesightAssessment as _FAp, ThreatSnapshotHourly as _TSHp,
+        )
+        loop = asyncio.get_event_loop()
+
+        if not _age_ok("news_points"):
+            def _build_news():
+                with get_db() as _db:
+                    rows = (_db.query(_NAp)
+                               .filter(_NAp.lat.isnot(None), _NAp.lon.isnot(None))
+                               .order_by(_NAp.ingested_at.desc()).limit(2000).all())
+                return [{"id": n.id, "lat": n.lat, "lon": n.lon,
+                         "title": (n.event_title or n.title or "")[:150],
+                         "domain": "NEWS", "relevance": n.relevance_score or 0,
+                         "tier": n.tier, "ingested_at": n.ingested_at.isoformat() if n.ingested_at else ""}
+                        for n in rows]
+            _write_snapshot_sync("news_points", await loop.run_in_executor(_executor, _build_news))
+            written += 1
+
+        if not _age_ok("alerts_active"):
+            def _build_alerts():
+                with get_db() as _db:
+                    rows = (_db.query(_ALp).filter(_ALp.status == "active")
+                               .order_by(_ALp.created_at.desc()).limit(500).all())
+                return [{"alert_id": a.alert_id, "source": a.source, "alert_type": a.alert_type,
+                         "title": a.title, "severity": a.severity, "lat": a.lat, "lon": a.lon,
+                         "country_code": a.country_code, "status": a.status,
+                         "relevance_score": a.relevance_score,
+                         "created_at": a.created_at.isoformat() if a.created_at else None}
+                        for a in rows]
+            _write_snapshot_sync("alerts_active", await loop.run_in_executor(_executor, _build_alerts))
+            written += 1
+
+        if not _age_ok("fusions"):
+            def _build_fusions():
+                with get_db() as _db:
+                    rows = (_db.query(_FEp).filter(_FEp.status == "active")
+                               .order_by(_FEp.created_at.desc()).limit(100).all())
+                return [{"fusion_id": f.fusion_id, "title": f.title, "subtitle": f.subtitle,
+                         "narrative": f.narrative, "severity": f.severity,
+                         "confidence": f.confidence, "lat": f.lat, "lon": f.lon,
+                         "signal_count": f.signal_count, "domains": f.domains,
+                         "key_signals": f.key_signals, "status": f.status,
+                         "marker_visible": f.marker_visible,
+                         "created_at": f.created_at.isoformat() if f.created_at else None,
+                         "expires_at": f.expires_at.isoformat() if f.expires_at else None}
+                        for f in rows]
+            _write_snapshot_sync("fusions", await loop.run_in_executor(_executor, _build_fusions))
+            written += 1
+
+        if not _age_ok("surge_events"):
+            def _build_surges():
+                with get_db() as _db:
+                    rows = (_db.query(_SEp).filter(_SEp.status == "active")
+                               .order_by(_SEp.created_at.desc()).limit(50).all())
+                return [{"surge_id": s.surge_id, "headline": s.headline, "severity": s.severity,
+                         "lat": s.lat, "lon": s.lon, "article_count": s.article_count,
+                         "location_name": s.location_name, "location_country": s.location_country,
+                         "context_summary": s.context_summary,
+                         "created_at": s.created_at.isoformat() if s.created_at else None,
+                         "expires_at": s.expires_at.isoformat() if s.expires_at else None}
+                        for s in rows]
+            _write_snapshot_sync("surge_events", await loop.run_in_executor(_executor, _build_surges))
+            written += 1
+
+        if not _age_ok("foresight_latest"):
+            def _build_foresight():
+                with get_db() as _db:
+                    rows = (_db.query(_FAp).order_by(_FAp.generated_at.desc()).limit(20).all())
+                return [{"zone_id": r.zone_id, "zone_name": r.zone_name,
+                         "escalation_probability_30d": r.escalation_probability_30d,
+                         "confidence": r.confidence, "analyst_note": r.analyst_note,
+                         "situation_summary": r.situation_summary,
+                         "generated_at": r.generated_at.isoformat() if r.generated_at else None}
+                        for r in rows]
+            _write_snapshot_sync("foresight_latest", await loop.run_in_executor(_executor, _build_foresight))
+            written += 1
+
+        if not _age_ok("threat_matrix"):
+            def _build_tm():
+                with get_db() as _db:
+                    rows = (_db.query(_TSHp).order_by(_TSHp.snapshot_at.desc()).limit(100).all())
+                return [{"region_name": r.region_name, "region_id": r.region_id,
+                         "score": r.score, "threat_level": r.threat_level,
+                         "snapshot_at": r.snapshot_at.isoformat() if r.snapshot_at else None}
+                        for r in rows]
+            _write_snapshot_sync("threat_matrix", await loop.run_in_executor(_executor, _build_tm))
+            written += 1
+
+    except Exception as _pre:
+        print(f"[STARTUP] snapshot prefill error: {_pre}")
+
+    print(f"[STARTUP] snapshot prefill complete — {written} keys written")
+
+
 def _refresh_surface_pool_sync(reason: str = "manual") -> list:
     global _SURFACE_POOL, _SURFACE_POOL_UPDATED_AT, _SURFACE_POOL_LAST_NONEMPTY
     if not _SURFACE_BUILD_LOCK.acquire(blocking=False):
@@ -7650,6 +7836,7 @@ def _refresh_surface_pool_sync(reason: str = "manual") -> list:
                 _SURFACE_POOL_LAST_NONEMPTY = time.time()
             print(f"[surface] {reason} refresh — {len(new_pool)} items")
             _surface_pool_cache_save(new_pool)  # persist for next cold start
+            _write_snapshot_sync("surface_pool", new_pool)
         return new_pool
     finally:
         _SURFACE_BUILD_LOCK.release()
@@ -11010,6 +11197,23 @@ async def _foresight_loop():
             import foresight_engine
             with get_db() as _fdb:
                 await foresight_engine.run_foresight_cycle(_fdb, list(_forge_alerts))
+            # Write foresight_latest snapshot
+            try:
+                from database import ForesightAssessment as _FA
+                with get_db() as _fadb:
+                    _fa_rows = (_fadb.query(_FA)
+                                     .order_by(_FA.generated_at.desc())
+                                     .limit(20).all())
+                await _write_snapshot("foresight_latest", [
+                    {"zone_id": r.zone_id, "zone_name": r.zone_name,
+                     "escalation_probability_30d": r.escalation_probability_30d,
+                     "confidence": r.confidence, "analyst_note": r.analyst_note,
+                     "situation_summary": r.situation_summary,
+                     "generated_at": r.generated_at.isoformat() if r.generated_at else None}
+                    for r in _fa_rows
+                ])
+            except Exception as _fase:
+                print(f"[SNAPSHOT] foresight_latest error: {_fase}")
         except Exception as _fl_err:
             print(f"[foresight] loop error: {_fl_err}")
         await asyncio.sleep(3600)
@@ -11029,6 +11233,21 @@ async def _threat_snapshot_loop():
             with _gdb_ts() as _ts_db:
                 n = threat_matrix.save_hourly_snapshot(_ts_db, list(_forge_alerts), active_events)
             print(f"[threat-snapshot] wrote {n} hourly rows")
+            # Write threat_matrix snapshot
+            try:
+                from database import ThreatSnapshotHourly as _TSH
+                with get_db() as _tmdb:
+                    _tm_rows = (_tmdb.query(_TSH)
+                                     .order_by(_TSH.snapshot_at.desc())
+                                     .limit(100).all())
+                _write_snapshot_sync("threat_matrix", [
+                    {"region_name": r.region_name, "region_id": r.region_id,
+                     "score": r.score, "threat_level": r.threat_level,
+                     "snapshot_at": r.snapshot_at.isoformat() if r.snapshot_at else None}
+                    for r in _tm_rows
+                ])
+            except Exception as _tme:
+                print(f"[SNAPSHOT] threat_matrix error: {_tme}")
         except Exception as _tse:
             print(f"[threat-snapshot] error: {_tse}")
         await asyncio.sleep(3600)
@@ -11254,6 +11473,7 @@ async def startup_event():
     asyncio.create_task(_daily_db_purge_loop())
     asyncio.create_task(_trajectory_loop())
     asyncio.create_task(_foresight_loop())
+    asyncio.create_task(_startup_snapshot_prefill())
 
     # Load OpenSanctions vessel list in background (non-blocking)
     async def _load_sanctions_bg():
@@ -12032,6 +12252,67 @@ async def backfill_article_intelligence():
 
     result = await loop.run_in_executor(_executor, _run)
     return result
+
+
+# ── Horizon Snapshot fast-path endpoints ─────────────────────────────────────
+
+_SNAPSHOT_KEYS = [
+    "surface_pool", "news_points", "alerts_active", "forge_alerts",
+    "fusions", "surge_events", "foresight_latest", "threat_matrix", "briefing_latest",
+]
+
+@app.get("/api/snapshot/status")
+def snapshot_status():
+    try:
+        from database import HorizonSnapshot
+        with get_db() as _db:
+            rows = _db.query(HorizonSnapshot).all()
+        snapshots = {}
+        for r in rows:
+            snapshots[r.key] = {
+                "built_at":   r.built_at.isoformat() if r.built_at else None,
+                "size_bytes": len(r.payload.encode("utf-8")) if r.payload else 0,
+            }
+        return {"snapshots": snapshots}
+    except Exception as e:
+        return {"snapshots": {}, "error": str(e)}
+
+def _snapshot_endpoint(key: str):
+    data, built_at = _read_snapshot(key)
+    if data is None:
+        return {"data": None, "built_at": None, "cache": "miss"}
+    return {
+        "data":     data,
+        "built_at": built_at.isoformat() if built_at else None,
+        "cache":    "hit",
+    }
+
+@app.get("/api/snapshot/surface_pool")
+def snapshot_surface_pool():     return _snapshot_endpoint("surface_pool")
+
+@app.get("/api/snapshot/news_points")
+def snapshot_news_points():      return _snapshot_endpoint("news_points")
+
+@app.get("/api/snapshot/alerts_active")
+def snapshot_alerts_active():    return _snapshot_endpoint("alerts_active")
+
+@app.get("/api/snapshot/forge_alerts")
+def snapshot_forge_alerts():     return _snapshot_endpoint("forge_alerts")
+
+@app.get("/api/snapshot/fusions")
+def snapshot_fusions():          return _snapshot_endpoint("fusions")
+
+@app.get("/api/snapshot/surge_events")
+def snapshot_surge_events():     return _snapshot_endpoint("surge_events")
+
+@app.get("/api/snapshot/foresight_latest")
+def snapshot_foresight_latest(): return _snapshot_endpoint("foresight_latest")
+
+@app.get("/api/snapshot/threat_matrix")
+def snapshot_threat_matrix():    return _snapshot_endpoint("threat_matrix")
+
+@app.get("/api/snapshot/briefing_latest")
+def snapshot_briefing_latest():  return _snapshot_endpoint("briefing_latest")
 
 
 # ── /satellite/search ─────────────────────────────────────────────────────────
@@ -18355,6 +18636,40 @@ async def _forge_detection_cycle():
                 f"{len(new_ais_alerts)}+{len(new_adsb_alerts)}+{len(new_news_alerts)} alerts, "
                 f"{len(new_assessments)} correlations, {len(_forge_alerts)} total"
             )
+            _write_snapshot_sync("forge_alerts", list(_forge_alerts))
+            # Write alerts_active from DB
+            try:
+                from database import Alert as _AlertSnap, FusionEvent as _FESnap
+                with get_db() as _adb:
+                    _active_alerts = _adb.query(_AlertSnap).filter(
+                        _AlertSnap.status == "active"
+                    ).order_by(_AlertSnap.created_at.desc()).limit(500).all()
+                _write_snapshot_sync("alerts_active", [
+                    {"alert_id": a.alert_id, "source": a.source, "alert_type": a.alert_type,
+                     "title": a.title, "severity": a.severity, "lat": a.lat, "lon": a.lon,
+                     "country_code": a.country_code, "status": a.status,
+                     "relevance_score": a.relevance_score,
+                     "created_at": a.created_at.isoformat() if a.created_at else None}
+                    for a in _active_alerts
+                ])
+                with get_db() as _fedb:
+                    _fe_rows = (_fedb.query(_FESnap)
+                                     .filter(_FESnap.status == "active")
+                                     .order_by(_FESnap.created_at.desc())
+                                     .limit(100).all())
+                _write_snapshot_sync("fusions", [
+                    {"fusion_id": f.fusion_id, "title": f.title, "subtitle": f.subtitle,
+                     "narrative": f.narrative, "severity": f.severity,
+                     "confidence": f.confidence, "lat": f.lat, "lon": f.lon,
+                     "signal_count": f.signal_count, "domains": f.domains,
+                     "key_signals": f.key_signals, "status": f.status,
+                     "created_at": f.created_at.isoformat() if f.created_at else None,
+                     "expires_at": f.expires_at.isoformat() if f.expires_at else None,
+                     "marker_visible": f.marker_visible}
+                    for f in _fe_rows
+                ])
+            except Exception as _ase:
+                print(f"[SNAPSHOT] alerts_active/fusions error: {_ase}")
         except Exception as _ex:
             print(f"[forge-brain] cycle error: {_ex}")
         await asyncio.sleep(300)

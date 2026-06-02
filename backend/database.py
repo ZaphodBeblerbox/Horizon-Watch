@@ -354,6 +354,15 @@ class ThreatSnapshotHourly(Base):
     snapshot_at  = Column(DateTime, nullable=False, index=True)
 
 
+class HorizonSnapshot(Base):
+    """Pre-built data snapshots — zero latency reads after cold start."""
+    __tablename__ = "horizon_snapshot"
+
+    key       = Column(String(64), primary_key=True)
+    payload   = Column(Text, nullable=False)
+    built_at  = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
 class SurfacePoolCache(Base):
     """Persisted surface pool — avoids cold-start rebuild on every restart."""
     __tablename__ = "surface_pool_cache"
