@@ -4,6 +4,7 @@ import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } 
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { markerProps, getCachedCanvas } from "./markerRenderer.js"
 
 function forgeHeaders() {
