@@ -4,7 +4,6 @@ import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } 
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { markerProps, getCachedCanvas } from "./markerRenderer.js"
 
 function forgeHeaders() {
@@ -47,8 +46,8 @@ export default function GlobeAlertsLayer({ enabled }) {
             let entityType
             if (a.source === "SENTINEL") {
                 entityType = "sentinel_detection"
-            } else if (NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")) {
-                entityType = "assessment"
+            } else {
+                entityType = "alert"
             } else {
                 entityType = "alert"
             }
@@ -93,7 +92,9 @@ export default function GlobeAlertsLayer({ enabled }) {
     ]
     const shouldRender = (a) => {
         if (!a.lat || !(a.lng ?? a.lon) || !isFinite(Number(a.lat))) return false
-        if ((a.domain || a.source || "").toUpperCase() !== "AIS") return true
+        const domain = (a.domain || a.source || "").toUpperCase()
+        if (domain === "ADSB") return (a.relevance_score || 0) >= 70
+        if (domain !== "AIS") return true
         const rule = a.rule_name || a.alert_type || ""
         if (!AIS_WHITELIST.some(r => rule.toLowerCase().includes(r.toLowerCase()))) return false
         if (rule.toLowerCase().includes("dark")) return (a.relevance_score || 0) >= 70
