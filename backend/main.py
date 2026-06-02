@@ -4114,6 +4114,56 @@ async def admin_enrich_articles():
     return {"enriched": enriched, "errors": errors}
 
 
+@app.post("/api/admin/full-cleanup")
+async def admin_full_cleanup():
+    """Full cleanup: expire low-quality dark ships, low-relevance ADSB, garbage fusion events."""
+    global _forge_alerts
+    from database import Alert, FusionEvent
+
+    with get_db() as db:
+        # 1. Expire low-relevance dark ships
+        dark_expired = db.query(Alert).filter(
+            Alert.alert_type.ilike("%dark%"),
+            Alert.status == "active",
+            Alert.relevance_score < 70,
+        ).update({"status": "expired"}, synchronize_session=False)
+
+        # 2. Expire ADSB alerts with no strategic context (low relevance)
+        adsb_expired = db.query(Alert).filter(
+            Alert.source == "adsb",
+            Alert.status == "active",
+            Alert.relevance_score < 65,
+        ).update({"status": "expired"}, synchronize_session=False)
+
+        # 3. Expire fusion events with impossibly high signal counts (was counting vessel positions)
+        fusion_expired = db.query(FusionEvent).filter(
+            FusionEvent.signal_count > 50,
+            FusionEvent.status == "active",
+        ).update({"status": "expired"}, synchronize_session=False)
+
+        db.commit()
+
+    before = len(_forge_alerts)
+    _forge_alerts = [
+        a for a in _forge_alerts
+        if not (
+            ("dark" in (a.get("rule_name") or a.get("alert_type") or "").lower()
+             and (a.get("relevance_score") or 0) < 70)
+            or
+            ((a.get("domain") or a.get("source") or "").upper() == "ADSB"
+             and (a.get("relevance_score") or 0) < 65)
+        )
+    ]
+
+    return {
+        "dark_ships_expired": dark_expired,
+        "adsb_expired":       adsb_expired,
+        "fusion_expired":     fusion_expired,
+        "memory_before":      before,
+        "memory_after":       len(_forge_alerts),
+    }
+
+
 @app.post("/api/admin/cleanup-dark-ships")
 async def admin_cleanup_dark_ships():
     """Expire dark ship alerts with relevance < 70 — routine coastal ones, not strategic ones."""
@@ -10044,10 +10094,19 @@ async def _global_adsb_cache_loop():
                                     "service": _isr_svc,
                                 },
                             }
-                            _aid = write_alert(_isr_alert)
-                            if _aid:
-                                _forge_alerts.append(_isr_alert)
-                                print(f"[isr] Pattern detected for {_isr_hex} at {_isr_lat:.3f},{_isr_lon:.3f}")
+                            _isr_has_ctx, _isr_ctx = _adsb_has_strategic_context(_isr_lat, _isr_lon)
+                            if not _isr_has_ctx:
+                                print(f"[isr] SUPPRESSED {_isr_hex}: no strategic context")
+                            else:
+                                _isr_alert["context_reason"]  = _isr_ctx
+                                _isr_alert["relevance_score"] = (
+                                    85 if "near_zone" in _isr_ctx else
+                                    80 if "near_ais" in _isr_ctx else 75
+                                )
+                                _aid = write_alert(_isr_alert)
+                                if _aid:
+                                    _forge_alerts.append(_isr_alert)
+                                    print(f"[isr] Pattern detected for {_isr_hex} at {_isr_lat:.3f},{_isr_lon:.3f} ctx={_isr_ctx}")
 
                 await asyncio.sleep(2)
             # Prune entries older than 10 minutes
@@ -10059,6 +10118,78 @@ async def _global_adsb_cache_loop():
         except Exception as e:
             print(f"[ADSB-GLOBAL] loop error: {e}")
         await asyncio.sleep(120)
+
+
+def _adsb_has_strategic_context(lat: float, lon: float) -> tuple:
+    """
+    Returns (True, reason) if this ADSB position warrants an alert.
+    Checks: (A) near active conflict/nuclear/chokepoint zone,
+            (B) near active AIS forge alert,
+            (C) near active news surge.
+    """
+    if not lat or not lon:
+        return False, "no_position"
+
+    deg_200 = 1.8  # ~200km
+    HIGH_ZONE_TYPES = {"CONFLICT_ACTIVE", "NUCLEAR_SENSITIVE", "CHOKEPOINT_EXTENDED", "CONFLICT_FROZEN"}
+
+    try:
+        from database import Alert as _AdsbA, SurgeEvent as _AdsbS, StrategicZone as _AdsbZ
+        from shapely.geometry import Point as _Pt, shape as _shp
+        import json as _j
+
+        # A — Near active conflict/nuclear/chokepoint zone
+        try:
+            pt = _Pt(lon, lat)
+            with get_db() as _db:
+                zones = (_db.query(_AdsbZ)
+                            .filter(_AdsbZ.enabled == True,
+                                    _AdsbZ.zone_type.in_(list(HIGH_ZONE_TYPES)))
+                            .all())
+            for z in zones:
+                try:
+                    poly = _shp(_j.loads(z.polygon_geojson)).buffer(1.8)
+                    if poly.contains(pt):
+                        return True, f"near_zone:{z.name}"
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[adsb_ctx] zone check: {e}")
+
+        # B — Near active AIS forge alert (last 12h)
+        try:
+            cutoff = datetime.utcnow() - timedelta(hours=12)
+            with get_db() as _db:
+                hit = (_db.query(_AdsbA)
+                          .filter(_AdsbA.source == "ais",
+                                  _AdsbA.status == "active",
+                                  _AdsbA.created_at >= cutoff,
+                                  _AdsbA.lat.between(lat - deg_200, lat + deg_200),
+                                  _AdsbA.lon.between(lon - deg_200, lon + deg_200))
+                          .first())
+            if hit:
+                return True, f"near_ais:{hit.alert_type}"
+        except Exception as e:
+            print(f"[adsb_ctx] AIS check: {e}")
+
+        # C — Near active news surge
+        try:
+            with get_db() as _db:
+                surge = (_db.query(_AdsbS)
+                            .filter(_AdsbS.status == "active",
+                                    _AdsbS.expires_at > datetime.utcnow(),
+                                    _AdsbS.lat.between(lat - deg_200, lat + deg_200),
+                                    _AdsbS.lon.between(lon - deg_200, lon + deg_200))
+                            .first())
+            if surge:
+                return True, f"near_surge:{(surge.headline or '')[:40]}"
+        except Exception as e:
+            print(f"[adsb_ctx] surge check: {e}")
+
+    except Exception as e:
+        print(f"[adsb_ctx] outer: {e}")
+
+    return False, "no_context"
 
 
 def _detect_isr_pattern(positions: list) -> bool:
@@ -18581,7 +18712,26 @@ async def _forge_detection_cycle():
                             h["rule_id"]   = rule.get("id")
                             h["rule_name"] = rule.get("name")
                             h["severity"]  = rule.get("severity", h.get("severity", "info"))
-                    new_adsb_alerts.extend(hits)
+                    # Context gate: only fire ADSB military if near a strategic zone/AIS alert/surge
+                    for h in hits:
+                        h_lat = h.get("lat")
+                        h_lon = h.get("lng") or h.get("lon")
+                        if h_lat and h_lon:
+                            _has_ctx, _ctx_reason = _adsb_has_strategic_context(h_lat, h_lon)
+                            if _has_ctx:
+                                h["context_reason"]  = _ctx_reason
+                                h["relevance_score"] = (
+                                    90 if "CONFLICT_ACTIVE" in _ctx_reason
+                                    else 85 if "NUCLEAR" in _ctx_reason
+                                    else 80 if "near_ais" in _ctx_reason
+                                    else 75 if "CHOKEPOINT" in _ctx_reason
+                                    else 70
+                                )
+                                new_adsb_alerts.append(h)
+                            else:
+                                pass  # suppressed — no strategic context
+                        else:
+                            new_adsb_alerts.append(h)  # no position, let through
             except Exception as _ae:
                 print(f"[forge-brain] adsb error: {_ae}")
 

@@ -53,9 +53,10 @@ async def run_convergence_cycle(db, force: bool = False) -> int:
         for a in (db.query(Alert)
                     .filter(Alert.status == "active",
                             Alert.created_at >= cutoff,
-                            Alert.lat.isnot(None))
+                            Alert.lat.isnot(None),
+                            Alert.relevance_score >= 60)   # quality gate
                     .order_by(Alert.relevance_score.desc())
-                    .limit(60).all()):
+                    .limit(30).all()):  # hard cap: 30 quality alerts
             signals.append({
                 "type": f"{(a.source or 'AIS').upper()}_ALERT",
                 "domain": (a.source or "AIS").upper(),
@@ -148,9 +149,17 @@ async def run_convergence_cycle(db, force: bool = False) -> int:
         domains = list(set(s["domain"] for s in cluster))
         n = len(cluster)
 
-        # Skip low-value single-domain clusters
-        if len(domains) == 1 and n < 3:
-            if not any(s["severity"] in ("high", "critical") for s in cluster):
+        # ── Quality gates ──────────────────────────────────────────────────────
+        # Gate 1: Single-rule clusters (e.g. all dark ships from same area) — skip
+        rules_in_cluster = set(s.get("rule", "") for s in cluster)
+        if len(rules_in_cluster) == 1 and list(rules_in_cluster)[0] in (
+                "Dark Ship", "AIS_DARK_SHIP", "tier1_news", "surge"):
+            continue
+
+        # Gate 2: Single-domain, low severity
+        if len(domains) == 1:
+            high_sev = [s for s in cluster if s.get("severity") in ("high", "critical")]
+            if len(high_sev) < 2:
                 continue
 
         # Check for recent assessment of same area
@@ -168,23 +177,27 @@ async def run_convergence_cycle(db, force: bool = False) -> int:
 
         # Build signal lines for Claude
         lines = []
-        for s in sorted(cluster, key=lambda x: x["severity"], reverse=True)[:10]:
-            line = f"[{s['domain']}] {s['rule'].upper()}: {s['title'][:100]}"
+        for s in sorted(cluster, key=lambda x: x.get("severity", ""), reverse=True)[:8]:
+            line = f"[{s['domain']}/{s['rule']}] {s['title'][:80]}"
             if s.get("context"):
-                line += f" — {s['context'][:150]}"
+                line += f" — {s['context'][:100]}"
             lines.append(line)
 
-        prompt = f"""You are an intelligence analyst. Assess this cluster of signals from a 200km area.
+        prompt = f"""Intelligence analyst. Assess signals from a 200km cluster.
 
-LOCATION: ~{bucket_lat:.1f}N {bucket_lon:.1f}E
-SIGNALS ({n} total, {len(domains)} domains):
+LOCATION: {bucket_lat:.1f}N {bucket_lon:.1f}E
+SIGNALS ({n} total, {len(domains)} domains — {', '.join(domains)}):
 {chr(10).join(lines)}
 
-Respond ONLY with valid JSON, no markdown fences:
+Rules: Be specific (name rules, locations). Only escalate if signals genuinely corroborate.
+State confidence honestly. If signals are routine, say low confidence.
+Narrative: max 50 words.
+
+JSON only, no markdown:
 {{
-  "title": "5-8 word intelligence headline",
-  "subtitle": "one sentence operational summary",
-  "narrative": "2-3 sentences. What is happening, why it matters, what to watch. Specific and factual.",
+  "title": "specific 6-word headline with location",
+  "subtitle": "what + where in one sentence",
+  "narrative": "2 sentences. Mention actual rules. Honest confidence.",
   "severity": "critical|high|medium|low",
   "confidence": 0.0-1.0,
   "domains": {json.dumps(domains)},
