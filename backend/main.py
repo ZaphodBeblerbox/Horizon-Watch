@@ -13747,6 +13747,37 @@ def api_chokepoints_geojson():
     return {"type": "FeatureCollection", "features": features}
 
 
+@app.get("/api/chokepoints/{chokepoint_id}/status")
+async def api_chokepoint_status(chokepoint_id: str):
+    """Return live status + satellite image for a single chokepoint."""
+    cp = next((c for c in _CHOKEPOINT_DEFS
+               if c.get("system_id") == chokepoint_id
+               or c.get("id") == chokepoint_id
+               or c.get("name", "").lower().replace(" ", "-") == chokepoint_id.lower()), None)
+    if not cp:
+        raise HTTPException(status_code=404, detail=f"Chokepoint '{chokepoint_id}' not found")
+
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(_executor, lambda: _compute_chokepoint_status(cp))
+
+    try:
+        from chokepoint_images import fetch_chokepoint_image as _cpimg_async
+        img_url, img_caption = await _cpimg_async(cp["name"])
+    except Exception:
+        img_url, img_caption = None, None
+
+    return {
+        **result,
+        "chokepoint_id": chokepoint_id,
+        "system_id":     cp.get("system_id"),
+        "name":          cp.get("name"),
+        "lat":           cp.get("lat"),
+        "lon":           cp.get("lon"),
+        "image_url":     img_url,
+        "image_caption": img_caption,
+    }
+
+
 @app.get("/api/infrastructure/chokepoints")
 async def api_infrastructure_chokepoints():
     """Return 12 global strategic chokepoints with computed current status and any auto-briefs."""
@@ -13758,11 +13789,11 @@ async def api_infrastructure_chokepoints():
     # Fire background auto-brief generation for newly elevated chokepoints
     asyncio.create_task(_run_auto_chokepoint_briefs(results))
 
-    # Attach any existing chokepoint briefs + satellite imagery
+    # Attach any existing chokepoint briefs + satellite imagery (from cache only — sync path)
     try:
-        from chokepoint_images import get_chokepoint_image as _cpimg
+        from chokepoint_images import _image_cache as _cpimg_cache
     except ImportError:
-        _cpimg = None
+        _cpimg_cache = {}
 
     with _AUTO_BRIEF_LOCK:
         enriched = []
@@ -13773,13 +13804,10 @@ async def api_infrastructure_chokepoints():
             entry      = _CHOKEPOINT_BRIEF_STORE.get(store_key)
             if entry:
                 cp = {**cp, "auto_brief": entry["brief"], "auto_brief_at": entry["generated_at"]}
-            # Attach satellite image
-            if _cpimg:
-                try:
-                    img_url, img_caption = _cpimg(name)
-                    cp = {**cp, "image_url": img_url, "image_caption": img_caption}
-                except Exception:
-                    pass
+            # Attach cached satellite image if available
+            if name in _cpimg_cache:
+                img_url, img_caption = _cpimg_cache[name]
+                cp = {**cp, "image_url": img_url, "image_caption": img_caption}
             enriched.append(cp)
     return {"chokepoints": enriched}
 

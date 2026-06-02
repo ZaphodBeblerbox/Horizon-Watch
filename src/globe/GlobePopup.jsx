@@ -15,9 +15,10 @@ import GlobeHeatmapPopup  from "./GlobeHeatmapPopup.jsx"
 import GlobeAlertPopup      from "./GlobeAlertPopup.jsx"
 import GlobeAssessmentPopup from "./GlobeAssessmentPopup.jsx"
 import GlobeFusionPopup     from "./GlobeFusionPopup.jsx"
-import GlobeAirportPopup  from "./GlobeAirportPopup.jsx"
-import GlobePortPopup            from "./GlobePortPopup.jsx"
-import SentinelDetectionPopup    from "./SentinelDetectionPopup.jsx"
+import GlobeAirportPopup       from "./GlobeAirportPopup.jsx"
+import GlobePortPopup           from "./GlobePortPopup.jsx"
+import SentinelDetectionPopup   from "./SentinelDetectionPopup.jsx"
+import GlobeChokepointPopup     from "./GlobeChokepointPopup.jsx"
 import API_BASE                  from "../apiBase.js"
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
@@ -347,6 +348,8 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                         <GlobePortPopup data={popup.data} onClose={handleClose} />
                     ) : popup.type === "sentinel_detection" ? (
                         <SentinelDetectionPopup data={popup.data} onClose={handleClose} />
+                    ) : popup.type === "chokepoint" ? (
+                        <GlobeChokepointPopup data={popup.data} onClose={handleClose} />
                     ) : (
                         <>
                             <button

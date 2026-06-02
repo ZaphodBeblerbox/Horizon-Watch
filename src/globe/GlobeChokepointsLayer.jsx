@@ -6,6 +6,7 @@ import {
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
+import { setEntity, deleteEntity } from "./entityStore.js"
 
 export default function GlobeChokepointsLayer({ enabled }) {
     const [data, setData] = useState([])
@@ -18,6 +19,21 @@ export default function GlobeChokepointsLayer({ enabled }) {
             .catch(() => {})
     }, [enabled])
 
+    // Register entities for click handling via GlobePopup
+    useEffect(() => {
+        if (!data.length) return
+        const ids = []
+        data.forEach(c => {
+            const id = `choke-${c.id ?? c.system_id ?? c.name}`
+            setEntity(id, "chokepoint", {
+                ...c,
+                system_id: c.system_id || c.id || c.name?.toLowerCase().replace(/\s+/g, "-"),
+            })
+            ids.push(id)
+        })
+        return () => ids.forEach(deleteEntity)
+    }, [data])
+
     if (!enabled || !data.length) return null
 
     return (
@@ -28,10 +44,9 @@ export default function GlobeChokepointsLayer({ enabled }) {
                 const name = c.name ?? "Chokepoint"
                 if (lat == null || lon == null || !isFinite(lat) || !isFinite(lon)) return null
 
-                const id   = c.id ?? name
-                const desc = c.strategic_description ?? c.description ?? ""
+                const id   = c.id ?? c.system_id ?? name
+                const entityId = `choke-${id}`
 
-                // c.polygon is [[lat,lon], ...] — note lat/lon order
                 const polyPositions = Array.isArray(c.polygon)
                     ? c.polygon
                         .filter(p => Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]))
@@ -40,36 +55,31 @@ export default function GlobeChokepointsLayer({ enabled }) {
 
                 return (
                     <Entity
-                        id={`choke-${id}`}
-                        key={id}
+                        id={entityId}
+                        key={entityId}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         polygon={polyPositions.length >= 3 ? {
-                            hierarchy:      new PolygonHierarchy(polyPositions),
-                            material:       Color.fromCssColorString("#FF6D00").withAlpha(0.12),
-                            outline:        true,
-                            outlineColor:   Color.fromCssColorString("#FF6D00").withAlpha(0.8),
-                            outlineWidth:   2,
-                            height:         0,
+                            hierarchy:          new PolygonHierarchy(polyPositions),
+                            material:           Color.fromCssColorString("#FF6D00").withAlpha(0.12),
+                            outline:            true,
+                            outlineColor:       Color.fromCssColorString("#FF6D00").withAlpha(0.8),
+                            outlineWidth:       2,
+                            height:             0,
                             classificationType: ClassificationType.TERRAIN,
                         } : undefined}
                         label={{
-                            text:       name,
-                            font:       "bold 11px Arial",
-                            fillColor:  Color.fromCssColorString("#FF6D00"),
-                            outlineColor: Color.fromCssColorString("#0F1721"),
-                            outlineWidth: 2,
-                            style:      2,
-                            pixelOffset: new Cartesian2(0, -14),
-                            scaleByDistance:          new NearFarScalar(1000, 1.0, 5_000_000, 0.3),
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 4_000_000),
-                            showBackground: true,
-                            backgroundColor: Color.fromCssColorString("#0F1721").withAlpha(0.85),
+                            text:             name,
+                            font:             "bold 11px Arial",
+                            fillColor:        Color.fromCssColorString("#FF6D00"),
+                            outlineColor:     Color.fromCssColorString("#0F1721"),
+                            outlineWidth:     2,
+                            style:            2,
+                            pixelOffset:      new Cartesian2(0, -14),
+                            scaleByDistance:           new NearFarScalar(1000, 1.0, 5_000_000, 0.3),
+                            distanceDisplayCondition:  new DistanceDisplayCondition(0, 4_000_000),
+                            showBackground:   true,
+                            backgroundColor:  Color.fromCssColorString("#0F1721").withAlpha(0.85),
                         }}
-                        description={`<div style="font-family:Arial;color:#E8ECF1;background:#1A2433;padding:12px;border-radius:6px;min-width:180px">
-                            <div style="color:#FF6D00;font-weight:bold;font-size:14px;margin-bottom:6px">◆ ${name}</div>
-                            ${desc ? `<div style="font-size:12px;line-height:1.4;margin-bottom:6px">${desc}</div>` : ""}
-                            <div style="font-size:10px;color:#9AA4B5">${lat.toFixed(3)}°, ${lon.toFixed(3)}°</div>
-                        </div>`}
                     />
                 )
             })}
