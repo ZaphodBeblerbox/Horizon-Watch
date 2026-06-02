@@ -576,24 +576,13 @@ class DarkShipDetector:
                 if alerted_at and (now - alerted_at).total_seconds() / 60.0 < min_gap_min * 2:
                     continue
 
-                # Open-water guard — skip inland waterways
-                try:
-                    from main import _is_open_water as _iow
-                    if not _iow(state["lat"], state["lon"]):
-                        continue
-                except Exception:
-                    pass  # if unavailable, allow the alert
-
                 self._last_seen[mmsi]["alerted_at"] = now
                 alerts.append({
                     "id":           f"dark_{int(now.timestamp()*1000)}_{mmsi}",
                     "rule_id":      rule.get("id"),
-                    "rule_name":    "Dark Ship",
-                    "alert_type":   "Dark Ship",
+                    "rule_name":    "AIS_DARK_SHIP",
                     "rule_trigger": "AIS_DARK_SHIP",
-                    "alert_category": "DARK_SHIP",
                     "source":       "AIS",
-                    "domain":       "AIS",
                     "severity":     "high",
                     "icon_type":    "DARK_SHIP",
                     "vessel":       state["name"],
@@ -609,47 +598,12 @@ class DarkShipDetector:
                     ),
                     "timestamp":    now.isoformat(),
                     "gap_minutes":  round(gap_min, 1),
-                    "gap_hours":    round(gap_min / 60.0, 2),
                     "provenance": {
                         "source_type":    "AIS",
                         "detection_rule": "AIS_DARK_SHIP",
                         "trigger_reason": "AIS_DARK_SHIP",
                     },
                 })
-
-                # Rule C — Dark ship near submarine cable (50km)
-                try:
-                    from main import _nearest_cable as _nc, _new_rule_cooldown as _nrc, _new_rule_mark as _nrm
-                    if not _nrc(mmsi, "CABLE_THREAT"):
-                        cable_name, cable_dist_km = _nc(state["lat"], state["lon"])
-                        if cable_dist_km <= 50.0:
-                            _nrm(mmsi, "CABLE_THREAT")
-                            alerts.append({
-                                "id":           f"cable_{int(now.timestamp()*1000)}_{mmsi}",
-                                "rule_name":    "Dark Ship Near Cable",
-                                "alert_type":   "Dark Ship Near Cable",
-                                "alert_category": "CABLE_THREAT",
-                                "source":       "AIS",
-                                "domain":       "AIS",
-                                "severity":     "critical",
-                                "vessel":       state["name"],
-                                "mmsi":         mmsi,
-                                "lat":          state["lat"],
-                                "lng":          state["lon"],
-                                "title":        f"Dark Ship Near Cable: {state['name']}",
-                                "message":      (
-                                    f"{state['name']} ({mmsi}) dark for {gap_min/60:.1f}h — "
-                                    f"within {cable_dist_km:.0f}km of {cable_name} cable infrastructure. "
-                                    f"Position: {state['lat']:.3f}, {state['lon']:.3f}."
-                                ),
-                                "timestamp":    now.isoformat(),
-                                "gap_minutes":  round(gap_min, 1),
-                                "cable_name":   cable_name,
-                                "cable_dist_km": round(cable_dist_km, 1),
-                                "provenance": {"source_type": "AIS", "detection_rule": "CABLE_THREAT"},
-                            })
-                except Exception:
-                    pass
 
         return alerts
 
