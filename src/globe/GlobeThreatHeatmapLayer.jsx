@@ -135,7 +135,7 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                     for (let lat = bbox.south; lat < bbox.north; lat += 1) {
                         for (let lon = bbox.west; lon < bbox.east; lon += 1) {
                             const cellScore = Math.max(0, score + (cellNoise(lat, lon) - 0.5) * 10)
-                            const alpha = 0.04 + Math.pow(cellScore / 100, 0.7) * 0.32
+                            const alpha = 0.01 + Math.pow(cellScore / 100, 0.7) * 0.04  // max ~0.05, subtle glow
                             const material = isPulse
                                 ? makePulseColor(cellScore, alpha * 0.6, alpha * 1.4, isEscalate ? 1000 : 2000)
                                 : scoreToRgba(cellScore, alpha)
@@ -158,7 +158,7 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                     const cy = (bbox.south + bbox.north) / 2
                     const semiMajorM = ((bbox.east - bbox.west) / 2) * 111_000
                     const semiMinorM = ((bbox.north - bbox.south) / 2) * 111_000
-                    const ellipseAlphaBase = score >= 75 ? 0.28 : score >= 50 ? 0.20 : score >= 25 ? 0.13 : 0.07
+                    const ellipseAlphaBase = score >= 75 ? 0.07 : score >= 50 ? 0.05 : score >= 25 ? 0.04 : 0.02
                     const ellipseMaterial  = isPulse
                         ? makePulseColor(score, ellipseAlphaBase * 0.5, ellipseAlphaBase * 1.6, isEscalate ? 1000 : 2000)
                         : scoreToRgba(score, ellipseAlphaBase)
@@ -172,7 +172,7 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                             material:        ellipseMaterial,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             outline:         score >= 50,
-                            outlineColor:    scoreToRgba(score, 0.45),
+                            outlineColor:    scoreToRgba(score, 0.15),
                             outlineWidth:    1.5,
                         },
                     })
@@ -195,7 +195,7 @@ export default function GlobeThreatHeatmapLayer({ enabled }) {
                             coordinates:  Rectangle.fromDegrees(bbox.west, bbox.south, bbox.east, bbox.north),
                             material:     Color.TRANSPARENT,
                             outline:      true,
-                            outlineColor: scoreToRgba(score, 0.55),
+                            outlineColor: scoreToRgba(score, 0.15),
                             outlineWidth: 1.5,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                         },

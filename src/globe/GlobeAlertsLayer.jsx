@@ -1,11 +1,9 @@
 import { useState, useEffect } from "react"
 import { Entity } from "resium"
-import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
+import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { markerProps, getCachedCanvas } from "./markerRenderer.js"
 
 function forgeHeaders() {
@@ -13,81 +11,6 @@ function forgeHeaders() {
         Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
         "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
     }
-}
-
-const ICON_CACHE = {}
-
-function alertIcon(a) {
-    const iconType = a.icon_type || ""
-    const severity = a.severity || "medium"
-
-    // News assessment — diamond icon with pattern colour
-    if (NEWS_PATTERN_ICON_KEYS.has(iconType)) {
-        const color = ALERT_ICONS[iconType]?.color || "#FF6B35"
-        const key   = `assess-${iconType}-${severity}`
-        if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAssessmentCanvas(color, severity)
-        return ICON_CACHE[key]
-    }
-
-    // Standard forge alert — source-coloured circle
-    const key = `${a.source || "NEWS"}-${severity}`
-    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAlertCanvas(a.source || "NEWS", severity)
-    return ICON_CACHE[key]
-}
-
-function isSanctioned(a) {
-    return (a.alert_type || a.rule_name || "").toLowerCase().includes("sanctioned vessel")
-}
-function isSts(a) {
-    return (a.alert_type || a.rule_name || "").toLowerCase().includes("ship-to-ship")
-}
-
-// Visual hierarchy scale — correlation elevates markers
-function getMarkerScale(a) {
-    if (isSanctioned(a)) return 2.0
-    if (isSts(a))        return 1.6
-    const nDomains = (a.correlation_domains || "").split("+").filter(Boolean).length
-    if (nDomains >= 3)   return 1.8  // triple-domain correlation: very prominent
-    if (nDomains >= 2 || a.is_correlated) return 1.4  // multi-domain
-    const sev = (a.severity || "").toLowerCase()
-    const rel = a.relevance_score ?? 0
-    if (sev === "critical" || rel >= 80) return 1.6
-    if (sev === "high"     || rel >= 50) return 1.2
-    if (sev === "low"      || (rel > 0 && rel < 30)) return 0.8
-    return 1.0
-}
-
-function getMarkerOpacity(a) {
-    if (isSanctioned(a) || isSts(a)) return 1.0
-    if (a.is_correlated)             return 1.0
-    const sev = (a.severity || "").toLowerCase()
-    if (sev === "critical" || sev === "high") return 1.0
-    if (sev === "medium")                     return 0.85
-    return 0.5
-}
-
-// Label text for high-priority alerts
-function getCorrelationLabel(a) {
-    const nDomains = (a.correlation_domains || "").split("+").filter(Boolean).length
-    if (nDomains >= 3) return `◉ ${a.correlation_domains}`
-    if (nDomains >= 2) return `◈ ${a.correlation_domains}`
-    return null
-}
-
-// Scale billboard by severity for assessment markers
-function severityScale(severity) {
-    if (severity === "critical") return 1.4
-    if (severity === "high")     return 1.2
-    if (severity === "medium")   return 1.0
-    return 0.85
-}
-
-const FUSION_SCALE = { critical: 1.8, high: 1.5, medium: 1.2 }
-
-function fusionIcon(severity) {
-    const key = `fusion-${severity}`
-    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeFusionCanvas(severity)
-    return ICON_CACHE[key]
 }
 
 export default function GlobeAlertsLayer({ enabled }) {

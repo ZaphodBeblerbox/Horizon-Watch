@@ -54,9 +54,9 @@ async def run_convergence_cycle(db, force: bool = False) -> int:
                     .filter(Alert.status == "active",
                             Alert.created_at >= cutoff,
                             Alert.lat.isnot(None),
-                            Alert.relevance_score >= 60)   # quality gate
+                            Alert.relevance_score >= 60)
                     .order_by(Alert.relevance_score.desc())
-                    .limit(30).all()):  # hard cap: 30 quality alerts
+                    .limit(30).all()):
             signals.append({
                 "type": f"{(a.source or 'AIS').upper()}_ALERT",
                 "domain": (a.source or "AIS").upper(),

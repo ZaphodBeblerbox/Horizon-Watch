@@ -3996,6 +3996,75 @@ async def director_transcript(seq_id: str):
     return PlainTextResponse(text)
 
 
+async def _geocode_articles_with_claude(db) -> int:
+    """Use Claude Haiku to geocode tier 1-2 articles that have no coordinates."""
+    from database import NewsArticle
+    import anthropic as _ant_gc, json as _jgc, re as _rgc
+
+    _gc_client = _ant_gc.Anthropic()
+    articles = (
+        db.query(NewsArticle)
+          .filter(NewsArticle.tier.in_([1, 2]), NewsArticle.lat.is_(None))
+          .order_by(NewsArticle.relevance_score.desc())
+          .limit(20)
+          .all()
+    )
+    if not articles:
+        return 0
+
+    print(f"[geocode] Geocoding {len(articles)} articles via Haiku")
+    placed = 0
+    for art in articles:
+        title = (art.event_title or art.title or "")[:200]
+        if not title:
+            continue
+        try:
+            resp = _gc_client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=80,
+                messages=[{"role": "user", "content": (
+                    f"Extract the most specific geographic location from this headline. "
+                    f"Return ONLY JSON: {{\"lat\": float, \"lon\": float, \"name\": \"city or place name\"}}\n"
+                    f"If no specific location, return {{\"lat\": null}}\n\nHeadline: {title}"
+                )}],
+            )
+            raw = resp.content[0].text.strip()
+            m = _rgc.search(r'\{[^}]+\}', raw)
+            if not m:
+                continue
+            data = _jgc.loads(m.group())
+            lat = data.get("lat")
+            lon = data.get("lon")
+            if lat is None or lon is None:
+                continue
+            lat, lon = float(lat), float(lon)
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                continue
+            art.lat = lat
+            art.lon = lon
+            if data.get("name"):
+                art.location_name = data["name"]
+            placed += 1
+            print(f"[geocode] {title[:50]} → {lat:.2f},{lon:.2f}")
+        except Exception as e:
+            print(f"[geocode] Failed for '{title[:40]}': {e}")
+
+    db.commit()
+    return placed
+
+
+@app.post("/api/admin/geocode-news")
+async def admin_geocode_news():
+    """Geocode tier 1-2 articles missing coordinates via Claude Haiku."""
+    from database import NewsArticle
+    with get_db() as _db:
+        placed = await _geocode_articles_with_claude(_db)
+        total_geocoded = _db.query(NewsArticle).filter(
+            NewsArticle.tier.in_([1, 2]), NewsArticle.lat.isnot(None)
+        ).count()
+    return {"placed_this_run": placed, "geocoded_total": total_geocoded}
+
+
 @app.post("/api/admin/trigger-convergence")
 async def admin_trigger_convergence():
     """Run signal convergence cycle immediately."""
@@ -11665,6 +11734,18 @@ async def _trajectory_loop():
         await asyncio.sleep(3600)
 
 
+async def _geocode_news_loop():
+    """Geocode unenriched tier 1-2 articles every 10 minutes."""
+    await asyncio.sleep(180)  # let startup settle
+    while True:
+        try:
+            with get_db() as _gcdb:
+                await _geocode_articles_with_claude(_gcdb)
+        except Exception as _gcerr:
+            print(f"[geocode] loop error: {_gcerr}")
+        await asyncio.sleep(600)
+
+
 async def _convergence_loop():
     """Run signal convergence cycle every 30 min — groups signals by geography, produces fusion assessments."""
     await asyncio.sleep(240)  # let forge + surge settle first
@@ -11931,6 +12012,7 @@ async def startup_event():
     asyncio.create_task(_trajectory_loop())
     asyncio.create_task(_foresight_loop())
     asyncio.create_task(_convergence_loop())
+    asyncio.create_task(_geocode_news_loop())
 
     # Load OpenSanctions vessel list in background (non-blocking)
     async def _load_sanctions_bg():
