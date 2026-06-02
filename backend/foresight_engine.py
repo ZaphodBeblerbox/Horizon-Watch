@@ -17,8 +17,8 @@ from typing import Optional
 
 import anthropic
 
-FORESIGHT_COOLDOWN_HOURS = 6
-MAX_ANALYSES_PER_HOUR   = 5
+FORESIGHT_COOLDOWN_HOURS = 2
+MAX_ANALYSES_PER_HOUR   = 10
 
 _analyses_this_hour: int = 0
 _analyses_hour_start: datetime.datetime = datetime.datetime.utcnow()

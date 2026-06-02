@@ -440,7 +440,7 @@ def build_snapshot(
 
     # ── Token budget guard: keep under ~6000 tokens serialised ───────────────
     snapshot_str = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-    if len(snapshot_str) > 18000:   # rough 6000 token estimate
+    if len(snapshot_str) > 6000:    # hard cap for fast Sonnet response (10-15s)
         snapshot["raw_intelligence"] = snapshot["raw_intelligence"][:15]
         snapshot["vessels"] = snapshot["vessels"][:25]
         snapshot["aircraft"] = snapshot["aircraft"][:15]

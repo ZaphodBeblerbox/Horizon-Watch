@@ -281,9 +281,9 @@ if not _api_key:
 
 client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
 
-CLAUDE_BUDGET_USD             = float(os.getenv("CLAUDE_BUDGET_USD",             "5.40"))
-CLAUDE_DAILY_HARD_CAP_USD     = float(os.getenv("CLAUDE_DAILY_HARD_CAP_USD",     "0.65"))
-MAX_LLM_ARTICLE_CALLS_PER_DAY = int(  os.getenv("MAX_LLM_ARTICLE_CALLS_PER_DAY", "200"))
+CLAUDE_BUDGET_USD             = float(os.getenv("CLAUDE_BUDGET_USD",             "10.0"))
+CLAUDE_DAILY_HARD_CAP_USD     = float(os.getenv("CLAUDE_DAILY_HARD_CAP_USD",     "10.0"))
+MAX_LLM_ARTICLE_CALLS_PER_DAY = int(  os.getenv("MAX_LLM_ARTICLE_CALLS_PER_DAY", "500"))
 
 _COPERNICUS_CLIENT_ID = os.getenv("COPERNICUS_CLIENT_ID", "").strip()
 _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
@@ -3996,6 +3996,115 @@ async def director_transcript(seq_id: str):
     return PlainTextResponse(text)
 
 
+@app.post("/api/admin/trigger-foresight-all")
+async def admin_trigger_foresight_all():
+    """Trigger foresight analysis for all elevated zones (score >= 30). Clears old assessments first."""
+    import foresight_engine as _fe
+    from threat_matrix import compute_all_zone_scores
+    from database import ForesightAssessment
+    with get_db() as _db:
+        _db.query(ForesightAssessment).delete()
+        _db.commit()
+        zones = compute_all_zone_scores(_db)
+        elevated = [z for z in zones if z.get("threat_score", z.get("score", 0)) >= 30]
+    triggered = []
+    for zone in elevated[:10]:
+        try:
+            with get_db() as _db:
+                result = await _fe.run_foresight_analysis(
+                    zone["zone_id"], zone["zone_name"],
+                    float(zone.get("threat_score", zone.get("score", 0))),
+                    _db, force=True,
+                )
+            if result:
+                triggered.append(zone["zone_name"])
+        except Exception as e:
+            print(f"[admin/foresight] {zone.get('zone_name')}: {e}")
+    return {"triggered": len(triggered), "zones": triggered}
+
+
+@app.post("/api/admin/trigger-surge")
+async def admin_trigger_surge():
+    """Run surge detection cycle immediately."""
+    if not _surge_engine:
+        return {"status": "surge_engine_not_available"}
+    try:
+        _surge_engine.expire_old_surges()
+        return {"status": "ok", "message": "Surge expiry run; new surges fire on next article ingest"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/api/admin/trigger-forge")
+async def admin_trigger_forge():
+    """Trigger an immediate forge brain detection cycle."""
+    asyncio.create_task(_forge_detection_cycle.__wrapped__() if hasattr(_forge_detection_cycle, '__wrapped__') else _forge_detection_cycle())
+    return {"status": "triggered", "note": "forge brain cycle started in background"}
+
+
+@app.post("/api/admin/trigger-threat-snapshot")
+async def admin_trigger_threat_snapshot():
+    """Write threat matrix snapshots for all regions right now."""
+    try:
+        from threat_matrix import compute_all_zone_scores, REGIONS
+        from database import ThreatMatrixSnapshot, ThreatSnapshotHourly
+        now = datetime.utcnow()
+        written = 0
+        with get_db() as _db:
+            active_events = []
+            try: active_events = es.get_active_events()
+            except Exception: pass
+            for region_name in REGIONS:
+                try:
+                    s = threat_matrix.compute_threat_score(region_name, _db, list(_forge_alerts), active_events)
+                    _db.add(ThreatSnapshotHourly(
+                        region_name=region_name,
+                        region_id=(s.get("region_id") or ""),
+                        score=s.get("threat_score", 0),
+                        threat_level=s.get("threat_level", "LOW"),
+                        snapshot_at=now,
+                    ))
+                    written += 1
+                except Exception: pass
+            _db.commit()
+        threat_matrix.refresh_cache(None, list(_forge_alerts), active_events)
+        return {"status": "ok", "snapshots_written": written}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/api/admin/enrich-articles")
+async def admin_enrich_articles():
+    """Batch-enrich top unenriched articles via Haiku."""
+    from article_intelligence import analyse_article
+    from database import NewsArticle
+    enriched = 0
+    errors = 0
+    with get_db() as _db:
+        unenriched = (
+            _db.query(NewsArticle)
+            .filter(NewsArticle.context_summary.is_(None), NewsArticle.tier.in_([1, 2]))
+            .order_by(NewsArticle.relevance_score.desc())
+            .limit(50)
+            .all()
+        )
+        for art in unenriched:
+            try:
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    _executor,
+                    lambda a=art: analyse_article(a.title or "", a.body or "", a.source_name or ""),
+                )
+                if result.get("context_summary"):
+                    art.context_summary = result["context_summary"]
+                if result.get("event_title"):
+                    art.event_title = result["event_title"]
+                enriched += 1
+            except Exception: errors += 1
+        _db.commit()
+    return {"enriched": enriched, "errors": errors}
+
+
 @app.post("/api/admin/cleanup-alerts")
 async def admin_cleanup_alerts():
     """
@@ -6338,7 +6447,7 @@ def _run_news_conflict_extraction_sync():
             pass
 
     MAX_NOM_CALLS           = 100   # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS_PER_CYCLE = 3     # LLM calls per feed cycle — keep low to limit blast radius on restart
+    MAX_LLM_CALLS_PER_CYCLE = 100   # LLM calls per feed cycle (demo: max enrichment)
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
@@ -11388,7 +11497,7 @@ async def _trajectory_loop():
 
 
 async def _foresight_loop():
-    """Run foresight analysis cycle every hour — analyses top 3 qualifying zones."""
+    """Run foresight analysis cycle every 30 min (demo: was 60 min)."""
     await asyncio.sleep(300)  # 5-min delay after startup
     while True:
         try:
@@ -11397,11 +11506,11 @@ async def _foresight_loop():
                 await foresight_engine.run_foresight_cycle(_fdb, list(_forge_alerts))
         except Exception as _fl_err:
             print(f"[foresight] loop error: {_fl_err}")
-        await asyncio.sleep(3600)
+        await asyncio.sleep(1800)  # 30 min
 
 
 async def _threat_snapshot_loop():
-    """Write hourly ThreatSnapshotHourly rows for trend computation."""
+    """Write ThreatSnapshotHourly rows every 10 min (demo: was 60 min)."""
     await asyncio.sleep(60)
     while True:
         try:
@@ -11416,7 +11525,7 @@ async def _threat_snapshot_loop():
             print(f"[threat-snapshot] wrote {n} hourly rows")
         except Exception as _tse:
             print(f"[threat-snapshot] error: {_tse}")
-        await asyncio.sleep(3600)
+        await asyncio.sleep(600)  # 10 min
 
 
 async def _threat_matrix_loop():
