@@ -5,7 +5,7 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
+import { ALERT_ICONS } from "../constants/alertIcons.js"
 
 function forgeHeaders() {
     return {
@@ -21,7 +21,7 @@ function alertIcon(a) {
     const severity = a.severity || "medium"
 
     // News assessment — diamond icon with pattern colour
-    if (NEWS_PATTERN_ICON_KEYS.has(iconType)) {
+    if (a.domain === "NEWS" && iconType && ALERT_ICONS[iconType]) {
         const color = ALERT_ICONS[iconType]?.color || "#FF6B35"
         const key   = `assess-${iconType}-${severity}`
         if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAssessmentCanvas(color, severity)
@@ -110,7 +110,7 @@ export default function GlobeAlertsLayer({ enabled }) {
             let entityType
             if (a.source === "SENTINEL") {
                 entityType = "sentinel_detection"
-            } else if (NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")) {
+            } else if (a.domain === "NEWS" && a.icon_type && ALERT_ICONS[a.icon_type]) {
                 entityType = "assessment"
             } else {
                 entityType = "alert"
@@ -159,7 +159,7 @@ export default function GlobeAlertsLayer({ enabled }) {
                 if (!isFinite(lat) || !isFinite(lon)) return null
                 const icon  = alertIcon(a)
                 if (!icon) return null
-                const isAssessment = NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")
+                const isAssessment = a.domain === "NEWS" && !!(a.icon_type && ALERT_ICONS[a.icon_type])
                 const baseSize = isAssessment ? 40 : 38
                 const assessScale = isAssessment ? severityScale(a.severity) : 1.0
                 const hierScale   = getMarkerScale(a)
