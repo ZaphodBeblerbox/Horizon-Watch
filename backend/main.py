@@ -4114,6 +4114,35 @@ async def admin_enrich_articles():
     return {"enriched": enriched, "errors": errors}
 
 
+@app.post("/api/admin/cleanup-dark-ships")
+async def admin_cleanup_dark_ships():
+    """Expire dark ship alerts with relevance < 70 — routine coastal ones, not strategic ones."""
+    global _forge_alerts
+    from database import Alert
+
+    with get_db() as db:
+        expired = db.query(Alert).filter(
+            Alert.alert_type.ilike("%dark%"),
+            Alert.status == "active",
+            Alert.relevance_score < 70,
+        ).update({"status": "expired"}, synchronize_session=False)
+        db.commit()
+
+    before = len(_forge_alerts)
+    _forge_alerts = [
+        a for a in _forge_alerts
+        if not (
+            "dark" in (a.get("rule_name") or a.get("alert_type") or "").lower()
+            and (a.get("relevance_score") or 0) < 70
+        )
+    ]
+    return {
+        "db_expired":       expired,
+        "memory_removed":   before - len(_forge_alerts),
+        "memory_remaining": len(_forge_alerts),
+    }
+
+
 @app.post("/api/admin/cleanup-alerts")
 async def admin_cleanup_alerts():
     """

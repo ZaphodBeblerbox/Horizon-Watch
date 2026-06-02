@@ -6,6 +6,7 @@ import { safeArray } from "../utils/safeArray.js"
 import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
+import { markerProps, getCachedCanvas } from "./markerRenderer.js"
 
 function forgeHeaders() {
     return {
@@ -160,7 +161,22 @@ export default function GlobeAlertsLayer({ enabled }) {
 
     if (!enabled) return null
 
-    const visibleAlerts  = alerts.filter(a => a.lat != null && (a.lng ?? a.lon) != null && isFinite(Number(a.lat)))
+    // ── AIS whitelist: only render alerts that matter ─────────────────────────
+    const AIS_WHITELIST = [
+        "Sanctioned Vessel", "Ship-to-Ship Transfer", "Cable Loiterer",
+        "Chokepoint Loitering", "Identity Change", "Vessel Cluster",
+        "Course Reversal", "Formation Sailing", "Dark Ship", "ISR Pattern",
+    ]
+    const shouldRender = (a) => {
+        if (!a.lat || !(a.lng ?? a.lon) || !isFinite(Number(a.lat))) return false
+        if ((a.domain || a.source || "").toUpperCase() !== "AIS") return true
+        const rule = a.rule_name || a.alert_type || ""
+        if (!AIS_WHITELIST.some(r => rule.toLowerCase().includes(r.toLowerCase()))) return false
+        if (rule.toLowerCase().includes("dark")) return (a.relevance_score || 0) >= 70
+        return (a.relevance_score || 0) >= 50
+    }
+
+    const visibleAlerts  = alerts.filter(shouldRender)
     const visibleFusions = fusions.filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
     return (
@@ -169,79 +185,44 @@ export default function GlobeAlertsLayer({ enabled }) {
                 const lat = Number(a.lat)
                 const lon = Number(a.lng ?? a.lon)
                 if (!isFinite(lat) || !isFinite(lon)) return null
-                const icon  = alertIcon(a)
-                if (!icon) return null
-                const isAssessment = NEWS_PATTERN_ICON_KEYS.has(a.icon_type || "")
-                const baseSize = isAssessment ? 40 : 38
-                const assessScale = isAssessment ? severityScale(a.severity) : 1.0
-                const hierScale   = getMarkerScale(a)
-                const finalScale  = isAssessment ? assessScale : hierScale
-                const opacity     = getMarkerOpacity(a)
-                const billColor   = opacity < 1.0 ? Color.WHITE.withAlpha(opacity) : undefined
-
-                const sanctioned   = isSanctioned(a)
-                const sts         = isSts(a)
-                const corrLabel   = getCorrelationLabel(a)
-                const labelText   = sanctioned ? "⚠ SANCTIONED"
-                                  : sts        ? "STS DETECTED"
-                                  : corrLabel  ? corrLabel
-                                  : null
-                const labelColor  = sanctioned ? "#FF3B30"
-                                  : sts        ? "#FF9500"
-                                  : "#8866CC"
-
+                const mp  = markerProps({ ...a, domain: (a.domain || a.source || "").toUpperCase() })
+                const img = getCachedCanvas(mp.color, mp.size, mp.pulse, mp.signalCount)
                 return (
                     <Entity
                         id={`alert-forge-${a.id || i}`}
                         key={a.id || i}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
-                            image:           icon,
-                            width:           Math.round(baseSize * finalScale),
-                            height:          Math.round(baseSize * finalScale),
-                            color:           billColor,
+                            image:           img,
+                            width:           mp.size,
+                            height:          mp.size,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.3, 12_000_000, 0.28),
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
-                            eyeOffset: isAssessment ? new (Cartesian3)(0, 0, -60) : undefined,
-                        }}
-                        label={labelText ? {
-                            text:            labelText,
-                            font:            "bold 9px Arial",
-                            fillColor:       Color.fromCssColorString(labelColor),
-                            outlineColor:    Color.fromCssColorString("#0F1721"),
-                            outlineWidth:    2,
-                            style:           2,
-                            showBackground:  true,
-                            backgroundColor: Color.fromCssColorString("#0F1721").withAlpha(0.85),
-                            pixelOffset:     new Cartesian2(0, -(Math.round(baseSize * finalScale) / 2 + 8)),
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 8_000_000),
                             disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                        } : undefined}
+                            scaleByDistance: new NearFarScalar(1000, 1.3, 12_000_000, 0.30),
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
+                        }}
                     />
                 )
             })}
             {visibleFusions.map(f => {
-                const lat   = Number(f.lat)
-                const lon   = Number(f.lon)
+                const lat = Number(f.lat)
+                const lon = Number(f.lon)
                 if (!isFinite(lat) || !isFinite(lon)) return null
-                const sev   = f.severity || "medium"
-                const scale = FUSION_SCALE[sev] || 1.2
-                const sz    = Math.round(56 * scale)
-                const icon  = fusionIcon(sev)
+                const mp  = markerProps({ ...f, domain: "FUSION", fusion_id: f.fusion_id })
+                const img = getCachedCanvas(mp.color, mp.size, mp.pulse, mp.signalCount)
                 return (
                     <Entity
                         id={`fusion-${f.fusion_id}`}
                         key={f.fusion_id}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         billboard={{
-                            image:           icon,
-                            width:           sz,
-                            height:          sz,
+                            image:           img,
+                            width:           mp.size,
+                            height:          mp.size,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
                             scaleByDistance: new NearFarScalar(1000, 1.4, 12_000_000, 0.30),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 25_000_000),
-                            eyeOffset: new (Cartesian3)(0, 0, -80),
                         }}
                     />
                 )

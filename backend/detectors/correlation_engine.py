@@ -663,28 +663,56 @@ class DarkShipDetector:
                 if not should_fire:
                     continue
 
+                # Relevance by strategic reason — only scores >= 70 render on globe
+                _DARK_RELEVANCE = {
+                    "sanctioned":                      100,
+                    "strategic:Strait of Hormuz":       90,
+                    "strategic:Bab el-Mandeb":          88,
+                    "strategic:Taiwan Strait":          87,
+                    "strategic:Red Sea south":          85,
+                    "strategic:Baltic cables zone":     85,
+                    "strategic:Turkish Straits":        83,
+                    "strategic:Black Sea west":         82,
+                    "strategic:Sicily Channel":         75,
+                    "isolated_ocean":                   72,
+                    "sensitive_type:military":          82,
+                    "sensitive_type:naval":             85,
+                    "sensitive_type:lng tanker":        70,
+                    "sensitive_type:lpg tanker":        70,
+                    "sensitive_type:tanker":            68,
+                }
+                reason_lower = reason.lower()
+                relevance = next(
+                    (v for k, v in _DARK_RELEVANCE.items() if reason_lower.startswith(k)),
+                    45,  # default: below render threshold, won't show on globe
+                )
+
                 self._last_seen[mmsi]["alerted_at"] = now
                 alerts.append({
-                    "id":           f"dark_{int(now.timestamp()*1000)}_{mmsi}",
-                    "rule_id":      rule.get("id"),
-                    "rule_name":    "AIS_DARK_SHIP",
-                    "rule_trigger": "AIS_DARK_SHIP",
-                    "source":       "AIS",
-                    "severity":     "high",
-                    "icon_type":    "DARK_SHIP",
-                    "vessel":       state["name"],
-                    "mmsi":         mmsi,
-                    "lat":          lat,
-                    "lng":          lon,
-                    "speed":        state["speed"],
+                    "id":              f"dark_{int(now.timestamp()*1000)}_{mmsi}",
+                    "rule_id":         rule.get("id"),
+                    "rule_name":       "Dark Ship",
+                    "alert_type":      "Dark Ship",
+                    "rule_trigger":    "AIS_DARK_SHIP",
+                    "source":          "AIS",
+                    "domain":          "AIS",
+                    "severity":        "high" if relevance >= 70 else "medium",
+                    "icon_type":       "DARK_SHIP",
+                    "relevance_score": relevance,
+                    "confidence":      0.85,
+                    "vessel":          state["name"],
+                    "mmsi":            mmsi,
+                    "lat":             lat,
+                    "lng":             lon,
+                    "speed":           state["speed"],
                     "message": (
                         f"Dark ship: {state['name']} — no AIS signal for {gap_min:.0f} min. "
                         f"Last position: {lat:.3f}, {lon:.3f} "
                         f"(region {state.get('region_id', '?')}). "
                         f"Last speed: {state['speed']:.1f} kn. Trigger: {reason}."
                     ),
-                    "timestamp":    now.isoformat(),
-                    "gap_minutes":  round(gap_min, 1),
+                    "timestamp":        now.isoformat(),
+                    "gap_minutes":      round(gap_min, 1),
                     "dark_ship_trigger": reason,
                     "provenance": {
                         "source_type":    "AIS",
