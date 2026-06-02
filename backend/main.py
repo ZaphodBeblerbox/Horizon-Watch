@@ -3996,6 +3996,73 @@ async def director_transcript(seq_id: str):
     return PlainTextResponse(text)
 
 
+@app.post("/api/admin/cleanup-alerts")
+async def admin_cleanup_alerts():
+    """
+    Expire dark ship alerts in suppressed zones from both the DB and in-memory store.
+    Safe to call multiple times — idempotent.
+    """
+    global _forge_alerts
+
+    SUPPRESS_ZONES = [
+        (51.0, 57.0, -2.0, 10.0),   # North Sea / English Channel
+        (55.0, 60.0,  8.0, 15.0),   # Danish/Swedish coast
+        (48.0, 52.0, -6.0,  3.0),   # Bay of Biscay coast
+        (43.0, 46.0, 12.0, 18.0),   # Adriatic
+        (59.0, 62.0,  4.0, 12.0),   # Norwegian coast
+        ( 1.0,  5.0,100.0,110.0),   # Malacca/Singapore
+        (31.0, 33.0, 32.0, 35.0),   # Suez approaches
+        (29.0, 32.0, 48.0, 52.0),   # Kuwait/Bahrain port approaches
+    ]
+
+    def in_suppress(lat, lon):
+        if not lat or not lon:
+            return False
+        for (mlat, xlat, mlon, xlon) in SUPPRESS_ZONES:
+            if mlat <= float(lat) <= xlat and mlon <= float(lon) <= xlon:
+                return True
+        return False
+
+    def is_dark_ship(a):
+        rule = (a.get("rule_name") or a.get("alert_type") or "").lower()
+        return "dark" in rule and "ship" in rule
+
+    # ── In-memory store cleanup ───────────────────────────────────────────
+    mem_before = len(_forge_alerts)
+    _forge_alerts = [
+        a for a in _forge_alerts
+        if not (is_dark_ship(a) and in_suppress(a.get("lat"), a.get("lon")))
+    ]
+    mem_removed = mem_before - len(_forge_alerts)
+
+    # ── DB cleanup ────────────────────────────────────────────────────────
+    db_expired = 0
+    try:
+        from database import Alert
+        with get_db() as db:
+            dark_ships = db.query(Alert).filter(
+                Alert.status == "active",
+                Alert.alert_type.in_([
+                    "AIS_DARK_SHIP", "Dark Ship", "dark_ship"
+                ]),
+            ).all()
+            for a in dark_ships:
+                if in_suppress(a.lat, a.lon):
+                    a.status = "expired"
+                    db_expired += 1
+            db.commit()
+    except Exception as _ce:
+        print(f"[cleanup] DB error: {_ce}")
+
+    print(f"[cleanup] Removed {mem_removed} from memory, expired {db_expired} in DB")
+    return {
+        "memory_before":  mem_before,
+        "memory_after":   len(_forge_alerts),
+        "memory_removed": mem_removed,
+        "db_expired":     db_expired,
+    }
+
+
 @app.post("/api/admin/reset-zone-intervals")
 async def admin_reset_zone_intervals(current_user=Depends(get_optional_user)):
     """Set all WatchZone scan_interval_hours to 120 (5 days) and recalculate next_scan_at."""
