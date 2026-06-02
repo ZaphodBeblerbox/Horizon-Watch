@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { Entity } from "resium"
-import { useCesium } from "resium"
-import { Cartesian2, Cartesian3, Color, ColorMaterialProperty, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
+import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
@@ -91,8 +90,6 @@ function fusionIcon(severity) {
 }
 
 export default function GlobeAlertsLayer({ enabled }) {
-    const { viewer }            = useCesium()
-    const corrLineEntities      = useRef([])
     const [alerts,  setAlerts]  = useState([])
     const [fusions, setFusions] = useState([])
 
@@ -116,47 +113,6 @@ export default function GlobeAlertsLayer({ enabled }) {
         const iv = setInterval(() => { loadAlerts(); loadFusions() }, 30_000)
         return () => { cancelled = true; clearInterval(iv) }
     }, [enabled])
-
-    // Draw Cesium correlation lines between correlated alerts
-    useEffect(() => {
-        if (!viewer) return
-        // Clear previous lines
-        corrLineEntities.current.forEach(e => { try { viewer.entities.remove(e) } catch {} })
-        corrLineEntities.current = []
-        if (!enabled || !alerts.length) return
-
-        const alertById = Object.fromEntries(alerts.map(a => [a.id || a.alert_id, a]))
-        const rendered  = new Set()
-
-        alerts.forEach(a => {
-            if (!a.is_correlated || !a.correlated_alert_ids?.length) return
-            if (!a.lat || !(a.lng ?? a.lon)) return
-            a.correlated_alert_ids.forEach(otherId => {
-                const pairKey = [a.id || a.alert_id, otherId].sort().join(":")
-                if (rendered.has(pairKey)) return
-                rendered.add(pairKey)
-                const other = alertById[otherId]
-                if (!other?.lat || !(other.lng ?? other.lon)) return
-                const e = viewer.entities.add({
-                    polyline: {
-                        positions: [
-                            Cartesian3.fromDegrees(Number(a.lng ?? a.lon), Number(a.lat)),
-                            Cartesian3.fromDegrees(Number(other.lng ?? other.lon), Number(other.lat)),
-                        ],
-                        width:         1,
-                        material:      new ColorMaterialProperty(Color.fromCssColorString("#6644AA").withAlpha(0.30)),
-                        clampToGround: true,
-                        distanceDisplayCondition: new DistanceDisplayCondition(0, 8_000_000),
-                    },
-                })
-                corrLineEntities.current.push(e)
-            })
-        })
-        return () => {
-            corrLineEntities.current.forEach(e => { try { viewer.entities.remove(e) } catch {} })
-            corrLineEntities.current = []
-        }
-    }, [alerts, viewer, enabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (!alerts.length) return

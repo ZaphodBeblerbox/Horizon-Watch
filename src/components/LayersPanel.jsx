@@ -358,6 +358,29 @@ export default function LayersPanel({
             <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 16px" }}>
                 {autoSection}
                 {rows}
+                {/* Signal legend */}
+                <div style={{ padding:'12px 14px 8px', borderTop:'1px solid rgba(255,255,255,0.06)', fontFamily:'"IBM Plex Mono", monospace', marginTop:8 }}>
+                  <div style={{ fontSize:8,fontWeight:700,letterSpacing:2,color:'rgba(255,255,255,0.25)',marginBottom:8 }}>SIGNAL LEGEND</div>
+                  {[
+                    ['#34AADC','AIS — Maritime'],
+                    ['#9B8FE0','ADS-B — Aviation'],
+                    ['#E8A838','NEWS — Intelligence'],
+                    ['#7B6FD4','FUSION — Multi-domain'],
+                    ['#3DAD6E','SENTINEL — Imagery'],
+                    ['#E03A3A','SANCTIONS — Critical'],
+                  ].map(([color,label])=>(
+                    <div key={label} style={{ display:'flex',alignItems:'center',gap:8,marginBottom:5 }}>
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path d="M2 5V2H5" stroke={color} strokeWidth="1.5" strokeLinecap="square"/>
+                        <path d="M9 2H12V5" stroke={color} strokeWidth="1.5" strokeLinecap="square"/>
+                        <path d="M2 9V12H5" stroke={color} strokeWidth="1.5" strokeLinecap="square"/>
+                        <path d="M12 9V12H9" stroke={color} strokeWidth="1.5" strokeLinecap="square"/>
+                        <circle cx="7" cy="7" r="1.2" fill={color} opacity="0.9"/>
+                      </svg>
+                      <span style={{ fontSize:9,color:'rgba(255,255,255,0.45)' }}>{label}</span>
+                    </div>
+                  ))}
+                </div>
             </div>
         </div>
     )

@@ -3996,6 +3996,15 @@ async def director_transcript(seq_id: str):
     return PlainTextResponse(text)
 
 
+@app.post("/api/admin/trigger-convergence")
+async def admin_trigger_convergence():
+    """Run signal convergence cycle immediately."""
+    import convergence_engine as _ce
+    with get_db() as _db:
+        count = await _ce.run_convergence_cycle(_db, force=True)
+    return {"assessments_created": count}
+
+
 @app.post("/api/admin/trigger-foresight-all")
 async def admin_trigger_foresight_all():
     """Trigger foresight analysis for all elevated zones (score >= 30). Clears old assessments first."""
@@ -11496,6 +11505,19 @@ async def _trajectory_loop():
         await asyncio.sleep(3600)
 
 
+async def _convergence_loop():
+    """Run signal convergence cycle every 30 min — groups signals by geography, produces fusion assessments."""
+    await asyncio.sleep(240)  # let forge + surge settle first
+    while True:
+        try:
+            import convergence_engine as _ce
+            with get_db() as _cdb:
+                await _ce.run_convergence_cycle(_cdb)
+        except Exception as _cl_err:
+            print(f"[convergence] loop error: {_cl_err}")
+        await asyncio.sleep(1800)  # 30 min
+
+
 async def _foresight_loop():
     """Run foresight analysis cycle every 30 min (demo: was 60 min)."""
     await asyncio.sleep(300)  # 5-min delay after startup
@@ -11748,6 +11770,7 @@ async def startup_event():
     asyncio.create_task(_daily_db_purge_loop())
     asyncio.create_task(_trajectory_loop())
     asyncio.create_task(_foresight_loop())
+    asyncio.create_task(_convergence_loop())
 
     # Load OpenSanctions vessel list in background (non-blocking)
     async def _load_sanctions_bg():

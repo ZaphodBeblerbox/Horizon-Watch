@@ -8,6 +8,7 @@ import {
     SceneTransforms,
 } from "cesium"
 import API_BASE from "../apiBase.js"
+import { markerProps, getCachedCanvas } from './markerRenderer.js'
 
 // ── Article-type → human explanation ──────────────────────────────────────────
 
@@ -370,16 +371,17 @@ export default function GlobeSurgeLayer({ enabled }) {
         <>
             {surges.map(surge => {
                 const isSel = selSurge?.surge_id === surge.surge_id
-                const icon  = makeSurgeIcon(surge.severity || "medium")
+                const _mp   = markerProps({ domain: 'SURGE', severity: surge.severity || 'medium', rule_name: 'News Surge' })
+                const _icon = getCachedCanvas(_mp.color, _mp.size, false, 0)
                 return (
                     <Entity
                         key={surge.surge_id}
                         id={`surge-${surge.surge_id}`}
                         position={Cartesian3.fromDegrees(surge.lon, surge.lat, 0)}
                         billboard={{
-                            image:           icon,
-                            width:           isSel ? 62 : 52,
-                            height:          isSel ? 62 : 52,
+                            image:           _icon,
+                            width:           isSel ? _mp.size * 1.2 : _mp.size,
+                            height:          isSel ? _mp.size * 1.2 : _mp.size,
                             color:           Color.WHITE.withAlpha(isSel ? 1.0 : 0.88),
                             scaleByDistance: new NearFarScalar(50_000, 1.2, 8_000_000, 0.3),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
