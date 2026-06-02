@@ -4786,6 +4786,7 @@ async def _fetch_shorts_feed() -> list:
 
 async def _shorts_refresh_loop():
     global _shorts_cache, _shorts_cache_ts
+    await asyncio.sleep(240)  # staggered startup — not critical
     while True:
         try:
             videos = await _fetch_shorts_feed()
@@ -6265,7 +6266,7 @@ def _run_news_conflict_extraction_sync():
             pass
 
     MAX_NOM_CALLS           = 100   # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS_PER_CYCLE = 100   # max enrichment — best performance
+    MAX_LLM_CALLS_PER_CYCLE = 25    # production default — demo mode used 100
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
@@ -6305,9 +6306,15 @@ def _run_news_conflict_extraction_sync():
         except Exception as ex:
             return sn, fu, None, ex
 
+    MAX_FEEDS_PER_CYCLE = 150  # cap per cycle; shuffle ensures coverage rotates
+    import random as _rnd_feeds
+    _feeds_this_cycle = list(_SCAN_FEEDS)
+    _rnd_feeds.shuffle(_feeds_this_cycle)
+    _feeds_this_cycle = _feeds_this_cycle[:MAX_FEEDS_PER_CYCLE]
+
     from concurrent.futures import ThreadPoolExecutor as _FetchTPE
     with _FetchTPE(max_workers=20, thread_name_prefix="rss-fetch") as _fp:
-        _scan_results = list(_fp.map(_prefetch_feed, _SCAN_FEEDS))
+        _scan_results = list(_fp.map(_prefetch_feed, _feeds_this_cycle))
 
     for source_name, feed_url, feed, _fetch_err in _scan_results:
         # ── Per-feed diagnostic counters ──────────────────────────────────────
@@ -6869,9 +6876,9 @@ def _run_background_news_geocode_sync(max_articles: int = 120):
 
 
 async def _extract_news_conflicts_loop():
-    """Async wrapper: immediate first run on startup, then every 30 minutes."""
+    """Async wrapper: staggered 45s startup delay, then every 30 minutes."""
+    await asyncio.sleep(45)  # staggered startup — prevents thundering herd
     loop = asyncio.get_event_loop()
-    # Run immediately — no startup delay
     print(f"[news-conflicts] Starting first extraction cycle (feeds={len(_SCAN_FEEDS)})…")
     t0 = asyncio.get_event_loop().time()
     try:
@@ -6893,8 +6900,8 @@ async def _extract_news_conflicts_loop():
 
 async def _background_news_geocode_loop():
     """Async wrapper for periodic background geocoding of pending articles."""
+    await asyncio.sleep(120)  # staggered startup
     loop = asyncio.get_event_loop()
-    await asyncio.sleep(5)  # let first feed extraction warm up the store
     while True:
         try:
             await loop.run_in_executor(_executor, _run_background_news_geocode_sync)
@@ -7556,9 +7563,9 @@ async def _run_auto_chokepoint_briefs(results: list) -> None:
 
 
 async def _surface_pool_loop():
-    """Rebuild the surface pool shortly after startup, then keep it warm."""
+    """Rebuild the surface pool, staggered 90s after startup, then every 10 min."""
     global _SURFACE_POOL, _SURFACE_POOL_UPDATED_AT, _SURFACE_POOL_LAST_NONEMPTY
-    await asyncio.sleep(5)
+    await asyncio.sleep(90)  # staggered startup
     while True:
         try:
             loop     = asyncio.get_event_loop()
@@ -7587,12 +7594,54 @@ async def _surface_pool_loop():
             await asyncio.sleep(600)  # 10 minutes
 
 
+def _surface_pool_cache_load() -> list | None:
+    """Return pool from DB cache if < 4 hours old, else None."""
+    try:
+        from database import SurfacePoolCache
+        cutoff = datetime.utcnow() - timedelta(hours=4)
+        with get_db() as _db:
+            row = (_db.query(SurfacePoolCache)
+                      .filter(SurfacePoolCache.cached_at >= cutoff)
+                      .order_by(SurfacePoolCache.cached_at.desc())
+                      .first())
+        if row:
+            pool = _json.loads(row.pool_json)
+            print(f"[surface] DB cache hit — {len(pool)} items (age={int((datetime.utcnow()-row.cached_at).total_seconds()//60)}min)")
+            return pool
+    except Exception as _e:
+        print(f"[surface] cache load error: {_e}")
+    return None
+
+def _surface_pool_cache_save(pool: list) -> None:
+    """Upsert pool to DB cache (delete old rows first)."""
+    try:
+        from database import SurfacePoolCache
+        with get_db() as _db:
+            _db.query(SurfacePoolCache).delete(synchronize_session=False)
+            _db.add(SurfacePoolCache(
+                cached_at=datetime.utcnow(),
+                pool_json=_json.dumps(pool, default=str),
+            ))
+            _db.commit()
+    except Exception as _e:
+        print(f"[surface] cache save error: {_e}")
+
 def _refresh_surface_pool_sync(reason: str = "manual") -> list:
     global _SURFACE_POOL, _SURFACE_POOL_UPDATED_AT, _SURFACE_POOL_LAST_NONEMPTY
     if not _SURFACE_BUILD_LOCK.acquire(blocking=False):
         with _SURFACE_POOL_LOCK:
             return list(_SURFACE_POOL)
     try:
+        # Check DB cache first — avoids full rebuild on cold start
+        if reason in ("api-empty", "loop") and not _SURFACE_POOL:
+            cached = _surface_pool_cache_load()
+            if cached:
+                with _SURFACE_POOL_LOCK:
+                    _SURFACE_POOL = cached
+                    _SURFACE_POOL_UPDATED_AT = datetime.now(timezone.utc).isoformat()
+                    _SURFACE_POOL_LAST_NONEMPTY = time.time()
+                return cached
+
         new_pool = _build_surface_pool()
         if new_pool:
             with _SURFACE_POOL_LOCK:
@@ -7600,6 +7649,7 @@ def _refresh_surface_pool_sync(reason: str = "manual") -> list:
                 _SURFACE_POOL_UPDATED_AT = datetime.now(timezone.utc).isoformat()
                 _SURFACE_POOL_LAST_NONEMPTY = time.time()
             print(f"[surface] {reason} refresh — {len(new_pool)} items")
+            _surface_pool_cache_save(new_pool)  # persist for next cold start
         return new_pool
     finally:
         _SURFACE_BUILD_LOCK.release()
@@ -7825,7 +7875,7 @@ def _geo_needs_refresh(path: Path) -> bool:
 
 async def _geo_refresh_loop() -> None:
     """Monthly background refresh of geo caches."""
-    await asyncio.sleep(5)   # let other startup tasks go first
+    await asyncio.sleep(30)  # staggered startup
     loop = asyncio.get_event_loop()
     while True:
         if _geo_needs_refresh(_GEO_COUNTRIES_FILE):
@@ -8908,7 +8958,7 @@ async def _run_sts_detection() -> None:
 
 async def _sts_detection_loop() -> None:
     """Run STS proximity scan every 5 minutes."""
-    await asyncio.sleep(120)   # let AIS buffer fill first
+    await asyncio.sleep(130)  # staggered startup
     while True:
         try:
             await _run_sts_detection()
@@ -10592,6 +10642,7 @@ Write in intelligence briefing style — 3–4 paragraphs maximum."""
 async def _sentinel_zone_scheduler_loop():
     """Background loop: every 15 minutes, trigger scans for due WatchZones."""
     import asyncio as _asyncio_sched
+    await _asyncio_sched.sleep(165)  # staggered startup
     _sched_interval = 15 * 60  # 15 minutes
 
     while True:
@@ -10798,7 +10849,7 @@ def _auto_ingest() -> None:
 
 async def _auto_ingest_task():
     """Wraps _auto_ingest() to run in executor after a short startup delay."""
-    await asyncio.sleep(3)  # let server fully initialise first
+    await asyncio.sleep(30)  # staggered startup
     loop = asyncio.get_event_loop()
     try:
         await loop.run_in_executor(_executor, _auto_ingest)
@@ -10808,7 +10859,7 @@ async def _auto_ingest_task():
 
 async def _zone_images_warmup_task():
     """Load zone images from DB metadata into the in-memory cache on startup."""
-    await asyncio.sleep(8)
+    await asyncio.sleep(30)  # staggered startup
     try:
         from database import StrategicZone, get_db
         with get_db() as db:
@@ -10882,7 +10933,7 @@ def _tm_refresh_once():
 
 async def _daily_db_purge_loop():
     """Run once daily (at 03:00 UTC) to prune old rows and keep the DB lean."""
-    await asyncio.sleep(120)  # let startup settle
+    await asyncio.sleep(240)  # staggered startup
     while True:
         now = datetime.now(timezone.utc)
         # Run at 03:xx UTC
@@ -10921,7 +10972,7 @@ async def _daily_db_purge_loop():
 
 async def _trajectory_loop():
     """Compute and persist ThreatTrajectory rows every hour."""
-    await asyncio.sleep(90)  # let DB and threat cache settle first
+    await asyncio.sleep(75)  # staggered startup
     while True:
         try:
             from database import ThreatTrajectory
@@ -10953,7 +11004,7 @@ async def _trajectory_loop():
 
 async def _foresight_loop():
     """Run foresight analysis cycle every hour — analyses top 3 qualifying zones."""
-    await asyncio.sleep(300)  # 5-min delay after startup
+    await asyncio.sleep(210)  # staggered startup
     while True:
         try:
             import foresight_engine
@@ -10966,7 +11017,7 @@ async def _foresight_loop():
 
 async def _threat_snapshot_loop():
     """Write hourly ThreatSnapshotHourly rows for trend computation."""
-    await asyncio.sleep(60)
+    await asyncio.sleep(100)  # staggered startup
     while True:
         try:
             from database import get_db as _gdb_ts
@@ -11246,9 +11297,9 @@ async def startup_event():
 
 async def _oref_loop():
     global _OREF_SEEN_IDS, _OREF_FAILURES, _OREF_SUSPENDED
+    await asyncio.sleep(35)  # staggered startup
     url  = "https://www.oref.org.il/WarningMessages/History/AlertsHistory.json"
     loop = asyncio.get_event_loop()
-    # Seed seen IDs from first fetch — don't treat existing history as new
     seeded = False
     while True:
         if _OREF_SUSPENDED:
@@ -11326,6 +11377,7 @@ async def _oref_loop():
 
 async def _usgs_loop():
     global _USGS_SEEN_IDS
+    await asyncio.sleep(35)  # staggered startup
     url  = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_hour.geojson"
     loop = asyncio.get_event_loop()
     seeded = False
@@ -11402,6 +11454,7 @@ async def _usgs_loop():
 
 async def _gdacs_loop():
     global _GDACS_SEEN_GUIDS
+    await asyncio.sleep(35)  # staggered startup
     url  = "https://www.gdacs.org/xml/rss.xml"
     loop = asyncio.get_event_loop()
     seeded = False
@@ -11491,16 +11544,27 @@ def get_new_alerts(since: str = Query(None)):
 
 
 @app.get("/api/surface")
-def get_surface_pool():
+def get_surface_pool(response: FastAPIResponse):
     """Return the current ranked surface pool (top 15 scored items), with any auto-briefs attached."""
     started = time.perf_counter()
+    cache_status = "hit"
     with _SURFACE_POOL_LOCK:
         pool    = list(_SURFACE_POOL)
         updated = _SURFACE_POOL_UPDATED_AT
     if not pool:
-        pool = _refresh_surface_pool_sync("api-empty")
-        with _SURFACE_POOL_LOCK:
-            updated = _SURFACE_POOL_UPDATED_AT
+        # Try DB cache before triggering expensive rebuild
+        cached = _surface_pool_cache_load()
+        if cached:
+            with _SURFACE_POOL_LOCK:
+                _SURFACE_POOL[:] = cached
+                pool = cached
+                updated = _SURFACE_POOL_UPDATED_AT
+        else:
+            cache_status = "miss"
+            pool = _refresh_surface_pool_sync("api-empty")
+            with _SURFACE_POOL_LOCK:
+                updated = _SURFACE_POOL_UPDATED_AT
+    response.headers["X-Surface-Cache"] = cache_status
     # Attach auto-briefs inline — no extra round-trip needed
     t_attach = time.perf_counter()
     with _AUTO_BRIEF_LOCK:
@@ -17775,6 +17839,7 @@ def _normalize_vessel(raw, mmsi=None):
 async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
     global _forge_alerts, _correlation_assessments, _last_cycle_stats
+    await asyncio.sleep(60)  # staggered startup
     while True:
         try:
             cycle_start = datetime.now(timezone.utc)

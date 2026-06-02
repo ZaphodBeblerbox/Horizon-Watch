@@ -354,6 +354,15 @@ class ThreatSnapshotHourly(Base):
     snapshot_at  = Column(DateTime, nullable=False, index=True)
 
 
+class SurfacePoolCache(Base):
+    """Persisted surface pool — avoids cold-start rebuild on every restart."""
+    __tablename__ = "surface_pool_cache"
+
+    id         = Column(Integer, primary_key=True)
+    cached_at  = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    pool_json  = Column(Text, nullable=False)
+
+
 class ThreatTrajectory(Base):
     """Velocity and acceleration of threat scores per zone — computed hourly."""
     __tablename__ = "threat_trajectories"
