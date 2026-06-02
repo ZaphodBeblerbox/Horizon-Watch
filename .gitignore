@@ -27,3 +27,8 @@ backend/data/akili.db
 backend/yolov8m-obb.onnx
 backend/yolov8m-obb.pt
 backend/runs/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pt
+backend/data/forge/
