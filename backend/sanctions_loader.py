@@ -10,8 +10,26 @@ import httpx
 import csv
 import io
 import json
+import re
 from datetime import datetime, timedelta
 from database import SessionLocal, SanctionedEntity
+
+_MMSI_RE = re.compile(r'^\d{9}$')
+_IMO_RE  = re.compile(r'^IMO(\d{7})$', re.IGNORECASE)
+
+
+def _extract_ids(identifiers_str: str) -> tuple[str | None, str | None]:
+    """Parse the identifiers field ('352002470;3E2311;IMO9253325') into (mmsi, imo)."""
+    mmsi = imo = None
+    for token in identifiers_str.split(";"):
+        token = token.strip()
+        m = _IMO_RE.match(token)
+        if m:
+            imo = m.group(1)
+            continue
+        if _MMSI_RE.match(token):
+            mmsi = token
+    return mmsi, imo
 
 
 # URLs tried in order — vessels endpoint was deprecated early 2025
@@ -27,11 +45,12 @@ _VESSEL_KEYWORDS = {"tanker", "cargo", "ship", "vessel", "ferry", "bulk", "lng",
 
 
 def _is_vessel_row(row: dict) -> bool:
-    schema = (row.get("schema") or row.get("type") or "").lower()
-    if "vessel" in schema:
+    schema = (row.get("schema") or "").strip()
+    if schema == "Vessel":
         return True
-    caption = (row.get("caption") or row.get("name") or "").lower()
-    return any(kw in caption for kw in _VESSEL_KEYWORDS)
+    # Fallback for rows without schema: keyword match on name
+    name = (row.get("name") or "").lower()
+    return any(kw in name for kw in _VESSEL_KEYWORDS)
 
 
 class SanctionsLoader:
@@ -131,27 +150,32 @@ class SanctionsLoader:
         }
 
     def _parse_csv(self, data_text: str) -> list:
+        # Column names as of 2025 CSV format:
+        # id, schema, name, aliases, birth_date, countries, addresses,
+        # identifiers, sanctions, phones, emails, program_ids, dataset,
+        # first_seen, last_seen, last_change
         reader = csv.DictReader(io.StringIO(data_text))
         vessels = []
         for row in reader:
             if not _is_vessel_row(row):
                 continue
-            mmsi      = (row.get("mmsi")     or "").strip()
-            imo       = (row.get("imo")      or "").strip()
-            name      = (row.get("name")     or "").strip()
-            datasets  = (row.get("datasets") or "").strip()
-            entity_id = (row.get("id")       or "").strip()
+            name      = (row.get("name")        or "").strip()
+            entity_id = (row.get("id")           or "").strip()
+            datasets  = (row.get("dataset")      or "").strip()
+            raw_ids   = (row.get("identifiers")  or "")
+            countries = (row.get("countries")    or "")
+            mmsi, imo = _extract_ids(raw_ids)
             if not (mmsi or imo or name):
                 continue
             vessels.append({
                 "entity_id": entity_id,
                 "name":      name,
-                "mmsi":      mmsi or None,
-                "imo":       imo  or None,
+                "mmsi":      mmsi,
+                "imo":       imo,
                 "datasets":  datasets,
-                "flag":      row.get("flag",   ""),
-                "owner":     row.get("owner",  ""),
-                "topics":    row.get("topics", ""),
+                "flag":      countries[:2] if countries else "",
+                "owner":     "",
+                "topics":    "",
             })
         return vessels
 
