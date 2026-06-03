@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -77,18 +77,91 @@ function fusionIcon(severity) {
     return ICON_CACHE[key]
 }
 
+// ── Inland waterway bboxes for dark ship open-water gate ─────────────────────
+const INLAND_BBOXES = [
+    [47.0, 51.9,   6.0,   8.5],  // Rhine
+    [44.5, 48.5,  13.5,  29.5],  // Danube
+    [41.5, 49.0, -93.0, -75.0],  // Great Lakes
+    [29.0, 48.0, -97.0, -88.0],  // Mississippi
+    [22.0, 32.0, 105.0, 122.0],  // Yangtze
+]
+function isInland(lat, lon) {
+    if (lat == null || lon == null) return false
+    return INLAND_BBOXES.some(([mlat, xlat, mlon, xlon]) =>
+        mlat <= lat && lat <= xlat && mlon <= lon && lon <= xlon
+    )
+}
+
+// ── Shared filter — applied at fetch time AND render time ─────────────────────
+// sanctionedMmsiSet is passed in as a ref value so both paths stay in sync
+function makeFilterAlert(sanctionedMmsiSet) {
+    return function filterAlert(a) {
+        // ── Type B ADSB: ISR pattern consolidated into MILITARY_AIRCRAFT ──────
+        if ((a.domain || a.source || "").toUpperCase() === "ADSB" &&
+            (a.alert_type === "ISR Pattern Detected" ||
+             (a.title || "").includes("Military ISR pattern") ||
+             (a.description || "").includes("Military ISR pattern"))) {
+            return false
+        }
+
+        // ── Sanctions violation alerts — always show, no gates ────────────────
+        const isSanctionsViolation = a.alert_category === "SANCTIONS_VIOLATION" ||
+            a.type === "sanctions_violation" ||
+            a.sanctions_hit === true ||
+            a.on_sanctions_list === true
+        if (isSanctionsViolation) return true
+
+        // ── Dark ship gates ───────────────────────────────────────────────────
+        const isDarkShip = a.alert_category === "DARK_SHIP" ||
+            a.type === "dark_ship" ||
+            (a.title || "").toLowerCase().includes("dark ship")
+        if (isDarkShip) {
+            const lat = Number(a.lat)
+            const lon = Number(a.lng ?? a.lon)
+            // Gate A — open water only
+            if (isInland(lat, lon)) return false
+            // Gate B — sanctions list only
+            const mmsi    = a.mmsi || (a.metadata?.mmsi) || ""
+            const onList  = a.sanctions_hit === true ||
+                a.on_sanctions_list === true ||
+                (a.metadata?.sanctions_hit) === true ||
+                (mmsi && sanctionedMmsiSet.has(mmsi))
+            if (!onList) return false
+        }
+
+        return true
+    }
+}
+
 export default function GlobeAlertsLayer({ enabled }) {
     const [alerts,  setAlerts]  = useState([])
     const [fusions, setFusions] = useState([])
+    const sanctionedMmsiRef = useRef(new Set())
+
+    // Fetch sanctions MMSI list once on mount — used in filterAlert for dark ship Gate B
+    useEffect(() => {
+        fetch(`${API_BASE}/api/sanctions/mmsi-list`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                const list = d?.mmsi_list || []
+                if (!list.length) console.warn("[GlobeAlertsLayer] sanctions mmsi-list empty or failed")
+                sanctionedMmsiRef.current = new Set(list)
+            })
+            .catch(e => console.warn("[GlobeAlertsLayer] sanctions fetch error:", e))
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (!enabled) { setAlerts([]); setFusions([]); return }
         let cancelled = false
 
+        // filterAlert is rebuilt each effect cycle so it captures the latest
+        // sanctionedMmsiRef.current — both initial load and 30s interval use the same logic
+        const filterAlert = makeFilterAlert(sanctionedMmsiRef.current)
+
         const loadAlerts = () =>
             fetch(`${API_BASE}/api/forge/alerts`, { headers: forgeHeaders() })
                 .then(r => r.ok ? r.json() : [])
-                .then(d => { if (!cancelled) setAlerts(safeArray(d)) })
+                .then(d => { if (!cancelled) setAlerts(safeArray(d).filter(filterAlert)) })
                 .catch(() => {})
 
         const loadFusions = () =>
@@ -114,8 +187,6 @@ export default function GlobeAlertsLayer({ enabled }) {
                  a.aircraft_military)
             let entityType
             if (isMilitaryAdsb) {
-                // Register as "aircraft" so GlobePopup routes to GlobeAircraftPopup
-                // which provides photo + identity + track for free
                 entityType = "aircraft"
             } else if (a.source === "SENTINEL") {
                 entityType = "sentinel_detection"
@@ -125,7 +196,6 @@ export default function GlobeAlertsLayer({ enabled }) {
                 entityType = "alert"
             }
             const entityData = isMilitaryAdsb ? {
-                // Shape to match what GlobeAircraftPopup expects
                 icao:       a.icao_hex || a.icao || a.entity_id || "",
                 icao24:     a.icao_hex || a.icao || a.entity_id || "",
                 flight:     a.callsign || a.aircraft || a.entity_name || "",
@@ -136,7 +206,7 @@ export default function GlobeAlertsLayer({ enabled }) {
                 track:      a.heading ?? null,
                 squawk:     a.squawk ?? null,
                 military:   true,
-                from_alert: true,  // flag: sourced from alert pipeline, not live ADSB cache
+                from_alert: true,
             } : {
                 ...a,
                 _idx:           i,
@@ -170,29 +240,14 @@ export default function GlobeAlertsLayer({ enabled }) {
 
     if (!enabled) return null
 
-    // FILTERING DISABLED — showing all alerts for audit
-    // Only hard requirements kept: valid coordinates + dedup to prevent Cesium crash
-    /* shouldRender filter commented out — restore to reintroduce selective display:
-    const AIS_WHITELIST = [...]
-    const shouldRender = (alert) => {
-      if (alert.domain !== 'AIS') return true
-      ...relevance gates, domain whitelists, ADSB thresholds...
-    }
-    */
+    // Render-path filter — coordinate validation + dedup only (business logic is in filterAlert above)
     const _seenIds = new Set()
     const visibleAlerts = alerts.filter(a => {
         if (a.lat == null || (a.lng ?? a.lon) == null || !isFinite(Number(a.lat))) return false
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
-        // Filter Type B ADSB: "Military ISR pattern" is consolidated into MILITARY_AIRCRAFT
-        if ((a.domain || a.source || "").toUpperCase() === "ADSB" &&
-            (a.alert_type === "ISR Pattern Detected" ||
-             (a.title || "").includes("Military ISR pattern") ||
-             (a.description || "").includes("Military ISR pattern"))) {
-            return false
-        }
-        return true  // no further business filter — render everything with valid coordinates
+        return true
     })
     const visibleFusions = fusions.filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
