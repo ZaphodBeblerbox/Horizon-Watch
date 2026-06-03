@@ -9,13 +9,29 @@ Refreshes every 24 hours.
 import httpx
 import csv
 import io
+import json
 from datetime import datetime, timedelta
 from database import SessionLocal, SanctionedEntity
 
 
-OPENSANCTIONS_VESSELS_URL = (
-    "https://data.opensanctions.org/datasets/latest/vessels/targets.simple.csv"
+# URLs tried in order — vessels endpoint was deprecated early 2025
+_CSV_URLS = [
+    "https://data.opensanctions.org/datasets/latest/sanctions/targets.simple.csv",
+    "https://data.opensanctions.org/datasets/latest/default/targets.simple.csv",
+]
+_JSON_FALLBACK_URL = (
+    "https://data.opensanctions.org/datasets/latest/sanctions/entities.ftm.json"
 )
+
+_VESSEL_KEYWORDS = {"tanker", "cargo", "ship", "vessel", "ferry", "bulk", "lng", "lpg"}
+
+
+def _is_vessel_row(row: dict) -> bool:
+    schema = (row.get("schema") or row.get("type") or "").lower()
+    if "vessel" in schema:
+        return True
+    caption = (row.get("caption") or row.get("name") or "").lower()
+    return any(kw in caption for kw in _VESSEL_KEYWORDS)
 
 
 class SanctionsLoader:
@@ -34,58 +50,60 @@ class SanctionsLoader:
             return {"cached": True, "vessels": self._total_vessels}
 
         print("[sanctions] Loading OpenSanctions vessel data…")
-        try:
-            async with httpx.AsyncClient() as client:
-                r = await client.get(
-                    OPENSANCTIONS_VESSELS_URL,
-                    timeout=45,
-                    follow_redirects=True,
-                )
-                r.raise_for_status()
-                data = r.text
-        except Exception as e:
-            print(f"[sanctions] Download failed: {e}")
-            # Fall back to whatever is already in DB
+
+        # Try CSV sources first
+        data_text = None
+        used_url  = None
+        async with httpx.AsyncClient(timeout=45, follow_redirects=True) as client:
+            for url in _CSV_URLS:
+                try:
+                    r = await client.get(url)
+                    if r.status_code == 200:
+                        data_text = r.text
+                        used_url  = url
+                        print(f"[sanctions] Downloaded CSV from {url}")
+                        break
+                    print(f"[sanctions] {url} returned {r.status_code}, trying next…")
+                except Exception as e:
+                    print(f"[sanctions] {url} failed: {e}, trying next…")
+
+        if data_text:
+            vessels = self._parse_csv(data_text)
+        else:
+            # Fallback to JSON format
+            print(f"[sanctions] Falling back to JSON: {_JSON_FALLBACK_URL}")
+            try:
+                async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+                    r = await client.get(_JSON_FALLBACK_URL)
+                    r.raise_for_status()
+                vessels = self._parse_json(r.text)
+                used_url = _JSON_FALLBACK_URL
+                print(f"[sanctions] Downloaded JSON from {_JSON_FALLBACK_URL}")
+            except Exception as e:
+                print(f"[sanctions] All sources failed: {e}")
+                if db:
+                    self._load_from_db(db)
+                return {"error": str(e), "vessels": self._total_vessels}
+
+        if not vessels:
+            print("[sanctions] No vessel records parsed — falling back to DB cache")
             if db:
                 self._load_from_db(db)
-            return {"error": str(e), "vessels": self._total_vessels}
+            return {"error": "no_vessels_parsed", "vessels": self._total_vessels}
 
-        # Parse CSV
-        reader = csv.DictReader(io.StringIO(data))
-        vessels = []
         new_mmsi: dict = {}
-        new_imo: dict = {}
+        new_imo:  dict = {}
         new_name: dict = {}
-
-        for row in reader:
-            mmsi     = (row.get("mmsi")     or "").strip()
-            imo      = (row.get("imo")      or "").strip()
-            name     = (row.get("name")     or "").strip()
-            datasets = (row.get("datasets") or "").strip()
-            entity_id = (row.get("id")      or "").strip()
-
-            if not (mmsi or imo or name):
-                continue
-
-            vessel = {
-                "entity_id": entity_id,
-                "name":      name,
-                "mmsi":      mmsi or None,
-                "imo":       imo  or None,
-                "datasets":  datasets,
-                "flag":      row.get("flag",   ""),
-                "owner":     row.get("owner",  ""),
-                "topics":    row.get("topics", ""),
-            }
-            vessels.append(vessel)
-
+        for vessel in vessels:
+            mmsi = vessel.get("mmsi") or ""
+            imo  = vessel.get("imo")  or ""
+            name = vessel.get("name") or ""
             if mmsi:
                 new_mmsi[mmsi] = vessel
             if imo:
                 new_imo[imo] = vessel
             if name:
-                key = name.upper().strip()
-                new_name[key] = vessel
+                new_name[name.upper().strip()] = vessel
 
         self._sanctions_by_mmsi = new_mmsi
         self._sanctions_by_imo  = new_imo
@@ -104,13 +122,72 @@ class SanctionsLoader:
                 pass
 
         print(f"[sanctions] Loaded {len(vessels)} sanctioned vessels "
-              f"({len(new_mmsi)} by MMSI, {len(new_imo)} by IMO)")
+              f"({len(new_mmsi)} by MMSI, {len(new_imo)} by IMO) from {used_url}")
         return {
             "vessels":   len(vessels),
             "by_mmsi":   len(new_mmsi),
             "by_imo":    len(new_imo),
             "loaded_at": self._last_loaded.isoformat(),
         }
+
+    def _parse_csv(self, data_text: str) -> list:
+        reader = csv.DictReader(io.StringIO(data_text))
+        vessels = []
+        for row in reader:
+            if not _is_vessel_row(row):
+                continue
+            mmsi      = (row.get("mmsi")     or "").strip()
+            imo       = (row.get("imo")      or "").strip()
+            name      = (row.get("name")     or "").strip()
+            datasets  = (row.get("datasets") or "").strip()
+            entity_id = (row.get("id")       or "").strip()
+            if not (mmsi or imo or name):
+                continue
+            vessels.append({
+                "entity_id": entity_id,
+                "name":      name,
+                "mmsi":      mmsi or None,
+                "imo":       imo  or None,
+                "datasets":  datasets,
+                "flag":      row.get("flag",   ""),
+                "owner":     row.get("owner",  ""),
+                "topics":    row.get("topics", ""),
+            })
+        return vessels
+
+    def _parse_json(self, data_text: str) -> list:
+        vessels = []
+        for line in data_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entity = json.loads(line)
+            except Exception:
+                continue
+            if entity.get("schema") != "Vessel":
+                continue
+            props     = entity.get("properties", {})
+            mmsi_list = props.get("mmsi", [])
+            imo_list  = props.get("imoNumber", props.get("imo", []))
+            name_list = props.get("name", [])
+            datasets  = entity.get("datasets", [])
+            mmsi      = mmsi_list[0].strip()  if mmsi_list  else None
+            imo       = imo_list[0].strip()   if imo_list   else None
+            name      = name_list[0].strip()  if name_list  else None
+            if not (mmsi or imo or name):
+                continue
+            vessels.append({
+                "entity_id": entity.get("id", ""),
+                "name":      name or "",
+                "mmsi":      mmsi,
+                "imo":       imo,
+                "datasets":  ",".join(datasets),
+                "flag":      (props.get("flag",  [None])[0] or ""),
+                "owner":     (props.get("owner", [None])[0] or ""),
+                "topics":    ",".join(entity.get("topics", [])),
+            })
+        return vessels
 
     def _persist_to_db(self, vessels: list, db) -> None:
         try:
