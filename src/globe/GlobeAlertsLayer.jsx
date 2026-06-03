@@ -148,15 +148,22 @@ export default function GlobeAlertsLayer({ enabled }) {
 
     if (!enabled) return null
 
-    // Deduplicate by id before rendering — backend can return duplicates which
-    // cause Cesium "entity already exists" crashes and React duplicate-key warnings
+    // FILTERING DISABLED — showing all alerts for audit
+    // Only hard requirements kept: valid coordinates + dedup to prevent Cesium crash
+    /* shouldRender filter commented out — restore to reintroduce selective display:
+    const AIS_WHITELIST = [...]
+    const shouldRender = (alert) => {
+      if (alert.domain !== 'AIS') return true
+      ...relevance gates, domain whitelists, ADSB thresholds...
+    }
+    */
     const _seenIds = new Set()
     const visibleAlerts = alerts.filter(a => {
         if (a.lat == null || (a.lng ?? a.lon) == null || !isFinite(Number(a.lat))) return false
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
-        return true
+        return true  // no business filter — render everything with valid coordinates
     })
     const visibleFusions = fusions.filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
