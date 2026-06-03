@@ -22,8 +22,18 @@ _USER_TMPL = (
     "Body: {body}\n\n"
     "Return a JSON object with exactly these fields:\n"
     '{{\n'
-    '  "location": "Specific place name (city/port/strait/region/country) where the physical event occurs. '
-    "null if no physical event — company news, stock prices, earnings, sports, celebrity, lifestyle.\",\n"
+    '  "location": "Extract the most specific geographic location mentioned in this article. '
+    "Prefer specific locations in this order: "
+    "1. Named facility (airport, port, base, plant, bridge) + city/country. "
+    "2. Named city or town. "
+    "3. Named region or province. "
+    "4. Country (last resort only). "
+    "Examples: 'Kuwait International Airport, Kuwait' not 'Kuwait'. "
+    "'Port of Rotterdam, Netherlands' not 'Netherlands'. "
+    "'Strait of Hormuz' for chokepoint articles. "
+    "'Kyiv, Ukraine' for city-level events. "
+    "Return ONLY the location string. "
+    "Return null if no physical event — company news, stock prices, earnings, sports, celebrity, lifestyle.\",\n"
     '  "location_country": "ISO-3166-1 alpha-2 lowercase country code for the event location. '
     'null if uncertain, international waters, or multi-country.\",\n'
     '  "location_confidence": "city OR region OR country OR none",\n'
@@ -45,8 +55,12 @@ _USER_TMPL = (
     "cultural events, corporate/business news without geopolitical impact.\n"
     "    IMPORTANT: Use tier 2 broadly — when in doubt between tier 2 and 3, choose tier 2.\n"
     '    Assign tier 4 ONLY for clearly irrelevant content (sports, celebrity, local traffic).,\n'
-    '  "relevance_score": float 0.0-10.0 — 9-10 direct military/maritime/infrastructure threat; '
-    "7-8 major geopolitical; 5-6 relevant background; 3-4 tangential; 1-2 mostly irrelevant; 0 sports/celebrity,\n"
+    '  "relevance_score": integer 1-10 — '
+    "1-3: Domestic politics, culture, sports, economics with no security angle. "
+    "4-5: Regional significance, diplomatic developments. "
+    "6-7: Security incidents, military movements, sanctions, protests. "
+    "8-9: Active conflict, strikes, explosions, naval incidents, terrorism. "
+    "10: Mass casualty event, declaration of war, nuclear/chemical incident.,\n"
     '  "event_title": "Concise 4-8 word label for this event, e.g. \'Missile strike on Kyiv port\' or \'Typhoon Haikui Taiwan landfall\'. null if no specific event.",\n'
     '  "has_image": true or false — true if article likely has an impactful photo worth displaying,\n'
     '  "is_breaking": true or false — true only for tier 1 events reported within the last 6 hours,\n'

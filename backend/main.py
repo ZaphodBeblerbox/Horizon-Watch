@@ -6294,7 +6294,7 @@ def _run_news_conflict_extraction_sync():
             pass
 
     MAX_NOM_CALLS           = 100   # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS_PER_CYCLE = 25    # production default — demo mode used 100
+    MAX_LLM_CALLS_PER_CYCLE = 50    # raised from 25 — more coverage, still within cost cap
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
@@ -6925,18 +6925,43 @@ async def _extract_news_conflicts_loop():
             # Write news_points snapshot
             try:
                 from database import NewsArticle
+                _JUNK_PATTERNS = (
+                    "recipe", "comic", "fashion", "sports score", "weather forecast",
+                    "obituary", "horoscope", "crossword", "bande dessinée", "bakery",
+                    "restaurant review", "film review", "book review", "concert",
+                )
+                _LOC_QUALITY_KEYS = (
+                    "airport", "port", "base", "strait", "bridge", "canal", "city",
+                )
                 with get_db() as _sn_db:
                     _pts = (_sn_db.query(NewsArticle)
-                                  .filter(NewsArticle.lat.isnot(None), NewsArticle.lon.isnot(None))
+                                  .filter(
+                                      NewsArticle.lat.isnot(None),
+                                      NewsArticle.lon.isnot(None),
+                                      NewsArticle.relevance_score >= 6,
+                                  )
                                   .order_by(NewsArticle.ingested_at.desc())
                                   .limit(2000).all())
-                _news_snap = [
-                    {"id": n.id, "lat": n.lat, "lon": n.lon,
-                     "title": (n.event_title or n.title or "")[:150],
-                     "domain": "NEWS", "relevance": n.relevance_score or 0,
-                     "tier": n.tier, "ingested_at": n.ingested_at.isoformat() if n.ingested_at else ""}
-                    for n in _pts
-                ]
+                _news_snap = []
+                for n in _pts:
+                    _t = (n.event_title or n.title or "").lower()
+                    if any(p in _t for p in _JUNK_PATTERNS):
+                        continue
+                    _loc = (n.location_name or "").lower()
+                    _loc_ok = (
+                        "," in _loc
+                        or any(k in _loc for k in _LOC_QUALITY_KEYS)
+                        or any(k in _t  for k in _LOC_QUALITY_KEYS)
+                    )
+                    if not _loc_ok:
+                        continue
+                    _news_snap.append({
+                        "id": n.id, "lat": n.lat, "lon": n.lon,
+                        "title": (n.event_title or n.title or "")[:150],
+                        "domain": "NEWS", "relevance": n.relevance_score or 0,
+                        "tier": n.tier,
+                        "ingested_at": n.ingested_at.isoformat() if n.ingested_at else "",
+                    })
                 _write_snapshot_sync("news_points", _news_snap)
             except Exception as _nse:
                 print(f"[SNAPSHOT] news_points error: {_nse}")
@@ -7752,15 +7777,40 @@ async def _startup_snapshot_prefill() -> None:
 
         if not _age_ok("news_points"):
             def _build_news():
+                _JUNK_PAT = (
+                    "recipe", "comic", "fashion", "sports score", "weather forecast",
+                    "obituary", "horoscope", "crossword", "bande dessinée", "bakery",
+                    "restaurant review", "film review", "book review", "concert",
+                )
+                _LOC_KEYS = (
+                    "airport", "port", "base", "strait", "bridge", "canal", "city",
+                )
                 with get_db() as _db:
                     rows = (_db.query(_NAp)
-                               .filter(_NAp.lat.isnot(None), _NAp.lon.isnot(None))
+                               .filter(
+                                   _NAp.lat.isnot(None),
+                                   _NAp.lon.isnot(None),
+                                   _NAp.relevance_score >= 6,
+                               )
                                .order_by(_NAp.ingested_at.desc()).limit(2000).all())
-                return [{"id": n.id, "lat": n.lat, "lon": n.lon,
-                         "title": (n.event_title or n.title or "")[:150],
-                         "domain": "NEWS", "relevance": n.relevance_score or 0,
-                         "tier": n.tier, "ingested_at": n.ingested_at.isoformat() if n.ingested_at else ""}
-                        for n in rows]
+                out = []
+                for n in rows:
+                    _t = (n.event_title or n.title or "").lower()
+                    if any(p in _t for p in _JUNK_PAT):
+                        continue
+                    _loc = (n.location_name or "").lower()
+                    if not ("," in _loc
+                            or any(k in _loc for k in _LOC_KEYS)
+                            or any(k in _t  for k in _LOC_KEYS)):
+                        continue
+                    out.append({
+                        "id": n.id, "lat": n.lat, "lon": n.lon,
+                        "title": (n.event_title or n.title or "")[:150],
+                        "domain": "NEWS", "relevance": n.relevance_score or 0,
+                        "tier": n.tier,
+                        "ingested_at": n.ingested_at.isoformat() if n.ingested_at else "",
+                    })
+                return out
             _write_snapshot_sync("news_points", await loop.run_in_executor(_executor, _build_news))
             written += 1
 
