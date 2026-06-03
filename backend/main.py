@@ -4005,6 +4005,35 @@ async def admin_reset_zone_intervals(current_user=Depends(get_optional_user)):
     return {"updated": updated, "scan_interval_hours": 120}
 
 
+@app.post("/api/admin/purge-dark-ships")
+async def purge_dark_ships(current_user=Depends(get_optional_user)):
+    global _forge_alerts
+    before = len(_forge_alerts)
+    _forge_alerts = [
+        a for a in _forge_alerts
+        if a.get("alert_type") not in ("AIS_DARK_SHIP", "DARK_SHIP")
+        and a.get("rule_name") not in ("AIS_DARK_SHIP", "DARK_SHIP")
+        and "dark ship" not in str(a.get("title", "")).lower()
+        and "dark ship" not in str(a.get("description", "")).lower()
+    ]
+    after = len(_forge_alerts)
+    deleted_db = 0
+    try:
+        from database import Alert as _Alert
+        with get_db() as _db:
+            deleted_db = _db.query(_Alert).filter(
+                _Alert.alert_type.in_(["AIS_DARK_SHIP", "DARK_SHIP"])
+            ).delete(synchronize_session=False)
+            # Also catch any stored via title match
+            deleted_db += _db.query(_Alert).filter(
+                _Alert.title.ilike("%dark ship%")
+            ).delete(synchronize_session=False)
+            _db.commit()
+    except Exception as _e:
+        print(f"[purge-dark-ships] DB purge error: {_e}")
+    return {"purged_memory": before - after, "purged_db": deleted_db, "remaining": after}
+
+
 # ── Director person dossier ───────────────────────────────────────────────────
 
 _PERSON_CACHE: dict[str, dict] = {}
