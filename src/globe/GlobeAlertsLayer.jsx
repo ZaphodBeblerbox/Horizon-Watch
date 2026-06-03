@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -124,9 +124,9 @@ function fusionIcon(severity) {
 }
 
 export default function GlobeAlertsLayer({ enabled }) {
-    const [alerts,  setAlerts]  = useState([])
-    const [fusions, setFusions] = useState([])
-    const sanctionedMmsiSetRef  = useRef(new Set())
+    const [alerts,           setAlerts]           = useState([])
+    const [fusions,          setFusions]          = useState([])
+    const [sanctionedMmsiSet, setSanctionedMmsiSet] = useState(new Set())
 
     // Fetch cycle runs on mount and never stops — decoupled from enabled.
     // Toggling enabled only shows/hides markers; it never wipes state or
@@ -151,7 +151,7 @@ export default function GlobeAlertsLayer({ enabled }) {
             .then(r => r.ok ? r.json() : [])
             .then(list => {
                 if (!cancelled)
-                    sanctionedMmsiSetRef.current = new Set(safeArray(list).map(String))
+                    setSanctionedMmsiSet(new Set(safeArray(list).map(String)))
             })
             .catch(() => console.warn("[GlobeAlertsLayer] sanctions mmsi-list fetch failed"))
 
@@ -230,7 +230,7 @@ export default function GlobeAlertsLayer({ enabled }) {
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
-        return filterAlert(a, sanctionedMmsiSetRef.current)
+        return filterAlert(a, sanctionedMmsiSet)
     })
     const visibleFusions = (enabled ? fusions : []).filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
