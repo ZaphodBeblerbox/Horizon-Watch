@@ -582,67 +582,6 @@ class DarkShipDetector:
         """
         alerts: list = []
 
-        for rule in rules:
-            if not rule.get("enabled", True):
-                continue
-            params          = rule.get("params", {})
-            min_gap_min     = float(params.get("min_gap_minutes", 60))
-            min_speed_before = float(params.get("min_speed_before_gap", 1.0))
-            target_region   = str(params.get("last_known_region", "ALL")).upper()
-
-            for mmsi, state in list(self._last_seen.items()):
-                if mmsi in active_mmsis:
-                    continue  # Still visible — not dark
-
-                last_ts = state["timestamp"]
-                gap_min = (now - last_ts).total_seconds() / 60.0
-
-                if gap_min < min_gap_min:
-                    continue
-
-                # Filter: must have been moving before going dark
-                if state["speed"] < min_speed_before:
-                    continue
-
-                # Filter: region scope
-                if target_region != "ALL":
-                    if (state.get("region_id") or "").upper() != target_region:
-                        continue
-
-                # Don't re-alert the same vessel for the same gap event
-                alerted_at = state.get("alerted_at")
-                if alerted_at and (now - alerted_at).total_seconds() / 60.0 < min_gap_min * 2:
-                    continue
-
-                self._last_seen[mmsi]["alerted_at"] = now
-                alerts.append({
-                    "id":           f"dark_{int(now.timestamp()*1000)}_{mmsi}",
-                    "rule_id":      rule.get("id"),
-                    "rule_name":    "AIS_DARK_SHIP",
-                    "rule_trigger": "AIS_DARK_SHIP",
-                    "source":       "AIS",
-                    "severity":     "high",
-                    "icon_type":    "DARK_SHIP",
-                    "vessel":       state["name"],
-                    "mmsi":         mmsi,
-                    "lat":          state["lat"],
-                    "lng":          state["lon"],
-                    "speed":        state["speed"],
-                    "message": (
-                        f"Dark ship: {state['name']} — no AIS signal for {gap_min:.0f} min. "
-                        f"Last position: {state['lat']:.3f}, {state['lon']:.3f} "
-                        f"(region {state.get('region_id', '?')}). "
-                        f"Last speed: {state['speed']:.1f} kn."
-                    ),
-                    "timestamp":    now.isoformat(),
-                    "gap_minutes":  round(gap_min, 1),
-                    "provenance": {
-                        "source_type":    "AIS",
-                        "detection_rule": "AIS_DARK_SHIP",
-                        "trigger_reason": "AIS_DARK_SHIP",
-                    },
-                })
-
         # Sanctions check — runs on ALL known vessels (active and dark)
         for mmsi, state in list(self._last_seen.items()):
             sanction_alert = _check_sanctions_hit(mmsi, {
