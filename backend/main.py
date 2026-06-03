@@ -18625,7 +18625,7 @@ async def _forge_detection_cycle():
                 if key not in seen:
                     seen.add(key)
                     deduped.append(a)
-            _forge_alerts = list(reversed(deduped))[:200]
+            _forge_alerts = list(reversed(deduped))
             _correlation_assessments = _correlation_assessments[-200:]
 
             cycle_s = (datetime.now(timezone.utc) - cycle_start).total_seconds()
