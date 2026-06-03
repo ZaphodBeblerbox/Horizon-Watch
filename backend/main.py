@@ -19891,18 +19891,7 @@ def _enrich_alert(alert: dict) -> dict:
 # ── Forge alerts ──────────────────────────────────────────────────────────────
 
 def _dedup_alerts(alerts: list) -> list:
-    """Keep only the most recent alert per (entity_id, alert_type) pair.
-    This allows the same vessel to have both a dark ship AND an STS alert visible."""
-    seen: dict = {}
-    for a in sorted(alerts,
-                    key=lambda x: x.get("created_at") or x.get("timestamp") or "",
-                    reverse=True):
-        entity = a.get("source_id") or a.get("entity_id") or ""
-        atype  = a.get("alert_type") or a.get("type") or a.get("alert_category") or ""
-        key    = f"{entity}::{atype}" if entity else id(a)
-        if key not in seen:
-            seen[key] = a
-    return list(seen.values())
+    return alerts
 
 
 @app.get("/api/forge/alerts")
