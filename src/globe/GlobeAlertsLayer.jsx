@@ -163,7 +163,14 @@ export default function GlobeAlertsLayer({ enabled }) {
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
-        return true  // no business filter — render everything with valid coordinates
+        // Filter Type B ADSB: "Military ISR pattern" is consolidated into MILITARY_AIRCRAFT
+        if ((a.domain || a.source || "").toUpperCase() === "ADSB" &&
+            (a.alert_type === "ISR Pattern Detected" ||
+             (a.title || "").includes("Military ISR pattern") ||
+             (a.description || "").includes("Military ISR pattern"))) {
+            return false
+        }
+        return true  // no further business filter — render everything with valid coordinates
     })
     const visibleFusions = fusions.filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 

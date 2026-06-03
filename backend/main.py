@@ -9503,6 +9503,34 @@ def get_aircraft_identity(icao_hex: str):
     return {"icao_hex": icao_hex, "identity": lookup_icao_hex(icao_hex)}
 
 
+# Rolling 20-position track buffer per military ICAO hex (populated by ADSB processing)
+_military_tracks: dict = {}   # icao_hex.upper() → [{lat,lon,alt,speed,heading,ts}, ...]
+
+
+@app.get("/api/adsb/military-track/{icao_hex}")
+async def get_military_track(icao_hex: str):
+    """Return rolling track for a military aircraft — in-memory first, DB fallback."""
+    hex_upper = icao_hex.upper()
+    track = list(_military_tracks.get(hex_upper, []))
+    if not track:
+        # Fallback: reconstruct from alert history for this ICAO
+        try:
+            from database import Alert
+            with get_db() as _db:
+                rows = (_db.query(Alert)
+                           .filter(Alert.entity_id == icao_hex)
+                           .order_by(Alert.created_at.desc())
+                           .limit(20).all())
+            track = [
+                {"lat": r.lat, "lon": r.lon,
+                 "ts": r.created_at.isoformat() if r.created_at else None}
+                for r in rows if r.lat and r.lon
+            ]
+        except Exception as _te:
+            print(f"[military-track] fallback error: {_te}")
+    return {"icao_hex": hex_upper, "track_points": track}
+
+
 @app.get("/api/history/vessels")
 async def get_vessel_history(
     mmsi: str = Query(None),

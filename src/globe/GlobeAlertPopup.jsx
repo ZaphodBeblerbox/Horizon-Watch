@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import * as Cesium from "cesium"
 import API_BASE from "../apiBase.js"
 import { ALERT_ICONS, FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
 
@@ -126,6 +127,7 @@ function StsPanel({ payload }) {
 export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
     const [forgeLinks,  setForgeLinks]  = useState([])
     const [photoErr,    setPhotoErr]    = useState(false)
+    const trackEntityRef = useRef(null)  // active Cesium track entity for cleanup
 
     const sev      = a.severity || "medium"
     const sevColor = SEV_COLOR[sev]  || "#fbbf24"
@@ -163,6 +165,55 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
             .catch(() => {})
         return () => { cancelled = true }
     }, [alertId])
+
+    // Fetch and render aircraft track for military ADSB alerts
+    const isMilitaryAdsb = src === "ADSB" && icao &&
+        (a.alert_category === "MILITARY_AIRCRAFT" || a.alert_type === "military_aircraft" ||
+         a.rule_name === "Military Squawk" || a.aircraft_military)
+    useEffect(() => {
+        if (!isMilitaryAdsb || !icao) return
+        const viewer = viewerRef?.current?.cesiumElement
+        if (!viewer) return
+
+        const trackId = `track-${icao}`
+        // Remove any previous track for this ICAO
+        try { viewer.entities.removeById(trackId) } catch {}
+
+        fetch(`${API_BASE}/api/adsb/military-track/${icao}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                const pts = (d?.track_points || []).filter(p => p.lat && p.lon)
+                if (pts.length < 2) return
+                if (!viewer || viewer.isDestroyed()) return
+                const positions = Cesium.Cartesian3.fromDegreesArray(
+                    pts.flatMap(p => [Number(p.lon), Number(p.lat)])
+                )
+                const entity = viewer.entities.add({
+                    id: trackId,
+                    polyline: {
+                        positions,
+                        width: 2,
+                        material: new Cesium.PolylineDashMaterialProperty({
+                            color:      Cesium.Color.fromCssColorString('#9B8FE0').withAlpha(0.85),
+                            dashLength: 12,
+                        }),
+                        clampToGround: false,
+                        arcType:       Cesium.ArcType.GEODESIC,
+                    },
+                })
+                trackEntityRef.current = entity
+            })
+            .catch(() => {})
+
+        return () => {
+            // Clean up track when popup closes
+            try {
+                const v = viewerRef?.current?.cesiumElement
+                if (v && !v.isDestroyed()) v.entities.removeById(trackId)
+            } catch {}
+            trackEntityRef.current = null
+        }
+    }, [isMilitaryAdsb, icao]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const flagUrl  = a.vessel_flag_url  || a.aircraft_flag_url  || null
     const flagEmoji= a.vessel_flag      || a.aircraft_flag      || null
