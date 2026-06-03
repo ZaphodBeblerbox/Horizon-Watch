@@ -107,18 +107,39 @@ export default function GlobeAlertsLayer({ enabled }) {
         const ids = []
         alerts.forEach((a, i) => {
             const id = `alert-forge-${a.id || i}`
+            const isMilitaryAdsb = (a.domain || a.source || "").toUpperCase() === "ADSB" &&
+                (a.alert_category === "MILITARY_AIRCRAFT" ||
+                 a.alert_type === "military_aircraft" ||
+                 a.rule_name === "Military Squawk" ||
+                 a.aircraft_military)
             let entityType
-            if (a.source === "SENTINEL") {
+            if (isMilitaryAdsb) {
+                // Register as "aircraft" so GlobePopup routes to GlobeAircraftPopup
+                // which provides photo + identity + track for free
+                entityType = "aircraft"
+            } else if (a.source === "SENTINEL") {
                 entityType = "sentinel_detection"
             } else if (a.domain === "NEWS" && a.icon_type && ALERT_ICONS[a.icon_type]) {
                 entityType = "assessment"
             } else {
                 entityType = "alert"
             }
-            setEntity(id, entityType, {
+            const entityData = isMilitaryAdsb ? {
+                // Shape to match what GlobeAircraftPopup expects
+                icao:       a.icao_hex || a.icao || a.entity_id || "",
+                icao24:     a.icao_hex || a.icao || a.entity_id || "",
+                flight:     a.callsign || a.aircraft || a.entity_name || "",
+                lat:        a.lat,
+                lon:        a.lon ?? a.lng,
+                alt_baro:   a.altitude ?? a.altitude_ft ?? null,
+                gs:         a.speed ?? null,
+                track:      a.heading ?? null,
+                squawk:     a.squawk ?? null,
+                military:   true,
+                from_alert: true,  // flag: sourced from alert pipeline, not live ADSB cache
+            } : {
                 ...a,
                 _idx:           i,
-                // Normalise sentinel fields so SentinelDetectionPopup finds them
                 detection_type:            a.detection_type || a.rule_type,
                 confidence:                a.confidence,
                 claude_severity:           a.severity,
@@ -129,7 +150,8 @@ export default function GlobeAlertsLayer({ enabled }) {
                 nearest_asset_distance_km: a.nearest_asset_distance_km,
                 in_strategic_zone:         a.in_strategic_zone,
                 created_at:                a.timestamp,
-            })
+            }
+            setEntity(id, entityType, entityData)
             ids.push(id)
         })
         return () => ids.forEach(deleteEntity)
