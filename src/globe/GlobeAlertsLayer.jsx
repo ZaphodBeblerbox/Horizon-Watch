@@ -81,8 +81,10 @@ export default function GlobeAlertsLayer({ enabled }) {
     const [alerts,  setAlerts]  = useState([])
     const [fusions, setFusions] = useState([])
 
+    // Fetch cycle runs on mount and never stops — decoupled from enabled.
+    // Toggling enabled only shows/hides markers; it never wipes state or
+    // restarts the interval, so alerts survive layer-toggle flickers.
     useEffect(() => {
-        if (!enabled) { setAlerts([]); setFusions([]); return }
         let cancelled = false
 
         const loadAlerts = () =>
@@ -100,7 +102,7 @@ export default function GlobeAlertsLayer({ enabled }) {
         loadAlerts(); loadFusions()
         const iv = setInterval(() => { loadAlerts(); loadFusions() }, 30_000)
         return () => { cancelled = true; clearInterval(iv) }
-    }, [enabled])
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (!alerts.length) return
@@ -165,18 +167,16 @@ export default function GlobeAlertsLayer({ enabled }) {
         return () => ids.forEach(deleteEntity)
     }, [fusions])
 
-    if (!enabled) return null
-
-    // Render-path filter — coordinate validation + dedup only (business logic is in filterAlert above)
+    // enabled controls visibility only — fetch cycle runs regardless
     const _seenIds = new Set()
-    const visibleAlerts = alerts.filter(a => {
+    const visibleAlerts = (enabled ? alerts : []).filter(a => {
         if (a.lat == null || (a.lng ?? a.lon) == null || !isFinite(Number(a.lat))) return false
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
         return true
     })
-    const visibleFusions = fusions.filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
+    const visibleFusions = (enabled ? fusions : []).filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
     return (
         <>

@@ -92,7 +92,7 @@ const REGION_COORDS = {
 // ── Workspace helpers ─────────────────────────────────────────────────────────
 
 function newWorkspace(name) {
-    return { id: crypto.randomUUID(), name, center: [20, 0], zoom: 2, layers: { unifiedEvents: true } }
+    return { id: crypto.randomUUID(), name, center: [20, 0], zoom: 2, layers: { unifiedEvents: true, forgeAlerts: true } }
 }
 
 // Ensure unifiedEvents is enabled on all existing workspaces that predate 3D-only mode.
@@ -1517,7 +1517,7 @@ export default function App() {
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                             precisionEventsEnabled={activeWorkspace?.layers?.precisionEvents ?? true}
                             eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 0}
-                            alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? false}
+                            alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? true}
                             threatHeatmapEnabled={activeWorkspace?.layers?.threatHeatmap ?? true}
                             airportsEnabled={activeWorkspace?.layers?.airports ?? false}
                             portsEnabled={activeWorkspace?.layers?.ports ?? false}
