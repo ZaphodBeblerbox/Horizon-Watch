@@ -11366,6 +11366,16 @@ async def startup_event():
     except Exception as _e:
         print(f"[startup] database init failed: {_e}")
 
+    # Load OpenSanctions vessel list (blocking, non-fatal — must complete before AIS checks run)
+    try:
+        from database import SessionLocal as _SL_sanctions
+        with _SL_sanctions() as _sdb:
+            refresh_result = await sanctions_loader.load_or_refresh(_sdb)
+        print(f"[STARTUP] Sanctions loaded: {refresh_result.get('vessels',0)} vessels, "
+              f"{refresh_result.get('by_mmsi',0)} with MMSI")
+    except Exception as _e:
+        print(f"[STARTUP] Sanctions refresh failed (non-fatal): {_e}")
+
     # Rebuild _forge_alerts from DB and load entity linker cache
     try:
         def _rebuild_from_db():
@@ -11503,18 +11513,20 @@ async def startup_event():
     asyncio.create_task(_foresight_loop())
     asyncio.create_task(_startup_snapshot_prefill())
 
-    # Load OpenSanctions vessel list in background (non-blocking)
-    async def _load_sanctions_bg():
-        await asyncio.sleep(15)   # let DB settle first
-        try:
-            from database import SessionLocal as _SL
-            with _SL() as _sdb:
-                stats = await sanctions_loader.load_or_refresh(_sdb)
-            print(f"[startup] Sanctions list: {stats.get('vessels', 0)} vessels loaded "
-                  f"({stats.get('by_mmsi', 0)} by MMSI)")
-        except Exception as _se:
-            print(f"[startup] Sanctions load failed: {_se}")
-    asyncio.create_task(_load_sanctions_bg())
+    # Scheduled 24h sanctions refresh loop (first run 5 min after startup)
+    async def _sanctions_refresh_loop():
+        await asyncio.sleep(300)
+        while True:
+            try:
+                from database import SessionLocal as _SL
+                with _SL() as _sdb:
+                    stats = await sanctions_loader.load_or_refresh(_sdb)
+                print(f"[sanctions] Scheduled refresh: {stats.get('vessels', 0)} vessels, "
+                      f"{stats.get('by_mmsi', 0)} with MMSI")
+            except Exception as _se:
+                print(f"[sanctions] Scheduled refresh failed: {_se}")
+            await asyncio.sleep(86400)
+    asyncio.create_task(_sanctions_refresh_loop())
 
     async def _director_auto_prepare():
         await asyncio.sleep(120)
