@@ -247,7 +247,6 @@ try:
     from detectors.correlation_engine import (
         CorrelationEngine as _CorrelationEngine,
         EscalationEngine as _EscalationEngine,
-        DarkShipDetector as _DarkShipDetector,
         ADSBLoiterDetector as _ADSBLoiterDetector,
         ChokepointActivityDetector as _ChokepointActivityDetector,
         NewsPatternEngine as _NewsPatternEngine,
@@ -8548,12 +8547,11 @@ if _HAS_DETECTORS:
     _threat_engine       = _ThreatEngine()
     _correlation_engine  = _CorrelationEngine()
     _escalation_engine   = _EscalationEngine()
-    _dark_ship_detector  = _DarkShipDetector()
     _adsb_loiter_detector = _ADSBLoiterDetector()
     _chokepoint_detector  = _ChokepointActivityDetector()
 else:
     _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
-    _escalation_engine = _dark_ship_detector = _adsb_loiter_detector = None
+    _escalation_engine = _adsb_loiter_detector = None
     _chokepoint_detector = None
     _news_pattern_engine = None
 
@@ -8810,7 +8808,6 @@ def normalize_signal(domain: str, source_obj: dict, alert_id: str = None) -> dic
 
 
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
-_forge_alerts = [a for a in _forge_alerts if a.get("alert_category") != "AIS_DARK_SHIP" and a.get("alert_category") != "DARK_SHIP"]
 _correlation_assessments: list = []  # cross-domain correlation results (24h)
 _last_cycle_stats: dict = {}         # stats from the most-recent detection cycle
 _cycle_history: list = []            # last 20 detection cycle summaries
