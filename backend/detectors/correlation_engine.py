@@ -13,6 +13,44 @@ import math
 import uuid
 import json
 
+# ── Sanctions vessel detection ────────────────────────────────────────────────
+_sanctions_alert_cooldown: dict = {}  # mmsi → datetime of last fire
+
+
+def _check_sanctions_hit(mmsi: str, vessel: dict) -> "dict | None":
+    try:
+        from sanctions_loader import sanctions_loader as _sl
+    except ImportError:
+        return None
+    hit = _sl.check_vessel(mmsi=mmsi)
+    if not hit:
+        return None
+    now = datetime.utcnow()
+    last_fired = _sanctions_alert_cooldown.get(mmsi)
+    if last_fired and (now - last_fired).total_seconds() < 6 * 3600:
+        return None
+    _sanctions_alert_cooldown[mmsi] = now
+    name = vessel.get("name") or vessel.get("vessel_name") or mmsi
+    lat  = float(vessel.get("lat") or 0)
+    lon  = float(vessel.get("lon") or vessel.get("lng") or 0)
+    flag = vessel.get("flag") or vessel.get("country") or hit.get("flag") or "unknown"
+    return {
+        "rule_id":        "SANCTIONS_VESSEL_DETECTED",
+        "alert_category": "SANCTIONS_VIOLATION",
+        "mmsi":           mmsi,
+        "vessel_name":    name,
+        "title":          f"Sanctioned Vessel: {name}",
+        "description": (
+            f"{name} ({mmsi}) — sanctioned vessel transmitting AIS at "
+            f"{lat:.3f}, {lon:.3f}. Flag: {flag}."
+        ),
+        "lat":            lat,
+        "lon":            lon,
+        "severity":       "critical",
+        "sanctions_hit":  True,
+        "timestamp":      now.isoformat(),
+    }
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NEWS PATTERN REGISTRY
@@ -604,6 +642,16 @@ class DarkShipDetector:
                         "trigger_reason": "AIS_DARK_SHIP",
                     },
                 })
+
+        # Sanctions check — runs on ALL known vessels (active and dark)
+        for mmsi, state in list(self._last_seen.items()):
+            sanction_alert = _check_sanctions_hit(mmsi, {
+                "name": state["name"],
+                "lat":  state["lat"],
+                "lon":  state["lon"],
+            })
+            if sanction_alert:
+                alerts.append(sanction_alert)
 
         return alerts
 

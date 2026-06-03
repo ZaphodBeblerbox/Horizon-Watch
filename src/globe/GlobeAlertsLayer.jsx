@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -71,6 +71,52 @@ function severityScale(severity) {
 
 const FUSION_SCALE = { critical: 1.8, high: 1.5, medium: 1.2 }
 
+function isDarkShip(a) {
+    return a.alert_category === "AIS_DARK_SHIP" ||
+           a.alert_category === "DARK_SHIP" ||
+           a.type === "dark_ship" ||
+           (a.title || "").toLowerCase().includes("dark ship")
+}
+
+const _INLAND_BBOXES = [
+    { latMin: 47.0, latMax: 51.9, lonMin:   6.0, lonMax:   8.5 }, // Rhine
+    { latMin: 44.5, latMax: 48.5, lonMin:  13.5, lonMax:  29.5 }, // Danube
+    { latMin: 41.5, latMax: 49.0, lonMin: -93.0, lonMax: -75.0 }, // Great Lakes
+    { latMin: 29.0, latMax: 48.0, lonMin: -97.0, lonMax: -88.0 }, // Mississippi
+    { latMin: 22.0, latMax: 32.0, lonMin: 105.0, lonMax: 122.0 }, // Yangtze
+]
+
+function _isInland(lat, lon) {
+    return _INLAND_BBOXES.some(b =>
+        lat >= b.latMin && lat <= b.latMax && lon >= b.lonMin && lon <= b.lonMax
+    )
+}
+
+function filterAlert(a, sanctionedMmsiSet) {
+    if (!isDarkShip(a)) return true
+
+    const lat = Number(a.lat)
+    const lon = Number(a.lng ?? a.lon)
+
+    // Gate A — inland waterway suppression
+    if (_isInland(lat, lon)) return false
+
+    // Gate B — sanctions list (skip if set is empty: fetch pending or failed)
+    if (sanctionedMmsiSet.size > 0) {
+        const mmsiA = String(a.mmsi          || "")
+        const mmsiB = String(a.metadata?.mmsi || "")
+        if (!sanctionedMmsiSet.has(mmsiA) &&
+            !sanctionedMmsiSet.has(mmsiB) &&
+            a.sanctions_hit          !== true &&
+            a.on_sanctions_list      !== true &&
+            a.metadata?.sanctions_hit !== true) {
+            return false
+        }
+    }
+
+    return true
+}
+
 function fusionIcon(severity) {
     const key = `fusion-${severity}`
     if (!ICON_CACHE[key]) ICON_CACHE[key] = makeFusionCanvas(severity)
@@ -80,6 +126,7 @@ function fusionIcon(severity) {
 export default function GlobeAlertsLayer({ enabled }) {
     const [alerts,  setAlerts]  = useState([])
     const [fusions, setFusions] = useState([])
+    const sanctionedMmsiSetRef  = useRef(new Set())
 
     // Fetch cycle runs on mount and never stops — decoupled from enabled.
     // Toggling enabled only shows/hides markers; it never wipes state or
@@ -98,6 +145,15 @@ export default function GlobeAlertsLayer({ enabled }) {
                 .then(r => r.ok ? r.json() : [])
                 .then(d => { if (!cancelled) setFusions(safeArray(d)) })
                 .catch(() => {})
+
+        // Sanctions MMSI set — fetched once on mount, never on interval ticks
+        fetch(`${API_BASE}/api/sanctions/mmsi-list`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(list => {
+                if (!cancelled)
+                    sanctionedMmsiSetRef.current = new Set(safeArray(list).map(String))
+            })
+            .catch(() => console.warn("[GlobeAlertsLayer] sanctions mmsi-list fetch failed"))
 
         loadAlerts(); loadFusions()
         const iv = setInterval(() => { loadAlerts(); loadFusions() }, 30_000)
@@ -174,7 +230,7 @@ export default function GlobeAlertsLayer({ enabled }) {
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
-        return true
+        return filterAlert(a, sanctionedMmsiSetRef.current)
     })
     const visibleFusions = (enabled ? fusions : []).filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
