@@ -151,7 +151,7 @@ export async function buildAutoplayQueue(API) {
                 priority:  4,
             }))
 
-        // ── 5. Tier 1 news visible on globe ──────────────────────────────
+        // ── 5. Tier 1 events visible on globe ────────────────────────────
         const newsRaw = await fetch(`${API}/api/v2/events?mode=events&limit=30`)
             .then(r => r.ok ? r.json() : {}).catch(() => ({}))
         const newsArr = Array.isArray(newsRaw) ? newsRaw : (newsRaw?.events || [])
@@ -173,7 +173,34 @@ export async function buildAutoplayQueue(API) {
                 priority:  5,
             }))
 
-        // ── 6. Elevated stable zones (filler) ────────────────────────────
+        // ── 6. News points from snapshot (relevance ≥ 6) ────────────────
+        const snapRaw = await fetch(`${API}/api/snapshot/news_points`)
+            .then(r => r.ok ? r.json() : {}).catch(() => ({}))
+        const snapArr = Array.isArray(snapRaw) ? snapRaw : (snapRaw?.data || [])
+
+        snapArr
+            .filter(n => isFinite(Number(n.lat)) && isFinite(Number(n.lon)) && (n.relevance || 0) >= 6)
+            .sort((a, b) => (b.relevance || 0) - (a.relevance || 0))
+            .slice(0, 8)
+            .forEach(n => {
+                const meta = n.ingested_at
+                    ? `Reported ${new Date(n.ingested_at).toUTCString().slice(0, 22)}`
+                    : ''
+                addIfNew({
+                    type:      'NEWS',
+                    lat:       Number(n.lat),
+                    lon:       Number(n.lon),
+                    altitude:  1_200_000,
+                    title:     (n.title || 'NEWS EVENT').slice(0, 60),
+                    subtitle:  'INTELLIGENCE FEED',
+                    narrative: meta ? `${n.title || ''}\n${meta}` : (n.title || ''),
+                    color:     '#E8A838',
+                    data:      n,
+                    priority:  2 + (n.relevance / 10),
+                })
+            })
+
+        // ── 7. Elevated stable zones (filler) ────────────────────────────
         zones
             .filter(z => (z.threat_score ?? z.score ?? 0) >= 55
                       && !z.is_emerging && !z.is_escalating

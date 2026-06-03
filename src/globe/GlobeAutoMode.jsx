@@ -13,11 +13,12 @@ import API_BASE from "../apiBase.js"
 export default function GlobeAutoMode({ enabled }) {
     const { viewer } = useCesium()
 
-    const cancelRef = useRef(false)
-    const timerRef  = useRef(null)
-    const queueRef  = useRef([])
-    const indexRef  = useRef(0)
-    const viewerRef = useRef(null)
+    const cancelRef         = useRef(false)
+    const timerRef          = useRef(null)
+    const queueRef          = useRef([])
+    const indexRef          = useRef(0)
+    const viewerRef         = useRef(null)
+    const rotationHandleRef = useRef(null)
 
     const [queue,   setQueue]   = useState([])
     const [index,   setIndex]   = useState(0)
@@ -26,9 +27,18 @@ export default function GlobeAutoMode({ enabled }) {
     // Keep a stable ref to the viewer so the interval callback can access it
     useEffect(() => { viewerRef.current = viewer }, [viewer])
 
+    const startRotation = (vwr) => {
+        clearInterval(rotationHandleRef.current)
+        rotationHandleRef.current = setInterval(() => {
+            if (vwr?.scene) vwr.camera.rotate(Cartesian3.UNIT_Z, -0.003)
+        }, 16)
+    }
+
     const flyToSegment = (seg, vwr) => {
         if (!seg || !vwr) return
+        clearInterval(rotationHandleRef.current)
         try {
+            const isNews = seg.type === 'NEWS'
             vwr.camera.flyTo({
                 destination: Cartesian3.fromDegrees(seg.lon, seg.lat, seg.altitude),
                 orientation: {
@@ -38,8 +48,9 @@ export default function GlobeAutoMode({ enabled }) {
                         : CesiumMath.toRadians(-75),
                     roll: 0,
                 },
-                duration:      2.8,
+                duration:       isNews ? 3.5 : 2.8,
                 easingFunction: EasingFunction.SINUSOIDAL_IN_OUT,
+                complete:       () => { startRotation(vwr) },
             })
         } catch (_) {}
     }
@@ -47,6 +58,7 @@ export default function GlobeAutoMode({ enabled }) {
     useEffect(() => {
         if (!enabled || !viewer) {
             clearInterval(timerRef.current)
+            clearInterval(rotationHandleRef.current)
             cancelRef.current = true
             setQueue([])
             setIndex(0)
@@ -95,6 +107,7 @@ export default function GlobeAutoMode({ enabled }) {
         return () => {
             cancelRef.current = true
             clearInterval(timerRef.current)
+            clearInterval(rotationHandleRef.current)
         }
     }, [enabled, viewer]) // eslint-disable-line react-hooks/exhaustive-deps
 
