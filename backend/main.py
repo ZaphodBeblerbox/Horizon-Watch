@@ -8810,6 +8810,7 @@ def normalize_signal(domain: str, source_obj: dict, alert_id: str = None) -> dic
 
 
 _forge_alerts: list = []          # in-memory rolling 24h alert buffer
+_forge_alerts = [a for a in _forge_alerts if a.get("alert_category") != "AIS_DARK_SHIP" and a.get("alert_category") != "DARK_SHIP"]
 _correlation_assessments: list = []  # cross-domain correlation results (24h)
 _last_cycle_stats: dict = {}         # stats from the most-recent detection cycle
 _cycle_history: list = []            # last 20 detection cycle summaries
@@ -18289,33 +18290,6 @@ async def _forge_detection_cycle():
                     print(f"[forge-brain] Stage1b loitering: {len(cable_loiter_rules)} cable / {len(port_loiter_rules)} port rules → {len(loiter_hits)} alert(s)")
             except Exception as _le:
                 print(f"[forge-brain] loitering check error: {_le}")
-
-            # Stage 1d — Dark ship (AIS gap) detection (DB-backed AIS_DARK_SHIP rules)
-            new_dark_alerts: list = []
-            try:
-                from database import RuleConfig, get_db
-                import json as _json_ds
-                with get_db() as _ddb:
-                    dark_rule_rows = _ddb.query(RuleConfig).filter(
-                        RuleConfig.rule_name == "AIS_DARK_SHIP",
-                        RuleConfig.enabled == True,
-                    ).all()
-                dark_rules = [
-                    {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
-                     "params": _json_ds.loads(r.params) if isinstance(r.params, str) else r.params}
-                    for r in dark_rule_rows
-                ]
-                if _dark_ship_detector is not None:
-                    cycle_now = datetime.now(timezone.utc)
-                    _dark_ship_detector.update(normalized_snap, cycle_now)
-                    if dark_rules:
-                        active_mmsis = set(normalized_snap.keys())
-                        new_dark_alerts = _dark_ship_detector.scan(dark_rules, cycle_now, active_mmsis)
-                        _dark_ship_detector.purge_stale(cycle_now)
-                        new_ais_alerts.extend(new_dark_alerts)
-                        print(f"[forge-brain] Stage1d dark-ship: {len(dark_rules)} rule(s), {len(new_dark_alerts)} alert(s)")
-            except Exception as _de:
-                print(f"[forge-brain] dark-ship check error: {_de}")
 
             # Stage 1e — Chokepoint activity (transit + loitering inside strategic polygons)
             new_choke_alerts: list = []
