@@ -19913,6 +19913,14 @@ def forge_get_alerts(_forge=Depends(_require_forge)):
 
 # ── Sanctions API endpoints ────────────────────────────────────────────────────
 
+@app.get("/api/sanctions/mmsi-list")
+def get_sanctions_mmsi_list(_=Depends(get_optional_user)):
+    """Return all MMSIs from the in-memory sanctions index for frontend filtering."""
+    mmsi_list = list(sanctions_loader._sanctions_by_mmsi.keys()) \
+        if hasattr(sanctions_loader, "_sanctions_by_mmsi") else []
+    return {"mmsi_list": mmsi_list, "count": len(mmsi_list)}
+
+
 @app.get("/api/sanctions/stats")
 def sanctions_stats(_=Depends(get_optional_user)):
     return sanctions_loader.stats()

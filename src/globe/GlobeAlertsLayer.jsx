@@ -121,12 +121,16 @@ function makeFilterAlert(sanctionedMmsiSet) {
             // Gate A — open water only
             if (isInland(lat, lon)) return false
             // Gate B — sanctions list only
-            const mmsi    = a.mmsi || (a.metadata?.mmsi) || ""
-            const onList  = a.sanctions_hit === true ||
-                a.on_sanctions_list === true ||
-                (a.metadata?.sanctions_hit) === true ||
-                (mmsi && sanctionedMmsiSet.has(mmsi))
-            if (!onList) return false
+            // If sanctionedMmsiSet is empty (fetch failed or pending),
+            // skip the gate entirely and show all dark ships
+            if (sanctionedMmsiSet.size > 0) {
+                const mmsi   = a.mmsi || (a.metadata?.mmsi) || ""
+                const onList = a.sanctions_hit === true ||
+                    a.on_sanctions_list === true ||
+                    (a.metadata?.sanctions_hit) === true ||
+                    (mmsi && sanctionedMmsiSet.has(mmsi))
+                if (!onList) return false
+            }
         }
 
         return true
