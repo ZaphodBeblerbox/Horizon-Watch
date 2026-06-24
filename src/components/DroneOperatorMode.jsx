@@ -407,9 +407,9 @@ export default function DroneOperatorMode({ mode, onMinimize, onExpand }) {
 
     useEffect(() => {
         if (streamStatus !== 'live') return
-        const RAILWAY = 'https://horizon-watch-production.up.railway.app'
-        console.log('[drone] SSE connecting to Railway:', RAILWAY)
-        const src = new EventSource(`${RAILWAY}/api/drone/events`)
+        const BACKEND = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+        console.log('[drone] SSE connecting to:', BACKEND)
+        const src = new EventSource(`${BACKEND}/api/drone/events`)
         src.onmessage = (e) => {
             try {
                 const msg = JSON.parse(e.data)

@@ -6294,7 +6294,7 @@ def _run_news_conflict_extraction_sync():
             pass
 
     MAX_NOM_CALLS           = 100   # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS_PER_CYCLE = 50    # raised from 25 — more coverage, still within cost cap
+    MAX_LLM_CALLS_PER_CYCLE = 8     # cost reduction: was 50
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
@@ -6334,7 +6334,7 @@ def _run_news_conflict_extraction_sync():
         except Exception as ex:
             return sn, fu, None, ex
 
-    MAX_FEEDS_PER_CYCLE = 150  # cap per cycle; shuffle ensures coverage rotates
+    MAX_FEEDS_PER_CYCLE = 80   # cost reduction: was 150; shuffle ensures coverage rotates
     import random as _rnd_feeds
     _feeds_this_cycle = list(_SCAN_FEEDS)
     _rnd_feeds.shuffle(_feeds_this_cycle)
@@ -6444,11 +6444,13 @@ def _run_news_conflict_extraction_sync():
             _intel = None
             _intel_llm_called = False
             _article_calls_today = usage_tracker.get_calls_today_by_type("article_intelligence")
+            _prescore = _cheap_prescore(title, summary or '')
             _can_call_llm = (
                 client
                 and llm_calls_this_cycle < MAX_LLM_CALLS_PER_CYCLE
                 and _article_calls_today < MAX_LLM_ARTICLE_CALLS_PER_DAY
                 and _claude_budget_ok()
+                and _prescore >= NEWS_ENRICHMENT_MIN_RELEVANCE_PRESCORE
             )
             if _can_call_llm:
                 try:
@@ -6903,6 +6905,35 @@ def _run_background_news_geocode_sync(max_articles: int = 120):
     print(f"[news-geo-worker] geo_validation={geo_validation_stats}")
 
 
+CONFLICT_KEYWORDS = [
+    'attack', 'strike', 'explosion', 'missile', 'bomb', 'war', 'conflict',
+    'military', 'troops', 'sanctions', 'coup', 'protest', 'riot', 'crisis',
+    'earthquake', 'flood', 'hurricane', 'tsunami', 'emergency', 'killed',
+    'dead', 'wounded', 'hostage', 'terrorism', 'nuclear', 'chemical',
+    'naval', 'aircraft', 'drone', 'radar', 'vessel', 'tanker', 'cargo',
+    'blockade', 'escalation', 'ceasefire', 'invasion', 'occupation',
+    'airstrike', 'shelling', 'artillery', 'submarine', 'warship',
+    'parliament', 'election', 'government', 'minister', 'president',
+    'diplomat', 'treaty', 'agreement', 'summit', 'sanctions', 'embargo',
+]
+_CONFLICT_GEO_TERMS = [
+    'strait', 'sea', 'gulf', 'port', 'border', 'coast',
+    'ocean', 'channel', 'airspace', 'territory',
+]
+NEWS_ENRICHMENT_MIN_RELEVANCE_PRESCORE = 6
+
+def _cheap_prescore(title: str, description: str = '') -> int:
+    text = (title + ' ' + description).lower()
+    score = 0
+    for kw in CONFLICT_KEYWORDS:
+        if kw in text:
+            score += 1
+    for g in _CONFLICT_GEO_TERMS:
+        if g in text:
+            score += 1
+    return min(score, 10)
+
+
 async def _extract_news_conflicts_loop():
     """Async wrapper: staggered 45s startup delay, then every 30 minutes."""
     await asyncio.sleep(45)  # staggered startup — prevents thundering herd
@@ -6978,7 +7009,7 @@ async def _background_news_geocode_loop():
             await loop.run_in_executor(_executor, _run_background_news_geocode_sync)
         except Exception as ex:
             print(f"[news-geo-worker] loop error: {ex}")
-        await asyncio.sleep(180)  # every 3 minutes
+        await asyncio.sleep(1800)  # cost reduction: was 3 min, now 30 min
 
 
 
@@ -7720,8 +7751,15 @@ def _surface_pool_cache_save(pool: list) -> None:
 
 # ── Horizon Snapshot: pre-built JSON cache for zero-latency cold starts ───────
 
+_snapshot_last_write: dict[str, float] = {}
+SNAPSHOT_COOLDOWN = 600  # seconds — don't rewrite any snapshot more than once per 10 min
+
 def _write_snapshot_sync(key: str, payload) -> None:
     """Upsert a snapshot row. Called from executor threads or async contexts."""
+    _now = time.time()
+    if _now - _snapshot_last_write.get(key, 0) < SNAPSHOT_COOLDOWN:
+        return  # too recent, skip
+    _snapshot_last_write[key] = _now
     try:
         from database import HorizonSnapshot
         data = _json.dumps(payload, default=str, ensure_ascii=False)
@@ -9412,7 +9450,7 @@ def _record_adsb_history(aircraft_list):
         if not icao24:
             continue
         last = _ADSB_LAST_RECORDED.get(icao24)
-        if last and (now - last) < 60:
+        if last and (now - last) < 300:  # cost reduction: was 60s
             continue
         _ADSB_LAST_RECORDED[icao24] = now
         if ac.get('lat') is None or ac.get('lon') is None:
@@ -9468,7 +9506,7 @@ def _record_ais_history(mmsi, vessel_data):
 
     now = time.time()
     last = _AIS_LAST_RECORDED.get(mmsi)
-    if last and (now - last) < 300:
+    if last and (now - last) < 600:  # cost reduction: was 300s
         return
     _AIS_LAST_RECORDED[mmsi] = now
     try:
@@ -9830,6 +9868,11 @@ async def _global_adsb_cache_loop():
             stale = [k for k, v in list(_GLOBAL_ADSB_CACHE.items()) if v.get("last_seen", 0) < cutoff]
             for k in stale:
                 _GLOBAL_ADSB_CACHE.pop(k, None)
+            # Hard cap at 3000 entries — drop oldest 500 if exceeded
+            if len(_GLOBAL_ADSB_CACHE) > 3000:
+                _oldest = sorted(_GLOBAL_ADSB_CACHE.items(), key=lambda x: x[1].get("last_seen", 0))
+                for k, _ in _oldest[:500]:
+                    _GLOBAL_ADSB_CACHE.pop(k, None)
             print(f"[ADSB-GLOBAL] {len(_GLOBAL_ADSB_CACHE)} aircraft tracked globally")
         except Exception as e:
             print(f"[ADSB-GLOBAL] loop error: {e}")
@@ -11256,8 +11299,8 @@ async def _daily_db_purge_loop():
                 print(f"[purge] Daily DB purge complete: {deleted}")
             except Exception as _pe:
                 print(f"[purge] Daily DB purge error: {_pe}")
-            # Sleep 23h to avoid running twice in the same 03:xx window
-            await asyncio.sleep(82800)
+            # Sleep 7 days — cost reduction: was daily, now weekly
+            await asyncio.sleep(604800)
         else:
             await asyncio.sleep(1800)
 
@@ -11578,15 +11621,18 @@ async def startup_event():
         asyncio.create_task(_youtube_reels_loop())
     asyncio.create_task(_shorts_refresh_loop())
     asyncio.create_task(_forge_detection_cycle())
-    asyncio.create_task(_sts_detection_loop())
+    # COST REDUCTION: paused for pilot phase
+    # asyncio.create_task(_sts_detection_loop())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
     asyncio.create_task(_zone_images_warmup_task())
     asyncio.create_task(_threat_matrix_loop())
-    asyncio.create_task(_threat_snapshot_loop())
+    # COST REDUCTION: paused for pilot phase
+    # asyncio.create_task(_threat_snapshot_loop())
     asyncio.create_task(_dirty_region_refresh_loop())
     asyncio.create_task(_daily_db_purge_loop())
-    asyncio.create_task(_trajectory_loop())
+    # COST REDUCTION: paused for pilot phase
+    # asyncio.create_task(_trajectory_loop())
     asyncio.create_task(_foresight_loop())
     asyncio.create_task(_startup_snapshot_prefill())
 
@@ -11628,6 +11674,14 @@ async def startup_event():
     spacy_mode = "spaCy NER" if _HAS_SPACY else "keyword fallback"
     print(f"[startup] Poll intervals — AIS: WebSocket | ADSB: 120s | RSS: 1800s")
     print(f"[startup] All background tasks started ({spacy_mode}). feeds={len(_SCAN_FEEDS)} executor_workers=4")
+    print("=" * 60)
+    print("COST REDUCTION MODE ACTIVE")
+    print("News loop: 30min | Geocode: 30min | Feeds cap: 80/cycle")
+    print("Haiku cap: 8/cycle | Prescore gate: >=6 required")
+    print("Paused: trajectory, threat_snapshot, STS")
+    print("History throttle: aircraft=5min, vessel=10min")
+    print("Snapshots: cooldown 10min per key")
+    print("=" * 60)
 
 
 # ── Pikud HaOref (Israel missile alerts) ─────────────────────────────────────
