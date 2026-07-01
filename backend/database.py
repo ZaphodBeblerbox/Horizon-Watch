@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Boolean, DateTime, Text, ForeignKey, Float, Integer, JSON, UniqueConstraint, Index
+from sqlalchemy import create_engine, Column, String, Boolean, DateTime, Text, ForeignKey, Float, Integer, JSON, UniqueConstraint, Index, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
@@ -6,6 +6,14 @@ import uuid, datetime, os
 
 DATABASE_URL = f"sqlite:///{os.getenv('DATA_DIR', './data')}/akili.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA cache_size = -65536")  # cap page cache at 64 MB
+    cursor.execute("PRAGMA journal_mode = WAL")   # WAL reduces lock contention
+    cursor.execute("PRAGMA mmap_size = 0")        # disable memory-mapped I/O
+    cursor.close()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

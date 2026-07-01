@@ -24,8 +24,26 @@ import shutil as _shutil
 import urllib.request
 import urllib.parse
 import urllib.error
-from collections import Counter
+from collections import Counter, OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
+
+# ── Memory management ─────────────────────────────────────────────────────────
+
+class CappedDict(OrderedDict):
+    """OrderedDict with a maximum size. Evicts oldest entry when cap is reached."""
+    def __init__(self, maxsize=10_000, *args, **kwargs):
+        self.maxsize = maxsize
+        super().__init__(*args, **kwargs)
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        if len(self) > self.maxsize:
+            oldest = next(iter(self))
+            del self[oldest]
+
+# Master pause flag — set True to pause heavy background feeds without redeploy
+HEAVY_FEEDS_PAUSED = False
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import httpx
@@ -293,9 +311,9 @@ if _COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET:
 else:
     print("[startup] Copernicus credentials missing — satellite search will use public mode.")
 
-_analysis_cache: dict = {}
-_geocode_proxy_cache: dict[tuple[str, int], list[dict]] = {}
-_nominatim_search_cache: dict[str, tuple[list, float]] = {}  # { query_lower: (results, ts) }
+_analysis_cache: CappedDict = CappedDict(maxsize=500)
+_geocode_proxy_cache: CappedDict = CappedDict(maxsize=5_000)
+_nominatim_search_cache: CappedDict = CappedDict(maxsize=5_000)  # { query_lower: (results, ts) }
 _NOMINATIM_CACHE_TTL = 300  # 5 minutes
 _zone_image_cache: dict[str, list[str]] = {}  # zone_id → [url, ...]
 
@@ -580,14 +598,14 @@ _last_intelligence_picture: dict = {}
 _ANOMALY_ALERTS: list = []
 
 # ── ADS-B and AIS history recording throttle ─────────────────────────────────
-_ADSB_LAST_RECORDED: dict = {}   # icao24 → last record timestamp (float)
-_AIS_LAST_RECORDED:  dict = {}   # mmsi   → last record timestamp (float)
+_ADSB_LAST_RECORDED: CappedDict = CappedDict(maxsize=20_000)  # icao24 → last record timestamp
+_AIS_LAST_RECORDED:  CappedDict = CappedDict(maxsize=20_000)  # mmsi   → last record timestamp
 
 # ── News conflict extraction state ────────────────────────────────────────────
-_NEWS_CONFLICT_MARKERS: list = []
-_NEWS_ARTICLE_STORE: dict[str, dict] = {}   # url -> enriched article snapshot (may have lat/lon None)
+_NEWS_CONFLICT_MARKERS: deque = deque(maxlen=2_000)
+_NEWS_ARTICLE_STORE: CappedDict = CappedDict(maxsize=2_000)  # url -> enriched article snapshot
 _NEWS_STORE_LOCK = threading.Lock()
-_PROCESSED_URLS: dict = {}       # url → timestamp (float), evicted after 72h
+_PROCESSED_URLS: CappedDict = CappedDict(maxsize=50_000)  # url → timestamp, evicted after 72h
 _PROCESSED_URLS_TTL = 72 * 3600  # 72 hours in seconds
 _FIRST_EXTRACTION_DONE = False   # cleared on first cycle so all current articles are processed fresh
 _executor = ThreadPoolExecutor(max_workers=4)   # for blocking I/O in sync extraction
@@ -1645,7 +1663,7 @@ Keep total prose to 250 words maximum."""
 
 # ── /analyse-news ──────────────────────────────────────────────────────────────
 
-_news_analysis_cache: dict = {}   # keyed by marker URL (stable unique id)
+_news_analysis_cache: CappedDict = CappedDict(maxsize=1_000)  # keyed by marker URL
 
 @app.post("/analyse-news")
 async def analyse_news_marker(payload: dict):
@@ -1770,7 +1788,7 @@ Keep the entire response under 400 tokens. Be specific and analytical."""
 
 # ── /news ─────────────────────────────────────────────────────────────────────
 
-_news_cache: dict = {}
+_news_cache: CappedDict = CappedDict(maxsize=500)
 NEWS_CACHE_TTL = 5 * 60  # seconds (reduced from 15m to 5m for fresher data)
 
 # Translation cache: original title → (translated_title, detected_lang)
@@ -3073,8 +3091,8 @@ def get_news_region():
 
 # ── /adsb ──────────────────────────────────────────────────────────────────────
 
-_adsb_cache: dict = {}
-_GLOBAL_ADSB_CACHE: dict = {}  # icao(upper) → aircraft dict with 'last_seen' float
+_adsb_cache: CappedDict = CappedDict(maxsize=500)
+_GLOBAL_ADSB_CACHE: CappedDict = CappedDict(maxsize=5_000)  # icao(upper) → aircraft dict
 
 GLOBAL_ADSB_REGIONS = [
     {"name": "Europe/Middle East", "lat": 40.0,  "lon": 22.5,  "dist": 3000},
@@ -5634,7 +5652,7 @@ def extract_locations_gazetteer(text: str, use_spacy: bool = True) -> list[str]:
 
 
 # ── Nominatim cache — each unique place is geocoded only once per process ──────
-_nominatim_cache: dict = {}
+_nominatim_cache: CappedDict = CappedDict(maxsize=5_000)
 
 
 def _geocode(location_name: str) -> dict | None:
@@ -8652,7 +8670,7 @@ async def _startup_warmup_tasks():
 # ══════════════════════════════════════════════════════════════════════════════
 
 _AISSTREAM_KEY   = os.getenv("AISSTREAM_API_KEY", "")
-_AIS_VESSELS:    dict = {}   # keyed by MMSI string
+_AIS_VESSELS: CappedDict = CappedDict(maxsize=10_000)  # keyed by MMSI string
 _AIS_LOCK        = threading.Lock()
 _sanctions_alerted: dict = {}   # mmsi → epoch of last sanctions alert (in-memory cooldown)
 _sts_candidates:    dict = {}   # (mmsi_a, mmsi_b) → proximity tracking state
@@ -8924,8 +8942,8 @@ def normalize_signal(domain: str, source_obj: dict, alert_id: str = None) -> dic
     }
 
 
-_forge_alerts: list = []          # in-memory rolling 24h alert buffer
-_correlation_assessments: list = []  # cross-domain correlation results (24h)
+_forge_alerts: deque = deque(maxlen=200)  # rolling alert buffer
+_correlation_assessments: deque = deque(maxlen=100)  # cross-domain correlation results
 _last_cycle_stats: dict = {}         # stats from the most-recent detection cycle
 _cycle_history: list = []            # last 20 detection cycle summaries
 _AIS_STATUS      = {"connected": False, "error": None, "vessel_count": 0, "last_msg": None, "last_poll": None}
@@ -9272,6 +9290,9 @@ async def _sts_detection_loop() -> None:
 async def _ais_websocket_loop():
     """Persistent WebSocket connection to aisstream.io. Reconnects on disconnect."""
     global _AIS_STATUS, _AIS_MSG_COUNTER, _AIS_LAST_LOG_T
+    if HEAVY_FEEDS_PAUSED:
+        print("[ais] HEAVY_FEEDS_PAUSED — AIS WebSocket not started")
+        return
     if not _AISSTREAM_KEY:
         _AIS_STATUS = {"connected": False, "error": "AISSTREAM_API_KEY not set", "vessel_count": 0, "last_msg": None}
         print("[ais] AISSTREAM_API_KEY not configured — live AIS disabled")
@@ -9477,7 +9498,7 @@ def _record_adsb_history(aircraft_list):
 
 
 # AIS aggregation buffer — flushed by _ais_aggregate_loop every 60s
-_AIS_AGG_BUFFER: dict[str, dict] = {}
+_AIS_AGG_BUFFER: CappedDict = CappedDict(maxsize=10_000)
 _AIS_AGG_LOCK   = threading.Lock()
 
 
@@ -9818,6 +9839,9 @@ async def _global_adsb_cache_loop():
     global _GLOBAL_ADSB_CACHE
     await asyncio.sleep(30)
     while True:
+        if HEAVY_FEEDS_PAUSED:
+            await asyncio.sleep(60)
+            continue
         try:
             loop = asyncio.get_event_loop()
             for region in GLOBAL_ADSB_REGIONS:
@@ -10374,12 +10398,22 @@ _OW_CATEGORY_MAP = {
 }
 
 # Two sessions — DOTA OBB (satellite, default) and COCO (fallback)
+# Sessions are NOT cached permanently — load on demand, release after use to free ~200MB RAM
 _ort_sessions     = {}
 _ort_session_lock = threading.Lock()
 
-def _get_ort_session(model_key="dota"):
+def _release_ort_session(model_key="dota"):
+    """Release ONNX session from RAM after use. Re-enabled by setting ONNX_PERSIST=True."""
+    import gc
     with _ort_session_lock:
         if model_key in _ort_sessions:
+            del _ort_sessions[model_key]
+    gc.collect()
+
+def _get_ort_session(model_key="dota"):
+    with _ort_session_lock:
+        # Only return cached session if ONNX_PERSIST env flag is set
+        if os.getenv("ONNX_PERSIST") and model_key in _ort_sessions:
             return _ort_sessions[model_key]
         try:
             import onnxruntime as ort
@@ -10706,9 +10740,10 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
 
     print(f"[overwatch] {len(detections)} detections (model={model_key}, conf≥{confidence})")
 
-    # Free memory explicitly
+    # Free memory explicitly — release ONNX session so ~200MB returns to OS
     import gc
     del all_aa_boxes, all_corners_px, all_scores, all_class_ids
+    _release_ort_session(model_key)
     gc.collect()
 
     return {
@@ -12163,6 +12198,32 @@ def get_news_geocoded():
         recent = [a for a in _NEWS_ARTICLE_STORE.values() if a.get("published", "") >= cutoff]
     markers, counts_by_region = _build_marker_set(recent, per_region=150, max_total=900)
     return {"articles": markers, "count": len(markers), "counts_by_region": counts_by_region}
+
+
+@app.get("/debug/cache-sizes")
+def debug_cache_sizes():
+    """Report current in-memory cache lengths. Use to verify caps are working."""
+    return {
+        "_GLOBAL_ADSB_CACHE":     {"len": len(_GLOBAL_ADSB_CACHE),     "cap": getattr(_GLOBAL_ADSB_CACHE,  "maxsize", None)},
+        "_AIS_VESSELS":           {"len": len(_AIS_VESSELS),            "cap": getattr(_AIS_VESSELS,         "maxsize", None)},
+        "_AIS_AGG_BUFFER":        {"len": len(_AIS_AGG_BUFFER),         "cap": getattr(_AIS_AGG_BUFFER,      "maxsize", None)},
+        "_NEWS_ARTICLE_STORE":    {"len": len(_NEWS_ARTICLE_STORE),     "cap": getattr(_NEWS_ARTICLE_STORE,  "maxsize", None)},
+        "_NEWS_CONFLICT_MARKERS": {"len": len(_NEWS_CONFLICT_MARKERS),  "cap": getattr(_NEWS_CONFLICT_MARKERS, "maxlen", None)},
+        "_forge_alerts":          {"len": len(_forge_alerts),           "cap": getattr(_forge_alerts,         "maxlen", None)},
+        "_PROCESSED_URLS":        {"len": len(_PROCESSED_URLS),         "cap": getattr(_PROCESSED_URLS,      "maxsize", None)},
+        "_adsb_cache":            {"len": len(_adsb_cache),             "cap": getattr(_adsb_cache,          "maxsize", None)},
+        "_ort_sessions":          {"len": len(_ort_sessions),           "keys": list(_ort_sessions.keys())},
+        "_correlation_assessments": {"len": len(_correlation_assessments), "cap": getattr(_correlation_assessments, "maxlen", None)},
+        "HEAVY_FEEDS_PAUSED":     HEAVY_FEEDS_PAUSED,
+    }
+
+
+@app.post("/admin/pause-feeds")
+async def admin_pause_feeds(pause: bool = True):
+    """Toggle HEAVY_FEEDS_PAUSED at runtime. AIS/ADSB loops check this flag every 60s."""
+    global HEAVY_FEEDS_PAUSED
+    HEAVY_FEEDS_PAUSED = pause
+    return {"heavy_feeds_paused": HEAVY_FEEDS_PAUSED}
 
 
 @app.get("/debug/news-geo-status")
