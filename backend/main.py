@@ -6147,9 +6147,8 @@ def _upsert_news_article(article: dict) -> None:
 
 
 def _merge_conflict_markers(new_markers: list[dict]) -> None:
-    global _NEWS_CONFLICT_MARKERS
     now_iso = datetime.now(timezone.utc).isoformat()
-    merged = [m for m in (_NEWS_CONFLICT_MARKERS + new_markers) if m.get("expires_at", "") > now_iso]
+    merged = [m for m in (list(_NEWS_CONFLICT_MARKERS) + new_markers) if m.get("expires_at", "") > now_iso]
     seen_urls = set()
     deduped = []
     for marker in merged:
@@ -6158,7 +6157,8 @@ def _merge_conflict_markers(new_markers: list[dict]) -> None:
             continue
         seen_urls.add(url)
         deduped.append(marker)
-    _NEWS_CONFLICT_MARKERS = deduped
+    _NEWS_CONFLICT_MARKERS.clear()
+    _NEWS_CONFLICT_MARKERS.extend(deduped)
 
 
 def _claude_budget_ok() -> bool:
@@ -6339,10 +6339,9 @@ def _run_news_conflict_extraction_sync():
 
     # Purge stale markers at start of each cycle
     now_iso = datetime.now(timezone.utc).isoformat()
-    _NEWS_CONFLICT_MARKERS[:] = [
-        m for m in _NEWS_CONFLICT_MARKERS
-        if m.get("expires_at", "") > now_iso
-    ]
+    _stale_purged = [m for m in _NEWS_CONFLICT_MARKERS if m.get("expires_at", "") > now_iso]
+    _NEWS_CONFLICT_MARKERS.clear()
+    _NEWS_CONFLICT_MARKERS.extend(_stale_purged)
 
     # ── Parallel feed fetch (20 concurrent HTTP workers) ──────────────────────
     def _prefetch_feed(args):

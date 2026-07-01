@@ -852,6 +852,7 @@ def migrate_db():
         ('correlation_score',      'FLOAT'),
         ('correlation_domains',    'TEXT'),
         ('analyst_note',           'TEXT'),
+        ('relevance_score',        'REAL'),
     ]
     if 'alerts' in tables:
         al_existing = [row[1] for row in cur.execute('PRAGMA table_info(alerts)').fetchall()]
