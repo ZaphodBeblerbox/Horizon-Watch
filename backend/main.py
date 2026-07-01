@@ -18645,6 +18645,7 @@ async def _forge_detection_cycle():
 
             # Stage 4 — Cross-domain correlation engine
             new_assessments: list = []
+            new_dark_alerts: list = []
             try:
                 ontology = _forge_ontology_load()
                 recent_events: list = []
