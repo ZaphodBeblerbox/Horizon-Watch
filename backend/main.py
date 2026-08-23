@@ -12930,6 +12930,114 @@ async def satellite_tile_png(z: int, x: int, y: int, dt: str = ""):
 # Returns a single base64-PNG for an arbitrary bounding box (drawn by the user).
 # Uses the same credentials/token cache as the tile proxy above.
 
+async def _fetch_sentinel_image_bytes(bounds: dict, image_type: str = "true-colour",
+                                       max_cloud: int = 20, days_back: int = 90,
+                                       date_str: str | None = None,
+                                       width: int | None = None, height: int | None = None) -> dict:
+    """Core Sentinel-2 Process API fetch, extracted from the /api/sentinel/imagery route so it can
+    be called directly (not just over HTTP) — used by that route and by SentinelScanner.run_scan().
+    Returns {"image_bytes": bytes, "width", "height", "image_type", "date"} on success,
+    or {"error": "..."} on any failure. Never raises — every failure path returns a real,
+    specific error string rather than throwing or silently producing an empty result."""
+    _TYPE_ALIASES = {
+        "true_color":   "true-colour",
+        "false_color":  "false-colour",
+        "true_colour":  "true-colour",
+        "false_colour": "false-colour",
+    }
+    image_type = _TYPE_ALIASES.get(image_type, image_type)
+
+    west  = bounds.get("west");  east  = bounds.get("east")
+    south = bounds.get("south"); north = bounds.get("north")
+    if None in (west, east, south, north):
+        return {"error": "bounds {north,south,east,west} required"}
+
+    if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
+        return {"error": "Copernicus credentials not configured"}
+
+    evalscript = _EVALSCRIPTS.get(image_type, _EVALSCRIPT_TRUE_COLOUR)
+
+    # ── Stepped size based on bbox span ──────────────────────────────────
+    lat_span = abs(north - south)
+    lng_span = abs(east  - west)
+    if width and height:
+        width  = min(2500, max(32, int(width)))
+        height = min(2500, max(32, int(height)))
+    else:
+        max_span = max(lat_span, lng_span)
+        if max_span < 0.1:
+            width = height = 512
+        elif max_span < 0.5:
+            width = height = 1024
+        else:
+            width = height = 2048
+
+    now = datetime.now(timezone.utc)
+    if date_str:
+        time_range = {
+            "from": f"{date_str}T00:00:00Z",
+            "to":   f"{date_str}T23:59:59Z",
+        }
+        mosaic_order = "mostRecent"
+    else:
+        time_range = {
+            "from": (now - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z"),
+            "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+        }
+        mosaic_order = "leastCC"
+
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": [west, south, east, north],
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+            },
+            "data": [{
+                "type": "sentinel-2-l2a",
+                "dataFilter": {
+                    "maxCloudCoverage": max_cloud if not date_str else 100,
+                    "timeRange": time_range,
+                    "mosaickingOrder": mosaic_order,
+                },
+            }],
+        },
+        "output": {
+            "width":  width,
+            "height": height,
+            "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+        },
+        "evalscript": evalscript,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client_h:
+            token, err = await _get_copernicus_access_token(client_h)
+            if not token:
+                return {"error": f"Sentinel Hub auth failed: {err}"}
+
+            resp = await client_h.post(
+                _SH_PROCESS_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        if resp.status_code == 200:
+            return {
+                "image_bytes": resp.content,
+                "width":       width,
+                "height":      height,
+                "image_type":  image_type,
+                "date":        date_str,
+            }
+        else:
+            detail = resp.text[:500]
+            print(f"[sentinel/imagery] Process API {resp.status_code}: {detail}")
+            return {"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail}
+    except Exception as e:
+        print(f"[sentinel/imagery] fetch error: {e}")
+        return {"error": str(e)}
+
+
 @app.post("/api/sentinel/imagery")
 async def sentinel_imagery(request: Request):
     """Fetch a full Sentinel-2 image for a drawn bounding box.
@@ -12943,107 +13051,28 @@ async def sentinel_imagery(request: Request):
         days_back  = int(body.get("days_back", 90))
         # Accept both "type" (new sidebar) and "image_type" (legacy)
         image_type = body.get("image_type") or body.get("type", "true-colour")
-        # Normalise underscore variants to dash variants used by _EVALSCRIPTS
-        _TYPE_ALIASES = {
-            "true_color":   "true-colour",
-            "false_color":  "false-colour",
-            "true_colour":  "true-colour",
-            "false_colour": "false-colour",
-        }
-        image_type = _TYPE_ALIASES.get(image_type, image_type)
         date_str   = body.get("date")   # optional YYYY-MM-DD for exact scene
-
-        west  = bounds.get("west");  east  = bounds.get("east")
-        south = bounds.get("south"); north = bounds.get("north")
-        if None in (west, east, south, north):
-            return JSONResponse({"error": "bounds {north,south,east,west} required"})
-
-        if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
-            return JSONResponse({"error": "Copernicus credentials not configured"})
-
-        evalscript = _EVALSCRIPTS.get(image_type, _EVALSCRIPT_TRUE_COLOUR)
-
-        # ── Stepped size based on bbox span ──────────────────────────────────
-        lat_span = abs(north - south)
-        lng_span = abs(east  - west)
         req_w = body.get("width");  req_h = body.get("height")
-        if req_w and req_h:
-            width  = min(2500, max(32, int(req_w)))
-            height = min(2500, max(32, int(req_h)))
-        else:
-            max_span = max(lat_span, lng_span)
-            if max_span < 0.1:
-                width = height = 512
-            elif max_span < 0.5:
-                width = height = 1024
-            else:
-                width = height = 2048
 
-        now = datetime.now(timezone.utc)
-        if date_str:
-            time_range = {
-                "from": f"{date_str}T00:00:00Z",
-                "to":   f"{date_str}T23:59:59Z",
-            }
-            mosaic_order = "mostRecent"
-        else:
-            time_range = {
-                "from": (now - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z"),
-                "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
-            }
-            mosaic_order = "leastCC"
+        result = await _fetch_sentinel_image_bytes(
+            bounds, image_type=image_type, max_cloud=max_cloud, days_back=days_back,
+            date_str=date_str, width=req_w, height=req_h,
+        )
+        if result.get("error"):
+            return JSONResponse(result)
 
-        payload = {
-            "input": {
-                "bounds": {
-                    "bbox": [west, south, east, north],
-                    "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
-                },
-                "data": [{
-                    "type": "sentinel-2-l2a",
-                    "dataFilter": {
-                        "maxCloudCoverage": max_cloud if not date_str else 100,
-                        "timeRange": time_range,
-                        "mosaickingOrder": mosaic_order,
-                    },
-                }],
-            },
-            "output": {
-                "width":  width,
-                "height": height,
-                "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
-            },
-            "evalscript": evalscript,
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client_h:
-            token, err = await _get_copernicus_access_token(client_h)
-            if not token:
-                return JSONResponse({"error": f"Sentinel Hub auth failed: {err}"})
-
-            resp = await client_h.post(
-                _SH_PROCESS_URL,
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-
-        if resp.status_code == 200:
-            img_b64 = _b64.b64encode(resp.content).decode()
-            return JSONResponse({
-                "image":       img_b64,
-                "width":       width,
-                "height":      height,
-                "bounds":      bounds,
-                "cloud_cover": max_cloud,
-                "days_back":   days_back,
-                "type":        image_type,
-                "image_type":  image_type,
-                "date":        date_str,
-            })
-        else:
-            detail = resp.text[:500]
-            print(f"[sentinel/imagery] Process API {resp.status_code}: {detail}")
-            return JSONResponse({"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail})
+        img_b64 = _b64.b64encode(result["image_bytes"]).decode()
+        return JSONResponse({
+            "image":       img_b64,
+            "width":       result["width"],
+            "height":      result["height"],
+            "bounds":      bounds,
+            "cloud_cover": max_cloud,
+            "days_back":   days_back,
+            "type":        result["image_type"],
+            "image_type":  result["image_type"],
+            "date":        date_str,
+        })
     except Exception as e:
         print(f"[sentinel/imagery] error: {e}")
         return JSONResponse({"error": str(e)})
