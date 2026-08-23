@@ -18015,19 +18015,13 @@ def _run_batch_scan_for_site(site, zoom=15):
                 px_box = [cx - 32, cy - 32, cx + 32, cy + 32]
             raw_dets.append((det, [int(v) for v in px_box]))
     else:
-        MOCK_CLASSES = ["plane", "large-vehicle", "vehicle", "ship", "storage-tank", "helicopter-pad"]
-        for _ in range(random.randint(2, 6)):
-            cx = random.randint(64, img_w - 64)
-            cy = random.randint(64, img_h - 64)
-            w  = random.randint(28, 68); h = random.randint(28, 68)
-            cls = random.choice(MOCK_CLASSES)
-            raw_dets.append(({
-                "class": cls, "category": "Object", "subcategory": "Unknown",
-                "confidence": round(random.uniform(0.52, 0.91), 2),
-                "center": [round(px_lat(cy), 5), round(px_lon(cx), 5)],
-                "lat": round(px_lat(cy), 5), "lon": round(px_lon(cx), 5),
-                "mock": True,
-            }, [max(0, cx-w//2), max(0, cy-h//2), min(img_w, cx+w//2), min(img_h, cy+h//2)]))
+        # No fabricated detections: this batch is used for human labeling/training review
+        # (TrainingWorkspace -> forge_label_detection), and an analyst confirming/correcting
+        # a randomly-generated "detection" would silently corrupt real accuracy/training data
+        # with labels for objects that were never actually there. If the ONNX model isn't
+        # available, that's a real failure — surface it as one instead of masking it with mock
+        # detections that look identical to real ones in the review UI.
+        raise RuntimeError("ONNX 'dota' model session unavailable — cannot run real detection for this site")
 
     # Build all_detections as percentage positions in the (possibly downscaled) full_image
     all_dets_pct = []
@@ -18101,29 +18095,13 @@ async def forge_ais_generate_batch(request: Request, _forge=Depends(_require_for
 
     vessels = [v for v in _AIS_VESSELS.values() if v.get("lat") and v.get("lon")]
 
-    if len(vessels) < 5:
-        MOCK_TYPES  = ["Tanker", "Cargo", "Container Ship", "Military", "Fishing", "Bulk Carrier", "General Cargo"]
-        MOCK_FLAGS  = ["Iran", "Russia", "China", "Panama", "Marshall Islands", "Liberia", "Bahamas", "Singapore"]
-        MOCK_DESTS  = ["Bandar Abbas", "Jeddah", "Shanghai", "Rotterdam", "Houston", "Novorossiysk", "Tartus", ""]
-        vessels = []
-        for _ in range(n):
-            mmsi = str(random.randint(300000000, 799999999))
-            vessels.append({
-                "mmsi":        mmsi,
-                "name":        f"VESSEL {random.randint(100, 999)}",
-                "ship_type":   random.choice(MOCK_TYPES),
-                "flag":        random.choice(MOCK_FLAGS),
-                "lat":         round(random.uniform(15, 45), 4),
-                "lon":         round(random.uniform(30, 80), 4),
-                "speed":       round(random.uniform(0, 18), 1),
-                "heading":     random.randint(0, 359),
-                "destination": random.choice(MOCK_DESTS),
-                "callsign":    f"A{random.randint(1000, 9999)}",
-                "mock":        True,
-            })
-    else:
-        random.shuffle(vessels)
-        vessels = vessels[:n]
+    # No fabricated vessels: this batch feeds a human labeling/training review
+    # (TrainingWorkspace -> forge_label_detection), and an analyst confirming/correcting a
+    # randomly-generated MMSI/vessel would silently corrupt real accuracy/training data with
+    # labels for a ship that never existed. If fewer than `n` real AIS vessels are currently
+    # tracked, return honestly fewer (down to zero) rather than padding with invented ones.
+    random.shuffle(vessels)
+    vessels = vessels[:n]
 
     for v in vessels:
         v["review_id"] = str(uuid.uuid4())
@@ -18144,37 +18122,14 @@ async def forge_news_generate_batch(request: Request, _forge=Depends(_require_fo
             if a.get("published", "") >= cutoff and a.get("title")
         ]
 
-    if len(candidates) < 3:
-        MOCK_TITLES = [
-            "Iran IRGC Conducts Naval Exercise Near Strait of Hormuz",
-            "Houthi Missile Strike Targets Red Sea Shipping Lane",
-            "Russia Deploys Additional Forces to Hmeimim Air Base",
-            "Sudan Armed Forces Report Ambush Near El Fasher",
-            "Turkish Drone Strike Kills 12 PKK Militants in Northern Iraq",
-            "China Expands Naval Base Facilities at Djibouti",
-            "Al-Shabaab Claims Ambush on AU Convoy in Somalia",
-            "Israeli Airstrikes Target Syrian Military Positions Near Deir ez-Zor",
-        ]
-        MOCK_TIERS   = ["critical", "significant", "elevated", "low"]
-        MOCK_TYPES   = ["Conflict", "Explosion / Remote Violence", "Strategic Developments"]
-        MOCK_SOURCES = ["Reuters", "AP", "BBC World", "Al Jazeera", "The Guardian"]
-        candidates = []
-        for i, title in enumerate(MOCK_TITLES):
-            candidates.append({
-                "id":            str(uuid.uuid4()),
-                "url":           f"https://example.com/mock/{i}",
-                "title":         title,
-                "source":        random.choice(MOCK_SOURCES),
-                "published":     (datetime.now(timezone.utc) - timedelta(hours=random.randint(1, 48))).isoformat(),
-                "severity_tier": random.choice(MOCK_TIERS),
-                "event_type":    random.choice(MOCK_TYPES),
-                "lat":           round(random.uniform(10, 45), 3),
-                "lon":           round(random.uniform(25, 75), 3),
-                "mock":          True,
-            })
-    else:
-        random.shuffle(candidates)
-        candidates = candidates[:n]
+    # No fabricated articles: this batch feeds a human labeling/training review
+    # (TrainingWorkspace -> forge_label_detection), and an analyst confirming/correcting a
+    # made-up headline (these were literally invented, real-sounding geopolitical events —
+    # e.g. a fabricated IRGC exercise or Houthi strike) would corrupt real accuracy/training
+    # data with labels for events that never happened. If fewer than 3 real recent articles
+    # exist, return honestly fewer (down to zero) rather than padding with invented ones.
+    random.shuffle(candidates)
+    candidates = candidates[:n]
 
     articles = []
     for a in candidates:
