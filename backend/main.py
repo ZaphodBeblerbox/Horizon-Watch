@@ -16181,6 +16181,12 @@ def _rule_row_to_dict(row) -> dict:
     }
 
 
+# Rule types actually read by live detection code (see: AIS loitering/chokepoint checks in the
+# fusion/detection cycle, ADSB loitering-near-airport check). Any other rule_name can be stored
+# but will never fire — so creation/update of one is rejected rather than silently accepted.
+WIRED_RULE_NAMES = ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY", "ADSB_LOITERING_NEAR_AIRPORT"]
+
+
 @app.get("/api/rules")
 def api_rules_list():
     """Return all rule configs."""
@@ -16203,6 +16209,10 @@ def api_rules_create(body: dict):
     trigger_type = body.get("trigger_type") or body.get("rule_name")
     if not trigger_type:
         raise HTTPException(status_code=422, detail="trigger_type (or rule_name) is required")
+    if trigger_type not in WIRED_RULE_NAMES:
+        raise HTTPException(status_code=400,
+                             detail=f"rule_name must be one of {WIRED_RULE_NAMES} — these are the only "
+                                    f"rule types currently wired into live detection.")
     name      = body.get("name") or trigger_type
     severity  = body.get("severity", "medium")
     icon_type = body.get("icon_type") or body.get("params", {}).get("icon_type")
@@ -16259,6 +16269,10 @@ def api_rules_update(rule_id: int, body: dict):
         if "params" in body:
             row.params = _ju.dumps(body["params"], ensure_ascii=False)
         if "rule_name" in body:
+            if body["rule_name"] not in WIRED_RULE_NAMES:
+                raise HTTPException(status_code=400,
+                                     detail=f"rule_name must be one of {WIRED_RULE_NAMES} — these are the only "
+                                            f"rule types currently wired into live detection.")
             row.rule_name = body["rule_name"]
         row.updated_at = _dt.datetime.utcnow()
         db.commit()
