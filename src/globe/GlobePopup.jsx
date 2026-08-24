@@ -244,6 +244,32 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
         return () => { handlerRef.current?.destroy(); handlerRef.current = null }
     }, [viewerRef, infraEnabled])
 
+    // Deep-link entry point: open the same real popup a click would, for an
+    // already-known entityStore id (e.g. "fusion-FUS-1234"). Dispatched by
+    // src/services/reportDeepLink.js when a report claim cites a live entity.
+    // If the entity isn't currently registered (aged out of the live picture
+    // since the report's snapshot was captured), this is a silent no-op —
+    // the fly-to the caller already dispatched still lands the camera on the
+    // real cited coordinates, it just won't have a marker to pop up.
+    useEffect(() => {
+        const handler = (e) => {
+            const id = e.detail?.id
+            if (!id) return
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer) return
+            const stored = getEntity(id)
+            if (!stored) return
+            const entity = viewer.entities.getById(id)
+            const pos = entity?.position?.getValue(viewer.clock.currentTime)
+            const sp  = pos ? SceneTransforms.worldToWindowCoordinates(viewer.scene, pos) : null
+            const x   = sp ? sp.x : viewer.scene.canvas.clientWidth / 2
+            const y   = sp ? sp.y : viewer.scene.canvas.clientHeight / 2
+            setPopup({ type: stored.type, data: stored.data, x, y, entityId: id })
+        }
+        window.addEventListener("akili:show-entity", handler)
+        return () => window.removeEventListener("akili:show-entity", handler)
+    }, [viewerRef])
+
     // Keep click popup anchored on entity position as camera moves
     useEffect(() => {
         if (!popup?.entityId) return

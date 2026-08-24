@@ -6,6 +6,7 @@ import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ForceGraph from "./forge/ForceGraph.jsx"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts"
+import { locateReportClaim } from "../services/reportDeepLink.js"
 
 const API = API_BASE
 
@@ -1396,6 +1397,517 @@ function ForgeLandingNav({ brainStatus, onNavigate, onPipeline }) {
     )
 }
 
+function ReportSnapshotsWorkspace() {
+    const [snapshots, setSnapshots] = useState([])
+    const [loaded,    setLoaded]    = useState(false)
+    const [capturing, setCapturing] = useState(false)
+    const [captureMsg, setCaptureMsg] = useState(null)
+    const [label,     setLabel]     = useState("")
+    const [expanded,  setExpanded]  = useState(null)   // snapshot_id of the one showing full content
+    const [detail,    setDetail]    = useState(null)   // fetched full content for `expanded`
+
+    const reload = () =>
+        fetch(`${API}/api/reports/snapshots?limit=50`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setSnapshots(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+
+    useEffect(() => { reload() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const capture = async () => {
+        setCapturing(true); setCaptureMsg(null)
+        try {
+            const res = await fetch(`${API}/api/reports/snapshots`, {
+                method: "POST", headers: forgeHeaders(),
+                body: JSON.stringify(label.trim() ? { label: label.trim() } : {}),
+            })
+            const d = await res.json()
+            if (res.ok) {
+                setCaptureMsg(`Captured ${d.snapshot_id}`)
+                setLabel("")
+                await reload()
+            } else {
+                setCaptureMsg(`Error: ${d.detail || "capture failed"}`)
+            }
+        } catch (e) {
+            setCaptureMsg(`Error: ${e.message}`)
+        } finally {
+            setCapturing(false)
+        }
+    }
+
+    const toggleDetail = async (snapId) => {
+        if (expanded === snapId) { setExpanded(null); setDetail(null); return }
+        setExpanded(snapId); setDetail(null)
+        try {
+            const res = await fetch(`${API}/api/reports/snapshots/${snapId}`, { headers: forgeHeaders() })
+            if (res.ok) setDetail(await res.json())
+        } catch (_e) {}
+    }
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                A snapshot freezes the current intelligence picture (active signals, fusion events, elevated regions, AIS/ADS-B anomalies, Sentinel detections) as a permanent, timestamped record with its own ID — unlike the live views elsewhere in this app, a captured snapshot never changes even as the underlying data moves on. This is the capture layer the Reports tab cites claims against.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+                <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Optional label (e.g. Red Sea AOI — daily)" style={{ ...inputStyle, flex: 1, maxWidth: 320 }} />
+                <button onClick={capture} disabled={capturing} style={{ padding: "6px 14px", borderRadius: 5, border: "none", background: capturing ? "#1e293b" : "#60a5fa", color: capturing ? "#475569" : "#0f172a", fontWeight: 600, cursor: capturing ? "default" : "pointer", fontSize: 11 }}>
+                    {capturing ? "Capturing…" : "Capture Snapshot Now"}
+                </button>
+                {captureMsg && <span style={{ color: captureMsg.startsWith("Error") ? "#f87171" : "#4ade80", fontSize: 11 }}>{captureMsg}</span>}
+            </div>
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && snapshots.length === 0 && (
+                <div style={{ color: "#334155", fontSize: 11 }}>No snapshots captured yet — click "Capture Snapshot Now" to freeze the current intelligence picture.</div>
+            )}
+            {snapshots.map(s => (
+                <div key={s.snapshot_id} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => toggleDetail(s.snapshot_id)}>
+                        <div>
+                            <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{s.label || s.snapshot_id}</span>
+                            <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{s.snapshot_id}</span>
+                        </div>
+                        <span style={{ color: "#475569", fontSize: 10 }}>{s.captured_at ? new Date(s.captured_at).toLocaleString() : "—"}</span>
+                    </div>
+                    <div style={{ color: "#64748b", fontSize: 10, marginTop: 6 }}>
+                        {s.statistics?.total_active_signals ?? "—"} signals · {s.statistics?.critical_signals ?? "—"} critical · {s.statistics?.active_fusions ?? "—"} fusions · {s.statistics?.active_surges ?? "—"} surges
+                        {s.statistics?.alerts_excluded_low_quality > 0 && <> · {s.statistics.alerts_excluded_low_quality} low-quality alerts excluded</>}
+                        {s.created_by && <> · captured by {s.created_by}</>}
+                    </div>
+                    {expanded === s.snapshot_id && (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(148,163,184,0.08)" }}>
+                            {!detail ? (
+                                <div style={{ color: "#334155", fontSize: 11 }}>Loading full content…</div>
+                            ) : (
+                                <pre style={{ color: "#94a3b8", fontSize: 10, maxHeight: 260, overflow: "auto", background: "#080c14", padding: 8, borderRadius: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                    {JSON.stringify(detail.content, null, 2)}
+                                </pre>
+                            )}
+                        </div>
+                    )}
+                </div>
+            ))}
+        </WorkspaceBody>
+    )
+}
+
+// ── Reports (roadmap Phase 3: report entity, status machine, council, PDF) ──
+//
+// Draft-to-published intelligence reports. Every report is keyed to a
+// ReportSnapshot (the tab alongside this one) so a claim can cite "signal X
+// in snapshot Y" rather than nothing. Submitting for review runs the
+// council (report_council.py): a deterministic pass — citation-existence,
+// geo-sanity — that no model can get wrong by being persuasive, plus two
+// independently-lensed model passes (citation fidelity, completeness).
+// Nothing here auto-advances a report; every step past draft is an explicit
+// human action, and a lens that has no Claude client configured reports
+// itself as skipped rather than faking a verdict.
+
+const REPORT_STATUSES = ["draft", "in_review", "approved", "published", "rejected"]
+const REPORT_STATUS_COLORS = { draft: "#94a3b8", in_review: "#facc15", approved: "#60a5fa", published: "#4ade80", rejected: "#f87171" }
+const REPORT_CITATION_SECTIONS = ["ais_anomalies", "adsb_anomalies", "fusion_events", "surge_events", "sentinel_detections", "news_assessments", "strategic_zones", "top_articles"]
+const RELIABILITY_CODES = ["A", "B", "C", "D", "E", "F"]
+const CREDIBILITY_CODES = ["1", "2", "3", "4", "5", "6"]
+
+function emptyReportClaim() {
+    return {
+        text: "", citation: { type: "snapshot_ref", section: REPORT_CITATION_SECTIONS[0], item_id: "" },
+        source_evaluation: null, asserted_zone: "", lat: "", lon: "",
+    }
+}
+
+function ClaimEditorRow({ claim, onChange, onRemove }) {
+    const set = (k, v) => onChange({ ...claim, [k]: v })
+    const setCitation = (k, v) => onChange({ ...claim, citation: { ...claim.citation, [k]: v } })
+    const [showGeo,  setShowGeo]  = useState(!!(claim.asserted_zone || claim.lat || claim.lon))
+    const [showEval, setShowEval] = useState(!!claim.source_evaluation)
+
+    return (
+        <div style={{ background: "#0d1422", borderRadius: 6, padding: 12, marginBottom: 8 }}>
+            <textarea value={claim.text} onChange={e => set("text", e.target.value)} placeholder="Claim text *" rows={2}
+                style={{ ...inputStyle, width: "100%", marginBottom: 6, resize: "vertical" }} />
+            <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                <select value={claim.citation.type} onChange={e => setCitation("type", e.target.value)} style={inputStyle}>
+                    <option value="snapshot_ref">citation: snapshot data</option>
+                    <option value="external">citation: external source</option>
+                </select>
+                {claim.citation.type === "snapshot_ref" ? (
+                    <>
+                        <select value={claim.citation.section || REPORT_CITATION_SECTIONS[0]} onChange={e => setCitation("section", e.target.value)} style={inputStyle}>
+                            {REPORT_CITATION_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <input value={claim.citation.item_id || ""} onChange={e => setCitation("item_id", e.target.value)} placeholder="item id (e.g. signal_id) *" style={inputStyle} />
+                    </>
+                ) : (
+                    <input value={claim.citation.url || ""} onChange={e => setCitation("url", e.target.value)} placeholder="Source URL *" style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
+                )}
+            </div>
+            <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
+                <label style={{ color: "#475569", fontSize: 10, cursor: "pointer" }}>
+                    <input type="checkbox" checked={showGeo} onChange={e => { setShowGeo(e.target.checked); if (!e.target.checked) onChange({ ...claim, asserted_zone: "", lat: "", lon: "" }) }} style={{ marginRight: 4 }} />
+                    Geo-sanity check
+                </label>
+                <label style={{ color: "#475569", fontSize: 10, cursor: "pointer" }}>
+                    <input type="checkbox" checked={showEval} onChange={e => { setShowEval(e.target.checked); if (!e.target.checked) set("source_evaluation", null) }} style={{ marginRight: 4 }} />
+                    Source evaluation (NATO Admiralty)
+                </label>
+            </div>
+            {showGeo && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                    <input value={claim.asserted_zone || ""} onChange={e => set("asserted_zone", e.target.value)} placeholder="Asserted zone name" style={{ ...inputStyle, flex: 1 }} />
+                    <input value={claim.lat || ""} onChange={e => set("lat", e.target.value)} placeholder="Lat" style={{ ...inputStyle, width: 90 }} />
+                    <input value={claim.lon || ""} onChange={e => set("lon", e.target.value)} placeholder="Lon" style={{ ...inputStyle, width: 90 }} />
+                </div>
+            )}
+            {showEval && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
+                    <select value={claim.source_evaluation?.reliability || ""} onChange={e => set("source_evaluation", { ...(claim.source_evaluation || {}), reliability: e.target.value })} style={inputStyle}>
+                        <option value="">reliability</option>
+                        {RELIABILITY_CODES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <select value={claim.source_evaluation?.credibility || ""} onChange={e => set("source_evaluation", { ...(claim.source_evaluation || {}), credibility: e.target.value })} style={inputStyle}>
+                        <option value="">credibility</option>
+                        {CREDIBILITY_CODES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <input value={claim.source_evaluation?.confidence_label || ""} onChange={e => set("source_evaluation", { ...(claim.source_evaluation || {}), confidence_label: e.target.value })} placeholder="confidence label (optional)" style={{ ...inputStyle, flex: 1 }} />
+                </div>
+            )}
+            <button onClick={onRemove} style={{ background: "none", border: "none", color: "#f87171", fontSize: 10, cursor: "pointer", padding: 0 }}>✕ Remove claim</button>
+        </div>
+    )
+}
+
+function ReportForm({ snapshots, existing, onSaved, onCancel }) {
+    const isEdit = !!existing
+    const [title,          setTitle]          = useState(existing?.title || "")
+    const [snapshotId,     setSnapshotId]     = useState(existing?.snapshot_id || (snapshots[0]?.snapshot_id || ""))
+    const [classification, setClassification] = useState(existing?.classification || "UNCLASSIFIED // FOR ANALYTICAL USE ONLY")
+    const [keyJudgments,   setKeyJudgments]   = useState(existing?.key_judgments || "")
+    const [claims, setClaims] = useState(
+        existing?.claims?.length
+            ? existing.claims.map(c => ({ ...c, lat: c.lat ?? "", lon: c.lon ?? "", asserted_zone: c.asserted_zone || "" }))
+            : [emptyReportClaim()]
+    )
+    const [saving, setSaving] = useState(false)
+    const [err, setErr]       = useState(null)
+
+    const updateClaim = (i, next) => setClaims(cs => cs.map((c, idx) => idx === i ? next : c))
+    const removeClaim = (i) => setClaims(cs => cs.filter((_, idx) => idx !== i))
+    const addClaim = () => setClaims(cs => [...cs, emptyReportClaim()])
+
+    const save = async () => {
+        setSaving(true); setErr(null)
+        try {
+            const payload = {
+                title: title.trim(), snapshot_id: snapshotId, classification, key_judgments: keyJudgments,
+                claims: claims.filter(c => c.text.trim()).map(c => ({
+                    ...(c.claim_id ? { claim_id: c.claim_id } : {}),
+                    text: c.text.trim(), citation: c.citation, source_evaluation: c.source_evaluation || null,
+                    asserted_zone: c.asserted_zone || null,
+                    lat: c.lat !== "" && c.lat != null ? parseFloat(c.lat) : null,
+                    lon: c.lon !== "" && c.lon != null ? parseFloat(c.lon) : null,
+                })),
+            }
+            const url = isEdit ? `${API}/api/reports/${existing.report_id}` : `${API}/api/reports`
+            const res = await fetch(url, { method: isEdit ? "PATCH" : "POST", headers: forgeHeaders(), body: JSON.stringify(payload) })
+            const d = await res.json()
+            if (res.ok) { onSaved(d) } else { setErr(d.detail || "Save failed") }
+        } catch (e) { setErr(e.message) }
+        finally { setSaving(false) }
+    }
+
+    return (
+        <div style={{ background: "#0d1422", borderRadius: 6, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Report title *" style={inputStyle} />
+                <select value={snapshotId} onChange={e => setSnapshotId(e.target.value)} disabled={isEdit} style={inputStyle}>
+                    <option value="">select a snapshot to cite *</option>
+                    {snapshots.map(s => <option key={s.snapshot_id} value={s.snapshot_id}>{s.label || s.snapshot_id}</option>)}
+                </select>
+            </div>
+            <input value={classification} onChange={e => setClassification(e.target.value)} placeholder="Classification" style={{ ...inputStyle, width: "100%", marginBottom: 8 }} />
+            <textarea value={keyJudgments} onChange={e => setKeyJudgments(e.target.value)} placeholder="Key judgments (analyst-written summary)" rows={3} style={{ ...inputStyle, width: "100%", marginBottom: 10, resize: "vertical" }} />
+            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                Sourced Claims ({claims.length})
+            </div>
+            {claims.map((c, i) => (
+                <ClaimEditorRow key={i} claim={c} onChange={next => updateClaim(i, next)} onRemove={() => removeClaim(i)} />
+            ))}
+            <button onClick={addClaim} style={{ ...ghostBtn, marginBottom: 10 }}>+ Add Claim</button>
+            {err && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{err}</div>}
+            <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={save} disabled={saving || !title.trim() || !snapshotId} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>
+                    {saving ? "Saving…" : isEdit ? "Save Changes" : "Create Draft Report"}
+                </button>
+                <button onClick={onCancel} style={ghostBtn}>Cancel</button>
+            </div>
+        </div>
+    )
+}
+
+function LensResult({ title, result }) {
+    if (!result) return null
+    return (
+        <div style={{ marginBottom: 10 }}>
+            <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{title}</div>
+            {result.status === "skipped" && <div style={{ color: "#475569", fontSize: 10, fontStyle: "italic" }}>Skipped — {result.reason}</div>}
+            {result.status === "error" && <div style={{ color: "#f87171", fontSize: 10 }}>Error — {result.reason}</div>}
+            {result.status === "ok" && Array.isArray(result.findings) && (
+                result.findings.length === 0
+                    ? <div style={{ color: "#334155", fontSize: 10 }}>No issues flagged.</div>
+                    : result.findings.map((f, i) => (
+                        <div key={i} style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
+                            <span style={{ color: f.verdict === "supported" ? "#4ade80" : f.verdict === "overstated" ? "#facc15" : "#f87171", fontWeight: 600 }}>
+                                {f.claim_id}{f.verdict ? ` — ${f.verdict}` : ""}
+                            </span>{f.comment ? `: ${f.comment}` : ""}
+                        </div>
+                    ))
+            )}
+            {result.status === "ok" && result.overall_comment !== undefined && (
+                <>
+                    <div style={{ color: "#94a3b8", fontSize: 10, marginBottom: 4 }}>{result.overall_comment || "(no overall comment)"}</div>
+                    {(result.per_claim || []).map((f, i) => (
+                        <div key={i} style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
+                            <span style={{ color: "#60a5fa", fontWeight: 600 }}>{f.claim_id}</span>: {f.comment}
+                        </div>
+                    ))}
+                </>
+            )}
+        </div>
+    )
+}
+
+function CouncilFindings({ findings }) {
+    if (!findings) return <div style={{ color: "#334155", fontSize: 11 }}>Council has not run yet.</div>
+    const det = findings.deterministic || []
+    return (
+        <div>
+            <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Deterministic Checks</div>
+            {det.length === 0
+                ? <div style={{ color: "#334155", fontSize: 10, marginBottom: 10 }}>No deterministic checks applied.</div>
+                : det.map((f, i) => (
+                    <div key={i} style={{ fontSize: 10, marginBottom: 3, color: f.passed ? "#4ade80" : "#f87171" }}>
+                        {f.passed ? "✓" : "✗"} {f.claim_id} — {f.check}: {f.detail}
+                    </div>
+                ))
+            }
+            <div style={{ marginTop: 10 }}>
+                <LensResult title="Citation Fidelity Lens" result={findings.citation_fidelity} />
+                <LensResult title="Completeness Lens" result={findings.completeness} />
+            </div>
+        </div>
+    )
+}
+
+function ReportCard({ report, snapshots, onChanged }) {
+    const [expanded, setExpanded] = useState(false)
+    const [full,     setFull]     = useState(null)
+    const [busy,     setBusy]     = useState(false)
+    const [editing,  setEditing]  = useState(false)
+    const [note,     setNote]     = useState("")
+    const [snapContent, setSnapContent] = useState(null)
+    const [locatingId,  setLocatingId]  = useState(null)
+    const [locateMsg,   setLocateMsg]   = useState(null)
+
+    const locate = async (claim) => {
+        setLocatingId(claim.claim_id); setLocateMsg(null)
+        try {
+            let content = snapContent
+            if (!content && claim.citation?.type === "snapshot_ref") {
+                const res = await fetch(`${API}/api/reports/snapshots/${full.snapshot_id}`, { headers: forgeHeaders() })
+                if (res.ok) { content = (await res.json()).content; setSnapContent(content) }
+            }
+            const result = await locateReportClaim(claim, content)
+            if (result.kind === "error") setLocateMsg(`${claim.claim_id}: ${result.reason}`)
+            else if (result.kind === "map" && result.entityFound === false) setLocateMsg(`${claim.claim_id}: flew to the location — its live marker is no longer active`)
+            else setLocateMsg(null)
+        } catch (e) { setLocateMsg(`${claim.claim_id}: ${e.message}`) }
+        finally { setLocatingId(null) }
+    }
+
+    const loadFull = async () => {
+        try {
+            const res = await fetch(`${API}/api/reports/${report.report_id}`, { headers: forgeHeaders() })
+            if (res.ok) setFull(await res.json())
+        } catch (_e) {}
+    }
+
+    const toggle = () => {
+        if (expanded) { setExpanded(false); return }
+        setExpanded(true)
+        loadFull()
+    }
+
+    const doAction = async (action, body) => {
+        setBusy(true)
+        try {
+            const res = await fetch(`${API}/api/reports/${report.report_id}/${action}`, {
+                method: "POST", headers: forgeHeaders(), body: JSON.stringify(body || {}),
+            })
+            const d = await res.json()
+            if (res.ok) { setFull(d); setNote(""); onChanged() } else { alert(d.detail || `${action} failed`) }
+        } catch (e) { alert(e.message) }
+        finally { setBusy(false) }
+    }
+
+    const downloadPdf = () => {
+        fetch(`${API}/api/reports/${report.report_id}/pdf`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.blob() : Promise.reject(new Error("PDF export failed")))
+            .then(blob => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = `${report.report_id}.pdf`; a.click(); URL.revokeObjectURL(u) })
+            .catch(e => alert(e.message))
+    }
+
+    const row = full || report
+    const statusColor = REPORT_STATUS_COLORS[row.status] || "#475569"
+
+    return (
+        <div style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={toggle}>
+                <div>
+                    <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{row.title}</span>
+                    <span style={{ padding: "1px 6px", borderRadius: 8, marginLeft: 8, background: statusColor + "22", color: statusColor, fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>{row.status}</span>
+                    <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{row.report_id}</span>
+                </div>
+                <span style={{ color: "#475569", fontSize: 10 }}>{row.created_at ? new Date(row.created_at).toLocaleString() : "—"}</span>
+            </div>
+            <div style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>
+                snapshot: {row.snapshot_id} · {(row.claims || []).length} claim(s)
+                {row.reviewer && <> · reviewed by {row.reviewer}</>}
+            </div>
+            {expanded && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(148,163,184,0.08)" }}>
+                    {!full ? <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div> : editing ? (
+                        <ReportForm
+                            snapshots={snapshots}
+                            existing={full}
+                            onSaved={d => { setFull(d); setEditing(false); onChanged() }}
+                            onCancel={() => setEditing(false)}
+                        />
+                    ) : (
+                        <>
+                            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", marginBottom: 4 }}>{full.classification}</div>
+                            {full.key_judgments && <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 10, whiteSpace: "pre-wrap" }}>{full.key_judgments}</div>}
+                            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", marginBottom: 6 }}>Claims ({(full.claims || []).length})</div>
+                            {(full.claims || []).map(c => (
+                                <div key={c.claim_id} style={{ marginBottom: 8, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
+                                    <div style={{ color: "#cbd5e1", fontSize: 11 }}>{c.text}</div>
+                                    <div style={{ color: "#475569", fontSize: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                        <span>
+                                            {c.citation?.type === "snapshot_ref" ? `snapshot: ${c.citation.section} / ${c.citation.item_id}` : c.citation?.url}
+                                            {c.source_evaluation && (c.source_evaluation.reliability || c.source_evaluation.credibility) &&
+                                                <> · Source Eval: {c.source_evaluation.reliability || "?"}{c.source_evaluation.credibility || "?"}</>}
+                                        </span>
+                                        <button onClick={() => locate(c)} disabled={locatingId === c.claim_id} style={{ background: "none", border: "none", color: "#60a5fa", cursor: "pointer", fontSize: 10, padding: 0 }}>
+                                            {locatingId === c.claim_id ? "Locating…" : c.citation?.type === "external" || c.citation?.section === "top_articles" ? "Open Source ↗" : "Locate on Map ↗"}
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                            {locateMsg && <div style={{ color: "#facc15", fontSize: 10, marginBottom: 8, fontStyle: "italic" }}>{locateMsg}</div>}
+                            {full.status !== "draft" && (
+                                <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(148,163,184,0.06)" }}>
+                                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", marginBottom: 6 }}>Council Findings</div>
+                                    <CouncilFindings findings={full.council_findings} />
+                                </div>
+                            )}
+                            {full.review_note && <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>Reviewer note: {full.review_note}</div>}
+                            <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+                                {full.status === "draft" && (
+                                    <>
+                                        <button onClick={() => setEditing(true)} style={ghostBtn}>Edit</button>
+                                        <button onClick={() => doAction("submit-for-review")} disabled={busy} style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.3)" }}>
+                                            {busy ? "Running council…" : "Submit for Review"}
+                                        </button>
+                                    </>
+                                )}
+                                {full.status === "in_review" && (
+                                    <>
+                                        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewer note (optional)" style={{ ...inputStyle, flex: 1, minWidth: 160 }} />
+                                        <button onClick={() => doAction("approve", { note })} disabled={busy} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>Approve</button>
+                                        <button onClick={() => doAction("reject", { note })} disabled={busy} style={{ ...ghostBtn, color: "#f87171", borderColor: "rgba(248,113,113,0.3)" }}>Reject</button>
+                                    </>
+                                )}
+                                {full.status === "approved" && (
+                                    <button onClick={() => doAction("publish")} disabled={busy} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>Publish</button>
+                                )}
+                                <button onClick={downloadPdf} style={ghostBtn}>⬇ Download PDF</button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
+
+function ReportsPanel() {
+    const [reports,   setReports]   = useState([])
+    const [snapshots, setSnapshots] = useState([])
+    const [loaded,    setLoaded]    = useState(false)
+    const [statusFilter, setStatusFilter] = useState("all")
+    const [showForm, setShowForm]   = useState(false)
+
+    const reload = () => {
+        const q = statusFilter !== "all" ? `?status=${statusFilter}` : ""
+        fetch(`${API}/api/reports${q}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setReports(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+    }
+
+    const loadSnapshots = () =>
+        fetch(`${API}/api/reports/snapshots?limit=50`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setSnapshots(Array.isArray(d) ? d : []))
+            .catch(() => {})
+
+    useEffect(() => { reload() }, [statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { loadSnapshots() }, [])
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                Draft, review, and publish sourced intelligence reports. Every report cites a captured snapshot; submitting for review runs the council — a deterministic pass (citation-existence, geo-sanity) plus two independently-lensed model passes (citation fidelity, completeness) — and every step past draft requires an explicit human action.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                    {["all", ...REPORT_STATUSES].map(s => (
+                        <button key={s} onClick={() => setStatusFilter(s)} style={{ ...ghostBtn, color: statusFilter === s ? (REPORT_STATUS_COLORS[s] || "#60a5fa") : "#94a3b8", borderColor: statusFilter === s ? (REPORT_STATUS_COLORS[s] || "#60a5fa") + "55" : "rgba(148,163,184,0.15)" }}>{s}</button>
+                    ))}
+                </div>
+                <button onClick={() => setShowForm(v => !v)} disabled={snapshots.length === 0} style={{ padding: "5px 12px", borderRadius: 5, border: "none", background: showForm ? "#60a5fa" : "#1e293b", color: showForm ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: snapshots.length === 0 ? "default" : "pointer", fontSize: 10 }}
+                    title={snapshots.length === 0 ? "Capture a snapshot first (Snapshots tab)" : ""}>
+                    {showForm ? "Close" : "+ New Report"}
+                </button>
+            </div>
+            {snapshots.length === 0 && <div style={{ color: "#475569", fontSize: 10, marginBottom: 10 }}>No snapshots captured yet — a report must cite one. Capture one from the Snapshots tab first.</div>}
+            {showForm && <ReportForm snapshots={snapshots} onSaved={() => { setShowForm(false); reload() }} onCancel={() => setShowForm(false)} />}
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && reports.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No {statusFilter === "all" ? "" : statusFilter + " "}reports yet.</div>}
+            {reports.map(r => <ReportCard key={r.report_id} report={r} snapshots={snapshots} onChanged={reload} />)}
+        </WorkspaceBody>
+    )
+}
+
+function ReportsWorkspace() {
+    const [tab, setTab] = useState("reports")
+    return (
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <Toolbar>
+                <div style={{ display: "flex", gap: 2, background: "#0a0e1a", borderRadius: 4, padding: 2 }}>
+                    {["reports", "snapshots"].map(t => (
+                        <button key={t} onClick={() => setTab(t)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: tab === t ? "rgba(96,165,250,0.12)" : "transparent", color: tab === t ? "#60a5fa" : "#475569", fontSize: 10, fontWeight: tab === t ? 600 : 400 }}>
+                            {t.charAt(0).toUpperCase() + t.slice(1)}
+                        </button>
+                    ))}
+                </div>
+            </Toolbar>
+            {tab === "reports" ? <ReportsPanel /> : <ReportSnapshotsWorkspace />}
+        </div>
+    )
+}
+
 function WorkspaceRouter({ workspace, node, brainStatus }) {
     switch (workspace) {
         case "ais-source":      return <AISSourceWorkspace />
@@ -1417,7 +1929,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "alerts":          return <AlertsWorkspace />
         case "geocoder":        return <SimpleInfo title="Geocoder" body="Provides lat/lng resolution for news events and uploaded entity data. Feeds the threat scoring engine." />
         case "briefings":       return <SimpleInfo title="Director Briefings" body="AI-generated intelligence briefings from threat scores and correlation assessments. Delivered via the Director system." />
-        case "reports":         return <SimpleInfo title="Reports" body="Export-ready PDF and JSON reports generated from pattern recognition and threat assessments." />
+        case "reports":         return <ReportsWorkspace />
         default:                return <SimpleInfo title={workspace} body="Workspace under construction." />
     }
 }
@@ -2057,6 +2569,14 @@ function UploadsWorkspace() {
     const [msg, setMsg] = useState("")
     const fileRef = useRef(null)
 
+    // Optional citation metadata — carried through to any entity-relationship
+    // claim this upload's document extraction produces, so a reviewer sees a
+    // real source instead of just "uploaded document".
+    const [srcTitle, setSrcTitle]         = useState("")
+    const [srcPublisher, setSrcPublisher] = useState("")
+    const [srcDate, setSrcDate]           = useState("")
+    const [srcUrl, setSrcUrl]             = useState("")
+
     const reload = () =>
         fetch(`${API}/api/forge/uploads`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : []).then(d => setUploads(Array.isArray(d) ? d : [])).catch(() => {})
@@ -2066,12 +2586,23 @@ function UploadsWorkspace() {
     const upload = async (e) => {
         const file = e.target.files?.[0]; if (!file) return
         setUploading(true); setMsg("")
-        const fd = new FormData(); fd.append("file", file)
+        const fd = new FormData()
+        fd.append("file", file)
+        if (srcTitle) fd.append("source_title", srcTitle)
+        if (srcPublisher) fd.append("source_publisher", srcPublisher)
+        if (srcDate) fd.append("source_date", srcDate)
+        if (srcUrl) fd.append("source_url", srcUrl)
         try {
             const res = await fetch(`${API}/api/forge/upload`, { method: "POST", headers: forgeFormHeaders(), body: fd })
             const d = await res.json()
-            setMsg(res.ok ? `Uploaded: ${d.original_name || file.name}` : d.detail || "Failed")
-            if (res.ok) reload()
+            if (res.ok) {
+                const pending = d.relationships_pending || 0
+                setMsg(`Uploaded: ${d.filename || file.name} — ${d.entities_extracted || 0} entities` +
+                    (pending ? `, ${pending} relationship claim(s) awaiting review below` : ""))
+                reload()
+            } else {
+                setMsg(d.detail || "Failed")
+            }
         } catch (_e) { setMsg("Upload failed") }
         finally { setUploading(false); if (fileRef.current) fileRef.current.value = "" }
     }
@@ -2080,7 +2611,13 @@ function UploadsWorkspace() {
         <WorkspaceBody>
             <div style={{ maxWidth: 640 }}>
                 <Section title="Upload Intelligence File">
-                    <div style={{ color: "#475569", fontSize: 11, marginBottom: 10 }}>CSV, KML, GeoJSON, and PDF files are parsed for entities and added to the ontology graph.</div>
+                    <div style={{ color: "#475569", fontSize: 11, marginBottom: 10 }}>CSV, KML, and GeoJSON files are parsed for entities and added to the ontology graph directly. PDF/text documents are also checked for entity relationships — those land in the pending review queue below, not the live graph, until approved.</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                        <input value={srcTitle} onChange={e => setSrcTitle(e.target.value)} placeholder="Source title (optional)" style={inputStyle} />
+                        <input value={srcPublisher} onChange={e => setSrcPublisher(e.target.value)} placeholder="Publisher (optional)" style={inputStyle} />
+                        <input value={srcDate} onChange={e => setSrcDate(e.target.value)} placeholder="Source date (optional)" style={inputStyle} />
+                        <input value={srcUrl} onChange={e => setSrcUrl(e.target.value)} placeholder="Source URL (optional)" style={inputStyle} />
+                    </div>
                     <input ref={fileRef} type="file" accept=".csv,.kml,.geojson,.json,.pdf" onChange={upload} disabled={uploading} style={{ display: "none" }} id="upload-file-input" />
                     <label htmlFor="upload-file-input" style={{ ...ghostBtn, display: "inline-block", cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.5 : 1 }}>
                         {uploading ? "Uploading…" : "+ Choose File"}
@@ -2092,14 +2629,101 @@ function UploadsWorkspace() {
                     {uploads.map((u, i) => (
                         <div key={i} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <div>
-                                <div style={{ color: "#cbd5e1", fontSize: 12, fontWeight: 500 }}>{u.original_name || u.filename}</div>
-                                <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{u.data_type || "auto"} · {u.entities_added || 0} entities · {u.uploaded_at?.slice(0, 10) || "—"}</div>
+                                <div style={{ color: "#cbd5e1", fontSize: 12, fontWeight: 500 }}>{u.filename}</div>
+                                <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>
+                                    {u.type || "auto"} · {u.entities_extracted || 0} entities
+                                    {u.relationships_pending ? ` · ${u.relationships_pending} claim(s) pending review` : ""}
+                                    {" · "}{u.uploaded_at?.slice(0, 10) || "—"}
+                                </div>
                             </div>
                         </div>
                     ))}
                 </Section>
             </div>
+            <OntologyClaimsReview />
         </WorkspaceBody>
+    )
+}
+
+// ── Entity-relationship claims review queue ─────────────────────────────────
+//
+// Every relationship a document upload extracts lands here as "pending" — it
+// is never merged into the live ontology graph on its own. A person reads the
+// cited excerpt and either approves it (creating the two entity nodes plus a
+// cited edge) or rejects it. This mirrors the report pipeline's human-review
+// gate, applied to ingested entity relationships.
+function OntologyClaimsReview() {
+    const [claims, setClaims] = useState([])
+    const [statusFilter, setStatusFilter] = useState("pending")
+    const [busyId, setBusyId] = useState(null)
+    const [loaded, setLoaded] = useState(false)
+
+    const reload = () =>
+        fetch(`${API}/api/forge/ontology/claims?status=${statusFilter}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setClaims(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+
+    useEffect(() => { reload() }, [statusFilter])
+
+    const act = async (claimId, action) => {
+        setBusyId(claimId)
+        try {
+            const res = await fetch(`${API}/api/forge/ontology/claims/${claimId}/${action}`, {
+                method: "POST", headers: forgeHeaders(), body: JSON.stringify({}),
+            })
+            if (res.ok) reload()
+        } catch (_e) { /* leave as pending, reviewer can retry */ }
+        finally { setBusyId(null) }
+    }
+
+    return (
+        <Section title={`Entity-Relationship Claims — Pending Review`}>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 10 }}>
+                Relationships extracted from uploaded documents (or loaded from an offline sourcing pass) wait here, each with its own citation, until approved. Nothing below is live in the ontology graph yet.
+            </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                {["pending", "approved", "rejected", "all"].map(s => (
+                    <button key={s} onClick={() => setStatusFilter(s)}
+                        style={{ ...ghostBtn, background: statusFilter === s ? "rgba(96,165,250,0.15)" : "transparent", color: statusFilter === s ? "#60a5fa" : "#94a3b8" }}>
+                        {s}
+                    </button>
+                ))}
+            </div>
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && claims.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No {statusFilter === "all" ? "" : statusFilter} claims.</div>}
+            {claims.map(c => (
+                <div key={c.claim_id} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8 }}>
+                    <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 500, marginBottom: 4 }}>
+                        {c.entity_a.label} <span style={{ color: "#60a5fa" }}>— {c.relationship_type} →</span> {c.entity_b.label}
+                        {c.as_of && <span style={{ color: "#475569", fontWeight: 400 }}> ({c.as_of})</span>}
+                    </div>
+                    {c.source.excerpt && (
+                        <div style={{ color: "#94a3b8", fontSize: 11, fontStyle: "italic", marginBottom: 4, borderLeft: "2px solid rgba(148,163,184,0.2)", paddingLeft: 8 }}>
+                            "{c.source.excerpt}"
+                        </div>
+                    )}
+                    <div style={{ color: "#475569", fontSize: 10, marginBottom: 8 }}>
+                        {c.source.title || "Untitled source"}{c.source.publisher ? ` · ${c.source.publisher}` : ""}{c.source.date ? ` · ${c.source.date}` : ""}
+                        {c.source.url && <>{" · "}<a href={c.source.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>source ↗</a></>}
+                        {" · confidence: "}{c.confidence || "unset"}
+                        {c.status !== "pending" && <> · <span style={{ color: c.status === "approved" ? "#4ade80" : "#f87171" }}>{c.status}</span>{c.reviewer ? ` by ${c.reviewer}` : ""}</>}
+                    </div>
+                    {c.status === "pending" && (
+                        <div style={{ display: "flex", gap: 6 }}>
+                            <button onClick={() => act(c.claim_id, "approve")} disabled={busyId === c.claim_id}
+                                style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>
+                                {busyId === c.claim_id ? "…" : "Approve"}
+                            </button>
+                            <button onClick={() => act(c.claim_id, "reject")} disabled={busyId === c.claim_id}
+                                style={{ ...ghostBtn, color: "#f87171", borderColor: "rgba(248,113,113,0.3)" }}>
+                                {busyId === c.claim_id ? "…" : "Reject"}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            ))}
+        </Section>
     )
 }
 
@@ -5083,6 +5707,231 @@ function EditNodeModal({ en, nodes, edges, onClose, onDeleteEntity, onDeleteConn
     )
 }
 
+// ── Assets — civilian/military/dual-use infrastructure registry ────────────
+//
+// A purpose-built registry for "is this port civilian, military, or
+// dual-use, and who owns it" — a question the rest of the ontology graph has
+// no fields for. Every row requires a real citation; the backend rejects
+// creation and edits that would leave a row without one.
+const ASSET_CATEGORIES = ["civilian", "military", "dual_use", "unknown"]
+const ASSET_CATEGORY_COLORS = { civilian: "#4ade80", military: "#f87171", dual_use: "#facc15", unknown: "#475569" }
+
+function AssetForm({ onSaved, onCancel }) {
+    const [form, setForm] = useState({
+        name: "", asset_type: "", category: "dual_use", owner: "", operator: "", country: "",
+        lat: "", lng: "", description: "", region_tag: "", confidence: "direct",
+        source_title: "", source_publisher: "", source_date: "", source_url: "", source_excerpt: "",
+    })
+    const [saving, setSaving] = useState(false)
+    const [err, setErr] = useState(null)
+    const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+    const save = async () => {
+        setSaving(true); setErr(null)
+        try {
+            const payload = { ...form, lat: form.lat ? parseFloat(form.lat) : null, lng: form.lng ? parseFloat(form.lng) : null }
+            const res = await fetch(`${API}/api/forge/assets`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify(payload) })
+            const d = await res.json()
+            if (res.ok) { onSaved(d) } else { setErr(d.detail || "Save failed") }
+        } catch (e) { setErr(e.message) }
+        finally { setSaving(false) }
+    }
+
+    return (
+        <div style={{ background: "#0d1422", borderRadius: 6, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Name *" style={inputStyle} />
+                <input value={form.asset_type} onChange={e => set("asset_type", e.target.value)} placeholder="Type * (port, airbase, naval_base…)" style={inputStyle} />
+                <select value={form.category} onChange={e => set("category", e.target.value)} style={inputStyle}>
+                    {ASSET_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={form.confidence} onChange={e => set("confidence", e.target.value)} style={inputStyle}>
+                    <option value="direct">confidence: direct</option>
+                    <option value="inferred">confidence: inferred</option>
+                </select>
+                <input value={form.owner} onChange={e => set("owner", e.target.value)} placeholder="Owner" style={inputStyle} />
+                <input value={form.operator} onChange={e => set("operator", e.target.value)} placeholder="Operator (if different)" style={inputStyle} />
+                <input value={form.country} onChange={e => set("country", e.target.value)} placeholder="Country" style={inputStyle} />
+                <input value={form.region_tag} onChange={e => set("region_tag", e.target.value)} placeholder="Region tag (e.g. red_sea_bab_el_mandeb)" style={inputStyle} />
+                <input value={form.lat} onChange={e => set("lat", e.target.value)} placeholder="Lat" style={inputStyle} />
+                <input value={form.lng} onChange={e => set("lng", e.target.value)} placeholder="Lng" style={inputStyle} />
+            </div>
+            <textarea value={form.description} onChange={e => set("description", e.target.value)} placeholder="Description" rows={2} style={{ ...inputStyle, width: "100%", marginBottom: 8, resize: "vertical" }} />
+            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Citation (required)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <input value={form.source_title} onChange={e => set("source_title", e.target.value)} placeholder="Source title" style={inputStyle} />
+                <input value={form.source_publisher} onChange={e => set("source_publisher", e.target.value)} placeholder="Publisher" style={inputStyle} />
+                <input value={form.source_date} onChange={e => set("source_date", e.target.value)} placeholder="Source date" style={inputStyle} />
+                <input value={form.source_url} onChange={e => set("source_url", e.target.value)} placeholder="Source URL" style={inputStyle} />
+            </div>
+            <textarea value={form.source_excerpt} onChange={e => set("source_excerpt", e.target.value)} placeholder="Quoted excerpt grounding the category/ownership claim *" rows={2} style={{ ...inputStyle, width: "100%", marginBottom: 8, resize: "vertical" }} />
+            {err && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{err}</div>}
+            <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={save} disabled={saving} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>{saving ? "Saving…" : "Save Asset"}</button>
+                <button onClick={onCancel} style={ghostBtn}>Cancel</button>
+            </div>
+        </div>
+    )
+}
+
+function AssetsPanel() {
+    const [assets, setAssets]   = useState([])
+    const [loaded, setLoaded]   = useState(false)
+    const [showForm, setShowForm] = useState(false)
+    const [categoryFilter, setCategoryFilter] = useState("all")
+    const [regionFilter, setRegionFilter]     = useState("")
+
+    const reload = () => {
+        const params = new URLSearchParams()
+        if (categoryFilter !== "all") params.set("category", categoryFilter)
+        if (regionFilter.trim()) params.set("region_tag", regionFilter.trim())
+        fetch(`${API}/api/forge/assets?${params.toString()}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setAssets(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+    }
+
+    useEffect(() => { reload() }, [categoryFilter, regionFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const del = async (assetId) => {
+        if (!confirm("Delete this asset?")) return
+        try {
+            await fetch(`${API}/api/forge/assets/${assetId}`, { method: "DELETE", headers: forgeHeaders() })
+            reload()
+        } catch (_e) {}
+    }
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                Civilian, military, and dual-use infrastructure — the categorization and ownership fields the rest of the ontology graph doesn't have. Every asset requires a real citation; nothing here is guessed.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                    {["all", ...ASSET_CATEGORIES].map(c => (
+                        <button key={c} onClick={() => setCategoryFilter(c)} style={{ ...ghostBtn, color: categoryFilter === c ? (ASSET_CATEGORY_COLORS[c] || "#60a5fa") : "#94a3b8", borderColor: categoryFilter === c ? (ASSET_CATEGORY_COLORS[c] || "#60a5fa") + "55" : "rgba(148,163,184,0.15)" }}>{c}</button>
+                    ))}
+                </div>
+                <input value={regionFilter} onChange={e => setRegionFilter(e.target.value)} placeholder="Filter by region tag…" style={{ ...inputStyle, maxWidth: 220 }} />
+                <button onClick={() => setShowForm(v => !v)} style={{ padding: "5px 12px", borderRadius: 5, border: "none", background: showForm ? "#60a5fa" : "#1e293b", color: showForm ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>
+                    {showForm ? "Close" : "+ Asset"}
+                </button>
+            </div>
+            {showForm && <AssetForm onSaved={() => { setShowForm(false); reload() }} onCancel={() => setShowForm(false)} />}
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && assets.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No assets yet — click "+ Asset" to add one (a real citation is required).</div>}
+            {assets.map(a => (
+                <div key={a.asset_id} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                            <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{a.name}</span>
+                            <span style={{ padding: "1px 6px", borderRadius: 8, marginLeft: 8, background: (ASSET_CATEGORY_COLORS[a.category] || "#475569") + "22", color: ASSET_CATEGORY_COLORS[a.category] || "#475569", fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>{a.category}</span>
+                            <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{a.asset_type}</span>
+                        </div>
+                        <button onClick={() => del(a.asset_id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 11 }} title="Delete">✕</button>
+                    </div>
+                    <div style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>
+                        {a.owner && <>Owner: {a.owner} · </>}
+                        {a.operator && <>Operator: {a.operator} · </>}
+                        {a.country && <>{a.country} · </>}
+                        {a.region_tag && <>region: {a.region_tag} · </>}
+                        confidence: {a.confidence || "unset"}
+                    </div>
+                    {a.description && <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 6 }}>{a.description}</div>}
+                    <div style={{ color: "#475569", fontSize: 10, marginTop: 6, fontStyle: "italic", borderLeft: "2px solid rgba(148,163,184,0.2)", paddingLeft: 8 }}>
+                        "{a.source?.excerpt}" — {a.source?.title || "untitled source"}
+                        {a.source?.url && <>{" "}<a href={a.source.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>↗</a></>}
+                    </div>
+                </div>
+            ))}
+        </WorkspaceBody>
+    )
+}
+
+// ── Discovered patterns — the convergence-engine reasoning layer ────────────
+//
+// Everything here is COMPUTED from edges the review queue already approved
+// (each hop still carries its own citation) — it never introduces a new
+// unsourced fact. What it adds is the connection itself: "A relates to B"
+// and "B relates to C" were each independently approved, but nobody had
+// pointed out that A and C might therefore be worth looking at together.
+// Star/dismiss just tracks an analyst's read on whether a given chain is
+// actually meaningful or a coincidental long path — it doesn't change the
+// underlying graph.
+function OntologyPatternsPanel() {
+    const [patterns, setPatterns] = useState([])
+    const [loaded, setLoaded] = useState(false)
+    const [showDismissed, setShowDismissed] = useState(false)
+    const [busyId, setBusyId] = useState(null)
+
+    const reload = () =>
+        fetch(`${API}/api/forge/ontology/patterns?include_dismissed=${showDismissed}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : { patterns: [] })
+            .then(d => { setPatterns(d.patterns || []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+
+    useEffect(() => { reload() }, [showDismissed]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const review = async (patternId, patch) => {
+        setBusyId(patternId)
+        try {
+            const res = await fetch(`${API}/api/forge/ontology/patterns/${patternId}/review`, {
+                method: "POST", headers: forgeHeaders(), body: JSON.stringify(patch),
+            })
+            if (res.ok) reload()
+        } catch (_e) {}
+        finally { setBusyId(null) }
+    }
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                Non-obvious connections found by chaining approved, cited relationships: A relates to B, B relates to C, but nothing directly linked A and C. Every hop below shows its own source — this panel only surfaces the path, it doesn't add anything new to what was already approved. Requires at least two approved entity-relationship claims sharing an entity to find anything.
+            </div>
+            <div style={{ marginBottom: 12 }}>
+                <button onClick={() => setShowDismissed(v => !v)} style={{ ...ghostBtn, color: showDismissed ? "#60a5fa" : "#94a3b8" }}>
+                    {showDismissed ? "Hide dismissed" : "Show dismissed"}
+                </button>
+            </div>
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && patterns.length === 0 && (
+                <div style={{ color: "#334155", fontSize: 11 }}>
+                    No patterns found yet. This needs at least two approved entity-relationship claims that share an entity — approve some pending claims in the Uploads workspace, then check back here.
+                </div>
+            )}
+            {patterns.map(p => (
+                <div key={p.pattern_id} style={{ background: "#111827", borderRadius: 4, padding: "12px 14px", marginBottom: 10, opacity: p.dismissed ? 0.5 : 1 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4, marginBottom: 8 }}>
+                        {p.nodes.map((n, i) => (
+                            <span key={n.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{n.label}</span>
+                                {i < p.hops.length && <span style={{ color: "#facc15", fontSize: 11 }}>— {p.hops[i].relationship_type} →</span>}
+                            </span>
+                        ))}
+                        {p.starred && <span style={{ color: "#facc15", fontSize: 11 }}>★ starred</span>}
+                    </div>
+                    {p.hops.map((h, i) => (
+                        <div key={i} style={{ color: "#64748b", fontSize: 10, marginBottom: 4, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
+                            <b>{h.source_label} → {h.target_label}</b> ({h.relationship_type}{h.as_of ? `, ${h.as_of}` : ""}, confidence: {h.confidence || "unset"}) — {h.citation?.title || "untitled source"}
+                            {h.citation?.url && <>{" "}<a href={h.citation.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>↗</a></>}
+                        </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <button onClick={() => review(p.pattern_id, { starred: !p.starred })} disabled={busyId === p.pattern_id}
+                            style={{ ...ghostBtn, color: "#facc15", borderColor: "rgba(250,204,21,0.3)" }}>
+                            {p.starred ? "Unstar" : "★ Star as significant"}
+                        </button>
+                        <button onClick={() => review(p.pattern_id, { dismissed: !p.dismissed })} disabled={busyId === p.pattern_id}
+                            style={{ ...ghostBtn, color: "#94a3b8" }}>
+                            {p.dismissed ? "Restore" : "Dismiss"}
+                        </button>
+                    </div>
+                </div>
+            ))}
+        </WorkspaceBody>
+    )
+}
+
 function OntologyWorkspace() {
     const [nodes,        setNodes]        = useState([])
     const [edges,        setEdges]        = useState([])
@@ -5210,8 +6059,8 @@ function OntologyWorkspace() {
             <Toolbar>
                 <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…" style={{ ...inputStyle, flex: 1, maxWidth: 200 }} />
                 <div style={{ display: "flex", gap: 2, background: "#0a0e1a", borderRadius: 4, padding: 2 }}>
-                    {["table", "graph", "live"].map(v => (
-                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? (v === "live" ? "rgba(236,72,153,0.14)" : "rgba(96,165,250,0.12)") : "transparent", color: view === v ? (v === "live" ? "#ec4899" : "#60a5fa") : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
+                    {["table", "graph", "patterns", "assets", "live"].map(v => (
+                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? (v === "live" ? "rgba(236,72,153,0.14)" : v === "patterns" ? "rgba(250,204,21,0.14)" : v === "assets" ? "rgba(74,222,128,0.14)" : "rgba(96,165,250,0.12)") : "transparent", color: view === v ? (v === "live" ? "#ec4899" : v === "patterns" ? "#facc15" : v === "assets" ? "#4ade80" : "#60a5fa") : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
                     ))}
                 </div>
                 <button onClick={() => { setShowAdd(v => !v); setShowLink(false) }} style={{ padding: "5px 10px", borderRadius: 5, border: "none", background: showAdd ? "#60a5fa" : "#1e293b", color: showAdd ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>+ Entity</button>
@@ -5266,6 +6115,8 @@ function OntologyWorkspace() {
                         }
                     }}
                 /> :
+                view === "patterns" ? <OntologyPatternsPanel /> :
+                view === "assets" ? <AssetsPanel /> :
                 filtered.length === 0 ? (
                     <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>
                         {nodes.length === 0 ? "No entities yet — click Build to populate from live data, or + Entity to add manually." : `No ${typeFilter === "all" ? "" : typeFilter + " "}entities match.`}

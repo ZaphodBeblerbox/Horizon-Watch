@@ -1049,6 +1049,15 @@ def get_health_detailed():
             "status":    _status(ds["imb"].get("failures", 0), ds["imb"].get("last_poll")),
             "failures":  ds["imb"].get("failures", 0),
         },
+        {
+            "id":        "pipelines",
+            "name":      "Global Energy Monitor Pipelines (GOPIT)",
+            "type":      "infrastructure",
+            "last_fetch": _PIPELINES_DATA.get("last_updated"),
+            "status":    "degraded" if _PIPELINES_DATA.get("error") else "ok",
+            "record_count": len(_PIPELINES_DATA.get("pipelines", [])),
+            "message":   _PIPELINES_DATA.get("error"),
+        },
     ]
 
     usage = usage_tracker.get_stats(CLAUDE_BUDGET_USD)
@@ -7982,6 +7991,26 @@ def _refresh_surface_pool_sync(reason: str = "manual") -> list:
         _SURFACE_BUILD_LOCK.release()
 
 
+def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Write `content` to `path` atomically (write-to-temp + os.replace), matching the pattern
+    event_store.py already uses correctly. A crash or concurrent request mid-write can never leave
+    `path` truncated or half-written — readers either see the old complete file or the new complete
+    file, never a corrupt in-between state. Used for every hand-edited/report-adjacent JSON store
+    (annotations, situations, profile, POI, documents, briefings) that previously used a naive
+    `path.write_text(...)` overwrite."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(content, encoding=encoding)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+        raise
+
+
 # ── Daily intelligence briefing — helpers ─────────────────────────────────────
 
 def _load_briefing_store() -> list:
@@ -7995,9 +8024,9 @@ def _load_briefing_store() -> list:
 
 def _save_briefing_store(store: list) -> None:
     try:
-        _BRIEFING_FILE.write_text(
+        _atomic_write_text(
+            _BRIEFING_FILE,
             _json.dumps(store[-30:], indent=2, ensure_ascii=False),
-            encoding="utf-8",
         )
     except Exception as ex:
         print(f"[briefing] save error: {ex}")
@@ -8374,8 +8403,9 @@ def _load_doc(folder: str, doc_id: str) -> dict | None:
 
 
 def _persist_doc(folder: str, doc_id: str, doc: dict) -> None:
-    (_DOCS_DIR / folder / f"{doc_id}.json").write_text(
-        _json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8"
+    _atomic_write_text(
+        _DOCS_DIR / folder / f"{doc_id}.json",
+        _json.dumps(doc, indent=2, ensure_ascii=False),
     )
 
 
@@ -8417,7 +8447,7 @@ def _auto_archive_old_briefings() -> None:
             if doc.get("created_at", "9999") < cutoff:
                 doc["folder"] = "archived"
                 archived_path = _DOCS_DIR / "archived" / path.name
-                archived_path.write_text(_json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+                _atomic_write_text(archived_path, _json.dumps(doc, indent=2, ensure_ascii=False))
                 path.unlink()
         except Exception:
             pass
@@ -8558,7 +8588,7 @@ def archive_document(doc_id: str):
                 doc["folder"] = "archived"
                 doc["modified_at"] = datetime.now(timezone.utc).isoformat()
                 dst = _DOCS_DIR / "archived" / f"{doc_id}.json"
-                dst.write_text(_json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+                _atomic_write_text(dst, _json.dumps(doc, indent=2, ensure_ascii=False))
                 src.unlink()
                 return {"ok": True}
             except Exception as ex:
@@ -12941,6 +12971,114 @@ async def satellite_tile_png(z: int, x: int, y: int, dt: str = ""):
 # Returns a single base64-PNG for an arbitrary bounding box (drawn by the user).
 # Uses the same credentials/token cache as the tile proxy above.
 
+async def _fetch_sentinel_image_bytes(bounds: dict, image_type: str = "true-colour",
+                                       max_cloud: int = 20, days_back: int = 90,
+                                       date_str: str | None = None,
+                                       width: int | None = None, height: int | None = None) -> dict:
+    """Core Sentinel-2 Process API fetch, extracted from the /api/sentinel/imagery route so it can
+    be called directly (not just over HTTP) — used by that route and by SentinelScanner.run_scan().
+    Returns {"image_bytes": bytes, "width", "height", "image_type", "date"} on success,
+    or {"error": "..."} on any failure. Never raises — every failure path returns a real,
+    specific error string rather than throwing or silently producing an empty result."""
+    _TYPE_ALIASES = {
+        "true_color":   "true-colour",
+        "false_color":  "false-colour",
+        "true_colour":  "true-colour",
+        "false_colour": "false-colour",
+    }
+    image_type = _TYPE_ALIASES.get(image_type, image_type)
+
+    west  = bounds.get("west");  east  = bounds.get("east")
+    south = bounds.get("south"); north = bounds.get("north")
+    if None in (west, east, south, north):
+        return {"error": "bounds {north,south,east,west} required"}
+
+    if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
+        return {"error": "Copernicus credentials not configured"}
+
+    evalscript = _EVALSCRIPTS.get(image_type, _EVALSCRIPT_TRUE_COLOUR)
+
+    # ── Stepped size based on bbox span ──────────────────────────────────
+    lat_span = abs(north - south)
+    lng_span = abs(east  - west)
+    if width and height:
+        width  = min(2500, max(32, int(width)))
+        height = min(2500, max(32, int(height)))
+    else:
+        max_span = max(lat_span, lng_span)
+        if max_span < 0.1:
+            width = height = 512
+        elif max_span < 0.5:
+            width = height = 1024
+        else:
+            width = height = 2048
+
+    now = datetime.now(timezone.utc)
+    if date_str:
+        time_range = {
+            "from": f"{date_str}T00:00:00Z",
+            "to":   f"{date_str}T23:59:59Z",
+        }
+        mosaic_order = "mostRecent"
+    else:
+        time_range = {
+            "from": (now - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z"),
+            "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+        }
+        mosaic_order = "leastCC"
+
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": [west, south, east, north],
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+            },
+            "data": [{
+                "type": "sentinel-2-l2a",
+                "dataFilter": {
+                    "maxCloudCoverage": max_cloud if not date_str else 100,
+                    "timeRange": time_range,
+                    "mosaickingOrder": mosaic_order,
+                },
+            }],
+        },
+        "output": {
+            "width":  width,
+            "height": height,
+            "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+        },
+        "evalscript": evalscript,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client_h:
+            token, err = await _get_copernicus_access_token(client_h)
+            if not token:
+                return {"error": f"Sentinel Hub auth failed: {err}"}
+
+            resp = await client_h.post(
+                _SH_PROCESS_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        if resp.status_code == 200:
+            return {
+                "image_bytes": resp.content,
+                "width":       width,
+                "height":      height,
+                "image_type":  image_type,
+                "date":        date_str,
+            }
+        else:
+            detail = resp.text[:500]
+            print(f"[sentinel/imagery] Process API {resp.status_code}: {detail}")
+            return {"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail}
+    except Exception as e:
+        print(f"[sentinel/imagery] fetch error: {e}")
+        return {"error": str(e)}
+
+
 @app.post("/api/sentinel/imagery")
 async def sentinel_imagery(request: Request):
     """Fetch a full Sentinel-2 image for a drawn bounding box.
@@ -12954,107 +13092,28 @@ async def sentinel_imagery(request: Request):
         days_back  = int(body.get("days_back", 90))
         # Accept both "type" (new sidebar) and "image_type" (legacy)
         image_type = body.get("image_type") or body.get("type", "true-colour")
-        # Normalise underscore variants to dash variants used by _EVALSCRIPTS
-        _TYPE_ALIASES = {
-            "true_color":   "true-colour",
-            "false_color":  "false-colour",
-            "true_colour":  "true-colour",
-            "false_colour": "false-colour",
-        }
-        image_type = _TYPE_ALIASES.get(image_type, image_type)
         date_str   = body.get("date")   # optional YYYY-MM-DD for exact scene
-
-        west  = bounds.get("west");  east  = bounds.get("east")
-        south = bounds.get("south"); north = bounds.get("north")
-        if None in (west, east, south, north):
-            return JSONResponse({"error": "bounds {north,south,east,west} required"})
-
-        if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
-            return JSONResponse({"error": "Copernicus credentials not configured"})
-
-        evalscript = _EVALSCRIPTS.get(image_type, _EVALSCRIPT_TRUE_COLOUR)
-
-        # ── Stepped size based on bbox span ──────────────────────────────────
-        lat_span = abs(north - south)
-        lng_span = abs(east  - west)
         req_w = body.get("width");  req_h = body.get("height")
-        if req_w and req_h:
-            width  = min(2500, max(32, int(req_w)))
-            height = min(2500, max(32, int(req_h)))
-        else:
-            max_span = max(lat_span, lng_span)
-            if max_span < 0.1:
-                width = height = 512
-            elif max_span < 0.5:
-                width = height = 1024
-            else:
-                width = height = 2048
 
-        now = datetime.now(timezone.utc)
-        if date_str:
-            time_range = {
-                "from": f"{date_str}T00:00:00Z",
-                "to":   f"{date_str}T23:59:59Z",
-            }
-            mosaic_order = "mostRecent"
-        else:
-            time_range = {
-                "from": (now - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z"),
-                "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
-            }
-            mosaic_order = "leastCC"
+        result = await _fetch_sentinel_image_bytes(
+            bounds, image_type=image_type, max_cloud=max_cloud, days_back=days_back,
+            date_str=date_str, width=req_w, height=req_h,
+        )
+        if result.get("error"):
+            return JSONResponse(result)
 
-        payload = {
-            "input": {
-                "bounds": {
-                    "bbox": [west, south, east, north],
-                    "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
-                },
-                "data": [{
-                    "type": "sentinel-2-l2a",
-                    "dataFilter": {
-                        "maxCloudCoverage": max_cloud if not date_str else 100,
-                        "timeRange": time_range,
-                        "mosaickingOrder": mosaic_order,
-                    },
-                }],
-            },
-            "output": {
-                "width":  width,
-                "height": height,
-                "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
-            },
-            "evalscript": evalscript,
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client_h:
-            token, err = await _get_copernicus_access_token(client_h)
-            if not token:
-                return JSONResponse({"error": f"Sentinel Hub auth failed: {err}"})
-
-            resp = await client_h.post(
-                _SH_PROCESS_URL,
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-
-        if resp.status_code == 200:
-            img_b64 = _b64.b64encode(resp.content).decode()
-            return JSONResponse({
-                "image":       img_b64,
-                "width":       width,
-                "height":      height,
-                "bounds":      bounds,
-                "cloud_cover": max_cloud,
-                "days_back":   days_back,
-                "type":        image_type,
-                "image_type":  image_type,
-                "date":        date_str,
-            })
-        else:
-            detail = resp.text[:500]
-            print(f"[sentinel/imagery] Process API {resp.status_code}: {detail}")
-            return JSONResponse({"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail})
+        img_b64 = _b64.b64encode(result["image_bytes"]).decode()
+        return JSONResponse({
+            "image":       img_b64,
+            "width":       result["width"],
+            "height":      result["height"],
+            "bounds":      bounds,
+            "cloud_cover": max_cloud,
+            "days_back":   days_back,
+            "type":        result["image_type"],
+            "image_type":  result["image_type"],
+            "date":        date_str,
+        })
     except Exception as e:
         print(f"[sentinel/imagery] error: {e}")
         return JSONResponse({"error": str(e)})
@@ -13103,7 +13162,7 @@ ANNOTATIONS_FILE = BASE_DIR / "annotations.json"
 @app.post("/annotations/save")
 async def save_annotations(request: Request):
     data = await request.json()
-    ANNOTATIONS_FILE.write_text(_json.dumps(data, indent=2))
+    _atomic_write_text(ANNOTATIONS_FILE, _json.dumps(data, indent=2))
     return {"status": "saved"}
 
 @app.get("/annotations/load")
@@ -13208,7 +13267,7 @@ SITUATIONS_FILE = BASE_DIR / "situations.json"
 @app.post("/situations/save")
 async def save_situations(request: Request):
     data = await request.json()
-    SITUATIONS_FILE.write_text(_json.dumps(data, indent=2))
+    _atomic_write_text(SITUATIONS_FILE, _json.dumps(data, indent=2))
     return {"status": "saved"}
 
 @app.get("/situations/load")
@@ -13245,7 +13304,7 @@ else:
 async def save_profile(request: Request):
     global _ACTIVE_PROFILE
     data = await request.json()
-    PROFILE_FILE.write_text(_json.dumps(data, indent=2))
+    _atomic_write_text(PROFILE_FILE, _json.dumps(data, indent=2))
     _ACTIVE_PROFILE = data
     print(f"[profile] updated: '{data.get('displayName', '')}' ({data.get('role', '?')}) "
           f"threshold={data.get('threshold', 1)} "
@@ -14477,7 +14536,7 @@ async def api_get_annotations():
 @app.post("/api/annotations")
 async def api_post_annotations(request: Request):
     data = await request.json()
-    (BASE_DIR / "annotations.json").write_text(_json.dumps(data, indent=2))
+    _atomic_write_text(BASE_DIR / "annotations.json", _json.dumps(data, indent=2))
     return {"ok": True}
 
 
@@ -14578,7 +14637,7 @@ def _poi_load() -> list:
 
 def _poi_save(pois: list) -> None:
     _POI_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _POI_FILE.write_text(_json.dumps(pois, indent=2, ensure_ascii=False), encoding="utf-8")
+    _atomic_write_text(_POI_FILE, _json.dumps(pois, indent=2, ensure_ascii=False))
 
 @app.get("/api/poi")
 async def poi_list():
@@ -15055,6 +15114,13 @@ def _load_pipelines() -> dict:
         try:
             raw = _json.loads(_PIPELINES_PATH.read_text())
             _PIPELINES_DATA = raw
+            if raw.get("error"):
+                # The cached file itself already carries a stale ingest failure (e.g. a prior
+                # 404 from the GEM source) — surface that at startup instead of loading it
+                # silently. Without this, an empty pipelines list reads as "no pipelines in
+                # this AOI" instead of "the last ingest attempt failed".
+                print(f"[pipelines] loaded cached data with a carried-over error from a prior "
+                      f"ingest attempt (last_updated={raw.get('last_updated')}): {raw['error']}")
         except FileNotFoundError:
             print("[pipelines] pipelines.json not found — skipping (will fetch from remote)")
             _PIPELINES_DATA = {"pipelines": []}
@@ -15242,6 +15308,9 @@ def api_pipelines_search(
         "total":        len(pipelines),
         "last_updated": data.get("last_updated"),
         "source":       data.get("source"),
+        # Surface a carried-over ingest failure instead of letting an empty/stale list read as
+        # "no pipelines exist" — see /api/health/detailed's "pipelines" entry for the same signal.
+        "error":        data.get("error"),
     }
 
 
@@ -15253,6 +15322,7 @@ def api_pipelines_near(
 ):
     """Return pipelines whose route passes within radius km of the given coordinates."""
     pipelines = _PIPELINES_DATA.get("pipelines", [])
+    pipelines_error = _PIPELINES_DATA.get("error")
     results = []
     for p in pipelines:
         geom   = p.get("route_geojson") or {}
@@ -15262,7 +15332,7 @@ def api_pipelines_near(
             if _route_passes_near(coords, lat, lon, radius):
                 results.append(p)
                 break
-    return {"pipelines": results, "total": len(results)}
+    return {"pipelines": results, "total": len(results), "error": pipelines_error}
 
 
 # ── Endpoints: Shipping Routes ─────────────────────────────────────────────────
@@ -16165,6 +16235,12 @@ def _rule_row_to_dict(row) -> dict:
     }
 
 
+# Rule types actually read by live detection code (see: AIS loitering/chokepoint checks in the
+# fusion/detection cycle, ADSB loitering-near-airport check). Any other rule_name can be stored
+# but will never fire — so creation/update of one is rejected rather than silently accepted.
+WIRED_RULE_NAMES = ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY", "ADSB_LOITERING_NEAR_AIRPORT"]
+
+
 @app.get("/api/rules")
 def api_rules_list():
     """Return all rule configs."""
@@ -16187,6 +16263,10 @@ def api_rules_create(body: dict):
     trigger_type = body.get("trigger_type") or body.get("rule_name")
     if not trigger_type:
         raise HTTPException(status_code=422, detail="trigger_type (or rule_name) is required")
+    if trigger_type not in WIRED_RULE_NAMES:
+        raise HTTPException(status_code=400,
+                             detail=f"rule_name must be one of {WIRED_RULE_NAMES} — these are the only "
+                                    f"rule types currently wired into live detection.")
     name      = body.get("name") or trigger_type
     severity  = body.get("severity", "medium")
     icon_type = body.get("icon_type") or body.get("params", {}).get("icon_type")
@@ -16243,6 +16323,10 @@ def api_rules_update(rule_id: int, body: dict):
         if "params" in body:
             row.params = _ju.dumps(body["params"], ensure_ascii=False)
         if "rule_name" in body:
+            if body["rule_name"] not in WIRED_RULE_NAMES:
+                raise HTTPException(status_code=400,
+                                     detail=f"rule_name must be one of {WIRED_RULE_NAMES} — these are the only "
+                                            f"rule types currently wired into live detection.")
             row.rule_name = body["rule_name"]
         row.updated_at = _dt.datetime.utcnow()
         db.commit()
@@ -17367,7 +17451,10 @@ def _guess_entity_type(type_str: str, has_mmsi: bool) -> str:
     return "facility"
 
 
-def _add_entities_to_ontology(entities: list):
+def _add_entities_to_ontology(entities: list, citation: dict = None):
+    """Merge entities into the ontology graph as nodes. `citation` (if given) is
+    attached to any newly-created node so a viewer can see where it came from —
+    e.g. {"title", "publisher", "date", "url"} for a document-derived entity."""
     ontology = _forge_ontology_load()
     changed = False
     for entity in entities:
@@ -17383,7 +17470,7 @@ def _add_entities_to_ontology(entities: list):
             continue
         safe_label = entity["label"][:20].replace(" ", "_").lower()
         node_id = f"{entity['type']}_{len(ontology['nodes'])+1}_{safe_label}"
-        ontology["nodes"].append({
+        node = {
             "id":          node_id,
             "type":        entity["type"],
             "label":       entity["label"],
@@ -17391,10 +17478,79 @@ def _add_entities_to_ontology(entities: list):
             "lat":         entity.get("lat"),
             "lng":         entity.get("lng"),
             "source":      "upload",
-        })
+        }
+        if citation:
+            node["citation"] = citation
+        ontology["nodes"].append(node)
         changed = True
     if changed:
         _forge_ontology_save(ontology)
+
+
+def _claim_id() -> str:
+    return "CLM-" + uuid.uuid4().hex[:8].upper()
+
+
+def _create_ontology_claims(claims: list, upload_id: str = None, default_source: dict = None) -> dict:
+    """Insert extracted entity-relationship claims into the pending-review queue.
+    This NEVER writes directly to the live ontology graph — a human must approve
+    each claim via POST /api/forge/ontology/claims/{id}/approve before it becomes
+    a real edge. A claim missing an entity, a relationship type, or a cited
+    evidence excerpt is silently dropped rather than stored half-formed: an
+    uncited relationship is exactly the kind of fabrication this queue exists to
+    catch, so it's refused here rather than accepted and flagged later. A claim
+    matching an existing row's (entity_a, relationship_type, entity_b) — any
+    status — is also skipped, so re-running an ingestion (e.g. after a partial
+    failure) doesn't spam duplicate pending claims.
+    `default_source` fills in citation fields the caller already knows (e.g. an
+    upload's declared title/publisher/date/url) for any claim that omits its own.
+    Returns {"created", "skipped_uncited", "skipped_duplicate"}."""
+    from database import OntologyClaim, get_db as _gdb_claims
+    default_source = default_source or {}
+    created = skipped_uncited = skipped_duplicate = 0
+    try:
+        with _gdb_claims() as db:
+            for c in claims:
+                a_label = (c.get("entity_a") or "").strip()
+                b_label = (c.get("entity_b") or "").strip()
+                rel     = (c.get("relationship_type") or "").strip()
+                excerpt = (c.get("evidence") or c.get("source_excerpt") or "").strip()
+                if not a_label or not b_label or not rel or not excerpt:
+                    skipped_uncited += 1
+                    continue
+                dup = db.query(OntologyClaim).filter(
+                    OntologyClaim.entity_a_label == a_label,
+                    OntologyClaim.relationship_type == rel,
+                    OntologyClaim.entity_b_label == b_label,
+                ).first()
+                if dup:
+                    skipped_duplicate += 1
+                    continue
+                confidence = c.get("confidence") if c.get("confidence") in ("direct", "inferred") else None
+                db.add(OntologyClaim(
+                    claim_id=_claim_id(),
+                    entity_a_label=a_label,
+                    entity_a_type=(c.get("entity_a_type") or "facility"),
+                    relationship_type=rel,
+                    entity_b_label=b_label,
+                    entity_b_type=(c.get("entity_b_type") or "facility"),
+                    as_of=c.get("as_of") or default_source.get("date"),
+                    valid_from=_parse_snapshot_dt(c.get("valid_from")),
+                    valid_until=_parse_snapshot_dt(c.get("valid_until")),
+                    confidence=confidence,
+                    source_title=c.get("source_title") or default_source.get("title"),
+                    source_publisher=c.get("source_publisher") or default_source.get("publisher"),
+                    source_date=c.get("source_date") or default_source.get("date"),
+                    source_url=c.get("source_url") or default_source.get("url"),
+                    source_excerpt=excerpt,
+                    upload_id=upload_id,
+                    status="pending",
+                ))
+                created += 1
+            db.commit()
+    except Exception as ex:
+        print(f"[ontology-claims] persist error: {ex}")
+    return {"created": created, "skipped_uncited": skipped_uncited, "skipped_duplicate": skipped_duplicate}
 
 
 async def _process_csv_upload(filepath: str, description: str) -> dict:
@@ -17502,7 +17658,10 @@ async def _process_geojson_upload(filepath: str, description: str) -> dict:
         return {"status": "error", "entities_extracted": 0, "details": {"error": str(exc)}}
 
 
-async def _process_document_upload(filepath: str, description: str) -> dict:
+async def _process_document_upload(filepath: str, description: str,
+                                    source_title: str = "", source_publisher: str = "",
+                                    source_date: str = "", source_url: str = "",
+                                    upload_id: str = None) -> dict:
     ext  = filepath.rsplit(".", 1)[-1].lower() if "." in filepath else ""
     text = ""
     if ext == "pdf":
@@ -17523,34 +17682,70 @@ async def _process_document_upload(filepath: str, description: str) -> dict:
         return {"status": "error", "entities_extracted": 0, "details": {"error": "No text extracted"}}
     if not client:
         return {"status": "error", "entities_extracted": 0, "details": {"error": "ANTHROPIC_API_KEY not set"}}
+
+    default_source = {
+        "title":     source_title or (description or None),
+        "publisher": source_publisher or None,
+        "date":      source_date or None,
+        "url":       source_url or None,
+    }
+
+    entities_raw, relationships_raw = [], []
     try:
         resp = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=2000,
+            max_tokens=4000,
             messages=[{"role": "user", "content": (
-                "Extract all named entities from this intelligence document. "
-                "Return ONLY a JSON array of objects, no other text.\n"
-                'Each object: {"name":"entity name","type":"person|country|organization|facility|weapon|vessel|aircraft|event","description":"brief description","lat":null,"lng":null}\n'
-                "If you know the approximate coordinates, include them. Otherwise leave null.\n\n"
+                "You are extracting structured intelligence from ONE real source document, for a "
+                "system that refuses to store anything it cannot cite back to this exact document. "
+                "Return ONLY a single JSON object, no other text, with two fields:\n\n"
+                '"entities": array of {"name","type" (person|country|organization|group|facility|'
+                'weapon|vessel|aircraft|port|event),"description"}. Only include "lat"/"lng" if this '
+                "specific document states coordinates explicitly — never estimate, guess, or recall "
+                "them from general knowledge. Omit them entirely if the document doesn't give them.\n\n"
+                '"relationships": array of {"entity_a","entity_a_type","relationship_type" (e.g. '
+                "sponsors|arms|funds|commands|leads|member_of|hosts|allied_with|adversarial_to|"
+                'designated_as|controls_territory_of|operates|other),"entity_b","entity_b_type",'
+                '"as_of" (a date/period the document itself gives, or null),"confidence" ("direct" if '
+                'the document states the relationship outright, "inferred" if you are combining two '
+                'separate facts it states),"evidence" (a short verbatim or near-verbatim excerpt FROM '
+                "THIS DOCUMENT supporting the relationship — mandatory, never fabricate one). Only "
+                "extract a relationship if you can quote real supporting text for it. If the document "
+                "supports no relationships, return an empty array — do not invent one to fill the field.\n\n"
                 f"Document:\n{text[:30000]}"
             )}],
         )
         raw = resp.content[0].text.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-        entities_raw = _json.loads(raw)
-    except Exception:
-        entities_raw = []
+        parsed = _json.loads(raw)
+        entities_raw      = parsed.get("entities", [])      if isinstance(parsed, dict) else []
+        relationships_raw = parsed.get("relationships", []) if isinstance(parsed, dict) else []
+    except Exception as _ex:
+        print(f"[document-upload] extraction failed: {_ex}")
+        entities_raw, relationships_raw = [], []
+
     entities = [
         {"label": e.get("name", "Unknown"), "type": e.get("type", "facility"),
          "description": e.get("description", ""), "lat": e.get("lat"), "lng": e.get("lng")}
         for e in entities_raw
     ]
-    _add_entities_to_ontology(entities)
+    citation = {k: v for k, v in default_source.items() if v} or None
+    _add_entities_to_ontology(entities, citation=citation)
+
+    claim_result = _create_ontology_claims(relationships_raw, upload_id=upload_id, default_source=default_source)
+
     return {
         "status": "processed",
         "entities_extracted": len(entities),
-        "details": {"text_length": len(text), "claude_extracted": len(entities_raw)},
+        "relationships_extracted": claim_result["created"],
+        "details": {
+            "text_length": len(text),
+            "claude_extracted_entities": len(entities_raw),
+            "claude_extracted_relationships": len(relationships_raw),
+            "pending_review": claim_result["created"],
+            "skipped_duplicate_relationships": claim_result["skipped_duplicate"],
+        },
     }
 
 
@@ -17562,6 +17757,10 @@ async def forge_upload(
     mission_id: str  = Form("mission_default"),
     data_type: str   = Form("auto"),
     description: str = Form(""),
+    source_title: str     = Form(""),
+    source_publisher: str = Form(""),
+    source_date: str      = Form(""),
+    source_url: str       = Form(""),
     _forge=Depends(_require_forge),
 ):
     _FORGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -17582,26 +17781,38 @@ async def forge_upload(
             "tif": "imagery", "tiff": "imagery",
         }.get(ext, "document")
 
+    uploads   = _forge_load("uploads.json")
+    upload_id = f"upload_{len(uploads)}_{ts}"
+
     if   data_type == "csv":      result = await _process_csv_upload(filepath, description)
     elif data_type == "kml":      result = await _process_kml_upload(filepath, description)
     elif data_type == "geojson":  result = await _process_geojson_upload(filepath, description)
-    elif data_type == "document": result = await _process_document_upload(filepath, description)
+    elif data_type == "document": result = await _process_document_upload(
+                                        filepath, description,
+                                        source_title=source_title, source_publisher=source_publisher,
+                                        source_date=source_date, source_url=source_url,
+                                        upload_id=upload_id,
+                                    )
     else:                         result = {"status": "stored", "entities_extracted": 0, "details": {}}
 
-    uploads = _forge_load("uploads.json")
     record = {
-        "id":                 f"upload_{len(uploads)}_{ts}",
-        "filename":           file.filename,
-        "stored_as":          filename,
-        "type":               data_type,
-        "description":        description,
-        "mission_id":         mission_id,
-        "uploaded_by":        getattr(_forge, "email", "admin"),
-        "uploaded_at":        datetime.utcnow().isoformat(),
-        "entities_extracted": result.get("entities_extracted", 0),
-        "rules_generated":    result.get("rules_generated", 0),
-        "status":             result.get("status", "processed"),
-        "details":            result.get("details", {}),
+        "id":                    upload_id,
+        "filename":              file.filename,
+        "stored_as":             filename,
+        "type":                  data_type,
+        "description":           description,
+        "source_title":          source_title,
+        "source_publisher":      source_publisher,
+        "source_date":           source_date,
+        "source_url":            source_url,
+        "mission_id":            mission_id,
+        "uploaded_by":           getattr(_forge, "email", "admin"),
+        "uploaded_at":           datetime.utcnow().isoformat(),
+        "entities_extracted":    result.get("entities_extracted", 0),
+        "relationships_pending": result.get("relationships_extracted", 0),
+        "rules_generated":       result.get("rules_generated", 0),
+        "status":                result.get("status", "processed"),
+        "details":               result.get("details", {}),
     }
     uploads.append(record)
     _forge_save("uploads.json", uploads)
@@ -17612,6 +17823,801 @@ async def forge_upload(
 def forge_get_uploads(_forge=Depends(_require_forge)):
     uploads = _forge_load("uploads.json")
     return list(reversed(uploads))
+
+
+# ── Ontology claims (entity-relationship review queue) ────────────────────────
+#
+# Every relationship a document-upload extraction proposes lands here as
+# "pending" — never directly in the live ontology graph. A person reviews each
+# claim's citation and either approves it (which creates/reuses the two entity
+# nodes and adds a cited edge) or rejects it. This is the same human-gate
+# philosophy as the intelligence-report council review, applied to ingested
+# entity relationships so nothing enters the graph on the strength of an LLM's
+# say-so alone.
+
+@app.get("/api/forge/ontology/claims")
+def forge_get_ontology_claims(status: str = "pending", _forge=Depends(_require_forge)):
+    from database import OntologyClaim, get_db as _gdb_list
+    with _gdb_list() as db:
+        q = db.query(OntologyClaim)
+        if status and status != "all":
+            q = q.filter(OntologyClaim.status == status)
+        rows = q.order_by(OntologyClaim.created_at.desc()).all()
+        return [
+            {
+                "claim_id":          r.claim_id,
+                "entity_a":          {"label": r.entity_a_label, "type": r.entity_a_type},
+                "relationship_type": r.relationship_type,
+                "entity_b":          {"label": r.entity_b_label, "type": r.entity_b_type},
+                "as_of":             r.as_of,
+                "valid_from":        r.valid_from.isoformat() if r.valid_from else None,
+                "valid_until":       r.valid_until.isoformat() if r.valid_until else None,
+                "confidence":        r.confidence,
+                "source": {
+                    "title": r.source_title, "publisher": r.source_publisher,
+                    "date": r.source_date, "url": r.source_url, "excerpt": r.source_excerpt,
+                },
+                "upload_id":   r.upload_id,
+                "status":      r.status,
+                "reviewer":    r.reviewer,
+                "review_note": r.review_note,
+                "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                "created_at":  r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+
+
+@app.post("/api/forge/ontology/claims/bulk")
+async def forge_bulk_create_ontology_claims(request: Request, _forge=Depends(_require_forge)):
+    """Load a batch of pre-researched claims (e.g. from an offline sourcing pass
+    over real documents) into the pending-review queue. Every claim still needs
+    its own citation ('evidence' + entity_a/entity_b/relationship_type) — claims
+    missing any of that are silently dropped, not stored half-formed. Nothing
+    here touches the live ontology; that only happens via the approve endpoint."""
+    body    = await request.json()
+    claims  = body.get("claims", [])
+    result  = _create_ontology_claims(claims)
+    return {"submitted": len(claims), **result}
+
+
+@app.post("/api/forge/ontology/claims/{claim_id}/approve")
+async def forge_approve_ontology_claim(claim_id: str, request: Request, _forge=Depends(_require_forge)):
+    from database import OntologyClaim, get_db as _gdb_appr
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    with _gdb_appr() as db:
+        row = db.query(OntologyClaim).filter(OntologyClaim.claim_id == claim_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        if row.status != "pending":
+            raise HTTPException(status_code=409, detail=f"Claim already {row.status}")
+
+        citation_for_nodes = {k: v for k, v in {
+            "title": row.source_title, "publisher": row.source_publisher,
+            "date": row.source_date, "url": row.source_url,
+        }.items() if v} or None
+        _add_entities_to_ontology([
+            {"label": row.entity_a_label, "type": row.entity_a_type},
+            {"label": row.entity_b_label, "type": row.entity_b_type},
+        ], citation=citation_for_nodes)
+
+        ontology = _forge_ontology_load()
+
+        def _find_id(label):
+            return next((n["id"] for n in ontology["nodes"] if n["label"].lower() == label.lower()), None)
+
+        src_id = _find_id(row.entity_a_label)
+        tgt_id = _find_id(row.entity_b_label)
+        if not src_id or not tgt_id:
+            raise HTTPException(status_code=500, detail="Could not resolve entity nodes for this claim")
+
+        reviewer = body.get("reviewer") or getattr(_forge, "email", "admin")
+        edge = {
+            "id":          f"e_claim_{row.claim_id}",
+            "source":      src_id,
+            "target":      tgt_id,
+            "type":        row.relationship_type,
+            "claim_id":    row.claim_id,
+            "as_of":       row.as_of,
+            "valid_from":  row.valid_from.isoformat() if row.valid_from else None,
+            "valid_until": row.valid_until.isoformat() if row.valid_until else None,
+            "confidence":  row.confidence,
+            "citation": {
+                "title": row.source_title, "publisher": row.source_publisher,
+                "date": row.source_date, "url": row.source_url, "excerpt": row.source_excerpt,
+            },
+            "approved_by": reviewer,
+        }
+        ontology["edges"].append(edge)
+        _forge_ontology_save(ontology)
+
+        row.status      = "approved"
+        row.reviewer     = reviewer
+        row.review_note  = body.get("note")
+        row.reviewed_at  = datetime.utcnow()
+        db.commit()
+        return {"claim_id": claim_id, "status": "approved", "edge": edge}
+
+
+@app.post("/api/forge/ontology/claims/{claim_id}/reject")
+async def forge_reject_ontology_claim(claim_id: str, request: Request, _forge=Depends(_require_forge)):
+    from database import OntologyClaim, get_db as _gdb_rej
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    with _gdb_rej() as db:
+        row = db.query(OntologyClaim).filter(OntologyClaim.claim_id == claim_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        if row.status != "pending":
+            raise HTTPException(status_code=409, detail=f"Claim already {row.status}")
+        row.status      = "rejected"
+        row.reviewer     = body.get("reviewer") or getattr(_forge, "email", "admin")
+        row.review_note  = body.get("note")
+        row.reviewed_at  = datetime.utcnow()
+        db.commit()
+        return {"claim_id": claim_id, "status": "rejected"}
+
+
+# ── Ontology pattern discovery (Stage 2 of the convergence engine) ────────────
+#
+# Stage 1 (above) gets cited relationships into the graph one approved claim at
+# a time. This is Stage 2: chain those already-approved, cited edges to surface
+# non-obvious 2-hop connections — "A relates to B, B relates to C, but nothing
+# directly links A and C" — the literal pattern-recognition capability the
+# convergence engine exists for. It is a pure read/derive over data that has
+# already passed a human's review; it never writes a new edge into the graph
+# itself, so there's no fabrication risk here — every hop it shows is exactly
+# the citation a person already approved. Only edges carrying a `claim_id`
+# (i.e. created via the approve endpoint above) are used as hops: manually
+# drawn or auto-built edges have no citation to show, so they're excluded from
+# pattern discovery even though they're still visible in the ontology graph.
+
+def _find_graph_patterns() -> list:
+    """Find 2-hop chains (A —hop1→ hub —hop2→ C) among claim-sourced edges where
+    no direct edge already connects A and C. Returns a list of pattern dicts,
+    each with a deterministic `pattern_id` derived from the pair of claim ids
+    involved, so star/dismiss state survives across re-computation."""
+    ontology  = _forge_ontology_load()
+    nodes_by_id = {n["id"]: n for n in ontology.get("nodes", [])}
+    all_edges   = ontology.get("edges", [])
+    claim_edges = [e for e in all_edges if e.get("claim_id")]
+
+    # Any existing edge (claim-sourced or not) between two nodes counts as
+    # "already directly linked" — a pattern is only interesting when nothing
+    # already connects A and C.
+    direct_pairs = {frozenset((e["source"], e["target"])) for e in all_edges if e.get("source") and e.get("target")}
+
+    # Adjacency of claim-sourced edges incident to each node (as source or target)
+    incident: dict = {}
+    for e in claim_edges:
+        for nid in (e.get("source"), e.get("target")):
+            if nid:
+                incident.setdefault(nid, []).append(e)
+
+    def _node_summary(nid):
+        n = nodes_by_id.get(nid, {})
+        return {"id": nid, "label": n.get("label", nid), "type": n.get("type")}
+
+    def _other_end(edge, hub_id):
+        return edge["target"] if edge["source"] == hub_id else edge["source"]
+
+    def _hop(edge):
+        return {
+            "source_label":     nodes_by_id.get(edge["source"], {}).get("label", edge["source"]),
+            "target_label":     nodes_by_id.get(edge["target"], {}).get("label", edge["target"]),
+            "relationship_type": edge.get("type"),
+            "as_of":            edge.get("as_of"),
+            "valid_from":       edge.get("valid_from"),
+            "valid_until":      edge.get("valid_until"),
+            "confidence":       edge.get("confidence"),
+            "citation":         edge.get("citation"),
+            "claim_id":         edge.get("claim_id"),
+        }
+
+    patterns = []
+    seen_pairs = set()
+    for hub_id, edges_here in incident.items():
+        for i in range(len(edges_here)):
+            for j in range(i + 1, len(edges_here)):
+                e1, e2 = edges_here[i], edges_here[j]
+                if e1.get("claim_id") == e2.get("claim_id"):
+                    continue
+                a_id = _other_end(e1, hub_id)
+                c_id = _other_end(e2, hub_id)
+                if not a_id or not c_id or a_id == c_id or a_id == hub_id or c_id == hub_id:
+                    continue
+                if frozenset((a_id, c_id)) in direct_pairs:
+                    continue
+                dedupe_key = frozenset((e1["claim_id"], e2["claim_id"]))
+                if dedupe_key in seen_pairs:
+                    continue
+                seen_pairs.add(dedupe_key)
+                pattern_id = "PAT-" + _hashlib.sha256(
+                    "|".join(sorted([e1["claim_id"], e2["claim_id"]])).encode()
+                ).hexdigest()[:10].upper()
+                patterns.append({
+                    "pattern_id": pattern_id,
+                    "nodes": [_node_summary(a_id), _node_summary(hub_id), _node_summary(c_id)],
+                    "hops":  [_hop(e1), _hop(e2)],
+                })
+    return patterns
+
+
+def _get_pattern_reviews() -> dict:
+    return {r["pattern_id"]: r for r in _forge_load("pattern_reviews.json") if r.get("pattern_id")}
+
+
+@app.get("/api/forge/ontology/patterns")
+def forge_get_ontology_patterns(include_dismissed: bool = False, _forge=Depends(_require_forge)):
+    patterns = _find_graph_patterns()
+    reviews  = _get_pattern_reviews()
+    for p in patterns:
+        rv = reviews.get(p["pattern_id"], {})
+        p["starred"]   = bool(rv.get("starred"))
+        p["dismissed"] = bool(rv.get("dismissed"))
+        p["note"]      = rv.get("note")
+    if not include_dismissed:
+        patterns = [p for p in patterns if not p["dismissed"]]
+    patterns.sort(key=lambda p: (not p["starred"], p["nodes"][1]["label"] or ""))
+    return {"patterns": patterns}
+
+
+@app.post("/api/forge/ontology/patterns/{pattern_id}/review")
+async def forge_review_ontology_pattern(pattern_id: str, request: Request, _forge=Depends(_require_forge)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reviews = _forge_load("pattern_reviews.json")
+    row = next((r for r in reviews if r.get("pattern_id") == pattern_id), None)
+    if not row:
+        row = {"pattern_id": pattern_id}
+        reviews.append(row)
+    for field in ("starred", "dismissed", "note"):
+        if field in body:
+            row[field] = body[field]
+    row["reviewed_at"] = datetime.utcnow().isoformat()
+    row["reviewer"]    = body.get("reviewer") or getattr(_forge, "email", "admin")
+    _forge_save("pattern_reviews.json", reviews)
+    return {
+        "pattern_id": pattern_id,
+        "starred":    bool(row.get("starred")),
+        "dismissed":  bool(row.get("dismissed")),
+        "note":       row.get("note"),
+    }
+
+
+# ── Report snapshots (Phase 1 capture layer) ───────────────────────────────────
+#
+# prepare_intelligence_picture() used to be pure compute — call it, get a dict,
+# throw it away. That meant nothing it produced ever had an ID a later report
+# or council pass could cite ("this claim traces to artefact X, captured at
+# time Y") — the exact capability the report pipeline needs and never had.
+# This is that persistence layer: capture the picture once, store it
+# untouched, and give it a real, retrievable identity. A snapshot row is never
+# rewritten after creation — that's the whole point of calling it a snapshot.
+# Gated the same way as the rest of Forge (passcode or admin bearer token),
+# since capturing one runs real DB queries and shouldn't be open to anyone.
+
+def _snapshot_id() -> str:
+    return "SNAP-" + uuid.uuid4().hex[:8].upper()
+
+
+def _parse_snapshot_dt(v):
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(v)
+    except Exception:
+        return None
+
+
+@app.post("/api/reports/snapshots")
+async def create_report_snapshot(request: Request, _forge=Depends(_require_forge)):
+    """Capture the current intelligence picture and freeze it as a versioned,
+    persisted artefact. Unlike /api/director/prepare-briefing (which keeps the
+    picture only in memory, for Director Mode's own use), this writes a row
+    that never changes after creation — a later report/council pass can cite
+    this exact snapshot_id even after the live data underneath has moved on."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    loop = asyncio.get_event_loop()
+    from briefing_prep import prepare_intelligence_picture as _prep_ip
+    _fe = _fusion_engine
+    try:
+        pic = await asyncio.wait_for(
+            loop.run_in_executor(
+                _executor,
+                lambda: _prep_ip(
+                    db=next(_db_gen()),
+                    forge_alerts=list(_forge_alerts),
+                    fusion_engine_instance=_fe,
+                ),
+            ),
+            timeout=30,
+        )
+    except Exception as _e:
+        raise HTTPException(500, f"Intelligence picture failed: {_e}")
+
+    from database import ReportSnapshot, get_db as _gdb_snap
+    snap_id    = _snapshot_id()
+    created_by = body.get("created_by") or getattr(_forge, "email", "admin")
+
+    def _json_default(obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return str(obj)
+
+    with _gdb_snap() as db:
+        row = ReportSnapshot(
+            snapshot_id=snap_id,
+            label=body.get("label"),
+            source="intelligence_picture",
+            period_start=_parse_snapshot_dt(body.get("period_start")),
+            period_end=_parse_snapshot_dt(body.get("period_end")),
+            stats_json=_json.dumps(pic.get("statistics", {}), default=_json_default),
+            content_json=_json.dumps(pic, ensure_ascii=False, default=_json_default),
+            created_by=created_by,
+        )
+        db.add(row)
+        db.commit()
+        captured_at = row.captured_at.isoformat() if row.captured_at else None
+
+    return {
+        "snapshot_id": snap_id,
+        "label":       body.get("label"),
+        "captured_at": captured_at,
+        "statistics":  pic.get("statistics", {}),
+    }
+
+
+@app.get("/api/reports/snapshots")
+def list_report_snapshots(limit: int = 20, _forge=Depends(_require_forge)):
+    """List captured snapshots, newest first — metadata + stats only. Fetch a
+    specific snapshot (below) to get its full frozen content."""
+    from database import ReportSnapshot, get_db as _gdb_snaplist
+    limit = max(1, min(limit, 200))
+    with _gdb_snaplist() as db:
+        rows = db.query(ReportSnapshot).order_by(ReportSnapshot.captured_at.desc()).limit(limit).all()
+        return [
+            {
+                "snapshot_id":  r.snapshot_id,
+                "label":        r.label,
+                "source":       r.source,
+                "period_start": r.period_start.isoformat() if r.period_start else None,
+                "period_end":   r.period_end.isoformat() if r.period_end else None,
+                "captured_at":  r.captured_at.isoformat() if r.captured_at else None,
+                "created_by":   r.created_by,
+                "statistics":   _json.loads(r.stats_json) if r.stats_json else {},
+            }
+            for r in rows
+        ]
+
+
+@app.get("/api/reports/snapshots/{snapshot_id}")
+def get_report_snapshot(snapshot_id: str, _forge=Depends(_require_forge)):
+    """Fetch one snapshot's full frozen content — exactly what was captured at
+    the time, unaffected by anything that has happened to the live data since."""
+    from database import ReportSnapshot, get_db as _gdb_snapget
+    with _gdb_snapget() as db:
+        row = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == snapshot_id).first()
+        if not row:
+            raise HTTPException(404, "Snapshot not found")
+        return {
+            "snapshot_id":  row.snapshot_id,
+            "label":        row.label,
+            "source":       row.source,
+            "period_start": row.period_start.isoformat() if row.period_start else None,
+            "period_end":   row.period_end.isoformat() if row.period_end else None,
+            "captured_at":  row.captured_at.isoformat() if row.captured_at else None,
+            "created_by":   row.created_by,
+            "content":      _json.loads(row.content_json),
+        }
+
+
+# ── Assets (roadmap Phase 2: civilian/military/dual-use infrastructure registry) ──
+#
+# OntologyEntity (the existing infra registry) is a label, a type, and a JSON
+# metadata blob — there's nowhere on it to say "this port is military" or "this
+# facility is owned by X." Asset is the purpose-built table for exactly that
+# question. Every row requires a real source citation, the same no-fake-data
+# gate OntologyClaim uses — an assertion like "this is a military facility" is
+# exactly the kind of claim that must trace to something real, not be guessed.
+
+_ASSET_CATEGORIES = {"civilian", "military", "dual_use", "unknown"}
+
+
+def _asset_id() -> str:
+    return "AST-" + uuid.uuid4().hex[:8].upper()
+
+
+def _asset_to_dict(row) -> dict:
+    return {
+        "asset_id":   row.asset_id,
+        "name":       row.name,
+        "asset_type": row.asset_type,
+        "category":   row.category,
+        "owner":      row.owner,
+        "operator":   row.operator,
+        "country":    row.country,
+        "lat":        row.lat,
+        "lng":        row.lng,
+        "description": row.description,
+        "region_tag": row.region_tag,
+        "confidence": row.confidence,
+        "source": {
+            "title": row.source_title, "publisher": row.source_publisher,
+            "date": row.source_date, "url": row.source_url, "excerpt": row.source_excerpt,
+        },
+        "created_by": row.created_by,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.post("/api/forge/assets")
+async def create_asset(request: Request, _forge=Depends(_require_forge)):
+    """Create one categorized asset. Requires a real citation (source_title
+    or source_url, plus an evidence excerpt) — rejected outright rather than
+    stored uncited, same policy as OntologyClaim. `category` must be one of
+    civilian/military/dual_use/unknown; there is no numeric confidence score,
+    only the honest 'direct'/'inferred' string OntologyClaim also uses."""
+    body = await request.json()
+
+    name       = (body.get("name") or "").strip()
+    asset_type = (body.get("asset_type") or "").strip()
+    category   = (body.get("category") or "").strip().lower()
+    source_title = (body.get("source_title") or "").strip()
+    source_url   = (body.get("source_url") or "").strip()
+    source_excerpt = (body.get("source_excerpt") or "").strip()
+
+    if not name or not asset_type:
+        raise HTTPException(400, "name and asset_type are required")
+    if category not in _ASSET_CATEGORIES:
+        raise HTTPException(400, f"category must be one of {sorted(_ASSET_CATEGORIES)}")
+    if not (source_title or source_url) or not source_excerpt:
+        raise HTTPException(400, "a citation (source_title or source_url) and a source_excerpt are required — an asset's category/ownership can't be stored uncited")
+
+    from database import Asset, get_db as _gdb_asset
+    aid = _asset_id()
+    created_by = body.get("created_by") or getattr(_forge, "email", "admin")
+    with _gdb_asset() as db:
+        row = Asset(
+            asset_id=aid, name=name, asset_type=asset_type, category=category,
+            owner=body.get("owner"), operator=body.get("operator"), country=body.get("country"),
+            lat=body.get("lat"), lng=body.get("lng"), description=body.get("description"),
+            region_tag=body.get("region_tag"),
+            confidence=body.get("confidence") if body.get("confidence") in ("direct", "inferred") else None,
+            source_title=source_title or None, source_publisher=body.get("source_publisher"),
+            source_date=body.get("source_date"), source_url=source_url or None,
+            source_excerpt=source_excerpt, created_by=created_by,
+        )
+        db.add(row)
+        db.commit()
+        return _asset_to_dict(row)
+
+
+@app.get("/api/forge/assets")
+def list_assets(region_tag: str = None, category: str = None, asset_type: str = None,
+                 _forge=Depends(_require_forge)):
+    from database import Asset, get_db as _gdb_assetlist
+    with _gdb_assetlist() as db:
+        q = db.query(Asset)
+        if region_tag:
+            q = q.filter(Asset.region_tag == region_tag)
+        if category:
+            q = q.filter(Asset.category == category)
+        if asset_type:
+            q = q.filter(Asset.asset_type == asset_type)
+        rows = q.order_by(Asset.created_at.desc()).all()
+        return [_asset_to_dict(r) for r in rows]
+
+
+@app.get("/api/forge/assets/{asset_id}")
+def get_asset(asset_id: str, _forge=Depends(_require_forge)):
+    from database import Asset, get_db as _gdb_assetget
+    with _gdb_assetget() as db:
+        row = db.query(Asset).filter(Asset.asset_id == asset_id).first()
+        if not row:
+            raise HTTPException(404, "Asset not found")
+        return _asset_to_dict(row)
+
+
+@app.patch("/api/forge/assets/{asset_id}")
+async def update_asset(asset_id: str, request: Request, _forge=Depends(_require_forge)):
+    """Update mutable fields on an existing asset (e.g. a reviewer correcting
+    a category, or adding an operator once confirmed). Changing category
+    still requires the row to end up with a valid category value and a
+    citation — you can't patch an asset into being uncited."""
+    body = await request.json()
+    from database import Asset, get_db as _gdb_assetupd
+    with _gdb_assetupd() as db:
+        row = db.query(Asset).filter(Asset.asset_id == asset_id).first()
+        if not row:
+            raise HTTPException(404, "Asset not found")
+        if "category" in body:
+            new_cat = (body["category"] or "").strip().lower()
+            if new_cat not in _ASSET_CATEGORIES:
+                raise HTTPException(400, f"category must be one of {sorted(_ASSET_CATEGORIES)}")
+            row.category = new_cat
+        for field in ("name", "asset_type", "owner", "operator", "country", "lat", "lng",
+                      "description", "region_tag", "source_title", "source_publisher",
+                      "source_date", "source_url", "source_excerpt"):
+            if field in body:
+                setattr(row, field, body[field])
+        if "confidence" in body and body["confidence"] in ("direct", "inferred", None):
+            row.confidence = body["confidence"]
+        if not (row.source_title or row.source_url) or not row.source_excerpt:
+            raise HTTPException(400, "an asset can't be left without a citation")
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _asset_to_dict(row)
+
+
+@app.delete("/api/forge/assets/{asset_id}")
+def delete_asset(asset_id: str, _forge=Depends(_require_forge)):
+    from database import Asset, get_db as _gdb_assetdel
+    with _gdb_assetdel() as db:
+        row = db.query(Asset).filter(Asset.asset_id == asset_id).first()
+        if not row:
+            raise HTTPException(404, "Asset not found")
+        db.delete(row)
+        db.commit()
+        return {"asset_id": asset_id, "status": "deleted"}
+
+
+# ── Reports (roadmap Phase 3: report entity, status machine, council, PDF) ───
+#
+# Net-new: nothing in this codebase built a report lifecycle before this.
+# Every report is keyed to a ReportSnapshot (Phase 1) — the frozen artefact
+# its claims are supposed to cite. Status machine: draft -> in_review
+# (submit-for-review runs the council) -> approved -> published, or
+# in_review -> rejected. The council itself (report_council.py) is a
+# sequential structure: a deterministic pass first (citation-existence,
+# geo-sanity — no model call, no judgment call to get wrong), then a small
+# number of model-based passes with distinct lenses. Nothing here auto-
+# publishes anything — every transition after draft requires an explicit
+# human action.
+
+_REPORT_CITATION_TYPES = {"snapshot_ref", "external"}
+
+
+def _report_id() -> str:
+    return "RPT-" + uuid.uuid4().hex[:8].upper()
+
+
+def _validate_claims(claims: list) -> list:
+    """Assigns a claim_id to any claim missing one and checks each claim has
+    real text and a well-formed citation. Raises HTTPException on the first
+    problem rather than silently accepting a half-formed claim."""
+    if not isinstance(claims, list):
+        raise HTTPException(400, "claims must be a list")
+    out = []
+    for i, c in enumerate(claims):
+        if not isinstance(c, dict) or not (c.get("text") or "").strip():
+            raise HTTPException(400, f"claim at index {i} is missing text")
+        citation = c.get("citation")
+        if not isinstance(citation, dict) or citation.get("type") not in _REPORT_CITATION_TYPES:
+            raise HTTPException(400, f"claim at index {i} needs a citation with type 'snapshot_ref' or 'external'")
+        if citation.get("type") == "snapshot_ref" and not (citation.get("section") and citation.get("item_id")):
+            raise HTTPException(400, f"claim at index {i}: snapshot_ref citation needs section and item_id")
+        if citation.get("type") == "external" and not (citation.get("url") or "").strip():
+            raise HTTPException(400, f"claim at index {i}: external citation needs a url")
+        out.append({
+            "claim_id": c.get("claim_id") or ("RCLM-" + uuid.uuid4().hex[:6].upper()),
+            "text": c["text"].strip(),
+            "citation": citation,
+            "source_evaluation": c.get("source_evaluation") if isinstance(c.get("source_evaluation"), dict) else None,
+            "asserted_zone": c.get("asserted_zone"), "lat": c.get("lat"), "lon": c.get("lon") or c.get("lng"),
+        })
+    return out
+
+
+def _report_to_dict(row) -> dict:
+    return {
+        "report_id":     row.report_id,
+        "title":         row.title,
+        "snapshot_id":   row.snapshot_id,
+        "classification": row.classification,
+        "key_judgments": row.key_judgments,
+        "claims":        _json.loads(row.claims_json or "[]"),
+        "status":        row.status,
+        "council_findings": _json.loads(row.council_findings_json) if row.council_findings_json else None,
+        "council_run_at":  row.council_run_at.isoformat() if row.council_run_at else None,
+        "reviewer":      row.reviewer,
+        "review_note":   row.review_note,
+        "reviewed_at":   row.reviewed_at.isoformat() if row.reviewed_at else None,
+        "published_at":  row.published_at.isoformat() if row.published_at else None,
+        "created_by":    row.created_by,
+        "created_at":    row.created_at.isoformat() if row.created_at else None,
+        "updated_at":    row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.post("/api/reports")
+async def create_report(request: Request, _forge=Depends(_require_forge)):
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    snapshot_id = (body.get("snapshot_id") or "").strip()
+    if not title:
+        raise HTTPException(400, "title is required")
+    if not snapshot_id:
+        raise HTTPException(400, "snapshot_id is required — a report must be keyed to a captured snapshot")
+
+    from database import Report, ReportSnapshot, get_db as _gdb_rpt
+    with _gdb_rpt() as db:
+        if not db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == snapshot_id).first():
+            raise HTTPException(404, f"snapshot {snapshot_id} not found — capture one first via POST /api/reports/snapshots")
+        claims = _validate_claims(body.get("claims") or [])
+        row = Report(
+            report_id=_report_id(), title=title, snapshot_id=snapshot_id,
+            classification=body.get("classification") or "UNCLASSIFIED // FOR ANALYTICAL USE ONLY",
+            key_judgments=body.get("key_judgments"),
+            claims_json=_json.dumps(claims), status="draft",
+            created_by=body.get("created_by") or getattr(_forge, "email", "admin"),
+        )
+        db.add(row)
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.get("/api/reports")
+def list_reports(status: str = None, _forge=Depends(_require_forge)):
+    from database import Report, get_db as _gdb_rptlist
+    with _gdb_rptlist() as db:
+        q = db.query(Report)
+        if status and status != "all":
+            q = q.filter(Report.status == status)
+        rows = q.order_by(Report.created_at.desc()).all()
+        return [_report_to_dict(r) for r in rows]
+
+
+@app.get("/api/reports/{report_id}")
+def get_report(report_id: str, _forge=Depends(_require_forge)):
+    from database import Report, get_db as _gdb_rptget
+    with _gdb_rptget() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        return _report_to_dict(row)
+
+
+@app.patch("/api/reports/{report_id}")
+async def update_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+    """Only draft reports can be edited — once submitted for review, the
+    content that the council actually reviewed shouldn't silently change
+    out from under those findings."""
+    body = await request.json()
+    from database import Report, get_db as _gdb_rptupd
+    with _gdb_rptupd() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "draft":
+            raise HTTPException(409, f"only draft reports can be edited (this one is {row.status})")
+        if "title" in body:
+            if not (body["title"] or "").strip():
+                raise HTTPException(400, "title cannot be blank")
+            row.title = body["title"].strip()
+        if "classification" in body:
+            row.classification = body["classification"]
+        if "key_judgments" in body:
+            row.key_judgments = body["key_judgments"]
+        if "claims" in body:
+            row.claims_json = _json.dumps(_validate_claims(body["claims"]))
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.post("/api/reports/{report_id}/submit-for-review")
+def submit_report_for_review(report_id: str, _forge=Depends(_require_forge)):
+    from database import Report, ReportSnapshot, get_db as _gdb_rptsub
+    import report_council as _council
+    with _gdb_rptsub() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "draft":
+            raise HTTPException(409, f"only draft reports can be submitted for review (this one is {row.status})")
+        claims = _json.loads(row.claims_json or "[]")
+        if not claims:
+            raise HTTPException(400, "cannot submit a report with no claims")
+        snap = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first()
+        if not snap:
+            raise HTTPException(500, f"report's snapshot {row.snapshot_id} no longer exists")
+        snapshot_content = _json.loads(snap.content_json)
+
+        findings = _council.run_council(
+            report_title=row.title, key_judgments=row.key_judgments, claims=claims,
+            snapshot_content=snapshot_content, client=client, usage_tracker_mod=usage_tracker, db=db,
+        )
+        row.council_findings_json = _json.dumps(findings, default=str)
+        row.council_run_at = datetime.utcnow()
+        row.status = "in_review"
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.post("/api/reports/{report_id}/approve")
+async def approve_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    from database import Report, get_db as _gdb_rptappr
+    with _gdb_rptappr() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "in_review":
+            raise HTTPException(409, f"only in_review reports can be approved (this one is {row.status})")
+        row.status = "approved"
+        row.reviewer = body.get("reviewer") or getattr(_forge, "email", "admin")
+        row.review_note = body.get("note")
+        row.reviewed_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.post("/api/reports/{report_id}/reject")
+async def reject_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    from database import Report, get_db as _gdb_rptrej
+    with _gdb_rptrej() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "in_review":
+            raise HTTPException(409, f"only in_review reports can be rejected (this one is {row.status})")
+        row.status = "rejected"
+        row.reviewer = body.get("reviewer") or getattr(_forge, "email", "admin")
+        row.review_note = body.get("note")
+        row.reviewed_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.post("/api/reports/{report_id}/publish")
+def publish_report(report_id: str, _forge=Depends(_require_forge)):
+    from database import Report, get_db as _gdb_rptpub
+    with _gdb_rptpub() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "approved":
+            raise HTTPException(409, f"only approved reports can be published (this one is {row.status})")
+        row.status = "published"
+        row.published_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.get("/api/reports/{report_id}/pdf")
+def get_report_pdf(report_id: str, _forge=Depends(_require_forge)):
+    from database import Report, get_db as _gdb_rptpdf
+    import report_pdf as _pdf
+    with _gdb_rptpdf() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        pdf_bytes = _pdf.render_report_pdf(_report_to_dict(row))
+    return FastAPIResponse(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{report_id}.pdf"'},
+    )
 
 
 # ── Auto-rule generation ──────────────────────────────────────────────────────
@@ -17986,19 +18992,13 @@ def _run_batch_scan_for_site(site, zoom=15):
                 px_box = [cx - 32, cy - 32, cx + 32, cy + 32]
             raw_dets.append((det, [int(v) for v in px_box]))
     else:
-        MOCK_CLASSES = ["plane", "large-vehicle", "vehicle", "ship", "storage-tank", "helicopter-pad"]
-        for _ in range(random.randint(2, 6)):
-            cx = random.randint(64, img_w - 64)
-            cy = random.randint(64, img_h - 64)
-            w  = random.randint(28, 68); h = random.randint(28, 68)
-            cls = random.choice(MOCK_CLASSES)
-            raw_dets.append(({
-                "class": cls, "category": "Object", "subcategory": "Unknown",
-                "confidence": round(random.uniform(0.52, 0.91), 2),
-                "center": [round(px_lat(cy), 5), round(px_lon(cx), 5)],
-                "lat": round(px_lat(cy), 5), "lon": round(px_lon(cx), 5),
-                "mock": True,
-            }, [max(0, cx-w//2), max(0, cy-h//2), min(img_w, cx+w//2), min(img_h, cy+h//2)]))
+        # No fabricated detections: this batch is used for human labeling/training review
+        # (TrainingWorkspace -> forge_label_detection), and an analyst confirming/correcting
+        # a randomly-generated "detection" would silently corrupt real accuracy/training data
+        # with labels for objects that were never actually there. If the ONNX model isn't
+        # available, that's a real failure — surface it as one instead of masking it with mock
+        # detections that look identical to real ones in the review UI.
+        raise RuntimeError("ONNX 'dota' model session unavailable — cannot run real detection for this site")
 
     # Build all_detections as percentage positions in the (possibly downscaled) full_image
     all_dets_pct = []
@@ -18072,29 +19072,13 @@ async def forge_ais_generate_batch(request: Request, _forge=Depends(_require_for
 
     vessels = [v for v in _AIS_VESSELS.values() if v.get("lat") and v.get("lon")]
 
-    if len(vessels) < 5:
-        MOCK_TYPES  = ["Tanker", "Cargo", "Container Ship", "Military", "Fishing", "Bulk Carrier", "General Cargo"]
-        MOCK_FLAGS  = ["Iran", "Russia", "China", "Panama", "Marshall Islands", "Liberia", "Bahamas", "Singapore"]
-        MOCK_DESTS  = ["Bandar Abbas", "Jeddah", "Shanghai", "Rotterdam", "Houston", "Novorossiysk", "Tartus", ""]
-        vessels = []
-        for _ in range(n):
-            mmsi = str(random.randint(300000000, 799999999))
-            vessels.append({
-                "mmsi":        mmsi,
-                "name":        f"VESSEL {random.randint(100, 999)}",
-                "ship_type":   random.choice(MOCK_TYPES),
-                "flag":        random.choice(MOCK_FLAGS),
-                "lat":         round(random.uniform(15, 45), 4),
-                "lon":         round(random.uniform(30, 80), 4),
-                "speed":       round(random.uniform(0, 18), 1),
-                "heading":     random.randint(0, 359),
-                "destination": random.choice(MOCK_DESTS),
-                "callsign":    f"A{random.randint(1000, 9999)}",
-                "mock":        True,
-            })
-    else:
-        random.shuffle(vessels)
-        vessels = vessels[:n]
+    # No fabricated vessels: this batch feeds a human labeling/training review
+    # (TrainingWorkspace -> forge_label_detection), and an analyst confirming/correcting a
+    # randomly-generated MMSI/vessel would silently corrupt real accuracy/training data with
+    # labels for a ship that never existed. If fewer than `n` real AIS vessels are currently
+    # tracked, return honestly fewer (down to zero) rather than padding with invented ones.
+    random.shuffle(vessels)
+    vessels = vessels[:n]
 
     for v in vessels:
         v["review_id"] = str(uuid.uuid4())
@@ -18115,37 +19099,14 @@ async def forge_news_generate_batch(request: Request, _forge=Depends(_require_fo
             if a.get("published", "") >= cutoff and a.get("title")
         ]
 
-    if len(candidates) < 3:
-        MOCK_TITLES = [
-            "Iran IRGC Conducts Naval Exercise Near Strait of Hormuz",
-            "Houthi Missile Strike Targets Red Sea Shipping Lane",
-            "Russia Deploys Additional Forces to Hmeimim Air Base",
-            "Sudan Armed Forces Report Ambush Near El Fasher",
-            "Turkish Drone Strike Kills 12 PKK Militants in Northern Iraq",
-            "China Expands Naval Base Facilities at Djibouti",
-            "Al-Shabaab Claims Ambush on AU Convoy in Somalia",
-            "Israeli Airstrikes Target Syrian Military Positions Near Deir ez-Zor",
-        ]
-        MOCK_TIERS   = ["critical", "significant", "elevated", "low"]
-        MOCK_TYPES   = ["Conflict", "Explosion / Remote Violence", "Strategic Developments"]
-        MOCK_SOURCES = ["Reuters", "AP", "BBC World", "Al Jazeera", "The Guardian"]
-        candidates = []
-        for i, title in enumerate(MOCK_TITLES):
-            candidates.append({
-                "id":            str(uuid.uuid4()),
-                "url":           f"https://example.com/mock/{i}",
-                "title":         title,
-                "source":        random.choice(MOCK_SOURCES),
-                "published":     (datetime.now(timezone.utc) - timedelta(hours=random.randint(1, 48))).isoformat(),
-                "severity_tier": random.choice(MOCK_TIERS),
-                "event_type":    random.choice(MOCK_TYPES),
-                "lat":           round(random.uniform(10, 45), 3),
-                "lon":           round(random.uniform(25, 75), 3),
-                "mock":          True,
-            })
-    else:
-        random.shuffle(candidates)
-        candidates = candidates[:n]
+    # No fabricated articles: this batch feeds a human labeling/training review
+    # (TrainingWorkspace -> forge_label_detection), and an analyst confirming/correcting a
+    # made-up headline (these were literally invented, real-sounding geopolitical events —
+    # e.g. a fabricated IRGC exercise or Houthi strike) would corrupt real accuracy/training
+    # data with labels for events that never happened. If fewer than 3 real recent articles
+    # exist, return honestly fewer (down to zero) rather than padding with invented ones.
+    random.shuffle(candidates)
+    candidates = candidates[:n]
 
     articles = []
     for a in candidates:
@@ -21095,8 +22056,9 @@ def _forge_ontology_load():
 
 def _forge_ontology_save(ontology: dict):
     _FORGE_DIR.mkdir(parents=True, exist_ok=True)
-    (_FORGE_DIR / "forge_ontology.json").write_text(
-        _json.dumps(ontology, indent=2, ensure_ascii=False)
+    _atomic_write_text(
+        _FORGE_DIR / "forge_ontology.json",
+        _json.dumps(ontology, indent=2, ensure_ascii=False),
     )
 
 
@@ -21152,127 +22114,17 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
     except Exception as _e:
         print(f"[ontology] chokepoints failed: {_e}")
 
-    # ── Countries ────────────────────────────────────────────────────────────
-    key_countries = [
-        "Iran", "United States", "Russia", "China", "Israel", "Saudi Arabia",
-        "Yemen", "Mali", "Sudan", "Ukraine", "Turkey", "Egypt", "France",
-        "United Kingdom", "India", "Somalia", "Djibouti", "Oman", "UAE", "Qatar",
-        "Iraq", "Syria", "Libya", "Nigeria", "Chad", "Niger", "Kenya",
-        "South Korea", "North Korea", "Taiwan", "Pakistan", "Afghanistan",
-        "Lebanon", "Jordan", "Bahrain", "Kuwait", "Myanmar", "Philippines",
-        "Ethiopia", "Eritrea", "South Sudan", "Mozambique", "Tanzania",
-        "Congo", "Palestine",
-    ]
-    country_ids: dict = {}
-    try:
-        for c in key_countries:
-            country_ids[c] = add_node("country", c)
-        alliances = [
-            ("United States", "Israel", "ally"), ("United States", "Saudi Arabia", "ally"),
-            ("United States", "UAE", "ally"),     ("United States", "United Kingdom", "ally"),
-            ("United States", "South Korea", "ally"),
-            ("Russia", "Iran", "ally"),           ("Russia", "Syria", "ally"),
-            ("China", "North Korea", "ally"),     ("China", "Russia", "partner"),
-            ("Iran", "Syria", "ally"),            ("Iran", "Yemen", "proxy"),
-            ("Saudi Arabia", "UAE", "ally"),      ("Turkey", "Qatar", "ally"),
-            ("Ethiopia", "Eritrea", "tension"),   ("India", "Pakistan", "rival"),
-            ("Israel", "Iran", "adversary"),      ("United States", "Russia", "adversary"),
-            ("United States", "China", "rival"),  ("Ukraine", "Russia", "war"),
-            ("Israel", "Lebanon", "tension"),
-        ]
-        for c1, c2, rel in alliances:
-            if c1 in country_ids and c2 in country_ids:
-                add_edge(country_ids[c1], country_ids[c2], rel)
-        cp_country_map = {
-            "Strait of Hormuz":  ["Iran", "Oman", "UAE"],
-            "Bab el-Mandeb":     ["Yemen", "Djibouti", "Eritrea"],
-            "Suez Canal":        ["Egypt"],
-            "Taiwan Strait":     ["Taiwan", "China"],
-            "Strait of Malacca": ["Myanmar", "Malaysia", "Indonesia"],
-            "Bosphorus":         ["Turkey"],
-            "Cape of Good Hope": ["South Africa"],
-            "Mozambique Channel":["Mozambique", "Tanzania"],
-            "Gibraltar Strait":  ["Spain", "Morocco"],
-            "Kerch Strait":      ["Russia", "Ukraine"],
-        }
-        for cp_name, countries in cp_country_map.items():
-            if cp_name in chokepoint_ids:
-                for c in countries:
-                    if c in country_ids:
-                        add_edge(chokepoint_ids[cp_name], country_ids[c], "located_in")
-        print(f"[ontology] {len(country_ids)} countries")
-    except Exception as _e:
-        print(f"[ontology] countries failed: {_e}")
-
-    # ── Groups ───────────────────────────────────────────────────────────────
-    group_ids: dict = {}
-    try:
-        groups = [
-            ("IRGC",         "Iran",       "Islamic Revolutionary Guard Corps"),
-            ("IRGC Navy",    "Iran",       "Fast attack craft — Strait of Hormuz"),
-            ("Hezbollah",    "Lebanon",    "Iran-backed militia — Bekaa Valley HQ"),
-            ("Houthi",       "Yemen",      "Ansar Allah — anti-ship missile capability"),
-            ("Hamas",        "Palestine",  "Gaza-based militant group"),
-            ("JNIM",         "Mali",       "Al-Qaeda affiliate — Sahel belt"),
-            ("ISIS Sahel",   "Niger",      "Islamic State affiliate — Tri-border area"),
-            ("Boko Haram",   "Nigeria",    "Islamist insurgency — Lake Chad basin"),
-            ("Al-Shabaab",   "Somalia",    "Al-Qaeda affiliate — Horn of Africa"),
-            ("RSF",          "Sudan",      "Rapid Support Forces — Hemedti"),
-            ("SAF",          "Sudan",      "Sudanese Armed Forces — Burhan"),
-            ("Wagner",       "Russia",     "PMC — Africa operations"),
-            ("PLA Navy",     "China",      "People's Liberation Army Navy"),
-            ("PLA Air Force","China",      "Strategic air and missile power"),
-            ("M23",          "Congo",      "Rwanda-backed armed group — eastern DRC"),
-        ]
-        for name, country, desc in groups:
-            nid = add_node("group", name, desc)
-            group_ids[name] = nid
-            if country in country_ids:
-                add_edge(nid, country_ids[country], "operates")
-        group_sponsors = [
-            ("IRGC", "Hezbollah", "sponsors"), ("IRGC", "Houthi", "sponsors"),
-            ("IRGC", "Hamas", "sponsors"),      ("Wagner", "RSF", "supports"),
-            ("JNIM", "ISIS Sahel", "rivals"),
-        ]
-        for g1, g2, rel in group_sponsors:
-            if g1 in group_ids and g2 in group_ids:
-                add_edge(group_ids[g1], group_ids[g2], rel)
-        group_threats = {
-            "IRGC Navy": ["Strait of Hormuz"],
-            "Houthi":    ["Bab el-Mandeb"],
-            "PLA Navy":  ["Taiwan Strait", "South China Sea"],
-        }
-        for g, cp_names in group_threats.items():
-            if g in group_ids:
-                for cp_name in cp_names:
-                    if cp_name in chokepoint_ids:
-                        add_edge(group_ids[g], chokepoint_ids[cp_name], "threatens")
-        print(f"[ontology] {len(group_ids)} groups")
-    except Exception as _e:
-        print(f"[ontology] groups failed: {_e}")
-
-    # ── Key People ───────────────────────────────────────────────────────────
-    try:
-        people = [
-            ("Ali Khamenei",          "Iran",        "Supreme Leader"),
-            ("Vladimir Putin",        "Russia",      "President"),
-            ("Xi Jinping",            "China",       "President / General Secretary"),
-            ("Benjamin Netanyahu",    "Israel",      "Prime Minister"),
-            ("Abdel Fattah al-Burhan","Sudan",       "SAF Commander / de facto President"),
-            ("Hemedti",               "Sudan",       "RSF Commander"),
-            ("Assimi Goita",          "Mali",        "Military leader / junta"),
-            ("Kim Jong Un",           "North Korea", "Supreme Leader"),
-            ("Volodymyr Zelenskyy",   "Ukraine",     "President"),
-            ("Abdel Fattah el-Sisi",  "Egypt",       "President"),
-            ("Recep Tayyip Erdogan",  "Turkey",      "President"),
-        ]
-        for name, country, desc in people:
-            nid = add_node("person", name, desc)
-            if country in country_ids:
-                add_edge(nid, country_ids[country], "leads")
-        print(f"[ontology] {len(people)} people")
-    except Exception as _e:
-        print(f"[ontology] people failed: {_e}")
+    # NOTE: this build previously seeded the graph with hardcoded countries, alliances,
+    # chokepoint-to-country mappings, armed groups/sponsorship edges, and named world
+    # leaders — ~44 countries, ~19 alliance edges, 15 groups, and 11 people, all frozen
+    # Python literals with no real source, no update mechanism, and no way for a viewer
+    # to tell them apart from the genuinely live data (vessels, aircraft, cables, rules,
+    # events) built below. Removed per the no-fake-data policy: a static, unsourced
+    # geopolitical assertion (e.g. "Iran allies Syria") presented as if it were computed
+    # ontology output is exactly the kind of fabrication that policy exists to catch.
+    # Real entity-to-entity relationships (vessel<->company, person<->faction, with a real
+    # confidence, evidence citation, and validity window) are Phase 2 roadmap work, not
+    # something to fake here in the meantime.
 
     # ── Live AIS vessels (sample 25) ─────────────────────────────────────────
     try:
@@ -21314,19 +22166,12 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
             ev_lat = ev.get("lat")
             ev_lng = ev.get("lng") or ev.get("lon")
             if ev_lat and ev_lng:
-                nid = add_node("event", (ev.get("headline") or ev.get("title") or "")[:50],
-                               f"Severity: {ev.get('severity','unknown')}",
-                               ev_lat, ev_lng)
+                add_node("event", (ev.get("headline") or ev.get("title") or "")[:50],
+                         f"Severity: {ev.get('severity','unknown')}",
+                         ev_lat, ev_lng)
                 ev_count += 1
-                country = ev.get("country")
-                if country and country in country_ids:
-                    add_edge(nid, country_ids[country], "located_in")
-                else:
-                    body_text = ((ev.get("headline") or ev.get("title","")) + " " + (ev.get("summary",""))).lower()
-                    for cname, cid in country_ids.items():
-                        if cname.lower() in body_text:
-                            add_edge(nid, cid, "located_in")
-                            break
+                # (previously added a "located_in" edge to a hardcoded country node here —
+                # removed along with the fabricated countries block above)
         print(f"[ontology] {ev_count} events")
     except Exception as _e:
         print(f"[ontology] events failed: {_e}")

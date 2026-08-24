@@ -364,6 +364,23 @@ export default function GlobeSurgeLayer({ enabled }) {
         setSel(null); posRef.current = null; setVis(false)
     }, [])
 
+    // Deep-link entry point: a report claim citing this surge event. The
+    // camera fly-to itself is dispatched by src/services/reportDeepLink.js
+    // (a surge_events snapshot item already carries real lat/lon) — this
+    // just opens the same real popup a click would, if the surge is still
+    // active. Silent no-op if it's aged out since the report's snapshot.
+    useEffect(() => {
+        const handler = (e) => {
+            const surgeId = e.detail?.surge_id
+            if (!surgeId) return
+            const surge = surges.find(s => String(s.surge_id) === String(surgeId))
+            if (!surge) return
+            handleClick(surge, window.innerWidth / 2, window.innerHeight / 2)
+        }
+        window.addEventListener("akili:show-surge", handler)
+        return () => window.removeEventListener("akili:show-surge", handler)
+    }, [surges, handleClick])
+
     if (!enabled) return null
 
     return (

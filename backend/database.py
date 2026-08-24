@@ -720,15 +720,200 @@ class OntologyLink(Base):
     entity_type     = Column(String, nullable=False, index=True)               # cable|port|airport|zone|vessel|aircraft
     entity_id       = Column(String, nullable=False, index=True)               # system_id or DB pk
     entity_name     = Column(String, nullable=True)
-    link_type       = Column(String, nullable=False, default="proximity")       # proximity|mention|impact
+    link_type       = Column(String, nullable=False, default="proximity")       # proximity|mention|impact|contains
     distance_km     = Column(Float, nullable=True)                             # for proximity links
-    confidence      = Column(Float, default=1.0)
+    confidence      = Column(Float, nullable=True)  # None = not yet computed; never fabricate certainty
     created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
     __table_args__ = (
         Index("ix_ontlink_entity",      "entity_type", "entity_id"),
         Index("ix_ontlink_source",      "source_type", "source_id"),
         Index("ix_ontlink_entity_time", "entity_type", "created_at"),
+    )
+
+
+class OntologyClaim(Base):
+    """A candidate entity-relationship claim extracted from an ingested document,
+    held for human review before it is allowed to become a live Forge ontology edge.
+
+    This is the review gate for the entity-relationship ingestion pipeline: every
+    row here must carry a real source citation (title/publisher/date/url/excerpt).
+    Nothing here is asserted as true — it is a claim a document makes, tagged with
+    where it came from, awaiting a person's approval. `confidence` is deliberately
+    a string ('direct' | 'inferred'), never a fabricated numeric score — this system
+    has no way to compute a real numeric confidence for a claim extracted from free
+    text, so it does not pretend to."""
+    __tablename__ = "ontology_claims"
+
+    id                = Column(Integer, primary_key=True)
+    claim_id          = Column(String, unique=True, index=True, nullable=False)  # CLM-<uuid8>
+
+    entity_a_label    = Column(String, nullable=False)
+    entity_a_type     = Column(String, nullable=False)
+    relationship_type = Column(String, nullable=False, index=True)
+    entity_b_label    = Column(String, nullable=False)
+    entity_b_type     = Column(String, nullable=False)
+
+    as_of             = Column(String, nullable=True)   # free-text date/period the source itself states
+    confidence        = Column(String, nullable=True)   # 'direct' | 'inferred' — never a numeric score
+
+    # Structured validity window — optional, in addition to the free-text `as_of` above.
+    # Most claims only ever carry a loose "as of August 2026" from their source text, which
+    # `as_of` already captures; these are for the minority of cases where the source states
+    # (or a reviewer can determine) an actual start/end. Addresses the audit's "relationships
+    # change over time" gap: a relationship can now be recorded as bounded, not just eternal.
+    valid_from        = Column(DateTime, nullable=True)
+    valid_until       = Column(DateTime, nullable=True)
+
+    source_title      = Column(String, nullable=True)
+    source_publisher  = Column(String, nullable=True)
+    source_date       = Column(String, nullable=True)
+    source_url        = Column(String, nullable=True)
+    source_excerpt    = Column(Text, nullable=True)     # the actual fact/quote grounding this claim
+
+    upload_id         = Column(String, nullable=True, index=True)  # forge upload record this came from, if any
+
+    status            = Column(String, nullable=False, default="pending", index=True)  # pending|approved|rejected
+    reviewer          = Column(String, nullable=True)
+    review_note       = Column(Text, nullable=True)
+    reviewed_at       = Column(DateTime, nullable=True)
+    created_at        = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_claim_status_created", "status", "created_at"),
+    )
+
+
+class ReportSnapshot(Base):
+    """A frozen, versioned intelligence-picture artefact — the persistence layer
+    the report pipeline needs but never had. Before this model existed,
+    `prepare_intelligence_picture()` was recomputed live on every call and
+    handed straight to a prompt or an HTTP response: nothing about it had an
+    ID, a timestamp, or a stored copy a later report/council pass could point
+    back to and say "this claim traces to artefact X, captured at time Y."
+    A row here is a snapshot: taken once, stored as-is, and never mutated
+    afterward — the whole point is that it does NOT change if the live data
+    underneath it changes later."""
+    __tablename__ = "report_snapshots"
+
+    id           = Column(Integer, primary_key=True)
+    snapshot_id  = Column(String, unique=True, index=True, nullable=False)  # SNAP-<uuid8>
+
+    label        = Column(String, nullable=True)    # optional human label, e.g. "Red Sea AOI — daily capture"
+    source       = Column(String, nullable=False, default="intelligence_picture")  # which capture pipeline produced this
+    period_start = Column(DateTime, nullable=True)   # optional explicit window this snapshot covers
+    period_end   = Column(DateTime, nullable=True)
+
+    stats_json   = Column(Text, nullable=True)       # denormalized quick-view stats, for listing without parsing content
+    content_json = Column(Text, nullable=False)      # the full frozen picture — never re-written after creation
+
+    created_by   = Column(String, nullable=True)
+    captured_at  = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_snapshot_source_captured", "source", "captured_at"),
+    )
+
+
+class Asset(Base):
+    """A categorized piece of real-world infrastructure — the missing piece
+    for questions like "is this port civilian, military, or dual-use, and
+    who owns it." `OntologyEntity` (above) is infra-only: a label, a type,
+    and a metadata blob, with nowhere to put ownership or category. This is
+    a genuinely new, purpose-built table rather than overloading that one.
+
+    Every row must carry a real source citation (title/publisher/date/url +
+    a quoted excerpt) — same no-fake-data gate as OntologyClaim. `category`
+    and `confidence` are both deliberately constrained, human-readable
+    strings, never a fabricated numeric score. `region_tag` marks which
+    pilot AOI a row belongs to, per the roadmap's "populate only for the
+    pilot AOI first" population strategy — this is not meant to be a
+    global registry on day one."""
+    __tablename__ = "assets"
+
+    id           = Column(Integer, primary_key=True)
+    asset_id     = Column(String, unique=True, index=True, nullable=False)  # AST-<uuid8>
+
+    name         = Column(String, nullable=False)
+    asset_type   = Column(String, nullable=False, index=True)   # port|airbase|naval_base|pipeline|power_plant|shipyard|...
+    category     = Column(String, nullable=False, index=True)   # civilian|military|dual_use|unknown — never a numeric score
+    owner        = Column(String, nullable=True)                # e.g. "Government of Djibouti", "DP World"
+    operator     = Column(String, nullable=True)                # when distinct from owner (state-owned, foreign-operated, etc.)
+    country      = Column(String, nullable=True)
+    lat          = Column(Float, nullable=True)
+    lng          = Column(Float, nullable=True)
+    description  = Column(Text, nullable=True)
+    region_tag   = Column(String, nullable=True, index=True)    # pilot AOI tag, e.g. "red_sea_bab_el_mandeb"
+
+    confidence       = Column(String, nullable=True)   # 'direct' | 'inferred' — never a fabricated numeric score
+    source_title     = Column(String, nullable=True)
+    source_publisher = Column(String, nullable=True)
+    source_date      = Column(String, nullable=True)
+    source_url       = Column(String, nullable=True)
+    source_excerpt   = Column(Text, nullable=True)      # the actual fact/quote grounding the category/ownership claim
+
+    created_by   = Column(String, nullable=True)
+    created_at   = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at   = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_asset_region_type", "region_tag", "asset_type"),
+    )
+
+
+class Report(Base):
+    """A draft-to-published intelligence report — the Phase 3 entity the
+    roadmap's whole "automated production of intelligence reports" mission
+    depends on, and net-new: nothing in this codebase built a report
+    lifecycle before this. Every report is keyed to a `ReportSnapshot`
+    (Phase 1) — the frozen artefact its claims are supposed to cite — so a
+    claim can point at "signal X in snapshot Y" rather than at nothing.
+
+    `claims_json` is a list of {claim_id, text, citation, source_evaluation}
+    dicts (kept inline rather than a separate table: claims belong to
+    exactly one report and are never queried across reports, so a normal
+    table would add join overhead for no real benefit at this scale).
+    `citation` on each claim points at something checkable — either
+    {"type": "snapshot_ref", "path": "ais_anomalies[2]"/"fusion_events[0]"/...,
+    "id": "<the referenced item's own id field>"} for something the deterministic
+    fact-check pass can verify actually exists in the snapshot, or
+    {"type": "external", "url": "..."} for a claim grounded in an outside
+    source instead. `source_evaluation` is the NATO Admiralty System
+    (reliability A-F, credibility 1-6) — a real, standard scale an analyst
+    assigns by hand during review, never a number an LLM invents.
+
+    `council_findings_json` holds the output of the review pipeline: a
+    deterministic pass (citation-existence, geo-sanity) plus a small number
+    of model-based passes with distinct lenses — never a single blended
+    "AI verdict," so a reviewer can see which lens flagged what."""
+    __tablename__ = "reports"
+
+    id            = Column(Integer, primary_key=True)
+    report_id     = Column(String, unique=True, index=True, nullable=False)  # RPT-<uuid8>
+
+    title         = Column(String, nullable=False)
+    snapshot_id   = Column(String, nullable=False, index=True)   # the ReportSnapshot this report's claims cite
+    classification = Column(String, nullable=False, default="UNCLASSIFIED // FOR ANALYTICAL USE ONLY")
+    key_judgments  = Column(Text, nullable=True)                 # free-text summary, analyst-written
+    claims_json    = Column(Text, nullable=False, default="[]")
+
+    status        = Column(String, nullable=False, default="draft", index=True)
+    # draft -> in_review -> approved -> published  (or draft/in_review -> rejected)
+
+    council_findings_json = Column(Text, nullable=True)   # set once submit-for-review has run
+    council_run_at        = Column(DateTime, nullable=True)
+
+    reviewer      = Column(String, nullable=True)
+    review_note   = Column(Text, nullable=True)
+    reviewed_at   = Column(DateTime, nullable=True)
+    published_at  = Column(DateTime, nullable=True)
+
+    created_by    = Column(String, nullable=True)
+    created_at    = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at    = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_report_status_created", "status", "created_at"),
     )
 
 
@@ -860,6 +1045,20 @@ def migrate_db():
             if col not in al_existing:
                 cur.execute(f'ALTER TABLE alerts ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] alerts: added column {col}')
+
+    # ontology_claims validity-window columns (added after the table already
+    # existed in deployed databases — create_all() below only creates missing
+    # tables, it never adds columns to one that's already there)
+    claim_new_cols = [
+        ('valid_from',  'DATETIME'),
+        ('valid_until', 'DATETIME'),
+    ]
+    if 'ontology_claims' in tables:
+        oc_existing = [row[1] for row in cur.execute('PRAGMA table_info(ontology_claims)').fetchall()]
+        for col, typ in claim_new_cols:
+            if col not in oc_existing:
+                cur.execute(f'ALTER TABLE ontology_claims ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] ontology_claims: added column {col}')
 
     conn.commit()
     conn.close()

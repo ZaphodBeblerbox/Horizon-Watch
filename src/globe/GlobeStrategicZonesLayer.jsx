@@ -109,6 +109,26 @@ export default function GlobeStrategicZonesLayer({ enabled }) {
         setTooltipVisible(false)
     }, [])
 
+    // Deep-link entry point: a report claim citing this zone. Unlike other
+    // snapshot sections, a strategic_zones snapshot item carries no lat/lon
+    // (see briefing_prep.py) — this layer already holds the real live
+    // polygon, so it (not the deep-link resolver) is the one real source for
+    // both the camera fly-to and the tooltip. Dispatched by
+    // src/services/reportDeepLink.js.
+    useEffect(() => {
+        const handler = (e) => {
+            const zoneId = e.detail?.zone_id
+            if (!zoneId) return
+            const zone = zones.find(z => String(z.zone_id) === String(zoneId))
+            if (!zone) return  // zone no longer enabled/live — honest no-op
+            const { lon, lat } = zoneCentroid(zone)
+            window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat, lon, altitude: 300000 } }))
+            handleZoneClick(zone, window.innerWidth / 2, window.innerHeight / 2)
+        }
+        window.addEventListener("akili:show-zone", handler)
+        return () => window.removeEventListener("akili:show-zone", handler)
+    }, [zones, handleZoneClick])
+
     if (!enabled || !zones.length) return null
 
     return (

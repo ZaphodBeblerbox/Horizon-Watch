@@ -863,6 +863,16 @@ export default function App() {
         return () => window.removeEventListener("akili:open-forge", h)
     }, [openTab])
 
+    // Reverse direction — a Forge report claim's "Locate on Map" deep link
+    // (src/services/reportDeepLink.js) needs the map tab open before the
+    // akili:fly-to / akili:show-entity events it fires right after this can
+    // find a mounted GlobeView to act on.
+    useEffect(() => {
+        const h = () => openTab("map")
+        window.addEventListener("akili:open-map", h)
+        return () => window.removeEventListener("akili:open-map", h)
+    }, [openTab])
+
     const closeTab = useCallback((id) => {
         const tab = tabs.find(t => t.id === id)
         if (!tab || tab.type === "map") return
