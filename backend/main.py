@@ -9036,6 +9036,17 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     hit = sanctions_loader.check_vessel(mmsi=mmsi, name=name)
     if not hit:
         return
+    if hit.get("_match_type") == "fuzzy_name":
+        # A name-only fuzzy match is not reliable enough to fire a
+        # "critical: SANCTIONED VESSEL" alert off of — real MMSI/IMO
+        # traffic (including inland river/canal AIS, which is where this
+        # false-positive pattern actually showed up) can share a common
+        # word with a sanctioned vessel's name without being that vessel.
+        # Log it so it's not silently invisible, but don't fabricate a
+        # critical-confidence alert from unverified evidence.
+        print(f"[sanctions] fuzzy name match only (not alerting): vessel '{name}' "
+              f"(MMSI {mmsi}) ~ sanctioned '{hit.get('name')}' — needs MMSI/IMO to confirm")
+        return
 
     # In-memory cooldown — skip if alerted within last 6 hours
     now_epoch = time.time()
@@ -9231,6 +9242,14 @@ async def _run_sts_detection() -> None:
         b_v = candidate["vessel_b"]
         sanction_a = sanctions_loader.check_vessel(mmsi=mmsi_a, name=a_v.get("name", ""))
         sanction_b = sanctions_loader.check_vessel(mmsi=mmsi_b, name=b_v.get("name", ""))
+        # A fuzzy name-only match isn't reliable evidence a vessel is
+        # actually the sanctioned entity (see sanctions_loader.check_vessel
+        # docstring) — don't let it escalate severity or claim "SANCTIONED"
+        # in generated alert text for an unrelated ship.
+        if sanction_a and sanction_a.get("_match_type") == "fuzzy_name":
+            sanction_a = None
+        if sanction_b and sanction_b.get("_match_type") == "fuzzy_name":
+            sanction_b = None
         is_sanctions_related = bool(sanction_a or sanction_b)
         severity = "critical" if is_sanctions_related else "high"
 
