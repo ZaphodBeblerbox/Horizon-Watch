@@ -722,7 +722,7 @@ class OntologyLink(Base):
     entity_name     = Column(String, nullable=True)
     link_type       = Column(String, nullable=False, default="proximity")       # proximity|mention|impact
     distance_km     = Column(Float, nullable=True)                             # for proximity links
-    confidence      = Column(Float, default=1.0)
+    confidence      = Column(Float, nullable=True)  # None = not yet computed; never fabricate certainty
     created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
     __table_args__ = (

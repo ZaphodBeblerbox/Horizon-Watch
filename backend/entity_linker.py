@@ -305,7 +305,12 @@ class EntityLinker:
     def _make_link(source_type: str, source_id: str,
                    entity_type: str, entity_id: str, entity_name: str,
                    link_type: str, distance_km: float = None,
-                   confidence: float = 1.0):
+                   confidence: float = None):
+        # confidence defaults to None ("not yet computed") rather than a fabricated 1.0 — no
+        # code here actually estimates a real confidence for proximity or title-mention links,
+        # so claiming certainty for them would be exactly the kind of fake-but-plausible-looking
+        # field the no-fake-data policy is aimed at. Only _entity_mention_links (Haiku-extracted
+        # entity mentions) has ever passed an explicit, deliberately-chosen value (0.8) here.
         if not source_id or not entity_id:
             return None
         return {
