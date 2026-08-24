@@ -17943,6 +17943,133 @@ async def forge_reject_ontology_claim(claim_id: str, request: Request, _forge=De
         return {"claim_id": claim_id, "status": "rejected"}
 
 
+# ── Ontology pattern discovery (Stage 2 of the convergence engine) ────────────
+#
+# Stage 1 (above) gets cited relationships into the graph one approved claim at
+# a time. This is Stage 2: chain those already-approved, cited edges to surface
+# non-obvious 2-hop connections — "A relates to B, B relates to C, but nothing
+# directly links A and C" — the literal pattern-recognition capability the
+# convergence engine exists for. It is a pure read/derive over data that has
+# already passed a human's review; it never writes a new edge into the graph
+# itself, so there's no fabrication risk here — every hop it shows is exactly
+# the citation a person already approved. Only edges carrying a `claim_id`
+# (i.e. created via the approve endpoint above) are used as hops: manually
+# drawn or auto-built edges have no citation to show, so they're excluded from
+# pattern discovery even though they're still visible in the ontology graph.
+
+def _find_graph_patterns() -> list:
+    """Find 2-hop chains (A —hop1→ hub —hop2→ C) among claim-sourced edges where
+    no direct edge already connects A and C. Returns a list of pattern dicts,
+    each with a deterministic `pattern_id` derived from the pair of claim ids
+    involved, so star/dismiss state survives across re-computation."""
+    ontology  = _forge_ontology_load()
+    nodes_by_id = {n["id"]: n for n in ontology.get("nodes", [])}
+    all_edges   = ontology.get("edges", [])
+    claim_edges = [e for e in all_edges if e.get("claim_id")]
+
+    # Any existing edge (claim-sourced or not) between two nodes counts as
+    # "already directly linked" — a pattern is only interesting when nothing
+    # already connects A and C.
+    direct_pairs = {frozenset((e["source"], e["target"])) for e in all_edges if e.get("source") and e.get("target")}
+
+    # Adjacency of claim-sourced edges incident to each node (as source or target)
+    incident: dict = {}
+    for e in claim_edges:
+        for nid in (e.get("source"), e.get("target")):
+            if nid:
+                incident.setdefault(nid, []).append(e)
+
+    def _node_summary(nid):
+        n = nodes_by_id.get(nid, {})
+        return {"id": nid, "label": n.get("label", nid), "type": n.get("type")}
+
+    def _other_end(edge, hub_id):
+        return edge["target"] if edge["source"] == hub_id else edge["source"]
+
+    def _hop(edge):
+        return {
+            "source_label":     nodes_by_id.get(edge["source"], {}).get("label", edge["source"]),
+            "target_label":     nodes_by_id.get(edge["target"], {}).get("label", edge["target"]),
+            "relationship_type": edge.get("type"),
+            "as_of":            edge.get("as_of"),
+            "confidence":       edge.get("confidence"),
+            "citation":         edge.get("citation"),
+            "claim_id":         edge.get("claim_id"),
+        }
+
+    patterns = []
+    seen_pairs = set()
+    for hub_id, edges_here in incident.items():
+        for i in range(len(edges_here)):
+            for j in range(i + 1, len(edges_here)):
+                e1, e2 = edges_here[i], edges_here[j]
+                if e1.get("claim_id") == e2.get("claim_id"):
+                    continue
+                a_id = _other_end(e1, hub_id)
+                c_id = _other_end(e2, hub_id)
+                if not a_id or not c_id or a_id == c_id or a_id == hub_id or c_id == hub_id:
+                    continue
+                if frozenset((a_id, c_id)) in direct_pairs:
+                    continue
+                dedupe_key = frozenset((e1["claim_id"], e2["claim_id"]))
+                if dedupe_key in seen_pairs:
+                    continue
+                seen_pairs.add(dedupe_key)
+                pattern_id = "PAT-" + _hashlib.sha256(
+                    "|".join(sorted([e1["claim_id"], e2["claim_id"]])).encode()
+                ).hexdigest()[:10].upper()
+                patterns.append({
+                    "pattern_id": pattern_id,
+                    "nodes": [_node_summary(a_id), _node_summary(hub_id), _node_summary(c_id)],
+                    "hops":  [_hop(e1), _hop(e2)],
+                })
+    return patterns
+
+
+def _get_pattern_reviews() -> dict:
+    return {r["pattern_id"]: r for r in _forge_load("pattern_reviews.json") if r.get("pattern_id")}
+
+
+@app.get("/api/forge/ontology/patterns")
+def forge_get_ontology_patterns(include_dismissed: bool = False, _forge=Depends(_require_forge)):
+    patterns = _find_graph_patterns()
+    reviews  = _get_pattern_reviews()
+    for p in patterns:
+        rv = reviews.get(p["pattern_id"], {})
+        p["starred"]   = bool(rv.get("starred"))
+        p["dismissed"] = bool(rv.get("dismissed"))
+        p["note"]      = rv.get("note")
+    if not include_dismissed:
+        patterns = [p for p in patterns if not p["dismissed"]]
+    patterns.sort(key=lambda p: (not p["starred"], p["nodes"][1]["label"] or ""))
+    return {"patterns": patterns}
+
+
+@app.post("/api/forge/ontology/patterns/{pattern_id}/review")
+async def forge_review_ontology_pattern(pattern_id: str, request: Request, _forge=Depends(_require_forge)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reviews = _forge_load("pattern_reviews.json")
+    row = next((r for r in reviews if r.get("pattern_id") == pattern_id), None)
+    if not row:
+        row = {"pattern_id": pattern_id}
+        reviews.append(row)
+    for field in ("starred", "dismissed", "note"):
+        if field in body:
+            row[field] = body[field]
+    row["reviewed_at"] = datetime.utcnow().isoformat()
+    row["reviewer"]    = body.get("reviewer") or getattr(_forge, "email", "admin")
+    _forge_save("pattern_reviews.json", reviews)
+    return {
+        "pattern_id": pattern_id,
+        "starred":    bool(row.get("starred")),
+        "dismissed":  bool(row.get("dismissed")),
+        "note":       row.get("note"),
+    }
+
+
 # ── Auto-rule generation ──────────────────────────────────────────────────────
 
 @app.post("/api/forge/auto-generate-rules")
