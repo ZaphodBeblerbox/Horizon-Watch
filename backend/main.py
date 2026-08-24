@@ -7975,6 +7975,26 @@ def _refresh_surface_pool_sync(reason: str = "manual") -> list:
         _SURFACE_BUILD_LOCK.release()
 
 
+def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Write `content` to `path` atomically (write-to-temp + os.replace), matching the pattern
+    event_store.py already uses correctly. A crash or concurrent request mid-write can never leave
+    `path` truncated or half-written — readers either see the old complete file or the new complete
+    file, never a corrupt in-between state. Used for every hand-edited/report-adjacent JSON store
+    (annotations, situations, profile, POI, documents, briefings) that previously used a naive
+    `path.write_text(...)` overwrite."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(content, encoding=encoding)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+        raise
+
+
 # ── Daily intelligence briefing — helpers ─────────────────────────────────────
 
 def _load_briefing_store() -> list:
@@ -7988,9 +8008,9 @@ def _load_briefing_store() -> list:
 
 def _save_briefing_store(store: list) -> None:
     try:
-        _BRIEFING_FILE.write_text(
+        _atomic_write_text(
+            _BRIEFING_FILE,
             _json.dumps(store[-30:], indent=2, ensure_ascii=False),
-            encoding="utf-8",
         )
     except Exception as ex:
         print(f"[briefing] save error: {ex}")
@@ -8367,8 +8387,9 @@ def _load_doc(folder: str, doc_id: str) -> dict | None:
 
 
 def _persist_doc(folder: str, doc_id: str, doc: dict) -> None:
-    (_DOCS_DIR / folder / f"{doc_id}.json").write_text(
-        _json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8"
+    _atomic_write_text(
+        _DOCS_DIR / folder / f"{doc_id}.json",
+        _json.dumps(doc, indent=2, ensure_ascii=False),
     )
 
 
@@ -8410,7 +8431,7 @@ def _auto_archive_old_briefings() -> None:
             if doc.get("created_at", "9999") < cutoff:
                 doc["folder"] = "archived"
                 archived_path = _DOCS_DIR / "archived" / path.name
-                archived_path.write_text(_json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+                _atomic_write_text(archived_path, _json.dumps(doc, indent=2, ensure_ascii=False))
                 path.unlink()
         except Exception:
             pass
@@ -8551,7 +8572,7 @@ def archive_document(doc_id: str):
                 doc["folder"] = "archived"
                 doc["modified_at"] = datetime.now(timezone.utc).isoformat()
                 dst = _DOCS_DIR / "archived" / f"{doc_id}.json"
-                dst.write_text(_json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+                _atomic_write_text(dst, _json.dumps(doc, indent=2, ensure_ascii=False))
                 src.unlink()
                 return {"ok": True}
             except Exception as ex:
@@ -13121,7 +13142,7 @@ ANNOTATIONS_FILE = BASE_DIR / "annotations.json"
 @app.post("/annotations/save")
 async def save_annotations(request: Request):
     data = await request.json()
-    ANNOTATIONS_FILE.write_text(_json.dumps(data, indent=2))
+    _atomic_write_text(ANNOTATIONS_FILE, _json.dumps(data, indent=2))
     return {"status": "saved"}
 
 @app.get("/annotations/load")
@@ -13226,7 +13247,7 @@ SITUATIONS_FILE = BASE_DIR / "situations.json"
 @app.post("/situations/save")
 async def save_situations(request: Request):
     data = await request.json()
-    SITUATIONS_FILE.write_text(_json.dumps(data, indent=2))
+    _atomic_write_text(SITUATIONS_FILE, _json.dumps(data, indent=2))
     return {"status": "saved"}
 
 @app.get("/situations/load")
@@ -13263,7 +13284,7 @@ else:
 async def save_profile(request: Request):
     global _ACTIVE_PROFILE
     data = await request.json()
-    PROFILE_FILE.write_text(_json.dumps(data, indent=2))
+    _atomic_write_text(PROFILE_FILE, _json.dumps(data, indent=2))
     _ACTIVE_PROFILE = data
     print(f"[profile] updated: '{data.get('displayName', '')}' ({data.get('role', '?')}) "
           f"threshold={data.get('threshold', 1)} "
@@ -14494,7 +14515,7 @@ async def api_get_annotations():
 @app.post("/api/annotations")
 async def api_post_annotations(request: Request):
     data = await request.json()
-    (BASE_DIR / "annotations.json").write_text(_json.dumps(data, indent=2))
+    _atomic_write_text(BASE_DIR / "annotations.json", _json.dumps(data, indent=2))
     return {"ok": True}
 
 
@@ -14595,7 +14616,7 @@ def _poi_load() -> list:
 
 def _poi_save(pois: list) -> None:
     _POI_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _POI_FILE.write_text(_json.dumps(pois, indent=2, ensure_ascii=False), encoding="utf-8")
+    _atomic_write_text(_POI_FILE, _json.dumps(pois, indent=2, ensure_ascii=False))
 
 @app.get("/api/poi")
 async def poi_list():
@@ -21070,8 +21091,9 @@ def _forge_ontology_load():
 
 def _forge_ontology_save(ontology: dict):
     _FORGE_DIR.mkdir(parents=True, exist_ok=True)
-    (_FORGE_DIR / "forge_ontology.json").write_text(
-        _json.dumps(ontology, indent=2, ensure_ascii=False)
+    _atomic_write_text(
+        _FORGE_DIR / "forge_ontology.json",
+        _json.dumps(ontology, indent=2, ensure_ascii=False),
     )
 
 
