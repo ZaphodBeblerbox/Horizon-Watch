@@ -6,6 +6,7 @@ import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ForceGraph from "./forge/ForceGraph.jsx"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts"
+import { locateReportClaim } from "../services/reportDeepLink.js"
 
 const API = API_BASE
 
@@ -1705,6 +1706,25 @@ function ReportCard({ report, snapshots, onChanged }) {
     const [busy,     setBusy]     = useState(false)
     const [editing,  setEditing]  = useState(false)
     const [note,     setNote]     = useState("")
+    const [snapContent, setSnapContent] = useState(null)
+    const [locatingId,  setLocatingId]  = useState(null)
+    const [locateMsg,   setLocateMsg]   = useState(null)
+
+    const locate = async (claim) => {
+        setLocatingId(claim.claim_id); setLocateMsg(null)
+        try {
+            let content = snapContent
+            if (!content && claim.citation?.type === "snapshot_ref") {
+                const res = await fetch(`${API}/api/reports/snapshots/${full.snapshot_id}`, { headers: forgeHeaders() })
+                if (res.ok) { content = (await res.json()).content; setSnapContent(content) }
+            }
+            const result = await locateReportClaim(claim, content)
+            if (result.kind === "error") setLocateMsg(`${claim.claim_id}: ${result.reason}`)
+            else if (result.kind === "map" && result.entityFound === false) setLocateMsg(`${claim.claim_id}: flew to the location — its live marker is no longer active`)
+            else setLocateMsg(null)
+        } catch (e) { setLocateMsg(`${claim.claim_id}: ${e.message}`) }
+        finally { setLocatingId(null) }
+    }
 
     const loadFull = async () => {
         try {
@@ -1772,13 +1792,19 @@ function ReportCard({ report, snapshots, onChanged }) {
                             {(full.claims || []).map(c => (
                                 <div key={c.claim_id} style={{ marginBottom: 8, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
                                     <div style={{ color: "#cbd5e1", fontSize: 11 }}>{c.text}</div>
-                                    <div style={{ color: "#475569", fontSize: 10 }}>
-                                        {c.citation?.type === "snapshot_ref" ? `snapshot: ${c.citation.section} / ${c.citation.item_id}` : c.citation?.url}
-                                        {c.source_evaluation && (c.source_evaluation.reliability || c.source_evaluation.credibility) &&
-                                            <> · Source Eval: {c.source_evaluation.reliability || "?"}{c.source_evaluation.credibility || "?"}</>}
+                                    <div style={{ color: "#475569", fontSize: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                        <span>
+                                            {c.citation?.type === "snapshot_ref" ? `snapshot: ${c.citation.section} / ${c.citation.item_id}` : c.citation?.url}
+                                            {c.source_evaluation && (c.source_evaluation.reliability || c.source_evaluation.credibility) &&
+                                                <> · Source Eval: {c.source_evaluation.reliability || "?"}{c.source_evaluation.credibility || "?"}</>}
+                                        </span>
+                                        <button onClick={() => locate(c)} disabled={locatingId === c.claim_id} style={{ background: "none", border: "none", color: "#60a5fa", cursor: "pointer", fontSize: 10, padding: 0 }}>
+                                            {locatingId === c.claim_id ? "Locating…" : c.citation?.type === "external" || c.citation?.section === "top_articles" ? "Open Source ↗" : "Locate on Map ↗"}
+                                        </button>
                                     </div>
                                 </div>
                             ))}
+                            {locateMsg && <div style={{ color: "#facc15", fontSize: 10, marginBottom: 8, fontStyle: "italic" }}>{locateMsg}</div>}
                             {full.status !== "draft" && (
                                 <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(148,163,184,0.06)" }}>
                                     <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", marginBottom: 6 }}>Council Findings</div>
