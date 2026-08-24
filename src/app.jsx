@@ -181,6 +181,10 @@ export default function App() {
     const [directorSequence,       setDirectorSequence]       = useState(null)
     const [directorLayerOverrides, setDirectorLayerOverrides] = useState({})
     const [directorHighlights,     setDirectorHighlights]     = useState([])
+    // Real override for GlobeView's satelliteEnabled prop while a Director
+    // scene has show_satellite/analyse_satellite active — null means "use the
+    // workspace's own layer toggle" (see satelliteEnabled prop below).
+    const [directorSatelliteOverride, setDirectorSatelliteOverride] = useState(null)
     const [directorRunnerState,    setDirectorRunnerState]    = useState({ isPlaying: false, currentIndex: -1, total: 0 })
     const [directorCurrentAction,  setDirectorCurrentAction]  = useState(null)
     const [directorIndicators,     setDirectorIndicators]     = useState([])
@@ -1172,7 +1176,11 @@ export default function App() {
             },
             onCloseDetail: () => { setRightPanel(null); setSelectedSurface(null); setSurfaceContext(null); setSurfaceEnrichment(null) },
             onComplete: () => {},
-            onScene:    (scene) => setDirectorScene(scene),
+            onScene:    (scene) => {
+                setDirectorScene(scene)
+                if (!scene) setDirectorSatelliteOverride(null)  // director stopped — drop the override
+            },
+            onSatelliteToggle: (on) => setDirectorSatelliteOverride(on),
         })
         runner.load(sequence)
         // Post-process scenes (auto-enrichment, hotspot injection) then start playback
@@ -1542,7 +1550,7 @@ export default function App() {
                             onOverwatchBounds={handleOverwatchBounds}
                             onOverwatchPolygon={handleOverwatchPolygon}
                             overwatchSentinelOverlay={owSentinelOverlay}
-                            satelliteEnabled={activeWorkspace?.layers?.satellite ?? false}
+                            satelliteEnabled={directorSatelliteOverride ?? (activeWorkspace?.layers?.satellite ?? false)}
                             directorScene={directorScene}
                             autoModeEnabled={showAutoMode}
                         />
