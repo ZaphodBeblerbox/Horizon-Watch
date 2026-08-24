@@ -861,6 +861,62 @@ class Asset(Base):
     )
 
 
+class Report(Base):
+    """A draft-to-published intelligence report — the Phase 3 entity the
+    roadmap's whole "automated production of intelligence reports" mission
+    depends on, and net-new: nothing in this codebase built a report
+    lifecycle before this. Every report is keyed to a `ReportSnapshot`
+    (Phase 1) — the frozen artefact its claims are supposed to cite — so a
+    claim can point at "signal X in snapshot Y" rather than at nothing.
+
+    `claims_json` is a list of {claim_id, text, citation, source_evaluation}
+    dicts (kept inline rather than a separate table: claims belong to
+    exactly one report and are never queried across reports, so a normal
+    table would add join overhead for no real benefit at this scale).
+    `citation` on each claim points at something checkable — either
+    {"type": "snapshot_ref", "path": "ais_anomalies[2]"/"fusion_events[0]"/...,
+    "id": "<the referenced item's own id field>"} for something the deterministic
+    fact-check pass can verify actually exists in the snapshot, or
+    {"type": "external", "url": "..."} for a claim grounded in an outside
+    source instead. `source_evaluation` is the NATO Admiralty System
+    (reliability A-F, credibility 1-6) — a real, standard scale an analyst
+    assigns by hand during review, never a number an LLM invents.
+
+    `council_findings_json` holds the output of the review pipeline: a
+    deterministic pass (citation-existence, geo-sanity) plus a small number
+    of model-based passes with distinct lenses — never a single blended
+    "AI verdict," so a reviewer can see which lens flagged what."""
+    __tablename__ = "reports"
+
+    id            = Column(Integer, primary_key=True)
+    report_id     = Column(String, unique=True, index=True, nullable=False)  # RPT-<uuid8>
+
+    title         = Column(String, nullable=False)
+    snapshot_id   = Column(String, nullable=False, index=True)   # the ReportSnapshot this report's claims cite
+    classification = Column(String, nullable=False, default="UNCLASSIFIED // FOR ANALYTICAL USE ONLY")
+    key_judgments  = Column(Text, nullable=True)                 # free-text summary, analyst-written
+    claims_json    = Column(Text, nullable=False, default="[]")
+
+    status        = Column(String, nullable=False, default="draft", index=True)
+    # draft -> in_review -> approved -> published  (or draft/in_review -> rejected)
+
+    council_findings_json = Column(Text, nullable=True)   # set once submit-for-review has run
+    council_run_at        = Column(DateTime, nullable=True)
+
+    reviewer      = Column(String, nullable=True)
+    review_note   = Column(Text, nullable=True)
+    reviewed_at   = Column(DateTime, nullable=True)
+    published_at  = Column(DateTime, nullable=True)
+
+    created_by    = Column(String, nullable=True)
+    created_at    = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at    = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_report_status_created", "status", "created_at"),
+    )
+
+
 @contextmanager
 def get_db():
     db = SessionLocal()
