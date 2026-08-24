@@ -14,10 +14,25 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx", "-q"])
     import httpx
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--base", default="http://localhost:8000")
-args = parser.parse_args()
-BASE = args.base.rstrip("/")
+# NOTE: this module is imported as a library (seed_db / seed_news_rules) by
+# main.py's _auto_ingest_task on every backend boot, not just run standalone.
+# argparse.parse_args() used to run unconditionally at import time, which
+# means it parsed the *importing process's* real argv — e.g. uvicorn's own
+# "main:app --host 0.0.0.0 --port 8000" — instead of this script's own CLI
+# flags. Those don't match --base, so argparse called sys.exit(2), which
+# propagated out of the background task and crashed the entire running
+# server on every startup that reached the rule-seeding step. BASE now has
+# a plain default and is only reparsed from argv when this file is actually
+# run as a script (see `if __name__ == "__main__"` at the bottom).
+BASE = "http://localhost:8000"
+
+
+def _parse_cli_args():
+    global BASE
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base", default="http://localhost:8000")
+    args = parser.parse_args()
+    BASE = args.base.rstrip("/")
 
 RULES = [
     {
@@ -516,6 +531,7 @@ def seed_news_rules(db=None) -> dict:
 
 
 if __name__ == "__main__":
+    _parse_cli_args()
     seed()
     seed_chokepoint_rules()
     seed_news_rules()
