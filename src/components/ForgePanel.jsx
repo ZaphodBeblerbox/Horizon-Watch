@@ -2057,6 +2057,14 @@ function UploadsWorkspace() {
     const [msg, setMsg] = useState("")
     const fileRef = useRef(null)
 
+    // Optional citation metadata — carried through to any entity-relationship
+    // claim this upload's document extraction produces, so a reviewer sees a
+    // real source instead of just "uploaded document".
+    const [srcTitle, setSrcTitle]         = useState("")
+    const [srcPublisher, setSrcPublisher] = useState("")
+    const [srcDate, setSrcDate]           = useState("")
+    const [srcUrl, setSrcUrl]             = useState("")
+
     const reload = () =>
         fetch(`${API}/api/forge/uploads`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : []).then(d => setUploads(Array.isArray(d) ? d : [])).catch(() => {})
@@ -2066,12 +2074,23 @@ function UploadsWorkspace() {
     const upload = async (e) => {
         const file = e.target.files?.[0]; if (!file) return
         setUploading(true); setMsg("")
-        const fd = new FormData(); fd.append("file", file)
+        const fd = new FormData()
+        fd.append("file", file)
+        if (srcTitle) fd.append("source_title", srcTitle)
+        if (srcPublisher) fd.append("source_publisher", srcPublisher)
+        if (srcDate) fd.append("source_date", srcDate)
+        if (srcUrl) fd.append("source_url", srcUrl)
         try {
             const res = await fetch(`${API}/api/forge/upload`, { method: "POST", headers: forgeFormHeaders(), body: fd })
             const d = await res.json()
-            setMsg(res.ok ? `Uploaded: ${d.original_name || file.name}` : d.detail || "Failed")
-            if (res.ok) reload()
+            if (res.ok) {
+                const pending = d.relationships_pending || 0
+                setMsg(`Uploaded: ${d.filename || file.name} — ${d.entities_extracted || 0} entities` +
+                    (pending ? `, ${pending} relationship claim(s) awaiting review below` : ""))
+                reload()
+            } else {
+                setMsg(d.detail || "Failed")
+            }
         } catch (_e) { setMsg("Upload failed") }
         finally { setUploading(false); if (fileRef.current) fileRef.current.value = "" }
     }
@@ -2080,7 +2099,13 @@ function UploadsWorkspace() {
         <WorkspaceBody>
             <div style={{ maxWidth: 640 }}>
                 <Section title="Upload Intelligence File">
-                    <div style={{ color: "#475569", fontSize: 11, marginBottom: 10 }}>CSV, KML, GeoJSON, and PDF files are parsed for entities and added to the ontology graph.</div>
+                    <div style={{ color: "#475569", fontSize: 11, marginBottom: 10 }}>CSV, KML, and GeoJSON files are parsed for entities and added to the ontology graph directly. PDF/text documents are also checked for entity relationships — those land in the pending review queue below, not the live graph, until approved.</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                        <input value={srcTitle} onChange={e => setSrcTitle(e.target.value)} placeholder="Source title (optional)" style={inputStyle} />
+                        <input value={srcPublisher} onChange={e => setSrcPublisher(e.target.value)} placeholder="Publisher (optional)" style={inputStyle} />
+                        <input value={srcDate} onChange={e => setSrcDate(e.target.value)} placeholder="Source date (optional)" style={inputStyle} />
+                        <input value={srcUrl} onChange={e => setSrcUrl(e.target.value)} placeholder="Source URL (optional)" style={inputStyle} />
+                    </div>
                     <input ref={fileRef} type="file" accept=".csv,.kml,.geojson,.json,.pdf" onChange={upload} disabled={uploading} style={{ display: "none" }} id="upload-file-input" />
                     <label htmlFor="upload-file-input" style={{ ...ghostBtn, display: "inline-block", cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.5 : 1 }}>
                         {uploading ? "Uploading…" : "+ Choose File"}
@@ -2092,14 +2117,101 @@ function UploadsWorkspace() {
                     {uploads.map((u, i) => (
                         <div key={i} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <div>
-                                <div style={{ color: "#cbd5e1", fontSize: 12, fontWeight: 500 }}>{u.original_name || u.filename}</div>
-                                <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{u.data_type || "auto"} · {u.entities_added || 0} entities · {u.uploaded_at?.slice(0, 10) || "—"}</div>
+                                <div style={{ color: "#cbd5e1", fontSize: 12, fontWeight: 500 }}>{u.filename}</div>
+                                <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>
+                                    {u.type || "auto"} · {u.entities_extracted || 0} entities
+                                    {u.relationships_pending ? ` · ${u.relationships_pending} claim(s) pending review` : ""}
+                                    {" · "}{u.uploaded_at?.slice(0, 10) || "—"}
+                                </div>
                             </div>
                         </div>
                     ))}
                 </Section>
             </div>
+            <OntologyClaimsReview />
         </WorkspaceBody>
+    )
+}
+
+// ── Entity-relationship claims review queue ─────────────────────────────────
+//
+// Every relationship a document upload extracts lands here as "pending" — it
+// is never merged into the live ontology graph on its own. A person reads the
+// cited excerpt and either approves it (creating the two entity nodes plus a
+// cited edge) or rejects it. This mirrors the report pipeline's human-review
+// gate, applied to ingested entity relationships.
+function OntologyClaimsReview() {
+    const [claims, setClaims] = useState([])
+    const [statusFilter, setStatusFilter] = useState("pending")
+    const [busyId, setBusyId] = useState(null)
+    const [loaded, setLoaded] = useState(false)
+
+    const reload = () =>
+        fetch(`${API}/api/forge/ontology/claims?status=${statusFilter}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setClaims(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+
+    useEffect(() => { reload() }, [statusFilter])
+
+    const act = async (claimId, action) => {
+        setBusyId(claimId)
+        try {
+            const res = await fetch(`${API}/api/forge/ontology/claims/${claimId}/${action}`, {
+                method: "POST", headers: forgeHeaders(), body: JSON.stringify({}),
+            })
+            if (res.ok) reload()
+        } catch (_e) { /* leave as pending, reviewer can retry */ }
+        finally { setBusyId(null) }
+    }
+
+    return (
+        <Section title={`Entity-Relationship Claims — Pending Review`}>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 10 }}>
+                Relationships extracted from uploaded documents (or loaded from an offline sourcing pass) wait here, each with its own citation, until approved. Nothing below is live in the ontology graph yet.
+            </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                {["pending", "approved", "rejected", "all"].map(s => (
+                    <button key={s} onClick={() => setStatusFilter(s)}
+                        style={{ ...ghostBtn, background: statusFilter === s ? "rgba(96,165,250,0.15)" : "transparent", color: statusFilter === s ? "#60a5fa" : "#94a3b8" }}>
+                        {s}
+                    </button>
+                ))}
+            </div>
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && claims.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No {statusFilter === "all" ? "" : statusFilter} claims.</div>}
+            {claims.map(c => (
+                <div key={c.claim_id} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8 }}>
+                    <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 500, marginBottom: 4 }}>
+                        {c.entity_a.label} <span style={{ color: "#60a5fa" }}>— {c.relationship_type} →</span> {c.entity_b.label}
+                        {c.as_of && <span style={{ color: "#475569", fontWeight: 400 }}> ({c.as_of})</span>}
+                    </div>
+                    {c.source.excerpt && (
+                        <div style={{ color: "#94a3b8", fontSize: 11, fontStyle: "italic", marginBottom: 4, borderLeft: "2px solid rgba(148,163,184,0.2)", paddingLeft: 8 }}>
+                            "{c.source.excerpt}"
+                        </div>
+                    )}
+                    <div style={{ color: "#475569", fontSize: 10, marginBottom: 8 }}>
+                        {c.source.title || "Untitled source"}{c.source.publisher ? ` · ${c.source.publisher}` : ""}{c.source.date ? ` · ${c.source.date}` : ""}
+                        {c.source.url && <>{" · "}<a href={c.source.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>source ↗</a></>}
+                        {" · confidence: "}{c.confidence || "unset"}
+                        {c.status !== "pending" && <> · <span style={{ color: c.status === "approved" ? "#4ade80" : "#f87171" }}>{c.status}</span>{c.reviewer ? ` by ${c.reviewer}` : ""}</>}
+                    </div>
+                    {c.status === "pending" && (
+                        <div style={{ display: "flex", gap: 6 }}>
+                            <button onClick={() => act(c.claim_id, "approve")} disabled={busyId === c.claim_id}
+                                style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>
+                                {busyId === c.claim_id ? "…" : "Approve"}
+                            </button>
+                            <button onClick={() => act(c.claim_id, "reject")} disabled={busyId === c.claim_id}
+                                style={{ ...ghostBtn, color: "#f87171", borderColor: "rgba(248,113,113,0.3)" }}>
+                                {busyId === c.claim_id ? "…" : "Reject"}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            ))}
+        </Section>
     )
 }
 
