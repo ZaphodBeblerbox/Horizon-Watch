@@ -757,6 +757,14 @@ class OntologyClaim(Base):
     as_of             = Column(String, nullable=True)   # free-text date/period the source itself states
     confidence        = Column(String, nullable=True)   # 'direct' | 'inferred' — never a numeric score
 
+    # Structured validity window — optional, in addition to the free-text `as_of` above.
+    # Most claims only ever carry a loose "as of August 2026" from their source text, which
+    # `as_of` already captures; these are for the minority of cases where the source states
+    # (or a reviewer can determine) an actual start/end. Addresses the audit's "relationships
+    # change over time" gap: a relationship can now be recorded as bounded, not just eternal.
+    valid_from        = Column(DateTime, nullable=True)
+    valid_until       = Column(DateTime, nullable=True)
+
     source_title      = Column(String, nullable=True)
     source_publisher  = Column(String, nullable=True)
     source_date       = Column(String, nullable=True)
@@ -804,6 +812,52 @@ class ReportSnapshot(Base):
 
     __table_args__ = (
         Index("ix_snapshot_source_captured", "source", "captured_at"),
+    )
+
+
+class Asset(Base):
+    """A categorized piece of real-world infrastructure — the missing piece
+    for questions like "is this port civilian, military, or dual-use, and
+    who owns it." `OntologyEntity` (above) is infra-only: a label, a type,
+    and a metadata blob, with nowhere to put ownership or category. This is
+    a genuinely new, purpose-built table rather than overloading that one.
+
+    Every row must carry a real source citation (title/publisher/date/url +
+    a quoted excerpt) — same no-fake-data gate as OntologyClaim. `category`
+    and `confidence` are both deliberately constrained, human-readable
+    strings, never a fabricated numeric score. `region_tag` marks which
+    pilot AOI a row belongs to, per the roadmap's "populate only for the
+    pilot AOI first" population strategy — this is not meant to be a
+    global registry on day one."""
+    __tablename__ = "assets"
+
+    id           = Column(Integer, primary_key=True)
+    asset_id     = Column(String, unique=True, index=True, nullable=False)  # AST-<uuid8>
+
+    name         = Column(String, nullable=False)
+    asset_type   = Column(String, nullable=False, index=True)   # port|airbase|naval_base|pipeline|power_plant|shipyard|...
+    category     = Column(String, nullable=False, index=True)   # civilian|military|dual_use|unknown — never a numeric score
+    owner        = Column(String, nullable=True)                # e.g. "Government of Djibouti", "DP World"
+    operator     = Column(String, nullable=True)                # when distinct from owner (state-owned, foreign-operated, etc.)
+    country      = Column(String, nullable=True)
+    lat          = Column(Float, nullable=True)
+    lng          = Column(Float, nullable=True)
+    description  = Column(Text, nullable=True)
+    region_tag   = Column(String, nullable=True, index=True)    # pilot AOI tag, e.g. "red_sea_bab_el_mandeb"
+
+    confidence       = Column(String, nullable=True)   # 'direct' | 'inferred' — never a fabricated numeric score
+    source_title     = Column(String, nullable=True)
+    source_publisher = Column(String, nullable=True)
+    source_date      = Column(String, nullable=True)
+    source_url       = Column(String, nullable=True)
+    source_excerpt   = Column(Text, nullable=True)      # the actual fact/quote grounding the category/ownership claim
+
+    created_by   = Column(String, nullable=True)
+    created_at   = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at   = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_asset_region_type", "region_tag", "asset_type"),
     )
 
 
@@ -935,6 +989,20 @@ def migrate_db():
             if col not in al_existing:
                 cur.execute(f'ALTER TABLE alerts ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] alerts: added column {col}')
+
+    # ontology_claims validity-window columns (added after the table already
+    # existed in deployed databases — create_all() below only creates missing
+    # tables, it never adds columns to one that's already there)
+    claim_new_cols = [
+        ('valid_from',  'DATETIME'),
+        ('valid_until', 'DATETIME'),
+    ]
+    if 'ontology_claims' in tables:
+        oc_existing = [row[1] for row in cur.execute('PRAGMA table_info(ontology_claims)').fetchall()]
+        for col, typ in claim_new_cols:
+            if col not in oc_existing:
+                cur.execute(f'ALTER TABLE ontology_claims ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] ontology_claims: added column {col}')
 
     conn.commit()
     conn.close()

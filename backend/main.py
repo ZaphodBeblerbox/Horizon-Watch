@@ -17521,6 +17521,8 @@ def _create_ontology_claims(claims: list, upload_id: str = None, default_source:
                     entity_b_label=b_label,
                     entity_b_type=(c.get("entity_b_type") or "facility"),
                     as_of=c.get("as_of") or default_source.get("date"),
+                    valid_from=_parse_snapshot_dt(c.get("valid_from")),
+                    valid_until=_parse_snapshot_dt(c.get("valid_until")),
                     confidence=confidence,
                     source_title=c.get("source_title") or default_source.get("title"),
                     source_publisher=c.get("source_publisher") or default_source.get("publisher"),
@@ -17834,6 +17836,8 @@ def forge_get_ontology_claims(status: str = "pending", _forge=Depends(_require_f
                 "relationship_type": r.relationship_type,
                 "entity_b":          {"label": r.entity_b_label, "type": r.entity_b_type},
                 "as_of":             r.as_of,
+                "valid_from":        r.valid_from.isoformat() if r.valid_from else None,
+                "valid_until":       r.valid_until.isoformat() if r.valid_until else None,
                 "confidence":        r.confidence,
                 "source": {
                     "title": r.source_title, "publisher": r.source_publisher,
@@ -17904,6 +17908,8 @@ async def forge_approve_ontology_claim(claim_id: str, request: Request, _forge=D
             "type":        row.relationship_type,
             "claim_id":    row.claim_id,
             "as_of":       row.as_of,
+            "valid_from":  row.valid_from.isoformat() if row.valid_from else None,
+            "valid_until": row.valid_until.isoformat() if row.valid_until else None,
             "confidence":  row.confidence,
             "citation": {
                 "title": row.source_title, "publisher": row.source_publisher,
@@ -17992,6 +17998,8 @@ def _find_graph_patterns() -> list:
             "target_label":     nodes_by_id.get(edge["target"], {}).get("label", edge["target"]),
             "relationship_type": edge.get("type"),
             "as_of":            edge.get("as_of"),
+            "valid_from":       edge.get("valid_from"),
+            "valid_until":      edge.get("valid_until"),
             "confidence":       edge.get("confidence"),
             "citation":         edge.get("citation"),
             "claim_id":         edge.get("claim_id"),
@@ -18199,6 +18207,157 @@ def get_report_snapshot(snapshot_id: str, _forge=Depends(_require_forge)):
             "created_by":   row.created_by,
             "content":      _json.loads(row.content_json),
         }
+
+
+# ── Assets (roadmap Phase 2: civilian/military/dual-use infrastructure registry) ──
+#
+# OntologyEntity (the existing infra registry) is a label, a type, and a JSON
+# metadata blob — there's nowhere on it to say "this port is military" or "this
+# facility is owned by X." Asset is the purpose-built table for exactly that
+# question. Every row requires a real source citation, the same no-fake-data
+# gate OntologyClaim uses — an assertion like "this is a military facility" is
+# exactly the kind of claim that must trace to something real, not be guessed.
+
+_ASSET_CATEGORIES = {"civilian", "military", "dual_use", "unknown"}
+
+
+def _asset_id() -> str:
+    return "AST-" + uuid.uuid4().hex[:8].upper()
+
+
+def _asset_to_dict(row) -> dict:
+    return {
+        "asset_id":   row.asset_id,
+        "name":       row.name,
+        "asset_type": row.asset_type,
+        "category":   row.category,
+        "owner":      row.owner,
+        "operator":   row.operator,
+        "country":    row.country,
+        "lat":        row.lat,
+        "lng":        row.lng,
+        "description": row.description,
+        "region_tag": row.region_tag,
+        "confidence": row.confidence,
+        "source": {
+            "title": row.source_title, "publisher": row.source_publisher,
+            "date": row.source_date, "url": row.source_url, "excerpt": row.source_excerpt,
+        },
+        "created_by": row.created_by,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.post("/api/forge/assets")
+async def create_asset(request: Request, _forge=Depends(_require_forge)):
+    """Create one categorized asset. Requires a real citation (source_title
+    or source_url, plus an evidence excerpt) — rejected outright rather than
+    stored uncited, same policy as OntologyClaim. `category` must be one of
+    civilian/military/dual_use/unknown; there is no numeric confidence score,
+    only the honest 'direct'/'inferred' string OntologyClaim also uses."""
+    body = await request.json()
+
+    name       = (body.get("name") or "").strip()
+    asset_type = (body.get("asset_type") or "").strip()
+    category   = (body.get("category") or "").strip().lower()
+    source_title = (body.get("source_title") or "").strip()
+    source_url   = (body.get("source_url") or "").strip()
+    source_excerpt = (body.get("source_excerpt") or "").strip()
+
+    if not name or not asset_type:
+        raise HTTPException(400, "name and asset_type are required")
+    if category not in _ASSET_CATEGORIES:
+        raise HTTPException(400, f"category must be one of {sorted(_ASSET_CATEGORIES)}")
+    if not (source_title or source_url) or not source_excerpt:
+        raise HTTPException(400, "a citation (source_title or source_url) and a source_excerpt are required — an asset's category/ownership can't be stored uncited")
+
+    from database import Asset, get_db as _gdb_asset
+    aid = _asset_id()
+    created_by = body.get("created_by") or getattr(_forge, "email", "admin")
+    with _gdb_asset() as db:
+        row = Asset(
+            asset_id=aid, name=name, asset_type=asset_type, category=category,
+            owner=body.get("owner"), operator=body.get("operator"), country=body.get("country"),
+            lat=body.get("lat"), lng=body.get("lng"), description=body.get("description"),
+            region_tag=body.get("region_tag"),
+            confidence=body.get("confidence") if body.get("confidence") in ("direct", "inferred") else None,
+            source_title=source_title or None, source_publisher=body.get("source_publisher"),
+            source_date=body.get("source_date"), source_url=source_url or None,
+            source_excerpt=source_excerpt, created_by=created_by,
+        )
+        db.add(row)
+        db.commit()
+        return _asset_to_dict(row)
+
+
+@app.get("/api/forge/assets")
+def list_assets(region_tag: str = None, category: str = None, asset_type: str = None,
+                 _forge=Depends(_require_forge)):
+    from database import Asset, get_db as _gdb_assetlist
+    with _gdb_assetlist() as db:
+        q = db.query(Asset)
+        if region_tag:
+            q = q.filter(Asset.region_tag == region_tag)
+        if category:
+            q = q.filter(Asset.category == category)
+        if asset_type:
+            q = q.filter(Asset.asset_type == asset_type)
+        rows = q.order_by(Asset.created_at.desc()).all()
+        return [_asset_to_dict(r) for r in rows]
+
+
+@app.get("/api/forge/assets/{asset_id}")
+def get_asset(asset_id: str, _forge=Depends(_require_forge)):
+    from database import Asset, get_db as _gdb_assetget
+    with _gdb_assetget() as db:
+        row = db.query(Asset).filter(Asset.asset_id == asset_id).first()
+        if not row:
+            raise HTTPException(404, "Asset not found")
+        return _asset_to_dict(row)
+
+
+@app.patch("/api/forge/assets/{asset_id}")
+async def update_asset(asset_id: str, request: Request, _forge=Depends(_require_forge)):
+    """Update mutable fields on an existing asset (e.g. a reviewer correcting
+    a category, or adding an operator once confirmed). Changing category
+    still requires the row to end up with a valid category value and a
+    citation — you can't patch an asset into being uncited."""
+    body = await request.json()
+    from database import Asset, get_db as _gdb_assetupd
+    with _gdb_assetupd() as db:
+        row = db.query(Asset).filter(Asset.asset_id == asset_id).first()
+        if not row:
+            raise HTTPException(404, "Asset not found")
+        if "category" in body:
+            new_cat = (body["category"] or "").strip().lower()
+            if new_cat not in _ASSET_CATEGORIES:
+                raise HTTPException(400, f"category must be one of {sorted(_ASSET_CATEGORIES)}")
+            row.category = new_cat
+        for field in ("name", "asset_type", "owner", "operator", "country", "lat", "lng",
+                      "description", "region_tag", "source_title", "source_publisher",
+                      "source_date", "source_url", "source_excerpt"):
+            if field in body:
+                setattr(row, field, body[field])
+        if "confidence" in body and body["confidence"] in ("direct", "inferred", None):
+            row.confidence = body["confidence"]
+        if not (row.source_title or row.source_url) or not row.source_excerpt:
+            raise HTTPException(400, "an asset can't be left without a citation")
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _asset_to_dict(row)
+
+
+@app.delete("/api/forge/assets/{asset_id}")
+def delete_asset(asset_id: str, _forge=Depends(_require_forge)):
+    from database import Asset, get_db as _gdb_assetdel
+    with _gdb_assetdel() as db:
+        row = db.query(Asset).filter(Asset.asset_id == asset_id).first()
+        if not row:
+            raise HTTPException(404, "Asset not found")
+        db.delete(row)
+        db.commit()
+        return {"asset_id": asset_id, "status": "deleted"}
 
 
 # ── Auto-rule generation ──────────────────────────────────────────────────────
