@@ -17437,7 +17437,10 @@ def _guess_entity_type(type_str: str, has_mmsi: bool) -> str:
     return "facility"
 
 
-def _add_entities_to_ontology(entities: list):
+def _add_entities_to_ontology(entities: list, citation: dict = None):
+    """Merge entities into the ontology graph as nodes. `citation` (if given) is
+    attached to any newly-created node so a viewer can see where it came from —
+    e.g. {"title", "publisher", "date", "url"} for a document-derived entity."""
     ontology = _forge_ontology_load()
     changed = False
     for entity in entities:
@@ -17453,7 +17456,7 @@ def _add_entities_to_ontology(entities: list):
             continue
         safe_label = entity["label"][:20].replace(" ", "_").lower()
         node_id = f"{entity['type']}_{len(ontology['nodes'])+1}_{safe_label}"
-        ontology["nodes"].append({
+        node = {
             "id":          node_id,
             "type":        entity["type"],
             "label":       entity["label"],
@@ -17461,10 +17464,77 @@ def _add_entities_to_ontology(entities: list):
             "lat":         entity.get("lat"),
             "lng":         entity.get("lng"),
             "source":      "upload",
-        })
+        }
+        if citation:
+            node["citation"] = citation
+        ontology["nodes"].append(node)
         changed = True
     if changed:
         _forge_ontology_save(ontology)
+
+
+def _claim_id() -> str:
+    return "CLM-" + uuid.uuid4().hex[:8].upper()
+
+
+def _create_ontology_claims(claims: list, upload_id: str = None, default_source: dict = None) -> dict:
+    """Insert extracted entity-relationship claims into the pending-review queue.
+    This NEVER writes directly to the live ontology graph — a human must approve
+    each claim via POST /api/forge/ontology/claims/{id}/approve before it becomes
+    a real edge. A claim missing an entity, a relationship type, or a cited
+    evidence excerpt is silently dropped rather than stored half-formed: an
+    uncited relationship is exactly the kind of fabrication this queue exists to
+    catch, so it's refused here rather than accepted and flagged later. A claim
+    matching an existing row's (entity_a, relationship_type, entity_b) — any
+    status — is also skipped, so re-running an ingestion (e.g. after a partial
+    failure) doesn't spam duplicate pending claims.
+    `default_source` fills in citation fields the caller already knows (e.g. an
+    upload's declared title/publisher/date/url) for any claim that omits its own.
+    Returns {"created", "skipped_uncited", "skipped_duplicate"}."""
+    from database import OntologyClaim, get_db as _gdb_claims
+    default_source = default_source or {}
+    created = skipped_uncited = skipped_duplicate = 0
+    try:
+        with _gdb_claims() as db:
+            for c in claims:
+                a_label = (c.get("entity_a") or "").strip()
+                b_label = (c.get("entity_b") or "").strip()
+                rel     = (c.get("relationship_type") or "").strip()
+                excerpt = (c.get("evidence") or c.get("source_excerpt") or "").strip()
+                if not a_label or not b_label or not rel or not excerpt:
+                    skipped_uncited += 1
+                    continue
+                dup = db.query(OntologyClaim).filter(
+                    OntologyClaim.entity_a_label == a_label,
+                    OntologyClaim.relationship_type == rel,
+                    OntologyClaim.entity_b_label == b_label,
+                ).first()
+                if dup:
+                    skipped_duplicate += 1
+                    continue
+                confidence = c.get("confidence") if c.get("confidence") in ("direct", "inferred") else None
+                db.add(OntologyClaim(
+                    claim_id=_claim_id(),
+                    entity_a_label=a_label,
+                    entity_a_type=(c.get("entity_a_type") or "facility"),
+                    relationship_type=rel,
+                    entity_b_label=b_label,
+                    entity_b_type=(c.get("entity_b_type") or "facility"),
+                    as_of=c.get("as_of") or default_source.get("date"),
+                    confidence=confidence,
+                    source_title=c.get("source_title") or default_source.get("title"),
+                    source_publisher=c.get("source_publisher") or default_source.get("publisher"),
+                    source_date=c.get("source_date") or default_source.get("date"),
+                    source_url=c.get("source_url") or default_source.get("url"),
+                    source_excerpt=excerpt,
+                    upload_id=upload_id,
+                    status="pending",
+                ))
+                created += 1
+            db.commit()
+    except Exception as ex:
+        print(f"[ontology-claims] persist error: {ex}")
+    return {"created": created, "skipped_uncited": skipped_uncited, "skipped_duplicate": skipped_duplicate}
 
 
 async def _process_csv_upload(filepath: str, description: str) -> dict:
@@ -17572,7 +17642,10 @@ async def _process_geojson_upload(filepath: str, description: str) -> dict:
         return {"status": "error", "entities_extracted": 0, "details": {"error": str(exc)}}
 
 
-async def _process_document_upload(filepath: str, description: str) -> dict:
+async def _process_document_upload(filepath: str, description: str,
+                                    source_title: str = "", source_publisher: str = "",
+                                    source_date: str = "", source_url: str = "",
+                                    upload_id: str = None) -> dict:
     ext  = filepath.rsplit(".", 1)[-1].lower() if "." in filepath else ""
     text = ""
     if ext == "pdf":
@@ -17593,34 +17666,70 @@ async def _process_document_upload(filepath: str, description: str) -> dict:
         return {"status": "error", "entities_extracted": 0, "details": {"error": "No text extracted"}}
     if not client:
         return {"status": "error", "entities_extracted": 0, "details": {"error": "ANTHROPIC_API_KEY not set"}}
+
+    default_source = {
+        "title":     source_title or (description or None),
+        "publisher": source_publisher or None,
+        "date":      source_date or None,
+        "url":       source_url or None,
+    }
+
+    entities_raw, relationships_raw = [], []
     try:
         resp = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=2000,
+            max_tokens=4000,
             messages=[{"role": "user", "content": (
-                "Extract all named entities from this intelligence document. "
-                "Return ONLY a JSON array of objects, no other text.\n"
-                'Each object: {"name":"entity name","type":"person|country|organization|facility|weapon|vessel|aircraft|event","description":"brief description","lat":null,"lng":null}\n'
-                "If you know the approximate coordinates, include them. Otherwise leave null.\n\n"
+                "You are extracting structured intelligence from ONE real source document, for a "
+                "system that refuses to store anything it cannot cite back to this exact document. "
+                "Return ONLY a single JSON object, no other text, with two fields:\n\n"
+                '"entities": array of {"name","type" (person|country|organization|group|facility|'
+                'weapon|vessel|aircraft|port|event),"description"}. Only include "lat"/"lng" if this '
+                "specific document states coordinates explicitly — never estimate, guess, or recall "
+                "them from general knowledge. Omit them entirely if the document doesn't give them.\n\n"
+                '"relationships": array of {"entity_a","entity_a_type","relationship_type" (e.g. '
+                "sponsors|arms|funds|commands|leads|member_of|hosts|allied_with|adversarial_to|"
+                'designated_as|controls_territory_of|operates|other),"entity_b","entity_b_type",'
+                '"as_of" (a date/period the document itself gives, or null),"confidence" ("direct" if '
+                'the document states the relationship outright, "inferred" if you are combining two '
+                'separate facts it states),"evidence" (a short verbatim or near-verbatim excerpt FROM '
+                "THIS DOCUMENT supporting the relationship — mandatory, never fabricate one). Only "
+                "extract a relationship if you can quote real supporting text for it. If the document "
+                "supports no relationships, return an empty array — do not invent one to fill the field.\n\n"
                 f"Document:\n{text[:30000]}"
             )}],
         )
         raw = resp.content[0].text.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-        entities_raw = _json.loads(raw)
-    except Exception:
-        entities_raw = []
+        parsed = _json.loads(raw)
+        entities_raw      = parsed.get("entities", [])      if isinstance(parsed, dict) else []
+        relationships_raw = parsed.get("relationships", []) if isinstance(parsed, dict) else []
+    except Exception as _ex:
+        print(f"[document-upload] extraction failed: {_ex}")
+        entities_raw, relationships_raw = [], []
+
     entities = [
         {"label": e.get("name", "Unknown"), "type": e.get("type", "facility"),
          "description": e.get("description", ""), "lat": e.get("lat"), "lng": e.get("lng")}
         for e in entities_raw
     ]
-    _add_entities_to_ontology(entities)
+    citation = {k: v for k, v in default_source.items() if v} or None
+    _add_entities_to_ontology(entities, citation=citation)
+
+    claim_result = _create_ontology_claims(relationships_raw, upload_id=upload_id, default_source=default_source)
+
     return {
         "status": "processed",
         "entities_extracted": len(entities),
-        "details": {"text_length": len(text), "claude_extracted": len(entities_raw)},
+        "relationships_extracted": claim_result["created"],
+        "details": {
+            "text_length": len(text),
+            "claude_extracted_entities": len(entities_raw),
+            "claude_extracted_relationships": len(relationships_raw),
+            "pending_review": claim_result["created"],
+            "skipped_duplicate_relationships": claim_result["skipped_duplicate"],
+        },
     }
 
 
@@ -17632,6 +17741,10 @@ async def forge_upload(
     mission_id: str  = Form("mission_default"),
     data_type: str   = Form("auto"),
     description: str = Form(""),
+    source_title: str     = Form(""),
+    source_publisher: str = Form(""),
+    source_date: str      = Form(""),
+    source_url: str       = Form(""),
     _forge=Depends(_require_forge),
 ):
     _FORGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -17652,26 +17765,38 @@ async def forge_upload(
             "tif": "imagery", "tiff": "imagery",
         }.get(ext, "document")
 
+    uploads   = _forge_load("uploads.json")
+    upload_id = f"upload_{len(uploads)}_{ts}"
+
     if   data_type == "csv":      result = await _process_csv_upload(filepath, description)
     elif data_type == "kml":      result = await _process_kml_upload(filepath, description)
     elif data_type == "geojson":  result = await _process_geojson_upload(filepath, description)
-    elif data_type == "document": result = await _process_document_upload(filepath, description)
+    elif data_type == "document": result = await _process_document_upload(
+                                        filepath, description,
+                                        source_title=source_title, source_publisher=source_publisher,
+                                        source_date=source_date, source_url=source_url,
+                                        upload_id=upload_id,
+                                    )
     else:                         result = {"status": "stored", "entities_extracted": 0, "details": {}}
 
-    uploads = _forge_load("uploads.json")
     record = {
-        "id":                 f"upload_{len(uploads)}_{ts}",
-        "filename":           file.filename,
-        "stored_as":          filename,
-        "type":               data_type,
-        "description":        description,
-        "mission_id":         mission_id,
-        "uploaded_by":        getattr(_forge, "email", "admin"),
-        "uploaded_at":        datetime.utcnow().isoformat(),
-        "entities_extracted": result.get("entities_extracted", 0),
-        "rules_generated":    result.get("rules_generated", 0),
-        "status":             result.get("status", "processed"),
-        "details":            result.get("details", {}),
+        "id":                    upload_id,
+        "filename":              file.filename,
+        "stored_as":             filename,
+        "type":                  data_type,
+        "description":           description,
+        "source_title":          source_title,
+        "source_publisher":      source_publisher,
+        "source_date":           source_date,
+        "source_url":            source_url,
+        "mission_id":            mission_id,
+        "uploaded_by":           getattr(_forge, "email", "admin"),
+        "uploaded_at":           datetime.utcnow().isoformat(),
+        "entities_extracted":    result.get("entities_extracted", 0),
+        "relationships_pending": result.get("relationships_extracted", 0),
+        "rules_generated":       result.get("rules_generated", 0),
+        "status":                result.get("status", "processed"),
+        "details":               result.get("details", {}),
     }
     uploads.append(record)
     _forge_save("uploads.json", uploads)
@@ -17682,6 +17807,140 @@ async def forge_upload(
 def forge_get_uploads(_forge=Depends(_require_forge)):
     uploads = _forge_load("uploads.json")
     return list(reversed(uploads))
+
+
+# ── Ontology claims (entity-relationship review queue) ────────────────────────
+#
+# Every relationship a document-upload extraction proposes lands here as
+# "pending" — never directly in the live ontology graph. A person reviews each
+# claim's citation and either approves it (which creates/reuses the two entity
+# nodes and adds a cited edge) or rejects it. This is the same human-gate
+# philosophy as the intelligence-report council review, applied to ingested
+# entity relationships so nothing enters the graph on the strength of an LLM's
+# say-so alone.
+
+@app.get("/api/forge/ontology/claims")
+def forge_get_ontology_claims(status: str = "pending", _forge=Depends(_require_forge)):
+    from database import OntologyClaim, get_db as _gdb_list
+    with _gdb_list() as db:
+        q = db.query(OntologyClaim)
+        if status and status != "all":
+            q = q.filter(OntologyClaim.status == status)
+        rows = q.order_by(OntologyClaim.created_at.desc()).all()
+        return [
+            {
+                "claim_id":          r.claim_id,
+                "entity_a":          {"label": r.entity_a_label, "type": r.entity_a_type},
+                "relationship_type": r.relationship_type,
+                "entity_b":          {"label": r.entity_b_label, "type": r.entity_b_type},
+                "as_of":             r.as_of,
+                "confidence":        r.confidence,
+                "source": {
+                    "title": r.source_title, "publisher": r.source_publisher,
+                    "date": r.source_date, "url": r.source_url, "excerpt": r.source_excerpt,
+                },
+                "upload_id":   r.upload_id,
+                "status":      r.status,
+                "reviewer":    r.reviewer,
+                "review_note": r.review_note,
+                "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                "created_at":  r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+
+
+@app.post("/api/forge/ontology/claims/bulk")
+async def forge_bulk_create_ontology_claims(request: Request, _forge=Depends(_require_forge)):
+    """Load a batch of pre-researched claims (e.g. from an offline sourcing pass
+    over real documents) into the pending-review queue. Every claim still needs
+    its own citation ('evidence' + entity_a/entity_b/relationship_type) — claims
+    missing any of that are silently dropped, not stored half-formed. Nothing
+    here touches the live ontology; that only happens via the approve endpoint."""
+    body    = await request.json()
+    claims  = body.get("claims", [])
+    result  = _create_ontology_claims(claims)
+    return {"submitted": len(claims), **result}
+
+
+@app.post("/api/forge/ontology/claims/{claim_id}/approve")
+async def forge_approve_ontology_claim(claim_id: str, request: Request, _forge=Depends(_require_forge)):
+    from database import OntologyClaim, get_db as _gdb_appr
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    with _gdb_appr() as db:
+        row = db.query(OntologyClaim).filter(OntologyClaim.claim_id == claim_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        if row.status != "pending":
+            raise HTTPException(status_code=409, detail=f"Claim already {row.status}")
+
+        citation_for_nodes = {k: v for k, v in {
+            "title": row.source_title, "publisher": row.source_publisher,
+            "date": row.source_date, "url": row.source_url,
+        }.items() if v} or None
+        _add_entities_to_ontology([
+            {"label": row.entity_a_label, "type": row.entity_a_type},
+            {"label": row.entity_b_label, "type": row.entity_b_type},
+        ], citation=citation_for_nodes)
+
+        ontology = _forge_ontology_load()
+
+        def _find_id(label):
+            return next((n["id"] for n in ontology["nodes"] if n["label"].lower() == label.lower()), None)
+
+        src_id = _find_id(row.entity_a_label)
+        tgt_id = _find_id(row.entity_b_label)
+        if not src_id or not tgt_id:
+            raise HTTPException(status_code=500, detail="Could not resolve entity nodes for this claim")
+
+        reviewer = body.get("reviewer") or getattr(_forge, "email", "admin")
+        edge = {
+            "id":          f"e_claim_{row.claim_id}",
+            "source":      src_id,
+            "target":      tgt_id,
+            "type":        row.relationship_type,
+            "claim_id":    row.claim_id,
+            "as_of":       row.as_of,
+            "confidence":  row.confidence,
+            "citation": {
+                "title": row.source_title, "publisher": row.source_publisher,
+                "date": row.source_date, "url": row.source_url, "excerpt": row.source_excerpt,
+            },
+            "approved_by": reviewer,
+        }
+        ontology["edges"].append(edge)
+        _forge_ontology_save(ontology)
+
+        row.status      = "approved"
+        row.reviewer     = reviewer
+        row.review_note  = body.get("note")
+        row.reviewed_at  = datetime.utcnow()
+        db.commit()
+        return {"claim_id": claim_id, "status": "approved", "edge": edge}
+
+
+@app.post("/api/forge/ontology/claims/{claim_id}/reject")
+async def forge_reject_ontology_claim(claim_id: str, request: Request, _forge=Depends(_require_forge)):
+    from database import OntologyClaim, get_db as _gdb_rej
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    with _gdb_rej() as db:
+        row = db.query(OntologyClaim).filter(OntologyClaim.claim_id == claim_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        if row.status != "pending":
+            raise HTTPException(status_code=409, detail=f"Claim already {row.status}")
+        row.status      = "rejected"
+        row.reviewer     = body.get("reviewer") or getattr(_forge, "email", "admin")
+        row.review_note  = body.get("note")
+        row.reviewed_at  = datetime.utcnow()
+        db.commit()
+        return {"claim_id": claim_id, "status": "rejected"}
 
 
 # ── Auto-rule generation ──────────────────────────────────────────────────────

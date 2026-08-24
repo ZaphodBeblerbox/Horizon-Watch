@@ -732,6 +732,50 @@ class OntologyLink(Base):
     )
 
 
+class OntologyClaim(Base):
+    """A candidate entity-relationship claim extracted from an ingested document,
+    held for human review before it is allowed to become a live Forge ontology edge.
+
+    This is the review gate for the entity-relationship ingestion pipeline: every
+    row here must carry a real source citation (title/publisher/date/url/excerpt).
+    Nothing here is asserted as true — it is a claim a document makes, tagged with
+    where it came from, awaiting a person's approval. `confidence` is deliberately
+    a string ('direct' | 'inferred'), never a fabricated numeric score — this system
+    has no way to compute a real numeric confidence for a claim extracted from free
+    text, so it does not pretend to."""
+    __tablename__ = "ontology_claims"
+
+    id                = Column(Integer, primary_key=True)
+    claim_id          = Column(String, unique=True, index=True, nullable=False)  # CLM-<uuid8>
+
+    entity_a_label    = Column(String, nullable=False)
+    entity_a_type     = Column(String, nullable=False)
+    relationship_type = Column(String, nullable=False, index=True)
+    entity_b_label    = Column(String, nullable=False)
+    entity_b_type     = Column(String, nullable=False)
+
+    as_of             = Column(String, nullable=True)   # free-text date/period the source itself states
+    confidence        = Column(String, nullable=True)   # 'direct' | 'inferred' — never a numeric score
+
+    source_title      = Column(String, nullable=True)
+    source_publisher  = Column(String, nullable=True)
+    source_date       = Column(String, nullable=True)
+    source_url        = Column(String, nullable=True)
+    source_excerpt    = Column(Text, nullable=True)     # the actual fact/quote grounding this claim
+
+    upload_id         = Column(String, nullable=True, index=True)  # forge upload record this came from, if any
+
+    status            = Column(String, nullable=False, default="pending", index=True)  # pending|approved|rejected
+    reviewer          = Column(String, nullable=True)
+    review_note       = Column(Text, nullable=True)
+    reviewed_at       = Column(DateTime, nullable=True)
+    created_at        = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_claim_status_created", "status", "created_at"),
+    )
+
+
 @contextmanager
 def get_db():
     db = SessionLocal()
