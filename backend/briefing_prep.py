@@ -33,17 +33,49 @@ def prepare_intelligence_picture(
     cutoff_48h = now - timedelta(hours=48)
 
     alerts = list(forge_alerts or [])
+    excluded_low_quality_alerts = 0
 
     # ── 0. Supplement forge_alerts with persisted Alert DB rows ──────────────
+    # Quality filter: 99.9% of live Alert rows have alert_type='unknown' and a
+    # blank title (confirmed by audit) — an artefact of upstream ingestion gaps,
+    # not real intelligence content. Letting those into the picture would mean
+    # a report silently treating that noise as if it were signal. Excluded here,
+    # at the point where DB-backed alerts enter the snapshot, rather than
+    # filtered later where it's easy to forget.
     try:
         from database import Alert as _AlertDB, NewsArticle as _NADB, OntologyLink as _OLDB
         db_alert_rows = (
             db.query(_AlertDB)
-            .filter(_AlertDB.status == "active", _AlertDB.created_at >= cutoff_24h)
+            .filter(
+                _AlertDB.status == "active",
+                _AlertDB.created_at >= cutoff_24h,
+                _AlertDB.alert_type.isnot(None),
+                _AlertDB.alert_type != "unknown",
+                _AlertDB.title.isnot(None),
+                _AlertDB.title != "",
+            )
             .order_by(_AlertDB.created_at.desc())
             .limit(100)
             .all()
         )
+        total_active_count = (
+            db.query(_AlertDB)
+            .filter(_AlertDB.status == "active", _AlertDB.created_at >= cutoff_24h)
+            .count()
+        )
+        quality_count = (
+            db.query(_AlertDB)
+            .filter(
+                _AlertDB.status == "active",
+                _AlertDB.created_at >= cutoff_24h,
+                _AlertDB.alert_type.isnot(None),
+                _AlertDB.alert_type != "unknown",
+                _AlertDB.title.isnot(None),
+                _AlertDB.title != "",
+            )
+            .count()
+        )
+        excluded_low_quality_alerts = max(0, total_active_count - quality_count)
         existing_ids = {str(a.get("id", "")) for a in alerts}
         for row in db_alert_rows:
             if row.alert_id not in existing_ids:
@@ -329,6 +361,7 @@ def prepare_intelligence_picture(
             "active_fusions":       len(fusion_items),
             "active_surges":        len(surge_items),
             "elevated_regions":     len(elevated_regions),
+            "alerts_excluded_low_quality": excluded_low_quality_alerts,
         },
         "threat_overview": {
             "elevated_regions": elevated_regions,
