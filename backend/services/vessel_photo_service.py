@@ -12,10 +12,13 @@ Strategy:
     the URL for the frontend to display directly.
   - Cache 6 hours per MMSI (photos rarely change).
 """
+import logging
 import time
 import urllib.request
 import urllib.error
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 _PHOTO_CACHE: dict = {}   # str(mmsi) → {"ts": float, "data": dict}
 _CACHE_TTL = 6 * 3600     # 6 hours
@@ -68,9 +71,11 @@ def _photo_available(mmsi: str) -> bool:
     except urllib.error.HTTPError as exc:
         # 404 = no photo; other errors treated as unavailable
         if exc.code != 404:
+            logger.exception("vessel_photo_service._photo_available: probe failed")
             print(f"[vessel_photo] HTTP {exc.code} for MMSI {mmsi}")
         return False
     except Exception as exc:
+        logger.exception("vessel_photo_service._photo_available: probe failed")
         print(f"[vessel_photo] error for MMSI {mmsi}: {exc}")
         return False
 

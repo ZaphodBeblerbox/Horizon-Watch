@@ -209,6 +209,12 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
                 toggled={active.threatHeatmap ?? false}
                 onToggle={() => onToggle("threatHeatmap")}
             />
+            <LayerRow
+                label="CCTV Feeds"
+                hint="Live camera feeds at strategic chokepoints"
+                toggled={active.cctvFeeds ?? true}
+                onToggle={() => onToggle("cctvFeeds")}
+            />
             <SectionHeader label="Infrastructure" />
             <LayerRow
                 label="Airports"

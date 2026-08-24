@@ -1,7 +1,10 @@
 import io
+import logging
 import httpx
 from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import Response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["proxy"])
 
@@ -84,7 +87,8 @@ async def openinfra_render(
     try:
         import mapbox_vector_tile as _mvt
         from PIL import Image, ImageDraw
-    except ImportError:
+    except ImportError as e:
+        logger.exception("tile_proxy: import failed, serving placeholder tile")
         return Response(
             content=_TRANSPARENT_PNG,
             media_type="image/png",
@@ -95,7 +99,8 @@ async def openinfra_render(
     url = f"{_OIM_BASE}/{z}/{x}/{y}.pbf"
     try:
         r = await _get_client().get(url, headers=_HEADERS)
-    except httpx.RequestError:
+    except httpx.RequestError as e:
+        logger.exception("tile_proxy: upstream request error, serving placeholder tile")
         return Response(content=_TRANSPARENT_PNG, media_type="image/png")
 
     if r.status_code != 200 or not r.content:
@@ -107,7 +112,8 @@ async def openinfra_render(
 
     try:
         tile_data: dict = _mvt.decode(r.content)
-    except Exception:
+    except Exception as e:
+        logger.exception("tile_proxy: unexpected error, serving placeholder tile")
         return Response(content=_TRANSPARENT_PNG, media_type="image/png")
 
     size   = 1024

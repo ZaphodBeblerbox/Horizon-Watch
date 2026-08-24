@@ -23,6 +23,7 @@ import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
 import GlobeSurgeLayer          from "../globe/GlobeSurgeLayer.jsx"
+import GlobeCameraLayer         from "../globe/GlobeCameraLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -106,6 +107,7 @@ export default function GlobeView({
     // Forge alerts/rules on the globe
     alertsEnabled = false,
     threatHeatmapEnabled = false,
+    cctvEnabled = true,
     eventsMinRelevance = 4,
     precisionEventsEnabled = true,
     autoModeEnabled = false,
@@ -433,6 +435,9 @@ export default function GlobeView({
 
                 {/* ── Forge alerts layer ──────────────────────────────────────── */}
                 <GlobeAlertsLayer enabled={alertsEnabled} />
+
+                {/* ── CCTV camera layer (local dev) ───────────────────────────── */}
+                {cctvEnabled && <GlobeCameraLayer />}
 
                 {/* ── Threat heatmap layer ─────────────────────────────────────── */}
                 <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />

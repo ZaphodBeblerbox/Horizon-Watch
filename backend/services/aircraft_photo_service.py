@@ -3,9 +3,12 @@
 Fetches real photos for a specific aircraft by ICAO24 hex code.
 Results are cached in-memory with a 6-hour TTL.
 """
+import logging
 import time
 import json
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 _PHOTO_CACHE: dict = {}   # icao24.lower() → {"ts": float, "data": dict}
 _CACHE_TTL = 6 * 3600     # 6 hours
@@ -32,6 +35,7 @@ def get_photo(icao24: str) -> dict:
 
     print(f"[photo] cache MISS {key} — querying Planespotters")
     result = _empty_photo()
+    fetch_failed = False
     try:
         url = f"https://api.planespotters.net/pub/photos/hex/{key}"
         req = urllib.request.Request(
@@ -55,9 +59,12 @@ def get_photo(icao24: str) -> dict:
             print(f"[photo] {key} → no photos found")
 
     except Exception as exc:
+        logger.exception("aircraft_photo_service.get_photo: Planespotters fetch failed")
         print(f"[photo] Planespotters error for {key}: {exc}")
+        fetch_failed = True
 
-    _PHOTO_CACHE[key] = {"ts": time.time(), "data": result}
+    if not fetch_failed:
+        _PHOTO_CACHE[key] = {"ts": time.time(), "data": result}
     return result
 
 

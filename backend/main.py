@@ -24,8 +24,11 @@ import shutil as _shutil
 import urllib.request
 import urllib.parse
 import urllib.error
+import logging
 from collections import Counter, OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
+
+logger = logging.getLogger(__name__)
 
 # ── Memory management ─────────────────────────────────────────────────────────
 
@@ -1373,9 +1376,11 @@ async def geocode_places(
             try:
                 raw = r.json()
             except Exception as parse_ex:
+                logger.exception("geocode_places: Nominatim request/parse failed")
                 print(f"[geocode] json parse error: {parse_ex}")
                 return []
     except Exception as ex:
+        logger.exception("geocode_places: Nominatim request/parse failed")
         print(f"[geocode-proxy] error for '{query}': {ex}")
         return []
 
@@ -3121,6 +3126,7 @@ def get_adsb(
         with urllib.request.urlopen(req, timeout=10) as resp:
             raw = _json.loads(resp.read())
     except Exception as e:
+        logger.exception("get_adsb: adsb.lol fetch failed")
         print(f"[adsb] fetch error: {e}")
         return {"aircraft": []}
 
@@ -3708,7 +3714,8 @@ async def director_video_search(
         try:
             r = requests.get(url, params=params, headers={"User-Agent": "HorizonWatch/2.0"}, timeout=10)
             return r.json() if r.status_code == 200 else None
-        except Exception:
+        except Exception as e:
+            logger.exception("director video-search: Wikimedia request failed")
             return None
 
     loop = asyncio.get_event_loop()
@@ -9597,7 +9604,8 @@ async def get_aircraft_history(
 ):
     try:
         from database import AircraftHistory, get_db
-    except ImportError:
+    except ImportError as e:
+        logger.exception("history/aircraft: import/query failed")
         return {"count": 0, "positions": []}
     cutoff = datetime.utcnow() - timedelta(hours=hours)
     with get_db() as db:
@@ -9677,7 +9685,8 @@ async def get_vessel_history(
 ):
     try:
         from database import VesselHistory, get_db
-    except ImportError:
+    except ImportError as e:
+        logger.exception("history/vessels: import/query failed")
         return {"count": 0, "positions": []}
     cutoff = datetime.utcnow() - timedelta(hours=hours)
     with get_db() as db:
@@ -9851,7 +9860,8 @@ async def _global_adsb_cache_loop():
                         req = _ur.Request(u, headers={"User-Agent": "Akili/1.0"})
                         with _ur.urlopen(req, timeout=15) as r:
                             return _json.loads(r.read()).get("ac", [])
-                    except Exception:
+                    except Exception as e:
+                        logger.exception("adsb background poll: region fetch failed")
                         return []
                 aircraft_raw = await loop.run_in_executor(_executor, _fetch)
                 now_ts = time.time()
@@ -10312,7 +10322,8 @@ async def _weekly_snapshot_loop():
 async def get_weekly_snapshots(weeks: int = Query(12), user=Depends(get_optional_user)):
     try:
         from database import WeeklySnapshot, get_db
-    except ImportError:
+    except ImportError as e:
+        logger.exception("statistics/weekly: import/query failed")
         return {"count": 0, "snapshots": []}
     with get_db() as db:
         snapshots = db.query(WeeklySnapshot).order_by(WeeklySnapshot.week_start.desc()).limit(weeks).all()
@@ -14458,7 +14469,8 @@ async def api_get_annotations():
         return {"points": [], "zones": [], "links": []}
     try:
         return _json.loads(p.read_text())
-    except Exception:
+    except Exception as e:
+        logger.exception("annotations: read/parse failed")
         return {"points": [], "zones": [], "links": []}
 
 
@@ -15176,6 +15188,7 @@ def _load_deployments() -> dict:
     try:
         return _json.loads(_DEPLOYMENTS_PATH.read_text())
     except Exception as ex:
+        logger.exception("load_deployments: read/parse failed")
         print(f"[deployments] load failed: {ex}")
         return {"carrier_strike_groups": [], "amphibious_ready_groups": [], "notable_surface_units": []}
 
@@ -17324,7 +17337,8 @@ def _forge_load(filename: str) -> list:
         return []
     try:
         return _json.loads(path.read_text())
-    except Exception:
+    except Exception as e:
+        logger.exception(f"forge_load: failed to load {path}")
         return []
 
 def _forge_save(filename: str, data: list):
@@ -19240,8 +19254,9 @@ def api_assessments_list(
     try:
         from intelligence_schema import IntelligenceAssessment
         from database import get_db as _gdb_a
-    except ImportError:
-        return []
+    except ImportError as e:
+        logger.exception("assessments_list: import failed")
+        raise HTTPException(status_code=503, detail="assessments unavailable")
     with _gdb_a() as _db:
         q = _db.query(IntelligenceAssessment).filter(
             IntelligenceAssessment.expires_at > datetime.utcnow()
@@ -19272,8 +19287,9 @@ def api_assessments_for_claude():
     try:
         from intelligence_schema import IntelligenceAssessment
         from database import get_db as _gdb_c
-    except ImportError:
-        return []
+    except ImportError as e:
+        logger.exception("assessments_for_claude: import failed")
+        raise HTTPException(status_code=503, detail="assessments for-claude unavailable")
     SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "info": 3}
     cutoff = datetime.utcnow() - timedelta(hours=24)
     with _gdb_c() as _db:
@@ -19629,6 +19645,7 @@ def api_fusions_signals(fusion_id: str):
 @app.get("/api/foresight/global/summary")
 async def api_foresight_global():
     """Top escalation risks across all zones (last 24h assessments)."""
+    errors = []
     try:
         from database import ForesightAssessment as _FA
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
@@ -19654,10 +19671,13 @@ async def api_foresight_global():
                 }
                 for r in rows
             ],
+            "errors": errors,
         }
     except Exception as e:
+        logger.exception("foresight/global/summary: query failed")
         print(f"[foresight/global] error: {e}")
-        return {"generated_at": datetime.utcnow().isoformat(), "top_risks": []}
+        errors.append("query failed")
+        return {"generated_at": datetime.utcnow().isoformat(), "top_risks": [], "errors": errors}
 
 
 @app.get("/api/foresight/{zone_id}")
@@ -20923,7 +20943,8 @@ def forge_threat_scores(_forge=Depends(_require_forge)):
     active_events = []
     try:
         active_events = es.get_active_events()
-    except Exception:
+    except Exception as e:
+        logger.exception("forge_threat_scores: event store query failed")
         pass
 
     scores = []
@@ -20991,7 +21012,8 @@ def analytics_threat_matrix():
     active_events = []
     try:
         active_events = es.get_active_events()
-    except Exception:
+    except Exception as e:
+        logger.exception("threat_matrix: event store query failed")
         pass
     _fusions_live = []
     try:
@@ -21004,7 +21026,8 @@ def analytics_threat_matrix():
                         _FE_live.status == "active", _FE_live.marker_visible == True
                     ).all()
                 ]
-    except Exception:
+    except Exception as e:
+        logger.exception("threat_matrix: fusion query failed")
         pass
     from database import get_db as _gdb_tm2
     with _gdb_tm2() as _db:
@@ -21495,7 +21518,8 @@ async def save_ontology_positions(request: Request, _forge=Depends(_require_forg
 def get_ontology_positions(_forge=Depends(_require_forge)):
     try:
         return _json.loads(_FORGE_ONTOLOGY_POS_FILE.read_text())
-    except Exception:
+    except Exception as e:
+        logger.exception("forge/ontology/positions: read/parse failed")
         return {}
 
 
@@ -21820,6 +21844,7 @@ def api_zone_signals(
     limit: int = Query(50, ge=1, le=200),
 ):
     """AIS alerts, news assessments, and fusion events that overlap this zone's bounding box."""
+    errors = []
     from database import StrategicZone, FusionEvent, get_db
     from sqlalchemy import or_
     with get_db() as db:
@@ -21881,7 +21906,9 @@ def api_zone_signals(
                 }
                 for r in assessments
             ]
-        except Exception:
+        except Exception as e:
+            logger.exception("zone_signals: news assessment lookup failed")
+            errors.append("news assessment lookup failed")
             pass
 
     # AIS/ADSB alerts from in-memory _forge_alerts
@@ -21901,7 +21928,9 @@ def api_zone_signals(
                     "lon": a_lon,
                     "created_at": a.get("timestamp"),
                 })
-    except Exception:
+    except Exception as e:
+        logger.exception("zone_signals: alert lookup failed")
+        errors.append("alert lookup failed")
         pass
 
     all_signals = sorted(
@@ -21913,6 +21942,7 @@ def api_zone_signals(
         "zone_id": zone_id,
         "signal_count": len(all_signals),
         "signals": all_signals[:limit],
+        "errors": errors,
     }
 
 

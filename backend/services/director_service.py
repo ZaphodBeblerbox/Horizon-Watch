@@ -148,7 +148,8 @@ def build_snapshot(
                 "severity":  ev.get("severity_tier") or "elevated",
                 "summary":   (ev.get("summary") or "")[:200],
             })
-    except Exception:
+    except Exception as e:
+        logger.exception("director_service: intel aggregation fetch/parse failed")
         pass
 
     # Sort newest first, cap at 100
@@ -421,7 +422,8 @@ def build_snapshot(
                         "lon":         r.lon,
                         "key_signals": _j_ds.loads(r.key_signals or "[]")[:5],
                     })
-        except Exception:
+        except Exception as e:
+            logger.exception("director_service: fusion aggregation fetch/parse failed")
             pass
 
     snapshot = {
@@ -1356,7 +1358,8 @@ def load_sequence(seq_id: str) -> dict | None:
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        logger.exception(f"director_service.load_sequence: failed to load {seq_id}")
         return None
 
 
@@ -1373,7 +1376,8 @@ def list_sequences() -> list[dict]:
                 "created_at":   data.get("created_at"),
                 "action_count": data.get("action_count", len(data.get("actions", []))),
             })
-        except Exception:
+        except Exception as e:
+            logger.exception(f"director_service.list_sequences: failed to read {path.name}")
             pass
     seqs.sort(key=lambda s: s.get("created_at") or "", reverse=True)
     return seqs

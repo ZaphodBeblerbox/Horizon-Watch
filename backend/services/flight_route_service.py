@@ -8,11 +8,14 @@ hexdb.io endpoints used:
 
 All four requests are fired in parallel (threads). Results cached 30 min per ICAO24.
 """
+import logging
 import time
 import urllib.request
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 _ROUTE_CACHE: dict = {}   # icao24.lower() → {"ts": float, "data": dict}
 _CACHE_TTL = 30 * 60      # 30 minutes
@@ -107,9 +110,11 @@ def _hexdb_get(endpoint: str, icao: str) -> str:
             print(f"[hexdb/{endpoint}] {icao} → HTTP {status}  text={body!r}")
             return body if status == 200 else ""
     except urllib.error.HTTPError as exc:
+        logger.exception("flight_route_service._hexdb_get: HTTP error from hexdb.io")
         print(f"[hexdb/{endpoint}] {icao} → HTTP {exc.code}")
         return ""
     except Exception as exc:
+        logger.exception("flight_route_service._hexdb_get: request failed")
         print(f"[hexdb/{endpoint}] {icao} → error: {exc}")
         return ""
 
