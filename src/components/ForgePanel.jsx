@@ -75,7 +75,7 @@ export const PIPELINE_NODES = [
     { id: 'int_rule_logic',  label: 'Rule Logic',            column: 3, type: 'intelligence', status: 'active',     config: {} },
     { id: 'out_alerts',      label: 'Alert System',          column: 4, type: 'output',       status: 'active',     config: {} },
     { id: 'out_briefings',   label: 'Director Briefings',    column: 4, type: 'output',       status: 'active',     config: {} },
-    { id: 'out_reports',     label: 'Reports',               column: 4, type: 'output',       status: 'inactive',   config: {} },
+    { id: 'out_reports',     label: 'Reports',               column: 4, type: 'output',       status: 'active',     config: {} },
 ]
 
 export const PIPELINE_EDGES = [
@@ -1447,7 +1447,7 @@ function ReportSnapshotsWorkspace() {
     return (
         <WorkspaceBody>
             <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
-                A snapshot freezes the current intelligence picture (active signals, fusion events, elevated regions, AIS/ADS-B anomalies, Sentinel detections) as a permanent, timestamped record with its own ID — unlike the live views elsewhere in this app, a captured snapshot never changes even as the underlying data moves on. This is the capture layer a future report/council pipeline will cite claims against; report generation and PDF export themselves don't exist yet.
+                A snapshot freezes the current intelligence picture (active signals, fusion events, elevated regions, AIS/ADS-B anomalies, Sentinel detections) as a permanent, timestamped record with its own ID — unlike the live views elsewhere in this app, a captured snapshot never changes even as the underlying data moves on. This is the capture layer the Reports tab cites claims against.
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
                 <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Optional label (e.g. Red Sea AOI — daily)" style={{ ...inputStyle, flex: 1, maxWidth: 320 }} />
@@ -1491,6 +1491,397 @@ function ReportSnapshotsWorkspace() {
     )
 }
 
+// ── Reports (roadmap Phase 3: report entity, status machine, council, PDF) ──
+//
+// Draft-to-published intelligence reports. Every report is keyed to a
+// ReportSnapshot (the tab alongside this one) so a claim can cite "signal X
+// in snapshot Y" rather than nothing. Submitting for review runs the
+// council (report_council.py): a deterministic pass — citation-existence,
+// geo-sanity — that no model can get wrong by being persuasive, plus two
+// independently-lensed model passes (citation fidelity, completeness).
+// Nothing here auto-advances a report; every step past draft is an explicit
+// human action, and a lens that has no Claude client configured reports
+// itself as skipped rather than faking a verdict.
+
+const REPORT_STATUSES = ["draft", "in_review", "approved", "published", "rejected"]
+const REPORT_STATUS_COLORS = { draft: "#94a3b8", in_review: "#facc15", approved: "#60a5fa", published: "#4ade80", rejected: "#f87171" }
+const REPORT_CITATION_SECTIONS = ["ais_anomalies", "adsb_anomalies", "fusion_events", "surge_events", "sentinel_detections", "news_assessments", "strategic_zones", "top_articles"]
+const RELIABILITY_CODES = ["A", "B", "C", "D", "E", "F"]
+const CREDIBILITY_CODES = ["1", "2", "3", "4", "5", "6"]
+
+function emptyReportClaim() {
+    return {
+        text: "", citation: { type: "snapshot_ref", section: REPORT_CITATION_SECTIONS[0], item_id: "" },
+        source_evaluation: null, asserted_zone: "", lat: "", lon: "",
+    }
+}
+
+function ClaimEditorRow({ claim, onChange, onRemove }) {
+    const set = (k, v) => onChange({ ...claim, [k]: v })
+    const setCitation = (k, v) => onChange({ ...claim, citation: { ...claim.citation, [k]: v } })
+    const [showGeo,  setShowGeo]  = useState(!!(claim.asserted_zone || claim.lat || claim.lon))
+    const [showEval, setShowEval] = useState(!!claim.source_evaluation)
+
+    return (
+        <div style={{ background: "#0d1422", borderRadius: 6, padding: 12, marginBottom: 8 }}>
+            <textarea value={claim.text} onChange={e => set("text", e.target.value)} placeholder="Claim text *" rows={2}
+                style={{ ...inputStyle, width: "100%", marginBottom: 6, resize: "vertical" }} />
+            <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                <select value={claim.citation.type} onChange={e => setCitation("type", e.target.value)} style={inputStyle}>
+                    <option value="snapshot_ref">citation: snapshot data</option>
+                    <option value="external">citation: external source</option>
+                </select>
+                {claim.citation.type === "snapshot_ref" ? (
+                    <>
+                        <select value={claim.citation.section || REPORT_CITATION_SECTIONS[0]} onChange={e => setCitation("section", e.target.value)} style={inputStyle}>
+                            {REPORT_CITATION_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <input value={claim.citation.item_id || ""} onChange={e => setCitation("item_id", e.target.value)} placeholder="item id (e.g. signal_id) *" style={inputStyle} />
+                    </>
+                ) : (
+                    <input value={claim.citation.url || ""} onChange={e => setCitation("url", e.target.value)} placeholder="Source URL *" style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
+                )}
+            </div>
+            <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
+                <label style={{ color: "#475569", fontSize: 10, cursor: "pointer" }}>
+                    <input type="checkbox" checked={showGeo} onChange={e => { setShowGeo(e.target.checked); if (!e.target.checked) onChange({ ...claim, asserted_zone: "", lat: "", lon: "" }) }} style={{ marginRight: 4 }} />
+                    Geo-sanity check
+                </label>
+                <label style={{ color: "#475569", fontSize: 10, cursor: "pointer" }}>
+                    <input type="checkbox" checked={showEval} onChange={e => { setShowEval(e.target.checked); if (!e.target.checked) set("source_evaluation", null) }} style={{ marginRight: 4 }} />
+                    Source evaluation (NATO Admiralty)
+                </label>
+            </div>
+            {showGeo && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                    <input value={claim.asserted_zone || ""} onChange={e => set("asserted_zone", e.target.value)} placeholder="Asserted zone name" style={{ ...inputStyle, flex: 1 }} />
+                    <input value={claim.lat || ""} onChange={e => set("lat", e.target.value)} placeholder="Lat" style={{ ...inputStyle, width: 90 }} />
+                    <input value={claim.lon || ""} onChange={e => set("lon", e.target.value)} placeholder="Lon" style={{ ...inputStyle, width: 90 }} />
+                </div>
+            )}
+            {showEval && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
+                    <select value={claim.source_evaluation?.reliability || ""} onChange={e => set("source_evaluation", { ...(claim.source_evaluation || {}), reliability: e.target.value })} style={inputStyle}>
+                        <option value="">reliability</option>
+                        {RELIABILITY_CODES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <select value={claim.source_evaluation?.credibility || ""} onChange={e => set("source_evaluation", { ...(claim.source_evaluation || {}), credibility: e.target.value })} style={inputStyle}>
+                        <option value="">credibility</option>
+                        {CREDIBILITY_CODES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <input value={claim.source_evaluation?.confidence_label || ""} onChange={e => set("source_evaluation", { ...(claim.source_evaluation || {}), confidence_label: e.target.value })} placeholder="confidence label (optional)" style={{ ...inputStyle, flex: 1 }} />
+                </div>
+            )}
+            <button onClick={onRemove} style={{ background: "none", border: "none", color: "#f87171", fontSize: 10, cursor: "pointer", padding: 0 }}>✕ Remove claim</button>
+        </div>
+    )
+}
+
+function ReportForm({ snapshots, existing, onSaved, onCancel }) {
+    const isEdit = !!existing
+    const [title,          setTitle]          = useState(existing?.title || "")
+    const [snapshotId,     setSnapshotId]     = useState(existing?.snapshot_id || (snapshots[0]?.snapshot_id || ""))
+    const [classification, setClassification] = useState(existing?.classification || "UNCLASSIFIED // FOR ANALYTICAL USE ONLY")
+    const [keyJudgments,   setKeyJudgments]   = useState(existing?.key_judgments || "")
+    const [claims, setClaims] = useState(
+        existing?.claims?.length
+            ? existing.claims.map(c => ({ ...c, lat: c.lat ?? "", lon: c.lon ?? "", asserted_zone: c.asserted_zone || "" }))
+            : [emptyReportClaim()]
+    )
+    const [saving, setSaving] = useState(false)
+    const [err, setErr]       = useState(null)
+
+    const updateClaim = (i, next) => setClaims(cs => cs.map((c, idx) => idx === i ? next : c))
+    const removeClaim = (i) => setClaims(cs => cs.filter((_, idx) => idx !== i))
+    const addClaim = () => setClaims(cs => [...cs, emptyReportClaim()])
+
+    const save = async () => {
+        setSaving(true); setErr(null)
+        try {
+            const payload = {
+                title: title.trim(), snapshot_id: snapshotId, classification, key_judgments: keyJudgments,
+                claims: claims.filter(c => c.text.trim()).map(c => ({
+                    ...(c.claim_id ? { claim_id: c.claim_id } : {}),
+                    text: c.text.trim(), citation: c.citation, source_evaluation: c.source_evaluation || null,
+                    asserted_zone: c.asserted_zone || null,
+                    lat: c.lat !== "" && c.lat != null ? parseFloat(c.lat) : null,
+                    lon: c.lon !== "" && c.lon != null ? parseFloat(c.lon) : null,
+                })),
+            }
+            const url = isEdit ? `${API}/api/reports/${existing.report_id}` : `${API}/api/reports`
+            const res = await fetch(url, { method: isEdit ? "PATCH" : "POST", headers: forgeHeaders(), body: JSON.stringify(payload) })
+            const d = await res.json()
+            if (res.ok) { onSaved(d) } else { setErr(d.detail || "Save failed") }
+        } catch (e) { setErr(e.message) }
+        finally { setSaving(false) }
+    }
+
+    return (
+        <div style={{ background: "#0d1422", borderRadius: 6, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Report title *" style={inputStyle} />
+                <select value={snapshotId} onChange={e => setSnapshotId(e.target.value)} disabled={isEdit} style={inputStyle}>
+                    <option value="">select a snapshot to cite *</option>
+                    {snapshots.map(s => <option key={s.snapshot_id} value={s.snapshot_id}>{s.label || s.snapshot_id}</option>)}
+                </select>
+            </div>
+            <input value={classification} onChange={e => setClassification(e.target.value)} placeholder="Classification" style={{ ...inputStyle, width: "100%", marginBottom: 8 }} />
+            <textarea value={keyJudgments} onChange={e => setKeyJudgments(e.target.value)} placeholder="Key judgments (analyst-written summary)" rows={3} style={{ ...inputStyle, width: "100%", marginBottom: 10, resize: "vertical" }} />
+            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                Sourced Claims ({claims.length})
+            </div>
+            {claims.map((c, i) => (
+                <ClaimEditorRow key={i} claim={c} onChange={next => updateClaim(i, next)} onRemove={() => removeClaim(i)} />
+            ))}
+            <button onClick={addClaim} style={{ ...ghostBtn, marginBottom: 10 }}>+ Add Claim</button>
+            {err && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{err}</div>}
+            <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={save} disabled={saving || !title.trim() || !snapshotId} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>
+                    {saving ? "Saving…" : isEdit ? "Save Changes" : "Create Draft Report"}
+                </button>
+                <button onClick={onCancel} style={ghostBtn}>Cancel</button>
+            </div>
+        </div>
+    )
+}
+
+function LensResult({ title, result }) {
+    if (!result) return null
+    return (
+        <div style={{ marginBottom: 10 }}>
+            <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{title}</div>
+            {result.status === "skipped" && <div style={{ color: "#475569", fontSize: 10, fontStyle: "italic" }}>Skipped — {result.reason}</div>}
+            {result.status === "error" && <div style={{ color: "#f87171", fontSize: 10 }}>Error — {result.reason}</div>}
+            {result.status === "ok" && Array.isArray(result.findings) && (
+                result.findings.length === 0
+                    ? <div style={{ color: "#334155", fontSize: 10 }}>No issues flagged.</div>
+                    : result.findings.map((f, i) => (
+                        <div key={i} style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
+                            <span style={{ color: f.verdict === "supported" ? "#4ade80" : f.verdict === "overstated" ? "#facc15" : "#f87171", fontWeight: 600 }}>
+                                {f.claim_id}{f.verdict ? ` — ${f.verdict}` : ""}
+                            </span>{f.comment ? `: ${f.comment}` : ""}
+                        </div>
+                    ))
+            )}
+            {result.status === "ok" && result.overall_comment !== undefined && (
+                <>
+                    <div style={{ color: "#94a3b8", fontSize: 10, marginBottom: 4 }}>{result.overall_comment || "(no overall comment)"}</div>
+                    {(result.per_claim || []).map((f, i) => (
+                        <div key={i} style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
+                            <span style={{ color: "#60a5fa", fontWeight: 600 }}>{f.claim_id}</span>: {f.comment}
+                        </div>
+                    ))}
+                </>
+            )}
+        </div>
+    )
+}
+
+function CouncilFindings({ findings }) {
+    if (!findings) return <div style={{ color: "#334155", fontSize: 11 }}>Council has not run yet.</div>
+    const det = findings.deterministic || []
+    return (
+        <div>
+            <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Deterministic Checks</div>
+            {det.length === 0
+                ? <div style={{ color: "#334155", fontSize: 10, marginBottom: 10 }}>No deterministic checks applied.</div>
+                : det.map((f, i) => (
+                    <div key={i} style={{ fontSize: 10, marginBottom: 3, color: f.passed ? "#4ade80" : "#f87171" }}>
+                        {f.passed ? "✓" : "✗"} {f.claim_id} — {f.check}: {f.detail}
+                    </div>
+                ))
+            }
+            <div style={{ marginTop: 10 }}>
+                <LensResult title="Citation Fidelity Lens" result={findings.citation_fidelity} />
+                <LensResult title="Completeness Lens" result={findings.completeness} />
+            </div>
+        </div>
+    )
+}
+
+function ReportCard({ report, snapshots, onChanged }) {
+    const [expanded, setExpanded] = useState(false)
+    const [full,     setFull]     = useState(null)
+    const [busy,     setBusy]     = useState(false)
+    const [editing,  setEditing]  = useState(false)
+    const [note,     setNote]     = useState("")
+
+    const loadFull = async () => {
+        try {
+            const res = await fetch(`${API}/api/reports/${report.report_id}`, { headers: forgeHeaders() })
+            if (res.ok) setFull(await res.json())
+        } catch (_e) {}
+    }
+
+    const toggle = () => {
+        if (expanded) { setExpanded(false); return }
+        setExpanded(true)
+        loadFull()
+    }
+
+    const doAction = async (action, body) => {
+        setBusy(true)
+        try {
+            const res = await fetch(`${API}/api/reports/${report.report_id}/${action}`, {
+                method: "POST", headers: forgeHeaders(), body: JSON.stringify(body || {}),
+            })
+            const d = await res.json()
+            if (res.ok) { setFull(d); setNote(""); onChanged() } else { alert(d.detail || `${action} failed`) }
+        } catch (e) { alert(e.message) }
+        finally { setBusy(false) }
+    }
+
+    const downloadPdf = () => {
+        fetch(`${API}/api/reports/${report.report_id}/pdf`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.blob() : Promise.reject(new Error("PDF export failed")))
+            .then(blob => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = `${report.report_id}.pdf`; a.click(); URL.revokeObjectURL(u) })
+            .catch(e => alert(e.message))
+    }
+
+    const row = full || report
+    const statusColor = REPORT_STATUS_COLORS[row.status] || "#475569"
+
+    return (
+        <div style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={toggle}>
+                <div>
+                    <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{row.title}</span>
+                    <span style={{ padding: "1px 6px", borderRadius: 8, marginLeft: 8, background: statusColor + "22", color: statusColor, fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>{row.status}</span>
+                    <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{row.report_id}</span>
+                </div>
+                <span style={{ color: "#475569", fontSize: 10 }}>{row.created_at ? new Date(row.created_at).toLocaleString() : "—"}</span>
+            </div>
+            <div style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>
+                snapshot: {row.snapshot_id} · {(row.claims || []).length} claim(s)
+                {row.reviewer && <> · reviewed by {row.reviewer}</>}
+            </div>
+            {expanded && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(148,163,184,0.08)" }}>
+                    {!full ? <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div> : editing ? (
+                        <ReportForm
+                            snapshots={snapshots}
+                            existing={full}
+                            onSaved={d => { setFull(d); setEditing(false); onChanged() }}
+                            onCancel={() => setEditing(false)}
+                        />
+                    ) : (
+                        <>
+                            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", marginBottom: 4 }}>{full.classification}</div>
+                            {full.key_judgments && <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 10, whiteSpace: "pre-wrap" }}>{full.key_judgments}</div>}
+                            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", marginBottom: 6 }}>Claims ({(full.claims || []).length})</div>
+                            {(full.claims || []).map(c => (
+                                <div key={c.claim_id} style={{ marginBottom: 8, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
+                                    <div style={{ color: "#cbd5e1", fontSize: 11 }}>{c.text}</div>
+                                    <div style={{ color: "#475569", fontSize: 10 }}>
+                                        {c.citation?.type === "snapshot_ref" ? `snapshot: ${c.citation.section} / ${c.citation.item_id}` : c.citation?.url}
+                                        {c.source_evaluation && (c.source_evaluation.reliability || c.source_evaluation.credibility) &&
+                                            <> · Source Eval: {c.source_evaluation.reliability || "?"}{c.source_evaluation.credibility || "?"}</>}
+                                    </div>
+                                </div>
+                            ))}
+                            {full.status !== "draft" && (
+                                <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(148,163,184,0.06)" }}>
+                                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", marginBottom: 6 }}>Council Findings</div>
+                                    <CouncilFindings findings={full.council_findings} />
+                                </div>
+                            )}
+                            {full.review_note && <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>Reviewer note: {full.review_note}</div>}
+                            <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+                                {full.status === "draft" && (
+                                    <>
+                                        <button onClick={() => setEditing(true)} style={ghostBtn}>Edit</button>
+                                        <button onClick={() => doAction("submit-for-review")} disabled={busy} style={{ ...ghostBtn, color: "#60a5fa", borderColor: "rgba(96,165,250,0.3)" }}>
+                                            {busy ? "Running council…" : "Submit for Review"}
+                                        </button>
+                                    </>
+                                )}
+                                {full.status === "in_review" && (
+                                    <>
+                                        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewer note (optional)" style={{ ...inputStyle, flex: 1, minWidth: 160 }} />
+                                        <button onClick={() => doAction("approve", { note })} disabled={busy} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>Approve</button>
+                                        <button onClick={() => doAction("reject", { note })} disabled={busy} style={{ ...ghostBtn, color: "#f87171", borderColor: "rgba(248,113,113,0.3)" }}>Reject</button>
+                                    </>
+                                )}
+                                {full.status === "approved" && (
+                                    <button onClick={() => doAction("publish")} disabled={busy} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>Publish</button>
+                                )}
+                                <button onClick={downloadPdf} style={ghostBtn}>⬇ Download PDF</button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
+
+function ReportsPanel() {
+    const [reports,   setReports]   = useState([])
+    const [snapshots, setSnapshots] = useState([])
+    const [loaded,    setLoaded]    = useState(false)
+    const [statusFilter, setStatusFilter] = useState("all")
+    const [showForm, setShowForm]   = useState(false)
+
+    const reload = () => {
+        const q = statusFilter !== "all" ? `?status=${statusFilter}` : ""
+        fetch(`${API}/api/reports${q}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setReports(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+    }
+
+    const loadSnapshots = () =>
+        fetch(`${API}/api/reports/snapshots?limit=50`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => setSnapshots(Array.isArray(d) ? d : []))
+            .catch(() => {})
+
+    useEffect(() => { reload() }, [statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { loadSnapshots() }, [])
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                Draft, review, and publish sourced intelligence reports. Every report cites a captured snapshot; submitting for review runs the council — a deterministic pass (citation-existence, geo-sanity) plus two independently-lensed model passes (citation fidelity, completeness) — and every step past draft requires an explicit human action.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                    {["all", ...REPORT_STATUSES].map(s => (
+                        <button key={s} onClick={() => setStatusFilter(s)} style={{ ...ghostBtn, color: statusFilter === s ? (REPORT_STATUS_COLORS[s] || "#60a5fa") : "#94a3b8", borderColor: statusFilter === s ? (REPORT_STATUS_COLORS[s] || "#60a5fa") + "55" : "rgba(148,163,184,0.15)" }}>{s}</button>
+                    ))}
+                </div>
+                <button onClick={() => setShowForm(v => !v)} disabled={snapshots.length === 0} style={{ padding: "5px 12px", borderRadius: 5, border: "none", background: showForm ? "#60a5fa" : "#1e293b", color: showForm ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: snapshots.length === 0 ? "default" : "pointer", fontSize: 10 }}
+                    title={snapshots.length === 0 ? "Capture a snapshot first (Snapshots tab)" : ""}>
+                    {showForm ? "Close" : "+ New Report"}
+                </button>
+            </div>
+            {snapshots.length === 0 && <div style={{ color: "#475569", fontSize: 10, marginBottom: 10 }}>No snapshots captured yet — a report must cite one. Capture one from the Snapshots tab first.</div>}
+            {showForm && <ReportForm snapshots={snapshots} onSaved={() => { setShowForm(false); reload() }} onCancel={() => setShowForm(false)} />}
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && reports.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No {statusFilter === "all" ? "" : statusFilter + " "}reports yet.</div>}
+            {reports.map(r => <ReportCard key={r.report_id} report={r} snapshots={snapshots} onChanged={reload} />)}
+        </WorkspaceBody>
+    )
+}
+
+function ReportsWorkspace() {
+    const [tab, setTab] = useState("reports")
+    return (
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <Toolbar>
+                <div style={{ display: "flex", gap: 2, background: "#0a0e1a", borderRadius: 4, padding: 2 }}>
+                    {["reports", "snapshots"].map(t => (
+                        <button key={t} onClick={() => setTab(t)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: tab === t ? "rgba(96,165,250,0.12)" : "transparent", color: tab === t ? "#60a5fa" : "#475569", fontSize: 10, fontWeight: tab === t ? 600 : 400 }}>
+                            {t.charAt(0).toUpperCase() + t.slice(1)}
+                        </button>
+                    ))}
+                </div>
+            </Toolbar>
+            {tab === "reports" ? <ReportsPanel /> : <ReportSnapshotsWorkspace />}
+        </div>
+    )
+}
+
 function WorkspaceRouter({ workspace, node, brainStatus }) {
     switch (workspace) {
         case "ais-source":      return <AISSourceWorkspace />
@@ -1512,7 +1903,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "alerts":          return <AlertsWorkspace />
         case "geocoder":        return <SimpleInfo title="Geocoder" body="Provides lat/lng resolution for news events and uploaded entity data. Feeds the threat scoring engine." />
         case "briefings":       return <SimpleInfo title="Director Briefings" body="AI-generated intelligence briefings from threat scores and correlation assessments. Delivered via the Director system." />
-        case "reports":         return <ReportSnapshotsWorkspace />
+        case "reports":         return <ReportsWorkspace />
         default:                return <SimpleInfo title={workspace} body="Workspace under construction." />
     }
 }
