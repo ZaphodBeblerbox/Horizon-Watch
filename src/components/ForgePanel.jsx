@@ -5290,6 +5290,147 @@ function EditNodeModal({ en, nodes, edges, onClose, onDeleteEntity, onDeleteConn
     )
 }
 
+// ── Assets — civilian/military/dual-use infrastructure registry ────────────
+//
+// A purpose-built registry for "is this port civilian, military, or
+// dual-use, and who owns it" — a question the rest of the ontology graph has
+// no fields for. Every row requires a real citation; the backend rejects
+// creation and edits that would leave a row without one.
+const ASSET_CATEGORIES = ["civilian", "military", "dual_use", "unknown"]
+const ASSET_CATEGORY_COLORS = { civilian: "#4ade80", military: "#f87171", dual_use: "#facc15", unknown: "#475569" }
+
+function AssetForm({ onSaved, onCancel }) {
+    const [form, setForm] = useState({
+        name: "", asset_type: "", category: "dual_use", owner: "", operator: "", country: "",
+        lat: "", lng: "", description: "", region_tag: "", confidence: "direct",
+        source_title: "", source_publisher: "", source_date: "", source_url: "", source_excerpt: "",
+    })
+    const [saving, setSaving] = useState(false)
+    const [err, setErr] = useState(null)
+    const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+    const save = async () => {
+        setSaving(true); setErr(null)
+        try {
+            const payload = { ...form, lat: form.lat ? parseFloat(form.lat) : null, lng: form.lng ? parseFloat(form.lng) : null }
+            const res = await fetch(`${API}/api/forge/assets`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify(payload) })
+            const d = await res.json()
+            if (res.ok) { onSaved(d) } else { setErr(d.detail || "Save failed") }
+        } catch (e) { setErr(e.message) }
+        finally { setSaving(false) }
+    }
+
+    return (
+        <div style={{ background: "#0d1422", borderRadius: 6, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Name *" style={inputStyle} />
+                <input value={form.asset_type} onChange={e => set("asset_type", e.target.value)} placeholder="Type * (port, airbase, naval_base…)" style={inputStyle} />
+                <select value={form.category} onChange={e => set("category", e.target.value)} style={inputStyle}>
+                    {ASSET_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={form.confidence} onChange={e => set("confidence", e.target.value)} style={inputStyle}>
+                    <option value="direct">confidence: direct</option>
+                    <option value="inferred">confidence: inferred</option>
+                </select>
+                <input value={form.owner} onChange={e => set("owner", e.target.value)} placeholder="Owner" style={inputStyle} />
+                <input value={form.operator} onChange={e => set("operator", e.target.value)} placeholder="Operator (if different)" style={inputStyle} />
+                <input value={form.country} onChange={e => set("country", e.target.value)} placeholder="Country" style={inputStyle} />
+                <input value={form.region_tag} onChange={e => set("region_tag", e.target.value)} placeholder="Region tag (e.g. red_sea_bab_el_mandeb)" style={inputStyle} />
+                <input value={form.lat} onChange={e => set("lat", e.target.value)} placeholder="Lat" style={inputStyle} />
+                <input value={form.lng} onChange={e => set("lng", e.target.value)} placeholder="Lng" style={inputStyle} />
+            </div>
+            <textarea value={form.description} onChange={e => set("description", e.target.value)} placeholder="Description" rows={2} style={{ ...inputStyle, width: "100%", marginBottom: 8, resize: "vertical" }} />
+            <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Citation (required)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <input value={form.source_title} onChange={e => set("source_title", e.target.value)} placeholder="Source title" style={inputStyle} />
+                <input value={form.source_publisher} onChange={e => set("source_publisher", e.target.value)} placeholder="Publisher" style={inputStyle} />
+                <input value={form.source_date} onChange={e => set("source_date", e.target.value)} placeholder="Source date" style={inputStyle} />
+                <input value={form.source_url} onChange={e => set("source_url", e.target.value)} placeholder="Source URL" style={inputStyle} />
+            </div>
+            <textarea value={form.source_excerpt} onChange={e => set("source_excerpt", e.target.value)} placeholder="Quoted excerpt grounding the category/ownership claim *" rows={2} style={{ ...inputStyle, width: "100%", marginBottom: 8, resize: "vertical" }} />
+            {err && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{err}</div>}
+            <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={save} disabled={saving} style={{ ...ghostBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)" }}>{saving ? "Saving…" : "Save Asset"}</button>
+                <button onClick={onCancel} style={ghostBtn}>Cancel</button>
+            </div>
+        </div>
+    )
+}
+
+function AssetsPanel() {
+    const [assets, setAssets]   = useState([])
+    const [loaded, setLoaded]   = useState(false)
+    const [showForm, setShowForm] = useState(false)
+    const [categoryFilter, setCategoryFilter] = useState("all")
+    const [regionFilter, setRegionFilter]     = useState("")
+
+    const reload = () => {
+        const params = new URLSearchParams()
+        if (categoryFilter !== "all") params.set("category", categoryFilter)
+        if (regionFilter.trim()) params.set("region_tag", regionFilter.trim())
+        fetch(`${API}/api/forge/assets?${params.toString()}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setAssets(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+    }
+
+    useEffect(() => { reload() }, [categoryFilter, regionFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const del = async (assetId) => {
+        if (!confirm("Delete this asset?")) return
+        try {
+            await fetch(`${API}/api/forge/assets/${assetId}`, { method: "DELETE", headers: forgeHeaders() })
+            reload()
+        } catch (_e) {}
+    }
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                Civilian, military, and dual-use infrastructure — the categorization and ownership fields the rest of the ontology graph doesn't have. Every asset requires a real citation; nothing here is guessed.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                    {["all", ...ASSET_CATEGORIES].map(c => (
+                        <button key={c} onClick={() => setCategoryFilter(c)} style={{ ...ghostBtn, color: categoryFilter === c ? (ASSET_CATEGORY_COLORS[c] || "#60a5fa") : "#94a3b8", borderColor: categoryFilter === c ? (ASSET_CATEGORY_COLORS[c] || "#60a5fa") + "55" : "rgba(148,163,184,0.15)" }}>{c}</button>
+                    ))}
+                </div>
+                <input value={regionFilter} onChange={e => setRegionFilter(e.target.value)} placeholder="Filter by region tag…" style={{ ...inputStyle, maxWidth: 220 }} />
+                <button onClick={() => setShowForm(v => !v)} style={{ padding: "5px 12px", borderRadius: 5, border: "none", background: showForm ? "#60a5fa" : "#1e293b", color: showForm ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>
+                    {showForm ? "Close" : "+ Asset"}
+                </button>
+            </div>
+            {showForm && <AssetForm onSaved={() => { setShowForm(false); reload() }} onCancel={() => setShowForm(false)} />}
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && assets.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No assets yet — click "+ Asset" to add one (a real citation is required).</div>}
+            {assets.map(a => (
+                <div key={a.asset_id} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                            <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{a.name}</span>
+                            <span style={{ padding: "1px 6px", borderRadius: 8, marginLeft: 8, background: (ASSET_CATEGORY_COLORS[a.category] || "#475569") + "22", color: ASSET_CATEGORY_COLORS[a.category] || "#475569", fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>{a.category}</span>
+                            <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{a.asset_type}</span>
+                        </div>
+                        <button onClick={() => del(a.asset_id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 11 }} title="Delete">✕</button>
+                    </div>
+                    <div style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>
+                        {a.owner && <>Owner: {a.owner} · </>}
+                        {a.operator && <>Operator: {a.operator} · </>}
+                        {a.country && <>{a.country} · </>}
+                        {a.region_tag && <>region: {a.region_tag} · </>}
+                        confidence: {a.confidence || "unset"}
+                    </div>
+                    {a.description && <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 6 }}>{a.description}</div>}
+                    <div style={{ color: "#475569", fontSize: 10, marginTop: 6, fontStyle: "italic", borderLeft: "2px solid rgba(148,163,184,0.2)", paddingLeft: 8 }}>
+                        "{a.source?.excerpt}" — {a.source?.title || "untitled source"}
+                        {a.source?.url && <>{" "}<a href={a.source.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>↗</a></>}
+                    </div>
+                </div>
+            ))}
+        </WorkspaceBody>
+    )
+}
+
 // ── Discovered patterns — the convergence-engine reasoning layer ────────────
 //
 // Everything here is COMPUTED from edges the review queue already approved
@@ -5501,8 +5642,8 @@ function OntologyWorkspace() {
             <Toolbar>
                 <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…" style={{ ...inputStyle, flex: 1, maxWidth: 200 }} />
                 <div style={{ display: "flex", gap: 2, background: "#0a0e1a", borderRadius: 4, padding: 2 }}>
-                    {["table", "graph", "patterns", "live"].map(v => (
-                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? (v === "live" ? "rgba(236,72,153,0.14)" : v === "patterns" ? "rgba(250,204,21,0.14)" : "rgba(96,165,250,0.12)") : "transparent", color: view === v ? (v === "live" ? "#ec4899" : v === "patterns" ? "#facc15" : "#60a5fa") : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
+                    {["table", "graph", "patterns", "assets", "live"].map(v => (
+                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? (v === "live" ? "rgba(236,72,153,0.14)" : v === "patterns" ? "rgba(250,204,21,0.14)" : v === "assets" ? "rgba(74,222,128,0.14)" : "rgba(96,165,250,0.12)") : "transparent", color: view === v ? (v === "live" ? "#ec4899" : v === "patterns" ? "#facc15" : v === "assets" ? "#4ade80" : "#60a5fa") : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
                     ))}
                 </div>
                 <button onClick={() => { setShowAdd(v => !v); setShowLink(false) }} style={{ padding: "5px 10px", borderRadius: 5, border: "none", background: showAdd ? "#60a5fa" : "#1e293b", color: showAdd ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>+ Entity</button>
@@ -5558,6 +5699,7 @@ function OntologyWorkspace() {
                     }}
                 /> :
                 view === "patterns" ? <OntologyPatternsPanel /> :
+                view === "assets" ? <AssetsPanel /> :
                 filtered.length === 0 ? (
                     <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>
                         {nodes.length === 0 ? "No entities yet — click Build to populate from live data, or + Entity to add manually." : `No ${typeFilter === "all" ? "" : typeFilter + " "}entities match.`}
