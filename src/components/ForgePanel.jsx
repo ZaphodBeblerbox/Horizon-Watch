@@ -5195,6 +5195,90 @@ function EditNodeModal({ en, nodes, edges, onClose, onDeleteEntity, onDeleteConn
     )
 }
 
+// ── Discovered patterns — the convergence-engine reasoning layer ────────────
+//
+// Everything here is COMPUTED from edges the review queue already approved
+// (each hop still carries its own citation) — it never introduces a new
+// unsourced fact. What it adds is the connection itself: "A relates to B"
+// and "B relates to C" were each independently approved, but nobody had
+// pointed out that A and C might therefore be worth looking at together.
+// Star/dismiss just tracks an analyst's read on whether a given chain is
+// actually meaningful or a coincidental long path — it doesn't change the
+// underlying graph.
+function OntologyPatternsPanel() {
+    const [patterns, setPatterns] = useState([])
+    const [loaded, setLoaded] = useState(false)
+    const [showDismissed, setShowDismissed] = useState(false)
+    const [busyId, setBusyId] = useState(null)
+
+    const reload = () =>
+        fetch(`${API}/api/forge/ontology/patterns?include_dismissed=${showDismissed}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : { patterns: [] })
+            .then(d => { setPatterns(d.patterns || []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+
+    useEffect(() => { reload() }, [showDismissed]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const review = async (patternId, patch) => {
+        setBusyId(patternId)
+        try {
+            const res = await fetch(`${API}/api/forge/ontology/patterns/${patternId}/review`, {
+                method: "POST", headers: forgeHeaders(), body: JSON.stringify(patch),
+            })
+            if (res.ok) reload()
+        } catch (_e) {}
+        finally { setBusyId(null) }
+    }
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                Non-obvious connections found by chaining approved, cited relationships: A relates to B, B relates to C, but nothing directly linked A and C. Every hop below shows its own source — this panel only surfaces the path, it doesn't add anything new to what was already approved. Requires at least two approved entity-relationship claims sharing an entity to find anything.
+            </div>
+            <div style={{ marginBottom: 12 }}>
+                <button onClick={() => setShowDismissed(v => !v)} style={{ ...ghostBtn, color: showDismissed ? "#60a5fa" : "#94a3b8" }}>
+                    {showDismissed ? "Hide dismissed" : "Show dismissed"}
+                </button>
+            </div>
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && patterns.length === 0 && (
+                <div style={{ color: "#334155", fontSize: 11 }}>
+                    No patterns found yet. This needs at least two approved entity-relationship claims that share an entity — approve some pending claims in the Uploads workspace, then check back here.
+                </div>
+            )}
+            {patterns.map(p => (
+                <div key={p.pattern_id} style={{ background: "#111827", borderRadius: 4, padding: "12px 14px", marginBottom: 10, opacity: p.dismissed ? 0.5 : 1 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4, marginBottom: 8 }}>
+                        {p.nodes.map((n, i) => (
+                            <span key={n.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{n.label}</span>
+                                {i < p.hops.length && <span style={{ color: "#facc15", fontSize: 11 }}>— {p.hops[i].relationship_type} →</span>}
+                            </span>
+                        ))}
+                        {p.starred && <span style={{ color: "#facc15", fontSize: 11 }}>★ starred</span>}
+                    </div>
+                    {p.hops.map((h, i) => (
+                        <div key={i} style={{ color: "#64748b", fontSize: 10, marginBottom: 4, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
+                            <b>{h.source_label} → {h.target_label}</b> ({h.relationship_type}{h.as_of ? `, ${h.as_of}` : ""}, confidence: {h.confidence || "unset"}) — {h.citation?.title || "untitled source"}
+                            {h.citation?.url && <>{" "}<a href={h.citation.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>↗</a></>}
+                        </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <button onClick={() => review(p.pattern_id, { starred: !p.starred })} disabled={busyId === p.pattern_id}
+                            style={{ ...ghostBtn, color: "#facc15", borderColor: "rgba(250,204,21,0.3)" }}>
+                            {p.starred ? "Unstar" : "★ Star as significant"}
+                        </button>
+                        <button onClick={() => review(p.pattern_id, { dismissed: !p.dismissed })} disabled={busyId === p.pattern_id}
+                            style={{ ...ghostBtn, color: "#94a3b8" }}>
+                            {p.dismissed ? "Restore" : "Dismiss"}
+                        </button>
+                    </div>
+                </div>
+            ))}
+        </WorkspaceBody>
+    )
+}
+
 function OntologyWorkspace() {
     const [nodes,        setNodes]        = useState([])
     const [edges,        setEdges]        = useState([])
@@ -5322,8 +5406,8 @@ function OntologyWorkspace() {
             <Toolbar>
                 <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…" style={{ ...inputStyle, flex: 1, maxWidth: 200 }} />
                 <div style={{ display: "flex", gap: 2, background: "#0a0e1a", borderRadius: 4, padding: 2 }}>
-                    {["table", "graph", "live"].map(v => (
-                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? (v === "live" ? "rgba(236,72,153,0.14)" : "rgba(96,165,250,0.12)") : "transparent", color: view === v ? (v === "live" ? "#ec4899" : "#60a5fa") : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
+                    {["table", "graph", "patterns", "live"].map(v => (
+                        <button key={v} onClick={() => setView(v)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: view === v ? (v === "live" ? "rgba(236,72,153,0.14)" : v === "patterns" ? "rgba(250,204,21,0.14)" : "rgba(96,165,250,0.12)") : "transparent", color: view === v ? (v === "live" ? "#ec4899" : v === "patterns" ? "#facc15" : "#60a5fa") : "#475569", fontSize: 10, fontWeight: view === v ? 600 : 400 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</button>
                     ))}
                 </div>
                 <button onClick={() => { setShowAdd(v => !v); setShowLink(false) }} style={{ padding: "5px 10px", borderRadius: 5, border: "none", background: showAdd ? "#60a5fa" : "#1e293b", color: showAdd ? "#0f172a" : "#94a3b8", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>+ Entity</button>
@@ -5378,6 +5462,7 @@ function OntologyWorkspace() {
                         }
                     }}
                 /> :
+                view === "patterns" ? <OntologyPatternsPanel /> :
                 filtered.length === 0 ? (
                     <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: 40 }}>
                         {nodes.length === 0 ? "No entities yet — click Build to populate from live data, or + Entity to add manually." : `No ${typeFilter === "all" ? "" : typeFilter + " "}entities match.`}
