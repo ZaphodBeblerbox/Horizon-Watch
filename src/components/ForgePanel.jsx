@@ -75,7 +75,7 @@ export const PIPELINE_NODES = [
     { id: 'int_rule_logic',  label: 'Rule Logic',            column: 3, type: 'intelligence', status: 'active',     config: {} },
     { id: 'out_alerts',      label: 'Alert System',          column: 4, type: 'output',       status: 'active',     config: {} },
     { id: 'out_briefings',   label: 'Director Briefings',    column: 4, type: 'output',       status: 'active',     config: {} },
-    { id: 'out_reports',     label: 'Reports',               column: 4, type: 'output',       status: 'active',     config: {} },
+    { id: 'out_reports',     label: 'Reports',               column: 4, type: 'output',       status: 'inactive',   config: {} },
 ]
 
 export const PIPELINE_EDGES = [
@@ -1417,7 +1417,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "alerts":          return <AlertsWorkspace />
         case "geocoder":        return <SimpleInfo title="Geocoder" body="Provides lat/lng resolution for news events and uploaded entity data. Feeds the threat scoring engine." />
         case "briefings":       return <SimpleInfo title="Director Briefings" body="AI-generated intelligence briefings from threat scores and correlation assessments. Delivered via the Director system." />
-        case "reports":         return <SimpleInfo title="Reports" body="Export-ready PDF and JSON reports generated from pattern recognition and threat assessments." />
+        case "reports":         return <SimpleInfo title="Reports" body="Not built yet. No PDF or JSON report export exists in the backend today — this stage is a placeholder for the intelligence-report pipeline on the roadmap." />
         default:                return <SimpleInfo title={workspace} body="Workspace under construction." />
     }
 }
