@@ -24,6 +24,13 @@ from database import (
     CableSegment, PortBoundary, Airport, WatchZone, StrategicZone,
 )
 
+try:
+    from shapely.geometry import Point as _ShpPoint, shape as _shp_shape
+    from shapely.ops import nearest_points as _shp_nearest_points
+    _HAS_SHAPELY = True
+except ImportError:
+    _HAS_SHAPELY = False
+
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0
@@ -38,11 +45,10 @@ def _link_id() -> str:
 
 
 # Proximity thresholds in km
-_CABLE_KM    = 50.0
-_PORT_KM     = 30.0
-_AIRPORT_KM  = 20.0
-_ZONE_KM     = 0.0   # point-in-polygon not implemented; use centroid proxy ≤ 100km
-_ZONE_BBOX   = True  # use bounding box check instead
+_CABLE_KM        = 50.0   # real min-distance-to-cable-route, not a midpoint proxy
+_PORT_KM         = 30.0
+_AIRPORT_KM      = 20.0
+_ZONE_MARGIN_KM  = 15.0   # "near but not inside" margin, measured from the real polygon boundary
 
 
 class EntityLinker:
@@ -73,16 +79,26 @@ class EntityLinker:
             db = ctx.__enter__()
         try:
             try:
+                # CableSegment stores its route as raw GeoJSON (LineString/MultiLineString)
+                # in `geometry` — there is no midpoint_lat/midpoint_lon column (an earlier
+                # version of this cache assumed one that was never added to the schema,
+                # so this query threw on every load and cable linking was silently dead).
+                # A single midpoint would also be a poor proxy for a cable that can span
+                # thousands of km anyway — real min-distance-to-route (below) is used instead.
                 cables = db.query(
                     CableSegment.id, CableSegment.cable_name,
-                    CableSegment.midpoint_lat, CableSegment.midpoint_lon,
-                    CableSegment.system_id,
+                    CableSegment.geometry, CableSegment.system_id,
                 ).all()
-                self._cables = [
-                    {"id": str(r.system_id or r.id), "name": r.cable_name or "",
-                     "lat": r.midpoint_lat or 0.0, "lon": r.midpoint_lon or 0.0}
-                    for r in cables if r.midpoint_lat is not None
-                ]
+                self._cables = []
+                for r in cables:
+                    geom = None
+                    if _HAS_SHAPELY and r.geometry:
+                        try:
+                            geom = _shp_shape(r.geometry)
+                        except Exception as _ge:
+                            print(f"[entity-linker] cable {r.system_id or r.id} has unparsable geometry: {_ge}")
+                    if geom is not None:
+                        self._cables.append({"id": str(r.system_id or r.id), "name": r.cable_name or "", "geom": geom})
             except Exception as _e:
                 print(f"[entity-linker] cables load error: {_e}")
 
@@ -101,12 +117,15 @@ class EntityLinker:
                 print(f"[entity-linker] ports load error: {_e}")
 
             try:
+                # Airport's name column is `airport_name`, not `name` — the previous
+                # query referenced a column that doesn't exist on this model at all,
+                # so it threw on every load and airport linking was silently dead.
                 airports = db.query(
-                    Airport.id, Airport.name, Airport.iata_code,
+                    Airport.id, Airport.airport_name, Airport.iata_code,
                     Airport.latitude, Airport.longitude,
                 ).all()
                 self._airports = [
-                    {"id": str(r.id), "name": r.name or r.iata_code or "",
+                    {"id": str(r.id), "name": r.airport_name or r.iata_code or "",
                      "lat": r.latitude or 0.0, "lon": r.longitude or 0.0}
                     for r in airports if r.latitude is not None
                 ]
@@ -114,36 +133,53 @@ class EntityLinker:
                 print(f"[entity-linker] airports load error: {_e}")
 
             try:
+                # WatchZone has no center_lat/center_lon/radius_km columns — it stores a
+                # real polygon (`polygon_geojson`) plus a bbox for cheap filtering. The
+                # previous query referenced nonexistent centroid columns, so it threw on
+                # every load and watch-zone linking was silently dead. Real point-in-polygon
+                # containment (via shapely) is used below instead of a centroid-distance proxy.
                 wz = db.query(
-                    WatchZone.id, WatchZone.name,
-                    WatchZone.center_lat, WatchZone.center_lon, WatchZone.radius_km,
-                ).all()
-                self._watch_zones = [
-                    {"id": str(r.id), "name": r.name or "",
-                     "lat": r.center_lat or 0.0, "lon": r.center_lon or 0.0,
-                     "radius_km": r.radius_km or 50.0}
-                    for r in wz if r.center_lat is not None
-                ]
+                    WatchZone.id, WatchZone.name, WatchZone.polygon_geojson,
+                    WatchZone.bbox_min_lon, WatchZone.bbox_min_lat,
+                    WatchZone.bbox_max_lon, WatchZone.bbox_max_lat,
+                ).filter(WatchZone.enabled == True).all()
+                self._watch_zones = []
+                for r in wz:
+                    poly = None
+                    if _HAS_SHAPELY:
+                        try:
+                            poly = _shp_shape(json.loads(r.polygon_geojson))
+                        except Exception as _pe:
+                            print(f"[entity-linker] watch_zone {r.id} has unparsable polygon: {_pe}")
+                    self._watch_zones.append({
+                        "id": str(r.id), "name": r.name or "",
+                        "bbox": (r.bbox_min_lon, r.bbox_min_lat, r.bbox_max_lon, r.bbox_max_lat),
+                        "polygon": poly,
+                    })
             except Exception as _e:
                 print(f"[entity-linker] watch_zones load error: {_e}")
 
             try:
-                # Try with active filter first; fall back to all zones if column missing
-                try:
-                    sz = db.query(
-                        StrategicZone.id, StrategicZone.name,
-                        StrategicZone.center_lat, StrategicZone.center_lon,
-                    ).filter(StrategicZone.active == True).all()
-                except Exception:
-                    sz = db.query(
-                        StrategicZone.id, StrategicZone.name,
-                        StrategicZone.center_lat, StrategicZone.center_lon,
-                    ).all()
-                self._strategic_zones = [
-                    {"id": str(r.id), "name": r.name or "",
-                     "lat": r.center_lat or 0.0, "lon": r.center_lon or 0.0}
-                    for r in sz if r.center_lat is not None
-                ]
+                # Same story as WatchZone: no center_lat/center_lon, and the column is
+                # `enabled` not `active`. Real polygon containment used below.
+                sz = db.query(
+                    StrategicZone.id, StrategicZone.name, StrategicZone.polygon_geojson,
+                    StrategicZone.bbox_min_lon, StrategicZone.bbox_min_lat,
+                    StrategicZone.bbox_max_lon, StrategicZone.bbox_max_lat,
+                ).filter(StrategicZone.enabled == True).all()
+                self._strategic_zones = []
+                for r in sz:
+                    poly = None
+                    if _HAS_SHAPELY:
+                        try:
+                            poly = _shp_shape(json.loads(r.polygon_geojson))
+                        except Exception as _pe:
+                            print(f"[entity-linker] strategic_zone {r.id} has unparsable polygon: {_pe}")
+                    self._strategic_zones.append({
+                        "id": str(r.id), "name": r.name or "",
+                        "bbox": (r.bbox_min_lon, r.bbox_min_lat, r.bbox_max_lon, r.bbox_max_lat),
+                        "polygon": poly,
+                    })
             except Exception as _e:
                 print(f"[entity-linker] strategic_zones load error: {_e}")
 
@@ -203,9 +239,20 @@ class EntityLinker:
         if lat is None or lon is None:
             return []
         results = []
+        pt = _ShpPoint(lon, lat) if _HAS_SHAPELY else None
 
         for cable in self._cables:
-            d = _haversine_km(lat, lon, cable["lat"], cable["lon"])
+            # Real min-distance from the point to the cable's actual route geometry —
+            # not a stand-in single "midpoint", which would be badly wrong for a cable
+            # spanning thousands of km (a point near one landing station but far from
+            # the route's midpoint would be incorrectly excluded).
+            if pt is None:
+                continue
+            try:
+                nearest = _shp_nearest_points(pt, cable["geom"])[1]
+                d = _haversine_km(lat, lon, nearest.y, nearest.x)
+            except Exception:
+                continue
             if d <= _CABLE_KM:
                 results.append(self._make_link(
                     source_type, source_id, "cable", cable["id"], cable["name"],
@@ -229,22 +276,50 @@ class EntityLinker:
                 ))
 
         for zone in self._watch_zones:
-            d = _haversine_km(lat, lon, zone["lat"], zone["lon"])
-            if d <= zone["radius_km"]:
-                results.append(self._make_link(
-                    source_type, source_id, "watch_zone", zone["id"], zone["name"],
-                    "proximity", d,
-                ))
+            link = self._zone_link(source_type, source_id, "watch_zone", zone, lat, lon, pt)
+            if link:
+                results.append(link)
 
         for zone in self._strategic_zones:
-            d = _haversine_km(lat, lon, zone["lat"], zone["lon"])
-            if d <= 150.0:
-                results.append(self._make_link(
-                    source_type, source_id, "strategic_zone", zone["id"], zone["name"],
-                    "proximity", d,
-                ))
+            link = self._zone_link(source_type, source_id, "strategic_zone", zone, lat, lon, pt)
+            if link:
+                results.append(link)
 
         return results
+
+    @staticmethod
+    def _zone_link(source_type: str, source_id: str, entity_type: str,
+                   zone: dict, lat: float, lon: float, pt) -> Optional[dict]:
+        """Real point-in-polygon containment (via shapely) against the zone's actual
+        polygon, replacing the previous centroid-distance proxy. A point strictly
+        inside the polygon links as "contains" at distance 0; a point outside but
+        within _ZONE_MARGIN_KM of the real boundary links as "proximity" with its
+        genuine distance to that boundary. Zones with no parseable polygon (shapely
+        unavailable, or malformed polygon_geojson) are skipped rather than faked
+        with a bbox or centroid guess."""
+        min_lon, min_lat, max_lon, max_lat = zone["bbox"]
+        pad_deg = 0.3  # ~33km at the equator — cheap pre-filter before the real geometry check
+        if not (min_lon - pad_deg <= lon <= max_lon + pad_deg and min_lat - pad_deg <= lat <= max_lat + pad_deg):
+            return None
+        poly = zone.get("polygon")
+        if poly is None or pt is None:
+            return None
+        if poly.contains(pt):
+            return EntityLinker._make_link(
+                source_type, source_id, entity_type, zone["id"], zone["name"],
+                "contains", 0.0,
+            )
+        try:
+            nearest = _shp_nearest_points(pt, poly.boundary)[1]
+            d = _haversine_km(lat, lon, nearest.y, nearest.x)
+        except Exception:
+            return None
+        if d <= _ZONE_MARGIN_KM:
+            return EntityLinker._make_link(
+                source_type, source_id, entity_type, zone["id"], zone["name"],
+                "proximity", d,
+            )
+        return None
 
     def _mention_links(self, source_type: str, source_id: str,
                        title: str) -> list[dict]:
