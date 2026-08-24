@@ -1046,6 +1046,15 @@ def get_health_detailed():
             "status":    _status(ds["imb"].get("failures", 0), ds["imb"].get("last_poll")),
             "failures":  ds["imb"].get("failures", 0),
         },
+        {
+            "id":        "pipelines",
+            "name":      "Global Energy Monitor Pipelines (GOPIT)",
+            "type":      "infrastructure",
+            "last_fetch": _PIPELINES_DATA.get("last_updated"),
+            "status":    "degraded" if _PIPELINES_DATA.get("error") else "ok",
+            "record_count": len(_PIPELINES_DATA.get("pipelines", [])),
+            "message":   _PIPELINES_DATA.get("error"),
+        },
     ]
 
     usage = usage_tracker.get_stats(CLAUDE_BUDGET_USD)
@@ -15093,6 +15102,13 @@ def _load_pipelines() -> dict:
         try:
             raw = _json.loads(_PIPELINES_PATH.read_text())
             _PIPELINES_DATA = raw
+            if raw.get("error"):
+                # The cached file itself already carries a stale ingest failure (e.g. a prior
+                # 404 from the GEM source) — surface that at startup instead of loading it
+                # silently. Without this, an empty pipelines list reads as "no pipelines in
+                # this AOI" instead of "the last ingest attempt failed".
+                print(f"[pipelines] loaded cached data with a carried-over error from a prior "
+                      f"ingest attempt (last_updated={raw.get('last_updated')}): {raw['error']}")
         except FileNotFoundError:
             print("[pipelines] pipelines.json not found — skipping (will fetch from remote)")
             _PIPELINES_DATA = {"pipelines": []}
@@ -15279,6 +15295,9 @@ def api_pipelines_search(
         "total":        len(pipelines),
         "last_updated": data.get("last_updated"),
         "source":       data.get("source"),
+        # Surface a carried-over ingest failure instead of letting an empty/stale list read as
+        # "no pipelines exist" — see /api/health/detailed's "pipelines" entry for the same signal.
+        "error":        data.get("error"),
     }
 
 
@@ -15290,6 +15309,7 @@ def api_pipelines_near(
 ):
     """Return pipelines whose route passes within radius km of the given coordinates."""
     pipelines = _PIPELINES_DATA.get("pipelines", [])
+    pipelines_error = _PIPELINES_DATA.get("error")
     results = []
     for p in pipelines:
         geom   = p.get("route_geojson") or {}
@@ -15299,7 +15319,7 @@ def api_pipelines_near(
             if _route_passes_near(coords, lat, lon, radius):
                 results.append(p)
                 break
-    return {"pipelines": results, "total": len(results)}
+    return {"pipelines": results, "total": len(results), "error": pipelines_error}
 
 
 # ── Endpoints: Shipping Routes ─────────────────────────────────────────────────
