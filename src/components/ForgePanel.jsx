@@ -1350,6 +1350,7 @@ const FORGE_NAV = [
     { ws: "surveillance-zones", label: "Surveillance Zones",    color: "#30D158", desc: "Sentinel satellite scan zones · zone analytics" },
     { ws: "strategic-zones",    label: "Strategic Zones",       color: "#FF3B30", desc: "Conflict zones · interest areas · relevance scoring · baseline zones" },
     { ws: "ontology",           label: "Entity Ontology",       color: "#60a5fa", desc: "Intelligence entity graph · cables · chokepoints · actors" },
+    { ws: "reports",            label: "Reports",               color: "#FFD60A", desc: "Snapshots · draft reports · AI review council · PDF export" },
 ]
 
 function ForgeLandingNav({ brainStatus, onNavigate, onPipeline }) {
