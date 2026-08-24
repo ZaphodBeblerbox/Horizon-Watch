@@ -9978,14 +9978,26 @@ def _cross_domain_correlation(now_iso: str) -> list:
         nearby_vessels = []
         with _AIS_LOCK:
             for mmsi, vessel in _AIS_VESSELS.items():
+                # A vessel can land in _AIS_VESSELS from a ShipStaticData
+                # message alone, before any PositionReport ever arrives —
+                # it then has no "lat"/"lon" key at all. `or 0` would silently
+                # turn that into Null Island (0, 0) and let it "correlate"
+                # with any news event that happens to be near there. Require
+                # a real reported position before treating it as nearby.
+                if not (vessel.get('lat') and vessel.get('lon')):
+                    continue
                 if vessel.get('ship_type', 0) in range(35, 40):
-                    d = _haversine(nlat, nlon, vessel.get('lat', 0) or 0, vessel.get('lon', 0) or 0)
+                    d = _haversine(nlat, nlon, vessel['lat'], vessel['lon'])
                     if d < 100:
                         nearby_vessels.append({"mmsi": mmsi, "name": vessel.get('name', 'Unknown'), "distance_km": round(d, 1)})
         nearby_ac = []
         for ac in list(_GLOBAL_ADSB_CACHE.values()):
+            # Same fabricated-position hazard as above: an ADS-B cache entry
+            # can have lat/lon set to None (feed row with no position yet).
+            if not (ac.get('lat') and ac.get('lon')):
+                continue
             if ac.get('military') or _is_military_callsign(ac.get('flight', '')):
-                d = _haversine(nlat, nlon, ac.get('lat', 0) or 0, ac.get('lon', 0) or 0)
+                d = _haversine(nlat, nlon, ac['lat'], ac['lon'])
                 if d < 200:
                     nearby_ac.append({"callsign": (ac.get('flight') or '').strip() or ac.get('hex', ''), "icao24": ac.get('hex', ''), "distance_km": round(d, 1)})
         if nearby_vessels or nearby_ac:
@@ -10069,7 +10081,7 @@ async def _anomaly_detection_loop():
                 if ac.get('military') or _is_military_callsign(callsign):
                     lat = ac.get('lat', 0) or 0
                     lon = ac.get('lon', 0) or 0
-                    if not lat:
+                    if not lat or not lon:
                         continue
                     min_dist = min(
                         _haversine(lat, lon, cp['center_lat'], cp['center_lon'])
