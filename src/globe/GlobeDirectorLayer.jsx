@@ -25,6 +25,8 @@ import {
     CallbackProperty,
     PolygonHierarchy,
     Math as CesiumMath,
+    Rectangle,
+    SceneTransforms,
 } from "cesium"
 import API_BASE from "../apiBase.js"
 import { makeAssessmentCanvas } from "./iconUtils.js"
@@ -215,9 +217,38 @@ function _removeHandles(viewer, handles) {
         try {
             if (h.type === "entity")     viewer.entities.remove(h.ref)
             else if (h.type === "ds")    viewer.dataSources.remove(h.ref, true)
+            else if (h.type === "dom") {
+                h.cleanup?.()
+                if (h.ref?.parentNode) h.ref.parentNode.removeChild(h.ref)
+            }
         } catch (_) {}
     }
     handles.length = 0
+}
+
+// ── Keyed entity registry ─────────────────────────────────────────────────────
+// CommandRunner's `visuals` format can show and later hide/unhighlight/remove
+// the *same* logical thing (a country highlight, a placed vessel, a placed
+// event…) within a single scene's action list. `sceneLocal` on its own can
+// only tear everything down at once when the scene ends — it has no notion of
+// "this group of entities belongs to country X". `keyed` gives each such
+// group a stable id (see the `key` arguments built in _renderVisualAction)
+// so a later hide_*/unhighlight_*/remove_* action in the same scene can find
+// and remove exactly that group while everything else stays on screen.
+function _registerKeyed(keyed, key, handle) {
+    if (!keyed || !key) return
+    if (!keyed.has(key)) keyed.set(key, [])
+    keyed.get(key).push(handle)
+}
+
+function _removeKeyed(viewer, keyed, removed, key) {
+    if (!keyed || !key) return
+    removed?.add(key)
+    const handles = keyed.get(key)
+    if (handles) {
+        _removeHandles(viewer, handles)
+        keyed.delete(key)
+    }
 }
 
 function _cancelTimers(frames, intervals, timeouts) {
@@ -300,7 +331,7 @@ function _renderSpotlight(el, viewer, sceneLocal) {
     sceneLocal.push({ type: "entity", ref: e })
 }
 
-function _renderFacilityMarker(el, viewer, sceneLocal, isAborted) {
+function _renderFacilityMarker(el, viewer, sceneLocal, isAborted, key, keyed) {
     const billInfo = el._billboard
     const billUrl  = billInfo ? _makeBillboardUrl(billInfo.iconType, billInfo.color) : null
     const [bw, bh] = billInfo ? (ICON_SIZES[billInfo.iconType] || ICON_SIZES.default) : [0, 0]
@@ -336,6 +367,7 @@ function _renderFacilityMarker(el, viewer, sceneLocal, isAborted) {
         } : undefined,
     })
     sceneLocal.push({ type: "entity", ref: e })
+    _registerKeyed(keyed, key, { type: "entity", ref: e })
 
     if (el.image_query) {
         _fetchWikiImage(el.image_query).then(url => {
@@ -634,9 +666,15 @@ function _renderDetectionBoxes(el, viewer, sceneLocal, timeouts, isAborted) {
 
 // ── GeoJSON-based async renderers ─────────────────────────────────────────────
 
-async function _renderCountryHighlight(el, viewer, sceneLocal, isAborted) {
+async function _renderCountryHighlight(el, viewer, sceneLocal, isAborted, key, keyed, removed) {
     const geo = await _getCountries()
     if (!geo || isAborted() || viewer.isDestroyed()) return
+    // A same-scene unhighlight_country/clear_country_highlights may already
+    // have fired for this key while the countries GeoJSON was still loading
+    // (both run through the same synchronous action loop, but this fetch is
+    // async and shared across the whole app) — honor it instead of flashing
+    // a highlight the scene has already asked to remove.
+    if (key && removed?.has(key)) return
     const name = (el.name || el.country || "").toLowerCase().trim()
     const feat = geo.features?.find(f =>
         (f.properties?.name || f.properties?.NAME || f.properties?.ADMIN || "").toLowerCase() === name
@@ -653,8 +691,8 @@ async function _renderCountryHighlight(el, viewer, sceneLocal, isAborted) {
         strokeWidth: 0,
         clampToGround: true,
     }).catch(() => null)
-    if (isAborted() || viewer.isDestroyed()) return
-    if (fillDs) { viewer.dataSources.add(fillDs); sceneLocal.push({ type: "ds", ref: fillDs }) }
+    if (isAborted() || viewer.isDestroyed() || (key && removed?.has(key))) return
+    if (fillDs) { viewer.dataSources.add(fillDs); sceneLocal.push({ type: "ds", ref: fillDs }); _registerKeyed(keyed, key, { type: "ds", ref: fillDs }) }
 
     // Outline — converted to LineStrings so clampToGround works
     const outlineDs = await GeoJsonDataSource.load(_polygonsToLines(fc), {
@@ -662,15 +700,15 @@ async function _renderCountryHighlight(el, viewer, sceneLocal, isAborted) {
         strokeWidth:   2,
         clampToGround: true,
     }).catch(() => null)
-    if (isAborted() || viewer.isDestroyed()) return
-    if (outlineDs) { viewer.dataSources.add(outlineDs); sceneLocal.push({ type: "ds", ref: outlineDs }) }
+    if (isAborted() || viewer.isDestroyed() || (key && removed?.has(key))) return
+    if (outlineDs) { viewer.dataSources.add(outlineDs); sceneLocal.push({ type: "ds", ref: outlineDs }); _registerKeyed(keyed, key, { type: "ds", ref: outlineDs }) }
 }
 
-async function _renderChokepointFromDB(el, viewer, sceneLocal, isAborted) {
+async function _renderChokepointFromDB(el, viewer, sceneLocal, isAborted, key, keyed, removed) {
     const rawName = (el.name || el.chokepoint_name || "").toLowerCase().trim()
     try {
         const r = await fetch(`${API_BASE}/api/infrastructure/chokepoints?name=${encodeURIComponent(rawName)}`)
-        if (!r.ok || isAborted() || viewer.isDestroyed()) return
+        if (!r.ok || isAborted() || viewer.isDestroyed() || (key && removed?.has(key))) return
         const data = await r.json()
         const items = data.chokepoints || data.items || data.features || []
 
@@ -706,21 +744,21 @@ async function _renderChokepointFromDB(el, viewer, sceneLocal, isAborted) {
             }
         }
 
-        if (!feature || isAborted()) return
+        if (!feature || isAborted() || (key && removed?.has(key))) return
         const fc = { type: "FeatureCollection", features: [feature] }
 
         const fillDs = await GeoJsonDataSource.load(fc, {
             stroke: Color.TRANSPARENT, fill: c.withAlpha(0.08), strokeWidth: 0, clampToGround: true,
         }).catch(() => null)
-        if (!isAborted() && fillDs && !viewer.isDestroyed()) {
-            viewer.dataSources.add(fillDs); sceneLocal.push({ type: "ds", ref: fillDs })
+        if (!isAborted() && fillDs && !viewer.isDestroyed() && !(key && removed?.has(key))) {
+            viewer.dataSources.add(fillDs); sceneLocal.push({ type: "ds", ref: fillDs }); _registerKeyed(keyed, key, { type: "ds", ref: fillDs })
         }
 
         const outlineDs = await GeoJsonDataSource.load(_polygonsToLines(fc), {
             stroke: c.withAlpha(0.75), strokeWidth: 2, clampToGround: true,
         }).catch(() => null)
-        if (!isAborted() && outlineDs && !viewer.isDestroyed()) {
-            viewer.dataSources.add(outlineDs); sceneLocal.push({ type: "ds", ref: outlineDs })
+        if (!isAborted() && outlineDs && !viewer.isDestroyed() && !(key && removed?.has(key))) {
+            viewer.dataSources.add(outlineDs); sceneLocal.push({ type: "ds", ref: outlineDs }); _registerKeyed(keyed, key, { type: "ds", ref: outlineDs })
         }
     } catch (e) { console.warn("[GlobeDirectorLayer] chokepoint_from_db:", e.message) }
 }
@@ -955,7 +993,223 @@ const _VESSEL_TYPE_MAP = {
     drone:      "drone",
 }
 
-function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames, intervals, timeouts, isAborted) {
+// animate_movement/troop_movement/formation units come from the AI with a
+// looser, overlapping vocabulary (vessel types, aircraft types, ground-unit
+// types) than either ICON_SIZES or _VESSEL_TYPE_MAP alone covers. Use the
+// icon key directly when it's already a real billboard type, otherwise fall
+// back through the vessel/aircraft aliases, otherwise a generic troop icon —
+// never silently drop the marker for an unrecognised type.
+function _resolveIconType(raw) {
+    if (!raw) return "troops"
+    if (ICON_SIZES[raw]) return raw
+    return _VESSEL_TYPE_MAP[raw] || "troops"
+}
+
+// ── Screen-space spotlight/vignette ───────────────────────────────────────────
+// A real Cesium-anchored version of the old Leaflet spotlight: a fixed DOM
+// overlay with a radial-gradient hole, kept centred on the entity's actual
+// projected screen position every frame via SceneTransforms — not a fake
+// static circle, it tracks the globe as the camera moves.
+function _renderScreenSpotlight(el, viewer, sceneLocal) {
+    const lat = el.lat, lon = el.lon ?? el.lng
+    if (lat == null || lon == null) return
+    const radiusPx = el.radius_px || 200
+    const duration = el.duration || 5000
+    const pos = Cartesian3.fromDegrees(lon, lat, 0)
+
+    const overlay = document.createElement("div")
+    overlay.className = "director-spotlight-overlay"
+    overlay.style.cssText = "position:fixed;inset:0;z-index:500;pointer-events:none;opacity:0;transition:opacity 500ms ease;"
+    document.body.appendChild(overlay)
+
+    const update = () => {
+        if (viewer.isDestroyed()) return
+        const sp = SceneTransforms.worldToWindowCoordinates(viewer.scene, pos)
+        if (!sp) return
+        overlay.style.background = `radial-gradient(circle ${radiusPx}px at ${sp.x}px ${sp.y}px,transparent 0%,transparent 70%,rgba(0,0,0,0.72) 100%)`
+    }
+    update()
+    viewer.scene.postRender.addEventListener(update)
+    requestAnimationFrame(() => { overlay.style.opacity = "1" })
+
+    const stopTracking = () => { try { viewer.scene.postRender.removeEventListener(update) } catch (_) {} }
+    const tid = setTimeout(() => {
+        stopTracking()
+        overlay.style.opacity = "0"
+        setTimeout(() => { try { document.body.removeChild(overlay) } catch (_) {} }, 550)
+    }, duration)
+
+    sceneLocal.push({
+        type: "dom", ref: overlay,
+        cleanup: () => { stopTracking(); clearTimeout(tid) },
+    })
+}
+
+// ── Pulsing border highlight ───────────────────────────────────────────────────
+// Mode A: an explicit simplified border (array of [lat,lon] points) drawn as a
+// polyline whose alpha pulses via CallbackProperty. Mode B: a lat/lon/radius_km
+// pulsing ring fallback when no border geometry was supplied.
+function _renderHighlightBorder(el, viewer, sceneLocal) {
+    const color    = Color.fromCssColorString(el.color || "#56cfff")
+    const duration = el.duration || 6000
+    const weight   = el.weight || 3
+    const startTime = performance.now()
+    const pulseAlpha = new CallbackProperty(() => {
+        const t     = performance.now() - startTime
+        const pulse = 0.55 + 0.35 * Math.sin((t / 800) * Math.PI)
+        const fadeIn = Math.min(t / 600, 1)
+        return color.withAlpha(fadeIn * pulse)
+    }, false)
+
+    if (Array.isArray(el.points) && el.points.length >= 2) {
+        const positions = el.points.map(([lat, lng]) => Cartesian3.fromDegrees(lng, lat, 50))
+        sceneLocal.push({ type: "entity", ref: viewer.entities.add({
+            polyline: { positions, width: weight, material: new ColorMaterialProperty(pulseAlpha) },
+        }) })
+        return
+    }
+
+    const lat    = el.lat ?? 0
+    const lon    = el.lon ?? 0
+    const radius = (el.radius_km ?? 300) * 1000
+    sceneLocal.push({ type: "entity", ref: viewer.entities.add({
+        position: Cartesian3.fromDegrees(lon, lat, 0),
+        ellipse: {
+            semiMajorAxis: radius, semiMinorAxis: radius,
+            fill: false, outline: true,
+            outlineColor: pulseAlpha, outlineWidth: weight,
+            heightReference: HeightReference.CLAMP_TO_GROUND,
+        },
+    }) })
+    // Duration is cosmetic here (the pulse just keeps going until the scene
+    // clears it) — kept as a parameter for API parity with the old action.
+    void duration
+}
+
+// ── Impact / explosion effect ─────────────────────────────────────────────────
+// Flash + three expanding, fading rings — mutating each entity's own ellipse
+// properties directly on a timer (the same "update the live entity" approach
+// _spawnVessel uses for position), rather than CallbackProperty, since these
+// are one-shot effects that fully finish and get cleaned up.
+function _renderImpact(el, viewer, sceneLocal, intervals, timeouts) {
+    const lat = el.lat, lon = el.lon
+    if (lat == null || lon == null) return
+    const color = Color.fromCssColorString(el.color || "#ff5500")
+
+    const flash = viewer.entities.add({
+        position: Cartesian3.fromDegrees(lon, lat, 0),
+        ellipse: {
+            semiMajorAxis: 6000, semiMinorAxis: 6000,
+            material: Color.WHITE.withAlpha(0.9),
+            heightReference: HeightReference.CLAMP_TO_GROUND,
+        },
+    })
+    sceneLocal.push({ type: "entity", ref: flash })
+    let flashOp = 0.9
+    const flashIv = setInterval(() => {
+        flashOp -= 0.09
+        try { flash.ellipse.material = color.withAlpha(Math.max(flashOp, 0)) } catch (_) {}
+        if (flashOp <= 0) clearInterval(flashIv)
+    }, 40)
+    intervals.push(flashIv)
+
+    for (let i = 0; i < 3; i++) {
+        const tid = setTimeout(() => {
+            let r = 1500 * (1 + i * 0.4)
+            let op = 1
+            const ring = viewer.entities.add({
+                position: Cartesian3.fromDegrees(lon, lat, 0),
+                ellipse: {
+                    semiMajorAxis: r, semiMinorAxis: r,
+                    material: Color.TRANSPARENT,
+                    outline: true, outlineColor: color.withAlpha(op), outlineWidth: 3,
+                    heightReference: HeightReference.CLAMP_TO_GROUND,
+                },
+            })
+            sceneLocal.push({ type: "entity", ref: ring })
+            const ringIv = setInterval(() => {
+                r  += 6000
+                op -= 0.05
+                try {
+                    ring.ellipse.semiMajorAxis = r
+                    ring.ellipse.semiMinorAxis = r
+                    ring.ellipse.outlineColor  = color.withAlpha(Math.max(op, 0))
+                } catch (_) {}
+                if (op <= 0) clearInterval(ringIv)
+            }, 40)
+            intervals.push(ringIv)
+        }, i * 200)
+        timeouts.push(tid)
+    }
+
+    if (el.label) {
+        sceneLocal.push({ type: "entity", ref: viewer.entities.add({
+            position: Cartesian3.fromDegrees(lon, lat, 300),
+            label: {
+                text: el.label, font: "bold 11px system-ui,sans-serif",
+                fillColor: color, outlineColor: Color.BLACK, outlineWidth: 2,
+                style: LabelStyle.FILL_AND_OUTLINE,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+        }) })
+    }
+}
+
+// ── Animated line reveal ──────────────────────────────────────────────────────
+// Draws the line progressively via CallbackProperty rather than all at once —
+// the animated counterpart of the already-real "draw_line" action.
+function _renderAnimatedLineReveal(el, viewer, sceneLocal) {
+    const pts = el.points || []
+    if (pts.length < 2) return
+    const color    = Color.fromCssColorString(el.color || "#38bdf8")
+    const duration = el.duration ?? 3000
+    const cartesians = pts.map(([lat, lng]) => Cartesian3.fromDegrees(lng, lat, 50))
+
+    const dists = [0]
+    for (let i = 1; i < cartesians.length; i++) {
+        dists.push(dists[i - 1] + Cartesian3.distance(cartesians[i - 1], cartesians[i]))
+    }
+    const total = dists[dists.length - 1] || 1
+    const startTime = performance.now()
+
+    const positionsCB = new CallbackProperty(() => {
+        const t      = Math.min((performance.now() - startTime) / duration, 1)
+        const target = t * total
+        const visible = [cartesians[0]]
+        for (let i = 0; i < dists.length - 1; i++) {
+            const segLen = dists[i + 1] - dists[i]
+            const rem    = target - dists[i]
+            if (rem <= 0) break
+            if (rem >= segLen) {
+                visible.push(cartesians[i + 1])
+            } else {
+                const frac = segLen > 0 ? rem / segLen : 0
+                visible.push(Cartesian3.lerp(cartesians[i], cartesians[i + 1], frac, new Cartesian3()))
+                break
+            }
+        }
+        return visible
+    }, false)
+
+    sceneLocal.push({ type: "entity", ref: viewer.entities.add({
+        polyline: { positions: positionsCB, width: el.weight || 4, material: new ColorMaterialProperty(color.withAlpha(0.9)) },
+    }) })
+
+    if (el.label) {
+        const mid = pts[Math.floor(pts.length / 2)]
+        sceneLocal.push({ type: "entity", ref: viewer.entities.add({
+            position: Cartesian3.fromDegrees(mid[1], mid[0], 200),
+            label: {
+                text: el.label, font: "bold 10px system-ui,sans-serif",
+                fillColor: color, outlineColor: Color.BLACK, outlineWidth: 2,
+                style: LabelStyle.FILL_AND_OUTLINE,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+        }) })
+    }
+}
+
+function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames, intervals, timeouts, isAborted, keyed, removed) {
     const act = action.action
     switch (act) {
         case "fly_to":
@@ -966,33 +1220,172 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
         case "show_context_card":
         case "show_image":
         case "show_video":
-        case "click_event":
-        case "click_location":
         case "click_vessel":
         case "click_aircraft":
         case "click_chokepoint":
         case "click_country":
         case "click_infrastructure":
-        case "remove_event":
-        case "remove_location":
-        case "hide_vessel":
-        case "hide_aircraft":
-        case "hide_chokepoint":
         case "hide_satellite":
-        case "hide_infrastructure":
-        case "unhighlight_country":
-        case "clear_country_highlights":
-        case "clear_drawings":
-        case "clear_all":
-            // These are narration/UI/cleanup-only actions — no Cesium primitives needed
+        case "hide_event":
+        case "open_detail":
+        case "close_detail":
+            // These are narration/UI/cleanup-only actions handled by CommandRunner's
+            // own onOpenDetail/onDetailPanel/onImage callbacks or the satellite-toggle
+            // callback (see app.jsx) — no Cesium primitives needed here.
+            break
+
+        // click_event/click_location have no marker of their own to react to here —
+        // CommandRunner routes them through onOpenDetail (see commandRunner.js), the
+        // same real detail-panel mechanism click_vessel/click_chokepoint/etc use.
+        case "click_event":
+        case "click_location":
             break
 
         case "highlight_country": {
             const color = _CONTEXT_COLORS[action.context] || "#38bdf8"
+            const key   = `country:${(action.name || "").toLowerCase().trim()}`
             _renderCountryHighlight(
                 { name: action.name, color },
-                viewer, sceneLocal, isAborted
+                viewer, sceneLocal, isAborted, key, keyed, removed
             )
+            break
+        }
+
+        case "unhighlight_country": {
+            const key = `country:${(action.name || "").toLowerCase().trim()}`
+            _removeKeyed(viewer, keyed, removed, key)
+            break
+        }
+
+        case "clear_country_highlights": {
+            for (const k of [...keyed.keys()]) {
+                if (k.startsWith("country:")) _removeKeyed(viewer, keyed, removed, k)
+            }
+            break
+        }
+
+        case "hide_vessel":
+            _removeKeyed(viewer, keyed, removed, `vessel:${action.mmsi}`)
+            break
+
+        case "hide_aircraft":
+            _removeKeyed(viewer, keyed, removed, `aircraft:${String(action.icao24 || "").toLowerCase()}`)
+            break
+
+        case "hide_chokepoint":
+            _removeKeyed(viewer, keyed, removed, `chokepoint:${(action.name || "").toLowerCase().trim()}`)
+            break
+
+        case "hide_infrastructure":
+            _removeKeyed(viewer, keyed, removed, `infra:${action.id}`)
+            break
+
+        case "remove_event":
+            _removeKeyed(viewer, keyed, removed, `placed-event:${action.title}`)
+            break
+
+        case "remove_location":
+            _removeKeyed(viewer, keyed, removed, `placed-location:${action.name}`)
+            break
+
+        case "hide_person":
+            _removeKeyed(viewer, keyed, removed, `person:${action.name}`)
+            break
+
+        case "clear_drawings":
+        case "clear_all":
+            // Wipe everything this scene has added so far — matches the old
+            // CommandRunner._clearAllDrawings semantics (both actions cleared
+            // literally everything imperatively drawn, not just "drawings").
+            _removeHandles(viewer, sceneLocal)
+            keyed.clear()
+            break
+
+        case "show_event": {
+            const id = action.event_id
+            if (id) {
+                // show_event doesn't create a new marker — it points the camera-
+                // independent popup mechanism at a LIVE GlobeEventsLayer entity
+                // (see reportDeepLink.js for the same pattern). If that event
+                // isn't currently registered — aged out, filtered by relevance,
+                // outside the loaded viewport — this is a graceful, honest no-op
+                // rather than a fabricated marker for something not really there.
+                window.dispatchEvent(new CustomEvent("akili:show-entity", { detail: { id: `event-${id}` } }))
+            }
+            break
+        }
+
+        case "spotlight":
+            _renderScreenSpotlight({
+                lat: action.lat, lon: action.lon,
+                radius_px: action.radius_px, duration: action.duration,
+            }, viewer, sceneLocal)
+            break
+
+        case "highlight_border":
+            _renderHighlightBorder(action, viewer, sceneLocal)
+            break
+
+        case "impact":
+            _renderImpact({
+                lat: action.lat, lon: action.lon,
+                color: action.color, label: action.label,
+            }, viewer, sceneLocal, intervals, timeouts)
+            break
+
+        case "draw_animated_line":
+            _renderAnimatedLineReveal(action, viewer, sceneLocal)
+            break
+
+        case "recap_overview": {
+            const points = Array.isArray(action.key_points) ? action.key_points
+                         : Array.isArray(action.locations)  ? action.locations
+                         : []
+            const valid = points.filter(p => p.lat != null && p.lon != null)
+            const color = Color.fromCssColorString(action.color || "#56cfff")
+            if (valid.length >= 2) {
+                const lats = valid.map(p => p.lat), lons = valid.map(p => p.lon)
+                const rect = Rectangle.fromDegrees(
+                    Math.min(...lons) - 2, Math.min(...lats) - 2,
+                    Math.max(...lons) + 2, Math.max(...lats) + 2,
+                )
+                viewer.camera.flyTo({ destination: rect, duration: 3 })
+            }
+            valid.forEach(pt => {
+                sceneLocal.push({ type: "entity", ref: viewer.entities.add({
+                    position: Cartesian3.fromDegrees(pt.lon, pt.lat, 0),
+                    point: {
+                        pixelSize: 9, color, outlineColor: Color.WHITE, outlineWidth: 1.5,
+                        heightReference: HeightReference.CLAMP_TO_GROUND,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    },
+                    label: pt.label ? {
+                        text: pt.label, font: "10px system-ui,sans-serif",
+                        fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 2,
+                        style: LabelStyle.FILL_AND_OUTLINE,
+                        pixelOffset: new Cartesian2(0, -14),
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        heightReference: HeightReference.CLAMP_TO_GROUND,
+                    } : undefined,
+                }) })
+            })
+            if (valid.length >= 2) {
+                const positions = valid.map(p => Cartesian3.fromDegrees(p.lon, p.lat, 50))
+                sceneLocal.push({ type: "entity", ref: viewer.entities.add({
+                    polyline: { positions, width: 1.5, material: new ColorMaterialProperty(color.withAlpha(0.5)) },
+                }) })
+            }
+            break
+        }
+
+        case "show_person": {
+            if (!action.name || !Array.isArray(action.position)) break
+            const key = `person:${action.name}`
+            _renderFacilityMarker({
+                lat: action.position[0], lng: action.position[1],
+                name: action.name, color: "#38bdf8",
+                image_query: action.name,
+            }, viewer, sceneLocal, isAborted, key, keyed)
             break
         }
 
@@ -1105,6 +1498,7 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
                 } : undefined,
             })
             sceneLocal.push({ type: "entity", ref: e })
+            _registerKeyed(keyed, `placed-event:${action.title}`, { type: "entity", ref: e })
             break
         }
 
@@ -1137,10 +1531,14 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
                 } : undefined,
             })
             sceneLocal.push({ type: "entity", ref: e })
+            _registerKeyed(keyed, `placed-location:${action.name}`, { type: "entity", ref: e })
             break
         }
 
         case "place_image_marker": {
+            // One-off illustrative marker — never individually hidden by any
+            // CommandRunner action, so no key is needed (clear_drawings/clear_all
+            // will still remove it via sceneLocal).
             _renderFacilityMarker({
                 lat:         action.lat,
                 lng:         action.lon,
@@ -1162,7 +1560,7 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
                 color,
                 image_query: action.image_query,
                 _billboard:  { iconType, color },
-            }, viewer, sceneLocal, isAborted)
+            }, viewer, sceneLocal, isAborted, `vessel:${action.mmsi}`, keyed)
             break
         }
 
@@ -1176,14 +1574,15 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
                 color,
                 image_query: action.image_query,
                 _billboard:  { iconType, color },
-            }, viewer, sceneLocal, isAborted)
+            }, viewer, sceneLocal, isAborted, `aircraft:${String(action.icao24 || "").toLowerCase()}`, keyed)
             break
         }
 
         case "show_chokepoint": {
+            const key = `chokepoint:${(action.name || "").toLowerCase().trim()}`
             _renderChokepointFromDB(
                 { name: action.name, color: "#f59e0b" },
-                viewer, sceneLocal, isAborted
+                viewer, sceneLocal, isAborted, key, keyed, removed
             )
             break
         }
@@ -1194,27 +1593,74 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
                 lng:   action.lon,
                 name:  action.name || "",
                 color: "#6366f1",
-            }, viewer, sceneLocal, isAborted)
+            }, viewer, sceneLocal, isAborted, `infra:${action.id}`, keyed)
             break
         }
 
-        case "troop_movement":
-            // Animated troop movement disabled during Director playback
+        case "troop_movement": {
+            // Converging-columns movement, ported from CommandRunner's old
+            // _animateTroopMovement: straight-line paths (not routed through
+            // OSRM like the DemoRunner troop_movement renderer above) animated
+            // via the same requestAnimationFrame interpolation _spawnVessel
+            // uses for show_vessel/animate_movement.
+            const target = action.target
+            const tLat   = target?.lat
+            const tLon   = target?.lng ?? target?.lon
+            for (const unit of (action.units || [])) {
+                const start = unit.start || unit.from
+                if (!start) continue
+                const end      = tLat != null ? [tLat, tLon] : (unit.end || unit.to || start)
+                const iconType = _resolveIconType(unit.icon || unit.type) || "infantry"
+                const color    = unit.color || _VESSEL_FACTION_COLORS[unit.faction] || "#ef4444"
+                _spawnVessel(
+                    { name: unit.label || unit.name, color, icon: iconType, path: [start, end] },
+                    7_000, viewer, sceneLocal, animFrames, isAborted
+                )
+            }
+            if (tLat != null) {
+                _renderSpotlight({ lat: tLat, lng: tLon, radius: 15_000, color: "#ef4444" }, viewer, sceneLocal)
+            }
             break
+        }
+
+        case "animate_movement": {
+            const duration = action.speed
+                ? Math.round((1 / Math.max(action.speed, 0.05)) * 5_000)
+                : (action.duration ?? 20_000)
+            for (const unit of (action.units || [])) {
+                const from = unit.from || unit.origin
+                const to   = unit.to   || unit.destination
+                if (!from || !to) continue
+                const waypoints = unit.waypoints || unit.path || []
+                const path      = [from, ...waypoints, to]
+                const iconType  = _resolveIconType(unit.type || unit.icon)
+                const color     = _VESSEL_FACTION_COLORS[unit.faction] || "#94a3b8"
+                _spawnVessel(
+                    { name: unit.label, color, icon: iconType, path },
+                    duration, viewer, sceneLocal, animFrames, isAborted
+                )
+            }
+            break
+        }
 
         case "formation": {
+            const target  = Array.isArray(action.target) ? action.target : null
+            const markers = []
             for (const unit of (action.units || [])) {
                 const color    = _VESSEL_FACTION_COLORS[unit.faction] || "#94a3b8"
-                const iconType = unit.type === "ship" ? "destroyer" : unit.type === "aircraft" ? "fighter" : "infantry"
-                // Place marker at unit's starting position
-                const [w, h] = ICON_SIZES[iconType] || ICON_SIZES.default
-                const billUrl = _makeBillboardUrl(iconType, color)
-                const marker  = viewer.entities.add({
-                    position: Cartesian3.fromDegrees(unit.lon ?? unit.lng ?? 0, unit.lat, unit.type === "aircraft" ? 8_000 : 0),
+                const isAir    = unit.type === "aircraft"
+                const iconType = isAir ? "fighter" : unit.type === "ship" ? "destroyer" : _resolveIconType(unit.icon) || "infantry"
+                const alt      = isAir ? 8_000 : 0
+                const startLat = unit.lat
+                const startLon = unit.lon ?? unit.lng ?? 0
+                const [w, h]   = ICON_SIZES[iconType] || ICON_SIZES.default
+                const billUrl  = _makeBillboardUrl(iconType, color)
+                const marker   = viewer.entities.add({
+                    position: Cartesian3.fromDegrees(startLon, startLat, alt),
                     billboard: {
-                        image:  billUrl, width: w, height: h,
+                        image: billUrl, width: w, height: h,
                         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                        heightReference: unit.type === "aircraft" ? HeightReference.NONE : HeightReference.CLAMP_TO_GROUND,
+                        heightReference: isAir ? HeightReference.NONE : HeightReference.CLAMP_TO_GROUND,
                     },
                     label: unit.label ? {
                         text: unit.label, font: "9px system-ui,sans-serif",
@@ -1223,25 +1669,80 @@ function _renderVisualAction(action, viewer, sceneLocal, persistent, animFrames,
                         verticalOrigin: VerticalOrigin.BOTTOM,
                         pixelOffset: new Cartesian2(0, -(h / 2) - 2),
                         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                        heightReference: unit.type === "aircraft" ? HeightReference.NONE : HeightReference.CLAMP_TO_GROUND,
+                        heightReference: isAir ? HeightReference.NONE : HeightReference.CLAMP_TO_GROUND,
                     } : undefined,
                 })
-                // Animated movement toward target disabled during Director playback
                 sceneLocal.push({ type: "entity", ref: marker })
+                markers.push({ marker, unit, startLat, startLon, alt })
+            }
+            // Animate toward the target using the same converge/surround/default
+            // easing CommandRunner's old Leaflet "formation" handler used —
+            // ported 1:1, just mutating a Cesium entity's position each frame
+            // instead of calling Leaflet's marker.setLatLng.
+            if (target && markers.length) {
+                const [tLat, tLon] = target
+                const hostileCount = markers.filter(m => m.unit.faction !== "subject").length
+                const finalPositions = markers.map((m, idx) => {
+                    if (m.unit.faction === "subject") return [tLat, tLon]
+                    if (action.pattern === "surround") {
+                        const angle  = (idx / Math.max(hostileCount, 1)) * Math.PI * 2
+                        const radius = 0.045
+                        return [tLat + Math.cos(angle) * radius, tLon + Math.sin(angle) * radius]
+                    }
+                    if (action.pattern === "converge") return [tLat, tLon]
+                    return [m.startLat + (tLat - m.startLat) * 0.7, m.startLon + (tLon - m.startLon) * 0.7]
+                })
+                const DURATION  = 4_000
+                const startTime = performance.now()
+                const step = () => {
+                    if (isAborted() || viewer.isDestroyed()) return
+                    const elapsed  = performance.now() - startTime
+                    const progress = Math.min(elapsed / DURATION, 1)
+                    const eased    = 1 - Math.pow(1 - progress, 3)
+                    markers.forEach((m, idx) => {
+                        const [eLat, eLon] = finalPositions[idx]
+                        const lat = m.startLat + (eLat - m.startLat) * eased
+                        const lon = m.startLon + (eLon - m.startLon) * eased
+                        try { m.marker.position = Cartesian3.fromDegrees(lon, lat, m.alt) } catch (_) {}
+                    })
+                    if (progress < 1) animFrames.push(requestAnimationFrame(step))
+                }
+                animFrames.push(requestAnimationFrame(step))
             }
             // Pulsing target circle
-            if (action.target) {
-                _renderSpotlight({
-                    lat: action.target[0], lng: action.target[1],
-                    radius: 15_000, color: "#ef4444",
-                }, viewer, sceneLocal)
+            if (target) {
+                _renderSpotlight({ lat: target[0], lng: target[1], radius: 15_000, color: "#ef4444" }, viewer, sceneLocal)
             }
             break
         }
 
         case "show_satellite":
         case "analyse_satellite":
-            // Satellite imagery handled separately by GlobeView satellite toggle
+        case "toggle_layer":
+        case "highlight_event":
+        case "clear_highlights":
+            // show_satellite/analyse_satellite: real imagery toggling happens via
+            // CommandRunner's onSatelliteToggle callback → app.jsx state → GlobeView's
+            // existing satelliteEnabled prop (the same Sentinel-2 overlay the manual
+            // layer toggle uses) — nothing to add on the Cesium-entity side here.
+            // toggle_layer/highlight_event/clear_highlights: pre-existing legacy
+            // actions — CommandRunner already labels their setLayerOverrides/
+            // setHighlights callbacks "kept for legacy compat"; nothing in the app
+            // reads directorLayerOverrides/directorHighlights downstream (confirmed:
+            // neither is passed to GlobeView or any layer), so there is no real
+            // per-layer toggle or highlight-list rendering to hook these into today.
+            // Left as an honest no-op rather than wiring a second, disconnected
+            // toggle mechanism.
+            break
+
+        case "pin_images":
+        case "country_info_overlay":
+            // Deferred — see GlobeDirectorLayer.jsx history / task report for why:
+            // both are elaborate multi-element DOM compositions (image collage with
+            // collision-avoided offsets; a full-screen country statistic card) that
+            // were never in this pass's priority list and would need meaningfully
+            // more design work to port faithfully rather than as a rough
+            // approximation. Explicitly a no-op, not a fabricated simplified version.
             break
 
         default:
@@ -1275,6 +1776,12 @@ export default function GlobeDirectorLayer({ scene }) {
         const animFrames = []
         const intervals  = []
         const timeouts   = []
+        // Keyed registry (visuals format only) — lets a later hide_*/unhighlight_*/
+        // remove_* action in this same scene find and remove exactly the entities
+        // an earlier show_*/highlight_*/place_* action in the scene added. See
+        // _registerKeyed/_removeKeyed above.
+        const keyed   = new Map()
+        const removed = new Set()
         let aborted = false
         const isAborted = () => aborted
 
@@ -1295,7 +1802,7 @@ export default function GlobeDirectorLayer({ scene }) {
             const wordCount = narText.split(/\s+/).filter(Boolean).length
             const animDurMs = Math.max((wordCount / 2.5) * 1_000, 6_000)
             for (const action of scene.visuals) {
-                _renderVisualAction(action, viewer, sceneLocal, persistentRef.current, animFrames, intervals, timeouts, isAborted)
+                _renderVisualAction(action, viewer, sceneLocal, persistentRef.current, animFrames, intervals, timeouts, isAborted, keyed, removed)
             }
         } else {
             // DemoRunner / scene_elements format
