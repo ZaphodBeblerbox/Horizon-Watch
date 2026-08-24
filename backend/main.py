@@ -18360,6 +18360,252 @@ def delete_asset(asset_id: str, _forge=Depends(_require_forge)):
         return {"asset_id": asset_id, "status": "deleted"}
 
 
+# ── Reports (roadmap Phase 3: report entity, status machine, council, PDF) ───
+#
+# Net-new: nothing in this codebase built a report lifecycle before this.
+# Every report is keyed to a ReportSnapshot (Phase 1) — the frozen artefact
+# its claims are supposed to cite. Status machine: draft -> in_review
+# (submit-for-review runs the council) -> approved -> published, or
+# in_review -> rejected. The council itself (report_council.py) is a
+# sequential structure: a deterministic pass first (citation-existence,
+# geo-sanity — no model call, no judgment call to get wrong), then a small
+# number of model-based passes with distinct lenses. Nothing here auto-
+# publishes anything — every transition after draft requires an explicit
+# human action.
+
+_REPORT_CITATION_TYPES = {"snapshot_ref", "external"}
+
+
+def _report_id() -> str:
+    return "RPT-" + uuid.uuid4().hex[:8].upper()
+
+
+def _validate_claims(claims: list) -> list:
+    """Assigns a claim_id to any claim missing one and checks each claim has
+    real text and a well-formed citation. Raises HTTPException on the first
+    problem rather than silently accepting a half-formed claim."""
+    if not isinstance(claims, list):
+        raise HTTPException(400, "claims must be a list")
+    out = []
+    for i, c in enumerate(claims):
+        if not isinstance(c, dict) or not (c.get("text") or "").strip():
+            raise HTTPException(400, f"claim at index {i} is missing text")
+        citation = c.get("citation")
+        if not isinstance(citation, dict) or citation.get("type") not in _REPORT_CITATION_TYPES:
+            raise HTTPException(400, f"claim at index {i} needs a citation with type 'snapshot_ref' or 'external'")
+        if citation.get("type") == "snapshot_ref" and not (citation.get("section") and citation.get("item_id")):
+            raise HTTPException(400, f"claim at index {i}: snapshot_ref citation needs section and item_id")
+        if citation.get("type") == "external" and not (citation.get("url") or "").strip():
+            raise HTTPException(400, f"claim at index {i}: external citation needs a url")
+        out.append({
+            "claim_id": c.get("claim_id") or ("RCLM-" + uuid.uuid4().hex[:6].upper()),
+            "text": c["text"].strip(),
+            "citation": citation,
+            "source_evaluation": c.get("source_evaluation") if isinstance(c.get("source_evaluation"), dict) else None,
+            "asserted_zone": c.get("asserted_zone"), "lat": c.get("lat"), "lon": c.get("lon") or c.get("lng"),
+        })
+    return out
+
+
+def _report_to_dict(row) -> dict:
+    return {
+        "report_id":     row.report_id,
+        "title":         row.title,
+        "snapshot_id":   row.snapshot_id,
+        "classification": row.classification,
+        "key_judgments": row.key_judgments,
+        "claims":        _json.loads(row.claims_json or "[]"),
+        "status":        row.status,
+        "council_findings": _json.loads(row.council_findings_json) if row.council_findings_json else None,
+        "council_run_at":  row.council_run_at.isoformat() if row.council_run_at else None,
+        "reviewer":      row.reviewer,
+        "review_note":   row.review_note,
+        "reviewed_at":   row.reviewed_at.isoformat() if row.reviewed_at else None,
+        "published_at":  row.published_at.isoformat() if row.published_at else None,
+        "created_by":    row.created_by,
+        "created_at":    row.created_at.isoformat() if row.created_at else None,
+        "updated_at":    row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.post("/api/reports")
+async def create_report(request: Request, _forge=Depends(_require_forge)):
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    snapshot_id = (body.get("snapshot_id") or "").strip()
+    if not title:
+        raise HTTPException(400, "title is required")
+    if not snapshot_id:
+        raise HTTPException(400, "snapshot_id is required — a report must be keyed to a captured snapshot")
+
+    from database import Report, ReportSnapshot, get_db as _gdb_rpt
+    with _gdb_rpt() as db:
+        if not db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == snapshot_id).first():
+            raise HTTPException(404, f"snapshot {snapshot_id} not found — capture one first via POST /api/reports/snapshots")
+        claims = _validate_claims(body.get("claims") or [])
+        row = Report(
+            report_id=_report_id(), title=title, snapshot_id=snapshot_id,
+            classification=body.get("classification") or "UNCLASSIFIED // FOR ANALYTICAL USE ONLY",
+            key_judgments=body.get("key_judgments"),
+            claims_json=_json.dumps(claims), status="draft",
+            created_by=body.get("created_by") or getattr(_forge, "email", "admin"),
+        )
+        db.add(row)
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.get("/api/reports")
+def list_reports(status: str = None, _forge=Depends(_require_forge)):
+    from database import Report, get_db as _gdb_rptlist
+    with _gdb_rptlist() as db:
+        q = db.query(Report)
+        if status and status != "all":
+            q = q.filter(Report.status == status)
+        rows = q.order_by(Report.created_at.desc()).all()
+        return [_report_to_dict(r) for r in rows]
+
+
+@app.get("/api/reports/{report_id}")
+def get_report(report_id: str, _forge=Depends(_require_forge)):
+    from database import Report, get_db as _gdb_rptget
+    with _gdb_rptget() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        return _report_to_dict(row)
+
+
+@app.patch("/api/reports/{report_id}")
+async def update_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+    """Only draft reports can be edited — once submitted for review, the
+    content that the council actually reviewed shouldn't silently change
+    out from under those findings."""
+    body = await request.json()
+    from database import Report, get_db as _gdb_rptupd
+    with _gdb_rptupd() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "draft":
+            raise HTTPException(409, f"only draft reports can be edited (this one is {row.status})")
+        if "title" in body:
+            if not (body["title"] or "").strip():
+                raise HTTPException(400, "title cannot be blank")
+            row.title = body["title"].strip()
+        if "classification" in body:
+            row.classification = body["classification"]
+        if "key_judgments" in body:
+            row.key_judgments = body["key_judgments"]
+        if "claims" in body:
+            row.claims_json = _json.dumps(_validate_claims(body["claims"]))
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.post("/api/reports/{report_id}/submit-for-review")
+def submit_report_for_review(report_id: str, _forge=Depends(_require_forge)):
+    from database import Report, ReportSnapshot, get_db as _gdb_rptsub
+    import report_council as _council
+    with _gdb_rptsub() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "draft":
+            raise HTTPException(409, f"only draft reports can be submitted for review (this one is {row.status})")
+        claims = _json.loads(row.claims_json or "[]")
+        if not claims:
+            raise HTTPException(400, "cannot submit a report with no claims")
+        snap = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first()
+        if not snap:
+            raise HTTPException(500, f"report's snapshot {row.snapshot_id} no longer exists")
+        snapshot_content = _json.loads(snap.content_json)
+
+        findings = _council.run_council(
+            report_title=row.title, key_judgments=row.key_judgments, claims=claims,
+            snapshot_content=snapshot_content, client=client, usage_tracker_mod=usage_tracker, db=db,
+        )
+        row.council_findings_json = _json.dumps(findings, default=str)
+        row.council_run_at = datetime.utcnow()
+        row.status = "in_review"
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.post("/api/reports/{report_id}/approve")
+async def approve_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    from database import Report, get_db as _gdb_rptappr
+    with _gdb_rptappr() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "in_review":
+            raise HTTPException(409, f"only in_review reports can be approved (this one is {row.status})")
+        row.status = "approved"
+        row.reviewer = body.get("reviewer") or getattr(_forge, "email", "admin")
+        row.review_note = body.get("note")
+        row.reviewed_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.post("/api/reports/{report_id}/reject")
+async def reject_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    from database import Report, get_db as _gdb_rptrej
+    with _gdb_rptrej() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "in_review":
+            raise HTTPException(409, f"only in_review reports can be rejected (this one is {row.status})")
+        row.status = "rejected"
+        row.reviewer = body.get("reviewer") or getattr(_forge, "email", "admin")
+        row.review_note = body.get("note")
+        row.reviewed_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.post("/api/reports/{report_id}/publish")
+def publish_report(report_id: str, _forge=Depends(_require_forge)):
+    from database import Report, get_db as _gdb_rptpub
+    with _gdb_rptpub() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row.status != "approved":
+            raise HTTPException(409, f"only approved reports can be published (this one is {row.status})")
+        row.status = "published"
+        row.published_at = datetime.utcnow()
+        db.commit()
+        return _report_to_dict(row)
+
+
+@app.get("/api/reports/{report_id}/pdf")
+def get_report_pdf(report_id: str, _forge=Depends(_require_forge)):
+    from database import Report, get_db as _gdb_rptpdf
+    import report_pdf as _pdf
+    with _gdb_rptpdf() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        pdf_bytes = _pdf.render_report_pdf(_report_to_dict(row))
+    return FastAPIResponse(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{report_id}.pdf"'},
+    )
+
+
 # ── Auto-rule generation ──────────────────────────────────────────────────────
 
 @app.post("/api/forge/auto-generate-rules")
