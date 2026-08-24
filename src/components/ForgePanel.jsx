@@ -1396,6 +1396,101 @@ function ForgeLandingNav({ brainStatus, onNavigate, onPipeline }) {
     )
 }
 
+function ReportSnapshotsWorkspace() {
+    const [snapshots, setSnapshots] = useState([])
+    const [loaded,    setLoaded]    = useState(false)
+    const [capturing, setCapturing] = useState(false)
+    const [captureMsg, setCaptureMsg] = useState(null)
+    const [label,     setLabel]     = useState("")
+    const [expanded,  setExpanded]  = useState(null)   // snapshot_id of the one showing full content
+    const [detail,    setDetail]    = useState(null)   // fetched full content for `expanded`
+
+    const reload = () =>
+        fetch(`${API}/api/reports/snapshots?limit=50`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setSnapshots(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+
+    useEffect(() => { reload() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const capture = async () => {
+        setCapturing(true); setCaptureMsg(null)
+        try {
+            const res = await fetch(`${API}/api/reports/snapshots`, {
+                method: "POST", headers: forgeHeaders(),
+                body: JSON.stringify(label.trim() ? { label: label.trim() } : {}),
+            })
+            const d = await res.json()
+            if (res.ok) {
+                setCaptureMsg(`Captured ${d.snapshot_id}`)
+                setLabel("")
+                await reload()
+            } else {
+                setCaptureMsg(`Error: ${d.detail || "capture failed"}`)
+            }
+        } catch (e) {
+            setCaptureMsg(`Error: ${e.message}`)
+        } finally {
+            setCapturing(false)
+        }
+    }
+
+    const toggleDetail = async (snapId) => {
+        if (expanded === snapId) { setExpanded(null); setDetail(null); return }
+        setExpanded(snapId); setDetail(null)
+        try {
+            const res = await fetch(`${API}/api/reports/snapshots/${snapId}`, { headers: forgeHeaders() })
+            if (res.ok) setDetail(await res.json())
+        } catch (_e) {}
+    }
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                A snapshot freezes the current intelligence picture (active signals, fusion events, elevated regions, AIS/ADS-B anomalies, Sentinel detections) as a permanent, timestamped record with its own ID — unlike the live views elsewhere in this app, a captured snapshot never changes even as the underlying data moves on. This is the capture layer a future report/council pipeline will cite claims against; report generation and PDF export themselves don't exist yet.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+                <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Optional label (e.g. Red Sea AOI — daily)" style={{ ...inputStyle, flex: 1, maxWidth: 320 }} />
+                <button onClick={capture} disabled={capturing} style={{ padding: "6px 14px", borderRadius: 5, border: "none", background: capturing ? "#1e293b" : "#60a5fa", color: capturing ? "#475569" : "#0f172a", fontWeight: 600, cursor: capturing ? "default" : "pointer", fontSize: 11 }}>
+                    {capturing ? "Capturing…" : "Capture Snapshot Now"}
+                </button>
+                {captureMsg && <span style={{ color: captureMsg.startsWith("Error") ? "#f87171" : "#4ade80", fontSize: 11 }}>{captureMsg}</span>}
+            </div>
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && snapshots.length === 0 && (
+                <div style={{ color: "#334155", fontSize: 11 }}>No snapshots captured yet — click "Capture Snapshot Now" to freeze the current intelligence picture.</div>
+            )}
+            {snapshots.map(s => (
+                <div key={s.snapshot_id} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => toggleDetail(s.snapshot_id)}>
+                        <div>
+                            <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{s.label || s.snapshot_id}</span>
+                            <span style={{ color: "#475569", fontSize: 10, marginLeft: 8 }}>{s.snapshot_id}</span>
+                        </div>
+                        <span style={{ color: "#475569", fontSize: 10 }}>{s.captured_at ? new Date(s.captured_at).toLocaleString() : "—"}</span>
+                    </div>
+                    <div style={{ color: "#64748b", fontSize: 10, marginTop: 6 }}>
+                        {s.statistics?.total_active_signals ?? "—"} signals · {s.statistics?.critical_signals ?? "—"} critical · {s.statistics?.active_fusions ?? "—"} fusions · {s.statistics?.active_surges ?? "—"} surges
+                        {s.statistics?.alerts_excluded_low_quality > 0 && <> · {s.statistics.alerts_excluded_low_quality} low-quality alerts excluded</>}
+                        {s.created_by && <> · captured by {s.created_by}</>}
+                    </div>
+                    {expanded === s.snapshot_id && (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(148,163,184,0.08)" }}>
+                            {!detail ? (
+                                <div style={{ color: "#334155", fontSize: 11 }}>Loading full content…</div>
+                            ) : (
+                                <pre style={{ color: "#94a3b8", fontSize: 10, maxHeight: 260, overflow: "auto", background: "#080c14", padding: 8, borderRadius: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                    {JSON.stringify(detail.content, null, 2)}
+                                </pre>
+                            )}
+                        </div>
+                    )}
+                </div>
+            ))}
+        </WorkspaceBody>
+    )
+}
+
 function WorkspaceRouter({ workspace, node, brainStatus }) {
     switch (workspace) {
         case "ais-source":      return <AISSourceWorkspace />
@@ -1417,7 +1512,7 @@ function WorkspaceRouter({ workspace, node, brainStatus }) {
         case "alerts":          return <AlertsWorkspace />
         case "geocoder":        return <SimpleInfo title="Geocoder" body="Provides lat/lng resolution for news events and uploaded entity data. Feeds the threat scoring engine." />
         case "briefings":       return <SimpleInfo title="Director Briefings" body="AI-generated intelligence briefings from threat scores and correlation assessments. Delivered via the Director system." />
-        case "reports":         return <SimpleInfo title="Reports" body="Not built yet. No PDF or JSON report export exists in the backend today — this stage is a placeholder for the intelligence-report pipeline on the roadmap." />
+        case "reports":         return <ReportSnapshotsWorkspace />
         default:                return <SimpleInfo title={workspace} body="Workspace under construction." />
     }
 }
