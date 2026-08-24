@@ -18070,6 +18070,137 @@ async def forge_review_ontology_pattern(pattern_id: str, request: Request, _forg
     }
 
 
+# ── Report snapshots (Phase 1 capture layer) ───────────────────────────────────
+#
+# prepare_intelligence_picture() used to be pure compute — call it, get a dict,
+# throw it away. That meant nothing it produced ever had an ID a later report
+# or council pass could cite ("this claim traces to artefact X, captured at
+# time Y") — the exact capability the report pipeline needs and never had.
+# This is that persistence layer: capture the picture once, store it
+# untouched, and give it a real, retrievable identity. A snapshot row is never
+# rewritten after creation — that's the whole point of calling it a snapshot.
+# Gated the same way as the rest of Forge (passcode or admin bearer token),
+# since capturing one runs real DB queries and shouldn't be open to anyone.
+
+def _snapshot_id() -> str:
+    return "SNAP-" + uuid.uuid4().hex[:8].upper()
+
+
+def _parse_snapshot_dt(v):
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(v)
+    except Exception:
+        return None
+
+
+@app.post("/api/reports/snapshots")
+async def create_report_snapshot(request: Request, _forge=Depends(_require_forge)):
+    """Capture the current intelligence picture and freeze it as a versioned,
+    persisted artefact. Unlike /api/director/prepare-briefing (which keeps the
+    picture only in memory, for Director Mode's own use), this writes a row
+    that never changes after creation — a later report/council pass can cite
+    this exact snapshot_id even after the live data underneath has moved on."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    loop = asyncio.get_event_loop()
+    from briefing_prep import prepare_intelligence_picture as _prep_ip
+    _fe = _fusion_engine
+    try:
+        pic = await asyncio.wait_for(
+            loop.run_in_executor(
+                _executor,
+                lambda: _prep_ip(
+                    db=next(_db_gen()),
+                    forge_alerts=list(_forge_alerts),
+                    fusion_engine_instance=_fe,
+                ),
+            ),
+            timeout=30,
+        )
+    except Exception as _e:
+        raise HTTPException(500, f"Intelligence picture failed: {_e}")
+
+    from database import ReportSnapshot, get_db as _gdb_snap
+    snap_id    = _snapshot_id()
+    created_by = body.get("created_by") or getattr(_forge, "email", "admin")
+
+    def _json_default(obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return str(obj)
+
+    with _gdb_snap() as db:
+        row = ReportSnapshot(
+            snapshot_id=snap_id,
+            label=body.get("label"),
+            source="intelligence_picture",
+            period_start=_parse_snapshot_dt(body.get("period_start")),
+            period_end=_parse_snapshot_dt(body.get("period_end")),
+            stats_json=_json.dumps(pic.get("statistics", {}), default=_json_default),
+            content_json=_json.dumps(pic, ensure_ascii=False, default=_json_default),
+            created_by=created_by,
+        )
+        db.add(row)
+        db.commit()
+        captured_at = row.captured_at.isoformat() if row.captured_at else None
+
+    return {
+        "snapshot_id": snap_id,
+        "label":       body.get("label"),
+        "captured_at": captured_at,
+        "statistics":  pic.get("statistics", {}),
+    }
+
+
+@app.get("/api/reports/snapshots")
+def list_report_snapshots(limit: int = 20, _forge=Depends(_require_forge)):
+    """List captured snapshots, newest first — metadata + stats only. Fetch a
+    specific snapshot (below) to get its full frozen content."""
+    from database import ReportSnapshot, get_db as _gdb_snaplist
+    limit = max(1, min(limit, 200))
+    with _gdb_snaplist() as db:
+        rows = db.query(ReportSnapshot).order_by(ReportSnapshot.captured_at.desc()).limit(limit).all()
+        return [
+            {
+                "snapshot_id":  r.snapshot_id,
+                "label":        r.label,
+                "source":       r.source,
+                "period_start": r.period_start.isoformat() if r.period_start else None,
+                "period_end":   r.period_end.isoformat() if r.period_end else None,
+                "captured_at":  r.captured_at.isoformat() if r.captured_at else None,
+                "created_by":   r.created_by,
+                "statistics":   _json.loads(r.stats_json) if r.stats_json else {},
+            }
+            for r in rows
+        ]
+
+
+@app.get("/api/reports/snapshots/{snapshot_id}")
+def get_report_snapshot(snapshot_id: str, _forge=Depends(_require_forge)):
+    """Fetch one snapshot's full frozen content — exactly what was captured at
+    the time, unaffected by anything that has happened to the live data since."""
+    from database import ReportSnapshot, get_db as _gdb_snapget
+    with _gdb_snapget() as db:
+        row = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == snapshot_id).first()
+        if not row:
+            raise HTTPException(404, "Snapshot not found")
+        return {
+            "snapshot_id":  row.snapshot_id,
+            "label":        row.label,
+            "source":       row.source,
+            "period_start": row.period_start.isoformat() if row.period_start else None,
+            "period_end":   row.period_end.isoformat() if row.period_end else None,
+            "captured_at":  row.captured_at.isoformat() if row.captured_at else None,
+            "created_by":   row.created_by,
+            "content":      _json.loads(row.content_json),
+        }
+
+
 # ── Auto-rule generation ──────────────────────────────────────────────────────
 
 @app.post("/api/forge/auto-generate-rules")

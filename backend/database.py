@@ -776,6 +776,37 @@ class OntologyClaim(Base):
     )
 
 
+class ReportSnapshot(Base):
+    """A frozen, versioned intelligence-picture artefact — the persistence layer
+    the report pipeline needs but never had. Before this model existed,
+    `prepare_intelligence_picture()` was recomputed live on every call and
+    handed straight to a prompt or an HTTP response: nothing about it had an
+    ID, a timestamp, or a stored copy a later report/council pass could point
+    back to and say "this claim traces to artefact X, captured at time Y."
+    A row here is a snapshot: taken once, stored as-is, and never mutated
+    afterward — the whole point is that it does NOT change if the live data
+    underneath it changes later."""
+    __tablename__ = "report_snapshots"
+
+    id           = Column(Integer, primary_key=True)
+    snapshot_id  = Column(String, unique=True, index=True, nullable=False)  # SNAP-<uuid8>
+
+    label        = Column(String, nullable=True)    # optional human label, e.g. "Red Sea AOI — daily capture"
+    source       = Column(String, nullable=False, default="intelligence_picture")  # which capture pipeline produced this
+    period_start = Column(DateTime, nullable=True)   # optional explicit window this snapshot covers
+    period_end   = Column(DateTime, nullable=True)
+
+    stats_json   = Column(Text, nullable=True)       # denormalized quick-view stats, for listing without parsing content
+    content_json = Column(Text, nullable=False)      # the full frozen picture — never re-written after creation
+
+    created_by   = Column(String, nullable=True)
+    captured_at  = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_snapshot_source_captured", "source", "captured_at"),
+    )
+
+
 @contextmanager
 def get_db():
     db = SessionLocal()
