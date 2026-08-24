@@ -21149,127 +21149,17 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
     except Exception as _e:
         print(f"[ontology] chokepoints failed: {_e}")
 
-    # ── Countries ────────────────────────────────────────────────────────────
-    key_countries = [
-        "Iran", "United States", "Russia", "China", "Israel", "Saudi Arabia",
-        "Yemen", "Mali", "Sudan", "Ukraine", "Turkey", "Egypt", "France",
-        "United Kingdom", "India", "Somalia", "Djibouti", "Oman", "UAE", "Qatar",
-        "Iraq", "Syria", "Libya", "Nigeria", "Chad", "Niger", "Kenya",
-        "South Korea", "North Korea", "Taiwan", "Pakistan", "Afghanistan",
-        "Lebanon", "Jordan", "Bahrain", "Kuwait", "Myanmar", "Philippines",
-        "Ethiopia", "Eritrea", "South Sudan", "Mozambique", "Tanzania",
-        "Congo", "Palestine",
-    ]
-    country_ids: dict = {}
-    try:
-        for c in key_countries:
-            country_ids[c] = add_node("country", c)
-        alliances = [
-            ("United States", "Israel", "ally"), ("United States", "Saudi Arabia", "ally"),
-            ("United States", "UAE", "ally"),     ("United States", "United Kingdom", "ally"),
-            ("United States", "South Korea", "ally"),
-            ("Russia", "Iran", "ally"),           ("Russia", "Syria", "ally"),
-            ("China", "North Korea", "ally"),     ("China", "Russia", "partner"),
-            ("Iran", "Syria", "ally"),            ("Iran", "Yemen", "proxy"),
-            ("Saudi Arabia", "UAE", "ally"),      ("Turkey", "Qatar", "ally"),
-            ("Ethiopia", "Eritrea", "tension"),   ("India", "Pakistan", "rival"),
-            ("Israel", "Iran", "adversary"),      ("United States", "Russia", "adversary"),
-            ("United States", "China", "rival"),  ("Ukraine", "Russia", "war"),
-            ("Israel", "Lebanon", "tension"),
-        ]
-        for c1, c2, rel in alliances:
-            if c1 in country_ids and c2 in country_ids:
-                add_edge(country_ids[c1], country_ids[c2], rel)
-        cp_country_map = {
-            "Strait of Hormuz":  ["Iran", "Oman", "UAE"],
-            "Bab el-Mandeb":     ["Yemen", "Djibouti", "Eritrea"],
-            "Suez Canal":        ["Egypt"],
-            "Taiwan Strait":     ["Taiwan", "China"],
-            "Strait of Malacca": ["Myanmar", "Malaysia", "Indonesia"],
-            "Bosphorus":         ["Turkey"],
-            "Cape of Good Hope": ["South Africa"],
-            "Mozambique Channel":["Mozambique", "Tanzania"],
-            "Gibraltar Strait":  ["Spain", "Morocco"],
-            "Kerch Strait":      ["Russia", "Ukraine"],
-        }
-        for cp_name, countries in cp_country_map.items():
-            if cp_name in chokepoint_ids:
-                for c in countries:
-                    if c in country_ids:
-                        add_edge(chokepoint_ids[cp_name], country_ids[c], "located_in")
-        print(f"[ontology] {len(country_ids)} countries")
-    except Exception as _e:
-        print(f"[ontology] countries failed: {_e}")
-
-    # ── Groups ───────────────────────────────────────────────────────────────
-    group_ids: dict = {}
-    try:
-        groups = [
-            ("IRGC",         "Iran",       "Islamic Revolutionary Guard Corps"),
-            ("IRGC Navy",    "Iran",       "Fast attack craft — Strait of Hormuz"),
-            ("Hezbollah",    "Lebanon",    "Iran-backed militia — Bekaa Valley HQ"),
-            ("Houthi",       "Yemen",      "Ansar Allah — anti-ship missile capability"),
-            ("Hamas",        "Palestine",  "Gaza-based militant group"),
-            ("JNIM",         "Mali",       "Al-Qaeda affiliate — Sahel belt"),
-            ("ISIS Sahel",   "Niger",      "Islamic State affiliate — Tri-border area"),
-            ("Boko Haram",   "Nigeria",    "Islamist insurgency — Lake Chad basin"),
-            ("Al-Shabaab",   "Somalia",    "Al-Qaeda affiliate — Horn of Africa"),
-            ("RSF",          "Sudan",      "Rapid Support Forces — Hemedti"),
-            ("SAF",          "Sudan",      "Sudanese Armed Forces — Burhan"),
-            ("Wagner",       "Russia",     "PMC — Africa operations"),
-            ("PLA Navy",     "China",      "People's Liberation Army Navy"),
-            ("PLA Air Force","China",      "Strategic air and missile power"),
-            ("M23",          "Congo",      "Rwanda-backed armed group — eastern DRC"),
-        ]
-        for name, country, desc in groups:
-            nid = add_node("group", name, desc)
-            group_ids[name] = nid
-            if country in country_ids:
-                add_edge(nid, country_ids[country], "operates")
-        group_sponsors = [
-            ("IRGC", "Hezbollah", "sponsors"), ("IRGC", "Houthi", "sponsors"),
-            ("IRGC", "Hamas", "sponsors"),      ("Wagner", "RSF", "supports"),
-            ("JNIM", "ISIS Sahel", "rivals"),
-        ]
-        for g1, g2, rel in group_sponsors:
-            if g1 in group_ids and g2 in group_ids:
-                add_edge(group_ids[g1], group_ids[g2], rel)
-        group_threats = {
-            "IRGC Navy": ["Strait of Hormuz"],
-            "Houthi":    ["Bab el-Mandeb"],
-            "PLA Navy":  ["Taiwan Strait", "South China Sea"],
-        }
-        for g, cp_names in group_threats.items():
-            if g in group_ids:
-                for cp_name in cp_names:
-                    if cp_name in chokepoint_ids:
-                        add_edge(group_ids[g], chokepoint_ids[cp_name], "threatens")
-        print(f"[ontology] {len(group_ids)} groups")
-    except Exception as _e:
-        print(f"[ontology] groups failed: {_e}")
-
-    # ── Key People ───────────────────────────────────────────────────────────
-    try:
-        people = [
-            ("Ali Khamenei",          "Iran",        "Supreme Leader"),
-            ("Vladimir Putin",        "Russia",      "President"),
-            ("Xi Jinping",            "China",       "President / General Secretary"),
-            ("Benjamin Netanyahu",    "Israel",      "Prime Minister"),
-            ("Abdel Fattah al-Burhan","Sudan",       "SAF Commander / de facto President"),
-            ("Hemedti",               "Sudan",       "RSF Commander"),
-            ("Assimi Goita",          "Mali",        "Military leader / junta"),
-            ("Kim Jong Un",           "North Korea", "Supreme Leader"),
-            ("Volodymyr Zelenskyy",   "Ukraine",     "President"),
-            ("Abdel Fattah el-Sisi",  "Egypt",       "President"),
-            ("Recep Tayyip Erdogan",  "Turkey",      "President"),
-        ]
-        for name, country, desc in people:
-            nid = add_node("person", name, desc)
-            if country in country_ids:
-                add_edge(nid, country_ids[country], "leads")
-        print(f"[ontology] {len(people)} people")
-    except Exception as _e:
-        print(f"[ontology] people failed: {_e}")
+    # NOTE: this build previously seeded the graph with hardcoded countries, alliances,
+    # chokepoint-to-country mappings, armed groups/sponsorship edges, and named world
+    # leaders — ~44 countries, ~19 alliance edges, 15 groups, and 11 people, all frozen
+    # Python literals with no real source, no update mechanism, and no way for a viewer
+    # to tell them apart from the genuinely live data (vessels, aircraft, cables, rules,
+    # events) built below. Removed per the no-fake-data policy: a static, unsourced
+    # geopolitical assertion (e.g. "Iran allies Syria") presented as if it were computed
+    # ontology output is exactly the kind of fabrication that policy exists to catch.
+    # Real entity-to-entity relationships (vessel<->company, person<->faction, with a real
+    # confidence, evidence citation, and validity window) are Phase 2 roadmap work, not
+    # something to fake here in the meantime.
 
     # ── Live AIS vessels (sample 25) ─────────────────────────────────────────
     try:
@@ -21311,19 +21201,12 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
             ev_lat = ev.get("lat")
             ev_lng = ev.get("lng") or ev.get("lon")
             if ev_lat and ev_lng:
-                nid = add_node("event", (ev.get("headline") or ev.get("title") or "")[:50],
-                               f"Severity: {ev.get('severity','unknown')}",
-                               ev_lat, ev_lng)
+                add_node("event", (ev.get("headline") or ev.get("title") or "")[:50],
+                         f"Severity: {ev.get('severity','unknown')}",
+                         ev_lat, ev_lng)
                 ev_count += 1
-                country = ev.get("country")
-                if country and country in country_ids:
-                    add_edge(nid, country_ids[country], "located_in")
-                else:
-                    body_text = ((ev.get("headline") or ev.get("title","")) + " " + (ev.get("summary",""))).lower()
-                    for cname, cid in country_ids.items():
-                        if cname.lower() in body_text:
-                            add_edge(nid, cid, "located_in")
-                            break
+                # (previously added a "located_in" edge to a hardcoded country node here —
+                # removed along with the fabricated countries block above)
         print(f"[ontology] {ev_count} events")
     except Exception as _e:
         print(f"[ontology] events failed: {_e}")
