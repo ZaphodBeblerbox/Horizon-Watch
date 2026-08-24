@@ -1494,8 +1494,12 @@ export class CommandRunner {
       // one from here. The camera move that used to live here is redundant
       // with the scene's own fly_to, which onScene→GlobeDirectorLayer already
       // performs for real.
-      case "show_satellite":
-      case "analyse_satellite": {
+      // NOTE: "analyse_satellite" is listed here for documentation only — it
+      // is intercepted earlier in _executeIndex and routed to
+      // _handleAnalyseSatelliteAsync before _dispatchAction ever runs, so
+      // this case never actually executes for it. See that method for the
+      // real onSatelliteToggle(true) call.
+      case "show_satellite": {
         if (this.setDirectorItems) {
           this.setDirectorItems(prev => ({ ...prev, satellite: true }))
         }
@@ -1831,6 +1835,17 @@ export class CommandRunner {
   // ── Async satellite analysis ───────────────────────────────────────────────
 
   async _handleAnalyseSatelliteAsync(action) {
+    // _executeIndex routes "analyse_satellite" here *before* _dispatchAction
+    // ever runs, so the "show_satellite"/"analyse_satellite" shared case in
+    // _dispatchAction's switch is unreachable for this action — without this,
+    // analyse_satellite fetched analysis text but never actually turned the
+    // real Sentinel-2 overlay on, contradicting its own intent (and the
+    // show_satellite/analyse_satellite doc comment on that dead case). Do here
+    // what that case does: flip the same real overlay show_satellite uses.
+    if (this.setDirectorItems) {
+      this.setDirectorItems(prev => ({ ...prev, satellite: true }))
+    }
+    this.onSatelliteToggle(true)
     try {
       const res = await fetch(`${API_BASE}/api/director/analyse-satellite`, {
         method:  "POST",
