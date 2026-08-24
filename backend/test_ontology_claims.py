@@ -176,6 +176,29 @@ with TestClient(main.app) as client:
         except Exception:
             pass
 
+# ── Cleanup: this script runs against the real backend/data DB (see module
+# docstring), and every claim it creates carries the "TEST — " prefix. Without
+# removing them, a rerun's bulk-create calls hit the pipeline's own duplicate
+# check against these leftover rows and report false "skipped_duplicate"
+# failures — exactly what happened the first time this suite was run twice
+# against the same DB. Delete them so the suite is repeatable.
+from database import get_db as _cleanup_get_db, OntologyClaim as _CleanupClaim  # noqa: E402
+
+with _cleanup_get_db() as _cdb:
+    _leftover = _cdb.query(_CleanupClaim).filter(
+        (_CleanupClaim.entity_a_label.like("TEST —%")) |
+        (_CleanupClaim.entity_b_label.like("TEST —%"))
+    ).all()
+    for _c in _leftover:
+        _cdb.delete(_c)
+    _cdb.commit()
+    _remaining = _cdb.query(_CleanupClaim).filter(
+        (_CleanupClaim.entity_a_label.like("TEST —%")) |
+        (_CleanupClaim.entity_b_label.like("TEST —%"))
+    ).count()
+    check("cleanup removed all TEST-prefixed ontology claims", _remaining == 0,
+          f"{_remaining} left over")
+
 print("="*70)
 if FAILURES:
     print(f"  RESULT: {len(FAILURES)} FAILURE(S): {FAILURES}")
