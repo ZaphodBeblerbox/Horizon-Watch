@@ -1,15 +1,13 @@
 import { useState, useRef } from "react"
 import { saveProfileToStorage } from "./MissionProfilePanel.jsx"
-import { apiFetch } from "../auth.js"
 
-const getClearances = (user) => {
-    if (!user) return []
-    const role = user.role
+const getClearances = (profile) => {
+    if (!profile) return []
     return [
         { name: "Map Intelligence",  status: "GRANTED" },
         { name: "Briefings Access",  status: "GRANTED" },
         { name: "Claude Analysis",   status: "GRANTED" },
-        { name: "Admin Panel",       status: "GRANTED" },
+        { name: "Forge Access",      status: "GRANTED" },
         { name: "Export Reports",    status: "GRANTED" },
     ]
 }
@@ -77,41 +75,17 @@ const INPUT_STYLE = {
     boxSizing:    "border-box",
 }
 
-function relTimeAgo(iso) {
-    if (!iso) return "—"
-    const diff = Date.now() - new Date(iso)
-    const m = Math.floor(diff / 60000)
-    if (m < 1)    return "just now"
-    if (m < 60)   return `${m} minutes ago`
-    if (m < 1440) return `${Math.floor(m / 60)} hours ago`
-    if (m < 43200) return `${Math.floor(m / 1440)} days ago`
-    return new Date(iso).toLocaleDateString()
-}
-
-export default function ProfilePanel({ profile, onSave, onClose, user: userProp, currentUser: currentUserProp }) {
-    const currentUser = userProp ?? currentUserProp
-    const [displayName, setDisplayName] = useState(currentUser?.name || profile?.displayName || "")
-    const [email,       setEmail]       = useState(currentUser?.email || profile?._email || "")
-    const [pwExpanded,  setPwExpanded]  = useState(false)
-    const [curPw,       setCurPw]       = useState("")
-    const [newPw,       setNewPw]       = useState("")
-    const [confirmPw,   setConfirmPw]   = useState("")
-    const [pwLoading,   setPwLoading]   = useState(false)
-    const [pwError,     setPwError]     = useState("")
-    const [pwSuccess,   setPwSuccess]   = useState(false)
+export default function ProfilePanel({ profile, onSave, onClose }) {
+    const [displayName, setDisplayName] = useState(profile?.displayName || "")
+    const [email,       setEmail]       = useState(profile?._email || "")
     const [saved,       setSaved]       = useState(false)
     const [requestOpen, setRequestOpen] = useState(false)
     const [requestText, setRequestText] = useState("")
     const [requestDone, setRequestDone] = useState(false)
     const avatarRef = useRef()
 
-    const roleKey = (currentUser?.role || profile?.role || "").toUpperCase().replace(/\s/g, "")
+    const roleKey = (profile?.role || "").toUpperCase().replace(/\s/g, "")
     const badgeColors = BADGE_COLOR[roleKey] || BADGE_COLOR.OBSERVER
-
-    function memberSince(iso) {
-        if (!iso) return null
-        return "Member since " + new Date(iso).toLocaleDateString("en-US", { month: "long", year: "numeric" })
-    }
 
     function handleSave() {
         if (!profile) return
@@ -120,29 +94,6 @@ export default function ProfilePanel({ profile, onSave, onClose, user: userProp,
         onSave?.(updated)
         setSaved(true)
         setTimeout(() => setSaved(false), 2000)
-    }
-
-    async function handleChangePassword() {
-        setPwError("")
-        if (!curPw || !newPw || !confirmPw) { setPwError("All fields required"); return }
-        if (newPw !== confirmPw) { setPwError("Passwords do not match"); return }
-        if (newPw.length < 8)   { setPwError("Password must be at least 8 characters"); return }
-        setPwLoading(true)
-        try {
-            const res = await apiFetch("/api/auth/change-password", {
-                method: "POST",
-                body: JSON.stringify({ current_password: curPw, new_password: newPw }),
-            })
-            const data = await res.json()
-            if (!res.ok) { setPwError(data.detail || "Failed to change password"); return }
-            setPwSuccess(true)
-            setCurPw(""); setNewPw(""); setConfirmPw("")
-            setTimeout(() => { setPwExpanded(false); setPwSuccess(false) }, 2000)
-        } catch {
-            setPwError("Connection error.")
-        } finally {
-            setPwLoading(false)
-        }
     }
 
     function handleRequest() {
@@ -232,12 +183,12 @@ export default function ProfilePanel({ profile, onSave, onClose, user: userProp,
                     {/* Name + role */}
                     <div>
                         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--akili-text-primary)", marginBottom: 4 }}>
-                            {currentUser?.name || profile?.displayName || "No name set"}
+                            {profile?.displayName || "No name set"}
                         </div>
                         <div style={{ fontSize: 11, color: "var(--akili-text-muted)", marginBottom: 8 }}>
-                            {currentUser?.email || profile?._email || "No email set"}
+                            {profile?._email || "No email set"}
                         </div>
-                        {(currentUser?.role || profile?.role) && (
+                        {profile?.role && (
                             <span style={{
                                 fontSize:      9,
                                 fontWeight:    700,
@@ -248,18 +199,8 @@ export default function ProfilePanel({ profile, onSave, onClose, user: userProp,
                                 border:        `1px solid ${badgeColors.border}`,
                                 color:         badgeColors.text,
                             }}>
-                                {(currentUser?.role || profile?.role).toUpperCase()}
+                                {profile.role.toUpperCase()}
                             </span>
-                        )}
-                        {currentUser?.created_at && (
-                            <div style={{ fontSize: 10, color: "var(--akili-text-muted)", marginTop: 6 }}>
-                                {memberSince(currentUser.created_at)}
-                            </div>
-                        )}
-                        {currentUser?.last_login && (
-                            <div style={{ fontSize: 10, color: "var(--akili-text-muted)", marginTop: 2 }}>
-                                Last login: {relTimeAgo(currentUser.last_login)}
-                            </div>
                         )}
                     </div>
                 </div>
@@ -286,53 +227,10 @@ export default function ProfilePanel({ profile, onSave, onClose, user: userProp,
                         </label>
                         <input
                             type="email"
-                            value={currentUser?.email || email}
+                            value={email}
                             readOnly
                             style={{ ...INPUT_STYLE, opacity: 0.6, cursor: "default" }}
                         />
-                    </div>
-
-                    {/* Password section */}
-                    <div>
-                        <label style={{ fontSize: 10, color: "var(--akili-text-muted)", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>
-                            PASSWORD
-                        </label>
-                        {!pwExpanded ? (
-                            <button onClick={() => setPwExpanded(true)} style={{
-                                background:   "var(--akili-hover)",
-                                border:       "1px solid var(--akili-border)",
-                                borderRadius: 4,
-                                padding:      "7px 12px",
-                                fontSize:     11,
-                                color:        "var(--akili-text-secondary)",
-                                cursor:       "pointer",
-                            }}>
-                                Change Password
-                            </button>
-                        ) : (
-                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                <input type="password" value={curPw} onChange={e => setCurPw(e.target.value)}
-                                    placeholder="Current password" style={INPUT_STYLE} />
-                                <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
-                                    placeholder="New password" style={INPUT_STYLE} />
-                                <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-                                    placeholder="Confirm new password" style={INPUT_STYLE} />
-                                {pwError   && <div style={{ fontSize: 10, color: "#f87171" }}>{pwError}</div>}
-                                {pwSuccess  && <div style={{ fontSize: 10, color: "#34d399" }}>Password updated</div>}
-                                <div style={{ display: "flex", gap: 6 }}>
-                                    <button onClick={() => { setPwExpanded(false); setPwError("") }} style={{
-                                        flex: 1, padding: "6px", background: "none",
-                                        border: "1px solid var(--akili-border)", borderRadius: 4,
-                                        fontSize: 11, color: "var(--akili-text-muted)", cursor: "pointer",
-                                    }}>Cancel</button>
-                                    <button onClick={handleChangePassword} disabled={pwLoading} style={{
-                                        flex: 2, padding: "6px", background: "rgba(26,110,181,0.12)",
-                                        border: "1px solid rgba(26,110,181,0.35)", borderRadius: 4,
-                                        fontSize: 11, color: "var(--akili-accent)", cursor: pwLoading ? "default" : "pointer",
-                                    }}>{pwLoading ? "Updating…" : "Update Password"}</button>
-                                </div>
-                            </div>
-                        )}
                     </div>
                 </div>
 
@@ -340,7 +238,7 @@ export default function ProfilePanel({ profile, onSave, onClose, user: userProp,
                 <SectionHeader>Access Clearances</SectionHeader>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                    {getClearances(currentUser || profile).map(c => (
+                    {getClearances(profile).map(c => (
                         <div key={c.name} style={{
                             display:        "flex",
                             alignItems:     "center",

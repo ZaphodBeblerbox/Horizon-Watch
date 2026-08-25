@@ -64,7 +64,6 @@ export default function MobileDrawer({
     onOpenTab,
     onOpenForge,
     profile,
-    currentUser,
     alertCount,
     notifUnread,
     onToggleNotif,
@@ -73,14 +72,9 @@ export default function MobileDrawer({
     onToggleSound,
     tvOpen,
     onToggleTV,
-    onToggleAdmin,
-    chatOpen,
-    onToggleChat,
     directorActive = false,
     onDirectorTap = null,
 }) {
-    const isAdmin = true
-
     function panelRow(id, label, badge) {
         return (
             <Row
@@ -201,7 +195,7 @@ export default function MobileDrawer({
                             Director Mode
                         </button>
                     {panelRow("workspaces", "Workspaces")}
-                    {isAdmin && panelRow("situations", "Situations")}
+                    {panelRow("situations", "Situations")}
 
                     {/* Navigation */}
                     <div style={SECTION_HEADER}>Navigation</div>
@@ -235,18 +229,6 @@ export default function MobileDrawer({
                         active={tvOpen}
                         onClick={() => { onToggleTV?.(); onClose() }}
                     />
-                    <Row
-                        label="Direct Messages"
-                        active={chatOpen}
-                        onClick={() => { onToggleChat?.(); onClose() }}
-                    />
-                    {isAdmin && (
-                        <Row
-                            label="Admin Console"
-                            active={false}
-                            onClick={() => { onToggleAdmin?.(); onClose() }}
-                        />
-                    )}
                 </div>
 
                 {/* Profile chip at bottom */}

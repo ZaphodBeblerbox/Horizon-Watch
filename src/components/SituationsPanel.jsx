@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react"
-import { apiFetch } from "../auth.js"
+import { useState } from "react"
 
 const ACCENT_COLOURS = ["#FF8C00", "#2979FF", "#ef4444", "#22c55e", "#9333ea", "#e5e7eb"]
 
@@ -33,87 +32,6 @@ function relTime(iso) {
     return `${Math.floor(m / 1440)}d ago`
 }
 
-function initials(name) {
-    if (!name) return "?"
-    return name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2)
-}
-
-function UserSessionRow({ user, onSelect }) {
-    const cv = user.current_view || {}
-    const regionLabel = cv.lat != null
-        ? `${Number(cv.lat).toFixed(2)}, ${Number(cv.lon).toFixed(2)} z${cv.zoom ?? "?"}`
-        : "Unknown"
-    return (
-        <button onClick={() => onSelect(user)} style={{
-            width: "100%", padding: "10px 14px", background: "none",
-            border: "none", borderBottom: "1px solid rgba(255,255,255,0.05)",
-            cursor: "pointer", display: "flex", alignItems: "center", gap: 10, textAlign: "left",
-        }}>
-            <div style={{
-                width: 30, height: 30, borderRadius: "50%",
-                background: "rgba(26,110,181,0.25)", border: "1px solid rgba(26,110,181,0.4)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 11, fontWeight: 700, color: "#60a5fa", flexShrink: 0,
-            }}>
-                {initials(user.name || user.email)}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#e0e0e0", marginBottom: 1 }}>
-                    {user.name || user.email}
-                    <span style={{ fontSize: 9, fontWeight: 400, color: "rgba(255,255,255,0.3)", marginLeft: 6 }}>{user.role}</span>
-                </div>
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>
-                    {regionLabel} · {relTime(user.last_seen)}
-                </div>
-            </div>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }} />
-        </button>
-    )
-}
-
-function UserDetailPopup({ user, onClose }) {
-    if (!user) return null
-    const cv = user.current_view || {}
-    return (
-        <>
-            <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 2999, background: "rgba(0,0,0,0.5)" }} />
-            <div style={{
-                position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-                width: 320, background: "rgba(6,14,48,0.97)", backdropFilter: "blur(24px)",
-                WebkitBackdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 10, padding: "18px 20px", zIndex: 3000,
-                boxShadow: "0 8px 40px rgba(0,0,0,0.6)", fontFamily: "Inter, sans-serif", color: "#e0e0e0",
-            }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-                    <div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{user.name || "No name"}</div>
-                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{user.email}</div>
-                    </div>
-                    <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
-                </div>
-                {[
-                    ["Role",         user.role],
-                    ["IP Address",   user.last_ip || "Unknown"],
-                    ["Joined",       user.created_at ? new Date(user.created_at).toLocaleDateString() : "—"],
-                    ["Last login",   user.last_login ? relTime(user.last_login) : "—"],
-                    ["Last seen",    user.last_seen ? relTime(user.last_seen) : "—"],
-                    ["Map position", cv.lat != null ? `${Number(cv.lat).toFixed(4)}, ${Number(cv.lon).toFixed(4)}` : "—"],
-                    ["Zoom",         cv.zoom != null ? String(cv.zoom) : "—"],
-                    ["Active event", cv.event || "None"],
-                ].map(([label, val]) => (
-                    <div key={label} style={{ display: "flex", gap: 12, fontSize: 11, marginBottom: 7 }}>
-                        <span style={{ color: "rgba(255,255,255,0.3)", flexShrink: 0, width: 90 }}>{label}</span>
-                        <span style={{ color: "#e0e0e0" }}>{val}</span>
-                    </div>
-                ))}
-                <div style={{ marginTop: 14, fontSize: 9, color: "rgba(255,255,255,0.2)", fontStyle: "italic", lineHeight: 1.5 }}>
-                    This information is not visible to the user.
-                </div>
-            </div>
-        </>
-    )
-}
-
 function SH({ children }) {
     return (
         <div style={{
@@ -129,7 +47,6 @@ export default function SituationsPanel({
     activeSituationId, setActiveSituationId,
     onClose, onDrawTheater,
     profile, onProfileSave,
-    currentUser,
     focusRegions: externalFocusRegions,
     onFocusRegionsChange,
 }) {
@@ -137,28 +54,10 @@ export default function SituationsPanel({
     const [name,          setName]          = useState("")
     const [mission,       setMission]       = useState("")
     const [color,         setColor]         = useState(ACCENT_COLOURS[0])
-    const [trackSessions, setTrackSessions] = useState(false)
-    const [activeUsers,   setActiveUsers]   = useState([])
-    const [selectedUser,  setSelectedUser]  = useState(null)
     const [missionText,   setMissionText]   = useState(profile?.activeSituations || "")
     const [focusRegions,  setFocusRegions]  = useState(externalFocusRegions ?? profile?.focusRegions ?? [])
     const [threshold,     setThreshold]     = useState(profile?.threshold ?? 1)
     const [savedMission,  setSavedMission]  = useState(false)
-
-    const isAdmin = true
-
-    useEffect(() => {
-        if (!trackSessions || !isAdmin) return
-        const doFetch = async () => {
-            try {
-                const res = await apiFetch("/api/admin/active-users")
-                if (res.ok) setActiveUsers(await res.json())
-            } catch { /* ignore */ }
-        }
-        doFetch()
-        const t = setInterval(doFetch, 15000)
-        return () => clearInterval(t)
-    }, [trackSessions, isAdmin])
 
     function createSituation() {
         if (!name.trim()) return
@@ -260,33 +159,6 @@ export default function SituationsPanel({
                     </button>
                 </div>
 
-                {/* User Locations — admin only */}
-                {isAdmin && (
-                    <>
-                        <SH>User Locations</SH>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Track active sessions</span>
-                            <button onClick={() => setTrackSessions(v => !v)} style={{
-                                width: 36, height: 20, borderRadius: 10, border: "none",
-                                background: trackSessions ? "rgba(26,110,181,0.6)" : "rgba(255,255,255,0.1)",
-                                cursor: "pointer", position: "relative", transition: "background 0.2s",
-                            }}>
-                                <span style={{
-                                    position: "absolute", top: 2,
-                                    left: trackSessions ? 18 : 2,
-                                    width: 16, height: 16, borderRadius: "50%", background: "#fff",
-                                    transition: "left 0.2s", display: "block",
-                                }} />
-                            </button>
-                        </div>
-                        {trackSessions && (
-                            activeUsers.length === 0
-                                ? <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", textAlign: "center", padding: "12px 0" }}>No active sessions in the last 10 minutes</div>
-                                : activeUsers.map(u => <UserSessionRow key={u.id} user={u} onSelect={setSelectedUser} />)
-                        )}
-                    </>
-                )}
-
                 {/* New situation form */}
                 {showNew && (
                     <>
@@ -349,8 +221,6 @@ export default function SituationsPanel({
                     )
                 })}
             </div>
-
-            {selectedUser && <UserDetailPopup user={selectedUser} onClose={() => setSelectedUser(null)} />}
         </div>
     )
 }
