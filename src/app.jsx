@@ -1427,7 +1427,6 @@ export default function App() {
                             eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 0}
                             alertsEnabled={activeWorkspace?.layers?.forgeAlerts ?? true}
                             threatHeatmapEnabled={activeWorkspace?.layers?.threatHeatmap ?? true}
-                            cctvEnabled={activeWorkspace?.layers?.cctvFeeds ?? true}
                             airportsEnabled={activeWorkspace?.layers?.airports ?? false}
                             portsEnabled={activeWorkspace?.layers?.ports ?? false}
                             aisHeatmapEnabled={activeWorkspace?.layers?.aisHeatmap ?? false}
