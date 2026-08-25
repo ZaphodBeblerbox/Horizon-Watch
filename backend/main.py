@@ -15764,7 +15764,7 @@ def _rule_row_to_dict(row) -> dict:
 # Rule types actually read by live detection code (see: AIS loitering/chokepoint checks in the
 # fusion/detection cycle, ADSB loitering-near-airport check). Any other rule_name can be stored
 # but will never fire — so creation/update of one is rejected rather than silently accepted.
-WIRED_RULE_NAMES = ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY", "ADSB_LOITERING_NEAR_AIRPORT"]
+WIRED_RULE_NAMES = ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY", "ADSB_LOITERING_NEAR_AIRPORT", "NEWS_PATTERN"]
 
 
 @app.get("/api/rules")
@@ -19129,6 +19129,165 @@ def _normalize_vessel(raw, mmsi=None):
         return None
 
 
+def _run_ais_loitering_rules(rule_rows, normalized_snap, cycle_now):
+    """Handle AIS_LOITERING_NEAR_INFRA / AIS_LOITERING_NEAR_CABLE rule types.
+
+    Splits into cable-loitering vs port-loitering by params (same as before),
+    since a single rule_name pair can target either depending on infra_type.
+    """
+    import json as _json_lc
+    from database import PortBoundary as _PB1b, get_db
+
+    loiter_rules = [
+        {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
+         "params": _json_lc.loads(r.params) if isinstance(r.params, str) else r.params}
+        for r in rule_rows
+    ]
+    if not loiter_rules:
+        return []
+
+    # Split rules: cable rules vs port rules
+    cable_loiter_rules = [
+        r for r in loiter_rules
+        if (r["params"].get("infra_type") or "").lower() != "port"
+        and str(r["params"].get("target", "")).upper() != "PORTS:STRATEGIC"
+    ]
+    port_loiter_rules = [
+        r for r in loiter_rules
+        if (r["params"].get("infra_type") or "").lower() == "port"
+        or str(r["params"].get("target", "")).upper() == "PORTS:STRATEGIC"
+    ]
+
+    cables_db = _prep_cables_from_db() if cable_loiter_rules else []
+    # Load all ports for port loitering rules
+    ports_db: list = []
+    if port_loiter_rules:
+        with get_db() as _pdb:
+            _pb_rows = _pdb.query(_PB1b).all()
+        ports_db = [
+            {
+                "system_id": p.system_id,
+                "port_name": p.port_name,
+                "latitude":  p.latitude,
+                "longitude": p.longitude,
+                "region_id": p.region_id,
+                "boundary_radius_metres": p.boundary_radius_metres,
+            }
+            for p in _pb_rows
+        ]
+
+    loiter_hits: list = []
+    for _mmsi, _vessel in normalized_snap.items():
+        try:
+            if cable_loiter_rules:
+                hits = _ais_detector.check_loitering(
+                    _vessel, cables_db, cable_loiter_rules, cycle_now
+                )
+                loiter_hits.extend(hits)
+            if port_loiter_rules and ports_db:
+                hits = _ais_detector.check_port_loitering(
+                    _vessel, ports_db, port_loiter_rules, cycle_now
+                )
+                loiter_hits.extend(hits)
+        except Exception:
+            pass
+    _ais_detector.purge_stale_loiter(cycle_now)
+    for _lhit in loiter_hits:
+        try:
+            _broadcast_push(
+                title=f"Loitering — {_lhit.get('port_name') or _lhit.get('cable_name', 'infrastructure')}",
+                body=_lhit.get("message", "AIS loitering near infrastructure"),
+                data={"type": "loitering_alert", "lat": _lhit.get("lat"), "lng": _lhit.get("lng")},
+            )
+        except Exception:
+            pass
+    print(f"[forge-brain] Stage1b loitering: {len(cable_loiter_rules)} cable / {len(port_loiter_rules)} port rules → {len(loiter_hits)} alert(s)")
+    return loiter_hits
+
+
+def _run_chokepoint_rules(rule_rows, normalized_snap, cycle_now):
+    """Handle AIS_CHOKEPOINT_ACTIVITY rule type."""
+    import json as _json_ck
+
+    ck_rules = [
+        {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
+         "severity": r.severity or "medium",
+         "params": _json_ck.loads(r.params) if isinstance(r.params, str) else r.params}
+        for r in rule_rows
+    ]
+    if not ck_rules or _chokepoint_detector is None:
+        return []
+    new_choke_alerts = _chokepoint_detector.check(
+        normalized_snap, ck_rules, _CHOKEPOINT_DEFS, cycle_now
+    )
+    _chokepoint_detector.purge_stale(cycle_now)
+    print(f"[forge-brain] Stage1e chokepoint: {len(ck_rules)} rule(s), {len(new_choke_alerts)} alert(s)")
+    return new_choke_alerts
+
+
+def _run_adsb_loiter_rules(rule_rows, cycle_now):
+    """Handle ADSB_LOITERING_NEAR_AIRPORT rule type."""
+    import json as _json_al
+    from database import Airport, get_db
+
+    al_rules = [
+        {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
+         "params": _json_al.loads(r.params) if isinstance(r.params, str) else r.params}
+        for r in rule_rows
+    ]
+    if not al_rules or _adsb_loiter_detector is None:
+        return []
+
+    def _airports_fn(region_id=None, types=None):
+        try:
+            with get_db() as _apdb:
+                q = _apdb.query(Airport)
+                if region_id:
+                    q = q.filter(Airport.region_id == region_id)
+                if types:
+                    from sqlalchemy import or_ as _or
+                    q = q.filter(_or(*[Airport.airport_type == t for t in types]))
+                rows = q.all()
+            return [
+                {"system_id": r.system_id, "ident": r.ident,
+                 "icao_code": r.icao_code, "airport_name": r.airport_name,
+                 "lat": r.latitude, "lon": r.longitude,
+                 "airport_type": r.airport_type}
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    ac_snap = {k: v for k, v in _GLOBAL_ADSB_CACHE.items()}
+    new_adsb_loiter_alerts = _adsb_loiter_detector.check(
+        ac_snap, al_rules, cycle_now, airports_fn=_airports_fn
+    )
+    _adsb_loiter_detector.purge_stale(cycle_now)
+    for _alrt in new_adsb_loiter_alerts:
+        try:
+            _broadcast_push(
+                title=_alrt.get("title", "Aircraft loitering near airport"),
+                body=_alrt.get("message", ""),
+                data={"type": "adsb_loiter_alert",
+                      "lat": _alrt.get("lat"), "lng": _alrt.get("lng")},
+            )
+        except Exception:
+            pass
+    print(f"[forge-brain] Stage2b ADSB loiter: {len(al_rules)} rule(s), {len(new_adsb_loiter_alerts)} alert(s)")
+    return new_adsb_loiter_alerts
+
+
+# Dispatch table: canonical rule_name/trigger_type constant -> the handler that already
+# implements it. Adding a new live-wired rule type means adding one entry here (plus the
+# handler function above) — NOT a new hardcoded DB query stage in _forge_detection_cycle.
+WIRED_RULE_DISPATCH = {
+    "AIS_LOITERING_NEAR_INFRA":    _run_ais_loitering_rules,
+    "AIS_LOITERING_NEAR_CABLE":    _run_ais_loitering_rules,
+    "AIS_CHOKEPOINT_ACTIVITY":     _run_chokepoint_rules,
+    "ADSB_LOITERING_NEAR_AIRPORT": _run_adsb_loiter_rules,
+}
+
+
 async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
     global _forge_alerts, _correlation_assessments, _last_cycle_stats
@@ -19186,106 +19345,43 @@ async def _forge_detection_cycle():
                     pass
             print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
 
-            # Stage 1b — Loitering near infrastructure (cables + ports)
+            # Stages 1b/1e/2b share one query against the wired-rule dispatch table instead
+            # of each running its own hardcoded RuleConfig.rule_name filter.
             try:
-                from database import RuleConfig, PortBoundary as _PB1b, get_db
-                import json as _json_lc
-                with get_db() as _ldb:
-                    loiter_rule_rows = _ldb.query(RuleConfig).filter(
-                        RuleConfig.rule_name.in_(["AIS_LOITERING_NEAR_CABLE", "AIS_LOITERING_NEAR_INFRA"]),
+                from database import RuleConfig, get_db
+                with get_db() as _rdb:
+                    _wired_rows = _rdb.query(RuleConfig).filter(
+                        RuleConfig.rule_name.in_(list(WIRED_RULE_DISPATCH.keys())),
                         RuleConfig.enabled == True,
                     ).all()
-                loiter_rules = [
-                    {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
-                     "params": _json_lc.loads(r.params) if isinstance(r.params, str) else r.params}
-                    for r in loiter_rule_rows
-                ]
-                if loiter_rules:
-                    # Split rules: cable rules vs port rules
-                    cable_loiter_rules = [
-                        r for r in loiter_rules
-                        if (r["params"].get("infra_type") or "").lower() != "port"
-                        and str(r["params"].get("target", "")).upper() != "PORTS:STRATEGIC"
-                    ]
-                    port_loiter_rules = [
-                        r for r in loiter_rules
-                        if (r["params"].get("infra_type") or "").lower() == "port"
-                        or str(r["params"].get("target", "")).upper() == "PORTS:STRATEGIC"
-                    ]
+            except Exception as _wre:
+                print(f"[forge-brain] wired-rule query error: {_wre}")
+                _wired_rows = []
 
-                    cables_db = _prep_cables_from_db() if cable_loiter_rules else []
-                    # Load all ports for port loitering rules
-                    ports_db: list = []
-                    if port_loiter_rules:
-                        with get_db() as _pdb:
-                            _pb_rows = _pdb.query(_PB1b).all()
-                        ports_db = [
-                            {
-                                "system_id": p.system_id,
-                                "port_name": p.port_name,
-                                "latitude":  p.latitude,
-                                "longitude": p.longitude,
-                                "region_id": p.region_id,
-                                "boundary_radius_metres": p.boundary_radius_metres,
-                            }
-                            for p in _pb_rows
-                        ]
+            _rows_by_handler: dict = {}
+            for _wr in _wired_rows:
+                _handler = WIRED_RULE_DISPATCH.get(_wr.rule_name)
+                if _handler:
+                    _rows_by_handler.setdefault(_handler, []).append(_wr)
 
-                    cycle_now = datetime.now(timezone.utc)
-                    loiter_hits: list = []
-                    for _mmsi, _vessel in normalized_snap.items():
-                        try:
-                            if cable_loiter_rules:
-                                hits = _ais_detector.check_loitering(
-                                    _vessel, cables_db, cable_loiter_rules, cycle_now
-                                )
-                                loiter_hits.extend(hits)
-                            if port_loiter_rules and ports_db:
-                                hits = _ais_detector.check_port_loitering(
-                                    _vessel, ports_db, port_loiter_rules, cycle_now
-                                )
-                                loiter_hits.extend(hits)
-                        except Exception:
-                            pass
-                    _ais_detector.purge_stale_loiter(cycle_now)
-                    for _lhit in loiter_hits:
-                        try:
-                            _broadcast_push(
-                                title=f"Loitering — {_lhit.get('port_name') or _lhit.get('cable_name', 'infrastructure')}",
-                                body=_lhit.get("message", "AIS loitering near infrastructure"),
-                                data={"type": "loitering_alert", "lat": _lhit.get("lat"), "lng": _lhit.get("lng")},
-                            )
-                        except Exception:
-                            pass
-                    new_ais_alerts.extend(loiter_hits)
-                    print(f"[forge-brain] Stage1b loitering: {len(cable_loiter_rules)} cable / {len(port_loiter_rules)} port rules → {len(loiter_hits)} alert(s)")
+            cycle_now = datetime.now(timezone.utc)
+
+            # Stage 1b — Loitering near infrastructure (cables + ports)
+            try:
+                loiter_hits = _run_ais_loitering_rules(
+                    _rows_by_handler.get(_run_ais_loitering_rules, []), normalized_snap, cycle_now
+                )
+                new_ais_alerts.extend(loiter_hits)
             except Exception as _le:
                 print(f"[forge-brain] loitering check error: {_le}")
 
             # Stage 1e — Chokepoint activity (transit + loitering inside strategic polygons)
             new_choke_alerts: list = []
             try:
-                from database import RuleConfig, get_db
-                import json as _json_ck
-                with get_db() as _ckdb:
-                    ck_rule_rows = _ckdb.query(RuleConfig).filter(
-                        RuleConfig.rule_name == "AIS_CHOKEPOINT_ACTIVITY",
-                        RuleConfig.enabled == True,
-                    ).all()
-                ck_rules = [
-                    {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
-                     "severity": r.severity or "medium",
-                     "params": _json_ck.loads(r.params) if isinstance(r.params, str) else r.params}
-                    for r in ck_rule_rows
-                ]
-                if ck_rules and _chokepoint_detector is not None:
-                    cycle_now = datetime.now(timezone.utc)
-                    new_choke_alerts = _chokepoint_detector.check(
-                        normalized_snap, ck_rules, _CHOKEPOINT_DEFS, cycle_now
-                    )
-                    _chokepoint_detector.purge_stale(cycle_now)
-                    new_ais_alerts.extend(new_choke_alerts)
-                    print(f"[forge-brain] Stage1e chokepoint: {len(ck_rules)} rule(s), {len(new_choke_alerts)} alert(s)")
+                new_choke_alerts = _run_chokepoint_rules(
+                    _rows_by_handler.get(_run_chokepoint_rules, []), normalized_snap, cycle_now
+                )
+                new_ais_alerts.extend(new_choke_alerts)
             except Exception as _cke:
                 print(f"[forge-brain] chokepoint check error: {_cke}")
 
@@ -19322,58 +19418,10 @@ async def _forge_detection_cycle():
             # Stage 2b — ADSB loitering near airport (DB-backed rules)
             new_adsb_loiter_alerts: list = []
             try:
-                from database import RuleConfig, Airport, get_db
-                import json as _json_al
-                with get_db() as _aldb:
-                    al_rule_rows = _aldb.query(RuleConfig).filter(
-                        RuleConfig.rule_name == "ADSB_LOITERING_NEAR_AIRPORT",
-                        RuleConfig.enabled == True,
-                    ).all()
-                al_rules = [
-                    {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
-                     "params": _json_al.loads(r.params) if isinstance(r.params, str) else r.params}
-                    for r in al_rule_rows
-                ]
-                if al_rules and _adsb_loiter_detector is not None:
-                    cycle_now = datetime.now(timezone.utc)
-
-                    def _airports_fn(region_id=None, types=None):
-                        try:
-                            with get_db() as _apdb:
-                                q = _apdb.query(Airport)
-                                if region_id:
-                                    q = q.filter(Airport.region_id == region_id)
-                                if types:
-                                    from sqlalchemy import or_ as _or
-                                    q = q.filter(_or(*[Airport.airport_type == t for t in types]))
-                                rows = q.all()
-                            return [
-                                {"system_id": r.system_id, "ident": r.ident,
-                                 "icao_code": r.icao_code, "airport_name": r.airport_name,
-                                 "lat": r.latitude, "lon": r.longitude,
-                                 "airport_type": r.airport_type}
-                                for r in rows
-                            ]
-                        except Exception:
-                            return []
-
-                    ac_snap = {k: v for k, v in _GLOBAL_ADSB_CACHE.items()}
-                    new_adsb_loiter_alerts = _adsb_loiter_detector.check(
-                        ac_snap, al_rules, cycle_now, airports_fn=_airports_fn
-                    )
-                    _adsb_loiter_detector.purge_stale(cycle_now)
-                    for _alrt in new_adsb_loiter_alerts:
-                        try:
-                            _broadcast_push(
-                                title=_alrt.get("title", "Aircraft loitering near airport"),
-                                body=_alrt.get("message", ""),
-                                data={"type": "adsb_loiter_alert",
-                                      "lat": _alrt.get("lat"), "lng": _alrt.get("lng")},
-                            )
-                        except Exception:
-                            pass
-                    new_adsb_alerts.extend(new_adsb_loiter_alerts)
-                    print(f"[forge-brain] Stage2b ADSB loiter: {len(al_rules)} rule(s), {len(new_adsb_loiter_alerts)} alert(s)")
+                new_adsb_loiter_alerts = _run_adsb_loiter_rules(
+                    _rows_by_handler.get(_run_adsb_loiter_rules, []), cycle_now
+                )
+                new_adsb_alerts.extend(new_adsb_loiter_alerts)
             except Exception as _ale:
                 print(f"[forge-brain] ADSB loiter check error: {_ale}")
 

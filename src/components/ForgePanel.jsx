@@ -3068,7 +3068,6 @@ const NEWS_ARTICLE_TYPES = ["conflict", "sanctions", "military", "humanitarian",
 const TRIGGER_TYPES = {
     AIS: [
         { value: "stationary_near_infrastructure", label: "Loitering near infrastructure (cable / port)", params: { infra_type: "cable", max_speed_knots: 0.5, proximity_km: 10, min_duration_minutes: 120 } },
-        { value: "AIS_DARK_SHIP",                  label: "AIS Dark Ship (gap detection)", params: { min_gap_minutes: 60, min_speed_before_gap: 2.0 } },
         { value: "AIS_CHOKEPOINT_ACTIVITY",        label: "AIS Chokepoint Activity (transit / loitering)", params: { target: "ALL", monitor_transit: true, monitor_loitering: false, min_loiter_duration_minutes: 45, max_loiter_speed_knots: 1.0 } },
     ],
     ADSB: [
@@ -3117,8 +3116,6 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const [scopeSingle, setScopeSingle] = useState("")
     const [regions, setRegions]         = useState([])
 
-    // Dark ship state
-    const [darkRegion, setDarkRegion]   = useState("")   // last_known_region for dark ship
     const [iconType, setIconType]       = useState("")   // optional ALERT_ICONS key override
 
     // News pattern state
@@ -3144,20 +3141,19 @@ function CreateRuleModal({ source, onClose, onCreated }) {
     const [flagStates, setFlagStates]             = useState("")
 
     const isInfraRule   = source === "AIS"  && triggerType === "stationary_near_infrastructure"
-    const isDarkRule    = source === "AIS"  && triggerType === "AIS_DARK_SHIP"
     const isLoiterRule  = source === "ADSB" && triggerType === "ADSB_LOITERING_NEAR_AIRPORT"
     const isChokeRule   = source === "AIS"  && triggerType === "AIS_CHOKEPOINT_ACTIVITY"
     const isNewsRule    = source === "NEWS" && triggerType === "NEWS_PATTERN"
-    const isDbRule      = isInfraRule || isDarkRule || isLoiterRule || isChokeRule || isNewsRule
+    const isDbRule      = isInfraRule || isLoiterRule || isChokeRule || isNewsRule
 
     useEffect(() => {
-        if ((isInfraRule || isDarkRule || isLoiterRule) && regions.length === 0) {
+        if ((isInfraRule || isLoiterRule) && regions.length === 0) {
             fetch(`${API}/api/cables/regions`)
                 .then(r => r.ok ? r.json() : { regions: [] })
                 .then(d => setRegions(d.regions || []))
                 .catch(() => {})
         }
-    }, [isInfraRule, isDarkRule, isLoiterRule])
+    }, [isInfraRule, isLoiterRule])
 
     useEffect(() => {
         if (isChokeRule && chokepoints.length === 0) {
@@ -3178,7 +3174,7 @@ function CreateRuleModal({ source, onClose, onCreated }) {
         const t = triggers.find(t => t.value === val)
         setParams(t?.params ? JSON.parse(JSON.stringify(t.params)) : {})
         setScopeMode("ALL"); setScopeRegion(""); setScopeSingle("")
-        setDarkRegion(""); setIconType("")
+        setIconType("")
         setLoiterScopeMode("ALL"); setLoiterScopeRegion(""); setLoiterScopeSingle("")
         setChokeTarget("ALL"); setChokeSelected([]); setMonitorTransit(true)
         setMonitorLoitering(false); setVesselTypes([]); setFlagStates("")
@@ -3220,18 +3216,6 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                             min_duration_minutes: parseFloat(params.min_duration_minutes ?? 30),
                             distance_metres:      Math.round((parseFloat(params.proximity_km ?? 0.5)) * 1000),
                             duration_minutes:     parseFloat(params.min_duration_minutes ?? 30),
-                            ...(iconType ? { icon_type: iconType } : {}),
-                        },
-                    }
-                } else if (isDarkRule) {
-                    ruleBody = {
-                        rule_name: name,
-                        trigger_type: "AIS_DARK_SHIP",
-                        severity,
-                        params: {
-                            min_gap_minutes:      parseFloat(params.min_gap_minutes ?? 60),
-                            min_speed_before_gap: parseFloat(params.min_speed_before_gap ?? 2.0),
-                            ...(darkRegion ? { last_known_region: darkRegion } : {}),
                             ...(iconType ? { icon_type: iconType } : {}),
                         },
                     }
@@ -3394,29 +3378,6 @@ function CreateRuleModal({ source, onClose, onCreated }) {
 
                         {scopeMode === "SINGLE" && fld("Cable System ID (e.g. CABLE-042)", (
                             <input value={scopeSingle} onChange={e => setScopeSingle(e.target.value)} placeholder="CABLE-NNN" style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
-                        ))}
-                    </>
-                ) : isDarkRule ? (
-                    <>
-                        <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                            {[
-                                ["min_gap_minutes",      "AIS gap (min)",       params.min_gap_minutes ?? 60],
-                                ["min_speed_before_gap", "Min speed before (kn)", params.min_speed_before_gap ?? 2.0],
-                            ].map(([key, label, def]) => (
-                                <div key={key}>
-                                    <label style={{ color: "#475569", fontSize: 10, display: "block", marginBottom: 4 }}>{label}</label>
-                                    <input type="number" step="any"
-                                        value={params[key] ?? def}
-                                        onChange={e => setParams(p => ({ ...p, [key]: e.target.value }))}
-                                        style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
-                                </div>
-                            ))}
-                        </div>
-                        {fld("Last known region (optional filter)", (
-                            <select value={darkRegion} onChange={e => setDarkRegion(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
-                                <option value="">Any region</option>
-                                {regions.map(r => <option key={r.region_id} value={r.region_id}>{r.region_name} ({r.region_id})</option>)}
-                            </select>
                         ))}
                     </>
                 ) : isLoiterRule ? (
@@ -3767,7 +3728,6 @@ function DetectorWorkspace({ source }) {
                                                             ["proximity",   p.proximity_km != null ? `${p.proximity_km} km` : p.distance_metres != null ? `${p.distance_metres} m` : null],
                                                             ["max speed",   p.max_speed_knots != null ? `${p.max_speed_knots} kn` : null],
                                                             ["duration",    p.min_duration_minutes != null ? `${p.min_duration_minutes} min` : null],
-                                                            ["min gap",     p.min_gap_minutes != null ? `${p.min_gap_minutes} min` : null],
                                                             ["squawk codes", p.squawk_codes ? p.squawk_codes.join(", ") : null],
                                                         ].filter(([, v]) => v != null).map(([k, v]) => (
                                                             <div key={k} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
