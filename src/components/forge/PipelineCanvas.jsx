@@ -7,7 +7,6 @@ function forgeHeaders() {
     return {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${localStorage.getItem('hw-auth-token') || ''}`,
-        'X-Forge-Passcode': localStorage.getItem('forge_passcode') || '',
     }
 }
 

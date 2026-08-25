@@ -38,7 +38,7 @@ import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
 import LayersPanel from "./components/LayersPanel.jsx"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
-import ForgePanel, { ForgeGate } from "./components/ForgePanel.jsx"
+import ForgePanel from "./components/ForgePanel.jsx"
 import DroneOperatorMode from "./components/DroneOperatorMode.jsx"
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
 import NewsTicker from "./components/NewsTicker.jsx"
@@ -1674,20 +1674,24 @@ export default function App() {
                     </div>
                 )}
 
-                {/* Forge — passcode-gated intelligence training lab */}
+                {/* Forge — admin-only intelligence training lab */}
                 {tabs.some(t => t.type === "forge") && (
                     <div style={{
                         flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
                         display: activeTabType === "forge" ? "block" : "none",
                         position: "relative",
                     }}>
-                        <ForgeGate>
+                        {(currentUser?.role === "admin" || currentUser?.is_super_admin === true) ? (
                             <ForgePanel
                                 user={currentUser}
                                 isMobile={isMobile}
                                 onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
                             />
-                        </ForgeGate>
+                        ) : (
+                            <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 13, fontFamily: "system-ui, sans-serif" }}>
+                                Admin access required.
+                            </div>
+                        )}
                     </div>
                 )}
 

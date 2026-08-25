@@ -29,9 +29,17 @@ print("  Asset registry + claim validity windows — verification")
 print("="*70)
 
 import main  # noqa: E402
-from database import Asset, OntologyClaim, get_db
+from database import Asset, OntologyClaim, User, get_db
+from app_shared import make_jwt
 
-HEADERS = {"X-Forge-Passcode": main._FORGE_PASSCODE}
+# Forge is admin-gated (require_admin_user), not passcode-gated — create a
+# real admin test user and mint a real JWT for it, same as any other admin.
+_ADMIN_ID = "TESTAST-ADMIN"
+with get_db() as _db:
+    _db.merge(User(id=_ADMIN_ID, email="testast-admin@test.local", password_hash="test",
+                    role="admin", approved=True))
+    _db.commit()
+HEADERS = {"Authorization": f"Bearer {make_jwt(_ADMIN_ID)}"}
 PREFIX  = "TESTAST"
 created_asset_ids = []
 created_claim_ids = []
@@ -152,6 +160,11 @@ with TestClient(main.app) as client:
         remaining_claims = db.query(OntologyClaim).filter(OntologyClaim.claim_id.in_(created_claim_ids)).count()
         check("cleanup removed test asset rows", remaining == 0)
         check("cleanup removed test claim rows", remaining_claims == 0)
+
+with get_db() as db:
+    db.query(User).filter(User.id == _ADMIN_ID).delete(synchronize_session=False)
+    db.commit()
+    check("cleanup removed test admin user", db.query(User).filter(User.id == _ADMIN_ID).count() == 0)
 
 print("="*70)
 if FAILURES:

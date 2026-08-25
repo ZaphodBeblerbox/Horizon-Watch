@@ -28,9 +28,17 @@ print("  Report entity, status machine, council, PDF — verification")
 print("="*70)
 
 import main  # noqa: E402
-from database import Report, ReportSnapshot, StrategicZone, get_db
+from database import Report, ReportSnapshot, StrategicZone, User, get_db
+from app_shared import make_jwt
 
-HEADERS = {"X-Forge-Passcode": main._FORGE_PASSCODE}
+# Forge is admin-gated (require_admin_user), not passcode-gated — create a
+# real admin test user and mint a real JWT for it, same as any other admin.
+_ADMIN_ID = "TESTRPT-ADMIN"
+with get_db() as _db:
+    _db.merge(User(id=_ADMIN_ID, email="testrpt-admin@test.local", password_hash="test",
+                    role="admin", approved=True))
+    _db.commit()
+HEADERS = {"Authorization": f"Bearer {make_jwt(_ADMIN_ID)}"}
 PREFIX  = "TESTRPT"
 created_report_ids = []
 created_snapshot_ids = []
@@ -230,6 +238,11 @@ with TestClient(main.app) as client:
         check("cleanup removed test reports", db.query(Report).filter(Report.report_id.in_(created_report_ids)).count() == 0)
         check("cleanup removed test snapshot", db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id.in_(created_snapshot_ids)).count() == 0)
         check("cleanup removed test zone", db.query(StrategicZone).filter(StrategicZone.zone_id.in_(created_zone_ids)).count() == 0)
+
+with get_db() as db:
+    db.query(User).filter(User.id == _ADMIN_ID).delete(synchronize_session=False)
+    db.commit()
+    check("cleanup removed test admin user", db.query(User).filter(User.id == _ADMIN_ID).count() == 0)
 
 print("="*70)
 if FAILURES:

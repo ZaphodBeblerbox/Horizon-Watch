@@ -14,44 +14,12 @@ function forgeHeaders() {
     return {
         "Content-Type": "application/json",
         Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
-        "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
     }
 }
 function forgeFormHeaders() {
     return {
         Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
-        "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
     }
-}
-
-// ── Passcode gate ──────────────────────────────────────────────────────────────
-export function ForgeGate({ children }) {
-    const [ok, setOk] = useState(() => localStorage.getItem("forge_access") === "true")
-    const [code, setCode] = useState("")
-    const [err, setErr] = useState("")
-    const [busy, setBusy] = useState(false)
-    const submit = async () => {
-        setBusy(true); setErr("")
-        try {
-            const res = await fetch(`${API}/api/forge/auth`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ passcode: code }) })
-            const d = await res.json()
-            if (d.access) { localStorage.setItem("forge_access", "true"); localStorage.setItem("forge_passcode", code); setOk(true) }
-            else setErr("Invalid passcode")
-        } catch (_e) { setErr("Connection failed") }
-        finally { setBusy(false) }
-    }
-    if (ok) return children
-    return (
-        <div style={{ position: "absolute", inset: 0, background: "rgba(8,12,24,0.98)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ background: "#111827", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 10, padding: 32, width: 320 }}>
-                <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700, marginBottom: 6, letterSpacing: "0.06em" }}>FORGE</div>
-                <div style={{ color: "#475569", fontSize: 12, marginBottom: 20 }}>Intelligence Training Lab — restricted access</div>
-                <input type="password" value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} placeholder="Enter passcode" style={{ width: "100%", padding: "10px 12px", marginBottom: 10, background: "rgba(30,41,59,0.8)", border: "1px solid rgba(148,163,184,0.15)", borderRadius: 6, color: "#e2e8f0", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-                {err && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 8 }}>{err}</div>}
-                <button onClick={submit} disabled={busy} style={{ width: "100%", padding: "10px 0", borderRadius: 6, border: "none", background: busy ? "#1e293b" : "#60a5fa", color: busy ? "#475569" : "#0f172a", fontWeight: 700, cursor: busy ? "default" : "pointer", fontSize: 13 }}>{busy ? "Authenticating…" : "Access Forge"}</button>
-            </div>
-        </div>
-    )
 }
 
 // ── Pipeline data ──────────────────────────────────────────────────────────────
