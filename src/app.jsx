@@ -39,7 +39,6 @@ import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
 import LayersPanel from "./components/LayersPanel.jsx"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
 import ForgePanel from "./components/ForgePanel.jsx"
-import DroneOperatorMode from "./components/DroneOperatorMode.jsx"
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
 import NewsTicker from "./components/NewsTicker.jsx"
 import WorldClocksBar from "./components/WorldClocksBar.jsx"
@@ -156,7 +155,6 @@ export default function App() {
     const [currentUser,  setCurrentUser]  = useState(null)
     const [showAdmin,         setShowAdmin]         = useState(false)
     const [showChat,          setShowChat]          = useState(false)
-    const [droneMode,           setDroneMode]           = useState("full") // "full" | "split"
     const [overwatchActive,     setOverwatchActive]     = useState(false)
     const [overwatchDrawActive, setOverwatchDrawActive] = useState(false)
     // Overwatch panel state (managed here, fed to OverwatchSidebar)
@@ -849,7 +847,7 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge", drone: "Drone Ops" }
+        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge" }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
         const newId = crypto.randomUUID()
@@ -1506,7 +1504,6 @@ export default function App() {
                             }
                         }}
                         onOpenForge={() => openTab("forge")}
-                        onOpenDrone={() => openTab("drone")}
                     />
                 )}
 
@@ -1695,21 +1692,6 @@ export default function App() {
                     </div>
                 )}
 
-                {/* Drone Operator Mode — full-screen feed + detections tab */}
-                {tabs.some(t => t.type === "drone") && (
-                    <div style={{
-                        flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
-                        display: activeTabType === "drone" ? "flex" : "none",
-                        flexDirection: "column",
-                    }}>
-                        <DroneOperatorMode
-                            mode={droneMode}
-                            onMinimize={() => { setDroneMode("split"); openTab("map") }}
-                            onExpand={() => setDroneMode("full")}
-                        />
-                    </div>
-                )}
-
                 {/* ── Right panel slot — 300px, only one at a time ──────────── */}
                 {rightPanel === "detail" && selectedSurface && (
                     <SurfaceDetailPanel
@@ -1794,26 +1776,6 @@ export default function App() {
                         currentUser={currentUser}
                         onClose={() => setShowChat(false)}
                     />
-                )}
-
-                {/* Drone PiP overlay — shown on map tab when drone is minimized to split */}
-                {tabs.some(t => t.type === "drone") && droneMode === "split" && activeTabType === "map" && (
-                    <div style={{
-                        position: "fixed",
-                        bottom: 0, right: 0,
-                        width: 480, height: 320,
-                        zIndex: 50,
-                        borderRadius: "12px 0 0 0",
-                        overflow: "hidden",
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        boxShadow: "0 -4px 32px rgba(0,0,0,0.6)",
-                    }}>
-                        <DroneOperatorMode
-                            mode="split"
-                            onExpand={() => { openTab("drone"); setDroneMode("full") }}
-                            onMinimize={() => setDroneMode("full")}
-                        />
-                    </div>
                 )}
 
             </div>
