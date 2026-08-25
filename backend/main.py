@@ -9624,9 +9624,14 @@ async def _ais_aggregate_loop():
 
 async def _prune_history_loop():
     """Delete raw history older than 24 hours and aggregated density older
-    than 90 days. Runs once per day."""
+    than 90 days. Runs immediately on startup, then once per day.
+
+    Previously this slept 24h *before* the first run, so on a dev machine
+    that's restarted before reaching a full day of continuous uptime, the
+    cleanup never fired at all — track_density grew unbounded (10M+ rows)
+    despite this code already existing.
+    """
     while True:
-        await asyncio.sleep(86400)
         try:
             from database import AircraftHistory, VesselHistory, TrackDensity, get_db
             now = datetime.utcnow()
@@ -9640,6 +9645,7 @@ async def _prune_history_loop():
             print(f"[history-prune] raw: -{deleted_ac} ac, -{deleted_vs} vs (>24h); density: -{deleted_td} (>90d)")
         except Exception as e:
             print(f"[history-prune] error: {e}")
+        await asyncio.sleep(86400)
 
 
 @app.get("/api/history/aircraft")

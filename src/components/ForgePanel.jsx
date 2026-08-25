@@ -7,6 +7,7 @@ import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ForceGraph from "./forge/ForceGraph.jsx"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts"
 import { locateReportClaim } from "../services/reportDeepLink.js"
+import { FOCUS_REGIONS } from "../constants/profile.js"
 
 const API = API_BASE
 
@@ -1865,14 +1866,346 @@ function ReportsWorkspace() {
         <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
             <Toolbar>
                 <div style={{ display: "flex", gap: 2, background: "#0a0e1a", borderRadius: 4, padding: 2 }}>
-                    {["reports", "snapshots"].map(t => (
+                    {["reports", "snapshots", "tasks"].map(t => (
                         <button key={t} onClick={() => setTab(t)} style={{ padding: "3px 10px", borderRadius: 3, border: "none", cursor: "pointer", background: tab === t ? "rgba(96,165,250,0.12)" : "transparent", color: tab === t ? "#60a5fa" : "#475569", fontSize: 10, fontWeight: tab === t ? 600 : 400 }}>
                             {t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
                     ))}
                 </div>
             </Toolbar>
-            {tab === "reports" ? <ReportsPanel /> : <ReportSnapshotsWorkspace />}
+            {tab === "reports" ? <ReportsPanel /> : tab === "snapshots" ? <ReportSnapshotsWorkspace /> : <TasksPanel />}
+        </div>
+    )
+}
+
+// ── Mission Tasking (roadmap Phase 4: region/period-scoped collection) ──────
+//
+// Sits in front of Reports/Snapshots: task the system to watch a region (or
+// let it infer one from Mission Profile) over a time window, with a given
+// focus, and see the "Original Data Package" — what's actually been
+// collected — before anything is drafted. While a task is queued/collecting,
+// the package view is computed live from prepare_intelligence_picture()
+// scoped to the task's region/period; once collection finishes it's the
+// exact, frozen ReportSnapshot content the resulting draft will cite.
+
+const TASK_STATUS_COLORS = {
+    queued: "#94a3b8", collecting: "#facc15", ready_to_draft: "#60a5fa",
+    drafting: "#a78bfa", council_review: "#f472b6", human_review: "#fb923c",
+    approved: "#60a5fa", rejected: "#f87171", published: "#4ade80", archived: "#475569",
+}
+
+function TaskCreateForm({ onSaved, onCancel }) {
+    const [focus, setFocus] = useState("")
+    const [regionMode, setRegionMode] = useState("auto")   // "auto" | "explicit"
+    const [regions, setRegions] = useState([])
+    const [periodStart, setPeriodStart] = useState("")
+    const [periodEnd, setPeriodEnd] = useState("")
+    const [saving, setSaving] = useState(false)
+    const [err, setErr] = useState("")
+
+    const toggleRegion = (r) => setRegions(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r])
+    const canSubmit = regionMode === "auto" || regions.length > 0
+
+    const submit = async () => {
+        if (!canSubmit) return
+        setSaving(true); setErr("")
+        const body = { focus: focus.trim() || null, region: regionMode === "auto" ? "auto" : regions }
+        if (periodStart) body.period_start = new Date(periodStart).toISOString()
+        if (periodEnd)   body.period_end   = new Date(periodEnd).toISOString()
+        try {
+            const res = await fetch(`${API}/api/reports/tasks`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify(body) })
+            const d = await res.json()
+            if (res.ok) onSaved(d)
+            else setErr(d.detail || "Failed to create task")
+        } catch (e) { setErr(e.message) }
+        finally { setSaving(false) }
+    }
+
+    return (
+        <div style={{ background: "#111827", borderRadius: 6, padding: 14, marginBottom: 14 }}>
+            <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600, marginBottom: 10 }}>New Mission Task</div>
+            <input value={focus} onChange={e => setFocus(e.target.value)} placeholder="Focus — what should this task watch for? (optional)" style={{ ...inputStyle, width: "100%", boxSizing: "border-box", marginBottom: 10 }} />
+            <div style={{ display: "flex", gap: 14, marginBottom: 10 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>
+                    <input type="radio" checked={regionMode === "auto"} onChange={() => setRegionMode("auto")} /> Auto (Mission Profile's focus regions)
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>
+                    <input type="radio" checked={regionMode === "explicit"} onChange={() => setRegionMode("explicit")} /> Choose regions
+                </label>
+            </div>
+            {regionMode === "explicit" && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10, maxHeight: 100, overflowY: "auto" }}>
+                    {FOCUS_REGIONS.map(r => (
+                        <button key={r} onClick={() => toggleRegion(r)} style={{ padding: "3px 8px", borderRadius: 10, border: "1px solid " + (regions.includes(r) ? "#60a5fa" : "rgba(148,163,184,0.15)"), background: regions.includes(r) ? "rgba(96,165,250,0.12)" : "transparent", color: regions.includes(r) ? "#60a5fa" : "#64748b", fontSize: 10, cursor: "pointer" }}>{r}</button>
+                    ))}
+                </div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <div style={{ flex: 1 }}>
+                    <div style={{ color: "#475569", fontSize: 9, marginBottom: 3 }}>Period start (optional — blank = now)</div>
+                    <input type="datetime-local" value={periodStart} onChange={e => setPeriodStart(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                    <div style={{ color: "#475569", fontSize: 9, marginBottom: 3 }}>Period end (optional — blank = open-ended)</div>
+                    <input type="datetime-local" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+                </div>
+            </div>
+            {err && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{err}</div>}
+            <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={onCancel} style={ghostBtn}>Cancel</button>
+                <button onClick={submit} disabled={saving || !canSubmit} style={{ padding: "6px 14px", borderRadius: 5, border: "none", background: (saving || !canSubmit) ? "#1e293b" : "#60a5fa", color: (saving || !canSubmit) ? "#475569" : "#0f172a", fontWeight: 600, cursor: (saving || !canSubmit) ? "default" : "pointer", fontSize: 11 }}>
+                    {saving ? "Creating…" : "Create Task"}
+                </button>
+            </div>
+        </div>
+    )
+}
+
+function TasksPanel() {
+    const [tasks,    setTasks]    = useState([])
+    const [loaded,   setLoaded]   = useState(false)
+    const [showForm, setShowForm] = useState(false)
+    const [selected, setSelected] = useState(null)   // task_id
+
+    const reload = () =>
+        fetch(`${API}/api/reports/tasks`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { setTasks(Array.isArray(d) ? d : []); setLoaded(true) })
+            .catch(() => setLoaded(true))
+
+    useEffect(() => { reload() }, [])
+
+    if (selected) {
+        return <TaskDataPackage taskId={selected} onBack={() => { setSelected(null); reload() }} />
+    }
+
+    return (
+        <WorkspaceBody>
+            <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
+                Task the system to watch a region — or let it infer one from Mission Profile — over a time window, with a given focus. Click a task to see its Original Data Package: everything actually collected so far, before anything is drafted.
+            </div>
+            <div style={{ marginBottom: 14 }}>
+                <button onClick={() => setShowForm(v => !v)} style={{ padding: "5px 12px", borderRadius: 5, border: "none", background: showForm ? "#1e293b" : "#60a5fa", color: showForm ? "#94a3b8" : "#0f172a", fontWeight: 600, cursor: "pointer", fontSize: 10 }}>
+                    {showForm ? "Cancel" : "+ New Task"}
+                </button>
+            </div>
+            {showForm && <TaskCreateForm onSaved={() => { setShowForm(false); reload() }} onCancel={() => setShowForm(false)} />}
+            {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
+            {loaded && tasks.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No mission tasks yet.</div>}
+            {tasks.map(t => (
+                <div key={t.task_id} onClick={() => setSelected(t.task_id)} style={{ background: "#111827", borderRadius: 4, padding: "10px 12px", marginBottom: 8, cursor: "pointer", borderLeft: `3px solid ${TASK_STATUS_COLORS[t.status] || "#475569"}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{t.focus || t.task_id}</span>
+                        <span style={{ fontSize: 9, padding: "1px 7px", borderRadius: 8, background: (TASK_STATUS_COLORS[t.status] || "#475569") + "22", color: TASK_STATUS_COLORS[t.status] || "#94a3b8", fontWeight: 700, textTransform: "uppercase" }}>{t.status}</span>
+                    </div>
+                    <div style={{ color: "#64748b", fontSize: 10, marginTop: 6 }}>
+                        {Array.isArray(t.region) ? t.region.join(", ") : (t.region || "unscoped")}
+                        {t.period_start && <> · from {new Date(t.period_start).toLocaleString()}</>}
+                        {t.period_end && <> to {new Date(t.period_end).toLocaleString()}</>}
+                    </div>
+                </div>
+            ))}
+        </WorkspaceBody>
+    )
+}
+
+const PKG_TABS = ["summary", "map", "timeline", "sources", "indicators"]
+
+function TaskSummaryTab({ task, pic }) {
+    const stats = pic.statistics || {}
+    return (
+        <div style={{ maxWidth: 640 }}>
+            <Section title="Task">
+                <ConfigRow label="Focus" value={task.focus || "—"} />
+                <ConfigRow label="Region" value={Array.isArray(task.region) ? task.region.join(", ") : (task.region || "unscoped")} />
+                <ConfigRow label="Period start" value={task.period_start ? new Date(task.period_start).toLocaleString() : "—"} />
+                <ConfigRow label="Period end" value={task.period_end ? new Date(task.period_end).toLocaleString() : "open-ended"} />
+                <ConfigRow label="Created by" value={task.created_by || "—"} />
+                <ConfigRow label="Snapshot" value={task.snapshot_id || "not frozen yet"} />
+                <ConfigRow label="Report" value={task.report_id || "not started yet"} />
+            </Section>
+            <Section title="Statistics">
+                <ConfigRow label="Total active signals" value={stats.total_active_signals ?? "—"} />
+                <ConfigRow label="Critical signals" value={stats.critical_signals ?? "—"} />
+                <ConfigRow label="Active fusions" value={stats.active_fusions ?? "—"} />
+                <ConfigRow label="Active surges" value={stats.active_surges ?? "—"} />
+                <ConfigRow label="Elevated regions" value={stats.elevated_regions ?? "—"} />
+                <ConfigRow label="Low-quality alerts excluded" value={stats.alerts_excluded_low_quality ?? "—"} />
+            </Section>
+        </div>
+    )
+}
+
+function TaskMapTab({ pic }) {
+    const points = []
+    for (const f of (pic.fusion_events || []))     if (f.lat != null && f.lon != null) points.push({ lat: f.lat, lon: f.lon, color: "#BF5AF2", label: f.title })
+    for (const s of (pic.surge_events || []))      if (s.lat != null && s.lon != null) points.push({ lat: s.lat, lon: s.lon, color: "#FF9500", label: s.headline })
+    for (const a of (pic.ais_anomalies || []))     if (a.lat != null && a.lon != null) points.push({ lat: a.lat, lon: a.lon, color: "#34AADC", label: a.location_name || a.summary })
+    for (const a of (pic.adsb_anomalies || []))    if (a.lat != null && a.lon != null) points.push({ lat: a.lat, lon: a.lon, color: "#5856D6", label: a.location_name || a.summary })
+    for (const d of (pic.sentinel_detections || [])) if (d.lat != null && d.lon != null) points.push({ lat: d.lat, lon: d.lon, color: "#30D158", label: d.object_type })
+    for (const a of (pic.news_assessments || []))  if (a.lat != null && a.lon != null) points.push({ lat: a.lat, lon: a.lon, color: "#f87171", label: a.headline })
+
+    const W = 640, H = 320
+    const toXY = (lat, lon) => [((lon + 180) / 360) * W, ((90 - lat) / 180) * H]
+
+    return (
+        <div>
+            <div style={{ color: "#475569", fontSize: 10, marginBottom: 8 }}>
+                {points.length} geolocated item{points.length === 1 ? "" : "s"} — flat lat/lon projection (the full 3D globe is on the main map).
+            </div>
+            <svg width={W} height={H} style={{ background: "#0a0e1a", borderRadius: 4, border: "1px solid rgba(148,163,184,0.08)" }}>
+                {Array.from({ length: 7 }, (_, i) => <line key={"v" + i} x1={i * W / 6} y1={0} x2={i * W / 6} y2={H} stroke="rgba(148,163,184,0.06)" />)}
+                {Array.from({ length: 5 }, (_, i) => <line key={"h" + i} x1={0} y1={i * H / 4} x2={W} y2={i * H / 4} stroke="rgba(148,163,184,0.06)" />)}
+                {points.map((p, i) => {
+                    const [x, y] = toXY(p.lat, p.lon)
+                    return <circle key={i} cx={x} cy={y} r={4} fill={p.color} fillOpacity={0.85}><title>{p.label}</title></circle>
+                })}
+            </svg>
+            {points.length === 0 && <div style={{ color: "#334155", fontSize: 11, marginTop: 8 }}>No geolocated items collected yet.</div>}
+        </div>
+    )
+}
+
+function TaskTimelineTab({ pic }) {
+    const items = []
+    for (const f of (pic.fusion_events || []))       items.push({ ts: f.created_at, type: "Fusion",   label: f.title })
+    for (const d of (pic.sentinel_detections || []))  items.push({ ts: d.scan_timestamp, type: "Sentinel", label: d.object_type })
+    for (const s of (pic.surge_events || []))         items.push({ ts: null, type: "Surge", label: s.headline })
+    for (const a of (pic.news_assessments || []))     items.push({ ts: null, type: "News",  label: a.headline })
+    const withTs    = items.filter(i => i.ts).sort((a, b) => new Date(b.ts) - new Date(a.ts))
+    const withoutTs = items.filter(i => !i.ts)
+    return (
+        <div style={{ maxWidth: 640 }}>
+            {withTs.map((i, idx) => (
+                <div key={idx} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                    <span style={{ color: "#475569", fontSize: 10, width: 140, flexShrink: 0 }}>{new Date(i.ts).toLocaleString()}</span>
+                    <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 2, background: "rgba(148,163,184,0.08)", color: "#94a3b8", flexShrink: 0 }}>{i.type}</span>
+                    <span style={{ color: "#cbd5e1", fontSize: 11 }}>{i.label}</span>
+                </div>
+            ))}
+            {withoutTs.length > 0 && (
+                <>
+                    <div style={{ color: "#334155", fontSize: 9, textTransform: "uppercase", marginTop: 14, marginBottom: 6 }}>Undated items</div>
+                    {withoutTs.map((i, idx) => (
+                        <div key={idx} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                            <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 2, background: "rgba(148,163,184,0.08)", color: "#94a3b8", flexShrink: 0 }}>{i.type}</span>
+                            <span style={{ color: "#cbd5e1", fontSize: 11 }}>{i.label}</span>
+                        </div>
+                    ))}
+                </>
+            )}
+            {items.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>Nothing collected yet.</div>}
+        </div>
+    )
+}
+
+function TaskSourcesTab({ pic }) {
+    const articles = pic.top_articles || []
+    return (
+        <div style={{ maxWidth: 640 }}>
+            {articles.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>No sourced articles collected yet.</div>}
+            {articles.map((a, i) => (
+                <div key={i} style={{ padding: "8px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                    <a href={a.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa", fontSize: 12, textDecoration: "none" }}>{a.title || a.url}</a>
+                    <div style={{ color: "#475569", fontSize: 10, marginTop: 2 }}>{a.article_type || "—"} · tier {a.tier ?? "—"} · relevance {a.relevance_score ?? "—"}</div>
+                </div>
+            ))}
+        </div>
+    )
+}
+
+function TaskIndicatorsTab({ pic }) {
+    const elevated = pic.threat_overview?.elevated_regions || []
+    const risks    = pic.foresight_risks || []
+    return (
+        <div style={{ maxWidth: 640 }}>
+            <Section title="Elevated Regions">
+                {elevated.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>None elevated in scope.</div>}
+                {elevated.map((r, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                        <span style={{ color: "#cbd5e1", fontSize: 11 }}>{r.region}</span>
+                        <span style={{ color: "#94a3b8", fontSize: 11 }}>{r.level} · {r.score} · {r.trend}</span>
+                    </div>
+                ))}
+            </Section>
+            <Section title="Foresight / Escalation Risks">
+                {risks.length === 0 && <div style={{ color: "#334155", fontSize: 11 }}>None above threshold in scope.</div>}
+                {risks.map((r, i) => (
+                    <div key={i} style={{ padding: "6px 0", borderBottom: "1px solid rgba(148,163,184,0.04)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span style={{ color: "#cbd5e1", fontSize: 11, fontWeight: 600 }}>{r.zone}</span>
+                            <span style={{ color: "#fbbf24", fontSize: 11 }}>{Math.round((r.escalation_probability || 0) * 100)}%</span>
+                        </div>
+                        {r.situation && <div style={{ color: "#64748b", fontSize: 10, marginTop: 2 }}>{r.situation}</div>}
+                    </div>
+                ))}
+            </Section>
+        </div>
+    )
+}
+
+function TaskDataPackage({ taskId, onBack }) {
+    const [task,   setTask]   = useState(null)
+    const [subTab, setSubTab] = useState("summary")
+    const [busy,   setBusy]   = useState(false)
+    const [msg,    setMsg]    = useState("")
+
+    const reload = () =>
+        fetch(`${API}/api/reports/tasks/${taskId}`, { headers: forgeHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => setTask(d))
+            .catch(() => {})
+
+    useEffect(() => { reload() }, [taskId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const doAction = async (path, body) => {
+        setBusy(true); setMsg("")
+        try {
+            const res = await fetch(`${API}/api/reports/tasks/${taskId}${path}`, { method: "POST", headers: forgeHeaders(), body: JSON.stringify(body || {}) })
+            const d = await res.json()
+            if (res.ok) { setMsg("Done"); await reload() }
+            else setMsg(d.detail || "Failed")
+        } catch (e) { setMsg(e.message) }
+        finally { setBusy(false); setTimeout(() => setMsg(""), 3000) }
+    }
+
+    if (!task) return <WorkspaceBody><div style={{ color: "#475569", fontSize: 12 }}>Loading…</div></WorkspaceBody>
+
+    const pic = task.collected || {}
+    const isCollecting = task.status === "queued" || task.status === "collecting"
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <Toolbar>
+                <button onClick={onBack} style={ghostBtn}>← Back</button>
+                <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{task.focus || task.task_id}</span>
+                <span style={{ fontSize: 9, padding: "1px 7px", borderRadius: 8, background: (TASK_STATUS_COLORS[task.status] || "#475569") + "22", color: TASK_STATUS_COLORS[task.status] || "#94a3b8", fontWeight: 700, textTransform: "uppercase" }}>{task.status}</span>
+                <div style={{ flex: 1 }} />
+                {isCollecting && <button onClick={() => doAction("/finish-collection")} disabled={busy} style={actionBtn("#60a5fa")}>Finish Collection</button>}
+                {task.status === "ready_to_draft" && <button onClick={() => doAction("/draft", {})} disabled={busy} style={actionBtn("#4ade80")}>Start Draft</button>}
+                {task.status === "published" && <button onClick={() => doAction("/archive")} disabled={busy} style={actionBtn("#94a3b8")}>Archive</button>}
+                {msg && <span style={{ color: msg === "Done" ? "#4ade80" : "#f87171", fontSize: 10 }}>{msg}</span>}
+            </Toolbar>
+            <div style={{ display: "flex", gap: 4, padding: "8px 14px", borderBottom: "1px solid rgba(148,163,184,0.06)" }}>
+                {PKG_TABS.map(t => <button key={t} onClick={() => setSubTab(t)} style={tabBtn(subTab === t)}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>)}
+            </div>
+            <WorkspaceBody>
+                {isCollecting && (
+                    <div style={{ color: "#facc15", fontSize: 10, marginBottom: 10, background: "rgba(250,204,21,0.08)", padding: "6px 10px", borderRadius: 4 }}>
+                        Still collecting — this view reflects everything gathered so far in [{task.period_start ? new Date(task.period_start).toLocaleString() : "unbounded"} → now]. It keeps growing until you finish collection.
+                    </div>
+                )}
+                {!isCollecting && task.snapshot_id && (
+                    <div style={{ color: "#4ade80", fontSize: 10, marginBottom: 10, background: "rgba(74,222,128,0.08)", padding: "6px 10px", borderRadius: 4 }}>
+                        Frozen — this is the exact, immutable content of snapshot {task.snapshot_id}, unaffected by anything collected since.
+                    </div>
+                )}
+                {subTab === "summary"    && <TaskSummaryTab task={task} pic={pic} />}
+                {subTab === "map"        && <TaskMapTab pic={pic} />}
+                {subTab === "timeline"   && <TaskTimelineTab pic={pic} />}
+                {subTab === "sources"    && <TaskSourcesTab pic={pic} />}
+                {subTab === "indicators" && <TaskIndicatorsTab pic={pic} />}
+            </WorkspaceBody>
         </div>
     )
 }
