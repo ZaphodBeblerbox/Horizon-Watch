@@ -12,14 +12,72 @@ import datetime
 from datetime import timedelta
 
 
+def _region_ok(lat, lon, region: list[str] | None) -> bool:
+    """True if (lat, lon) falls inside — or within 400km of the edge of — any of
+    the named regions in `region` (same bbox+buffer convention already used by
+    scoring.geo_gate_passes for the Mission Profile surface-pool filter, and the
+    same named-region vocabulary as Mission Profile's own focusRegions). No
+    region requested => everything passes, i.e. today's unscoped behavior."""
+    if not region:
+        return True
+    if lat is None or lon is None:
+        return False
+    from scoring import REGION_BBOXES, _haversine_km
+    for rname in region:
+        bbox = REGION_BBOXES.get(rname)
+        if bbox is None:
+            continue  # unrecognised region name — ignore rather than silently exclude everything
+        s, n, w, e = bbox
+        if s <= lat <= n and w <= lon <= e:
+            return True
+        clamp_lat = max(s, min(n, lat))
+        clamp_lon = max(w, min(e, lon))
+        if _haversine_km(lat, lon, clamp_lat, clamp_lon) <= 400.0:
+            return True
+    return False
+
+
+def _period_ok(ts_value, period_start, period_end) -> bool:
+    """True if ts_value falls within [period_start, period_end] (either bound
+    may be None/open). No period requested => everything passes."""
+    if not (period_start or period_end):
+        return True
+    if ts_value is None:
+        return False
+    if isinstance(ts_value, str):
+        try:
+            ts_value = datetime.datetime.fromisoformat(ts_value.replace("Z", "+00:00"))
+        except Exception:
+            return False
+    if ts_value.tzinfo is not None:
+        ts_value = ts_value.replace(tzinfo=None)
+    if period_start and ts_value < period_start:
+        return False
+    if period_end and ts_value > period_end:
+        return False
+    return True
+
+
 def prepare_intelligence_picture(
     db,
     forge_alerts: list | None = None,
     fusion_engine_instance=None,
+    region: list[str] | None = None,
+    period_start: "datetime.datetime | None" = None,
+    period_end: "datetime.datetime | None" = None,
 ) -> dict:
     """
     Collect and score all active intelligence signals, group by region/zone,
     return a structured dict Claude can reason about directly.
+
+    `region` (optional): list of named Mission-Profile-style region strings
+    (must match scoring.REGION_BBOXES keys, e.g. "Red Sea / Arabian Peninsula")
+    to scope every geolocated signal to. `period_start`/`period_end` (optional):
+    scope every signal to this time window instead of the fixed 24h/48h lookback
+    windows below. All three are additive — omitting them (the default) reproduces
+    today's exact unscoped, "right now, everywhere" behavior byte-for-byte; every
+    existing call site (Director briefings, the unscoped snapshot endpoint) keeps
+    working unchanged.
     """
     from database import (
         FusionEvent, SurgeEvent, SentinelDetection, StrategicZone,
@@ -90,14 +148,18 @@ def prepare_intelligence_picture(
                     "timestamp": row.created_at.isoformat() if row.created_at else "",
                 })
 
-        # Top tier-1/2 news articles (last 24h)
+        # Top tier-1/2 news articles (last 24h, or the requested period)
         top_articles = (
             db.query(_NADB)
-            .filter(_NADB.tier.in_([1, 2]), _NADB.ingested_at >= cutoff_24h)
+            .filter(_NADB.tier.in_([1, 2]), _NADB.ingested_at >= (period_start or cutoff_24h))
             .order_by(_NADB.relevance_score.desc())
             .limit(20)
             .all()
         )
+        top_articles = [
+            a for a in top_articles
+            if _region_ok(a.lat, a.lon, region) and _period_ok(a.ingested_at, None, period_end)
+        ]
     except Exception:
         top_articles = []
 
@@ -126,6 +188,11 @@ def prepare_intelligence_picture(
         )
     except Exception:
         fusions = []
+
+    fusions = [
+        f for f in fusions
+        if _region_ok(f.lat, f.lon, region) and _period_ok(f.created_at, period_start, period_end)
+    ]
 
     fusion_items = []
     for f in fusions:
@@ -159,6 +226,11 @@ def prepare_intelligence_picture(
         )
     except Exception:
         surges = []
+
+    surges = [
+        s for s in surges
+        if _region_ok(s.lat, s.lon, region) and _period_ok(s.created_at, period_start, period_end)
+    ]
 
     surge_items = []
     for s in surges:
@@ -206,6 +278,10 @@ def prepare_intelligence_picture(
         lon = a.get("lng") or a.get("lon")
         if lat is None or lon is None:
             continue
+        if not _region_ok(lat, lon, region):
+            continue
+        if not _period_ok(a.get("timestamp"), period_start, period_end):
+            continue
         sid = str(a.get("id") or f"alert-{lat:.3f}-{lon:.3f}")
         if sid in seen_ids:
             continue
@@ -232,9 +308,14 @@ def prepare_intelligence_picture(
             for bucket in fusion_engine_instance.active_signals.values():
                 for s in bucket:
                     sid = str(s.get("signal_id", ""))
-                    if sid and sid not in seen_ids:
-                        seen_ids.add(sid)
-                        signals_raw.append(s)
+                    if not sid or sid in seen_ids:
+                        continue
+                    if not _region_ok(s.get("lat"), s.get("lon"), region):
+                        continue
+                    if not _period_ok(s.get("created_at"), period_start, period_end):
+                        continue
+                    seen_ids.add(sid)
+                    signals_raw.append(s)
         except Exception:
             pass
 
@@ -250,7 +331,7 @@ def prepare_intelligence_picture(
             db.query(SentinelDetection)
             .filter(
                 SentinelDetection.alert_tier == "immediate",
-                SentinelDetection.created_at > cutoff_48h,
+                SentinelDetection.created_at > (period_start or cutoff_48h),
             )
             .order_by(SentinelDetection.confidence.desc())
             .limit(20)
@@ -258,6 +339,12 @@ def prepare_intelligence_picture(
         )
     except Exception:
         sentinel_rows = []
+
+    sentinel_rows = [
+        d for d in sentinel_rows
+        if _region_ok(d.centroid_lat, d.centroid_lon, region)
+        and _period_ok(d.created_at, None, period_end)  # lower bound already applied in the query above
+    ]
 
     sentinel_items = []
     for d in sentinel_rows:
@@ -299,6 +386,11 @@ def prepare_intelligence_picture(
     except Exception:
         assessments = []
 
+    assessments = [
+        a for a in assessments
+        if _region_ok(a.lat, a.lon, region) and _period_ok(a.created_at, period_start, period_end)
+    ]
+
     assessment_items = []
     for a in assessments:
         try:
@@ -324,6 +416,13 @@ def prepare_intelligence_picture(
         zone_rows = db.query(StrategicZone).filter(StrategicZone.enabled == True).all()
     except Exception:
         zone_rows = []
+
+    # Zones are static config, not time-scoped events — only region scoping applies
+    # (by bbox centroid), no period filtering.
+    zone_rows = [
+        z for z in zone_rows
+        if _region_ok((z.bbox_min_lat + z.bbox_max_lat) / 2, (z.bbox_min_lon + z.bbox_max_lon) / 2, region)
+    ]
 
     active_zones = []
     for z in zone_rows:

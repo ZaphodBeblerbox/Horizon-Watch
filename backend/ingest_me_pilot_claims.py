@@ -28,6 +28,23 @@ from fastapi.testclient import TestClient
 
 MANIFEST_DOC = "claude/Horizon_Watch_ME_Pilot_Source_Manifest.md (project doc)"
 
+
+def _get_admin_auth_headers() -> dict:
+    """Forge is admin-gated (require_admin_user), not passcode-gated. Use a real
+    existing admin account if one is in this DB already; otherwise bootstrap a
+    minimal one so this script still works against a fresh/empty database."""
+    from database import get_db, User
+    from app_shared import make_jwt
+    with get_db() as db:
+        admin = db.query(User).filter((User.role == "admin") | (User.is_super_admin == True)).first()
+        if admin is None:
+            admin = User(id="PILOT-INGEST-ADMIN", email="pilot-ingest-admin@test.local",
+                         password_hash="not-used", role="admin", approved=True)
+            db.add(admin)
+            db.commit()
+        admin_id = admin.id
+    return {"Authorization": f"Bearer {make_jwt(admin_id)}"}
+
 CLAIMS = [
     dict(entity_a="IRGC-Quds Force", entity_a_type="organization", relationship_type="commands",
          entity_b="Hezbollah", entity_b_type="group", as_of="Aug 2026", confidence="direct",
@@ -287,7 +304,7 @@ CLAIMS = [
 def main_ingest():
     import main as _m
     with TestClient(_m.app) as client:
-        headers = {"X-Forge-Passcode": _m._FORGE_PASSCODE}
+        headers = _get_admin_auth_headers()
         r = client.post("/api/forge/ontology/claims/bulk", json={"claims": CLAIMS}, headers=headers)
         r.raise_for_status()
         result = r.json()

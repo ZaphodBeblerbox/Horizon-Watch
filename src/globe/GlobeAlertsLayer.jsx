@@ -10,7 +10,6 @@ import { ALERT_ICONS } from "../constants/alertIcons.js"
 function forgeHeaders() {
     return {
         Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
-        "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
     }
 }
 

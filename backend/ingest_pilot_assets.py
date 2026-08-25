@@ -25,6 +25,23 @@ import main
 
 REGION = "red_sea_bab_el_mandeb"
 
+
+def _get_admin_auth_headers() -> dict:
+    """Forge is admin-gated (require_admin_user), not passcode-gated. Use a real
+    existing admin account if one is in this DB already; otherwise bootstrap a
+    minimal one so this script still works against a fresh/empty database."""
+    from database import get_db, User
+    from app_shared import make_jwt
+    with get_db() as db:
+        admin = db.query(User).filter((User.role == "admin") | (User.is_super_admin == True)).first()
+        if admin is None:
+            admin = User(id="PILOT-INGEST-ADMIN", email="pilot-ingest-admin@test.local",
+                         password_hash="not-used", role="admin", approved=True)
+            db.add(admin)
+            db.commit()
+        admin_id = admin.id
+    return {"Authorization": f"Bearer {make_jwt(admin_id)}"}
+
 ASSETS = [
     {
         "name": "Doraleh Container Terminal", "asset_type": "port", "category": "civilian",
@@ -130,7 +147,7 @@ def main_ingest():
     print("="*70)
     print("  Pilot Asset ingestion — Red Sea / Bab-el-Mandeb AOI")
     print("="*70)
-    headers = {"X-Forge-Passcode": main._FORGE_PASSCODE}
+    headers = _get_admin_auth_headers()
     with TestClient(main.app) as client:
         existing = client.get("/api/forge/assets", params={"region_tag": REGION}, headers=headers).json()
         existing_names = {a["name"] for a in existing}

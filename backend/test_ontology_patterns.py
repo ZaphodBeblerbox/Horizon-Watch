@@ -35,8 +35,17 @@ print("  Ontology pattern discovery — verification")
 print("="*70)
 
 import main  # noqa: E402
+from database import get_db, User  # noqa: E402
+from app_shared import make_jwt  # noqa: E402
 
-HEADERS = {"X-Forge-Passcode": main._FORGE_PASSCODE}
+# Forge is admin-gated (require_admin_user), not passcode-gated — create a
+# real admin test user and mint a real JWT for it, same as any other admin.
+_ADMIN_ID = "TESTPAT-ADMIN"
+with get_db() as _db:
+    _db.merge(User(id=_ADMIN_ID, email="testpat-admin@test.local", password_hash="test",
+                    role="admin", approved=True))
+    _db.commit()
+HEADERS = {"Authorization": f"Bearer {make_jwt(_ADMIN_ID)}"}
 PREFIX  = "TESTPAT — "
 
 created_claim_ids  = []
@@ -143,6 +152,11 @@ with TestClient(main.app) as client:
     ontology_after = main._forge_ontology_load()
     check("cleanup removed all TESTPAT nodes", not any(n["label"].startswith(PREFIX) for n in ontology_after["nodes"]))
     check("cleanup removed all TESTPAT edges", not any(e.get("claim_id") in created_claim_ids for e in ontology_after["edges"]))
+
+    with get_db() as db:
+        db.query(User).filter(User.id == _ADMIN_ID).delete(synchronize_session=False)
+        db.commit()
+        check("cleanup removed test admin user", db.query(User).filter(User.id == _ADMIN_ID).count() == 0)
 
 print("="*70)
 if FAILURES:

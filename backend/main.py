@@ -9624,9 +9624,14 @@ async def _ais_aggregate_loop():
 
 async def _prune_history_loop():
     """Delete raw history older than 24 hours and aggregated density older
-    than 90 days. Runs once per day."""
+    than 90 days. Runs immediately on startup, then once per day.
+
+    Previously this slept 24h *before* the first run, so on a dev machine
+    that's restarted before reaching a full day of continuous uptime, the
+    cleanup never fired at all — track_density grew unbounded (10M+ rows)
+    despite this code already existing.
+    """
     while True:
-        await asyncio.sleep(86400)
         try:
             from database import AircraftHistory, VesselHistory, TrackDensity, get_db
             now = datetime.utcnow()
@@ -9640,6 +9645,7 @@ async def _prune_history_loop():
             print(f"[history-prune] raw: -{deleted_ac} ac, -{deleted_vs} vs (>24h); density: -{deleted_td} (>90d)")
         except Exception as e:
             print(f"[history-prune] error: {e}")
+        await asyncio.sleep(86400)
 
 
 @app.get("/api/history/aircraft")
@@ -17418,33 +17424,6 @@ def api_deployments_put(payload: dict = Body(...)):
 # ══════════════════════════════════════════════════════════════════════════════
 
 _FORGE_DIR      = Path(DATA_DIR) / "forge"
-_FORGE_PASSCODE = "2212429391"
-
-
-async def _require_forge(request: Request):
-    """Accept either the forge passcode header OR a valid admin Bearer token."""
-    if request.headers.get("X-Forge-Passcode", "") == _FORGE_PASSCODE:
-        return True
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        try:
-            user = await _get_user_from_token(auth.split(" ", 1)[1])
-            if user and getattr(user, "is_admin", False):
-                return True
-        except Exception:
-            pass
-    raise HTTPException(status_code=401, detail="Forge access denied")
-
-
-@app.post("/api/forge/auth")
-async def forge_auth(request: Request):
-    """Passcode-only access gate — no login required."""
-    body     = await request.json()
-    passcode = body.get("passcode", "")
-    if passcode == _FORGE_PASSCODE:
-        ts = int(datetime.utcnow().timestamp())
-        return {"access": True, "token": f"forge_{ts}"}
-    return JSONResponse({"access": False, "error": "Invalid passcode"}, status_code=401)
 
 def _forge_load(filename: str) -> list:
     path = _FORGE_DIR / filename
@@ -17792,7 +17771,7 @@ async def forge_upload(
     source_publisher: str = Form(""),
     source_date: str      = Form(""),
     source_url: str       = Form(""),
-    _forge=Depends(_require_forge),
+    _forge=Depends(require_admin_user),
 ):
     _FORGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     ts       = int(datetime.utcnow().timestamp())
@@ -17851,7 +17830,7 @@ async def forge_upload(
 
 
 @app.get("/api/forge/uploads")
-def forge_get_uploads(_forge=Depends(_require_forge)):
+def forge_get_uploads(_forge=Depends(require_admin_user)):
     uploads = _forge_load("uploads.json")
     return list(reversed(uploads))
 
@@ -17867,7 +17846,7 @@ def forge_get_uploads(_forge=Depends(_require_forge)):
 # say-so alone.
 
 @app.get("/api/forge/ontology/claims")
-def forge_get_ontology_claims(status: str = "pending", _forge=Depends(_require_forge)):
+def forge_get_ontology_claims(status: str = "pending", _forge=Depends(require_admin_user)):
     from database import OntologyClaim, get_db as _gdb_list
     with _gdb_list() as db:
         q = db.query(OntologyClaim)
@@ -17900,7 +17879,7 @@ def forge_get_ontology_claims(status: str = "pending", _forge=Depends(_require_f
 
 
 @app.post("/api/forge/ontology/claims/bulk")
-async def forge_bulk_create_ontology_claims(request: Request, _forge=Depends(_require_forge)):
+async def forge_bulk_create_ontology_claims(request: Request, _forge=Depends(require_admin_user)):
     """Load a batch of pre-researched claims (e.g. from an offline sourcing pass
     over real documents) into the pending-review queue. Every claim still needs
     its own citation ('evidence' + entity_a/entity_b/relationship_type) — claims
@@ -17913,7 +17892,7 @@ async def forge_bulk_create_ontology_claims(request: Request, _forge=Depends(_re
 
 
 @app.post("/api/forge/ontology/claims/{claim_id}/approve")
-async def forge_approve_ontology_claim(claim_id: str, request: Request, _forge=Depends(_require_forge)):
+async def forge_approve_ontology_claim(claim_id: str, request: Request, _forge=Depends(require_admin_user)):
     from database import OntologyClaim, get_db as _gdb_appr
     try:
         body = await request.json()
@@ -17974,7 +17953,7 @@ async def forge_approve_ontology_claim(claim_id: str, request: Request, _forge=D
 
 
 @app.post("/api/forge/ontology/claims/{claim_id}/reject")
-async def forge_reject_ontology_claim(claim_id: str, request: Request, _forge=Depends(_require_forge)):
+async def forge_reject_ontology_claim(claim_id: str, request: Request, _forge=Depends(require_admin_user)):
     from database import OntologyClaim, get_db as _gdb_rej
     try:
         body = await request.json()
@@ -18084,7 +18063,7 @@ def _get_pattern_reviews() -> dict:
 
 
 @app.get("/api/forge/ontology/patterns")
-def forge_get_ontology_patterns(include_dismissed: bool = False, _forge=Depends(_require_forge)):
+def forge_get_ontology_patterns(include_dismissed: bool = False, _forge=Depends(require_admin_user)):
     patterns = _find_graph_patterns()
     reviews  = _get_pattern_reviews()
     for p in patterns:
@@ -18099,7 +18078,7 @@ def forge_get_ontology_patterns(include_dismissed: bool = False, _forge=Depends(
 
 
 @app.post("/api/forge/ontology/patterns/{pattern_id}/review")
-async def forge_review_ontology_pattern(pattern_id: str, request: Request, _forge=Depends(_require_forge)):
+async def forge_review_ontology_pattern(pattern_id: str, request: Request, _forge=Depends(require_admin_user)):
     try:
         body = await request.json()
     except Exception:
@@ -18149,7 +18128,7 @@ def _parse_snapshot_dt(v):
 
 
 @app.post("/api/reports/snapshots")
-async def create_report_snapshot(request: Request, _forge=Depends(_require_forge)):
+async def create_report_snapshot(request: Request, _forge=Depends(require_admin_user)):
     """Capture the current intelligence picture and freeze it as a versioned,
     persisted artefact. Unlike /api/director/prepare-briefing (which keeps the
     picture only in memory, for Director Mode's own use), this writes a row
@@ -18211,7 +18190,7 @@ async def create_report_snapshot(request: Request, _forge=Depends(_require_forge
 
 
 @app.get("/api/reports/snapshots")
-def list_report_snapshots(limit: int = 20, _forge=Depends(_require_forge)):
+def list_report_snapshots(limit: int = 20, _forge=Depends(require_admin_user)):
     """List captured snapshots, newest first — metadata + stats only. Fetch a
     specific snapshot (below) to get its full frozen content."""
     from database import ReportSnapshot, get_db as _gdb_snaplist
@@ -18234,7 +18213,7 @@ def list_report_snapshots(limit: int = 20, _forge=Depends(_require_forge)):
 
 
 @app.get("/api/reports/snapshots/{snapshot_id}")
-def get_report_snapshot(snapshot_id: str, _forge=Depends(_require_forge)):
+def get_report_snapshot(snapshot_id: str, _forge=Depends(require_admin_user)):
     """Fetch one snapshot's full frozen content — exactly what was captured at
     the time, unaffected by anything that has happened to the live data since."""
     from database import ReportSnapshot, get_db as _gdb_snapget
@@ -18252,6 +18231,315 @@ def get_report_snapshot(snapshot_id: str, _forge=Depends(_require_forge)):
             "created_by":   row.created_by,
             "content":      _json.loads(row.content_json),
         }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REPORT TASKS — task the system to watch a region/period before drafting
+# ══════════════════════════════════════════════════════════════════════════════
+# Sits in front of ReportSnapshot/Report — see database.ReportTask's docstring
+# for the full design rationale (status-machine superset, "auto" region v1
+# scope, why collection is computed live rather than via a background poller).
+# Gated the same way as the rest of Forge/Reports.
+
+def _task_id() -> str:
+    return "TASK-" + uuid.uuid4().hex[:8].upper()
+
+
+def _task_region_list(row):
+    """Decode region_json back to either a list of region names, the literal
+    string "auto", or None (no region scope requested at all)."""
+    if not row.region_json:
+        return None
+    try:
+        return _json.loads(row.region_json)
+    except Exception:
+        return None
+
+
+def _resolve_task_region(row):
+    """Turn a task's stored region into a concrete list of region names
+    prepare_intelligence_picture() can use, or None (unscoped). "auto" v1 is
+    deliberately the simple version — infer from Mission Profile's currently-
+    configured focusRegions — not real hotspot/anomaly-density detection;
+    that is real, sequenced, later work, not a shortcut being taken here."""
+    decoded = _task_region_list(row)
+    if decoded is None:
+        return None
+    if decoded == "auto":
+        return list((_ACTIVE_PROFILE or {}).get("focusRegions", [])) or None
+    if isinstance(decoded, list):
+        return decoded
+    return None
+
+
+def _task_effective_status(row, db) -> str:
+    """The task's *displayed* status. queued/collecting/ready_to_draft/archived
+    are stored directly on the task. drafting/council_review/human_review/
+    published are never separately stored once a Report exists — they're
+    derived live from that Report's own real status, so the two can never
+    drift out of sync with each other.
+
+    Honest caveat: today's POST /api/reports/{id}/submit-for-review runs the
+    council synchronously and sets status="in_review" with council_run_at
+    already populated in that same call — there is no real intermediate
+    moment where a Report is in_review with council_run_at still unset. That
+    means "council_review" below is genuine, reachable code (not a fabricated
+    status) but is not currently observable in practice: a task will jump
+    straight from "drafting" to "human_review" the instant submit-for-review
+    succeeds. It becomes a real, visible waiting state if that endpoint is
+    ever changed to run the council asynchronously — not guessed at here,
+    just not currently reachable."""
+    if row.status in ("queued", "collecting", "ready_to_draft", "archived"):
+        return row.status
+    if not row.report_id:
+        return row.status
+    from database import Report as _RptSync
+    rpt = db.query(_RptSync).filter(_RptSync.report_id == row.report_id).first()
+    if not rpt:
+        return row.status
+    if rpt.status == "draft":
+        return "drafting"
+    if rpt.status == "in_review":
+        return "human_review" if rpt.council_run_at else "council_review"
+    if rpt.status == "published":
+        return "published"
+    return rpt.status  # "approved" / "rejected" — shown as-is, not forced into a task-only label
+
+
+def _task_to_dict(row, db) -> dict:
+    return {
+        "task_id":      row.task_id,
+        "focus":        row.focus,
+        "region":       _task_region_list(row),
+        "period_start": row.period_start.isoformat() if row.period_start else None,
+        "period_end":   row.period_end.isoformat() if row.period_end else None,
+        "status":       _task_effective_status(row, db),
+        "snapshot_id":  row.snapshot_id,
+        "report_id":    row.report_id,
+        "created_by":   row.created_by,
+        "created_at":   row.created_at.isoformat() if row.created_at else None,
+        "updated_at":   row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.post("/api/reports/tasks")
+async def create_report_task(request: Request, _forge=Depends(require_admin_user)):
+    """Task the system to watch a region (or "auto") over a time window, with a
+    given focus, rather than only ever capturing an instant, unscoped snapshot
+    on demand. Starts "queued" if period_start is in the future, else
+    "collecting" immediately — there is no separate scheduler to wait in."""
+    body = await request.json()
+    region = body.get("region")
+    if region is not None and region != "auto" and not isinstance(region, list):
+        raise HTTPException(400, "region must be a list of region names, or the literal string 'auto'")
+    period_start = _parse_snapshot_dt(body.get("period_start"))
+    period_end   = _parse_snapshot_dt(body.get("period_end"))
+    if period_start and period_end and period_end <= period_start:
+        raise HTTPException(400, "period_end must be after period_start")
+
+    now = datetime.utcnow()
+    status = "queued" if (period_start and period_start > now) else "collecting"
+
+    from database import ReportTask, get_db as _gdb_tcreate
+    with _gdb_tcreate() as db:
+        row = ReportTask(
+            task_id=_task_id(),
+            focus=body.get("focus"),
+            region_json=_json.dumps(region) if region is not None else None,
+            period_start=period_start, period_end=period_end,
+            status=status,
+            created_by=body.get("created_by") or getattr(_forge, "email", "admin"),
+        )
+        db.add(row)
+        db.commit()
+        return _task_to_dict(row, db)
+
+
+@app.get("/api/reports/tasks")
+def list_report_tasks(status: str = None, _forge=Depends(require_admin_user)):
+    from database import ReportTask, get_db as _gdb_tlist
+    with _gdb_tlist() as db:
+        rows = db.query(ReportTask).order_by(ReportTask.created_at.desc()).all()
+        out = [_task_to_dict(r, db) for r in rows]
+        if status and status != "all":
+            out = [t for t in out if t["status"] == status]
+        return out
+
+
+@app.get("/api/reports/tasks/{task_id}")
+async def get_report_task(task_id: str, _forge=Depends(require_admin_user)):
+    """Returns the task's current status plus whatever's been collected so far
+    — the whole point of this endpoint: seeing the data before anything is
+    drafted.
+
+    While status is queued/collecting, "collected" is computed LIVE by calling
+    prepare_intelligence_picture() scoped to [period_start, min(period_end, now)]
+    on every call, rather than a persisted, periodically-diffed partial
+    artefact (see ReportTask's docstring for why). This naturally shows more
+    data as time passes, since the query window grows and the real DB
+    naturally accumulates more matching rows in it — without any background
+    scheduler or diff-state to get out of sync.
+
+    Once a snapshot has been frozen (ready_to_draft or later), "collected" is
+    that real, immutable snapshot's content instead, so this endpoint keeps
+    returning the exact picture a linked Report actually cites.
+    """
+    from database import ReportTask, ReportSnapshot, get_db as _gdb_tget
+    with _gdb_tget() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+
+        now = datetime.utcnow()
+        # Lazy, low-consequence transition only: time has passed, start
+        # collecting. Freezing a snapshot (ready_to_draft) is NOT done here —
+        # that's a real, consequential write and gets its own explicit POST
+        # below; a GET should never have a side effect that significant.
+        if row.status == "queued" and (not row.period_start or row.period_start <= now):
+            row.status = "collecting"
+            row.updated_at = now
+            db.commit()
+
+        collected = None
+        if row.status in ("queued", "collecting"):
+            region = _resolve_task_region(row)
+            window_end = min(row.period_end, now) if row.period_end else now
+            from briefing_prep import prepare_intelligence_picture as _prep_ip_task
+            loop = asyncio.get_event_loop()
+            try:
+                collected = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        _executor,
+                        lambda: _prep_ip_task(
+                            db=next(_db_gen()), forge_alerts=list(_forge_alerts),
+                            fusion_engine_instance=_fusion_engine,
+                            region=region, period_start=row.period_start, period_end=window_end,
+                        ),
+                    ),
+                    timeout=30,
+                )
+            except Exception as _e:
+                raise HTTPException(500, f"collection failed: {_e}")
+        elif row.snapshot_id:
+            snap = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first()
+            if snap:
+                collected = _json.loads(snap.content_json)
+
+        result = _task_to_dict(row, db)
+        result["collected"] = collected
+        return result
+
+
+@app.post("/api/reports/tasks/{task_id}/finish-collection")
+async def finish_report_task_collection(task_id: str, _forge=Depends(require_admin_user)):
+    """Explicit, consequential transition: freezes a real ReportSnapshot from
+    everything collected in [period_start, now] and moves the task to
+    ready_to_draft. Needed for open-ended tasks (no period_end ever arrives on
+    its own) and for closing a windowed task early — GET never does this
+    automatically, since freezing a permanent artefact isn't something a read
+    should trigger as a side effect."""
+    from database import ReportTask, ReportSnapshot, get_db as _gdb_tfin
+    with _gdb_tfin() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+        if row.status not in ("queued", "collecting"):
+            raise HTTPException(409, f"only queued/collecting tasks can finish collection (this one is {row.status})")
+
+        now = datetime.utcnow()
+        region = _resolve_task_region(row)
+        window_end = min(row.period_end, now) if row.period_end else now
+        from briefing_prep import prepare_intelligence_picture as _prep_ip_fin
+        loop = asyncio.get_event_loop()
+        try:
+            pic = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _executor,
+                    lambda: _prep_ip_fin(
+                        db=next(_db_gen()), forge_alerts=list(_forge_alerts),
+                        fusion_engine_instance=_fusion_engine,
+                        region=region, period_start=row.period_start, period_end=window_end,
+                    ),
+                ),
+                timeout=30,
+            )
+        except Exception as _e:
+            raise HTTPException(500, f"collection failed: {_e}")
+
+        def _json_default(obj):
+            if hasattr(obj, "isoformat"):
+                return obj.isoformat()
+            return str(obj)
+
+        snap_id = _snapshot_id()
+        snap = ReportSnapshot(
+            snapshot_id=snap_id, label=row.focus or f"Task {row.task_id}",
+            source="report_task", period_start=row.period_start, period_end=window_end,
+            stats_json=_json.dumps(pic.get("statistics", {}), default=_json_default),
+            content_json=_json.dumps(pic, ensure_ascii=False, default=_json_default),
+            created_by=row.created_by,
+        )
+        db.add(snap)
+        row.snapshot_id = snap_id
+        row.status = "ready_to_draft"
+        row.updated_at = now
+        db.commit()
+        return _task_to_dict(row, db)
+
+
+@app.post("/api/reports/tasks/{task_id}/draft")
+async def start_report_task_draft(task_id: str, request: Request, _forge=Depends(require_admin_user)):
+    """Once ready_to_draft, create the underlying Report draft pre-filled from
+    the task's frozen snapshot — reuses the exact same creation pattern
+    POST /api/reports already uses (_report_id, _validate_claims, the same
+    Report(...) construction), not a parallel implementation."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    from database import ReportTask, ReportSnapshot, Report, get_db as _gdb_tdraft
+    with _gdb_tdraft() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+        if row.status != "ready_to_draft":
+            raise HTTPException(409, f"only ready_to_draft tasks can start drafting (this one is {row.status})")
+        if not row.snapshot_id or not db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first():
+            raise HTTPException(500, f"task's snapshot {row.snapshot_id} no longer exists")
+
+        title = (body.get("title") or "").strip() or f"Report — {row.focus or row.task_id}"
+        claims = _validate_claims(body.get("claims") or [])
+        rpt = Report(
+            report_id=_report_id(), title=title, snapshot_id=row.snapshot_id,
+            classification=body.get("classification") or "UNCLASSIFIED // FOR ANALYTICAL USE ONLY",
+            key_judgments=body.get("key_judgments"),
+            claims_json=_json.dumps(claims), status="draft",
+            created_by=row.created_by or getattr(_forge, "email", "admin"),
+        )
+        db.add(rpt)
+        row.report_id = rpt.report_id
+        row.status = "drafting"
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _task_to_dict(row, db)
+
+
+@app.post("/api/reports/tasks/{task_id}/archive")
+def archive_report_task(task_id: str, _forge=Depends(require_admin_user)):
+    """Terminal, task-only state with no Report analog — only once the
+    underlying report has actually been published."""
+    from database import ReportTask, get_db as _gdb_tarch
+    with _gdb_tarch() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+        eff = _task_effective_status(row, db)
+        if eff != "published":
+            raise HTTPException(409, f"only published tasks can be archived (this one is {eff})")
+        row.status = "archived"
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _task_to_dict(row, db)
 
 
 # ── Assets (roadmap Phase 2: civilian/military/dual-use infrastructure registry) ──
@@ -18295,7 +18583,7 @@ def _asset_to_dict(row) -> dict:
 
 
 @app.post("/api/forge/assets")
-async def create_asset(request: Request, _forge=Depends(_require_forge)):
+async def create_asset(request: Request, _forge=Depends(require_admin_user)):
     """Create one categorized asset. Requires a real citation (source_title
     or source_url, plus an evidence excerpt) — rejected outright rather than
     stored uncited, same policy as OntologyClaim. `category` must be one of
@@ -18338,7 +18626,7 @@ async def create_asset(request: Request, _forge=Depends(_require_forge)):
 
 @app.get("/api/forge/assets")
 def list_assets(region_tag: str = None, category: str = None, asset_type: str = None,
-                 _forge=Depends(_require_forge)):
+                 _forge=Depends(require_admin_user)):
     from database import Asset, get_db as _gdb_assetlist
     with _gdb_assetlist() as db:
         q = db.query(Asset)
@@ -18353,7 +18641,7 @@ def list_assets(region_tag: str = None, category: str = None, asset_type: str = 
 
 
 @app.get("/api/forge/assets/{asset_id}")
-def get_asset(asset_id: str, _forge=Depends(_require_forge)):
+def get_asset(asset_id: str, _forge=Depends(require_admin_user)):
     from database import Asset, get_db as _gdb_assetget
     with _gdb_assetget() as db:
         row = db.query(Asset).filter(Asset.asset_id == asset_id).first()
@@ -18363,7 +18651,7 @@ def get_asset(asset_id: str, _forge=Depends(_require_forge)):
 
 
 @app.patch("/api/forge/assets/{asset_id}")
-async def update_asset(asset_id: str, request: Request, _forge=Depends(_require_forge)):
+async def update_asset(asset_id: str, request: Request, _forge=Depends(require_admin_user)):
     """Update mutable fields on an existing asset (e.g. a reviewer correcting
     a category, or adding an operator once confirmed). Changing category
     still requires the row to end up with a valid category value and a
@@ -18394,7 +18682,7 @@ async def update_asset(asset_id: str, request: Request, _forge=Depends(_require_
 
 
 @app.delete("/api/forge/assets/{asset_id}")
-def delete_asset(asset_id: str, _forge=Depends(_require_forge)):
+def delete_asset(asset_id: str, _forge=Depends(require_admin_user)):
     from database import Asset, get_db as _gdb_assetdel
     with _gdb_assetdel() as db:
         row = db.query(Asset).filter(Asset.asset_id == asset_id).first()
@@ -18474,7 +18762,7 @@ def _report_to_dict(row) -> dict:
 
 
 @app.post("/api/reports")
-async def create_report(request: Request, _forge=Depends(_require_forge)):
+async def create_report(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     title = (body.get("title") or "").strip()
     snapshot_id = (body.get("snapshot_id") or "").strip()
@@ -18501,7 +18789,7 @@ async def create_report(request: Request, _forge=Depends(_require_forge)):
 
 
 @app.get("/api/reports")
-def list_reports(status: str = None, _forge=Depends(_require_forge)):
+def list_reports(status: str = None, _forge=Depends(require_admin_user)):
     from database import Report, get_db as _gdb_rptlist
     with _gdb_rptlist() as db:
         q = db.query(Report)
@@ -18512,7 +18800,7 @@ def list_reports(status: str = None, _forge=Depends(_require_forge)):
 
 
 @app.get("/api/reports/{report_id}")
-def get_report(report_id: str, _forge=Depends(_require_forge)):
+def get_report(report_id: str, _forge=Depends(require_admin_user)):
     from database import Report, get_db as _gdb_rptget
     with _gdb_rptget() as db:
         row = db.query(Report).filter(Report.report_id == report_id).first()
@@ -18522,7 +18810,7 @@ def get_report(report_id: str, _forge=Depends(_require_forge)):
 
 
 @app.patch("/api/reports/{report_id}")
-async def update_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+async def update_report(report_id: str, request: Request, _forge=Depends(require_admin_user)):
     """Only draft reports can be edited — once submitted for review, the
     content that the council actually reviewed shouldn't silently change
     out from under those findings."""
@@ -18550,7 +18838,7 @@ async def update_report(report_id: str, request: Request, _forge=Depends(_requir
 
 
 @app.post("/api/reports/{report_id}/submit-for-review")
-def submit_report_for_review(report_id: str, _forge=Depends(_require_forge)):
+def submit_report_for_review(report_id: str, _forge=Depends(require_admin_user)):
     from database import Report, ReportSnapshot, get_db as _gdb_rptsub
     import report_council as _council
     with _gdb_rptsub() as db:
@@ -18580,7 +18868,7 @@ def submit_report_for_review(report_id: str, _forge=Depends(_require_forge)):
 
 
 @app.post("/api/reports/{report_id}/approve")
-async def approve_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+async def approve_report(report_id: str, request: Request, _forge=Depends(require_admin_user)):
     try:
         body = await request.json()
     except Exception:
@@ -18601,7 +18889,7 @@ async def approve_report(report_id: str, request: Request, _forge=Depends(_requi
 
 
 @app.post("/api/reports/{report_id}/reject")
-async def reject_report(report_id: str, request: Request, _forge=Depends(_require_forge)):
+async def reject_report(report_id: str, request: Request, _forge=Depends(require_admin_user)):
     try:
         body = await request.json()
     except Exception:
@@ -18622,7 +18910,7 @@ async def reject_report(report_id: str, request: Request, _forge=Depends(_requir
 
 
 @app.post("/api/reports/{report_id}/publish")
-def publish_report(report_id: str, _forge=Depends(_require_forge)):
+def publish_report(report_id: str, _forge=Depends(require_admin_user)):
     from database import Report, get_db as _gdb_rptpub
     with _gdb_rptpub() as db:
         row = db.query(Report).filter(Report.report_id == report_id).first()
@@ -18637,7 +18925,7 @@ def publish_report(report_id: str, _forge=Depends(_require_forge)):
 
 
 @app.get("/api/reports/{report_id}/pdf")
-def get_report_pdf(report_id: str, _forge=Depends(_require_forge)):
+def get_report_pdf(report_id: str, _forge=Depends(require_admin_user)):
     from database import Report, get_db as _gdb_rptpdf
     import report_pdf as _pdf
     with _gdb_rptpdf() as db:
@@ -18654,7 +18942,7 @@ def get_report_pdf(report_id: str, _forge=Depends(_require_forge)):
 # ── Auto-rule generation ──────────────────────────────────────────────────────
 
 @app.post("/api/forge/auto-generate-rules")
-async def forge_auto_generate_rules(request: Request, _forge=Depends(_require_forge)):
+async def forge_auto_generate_rules(request: Request, _forge=Depends(require_admin_user)):
     body        = await request.json()
     mission_id  = body.get("mission_id", "mission_default")
     ontology    = _forge_ontology_load()
@@ -18739,12 +19027,12 @@ async def forge_auto_generate_rules(request: Request, _forge=Depends(_require_fo
 
 
 @app.get("/api/forge/rules")
-def forge_get_rules(_forge=Depends(_require_forge)):
+def forge_get_rules(_forge=Depends(require_admin_user)):
     return {"rules": _forge_load("rules.json")}
 
 
 @app.post("/api/forge/rules")
-async def forge_create_rule(request: Request, _forge=Depends(_require_forge)):
+async def forge_create_rule(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     rules = _forge_load("rules.json")
     rule = {
@@ -18764,7 +19052,7 @@ async def forge_create_rule(request: Request, _forge=Depends(_require_forge)):
 
 
 @app.put("/api/forge/rules/{rule_id}")
-async def forge_update_rule(rule_id: str, request: Request, _forge=Depends(_require_forge)):
+async def forge_update_rule(rule_id: str, request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     rules = _forge_load("rules.json")
     for i, r in enumerate(rules):
@@ -18776,7 +19064,7 @@ async def forge_update_rule(rule_id: str, request: Request, _forge=Depends(_requ
 
 
 @app.delete("/api/forge/rules/{rule_id}")
-def forge_delete_rule(rule_id: str, _forge=Depends(_require_forge)):
+def forge_delete_rule(rule_id: str, _forge=Depends(require_admin_user)):
     rules = _forge_load("rules.json")
     rules = [r for r in rules if r.get("id") != rule_id]
     _forge_save("rules.json", rules)
@@ -18784,12 +19072,12 @@ def forge_delete_rule(rule_id: str, _forge=Depends(_require_forge)):
 
 
 @app.get("/api/forge/watch-areas")
-def forge_get_watch_areas(_forge=Depends(_require_forge)):
+def forge_get_watch_areas(_forge=Depends(require_admin_user)):
     return {"areas": _forge_load("watch_areas.json")}
 
 
 @app.post("/api/forge/watch-areas")
-async def forge_create_watch_area(request: Request, _forge=Depends(_require_forge)):
+async def forge_create_watch_area(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     areas = _forge_load("watch_areas.json")
     area = {
@@ -18811,7 +19099,7 @@ async def forge_create_watch_area(request: Request, _forge=Depends(_require_forg
 
 
 @app.delete("/api/forge/watch-areas/{area_id}")
-def forge_delete_watch_area(area_id: str, _forge=Depends(_require_forge)):
+def forge_delete_watch_area(area_id: str, _forge=Depends(require_admin_user)):
     areas = _forge_load("watch_areas.json")
     areas = [a for a in areas if a.get("id") != area_id]
     _forge_save("watch_areas.json", areas)
@@ -18819,7 +19107,7 @@ def forge_delete_watch_area(area_id: str, _forge=Depends(_require_forge)):
 
 
 @app.post("/api/forge/watch-areas/{area_id}/scan")
-async def forge_scan_watch_area(area_id: str, request: Request, _forge=Depends(_require_forge)):
+async def forge_scan_watch_area(area_id: str, request: Request, _forge=Depends(require_admin_user)):
     areas = _forge_load("watch_areas.json")
     area  = next((a for a in areas if a.get("id") == area_id), None)
     if not area:
@@ -18857,7 +19145,7 @@ async def forge_scan_watch_area(area_id: str, request: Request, _forge=Depends(_
 
 
 @app.get("/api/forge/brain-status")
-def forge_brain_status(_forge=Depends(_require_forge)):
+def forge_brain_status(_forge=Depends(require_admin_user)):
     return {
         **_last_cycle_stats,
         "detector_ready": _HAS_DETECTORS,
@@ -18867,12 +19155,12 @@ def forge_brain_status(_forge=Depends(_require_forge)):
 
 
 @app.get("/api/forge/detections")
-def forge_get_detections(_forge=Depends(_require_forge)):
+def forge_get_detections(_forge=Depends(require_admin_user)):
     return {"detections": _forge_load("detection_corrections.json")}
 
 
 @app.post("/api/forge/detection/{detection_id}/confirm")
-def forge_confirm_detection(detection_id: str, _forge=Depends(_require_forge)):
+def forge_confirm_detection(detection_id: str, _forge=Depends(require_admin_user)):
     items = _forge_load("detection_corrections.json")
     for item in items:
         if item.get("id") == detection_id:
@@ -18886,7 +19174,7 @@ def forge_confirm_detection(detection_id: str, _forge=Depends(_require_forge)):
 
 
 @app.post("/api/forge/detection/{detection_id}/correct")
-async def forge_correct_detection(detection_id: str, request: Request, _forge=Depends(_require_forge)):
+async def forge_correct_detection(detection_id: str, request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     items = _forge_load("detection_corrections.json")
     for item in items:
@@ -19070,7 +19358,7 @@ def _run_batch_scan_for_site(site, zoom=15):
 # ── Forge Phase 2: batch generation endpoints ──────────────────────────────────
 
 @app.post("/api/forge/overwatch/generate-batch")
-async def forge_overwatch_generate_batch(request: Request, _forge=Depends(_require_forge)):
+async def forge_overwatch_generate_batch(request: Request, _forge=Depends(require_admin_user)):
     import functools, random
     body = await request.json()
     n = min(int(body.get("n", 10)), 20)
@@ -19096,7 +19384,7 @@ async def forge_overwatch_generate_batch(request: Request, _forge=Depends(_requi
 
 
 @app.post("/api/forge/ais/generate-batch")
-async def forge_ais_generate_batch(request: Request, _forge=Depends(_require_forge)):
+async def forge_ais_generate_batch(request: Request, _forge=Depends(require_admin_user)):
     import random
     body = await request.json()
     n = min(int(body.get("n", 20)), 50)
@@ -19118,7 +19406,7 @@ async def forge_ais_generate_batch(request: Request, _forge=Depends(_require_for
 
 
 @app.post("/api/forge/news/generate-batch")
-async def forge_news_generate_batch(request: Request, _forge=Depends(_require_forge)):
+async def forge_news_generate_batch(request: Request, _forge=Depends(require_admin_user)):
     import random
     body = await request.json()
     n = min(int(body.get("n", 15)), 50)
@@ -19159,7 +19447,7 @@ async def forge_news_generate_batch(request: Request, _forge=Depends(_require_fo
 
 
 @app.post("/api/forge/detection/label")
-async def forge_label_detection(request: Request, _forge=Depends(_require_forge)):
+async def forge_label_detection(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     detection_id = body.get("id") or body.get("detection_id")
     if not detection_id:
@@ -19188,7 +19476,7 @@ async def forge_label_detection(request: Request, _forge=Depends(_require_forge)
 
 
 @app.get("/api/forge/labels")
-def forge_get_labels(_forge=Depends(_require_forge)):
+def forge_get_labels(_forge=Depends(require_admin_user)):
     return {"labels": _forge_load("forge_labels.json")}
 
 
@@ -19889,7 +20177,7 @@ async def _forge_detection_cycle():
 # ── Forge aircraft feed (ADSB global cache) ───────────────────────────────────
 
 @app.get("/api/forge/aircraft")
-def forge_get_aircraft(_forge=Depends(_require_forge)):
+def forge_get_aircraft(_forge=Depends(require_admin_user)):
     aircraft = sorted(
         _GLOBAL_ADSB_CACHE.values(),
         key=lambda a: a.get("last_seen", 0), reverse=True
@@ -19915,7 +20203,7 @@ def _save_forge_config(cfg: dict):
 
 
 @app.get("/api/forge/source/{source_id}/config")
-def forge_get_source_config(source_id: str, _forge=Depends(_require_forge)):
+def forge_get_source_config(source_id: str, _forge=Depends(require_admin_user)):
     cfg = _get_forge_config()
     src_cfg = cfg.get(source_id, {})
 
@@ -19948,7 +20236,7 @@ def forge_get_source_config(source_id: str, _forge=Depends(_require_forge)):
 
 
 @app.put("/api/forge/source/{source_id}/config")
-async def forge_update_source_config(source_id: str, request: Request, _forge=Depends(_require_forge)):
+async def forge_update_source_config(source_id: str, request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     cfg = _get_forge_config()
     cfg[source_id] = {**(cfg.get(source_id) or {}), **body}
@@ -19959,7 +20247,7 @@ async def forge_update_source_config(source_id: str, request: Request, _forge=De
 # ── Forge rule dry-run ────────────────────────────────────────────────────────
 
 @app.post("/api/forge/rules/{rule_id}/test")
-def forge_test_rule(rule_id: str, _forge=Depends(_require_forge)):
+def forge_test_rule(rule_id: str, _forge=Depends(require_admin_user)):
     if not _HAS_DETECTORS:
         raise HTTPException(status_code=503, detail="Detector engine not available")
     rules = _forge_load("rules.json")
@@ -20035,7 +20323,7 @@ def forge_test_rule(rule_id: str, _forge=Depends(_require_forge)):
 # ── Forge training stats ──────────────────────────────────────────────────────
 
 @app.get("/api/forge/training/stats/{detector_id}")
-def forge_training_stats(detector_id: str, _forge=Depends(_require_forge)):
+def forge_training_stats(detector_id: str, _forge=Depends(require_admin_user)):
     labels = _forge_load("forge_labels.json")
     type_map = {
         "det_overwatch": "overwatch",
@@ -20080,7 +20368,7 @@ def forge_training_stats(detector_id: str, _forge=Depends(_require_forge)):
 # ── Forge training export ─────────────────────────────────────────────────────
 
 @app.get("/api/forge/training/export/{fmt}")
-def forge_training_export(fmt: str, _forge=Depends(_require_forge)):
+def forge_training_export(fmt: str, _forge=Depends(require_admin_user)):
     from fastapi.responses import Response
     labels = _forge_load("forge_labels.json")
 
@@ -20127,7 +20415,7 @@ def forge_training_export(fmt: str, _forge=Depends(_require_forge)):
 # ── Forge model download ──────────────────────────────────────────────────────
 
 @app.get("/api/forge/models/download/{model_name}")
-def forge_download_model(model_name: str, _forge=Depends(_require_forge)):
+def forge_download_model(model_name: str, _forge=Depends(require_admin_user)):
     from fastapi.responses import FileResponse
     safe = model_name.replace("/", "").replace("..", "")
     backend_dir = Path(__file__).parent
@@ -20141,7 +20429,7 @@ def forge_download_model(model_name: str, _forge=Depends(_require_forge)):
 # ── Forge brain inspect ───────────────────────────────────────────────────────
 
 @app.get("/api/forge/brain/inspect")
-def forge_brain_inspect(_forge=Depends(_require_forge)):
+def forge_brain_inspect(_forge=Depends(require_admin_user)):
     rules = _forge_load("rules.json")
     labels = _forge_load("forge_labels.json")
     confirmed = sum(1 for l in labels if l.get("label") in ("confirm", "confirmed", "correct"))
@@ -21084,7 +21372,7 @@ def _dedup_alerts(alerts: list) -> list:
 
 
 @app.get("/api/forge/alerts")
-def forge_get_alerts(_forge=Depends(_require_forge)):
+def forge_get_alerts(_forge=Depends(require_admin_user)):
     enriched = [_enrich_alert(dict(a)) for a in _forge_alerts]
     return _dedup_alerts(enriched)
 
@@ -21825,7 +22113,7 @@ async def api_threat_matrix_explain(
 
 
 @app.get("/api/forge/correlations")
-def forge_get_correlations(_forge=Depends(_require_forge)):
+def forge_get_correlations(_forge=Depends(require_admin_user)):
     return sorted(
         _correlation_assessments,
         key=lambda x: (x.get("confidence", 0), x.get("signal_count", 0)),
@@ -21834,7 +22122,7 @@ def forge_get_correlations(_forge=Depends(_require_forge)):
 
 
 @app.post("/api/forge/alerts/{alert_idx}/feedback")
-async def forge_alert_feedback(alert_idx: int, request: Request, _forge=Depends(_require_forge)):
+async def forge_alert_feedback(alert_idx: int, request: Request, _forge=Depends(require_admin_user)):
     body    = await request.json()
     action  = body.get("action")  # 'confirm' or 'false_alarm'
     if not _HAS_DETECTORS:
@@ -21925,7 +22213,7 @@ _THREAT_REGION_BOUNDS_V2 = {
 
 
 @app.get("/api/forge/threat-scores")
-def forge_threat_scores(_forge=Depends(_require_forge)):
+def forge_threat_scores(_forge=Depends(require_admin_user)):
     if not _HAS_DETECTORS:
         return []
 
@@ -22060,7 +22348,7 @@ def analytics_threat_matrix_history(
 # ── Training data export ──────────────────────────────────────────────────────
 
 @app.get("/api/forge/export-training-data")
-def forge_export_training_data(_forge=Depends(_require_forge)):
+def forge_export_training_data(_forge=Depends(require_admin_user)):
     labels = _forge_load("forge_labels.json")
     confirmed = [l for l in labels if l.get("label") == "confirmed"]
     corrected  = [l for l in labels if l.get("label") == "corrected"]
@@ -22094,7 +22382,7 @@ def _forge_ontology_save(ontology: dict):
 
 
 @app.get("/api/forge/ontology")
-def forge_get_ontology(_forge=Depends(_require_forge)):
+def forge_get_ontology(_forge=Depends(require_admin_user)):
     result = _forge_ontology_load()
     if not result.get("nodes"):
         result = api_ontology_graph(current_user=None)
@@ -22102,7 +22390,7 @@ def forge_get_ontology(_forge=Depends(_require_forge)):
 
 
 @app.post("/api/forge/ontology/build")
-async def forge_build_ontology(_forge=Depends(_require_forge)):
+async def forge_build_ontology(_forge=Depends(require_admin_user)):
     import random as _random
     # Merge: keep existing nodes/edges, only add new ones by label
     existing = _forge_ontology_load()
@@ -22298,7 +22586,7 @@ async def forge_build_ontology(_forge=Depends(_require_forge)):
 
 
 @app.get("/api/forge/models")
-def forge_get_models(_forge=Depends(_require_forge)):
+def forge_get_models(_forge=Depends(require_admin_user)):
     """Return real ML model info from disk + training data stats."""
     models = []
     backend_dir = Path(__file__).parent
@@ -22330,7 +22618,7 @@ def forge_get_models(_forge=Depends(_require_forge)):
 
 
 @app.post("/api/forge/ontology/node")
-async def forge_add_ontology_node(request: Request, _forge=Depends(_require_forge)):
+async def forge_add_ontology_node(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     ontology = _forge_ontology_load()
     nid = f"{body['type']}_{len(ontology['nodes'])+1}_{int(datetime.now(timezone.utc).timestamp())}"
@@ -22349,7 +22637,7 @@ async def forge_add_ontology_node(request: Request, _forge=Depends(_require_forg
 
 
 @app.delete("/api/forge/ontology/node/{node_id}")
-async def forge_delete_ontology_node(node_id: str, _forge=Depends(_require_forge)):
+async def forge_delete_ontology_node(node_id: str, _forge=Depends(require_admin_user)):
     ontology = _forge_ontology_load()
     ontology["nodes"] = [n for n in ontology["nodes"] if n.get("id") != node_id]
     ontology["edges"] = [e for e in ontology["edges"] if e.get("source") != node_id and e.get("target") != node_id]
@@ -22358,7 +22646,7 @@ async def forge_delete_ontology_node(node_id: str, _forge=Depends(_require_forge
 
 
 @app.post("/api/forge/ontology/edge")
-async def forge_add_ontology_edge(request: Request, _forge=Depends(_require_forge)):
+async def forge_add_ontology_edge(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     ontology = _forge_ontology_load()
     new_edge = {
@@ -22374,7 +22662,7 @@ async def forge_add_ontology_edge(request: Request, _forge=Depends(_require_forg
 
 
 @app.delete("/api/forge/ontology/edge/{edge_id}")
-def forge_delete_ontology_edge(edge_id: str, _forge=Depends(_require_forge)):
+def forge_delete_ontology_edge(edge_id: str, _forge=Depends(require_admin_user)):
     ontology = _forge_ontology_load()
     ontology["edges"] = [e for e in ontology["edges"] if e.get("id") != edge_id]
     _forge_ontology_save(ontology)
@@ -22384,14 +22672,14 @@ def forge_delete_ontology_edge(edge_id: str, _forge=Depends(_require_forge)):
 _FORGE_ONTOLOGY_POS_FILE = _FORGE_DIR / "forge_ontology_positions.json"
 
 @app.post("/api/forge/ontology/positions")
-async def save_ontology_positions(request: Request, _forge=Depends(_require_forge)):
+async def save_ontology_positions(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     _FORGE_DIR.mkdir(parents=True, exist_ok=True)
     _FORGE_ONTOLOGY_POS_FILE.write_text(_json.dumps(body))
     return {"saved": True}
 
 @app.get("/api/forge/ontology/positions")
-def get_ontology_positions(_forge=Depends(_require_forge)):
+def get_ontology_positions(_forge=Depends(require_admin_user)):
     try:
         return _json.loads(_FORGE_ONTOLOGY_POS_FILE.read_text())
     except Exception as e:
@@ -22433,7 +22721,7 @@ _DEFAULT_MISSION = {
 
 
 @app.get("/api/forge/missions")
-def forge_get_missions(_forge=Depends(_require_forge)):
+def forge_get_missions(_forge=Depends(require_admin_user)):
     missions = _forge_load(_FORGE_MISSION_FILE)
     if not missions:
         missions = [_DEFAULT_MISSION]
@@ -22442,7 +22730,7 @@ def forge_get_missions(_forge=Depends(_require_forge)):
 
 
 @app.post("/api/forge/missions")
-async def forge_create_mission(request: Request, _forge=Depends(_require_forge)):
+async def forge_create_mission(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     missions = _forge_load(_FORGE_MISSION_FILE)
     if not missions:
@@ -22481,7 +22769,7 @@ def _save_pipeline(data: dict):
 
 
 @app.get("/api/forge/pipeline")
-async def forge_get_pipeline(_forge=Depends(_require_forge)):
+async def forge_get_pipeline(_forge=Depends(require_admin_user)):
     data = _load_pipeline()
     if not data:
         return {"nodes": [], "edges": [], "status": "default"}
@@ -22489,7 +22777,7 @@ async def forge_get_pipeline(_forge=Depends(_require_forge)):
 
 
 @app.post("/api/forge/pipeline/save")
-async def forge_save_pipeline(request: Request, _forge=Depends(_require_forge)):
+async def forge_save_pipeline(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     nodes = body.get("nodes", [])
     edges = body.get("edges", [])
@@ -22499,7 +22787,7 @@ async def forge_save_pipeline(request: Request, _forge=Depends(_require_forge)):
 
 
 @app.post("/api/forge/pipeline/delete-node")
-async def forge_delete_pipeline_node(request: Request, _forge=Depends(_require_forge)):
+async def forge_delete_pipeline_node(request: Request, _forge=Depends(require_admin_user)):
     body    = await request.json()
     node_id = body.get("node_id", "")
     if node_id.startswith("det_"):
@@ -22515,14 +22803,14 @@ async def forge_delete_pipeline_node(request: Request, _forge=Depends(_require_f
 
 
 @app.post("/api/forge/pipeline/delete-edge")
-async def forge_delete_pipeline_edge(request: Request, _forge=Depends(_require_forge)):
+async def forge_delete_pipeline_edge(request: Request, _forge=Depends(require_admin_user)):
     body = await request.json()
     print(f"[forge-pipeline] edge removed: {body.get('from')} → {body.get('to')}")
     return {"deleted": True}
 
 
 @app.post("/api/forge/pipeline/toggle-node")
-async def forge_toggle_pipeline_node(request: Request, _forge=Depends(_require_forge)):
+async def forge_toggle_pipeline_node(request: Request, _forge=Depends(require_admin_user)):
     body       = await request.json()
     node_id    = body.get("node_id", "")
     new_status = body.get("status", "active")
@@ -22560,7 +22848,7 @@ async def _apply_pipeline_changes(pipeline: dict):
 
 
 @app.put("/api/forge/missions/{mission_id}/activate")
-def forge_activate_mission(mission_id: str, _forge=Depends(_require_forge)):
+def forge_activate_mission(mission_id: str, _forge=Depends(require_admin_user)):
     missions = _forge_load(_FORGE_MISSION_FILE)
     if not missions:
         missions = [_DEFAULT_MISSION]

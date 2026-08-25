@@ -21,7 +21,6 @@ const DOMAIN_COLOR = {
 function forgeHeaders() {
     return {
         Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
-        "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
         "Content-Type": "application/json",
     }
 }

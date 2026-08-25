@@ -369,7 +369,6 @@ function SurveillanceZoneAnalytics() {
 function forgeAuthHeaders() {
     return {
         Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
-        "X-Forge-Passcode": localStorage.getItem("forge_passcode") || "",
     }
 }
 
