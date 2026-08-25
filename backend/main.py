@@ -243,6 +243,7 @@ try:
         EscalationEngine as _EscalationEngine,
         ADSBLoiterDetector as _ADSBLoiterDetector,
         ChokepointActivityDetector as _ChokepointActivityDetector,
+        AISSpoofingDetector as _AISSpoofingDetector,
         NewsPatternEngine as _NewsPatternEngine,
         NEWS_PATTERNS as _NEWS_PATTERNS,
         news_pattern_engine as _news_pattern_engine,
@@ -8692,10 +8693,12 @@ if _HAS_DETECTORS:
     _escalation_engine   = _EscalationEngine()
     _adsb_loiter_detector = _ADSBLoiterDetector()
     _chokepoint_detector  = _ChokepointActivityDetector()
+    _ais_spoofing_detector = _AISSpoofingDetector()
 else:
     _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
     _escalation_engine = _adsb_loiter_detector = None
     _chokepoint_detector = None
+    _ais_spoofing_detector = None
     _news_pattern_engine = None
 
 
@@ -19344,6 +19347,24 @@ async def _forge_detection_cycle():
                 except Exception:
                     pass
             print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
+
+            # Stage 1c — AIS spoofing / MMSI-integrity anomaly detection.
+            # Always-on background check (like EscalationEngine) — not a
+            # per-region tunable rule, so it is NOT in WIRED_RULE_DISPATCH and
+            # has no RuleConfig entry. See AISSpoofingDetector's docstring for
+            # exactly what this can and can't distinguish.
+            new_spoof_alerts: list = []
+            if _ais_spoofing_detector is not None:
+                for _sp_mmsi, _sp_vessel in normalized_snap.items():
+                    try:
+                        new_spoof_alerts.extend(
+                            _ais_spoofing_detector.check(_sp_mmsi, _sp_vessel, cycle_start)
+                        )
+                    except Exception:
+                        pass
+                _ais_spoofing_detector.purge_stale(cycle_start)
+                new_ais_alerts.extend(new_spoof_alerts)
+            print(f"[forge-brain] Stage1c AIS spoofing: {vessels_checked} vessels → {len(new_spoof_alerts)} alerts")
 
             # Stages 1b/1e/2b share one query against the wired-rule dispatch table instead
             # of each running its own hardcoded RuleConfig.rule_name filter.
