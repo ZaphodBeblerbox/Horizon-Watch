@@ -18227,6 +18227,315 @@ def get_report_snapshot(snapshot_id: str, _forge=Depends(require_admin_user)):
         }
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# REPORT TASKS — task the system to watch a region/period before drafting
+# ══════════════════════════════════════════════════════════════════════════════
+# Sits in front of ReportSnapshot/Report — see database.ReportTask's docstring
+# for the full design rationale (status-machine superset, "auto" region v1
+# scope, why collection is computed live rather than via a background poller).
+# Gated the same way as the rest of Forge/Reports.
+
+def _task_id() -> str:
+    return "TASK-" + uuid.uuid4().hex[:8].upper()
+
+
+def _task_region_list(row):
+    """Decode region_json back to either a list of region names, the literal
+    string "auto", or None (no region scope requested at all)."""
+    if not row.region_json:
+        return None
+    try:
+        return _json.loads(row.region_json)
+    except Exception:
+        return None
+
+
+def _resolve_task_region(row):
+    """Turn a task's stored region into a concrete list of region names
+    prepare_intelligence_picture() can use, or None (unscoped). "auto" v1 is
+    deliberately the simple version — infer from Mission Profile's currently-
+    configured focusRegions — not real hotspot/anomaly-density detection;
+    that is real, sequenced, later work, not a shortcut being taken here."""
+    decoded = _task_region_list(row)
+    if decoded is None:
+        return None
+    if decoded == "auto":
+        return list((_ACTIVE_PROFILE or {}).get("focusRegions", [])) or None
+    if isinstance(decoded, list):
+        return decoded
+    return None
+
+
+def _task_effective_status(row, db) -> str:
+    """The task's *displayed* status. queued/collecting/ready_to_draft/archived
+    are stored directly on the task. drafting/council_review/human_review/
+    published are never separately stored once a Report exists — they're
+    derived live from that Report's own real status, so the two can never
+    drift out of sync with each other.
+
+    Honest caveat: today's POST /api/reports/{id}/submit-for-review runs the
+    council synchronously and sets status="in_review" with council_run_at
+    already populated in that same call — there is no real intermediate
+    moment where a Report is in_review with council_run_at still unset. That
+    means "council_review" below is genuine, reachable code (not a fabricated
+    status) but is not currently observable in practice: a task will jump
+    straight from "drafting" to "human_review" the instant submit-for-review
+    succeeds. It becomes a real, visible waiting state if that endpoint is
+    ever changed to run the council asynchronously — not guessed at here,
+    just not currently reachable."""
+    if row.status in ("queued", "collecting", "ready_to_draft", "archived"):
+        return row.status
+    if not row.report_id:
+        return row.status
+    from database import Report as _RptSync
+    rpt = db.query(_RptSync).filter(_RptSync.report_id == row.report_id).first()
+    if not rpt:
+        return row.status
+    if rpt.status == "draft":
+        return "drafting"
+    if rpt.status == "in_review":
+        return "human_review" if rpt.council_run_at else "council_review"
+    if rpt.status == "published":
+        return "published"
+    return rpt.status  # "approved" / "rejected" — shown as-is, not forced into a task-only label
+
+
+def _task_to_dict(row, db) -> dict:
+    return {
+        "task_id":      row.task_id,
+        "focus":        row.focus,
+        "region":       _task_region_list(row),
+        "period_start": row.period_start.isoformat() if row.period_start else None,
+        "period_end":   row.period_end.isoformat() if row.period_end else None,
+        "status":       _task_effective_status(row, db),
+        "snapshot_id":  row.snapshot_id,
+        "report_id":    row.report_id,
+        "created_by":   row.created_by,
+        "created_at":   row.created_at.isoformat() if row.created_at else None,
+        "updated_at":   row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.post("/api/reports/tasks")
+async def create_report_task(request: Request, _forge=Depends(require_admin_user)):
+    """Task the system to watch a region (or "auto") over a time window, with a
+    given focus, rather than only ever capturing an instant, unscoped snapshot
+    on demand. Starts "queued" if period_start is in the future, else
+    "collecting" immediately — there is no separate scheduler to wait in."""
+    body = await request.json()
+    region = body.get("region")
+    if region is not None and region != "auto" and not isinstance(region, list):
+        raise HTTPException(400, "region must be a list of region names, or the literal string 'auto'")
+    period_start = _parse_snapshot_dt(body.get("period_start"))
+    period_end   = _parse_snapshot_dt(body.get("period_end"))
+    if period_start and period_end and period_end <= period_start:
+        raise HTTPException(400, "period_end must be after period_start")
+
+    now = datetime.utcnow()
+    status = "queued" if (period_start and period_start > now) else "collecting"
+
+    from database import ReportTask, get_db as _gdb_tcreate
+    with _gdb_tcreate() as db:
+        row = ReportTask(
+            task_id=_task_id(),
+            focus=body.get("focus"),
+            region_json=_json.dumps(region) if region is not None else None,
+            period_start=period_start, period_end=period_end,
+            status=status,
+            created_by=body.get("created_by") or getattr(_forge, "email", "admin"),
+        )
+        db.add(row)
+        db.commit()
+        return _task_to_dict(row, db)
+
+
+@app.get("/api/reports/tasks")
+def list_report_tasks(status: str = None, _forge=Depends(require_admin_user)):
+    from database import ReportTask, get_db as _gdb_tlist
+    with _gdb_tlist() as db:
+        rows = db.query(ReportTask).order_by(ReportTask.created_at.desc()).all()
+        out = [_task_to_dict(r, db) for r in rows]
+        if status and status != "all":
+            out = [t for t in out if t["status"] == status]
+        return out
+
+
+@app.get("/api/reports/tasks/{task_id}")
+async def get_report_task(task_id: str, _forge=Depends(require_admin_user)):
+    """Returns the task's current status plus whatever's been collected so far
+    — the whole point of this endpoint: seeing the data before anything is
+    drafted.
+
+    While status is queued/collecting, "collected" is computed LIVE by calling
+    prepare_intelligence_picture() scoped to [period_start, min(period_end, now)]
+    on every call, rather than a persisted, periodically-diffed partial
+    artefact (see ReportTask's docstring for why). This naturally shows more
+    data as time passes, since the query window grows and the real DB
+    naturally accumulates more matching rows in it — without any background
+    scheduler or diff-state to get out of sync.
+
+    Once a snapshot has been frozen (ready_to_draft or later), "collected" is
+    that real, immutable snapshot's content instead, so this endpoint keeps
+    returning the exact picture a linked Report actually cites.
+    """
+    from database import ReportTask, ReportSnapshot, get_db as _gdb_tget
+    with _gdb_tget() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+
+        now = datetime.utcnow()
+        # Lazy, low-consequence transition only: time has passed, start
+        # collecting. Freezing a snapshot (ready_to_draft) is NOT done here —
+        # that's a real, consequential write and gets its own explicit POST
+        # below; a GET should never have a side effect that significant.
+        if row.status == "queued" and (not row.period_start or row.period_start <= now):
+            row.status = "collecting"
+            row.updated_at = now
+            db.commit()
+
+        collected = None
+        if row.status in ("queued", "collecting"):
+            region = _resolve_task_region(row)
+            window_end = min(row.period_end, now) if row.period_end else now
+            from briefing_prep import prepare_intelligence_picture as _prep_ip_task
+            loop = asyncio.get_event_loop()
+            try:
+                collected = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        _executor,
+                        lambda: _prep_ip_task(
+                            db=next(_db_gen()), forge_alerts=list(_forge_alerts),
+                            fusion_engine_instance=_fusion_engine,
+                            region=region, period_start=row.period_start, period_end=window_end,
+                        ),
+                    ),
+                    timeout=30,
+                )
+            except Exception as _e:
+                raise HTTPException(500, f"collection failed: {_e}")
+        elif row.snapshot_id:
+            snap = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first()
+            if snap:
+                collected = _json.loads(snap.content_json)
+
+        result = _task_to_dict(row, db)
+        result["collected"] = collected
+        return result
+
+
+@app.post("/api/reports/tasks/{task_id}/finish-collection")
+async def finish_report_task_collection(task_id: str, _forge=Depends(require_admin_user)):
+    """Explicit, consequential transition: freezes a real ReportSnapshot from
+    everything collected in [period_start, now] and moves the task to
+    ready_to_draft. Needed for open-ended tasks (no period_end ever arrives on
+    its own) and for closing a windowed task early — GET never does this
+    automatically, since freezing a permanent artefact isn't something a read
+    should trigger as a side effect."""
+    from database import ReportTask, ReportSnapshot, get_db as _gdb_tfin
+    with _gdb_tfin() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+        if row.status not in ("queued", "collecting"):
+            raise HTTPException(409, f"only queued/collecting tasks can finish collection (this one is {row.status})")
+
+        now = datetime.utcnow()
+        region = _resolve_task_region(row)
+        window_end = min(row.period_end, now) if row.period_end else now
+        from briefing_prep import prepare_intelligence_picture as _prep_ip_fin
+        loop = asyncio.get_event_loop()
+        try:
+            pic = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _executor,
+                    lambda: _prep_ip_fin(
+                        db=next(_db_gen()), forge_alerts=list(_forge_alerts),
+                        fusion_engine_instance=_fusion_engine,
+                        region=region, period_start=row.period_start, period_end=window_end,
+                    ),
+                ),
+                timeout=30,
+            )
+        except Exception as _e:
+            raise HTTPException(500, f"collection failed: {_e}")
+
+        def _json_default(obj):
+            if hasattr(obj, "isoformat"):
+                return obj.isoformat()
+            return str(obj)
+
+        snap_id = _snapshot_id()
+        snap = ReportSnapshot(
+            snapshot_id=snap_id, label=row.focus or f"Task {row.task_id}",
+            source="report_task", period_start=row.period_start, period_end=window_end,
+            stats_json=_json.dumps(pic.get("statistics", {}), default=_json_default),
+            content_json=_json.dumps(pic, ensure_ascii=False, default=_json_default),
+            created_by=row.created_by,
+        )
+        db.add(snap)
+        row.snapshot_id = snap_id
+        row.status = "ready_to_draft"
+        row.updated_at = now
+        db.commit()
+        return _task_to_dict(row, db)
+
+
+@app.post("/api/reports/tasks/{task_id}/draft")
+async def start_report_task_draft(task_id: str, request: Request, _forge=Depends(require_admin_user)):
+    """Once ready_to_draft, create the underlying Report draft pre-filled from
+    the task's frozen snapshot — reuses the exact same creation pattern
+    POST /api/reports already uses (_report_id, _validate_claims, the same
+    Report(...) construction), not a parallel implementation."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    from database import ReportTask, ReportSnapshot, Report, get_db as _gdb_tdraft
+    with _gdb_tdraft() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+        if row.status != "ready_to_draft":
+            raise HTTPException(409, f"only ready_to_draft tasks can start drafting (this one is {row.status})")
+        if not row.snapshot_id or not db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first():
+            raise HTTPException(500, f"task's snapshot {row.snapshot_id} no longer exists")
+
+        title = (body.get("title") or "").strip() or f"Report — {row.focus or row.task_id}"
+        claims = _validate_claims(body.get("claims") or [])
+        rpt = Report(
+            report_id=_report_id(), title=title, snapshot_id=row.snapshot_id,
+            classification=body.get("classification") or "UNCLASSIFIED // FOR ANALYTICAL USE ONLY",
+            key_judgments=body.get("key_judgments"),
+            claims_json=_json.dumps(claims), status="draft",
+            created_by=row.created_by or getattr(_forge, "email", "admin"),
+        )
+        db.add(rpt)
+        row.report_id = rpt.report_id
+        row.status = "drafting"
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _task_to_dict(row, db)
+
+
+@app.post("/api/reports/tasks/{task_id}/archive")
+def archive_report_task(task_id: str, _forge=Depends(require_admin_user)):
+    """Terminal, task-only state with no Report analog — only once the
+    underlying report has actually been published."""
+    from database import ReportTask, get_db as _gdb_tarch
+    with _gdb_tarch() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+        eff = _task_effective_status(row, db)
+        if eff != "published":
+            raise HTTPException(409, f"only published tasks can be archived (this one is {eff})")
+        row.status = "archived"
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _task_to_dict(row, db)
+
+
 # ── Assets (roadmap Phase 2: civilian/military/dual-use infrastructure registry) ──
 #
 # OntologyEntity (the existing infra registry) is a label, a type, and a JSON

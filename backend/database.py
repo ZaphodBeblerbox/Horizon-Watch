@@ -917,6 +917,68 @@ class Report(Base):
     )
 
 
+class ReportTask(Base):
+    """Tasks the system to watch a region over a time window before anything is
+    drafted — sits in front of the ReportSnapshot/Report pair rather than
+    replacing either. Before this existed, the only way to get a
+    ReportSnapshot was to hit the endpoint and freeze "everything active,
+    right now" with no region/period scope at all and no way to see what was
+    accumulating before deciding to draft.
+
+    Status machine is deliberately a SUPERSET of Report's own
+    (draft -> in_review -> approved -> published/rejected): `drafting`,
+    `council_review`, and `human_review` on a task correspond 1:1 to the
+    underlying Report actually being in `draft`, `in_review` (twice — once
+    for the council pass, once for human review), and `published`. This
+    model orchestrates and points at a Report via `report_id`; it does not
+    fork or replace Report's own status machine or its existing tests.
+
+    `region_json` is either a JSON array of named Mission-Profile-style
+    region strings (must match scoring.REGION_BBOXES keys — the same
+    vocabulary Mission Profile's own focusRegions already uses, not a new
+    geometry format) or the literal JSON string "auto", meaning: infer the
+    region from Mission Profile's currently-configured focusRegions at
+    collection time. v1 auto-detection is deliberately this simple lookup,
+    not real hotspot/anomaly-density detection — that is real, sequenced,
+    later work, not a shortcut being snuck in here.
+
+    There is no separate "collected so far" storage column: while
+    status == "collecting", the collected-so-far view is computed live by
+    calling prepare_intelligence_picture() scoped to
+    [period_start, min(period_end, now)] on every request, rather than
+    running a background poller that periodically diffs and persists
+    partial artefacts. This was the smaller, safer choice — no new
+    scheduler/thread, no diff-state that can drift out of sync with the
+    real data — and it inherently shows more data as time passes, since
+    the query window naturally grows and the real DB naturally accumulates
+    more matching rows in it. Once collection is done, `snapshot_id` points
+    at a real, frozen ReportSnapshot taken via the exact same creation path
+    the unscoped endpoint already uses — not a parallel implementation."""
+    __tablename__ = "report_tasks"
+
+    id            = Column(Integer, primary_key=True)
+    task_id       = Column(String, unique=True, index=True, nullable=False)  # TASK-<uuid8>
+
+    focus         = Column(Text, nullable=True)     # free text, same shape as Mission Profile's missionContext
+    region_json   = Column(Text, nullable=True)      # JSON: ["Region A", ...] or the literal JSON string "auto"
+    period_start  = Column(DateTime, nullable=True)   # open-ended (nullable) = "until further notice"
+    period_end    = Column(DateTime, nullable=True)
+
+    status        = Column(String, nullable=False, default="queued", index=True)
+    # queued -> collecting -> ready_to_draft -> drafting -> council_review -> human_review -> published -> archived
+
+    snapshot_id   = Column(String, nullable=True, index=True)   # set once collection freezes a ReportSnapshot
+    report_id     = Column(String, nullable=True, index=True)   # set once drafting creates the underlying Report
+
+    created_by    = Column(String, nullable=True)
+    created_at    = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at    = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_task_status_created", "status", "created_at"),
+    )
+
+
 @contextmanager
 def get_db():
     db = SessionLocal()
