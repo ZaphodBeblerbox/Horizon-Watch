@@ -180,12 +180,6 @@ function LayerRows3D({ active, onToggle, onLayerSet }) {
                 />
             )}
             <LayerRow
-                label="Points of Interest"
-                hint="User-created markers"
-                toggled={active.poi}
-                onToggle={() => onToggle("poi")}
-            />
-            <LayerRow
                 label="Strategic Zones"
                 hint="Conflict zones · nuclear corridors · chokepoints"
                 toggled={active.showStrategicZones ?? false}

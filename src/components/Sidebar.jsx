@@ -131,22 +131,6 @@ function IconTV() {
     )
 }
 
-function IconShield() {
-    return (
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 2L16 5V9C16 13 9 16.5 9 16.5S2 13 2 9V5L9 2Z"/>
-        </svg>
-    )
-}
-
-function IconChat() {
-    return (
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 2.5h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5.5L2 16V3.5a1 1 0 0 1 1-1z" fill="none"/>
-        </svg>
-    )
-}
-
 function IconProfile() {
     return (
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -163,21 +147,6 @@ function IconNews() {
             <line x1="5" y1="6"  x2="13" y2="6"/>
             <line x1="5" y1="9"  x2="13" y2="9"/>
             <line x1="5" y1="12" x2="9"  y2="12"/>
-        </svg>
-    )
-}
-
-function IconPOI() {
-    return (
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="9" cy="6" r="3.2" fill="none"/>
-            <path d="M2.5 15.5C2.5 12.5 5.5 10 9 10C12.5 10 15.5 12.5 15.5 15.5" fill="none"/>
-            <circle cx="14" cy="4" r="2.2" fill="none" strokeWidth="1.1"/>
-            <line x1="14" y1="2.3" x2="14" y2="1.2"/>
-            <line x1="15.6" y1="2.8" x2="16.4" y2="2.2"/>
-            <line x1="15.6" y1="5.2" x2="16.4" y2="5.8"/>
-            <line x1="12.4" y1="5.2" x2="11.6" y2="5.8"/>
-            <line x1="12.4" y1="2.8" x2="11.6" y2="2.2"/>
         </svg>
     )
 }
@@ -219,7 +188,6 @@ export default function Sidebar({
     activeTabType    = "map",
     onOpenTab,
     profile,
-    currentUser      = null,
     alertCount       = 0,
     budgetPct        = null,
     notifOpen        = false,
@@ -230,18 +198,12 @@ export default function Sidebar({
     onToggleSound,
     tvOpen           = false,
     onToggleTV,
-    onToggleAdmin,
-    chatOpen         = false,
-    onToggleChat,
     overwatchActive  = false,
     onToggleOverwatch,
     directorActive   = false,
     onDirectorClick  = null,
     onOpenForge      = null,
-    onOpenDrone      = null,
 }) {
-    const isAdmin    = true
-    const isAnalyst  = true
     const isObserver = true
     const [hovered, setHovered] = useState(null)
 
@@ -255,15 +217,12 @@ export default function Sidebar({
                        (id === "health"     && rightPanel === "health")        ||
                        (id === "analytics"  && rightPanel === "analytics")     ||
                        (id === "threats"    && rightPanel === "threats")       ||
-                       (id === "poi"        && activeTabType === "poi")        ||
                        (id === "map"        && activeTabType === "map")        ||
                        (id === "news"       && activeTabType === "news")       ||
                        (id === "briefing"   && activeTabType === "briefing")   ||
                        (id === "notif"      && notifOpen)                      ||
-                       (id === "chat"       && chatOpen)                       ||
                        (id === "overwatch"  && overwatchActive)  ||
-                       (id === "forge"      && activeTabType === "forge")  ||
-                       (id === "drone"      && activeTabType === "drone")
+                       (id === "forge"      && activeTabType === "forge")
         if (active)         return "var(--akili-accent)"
         if (hovered === id) return "var(--akili-text-secondary)"
         return "var(--akili-text-muted)"
@@ -276,7 +235,6 @@ export default function Sidebar({
             onMouseLeave={() => setHovered(null)}
             onClick={() => {
                 if (id === "map")     { onOpenTab?.("map");     return }
-                if (id === "poi")     { onOpenTab?.("poi");     return }
                 if (id === "news")    { onOpenTab?.("news");    return }
                 if (id === "briefing") { onOpenTab?.("briefing"); return }
                 onRightPanel(rightPanel === id ? null : id)
@@ -424,7 +382,7 @@ export default function Sidebar({
                     </button>
                 )}
 
-                {isAnalyst && btn("layers",     <IconLayers />)}
+                {btn("layers",     <IconLayers />)}
                 {/* Overwatch — satellite ML detection */}
                 {onToggleOverwatch && (
                     <button
@@ -510,76 +468,15 @@ export default function Sidebar({
                         </svg>
                     </button>
                 )}
-                {/* Drone Operator Mode */}
-                {onOpenDrone && (
-                    <button
-                        onMouseEnter={() => setHovered("drone")}
-                        onMouseLeave={() => setHovered(null)}
-                        onClick={onOpenDrone}
-                        title="Drone Operator Mode"
-                        style={{
-                            width:          48,
-                            height:         40,
-                            display:        "flex",
-                            alignItems:     "center",
-                            justifyContent: "center",
-                            background:     activeTabType === "drone" ? "rgba(56,189,248,0.1)" : "none",
-                            border:         "none",
-                            borderLeft:     activeTabType === "drone" ? "2px solid #38bdf8" : "2px solid transparent",
-                            cursor:         "pointer",
-                            color:          iconColor("drone"),
-                            fontSize:       15,
-                            lineHeight:     1,
-                            transition:     "color 0.12s, background 0.12s",
-                            flexShrink:     0,
-                        }}
-                    >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="2"/>
-                            <path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/>
-                            <circle cx="4"  cy="4"  r="1.5" fill="currentColor"/>
-                            <circle cx="20" cy="4"  r="1.5" fill="currentColor"/>
-                            <circle cx="4"  cy="20" r="1.5" fill="currentColor"/>
-                            <circle cx="20" cy="20" r="1.5" fill="currentColor"/>
-                        </svg>
-                    </button>
-                )}
-                {isAnalyst && btn("poi", <IconPOI />, null, null)}
-                {isAnalyst && btn("analytics", <IconAnalytics />, null, null)}
-                {isAnalyst && btn("threats",
+                {btn("analytics", <IconAnalytics />, null, null)}
+                {btn("threats",
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
                         <polygon points="8,2 14,13 2,13"/>
                         <line x1="8" y1="7" x2="8" y2="10"/>
                         <circle cx="8" cy="12" r="0.6" fill="currentColor"/>
                     </svg>,
                     null, null)}
-                {isAdmin   && btn("health", <IconHealth />, null, null)}
-
-                {/* Chat — analyst + admin only */}
-                {isAnalyst && onToggleChat && (
-                    <button
-                        onMouseEnter={() => setHovered("chat")}
-                        onMouseLeave={() => setHovered(null)}
-                        onClick={onToggleChat}
-                        title="Messages"
-                        style={{
-                            position:       "relative",
-                            width:          48,
-                            height:         40,
-                            display:        "flex",
-                            alignItems:     "center",
-                            justifyContent: "center",
-                            background:     "none",
-                            border:         "none",
-                            cursor:         "pointer",
-                            color:          iconColor("chat"),
-                            transition:     "color 0.12s",
-                            flexShrink:     0,
-                        }}
-                    >
-                        <IconChat />
-                    </button>
-                )}
+                {btn("health", <IconHealth />, null, null)}
 
                 {/* TV button */}
                 {onToggleTV && (
@@ -651,31 +548,6 @@ export default function Sidebar({
                 )}
 {btn("settings", <IconSettings />)}
                 {profile && btn("profile", <IconProfile />)}
-                {/* Admin shield — only for admins */}
-                {isAdmin && onToggleAdmin && (
-                    <button
-                        onMouseEnter={() => setHovered("admin")}
-                        onMouseLeave={() => setHovered(null)}
-                        onClick={onToggleAdmin}
-                        title="Admin Console"
-                        style={{
-                            width:          48,
-                            height:         36,
-                            display:        "flex",
-                            alignItems:     "center",
-                            justifyContent: "center",
-                            background:     "none",
-                            border:         "none",
-                            cursor:         "pointer",
-                            color:          hovered === "admin" ? "rgba(255,179,0,0.8)" : "rgba(255,179,0,0.4)",
-                            transition:     "color 0.12s",
-                            flexShrink:     0,
-                        }}
-                    >
-                        <IconShield />
-                    </button>
-                )}
-
             </div>
         </div>
     )

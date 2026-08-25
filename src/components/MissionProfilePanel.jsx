@@ -537,33 +537,6 @@ function SettingsPanel({ profile, onSave, onClose }) {
                     </div>
 
                     <div>
-                        <SectionLabel>POI Proximity Alerts</SectionLabel>
-                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.22)", marginBottom: 8 }}>Alert when a person of interest is near a significant event</div>
-                        <button
-                            onClick={() => upd("poiProximityAlerts", !draft.poiProximityAlerts)}
-                            style={{
-                                display: "flex", alignItems: "center", gap: 8,
-                                background: "none", border: "none", cursor: "pointer", padding: 0,
-                            }}
-                        >
-                            <div style={{
-                                width: 32, height: 18, borderRadius: 9, flexShrink: 0,
-                                background: draft.poiProximityAlerts !== false ? "var(--akili-accent)" : "#2d3748",
-                                position: "relative", transition: "background 0.2s",
-                            }}>
-                                <span style={{
-                                    position: "absolute", top: 2, width: 14, height: 14, borderRadius: "50%",
-                                    background: "#fff", transition: "left 0.2s",
-                                    left: draft.poiProximityAlerts !== false ? 16 : 2,
-                                }} />
-                            </div>
-                            <span style={{ fontSize: 11, color: draft.poiProximityAlerts !== false ? "var(--akili-accent)" : "rgba(255,255,255,0.3)" }}>
-                                {draft.poiProximityAlerts !== false ? "On" : "Off"}
-                            </span>
-                        </button>
-                    </div>
-
-                    <div>
                         <SectionLabel>Active Situations</SectionLabel>
                         <textarea
                             value={draft.activeSituations}

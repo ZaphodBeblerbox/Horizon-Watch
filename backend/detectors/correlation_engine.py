@@ -1237,3 +1237,200 @@ class ChokepointActivityDetector:
                 "trigger_reason": icon_type,
             },
         }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AIS SPOOFING / MMSI-INTEGRITY DETECTOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AISSpoofingDetector:
+    """
+    Flags two kinds of AIS integrity anomaly for a given MMSI, comparing this
+    detection cycle's normalized snapshot against the previous cycle's
+    (~5 minute cadence — this compares cycle-to-cycle snapshots, NOT raw
+    per-message websocket deltas):
+
+      1. Position jump — the implied speed between the last two reported
+         positions for an MMSI exceeds a physically-impossible threshold
+         (default 100 knots — far above any real vessel, including fast
+         ferries/hydrofoils which top out around 40-50 knots).
+      2. Identity mismatch — the vessel's reported `name` changes between two
+         specific, non-placeholder values across consecutive cycles.
+
+    HONEST SCOPE NOTE (read before trusting the alert label): this pipeline
+    has a single AIS ingestion path and keeps exactly one "last known
+    state" per MMSI — there is no multi-receiver correlation that could
+    directly observe two different vessels broadcasting on the same MMSI at
+    the same instant. Both failure modes above collapse to the identical
+    observable signal in this single last-position/identity cache: a
+    discontinuity between consecutive reports for one MMSI. That
+    discontinuity is consistent with genuine GPS/AIS spoofing, with two
+    distinct physical vessels colliding on a reused or misconfigured MMSI,
+    or — more mundanely — a legitimate MMSI reassignment or a garbled
+    upstream message. This detector cannot and does not distinguish those
+    cases; it surfaces the discontinuity as an "MMSI integrity anomaly" for
+    a human to investigate further, and both the alert message and the
+    trigger_reason say so rather than overclaiming "spoofing detected".
+
+    Design note: only `name` is used to trigger the identity-mismatch alert.
+    `ship_type` is deliberately excluded from the trigger because it commonly
+    (and legitimately) updates from an empty/"unknown" default to a real
+    value as more static AIS data arrives for a vessel — flagging that
+    transition would be a guaranteed false positive on nearly every vessel's
+    first few cycles. `name` does not have that problem: `_normalize_vessel`
+    only ever fills in a synthetic "MMSI:<n>" placeholder when the real name
+    is absent, and that placeholder is treated as non-real (see
+    `_is_real_name`) so a name only trips this check when it moves between
+    two genuinely different, real-looking values.
+    """
+
+    POSITION_JUMP_KNOTS  = 100.0   # generous, false-positive-resistant cutoff
+    MIN_ELAPSED_SECONDS  = 30.0    # ignore intervals shorter than this (GPS jitter / duplicate cycle)
+    KM_PER_NM            = 1.852
+
+    _PLACEHOLDER_NAMES = {"", "UNKNOWN", "UNKNOWN VESSEL", "N/A", "NONE", "NULL"}
+
+    def __init__(self):
+        # mmsi (str) -> {lat, lng, timestamp, name, ship_type}
+        self._last: dict = {}
+
+    def check(self, mmsi, vessel: dict, now: datetime) -> list:
+        """
+        vessel: a _normalize_vessel()-shaped dict (lat, lng, name, ship_type,
+                speed, ...) for ONE mmsi, from the current detection cycle.
+        Returns a list of alert dicts. Never raises, never returns None.
+        """
+        try:
+            if not vessel.get("lat") or not vessel.get("lng"):
+                return []
+            mmsi = str(mmsi)
+            lat  = vessel["lat"]
+            lng  = vessel["lng"]
+            name = (vessel.get("name") or "").strip()
+            ship_type = (vessel.get("ship_type") or "").strip()
+
+            prev = self._last.get(mmsi)
+            alerts: list = []
+
+            if prev is not None:
+                elapsed_s = (now - prev["timestamp"]).total_seconds()
+                if elapsed_s >= self.MIN_ELAPSED_SECONDS:
+                    from scoring import _haversine_km
+                    dist_km = _haversine_km(prev["lat"], prev["lng"], lat, lng)
+                    implied_knots = (dist_km / (elapsed_s / 3600.0)) / self.KM_PER_NM
+                    if implied_knots > self.POSITION_JUMP_KNOTS:
+                        alerts.append(self._make_position_alert(
+                            mmsi, vessel, prev, dist_km, implied_knots, elapsed_s, now,
+                        ))
+
+                if (self._is_real_name(name, mmsi)
+                        and self._is_real_name(prev.get("name", ""), mmsi)
+                        and not self._same_text(name, prev.get("name", ""))):
+                    alerts.append(self._make_identity_alert(mmsi, vessel, prev, now))
+
+            # Record current cycle as the new "previous" regardless of whether
+            # anything fired, so drift is tracked continuously rather than reset.
+            self._last[mmsi] = {
+                "lat": lat, "lng": lng, "timestamp": now,
+                "name": name, "ship_type": ship_type,
+            }
+            return alerts
+        except Exception:
+            return []
+
+    def purge_stale(self, now: datetime, max_age_hours: float = 48.0) -> None:
+        cutoff = now - timedelta(hours=max_age_hours)
+        self._last = {k: v for k, v in self._last.items() if v["timestamp"] >= cutoff}
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _same_text(a: str, b: str) -> bool:
+        return (a or "").strip().casefold() == (b or "").strip().casefold()
+
+    @classmethod
+    def _is_real_name(cls, name: str, mmsi: str) -> bool:
+        if not name:
+            return False
+        n = name.strip().upper()
+        if n in cls._PLACEHOLDER_NAMES:
+            return False
+        if n == f"MMSI:{mmsi}".upper():
+            return False
+        return True
+
+    @staticmethod
+    def _make_position_alert(mmsi, vessel, prev, dist_km, implied_knots, elapsed_s, now) -> dict:
+        vname = vessel.get("name") or str(mmsi)
+        return {
+            "id":           f"aisspoof_jump_{int(now.timestamp()*1000)}_{mmsi}",
+            "rule_id":      "AIS_POSITION_JUMP",
+            "rule_name":    "AIS_POSITION_JUMP",
+            "rule_trigger": "AIS_POSITION_JUMP",
+            "source":       "AIS",
+            "severity":     "high",
+            "icon_type":    "POSITION_JUMP",
+            "vessel":       vname,
+            "mmsi":         mmsi,
+            "lat":          vessel.get("lat"),
+            "lng":          vessel.get("lng"),
+            "speed":        vessel.get("speed"),
+            "message": (
+                f"{vname} (MMSI {mmsi}) jumped {dist_km:.1f}km in {elapsed_s:.0f}s "
+                f"(implied {implied_knots:.0f} kn) — physically implausible for a "
+                f"vessel. MMSI integrity anomaly: consistent with AIS spoofing, "
+                f"MMSI reuse by a different vessel, or a data error — not "
+                f"distinguishable from this signal alone."
+            ),
+            "timestamp":    now.isoformat(),
+            "provenance": {
+                "source_type":    "AIS",
+                "source_entity":  mmsi,
+                "detection_rule": "AIS_POSITION_JUMP",
+                "trigger_reason": "implied_speed_exceeds_threshold",
+                "params_at_trigger": {
+                    "threshold_knots": AISSpoofingDetector.POSITION_JUMP_KNOTS,
+                    "implied_knots":   round(implied_knots, 1),
+                    "distance_km":     round(dist_km, 2),
+                    "elapsed_seconds": round(elapsed_s, 1),
+                    "prev_lat":        prev["lat"],
+                    "prev_lng":        prev["lng"],
+                },
+            },
+        }
+
+    @staticmethod
+    def _make_identity_alert(mmsi, vessel, prev, now) -> dict:
+        vname = vessel.get("name") or str(mmsi)
+        prev_name = prev.get("name", "")
+        return {
+            "id":           f"aisspoof_ident_{int(now.timestamp()*1000)}_{mmsi}",
+            "rule_id":      "AIS_IDENTITY_MISMATCH",
+            "rule_name":    "AIS_IDENTITY_MISMATCH",
+            "rule_trigger": "AIS_IDENTITY_MISMATCH",
+            "source":       "AIS",
+            "severity":     "high",
+            "icon_type":    "IDENTITY_CHANGE",
+            "vessel":       vname,
+            "mmsi":         mmsi,
+            "lat":          vessel.get("lat"),
+            "lng":          vessel.get("lng"),
+            "speed":        vessel.get("speed"),
+            "message": (
+                f"MMSI {mmsi} reported name '{prev_name}' last cycle, now reports "
+                f"'{vname}'. MMSI integrity anomaly: consistent with AIS spoofing, "
+                f"MMSI reuse by a different vessel, or a data error — not "
+                f"distinguishable from this signal alone."
+            ),
+            "timestamp":    now.isoformat(),
+            "provenance": {
+                "source_type":    "AIS",
+                "source_entity":  mmsi,
+                "detection_rule": "AIS_IDENTITY_MISMATCH",
+                "trigger_reason": "name_changed_between_cycles",
+                "params_at_trigger": {
+                    "previous_name": prev_name,
+                    "current_name":  vname,
+                },
+            },
+        }

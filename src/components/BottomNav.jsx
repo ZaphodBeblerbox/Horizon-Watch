@@ -30,7 +30,6 @@ export default function BottomNav({
     onOpenMenu,
     overwatchActive,
     onToggleOverwatch,
-    onOpenPoi,
     onOpenForge,
     onOpenLayers,
     directorActive = false,

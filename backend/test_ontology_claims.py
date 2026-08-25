@@ -32,17 +32,9 @@ print("  Ontology claims pipeline — verification")
 print("="*70)
 
 import main  # noqa: E402
-from database import get_db, User  # noqa: E402
-from app_shared import make_jwt  # noqa: E402
 
-# Forge is admin-gated (require_admin_user), not passcode-gated — create a
-# real admin test user and mint a real JWT for it, same as any other admin.
-_ADMIN_ID = "TESTOC-ADMIN"
-with get_db() as _db:
-    _db.merge(User(id=_ADMIN_ID, email="testoc-admin@test.local", password_hash="test",
-                    role="admin", approved=True))
-    _db.commit()
-HEADERS = {"Authorization": f"Bearer {make_jwt(_ADMIN_ID)}"}
+# Auth has been removed — every endpoint is open, no token needed.
+HEADERS = {}
 
 with TestClient(main.app) as client:
     # ── 1. Bulk-create claims: one well-formed + cited, one missing evidence ──
@@ -207,11 +199,6 @@ with _cleanup_get_db() as _cdb:
     ).count()
     check("cleanup removed all TEST-prefixed ontology claims", _remaining == 0,
           f"{_remaining} left over")
-
-with get_db() as _db:
-    _db.query(User).filter(User.id == _ADMIN_ID).delete(synchronize_session=False)
-    _db.commit()
-    check("cleanup removed test admin user", _db.query(User).filter(User.id == _ADMIN_ID).count() == 0)
 
 print("="*70)
 if FAILURES:

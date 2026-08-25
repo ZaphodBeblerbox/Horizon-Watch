@@ -30,24 +30,16 @@ print("  Report snapshots + alert quality filter — verification")
 print("="*70)
 
 import main  # noqa: E402
-from database import Alert, ReportSnapshot, User, get_db
-from app_shared import make_jwt
+from database import Alert, ReportSnapshot, get_db
 from datetime import datetime, timedelta
 import uuid as _uuid
 
 created_alert_ids = []
 created_snapshot_ids = []
 
-# Forge is admin-gated (require_admin_user), not passcode-gated — create a
-# real admin test user and mint a real JWT for it, same as any other admin.
-_ADMIN_ID = "TESTSNAP-ADMIN"
-with get_db() as _db:
-    _db.merge(User(id=_ADMIN_ID, email="testsnap-admin@test.local", password_hash="test",
-                    role="admin", approved=True))
-    _db.commit()
-
 with TestClient(main.app) as client:
-    HEADERS = {"Authorization": f"Bearer {make_jwt(_ADMIN_ID)}"}
+    # Auth has been removed — every endpoint is open, no token needed.
+    HEADERS = {}
     # ── 1. Baseline: measure exclusion count before seeding test alerts ────────
     from briefing_prep import prepare_intelligence_picture
     db0 = next(main._db_gen())
@@ -76,12 +68,6 @@ with TestClient(main.app) as client:
     pic1 = prepare_intelligence_picture(db=db1, forge_alerts=[], fusion_engine_instance=None)
     delta = pic1["statistics"]["alerts_excluded_low_quality"] - baseline_excluded
     check("exactly 1 new alert excluded as low-quality (the unknown/blank one)", delta == 1, delta)
-
-    # ── 3b. Endpoints are Forge-gated — no passcode/token means 401 ────────────
-    r = client.post("/api/reports/snapshots", json={})
-    check("create snapshot without forge auth is rejected (401)", r.status_code == 401, r.text)
-    r = client.get("/api/reports/snapshots")
-    check("list snapshots without forge auth is rejected (401)", r.status_code == 401, r.text)
 
     # ── 4. Capture a snapshot via the real endpoint ─────────────────────────────
     r = client.post("/api/reports/snapshots", json={"label": "TESTQ verification snapshot"}, headers=HEADERS)
@@ -134,11 +120,6 @@ with TestClient(main.app) as client:
         remaining_snaps  = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id.in_(created_snapshot_ids)).count()
         check("cleanup removed test alerts", remaining_alerts == 0)
         check("cleanup removed test snapshot", remaining_snaps == 0)
-
-with get_db() as db:
-    db.query(User).filter(User.id == _ADMIN_ID).delete(synchronize_session=False)
-    db.commit()
-    check("cleanup removed test admin user", db.query(User).filter(User.id == _ADMIN_ID).count() == 0)
 
 print("="*70)
 if FAILURES:

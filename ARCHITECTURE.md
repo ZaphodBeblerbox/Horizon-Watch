@@ -80,7 +80,6 @@ NAGINI 2.0/
 │       ├── MissionProfilePanel.jsx# Focus regions + mission context editor
 │       ├── WorkspacesPanel.jsx    # Named map workspaces
 │       ├── SituationsPanel.jsx    # Saved situation snapshots
-│       ├── POIPanel.jsx           # Points of interest editor
 │       ├── NotificationBar.jsx    # Top alert banner from /api/v2/notifications
 │       ├── AlertStrip.jsx         # Flagged item banner
 │       ├── ToastSystem.jsx        # Toast notifications
@@ -386,7 +385,7 @@ All caches are in-memory Python dicts with TTL timestamps. No Redis or external 
 
 **Tab system:** Tabs stored in `localStorage["akili_tabs"]`. Supported tab types: `map`, `news`, `briefing`. Default: single Map tab.
 
-**Right panel slots** (mutually exclusive): `layers`, `detail`, `profile`, `settings`, `health`, `workspaces`, `situations`, `chat`, `alerts`, `poi`.
+**Right panel slots** (mutually exclusive): `layers`, `detail`, `profile`, `settings`, `health`, `workspaces`, `situations`, `chat`, `alerts`.
 
 **State managed in `App`:**
 - `currentUser` — authenticated user object

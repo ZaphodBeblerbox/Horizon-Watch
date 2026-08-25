@@ -31,17 +31,10 @@ print("  Mission Tasking (ReportTask) — verification")
 print("="*70)
 
 import main  # noqa: E402
-from database import FusionEvent, Report, ReportSnapshot, ReportTask, User, get_db  # noqa: E402
-from app_shared import make_jwt  # noqa: E402
+from database import FusionEvent, Report, ReportSnapshot, ReportTask, get_db  # noqa: E402
 
-# Forge is admin-gated (require_admin_user), not passcode-gated — create a
-# real admin test user and mint a real JWT for it, same as any other admin.
-_ADMIN_ID = "TESTTASK-ADMIN"
-with get_db() as _db:
-    _db.merge(User(id=_ADMIN_ID, email="testtask-admin@test.local", password_hash="test",
-                    role="admin", approved=True))
-    _db.commit()
-HEADERS = {"Authorization": f"Bearer {make_jwt(_ADMIN_ID)}"}
+# Auth has been removed — every endpoint is open, no token needed.
+HEADERS = {}
 PREFIX  = "TESTTASK"
 
 created_fusion_ids   = []
@@ -86,9 +79,6 @@ with TestClient(main.app) as client:
         "period_start": now.isoformat(), "period_end": (now - timedelta(hours=1)).isoformat(),
     }, headers=HEADERS)
     check("period_end before period_start is rejected (400)", r.status_code == 400, r.text)
-
-    r = client.get("/api/reports/tasks", headers={})
-    check("list tasks without auth is rejected (401)", r.status_code == 401, r.text)
 
     # ── 2. Create a real task scoped to region + period, no period_end (open-ended) ─
     r = client.post("/api/reports/tasks", json={
@@ -250,11 +240,6 @@ with TestClient(main.app) as client:
         check("cleanup removed test reports", db.query(Report).filter(Report.report_id.in_(created_report_ids)).count() == 0)
         check("cleanup removed test snapshots", db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id.in_(created_snapshot_ids)).count() == 0)
         check("cleanup removed test tasks", db.query(ReportTask).filter(ReportTask.task_id.in_(created_task_ids)).count() == 0)
-
-with get_db() as db:
-    db.query(User).filter(User.id == _ADMIN_ID).delete(synchronize_session=False)
-    db.commit()
-    check("cleanup removed test admin user", db.query(User).filter(User.id == _ADMIN_ID).count() == 0)
 
 print("="*70)
 if FAILURES:

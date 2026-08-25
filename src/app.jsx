@@ -5,7 +5,6 @@ import Sidebar from "./components/Sidebar.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
 import ChatPanel from "./components/ChatPanel.jsx"
-import DirectChatPanel from "./components/DirectChatPanel.jsx"
 import TVWidget from "./components/tvwidget.jsx"
 import MissionProfilePanel, { loadProfile, saveProfileToStorage } from "./components/MissionProfilePanel.jsx"
 import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
@@ -15,18 +14,14 @@ import { playAlert, resumeAudio } from "./soundSystem.js"
 import SettingsPanel from "./components/SettingsPanel.jsx"
 import HealthPanel from "./components/HealthPanel.jsx"
 import AnalyticsPanel from "./components/AnalyticsPanel.jsx"
-import POIPanel from "./components/POIPanel.jsx"
 import API_BASE from "./apiBase.js"
 import LoadingScreen from "./components/LoadingScreen.jsx"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import PreferencesPanel, { loadSettings } from "./components/PreferencesPanel.jsx"
-import LoginPage from "./components/LoginPage.jsx"
-import AdminPanel from "./components/AdminPanel.jsx"
 import NotificationBar from "./components/NotificationBar.jsx"
 import NewsPage from "./components/NewsPage.jsx"
 import BottomNav from "./components/BottomNav.jsx"
 import MobileDrawer from "./components/MobileDrawer.jsx"
-import { getToken, clearToken, apiFetch } from "./auth.js"
 import DirectorBar from "./components/DirectorBar.jsx"
 import DirectorSidebar from "./components/DirectorSidebar.jsx"
 import DirectorModal from "./components/DirectorModal.jsx"
@@ -39,7 +34,6 @@ import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
 import LayersPanel from "./components/LayersPanel.jsx"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
 import ForgePanel from "./components/ForgePanel.jsx"
-import DroneOperatorMode from "./components/DroneOperatorMode.jsx"
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
 import NewsTicker from "./components/NewsTicker.jsx"
 import WorldClocksBar from "./components/WorldClocksBar.jsx"
@@ -152,11 +146,6 @@ const PANEL_STYLE = {
 export default function App() {
     const [loading,      setLoading]      = useState(true)
     const [showTV,       setShowTV]       = useState(false)
-    const [authChecked,  setAuthChecked]  = useState(false)
-    const [currentUser,  setCurrentUser]  = useState(null)
-    const [showAdmin,         setShowAdmin]         = useState(false)
-    const [showChat,          setShowChat]          = useState(false)
-    const [droneMode,           setDroneMode]           = useState("full") // "full" | "split"
     const [overwatchActive,     setOverwatchActive]     = useState(false)
     const [overwatchDrawActive, setOverwatchDrawActive] = useState(false)
     // Overwatch panel state (managed here, fed to OverwatchSidebar)
@@ -174,7 +163,6 @@ export default function App() {
     const [owSentinelLoading,  setOwSentinelLoading]  = useState(false) // kept for legacy compat
     const [overwatchDrawMode,  setOverwatchDrawMode]  = useState("rectangle")
     const [owPolygon,          setOwPolygon]          = useState(null)
-    const [showLoginModal,    setShowLoginModal]    = useState(false)
 
     // ── Director Mode ──────────────────────────────────────────────────────────
     const [directorVisible,        setDirectorVisible]        = useState(false)
@@ -255,70 +243,6 @@ export default function App() {
         return () => window.removeEventListener("resize", handler)
     }, [])
 
-    // ── Auth check on mount ───────────────────────────────────────────────────
-    useEffect(() => {
-        const token = getToken()
-        if (!token) { setAuthChecked(true); return }
-        let resolved = false
-        const resolve = () => { if (!resolved) { resolved = true; setAuthChecked(true) } }
-        // Timeout: if backend unreachable, show login after 6s instead of hanging indefinitely
-        const timeout = setTimeout(() => { clearToken(); resolve() }, 6000)
-        apiFetch("/api/auth/me")
-            .then(r => r.ok ? r.json() : null)
-            .then(d => {
-                if (d?.id) setCurrentUser(d)
-                else clearToken()
-            })
-            .catch(() => clearToken())
-            .finally(() => { clearTimeout(timeout); resolve() })
-    }, [])
-
-    // ── Session tracking — post location/view every 60s ──────────────────────
-    useEffect(() => {
-        if (!currentUser) return
-        const post = () => {
-            apiFetch("/api/auth/session", {
-                method: "POST",
-                body: JSON.stringify({ current_view: null }),
-            }).catch(() => {})
-        }
-        post()
-        const t = setInterval(post, 60000)
-        return () => clearInterval(t)
-    }, [currentUser])
-
-    // ── GPS location tracking — send to backend on login, then every 5 min ───
-    useEffect(() => {
-        if (!currentUser) return
-        if (!navigator.geolocation) {
-            console.warn("[location] navigator.geolocation not available")
-            return
-        }
-        const send = (pos) => {
-            const { latitude, longitude, accuracy } = pos.coords
-            console.log("[location] Sending:", { lat: latitude, lon: longitude, accuracy })
-            apiFetch("/api/user/location", {
-                method: "POST",
-                body: JSON.stringify({ lat: latitude, lon: longitude }),
-            }).then(r => console.log("[location] Response:", r.status)).catch(e => console.error("[location] Error:", e))
-        }
-        const onError = (err) => {
-            console.warn("[location] Geolocation error:", err.code, err.message)
-        }
-        // Use less aggressive settings on mobile to reduce battery drain
-        const mobileUA = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-        const opts = {
-            enableHighAccuracy: !mobileUA,
-            timeout:            15000,
-            maximumAge:         mobileUA ? 300000 : 60000,
-        }
-        navigator.geolocation.getCurrentPosition(send, onError, opts)
-        const t = setInterval(() => {
-            navigator.geolocation.getCurrentPosition(send, onError, opts)
-        }, 5 * 60 * 1000)
-        return () => clearInterval(t)
-    }, [currentUser])
-
     // ── Mission profile ───────────────────────────────────────────────────────
     const [profile, setProfile] = useState(() => loadProfile())
     const [focusRegions, setFocusRegions] = useState(() => loadProfile()?.focusRegions || [])
@@ -387,7 +311,7 @@ export default function App() {
     const [searchTarget, setSearchTarget] = useState(null)
 
     // ── Right panel slot — mutually exclusive ─────────────────────────────────
-    // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts" | "poi"
+    // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts"
     const [rightPanel, setRightPanel] = useState(null)
 
     const openRightPanel = useCallback((id) => {
@@ -849,7 +773,7 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge", drone: "Drone Ops" }
+        const LABELS = { map: "Map", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge" }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
         const newId = crypto.randomUUID()
@@ -912,7 +836,6 @@ export default function App() {
 
     const openNewTab = useCallback(() => {
         const order = [
-            { type: "poi",       label: "POI" },
             { type: "briefing",  label: "Briefings" },
             { type: "news",      label: "News Feed" },
             { type: "analytics", label: "Analytics" },
@@ -929,17 +852,6 @@ export default function App() {
             localStorage.setItem(TAB_STORAGE_KEY + "-active", activeTabId)
         } catch { /* ignore */ }
     }, [tabs, activeTabId])
-
-    // Dispatch POI mode event when tab changes
-    const prevActiveTabIdRef = useRef(null)
-    useEffect(() => {
-        const isPoi = activeTabType === "poi"
-        const wasPoi = tabs.find(t => t.id === prevActiveTabIdRef.current)?.type === "poi"
-        if (isPoi !== wasPoi) {
-            window.dispatchEvent(new CustomEvent("akili:poi-mode", { detail: { active: isPoi } }))
-        }
-        prevActiveTabIdRef.current = activeTabId
-    }, [activeTabId, activeTabType, tabs])
 
     // ── Situations (state kept for ChatPanel context; no panel UI) ──────────
     const [situations,        setSituations]        = useState([])
@@ -1236,14 +1148,9 @@ export default function App() {
         } catch (err) {
             console.error("[Director] generate failed:", err)
             setDirectorGenerating(false)
-            const msg = err.message || "Director generation failed"
-            if (msg.toLowerCase().includes("session expired") || msg.toLowerCase().includes("authentication")) {
-                clearToken(); setCurrentUser(null)
-            } else {
-                setDirectorError(msg)
-            }
+            setDirectorError(err.message || "Director generation failed")
         }
-    }, [currentUser, directorLayerOverrides, _startDirectorPlayback]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [directorLayerOverrides, _startDirectorPlayback]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDirectorLoadTest = useCallback(async () => {
         setDirectorError(null)
@@ -1437,15 +1344,6 @@ export default function App() {
           .demo-runner-rich-tooltip img { display: block !important; }
         `}</style>
             {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
-            {/* Login overlay — shown when user explicitly requests sign-in */}
-            {showLoginModal && (
-                <div style={{ position: "fixed", inset: 0, zIndex: 99999 }}>
-                    <LoginPage
-                        onAuthenticated={(user) => { setCurrentUser(user); setShowLoginModal(false) }}
-                        onDismiss={() => setShowLoginModal(false)}
-                    />
-                </div>
-            )}
             {/* ── Topbar — 40px, full width ─────────────────────────────────── */}
             {!showAutoMode && <TopBar
                 tabs={tabs}
@@ -1458,8 +1356,6 @@ export default function App() {
                 showSearch={activeTabType === "map"}
                 onSearchResult={(r) => setSearchTarget({ lat: r.lat, lon: r.lon, zoom: r.zoom, label: r.label, key: Date.now() })}
                 searchApiBase={API}
-                showSignIn={authChecked && !currentUser && !showLoginModal}
-                onSignIn={() => setShowLoginModal(true)}
             />}
 
             {/* ── Notification toasts — new event alerts ─────────────────────── */}
@@ -1481,7 +1377,6 @@ export default function App() {
                         activeTabType={activeTabType}
                         onOpenTab={openTab}
                         profile={profile}
-                        currentUser={currentUser}
                         alertCount={flaggedEvents.length}
                         budgetPct={budgetPct}
                         notifOpen={notifOpen}
@@ -1492,9 +1387,6 @@ export default function App() {
                         onToggleSound={onToggleSound}
                         tvOpen={showTV}
                         onToggleTV={() => setShowTV(v => !v)}
-                        onToggleAdmin={() => setShowAdmin(v => !v)}
-                        chatOpen={showChat}
-                        onToggleChat={() => setShowChat(v => !v)}
                         overwatchActive={overwatchActive}
                         onToggleOverwatch={() => setOverwatchActive(v => !v)}
                         directorActive={directorVisible}
@@ -1506,7 +1398,6 @@ export default function App() {
                             }
                         }}
                         onOpenForge={() => openTab("forge")}
-                        onOpenDrone={() => openTab("drone")}
                     />
                 )}
 
@@ -1531,7 +1422,6 @@ export default function App() {
                             cablesEnabled={activeWorkspace?.layers?.cables ?? false}
                             chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
                             strategicZonesEnabled={activeWorkspace?.layers?.showStrategicZones ?? false}
-                            poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                             precisionEventsEnabled={activeWorkspace?.layers?.precisionEvents ?? true}
                             eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 0}
@@ -1645,12 +1535,6 @@ export default function App() {
                     </div>
                 )}
 
-                {/* POI — mounted only while a poi tab exists */}
-                {tabs.some(t => t.type === "poi") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "poi" ? "flex" : "none", flexDirection: "column" }}>
-                        <POIPanel onClose={() => closeTab(tabs.find(t => t.type === "poi")?.id)} />
-                    </div>
-                )}
 
                 {/* News Feed — mounted only while a news tab exists */}
                 {tabs.some(t => t.type === "news") && (
@@ -1674,38 +1558,16 @@ export default function App() {
                     </div>
                 )}
 
-                {/* Forge — admin-only intelligence training lab */}
+                {/* Forge — intelligence training lab */}
                 {tabs.some(t => t.type === "forge") && (
                     <div style={{
                         flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
                         display: activeTabType === "forge" ? "block" : "none",
                         position: "relative",
                     }}>
-                        {(currentUser?.role === "admin" || currentUser?.is_super_admin === true) ? (
-                            <ForgePanel
-                                user={currentUser}
-                                isMobile={isMobile}
-                                onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
-                            />
-                        ) : (
-                            <div style={{ position: "absolute", inset: 0, background: "#0a0e1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 13, fontFamily: "system-ui, sans-serif" }}>
-                                Admin access required.
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* Drone Operator Mode — full-screen feed + detections tab */}
-                {tabs.some(t => t.type === "drone") && (
-                    <div style={{
-                        flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
-                        display: activeTabType === "drone" ? "flex" : "none",
-                        flexDirection: "column",
-                    }}>
-                        <DroneOperatorMode
-                            mode={droneMode}
-                            onMinimize={() => { setDroneMode("split"); openTab("map") }}
-                            onExpand={() => setDroneMode("full")}
+                        <ForgePanel
+                            isMobile={isMobile}
+                            onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
                         />
                     </div>
                 )}
@@ -1736,7 +1598,6 @@ export default function App() {
                             profile={profile}
                             onSave={handleProfileSave}
                             onClose={() => setRightPanel(null)}
-                            user={currentUser}
                         />
                     </div>
                 )}
@@ -1788,40 +1649,7 @@ export default function App() {
                     </div>
                 )}
 
-                {/* Direct messaging panel — full screen overlay */}
-                {showChat && (
-                    <DirectChatPanel
-                        currentUser={currentUser}
-                        onClose={() => setShowChat(false)}
-                    />
-                )}
-
-                {/* Drone PiP overlay — shown on map tab when drone is minimized to split */}
-                {tabs.some(t => t.type === "drone") && droneMode === "split" && activeTabType === "map" && (
-                    <div style={{
-                        position: "fixed",
-                        bottom: 0, right: 0,
-                        width: 480, height: 320,
-                        zIndex: 50,
-                        borderRadius: "12px 0 0 0",
-                        overflow: "hidden",
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        boxShadow: "0 -4px 32px rgba(0,0,0,0.6)",
-                    }}>
-                        <DroneOperatorMode
-                            mode="split"
-                            onExpand={() => { openTab("drone"); setDroneMode("full") }}
-                            onMinimize={() => setDroneMode("full")}
-                        />
-                    </div>
-                )}
-
             </div>
-
-            {/* Admin panel */}
-            {showAdmin && (
-                <AdminPanel user={currentUser} onClose={() => setShowAdmin(false)} />
-            )}
 
             {/* Director Mode modal — portal-level, covers full screen */}
             <DirectorModal
@@ -2115,7 +1943,6 @@ export default function App() {
                     onSwitchToNews={() => openTab("news")}
                     onOpenBriefings={() => openTab("briefing")}
                     onOpenAnalytics={() => openTab("analytics")}
-                    onOpenPoi={() => openTab("poi")}
                     onOpenForge={() => openTab("forge")}
                     onOpenLayers={() => openRightPanel("layers")}
                     notifUnread={unreadCount}
@@ -2138,7 +1965,6 @@ export default function App() {
                     activeTabType={activeTabType}
                     onOpenTab={openTab}
                     profile={profile}
-                    currentUser={currentUser}
                     alertCount={flaggedEvents.length}
                     notifUnread={unreadCount}
                     onToggleNotif={() => setNotifOpen(v => !v)}
@@ -2147,9 +1973,6 @@ export default function App() {
                     onToggleSound={onToggleSound}
                     tvOpen={showTV}
                     onToggleTV={() => setShowTV(v => !v)}
-                    onToggleAdmin={() => setShowAdmin(v => !v)}
-                    chatOpen={showChat}
-                    onToggleChat={() => setShowChat(v => !v)}
                     directorActive={directorVisible}
                     onDirectorTap={() => directorVisible ? handleDirectorClose() : setDirectorModalOpen(true)}
                 />

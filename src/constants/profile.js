@@ -77,7 +77,6 @@ export function emptyProfile() {
         chokepoints:        [],
         threshold:          1,
         activeSituations:   "",
-        poiProximityAlerts: true,
     }
 }
 
