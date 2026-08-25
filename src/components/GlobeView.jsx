@@ -3,7 +3,7 @@ import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
 import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
-import { esriSatelliteProvider, esriLabelsProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
+import { esriLabelsProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
@@ -120,7 +120,6 @@ export default function GlobeView({
     const [aircraft, setAircraft] = useState([])
     const [viewBounds, setViewBounds] = useState(null)
     const [webglLost, setWebglLost] = useState(false)
-    const [blackGlobe, setBlackGlobe] = useState(false)
 
     // AIS — use external prop if provided, otherwise fetch internally
     useEffect(() => {
@@ -381,9 +380,6 @@ export default function GlobeView({
                 infoBox={false}
                 scene3DOnly={true}
             >
-                {/* ── Base layer ─────────────────────────────────────────────── */}
-                {!blackGlobe && <ImageryLayer imageryProvider={esriSatelliteProvider} maximumTerrainLevel={20} />}
-
                 {/* Raster overlays — rendered on top of ESRI base when active */}
                 {satelliteEnabled && sentinelProvider && (
                     <ImageryLayer imageryProvider={sentinelProvider} alpha={0.9} maximumTerrainLevel={18} />
@@ -454,36 +450,6 @@ export default function GlobeView({
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} />
-
-            {/* Globe base-layer toggle */}
-            <button
-                onClick={() => setBlackGlobe(v => !v)}
-                title={blackGlobe ? "Switch to satellite imagery" : "Switch to dark globe"}
-                style={{
-                    position: "absolute",
-                    bottom: 28,
-                    left: 12,
-                    zIndex: 10,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    background: "rgba(5,12,28,0.75)",
-                    border: `1px solid ${blackGlobe ? "rgba(45,143,232,0.5)" : "rgba(255,255,255,0.12)"}`,
-                    borderRadius: 6,
-                    color: blackGlobe ? "#60a5fa" : "rgba(226,232,240,0.7)",
-                    padding: "4px 9px",
-                    fontSize: 11,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    fontFamily: "system-ui",
-                    backdropFilter: "blur(6px)",
-                    letterSpacing: "0.04em",
-                    transition: "border-color 0.15s, color 0.15s",
-                }}
-            >
-                <span style={{ fontSize: 13, lineHeight: 1 }}>{blackGlobe ? "○" : "●"}</span>
-                {blackGlobe ? "SATELLITE" : "DARK"}
-            </button>
 
         </div>
         </GlobeErrorBoundary>
