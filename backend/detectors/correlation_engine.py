@@ -953,6 +953,17 @@ class ADSBLoiterDetector:
                 except (TypeError, ValueError):
                     continue
 
+                # An aircraft with no reported position (e.g. a fresh cache
+                # entry seen before its first position report, or a feed row
+                # that only carries identity fields) falls through every
+                # `or 0` above to lat=0, lon=0 — Null Island, in the Gulf of
+                # Guinea. Treating that as a real fix would let it "loiter
+                # near" any airport that happens to sit close to (0, 0).
+                # Skip aircraft with no real position instead of correlating
+                # them against a fabricated one.
+                if ac_lat == 0 and ac_lon == 0:
+                    continue
+
                 if ac_spd > max_spd:
                     continue
 

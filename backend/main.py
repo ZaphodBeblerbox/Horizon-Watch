@@ -9036,6 +9036,17 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     hit = sanctions_loader.check_vessel(mmsi=mmsi, name=name)
     if not hit:
         return
+    if hit.get("_match_type") == "fuzzy_name":
+        # A name-only fuzzy match is not reliable enough to fire a
+        # "critical: SANCTIONED VESSEL" alert off of — real MMSI/IMO
+        # traffic (including inland river/canal AIS, which is where this
+        # false-positive pattern actually showed up) can share a common
+        # word with a sanctioned vessel's name without being that vessel.
+        # Log it so it's not silently invisible, but don't fabricate a
+        # critical-confidence alert from unverified evidence.
+        print(f"[sanctions] fuzzy name match only (not alerting): vessel '{name}' "
+              f"(MMSI {mmsi}) ~ sanctioned '{hit.get('name')}' — needs MMSI/IMO to confirm")
+        return
 
     # In-memory cooldown — skip if alerted within last 6 hours
     now_epoch = time.time()
@@ -9231,6 +9242,14 @@ async def _run_sts_detection() -> None:
         b_v = candidate["vessel_b"]
         sanction_a = sanctions_loader.check_vessel(mmsi=mmsi_a, name=a_v.get("name", ""))
         sanction_b = sanctions_loader.check_vessel(mmsi=mmsi_b, name=b_v.get("name", ""))
+        # A fuzzy name-only match isn't reliable evidence a vessel is
+        # actually the sanctioned entity (see sanctions_loader.check_vessel
+        # docstring) — don't let it escalate severity or claim "SANCTIONED"
+        # in generated alert text for an unrelated ship.
+        if sanction_a and sanction_a.get("_match_type") == "fuzzy_name":
+            sanction_a = None
+        if sanction_b and sanction_b.get("_match_type") == "fuzzy_name":
+            sanction_b = None
         is_sanctions_related = bool(sanction_a or sanction_b)
         severity = "critical" if is_sanctions_related else "high"
 
@@ -9959,14 +9978,26 @@ def _cross_domain_correlation(now_iso: str) -> list:
         nearby_vessels = []
         with _AIS_LOCK:
             for mmsi, vessel in _AIS_VESSELS.items():
+                # A vessel can land in _AIS_VESSELS from a ShipStaticData
+                # message alone, before any PositionReport ever arrives —
+                # it then has no "lat"/"lon" key at all. `or 0` would silently
+                # turn that into Null Island (0, 0) and let it "correlate"
+                # with any news event that happens to be near there. Require
+                # a real reported position before treating it as nearby.
+                if not (vessel.get('lat') and vessel.get('lon')):
+                    continue
                 if vessel.get('ship_type', 0) in range(35, 40):
-                    d = _haversine(nlat, nlon, vessel.get('lat', 0) or 0, vessel.get('lon', 0) or 0)
+                    d = _haversine(nlat, nlon, vessel['lat'], vessel['lon'])
                     if d < 100:
                         nearby_vessels.append({"mmsi": mmsi, "name": vessel.get('name', 'Unknown'), "distance_km": round(d, 1)})
         nearby_ac = []
         for ac in list(_GLOBAL_ADSB_CACHE.values()):
+            # Same fabricated-position hazard as above: an ADS-B cache entry
+            # can have lat/lon set to None (feed row with no position yet).
+            if not (ac.get('lat') and ac.get('lon')):
+                continue
             if ac.get('military') or _is_military_callsign(ac.get('flight', '')):
-                d = _haversine(nlat, nlon, ac.get('lat', 0) or 0, ac.get('lon', 0) or 0)
+                d = _haversine(nlat, nlon, ac['lat'], ac['lon'])
                 if d < 200:
                     nearby_ac.append({"callsign": (ac.get('flight') or '').strip() or ac.get('hex', ''), "icao24": ac.get('hex', ''), "distance_km": round(d, 1)})
         if nearby_vessels or nearby_ac:
@@ -10050,7 +10081,7 @@ async def _anomaly_detection_loop():
                 if ac.get('military') or _is_military_callsign(callsign):
                     lat = ac.get('lat', 0) or 0
                     lon = ac.get('lon', 0) or 0
-                    if not lat:
+                    if not lat or not lon:
                         continue
                     min_dist = min(
                         _haversine(lat, lon, cp['center_lat'], cp['center_lon'])

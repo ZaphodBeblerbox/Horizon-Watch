@@ -348,17 +348,39 @@ class EntityLinker:
 
     def _entity_mention_links(self, source_type: str, source_id: str,
                                entities: list) -> list[dict]:
-        """Map Haiku-extracted entities to ontology objects by name match."""
+        """Map Haiku-extracted entities to ontology objects by name match.
+
+        Uses a `\\b` word-boundary match of the *whole* extracted entity name
+        against the candidate port/airport name — the same technique
+        `_mention_links` above already uses for title matching — rather than
+        a bare substring check. A bare `ent_name in port_name.lower()` check
+        used to accept ANY fragment match: a short, generic Haiku-extracted
+        term (e.g. "san", "port", a 3-character minimum was the only guard)
+        would match as a fragment inside the name of any port/airport that
+        happens to contain those letters in sequence, mid-word ("san" inside
+        "Santos", "aden" inside a hypothetical "Aidenberg Port"), creating a
+        fabricated OntologyLink between a news article and a real but
+        completely unrelated port or airport. This is the same
+        short-generic-substring false-positive shape that made the sanctions
+        vessel matcher flag unrelated ships (see sanctions_loader.py
+        check_vessel) — fixed here the same way _mention_links already
+        avoids it: require ent_name to appear as a whole word/phrase, not an
+        arbitrary substring.
+        """
         results = []
         for ent in (entities or []):
             ent_name = (ent.get("name") or "").lower()
             ent_type = (ent.get("type") or "").lower()
             if not ent_name or len(ent_name) < 3:
                 continue
+            try:
+                pattern = re.compile(r'\b' + re.escape(ent_name) + r'\b')
+            except re.error:
+                continue
 
             if ent_type in ("port", "harbor", "terminal"):
                 for port in self._ports:
-                    if port["name"] and ent_name in port["name"].lower():
+                    if port["name"] and pattern.search(port["name"].lower()):
                         results.append(self._make_link(
                             source_type, source_id, "port", port["id"], port["name"],
                             "mention", confidence=0.8,
@@ -367,7 +389,7 @@ class EntityLinker:
 
             elif ent_type in ("airport", "airfield", "airbase"):
                 for ap in self._airports:
-                    if ap["name"] and ent_name in ap["name"].lower():
+                    if ap["name"] and pattern.search(ap["name"].lower()):
                         results.append(self._make_link(
                             source_type, source_id, "airport", ap["id"], ap["name"],
                             "mention", confidence=0.8,

@@ -271,22 +271,58 @@ class SanctionsLoader:
     def check_vessel(self, mmsi: str = None,
                      imo: str = None,
                      name: str = None) -> dict | None:
-        """Check if a vessel is sanctioned. Returns record or None."""
+        """Check if a vessel is sanctioned. Returns record or None.
+
+        The returned dict carries a `_match_type` key so callers can tell a
+        verified identifier hit (mmsi/imo — effectively unambiguous) apart
+        from a name-based match, which is inherently weaker: vessel names
+        are short, reused across unrelated ships ("STAR", "OCEAN GLORY",
+        river barges named after the same handful of common words), and a
+        substring match against one is not the same evidence as an exact
+        registry-number match. Callers that turn a hit into a user-facing
+        "critical: SANCTIONED VESSEL" alert should gate on `_match_type` —
+        see `_check_sanctions_on_update` in main.py, which used to treat
+        every match type identically and could fire a critical alert on an
+        unrelated vessel (e.g. Rhine/canal traffic in Germany whose name
+        happened to contain — or be contained in — a sanctioned name) that
+        happened to be sailing nowhere near where the sanctioned vessel
+        actually operates. A name-only match still fires a low-confidence
+        "fuzzy_name" hit here, but it is on the caller to decide whether
+        that is trustworthy enough to act on.
+        """
         if mmsi and str(mmsi) in self._sanctions_by_mmsi:
-            return self._sanctions_by_mmsi[str(mmsi)]
+            hit = dict(self._sanctions_by_mmsi[str(mmsi)])
+            hit["_match_type"] = "mmsi"
+            return hit
 
         if imo and str(imo) in self._sanctions_by_imo:
-            return self._sanctions_by_imo[str(imo)]
+            hit = dict(self._sanctions_by_imo[str(imo)])
+            hit["_match_type"] = "imo"
+            return hit
 
         if name:
             key = name.upper().strip()
             if key in self._sanctions_by_name:
-                return self._sanctions_by_name[key]
-            # Partial match for names > 5 chars
-            if len(key) > 5:
+                hit = dict(self._sanctions_by_name[key])
+                hit["_match_type"] = "exact_name"
+                return hit
+            # Fuzzy fallback for longer names only, and only when the two
+            # names are close enough in length that one containing the
+            # other is actually meaningful — e.g. "MV OCEAN GLORY II"
+            # containing "OCEAN GLORY" is plausible; a 6-character generic
+            # word like "OCEAN" or "STAR" matching inside a 30-character
+            # unrelated name is exactly the false-positive pattern that
+            # made this list flag random, unrelated vessels as sanctioned.
+            if len(key) > 8:
                 for sname, svessel in self._sanctions_by_name.items():
+                    if len(sname) <= 8:
+                        continue
+                    if abs(len(key) - len(sname)) > 6:
+                        continue
                     if key in sname or sname in key:
-                        return svessel
+                        hit = dict(svessel)
+                        hit["_match_type"] = "fuzzy_name"
+                        return hit
 
         return None
 

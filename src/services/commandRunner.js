@@ -23,6 +23,50 @@
  *
  * NOTE: All Leaflet L.* objects are created INSIDE handler methods only,
  * never at module level.
+ *
+ * REALITY CHECK ON `mapRef` / `window.L` (read this before touching a case
+ * below): this file was written for the app's old Leaflet map. The live map
+ * (src/components/GlobeView.jsx) has been Cesium-based for a long time, and
+ * nothing in the app ever assigns `mapInstanceRef.current` (see app.jsx) —
+ * so every `this.mapRef?.current` read below is always null/undefined, and
+ * `window.L` is always undefined (Leaflet isn't even loaded on this page).
+ * Every block guarded by those — draw_line/draw_circle/draw_arrow/
+ * draw_polygon, show_vessel/show_aircraft's inline marker placement,
+ * show_person, pin_images, click_event/click_location's old popup builders,
+ * _highlightBorder/_createSpotlight/_showCountryInfoOverlay/_animateUnits/
+ * _animateTroopMovement/_createImpact/_drawAnimatedLine/_executeRecapOverview
+ * and friends — is DEAD CODE. It safely no-ops (every access is optional-
+ * chained or `if (map && L)`-guarded) rather than throwing, but it does
+ * nothing.
+ *
+ * The real Cesium rendering for a `visuals`-format scene happens entirely
+ * through `this.onScene(scene)` (fired once per scene from `_playSceneLoop`
+ * below) into src/globe/GlobeDirectorLayer.jsx's `_renderVisualAction`
+ * dispatcher, which is a genuine, independent, working Cesium renderer for
+ * fly_to/highlight_country/place_location/place_event/draw_line (etc)/
+ * show_vessel/show_aircraft/show_chokepoint/show_infrastructure/show_event/
+ * formation/animate_movement/troop_movement/impact/spotlight/highlight_border/
+ * draw_animated_line/recap_overview/show_person and their hide_/unhighlight_/
+ * remove_/clear_ counterparts. `show_satellite`/`hide_satellite`/
+ * `analyse_satellite` are the one exception: GlobeDirectorLayer has no
+ * Cesium primitive to add for those, so they instead go through the new
+ * `onSatelliteToggle` callback into a piece of app.jsx state that overrides
+ * GlobeView's existing real satelliteEnabled prop (see app.jsx).
+ *
+ * `pin_images`, `country_info_overlay`, and the pre-existing legacy
+ * `toggle_layer`/`highlight_event`/`clear_highlights` actions (see their own
+ * constructor comments below) remain unimplemented on the Cesium side —
+ * deliberately left as documented no-ops rather than fabricated approximations.
+ * See the overnight session report for the full accounting.
+ *
+ * So: everything below that still touches `this.mapRef`/`window.L` is kept
+ * only for its non-map side effects (return-value/delay timing, image
+ * fetches, onIndicator/onOpenDetail/onDetailPanel calls, TTS) — never rely on
+ * it to move the camera or draw anything. It's left in place rather than
+ * stripped out wholesale: rewriting ~1000 lines of dead-but-inert animation
+ * choreography carried real regression risk for zero behavioural change,
+ * against the much smaller, reviewable diff of this comment plus the actual
+ * fixes made this pass.
  */
 
 import API_BASE from "../apiBase.js"
@@ -71,6 +115,8 @@ export class CommandRunner {
     onCloseDetail  = () => {},  // () => void — closes the real UI detail panel
     onChart        = null,      // ({svg, title, duration}) => void — optional chart receiver
     onScene        = () => {},  // (scene|null) => void — fires when each scene starts, null on stop
+    onSatelliteToggle = () => {}, // (boolean) => void — show_satellite/hide_satellite/analyse_satellite;
+                                   // app.jsx uses this to override GlobeView's real satelliteEnabled prop
   } = {}) {
     this.mapRef            = mapRef
     this.setDirectorItems  = setDirectorItems
@@ -90,6 +136,7 @@ export class CommandRunner {
     this.onCloseDetail     = onCloseDetail
     this.onChart           = onChart
     this.onScene           = onScene
+    this.onSatelliteToggle = onSatelliteToggle
 
     this.actions      = []
     this.currentIndex = -1
@@ -429,6 +476,7 @@ export class CommandRunner {
     this._clearAllDrawings()
     ttsService.stop()
     this.onScene(null)
+    this.onSatelliteToggle(false)
     this._notifyState()
   }
 
@@ -834,6 +882,7 @@ export class CommandRunner {
       case "clear_all": {
         console.log("[Director] clear_all executed")
         this._clearAllDrawings()
+        this.onSatelliteToggle(false)
         this._placedEvents    = new Map()
         this._placedLocations = new Map()
         // Remove person dossier markers
@@ -906,42 +955,14 @@ export class CommandRunner {
       }
 
       case "click_event": {
-        const map = this.mapRef?.current
-        const L   = window.L
-        if (!map || !L) return defaultDelay
-        const ev = this._placedEvents.get(action.title)
-        if (!ev) return defaultDelay
-        const SEVERITY_COLOR = { critical: "#ef4444", significant: "#f59e0b", elevated: "#3b82f6", low: "#6b7280" }
-        const color    = SEVERITY_COLOR[ev.severity] || "#3b82f6"
-        const imgId    = `dir-ev-img-${Date.now()}`
-        const timeAgo  = ev.timestamp ? this._formatTimeAgo(ev.timestamp) : ""
-        const absTime  = ev.timestamp ? (() => { try { return new Date(ev.timestamp).toLocaleString() } catch { return "" } })() : ""
-        const html = `<div class="director-event-popup">
-          <div class="director-event-popup-header" style="border-left:3px solid ${color};padding-left:8px;display:flex;justify-content:space-between;align-items:center">
-            <span>
-              <span class="director-event-popup-type">${(ev.type || "event").toUpperCase()}</span>
-              <span class="director-event-popup-severity" style="color:${color};margin-left:6px">${(ev.severity || "").toUpperCase()}</span>
-            </span>
-            ${timeAgo ? `<span style="font-size:10px;color:rgba(255,180,0,0.9);flex-shrink:0" title="${absTime}">${timeAgo}</span>` : ""}
-          </div>
-          <div class="director-event-popup-title">${ev.title}</div>
-          ${ev.summary ? `<div class="director-event-popup-summary">${ev.summary}</div>` : ""}
-          ${ev.source || absTime ? `<div class="director-event-popup-source">${ev.source || ""}${ev.source && absTime ? " · " : ""}${absTime}</div>` : ""}
-          <div id="${imgId}" class="director-event-popup-img"></div>
-        </div>`
-        const popup = L.popup({ className: "director-event-leaflet-popup", maxWidth: 300, closeButton: true })
-          .setLatLng([ev.lat, ev.lon])
-          .setContent(html)
-          .openOn(map)
-        this._drawings.push(popup)
-        // Async: fetch image and inject (backend → Wikipedia fallback)
-        this._fetchImage(`${ev.title} ${ev.source || ""}`.trim()).then(url => {
-          if (url) {
-            const el = document.getElementById(imgId)
-            if (el) el.innerHTML = `<img src="${url}" style="width:100%;border-radius:4px;margin-top:6px"/>`
-          }
-        })
-        return 1000
+        // Was: build a Leaflet popup by hand (dead — see file-header note).
+        // Fixed to do what click_chokepoint/click_vessel/click_aircraft/
+        // click_infrastructure/click_country already do: open the real detail
+        // panel via onOpenDetail. onOpenDetail's generic surfaceItems lookup
+        // (see app.jsx) may or may not find a match for a self-geocoded
+        // place_event title — same honest limitation its siblings already have.
+        if (action.title) this.onOpenDetail("event", action.title)
+        return 600
       }
 
       // ── Click handlers (open real detail panels) ──────────────────────────
@@ -1003,39 +1024,10 @@ export class CommandRunner {
       }
 
       case "click_location": {
-        const map = this.mapRef?.current
-        const L   = window.L
-        if (!map || !L) return defaultDelay
-        const loc = this._placedLocations.get(action.name)
-        if (!loc) return defaultDelay
-
-        const TYPE_ICONS  = { city: "🏙", base: "⚔", port: "⚓", facility: "⚙", landmark: "◆", target: "🎯" }
-        const TYPE_LABELS = { city: "CITY", base: "MILITARY BASE", port: "PORT", facility: "FACILITY", landmark: "LANDMARK", target: "STRIKE TARGET" }
-        const icon  = TYPE_ICONS[loc.type]  || "📍"
-        const label = TYPE_LABELS[loc.type] || "LOCATION"
-        const imgId = `dir-loc-img-${Date.now()}`
-
-        const html = `<div class="director-location-popup-content">
-          <div id="${imgId}" class="director-popup-image"></div>
-          <div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,0.5);margin-bottom:4px;">${icon} ${label}</div>
-          <div style="font-size:15px;font-weight:700;color:white;margin-bottom:6px;">${loc.name}</div>
-          ${loc.description ? `<div style="font-size:13px;color:rgba(255,255,255,0.8);line-height:1.5;">${loc.description}</div>` : ""}
-        </div>`
-
-        const popup = L.popup({ className: "director-location-popup", maxWidth: 300, closeButton: true, autoPan: false })
-          .setLatLng([loc.lat, loc.lon])
-          .setContent(html)
-          .openOn(map)
-        this._drawings.push(popup)
-
-        // Async: fetch image and inject (backend → Wikipedia fallback)
-        this._fetchImage(loc.name).then(url => {
-          if (url) {
-            const el = document.getElementById(imgId)
-            if (el) el.innerHTML = `<img src="${url}" alt="${loc.name}" style="width:100%;border-radius:6px;margin-bottom:8px;"/>`
-          }
-        })
-        return 1200
+        // Was: build a Leaflet popup by hand (dead — see file-header note).
+        // Fixed the same way as click_event, above.
+        if (action.name) this.onOpenDetail("location", action.name)
+        return 600
       }
 
       // ── Country click (open country news panel) ───────────────────────────
@@ -1494,17 +1486,24 @@ export class CommandRunner {
 
       // ── Satellite ─────────────────────────────────────────────────────────
 
+      // show_satellite/analyse_satellite both mean "turn the real Sentinel-2
+      // overlay on" — GlobeView already has a genuine satelliteEnabled prop
+      // driving a live imagery layer (see GlobeView.jsx); onSatelliteToggle
+      // lets app.jsx override that prop for the duration of Director playback
+      // instead of us trying (and failing, with no mapRef) to fake a second
+      // one from here. The camera move that used to live here is redundant
+      // with the scene's own fly_to, which onScene→GlobeDirectorLayer already
+      // performs for real.
+      // NOTE: "analyse_satellite" is listed here for documentation only — it
+      // is intercepted earlier in _executeIndex and routed to
+      // _handleAnalyseSatelliteAsync before _dispatchAction ever runs, so
+      // this case never actually executes for it. See that method for the
+      // real onSatelliteToggle(true) call.
       case "show_satellite": {
         if (this.setDirectorItems) {
           this.setDirectorItems(prev => ({ ...prev, satellite: true }))
         }
-        // Also fly to location
-        const map = this.mapRef?.current
-        if (map && action.lat != null && action.lon != null) {
-          const zoom     = action.zoom ?? 13
-          const duration = 3000 / 1000
-          map.flyTo([action.lat, action.lon], zoom, { animate: true, duration, easeLinearity: 0.1 })
-        }
+        this.onSatelliteToggle(true)
         return 3600
       }
 
@@ -1512,6 +1511,7 @@ export class CommandRunner {
         if (this.setDirectorItems) {
           this.setDirectorItems(prev => ({ ...prev, satellite: false }))
         }
+        this.onSatelliteToggle(false)
         return defaultDelay
       }
 
@@ -1835,6 +1835,17 @@ export class CommandRunner {
   // ── Async satellite analysis ───────────────────────────────────────────────
 
   async _handleAnalyseSatelliteAsync(action) {
+    // _executeIndex routes "analyse_satellite" here *before* _dispatchAction
+    // ever runs, so the "show_satellite"/"analyse_satellite" shared case in
+    // _dispatchAction's switch is unreachable for this action — without this,
+    // analyse_satellite fetched analysis text but never actually turned the
+    // real Sentinel-2 overlay on, contradicting its own intent (and the
+    // show_satellite/analyse_satellite doc comment on that dead case). Do here
+    // what that case does: flip the same real overlay show_satellite uses.
+    if (this.setDirectorItems) {
+      this.setDirectorItems(prev => ({ ...prev, satellite: true }))
+    }
+    this.onSatelliteToggle(true)
     try {
       const res = await fetch(`${API_BASE}/api/director/analyse-satellite`, {
         method:  "POST",
