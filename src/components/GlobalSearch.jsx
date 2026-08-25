@@ -8,7 +8,6 @@ const TYPE_META = {
     port:       { icon: "⚓", label: "Port",        color: "#34d399" },
     cable:      { icon: "〰", label: "Cable",       color: "#fb923c" },
     chokepoint: { icon: "🔺", label: "Chokepoint",  color: "#fbbf24" },
-    poi:        { icon: "👤", label: "Person",      color: "#f472b6" },
     assessment: { icon: "⚡", label: "Assessment",  color: "#ef4444" },
     fusion:     { icon: "🔮", label: "Fusion",      color: "#8b5cf6" },
     zone:       { icon: "👁", label: "Zone",        color: "#10b981" },
@@ -22,12 +21,12 @@ const FILTER_GROUPS = [
     { id: "all",            label: "All",            types: null },
     { id: "places",         label: "Places",         types: ["airport", "port", "chokepoint", "location", "city", "country"] },
     { id: "infrastructure", label: "Infrastructure", types: ["cable", "zone"] },
-    { id: "intelligence",   label: "Intelligence",   types: ["assessment", "fusion", "poi"] },
+    { id: "intelligence",   label: "Intelligence",   types: ["assessment", "fusion"] },
     { id: "rules",          label: "Rules",          types: ["rule"] },
 ]
 
 function altitudeForResult(r) {
-    if (r.type === "airport" || r.type === "port" || r.type === "poi") return 80_000
+    if (r.type === "airport" || r.type === "port") return 80_000
     if (r.type === "chokepoint" || r.type === "assessment" || r.type === "fusion") return 120_000
     if (r.type === "zone") return 250_000
     if (r.type === "location") {
@@ -52,7 +51,6 @@ function subtitleForResult(r) {
         return [owner, countries].filter(Boolean).join(" — ") || "Submarine Cable"
     }
     if (r.type === "chokepoint") return "Strategic Chokepoint"
-    if (r.type === "poi")        return "Person of Interest"
     if (r.type === "assessment") return [r.severity?.toUpperCase(), r.location_name].filter(Boolean).join(" · ")
     if (r.type === "fusion")     return [r.severity?.toUpperCase(), r.location_name].filter(Boolean).join(" · ")
     if (r.type === "zone")       return [r.priority?.toUpperCase(), "Watch Zone"].filter(Boolean).join(" · ")

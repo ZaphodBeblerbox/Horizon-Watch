@@ -274,9 +274,7 @@ export default function DirectChatPanel({ currentUser, onClose }) {
                                             border: `1px solid ${isMine ? "rgba(26,110,181,0.4)" : "rgba(255,255,255,0.08)"}`,
                                             fontSize: 13, lineHeight: 1.55, color: "#fff",
                                         }}>
-                                            {m.message_type === "poi" ? (
-                                                <AttachmentCard msg={m} />
-                                            ) : m.message_type === "briefing" ? (
+                                            {m.message_type === "briefing" ? (
                                                 <AttachmentCard msg={m} />
                                             ) : m.content}
                                         </div>
@@ -333,7 +331,7 @@ function AttachmentCard({ msg }) {
     return (
         <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 6, padding: "8px 10px", fontSize: 11 }}>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "#FFB300", marginBottom: 4, textTransform: "uppercase" }}>
-                {msg.message_type === "poi" ? "Shared POI" : "Shared Briefing"}
+                Shared Briefing
             </div>
             <div style={{ color: "rgba(255,255,255,0.7)" }}>{msg.content}</div>
         </div>

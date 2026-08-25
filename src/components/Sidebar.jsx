@@ -167,21 +167,6 @@ function IconNews() {
     )
 }
 
-function IconPOI() {
-    return (
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="9" cy="6" r="3.2" fill="none"/>
-            <path d="M2.5 15.5C2.5 12.5 5.5 10 9 10C12.5 10 15.5 12.5 15.5 15.5" fill="none"/>
-            <circle cx="14" cy="4" r="2.2" fill="none" strokeWidth="1.1"/>
-            <line x1="14" y1="2.3" x2="14" y2="1.2"/>
-            <line x1="15.6" y1="2.8" x2="16.4" y2="2.2"/>
-            <line x1="15.6" y1="5.2" x2="16.4" y2="5.8"/>
-            <line x1="12.4" y1="5.2" x2="11.6" y2="5.8"/>
-            <line x1="12.4" y1="2.8" x2="11.6" y2="2.2"/>
-        </svg>
-    )
-}
-
 function IconClock() {
     return (
         <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -254,7 +239,6 @@ export default function Sidebar({
                        (id === "health"     && rightPanel === "health")        ||
                        (id === "analytics"  && rightPanel === "analytics")     ||
                        (id === "threats"    && rightPanel === "threats")       ||
-                       (id === "poi"        && activeTabType === "poi")        ||
                        (id === "map"        && activeTabType === "map")        ||
                        (id === "news"       && activeTabType === "news")       ||
                        (id === "briefing"   && activeTabType === "briefing")   ||
@@ -274,7 +258,6 @@ export default function Sidebar({
             onMouseLeave={() => setHovered(null)}
             onClick={() => {
                 if (id === "map")     { onOpenTab?.("map");     return }
-                if (id === "poi")     { onOpenTab?.("poi");     return }
                 if (id === "news")    { onOpenTab?.("news");    return }
                 if (id === "briefing") { onOpenTab?.("briefing"); return }
                 onRightPanel(rightPanel === id ? null : id)
@@ -508,7 +491,6 @@ export default function Sidebar({
                         </svg>
                     </button>
                 )}
-                {isAnalyst && btn("poi", <IconPOI />, null, null)}
                 {isAnalyst && btn("analytics", <IconAnalytics />, null, null)}
                 {isAnalyst && btn("threats",
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">

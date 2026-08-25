@@ -32,7 +32,6 @@ const TYPE_META = {
     port:       { icon: "⚓", color: "#34d399" },
     cable:      { icon: "〰", color: "#fb923c" },
     chokepoint: { icon: "🔺", color: "#fbbf24" },
-    poi:        { icon: "👤", color: "#f472b6" },
     assessment: { icon: "⚡", color: "#ef4444" },
     fusion:     { icon: "🔮", color: "#8b5cf6" },
     zone:       { icon: "👁", color: "#10b981" },

@@ -106,36 +106,6 @@ export function makeEventCanvas(hex) {
     })
 }
 
-// ── POI ───────────────────────────────────────────────────────────────────────
-export function makePOICanvas(hex) {
-    return makeCanvas(20, 26, (ctx, w, h) => {
-        const cx = w / 2
-        const cr = 7
-        const cy = cr + 1
-        // Pin circle
-        ctx.beginPath()
-        ctx.arc(cx, cy, cr, 0, Math.PI * 2)
-        ctx.fillStyle = hex
-        ctx.fill()
-        ctx.strokeStyle = "#0F1721"
-        ctx.lineWidth = 1.2
-        ctx.stroke()
-        // Pin tail
-        ctx.beginPath()
-        ctx.moveTo(cx, h - 1)
-        ctx.lineTo(cx - 5, cy + cr - 1)
-        ctx.lineTo(cx + 5, cy + cr - 1)
-        ctx.closePath()
-        ctx.fillStyle = hex
-        ctx.fill()
-        // Inner highlight
-        ctx.beginPath()
-        ctx.arc(cx, cy, 3, 0, Math.PI * 2)
-        ctx.fillStyle = "rgba(255,255,255,0.7)"
-        ctx.fill()
-    })
-}
-
 // ── Chokepoints ───────────────────────────────────────────────────────────────
 let _chokepointCanvas = null
 export function makeChokepointCanvas() {

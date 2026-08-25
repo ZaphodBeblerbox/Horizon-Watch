@@ -15,7 +15,6 @@ import { playAlert, resumeAudio } from "./soundSystem.js"
 import SettingsPanel from "./components/SettingsPanel.jsx"
 import HealthPanel from "./components/HealthPanel.jsx"
 import AnalyticsPanel from "./components/AnalyticsPanel.jsx"
-import POIPanel from "./components/POIPanel.jsx"
 import API_BASE from "./apiBase.js"
 import LoadingScreen from "./components/LoadingScreen.jsx"
 import ProfilePanel from "./components/ProfilePanel.jsx"
@@ -385,7 +384,7 @@ export default function App() {
     const [searchTarget, setSearchTarget] = useState(null)
 
     // ── Right panel slot — mutually exclusive ─────────────────────────────────
-    // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts" | "poi"
+    // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts"
     const [rightPanel, setRightPanel] = useState(null)
 
     const openRightPanel = useCallback((id) => {
@@ -847,7 +846,7 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        const LABELS = { map: "Map", poi: "POI", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge" }
+        const LABELS = { map: "Map", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge" }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
         const newId = crypto.randomUUID()
@@ -910,7 +909,6 @@ export default function App() {
 
     const openNewTab = useCallback(() => {
         const order = [
-            { type: "poi",       label: "POI" },
             { type: "briefing",  label: "Briefings" },
             { type: "news",      label: "News Feed" },
             { type: "analytics", label: "Analytics" },
@@ -927,17 +925,6 @@ export default function App() {
             localStorage.setItem(TAB_STORAGE_KEY + "-active", activeTabId)
         } catch { /* ignore */ }
     }, [tabs, activeTabId])
-
-    // Dispatch POI mode event when tab changes
-    const prevActiveTabIdRef = useRef(null)
-    useEffect(() => {
-        const isPoi = activeTabType === "poi"
-        const wasPoi = tabs.find(t => t.id === prevActiveTabIdRef.current)?.type === "poi"
-        if (isPoi !== wasPoi) {
-            window.dispatchEvent(new CustomEvent("akili:poi-mode", { detail: { active: isPoi } }))
-        }
-        prevActiveTabIdRef.current = activeTabId
-    }, [activeTabId, activeTabType, tabs])
 
     // ── Situations (state kept for ChatPanel context; no panel UI) ──────────
     const [situations,        setSituations]        = useState([])
@@ -1528,7 +1515,6 @@ export default function App() {
                             cablesEnabled={activeWorkspace?.layers?.cables ?? false}
                             chokepointsEnabled={activeWorkspace?.layers?.chokepoints ?? false}
                             strategicZonesEnabled={activeWorkspace?.layers?.showStrategicZones ?? false}
-                            poiEnabled={activeWorkspace?.layers?.poi ?? false}
                             eventsEnabled={activeWorkspace?.layers?.unifiedEvents ?? true}
                             precisionEventsEnabled={activeWorkspace?.layers?.precisionEvents ?? true}
                             eventsMinRelevance={activeWorkspace?.layers?.eventsMinRelevance ?? 0}
@@ -1642,12 +1628,6 @@ export default function App() {
                     </div>
                 )}
 
-                {/* POI — mounted only while a poi tab exists */}
-                {tabs.some(t => t.type === "poi") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "poi" ? "flex" : "none", flexDirection: "column" }}>
-                        <POIPanel onClose={() => closeTab(tabs.find(t => t.type === "poi")?.id)} />
-                    </div>
-                )}
 
                 {/* News Feed — mounted only while a news tab exists */}
                 {tabs.some(t => t.type === "news") && (
@@ -2077,7 +2057,6 @@ export default function App() {
                     onSwitchToNews={() => openTab("news")}
                     onOpenBriefings={() => openTab("briefing")}
                     onOpenAnalytics={() => openTab("analytics")}
-                    onOpenPoi={() => openTab("poi")}
                     onOpenForge={() => openTab("forge")}
                     onOpenLayers={() => openRightPanel("layers")}
                     notifUnread={unreadCount}

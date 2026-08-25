@@ -220,12 +220,6 @@ export default function MobileDrawer({
                         active={activeTabType === "forge"}
                         onClick={() => { onOpenTab("forge"); onClose() }}
                     />
-                    <Row
-                        label="POI"
-                        active={activeTabType === "poi"}
-                        onClick={() => { onOpenTab("poi"); onClose() }}
-                    />
-
                     {/* Settings */}
                     <div style={SECTION_HEADER}>Settings</div>
                     {panelRow("profile", "Profile")}

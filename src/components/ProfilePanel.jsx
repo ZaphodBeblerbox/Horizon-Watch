@@ -8,7 +8,6 @@ const getClearances = (user) => {
     return [
         { name: "Map Intelligence",  status: "GRANTED" },
         { name: "Briefings Access",  status: "GRANTED" },
-        { name: "POI Profiles",      status: "GRANTED" },
         { name: "Claude Analysis",   status: "GRANTED" },
         { name: "Admin Panel",       status: "GRANTED" },
         { name: "Export Reports",    status: "GRANTED" },

@@ -12,15 +12,6 @@ function MapIcon({ size }) {
     )
 }
 
-function POIIcon({ size }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="9" cy="6" r="3.2" />
-            <path d="M2.5 15.5C2.5 12.5 5.5 10 9 10C12.5 10 15.5 12.5 15.5 15.5" />
-        </svg>
-    )
-}
-
 function BriefingIcon({ size }) {
     return (
         <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
@@ -51,7 +42,7 @@ function ForgeIcon({ size }) {
     )
 }
 
-const TYPE_ICON = { map: MapIcon, poi: POIIcon, briefing: BriefingIcon, news: NewsIcon, forge: ForgeIcon }
+const TYPE_ICON = { map: MapIcon, briefing: BriefingIcon, news: NewsIcon, forge: ForgeIcon }
 
 // ── TabBar ─────────────────────────────────────────────────────────────────────
 //

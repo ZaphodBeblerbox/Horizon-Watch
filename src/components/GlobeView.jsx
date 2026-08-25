@@ -9,7 +9,6 @@ import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
-import GlobePOILayer            from "../globe/GlobePOILayer.jsx"
 import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
@@ -85,7 +84,6 @@ export default function GlobeView({
     cablesEnabled    = false,
     chokepointsEnabled = false,
     strategicZonesEnabled = false,
-    poiEnabled       = false,
     eventsEnabled    = true,
     cityLabelsEnabled = false,
     aisHeatmapEnabled  = false,
@@ -404,7 +402,6 @@ export default function GlobeView({
                 {/* ── Point / entity layers ───────────────────────────────────── */}
                 <GlobeStrategicZonesLayer enabled={strategicZonesEnabled} />
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
-                <GlobePOILayer          enabled={poiEnabled} />
                 <GlobeEventsLayer       enabled={eventsEnabled} precisionEnabled={precisionEventsEnabled} bounds={viewBounds} minRelevance={eventsMinRelevance} />
                 <GlobeSurgeLayer        enabled={eventsEnabled} />
                 {cityLabelsEnabled && (

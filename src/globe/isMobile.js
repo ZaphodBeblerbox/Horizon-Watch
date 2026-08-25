@@ -12,4 +12,3 @@ export const isMobile = (() => {
 export const ADSB_CAP   = isMobile ? 100 : Infinity
 export const AIS_CAP    = isMobile ? 150 : Infinity
 export const EVENTS_CAP = isMobile ? 100 : Infinity
-export const POI_CAP    = isMobile ? 100 : Infinity
