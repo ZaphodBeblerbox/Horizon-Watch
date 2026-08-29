@@ -166,13 +166,17 @@ sig_gdelt["signal_id"] = f"TEST-GDELT-COLL-{test_tag}"
 # already are (via normalize_signal), landing in the same 0.1-degree grid cell.
 sig_ais = main.normalize_signal("AIS", {
     "severity":      "medium",
-    # Offset must stay far inside the 0.1-degree grid-cell rounding boundary
-    # (+-0.05 half-width) that fusion_engine's geo-keying falls back to for
-    # coordinates with no region_id/strategic-zone/country match — a larger
-    # offset (0.002 was tried first) occasionally crossed that boundary on
-    # some random seeds and put the two signals in different geo_keys.
-    "lat":           COLL_LAT + 0.0001,
-    "lon":           COLL_LON + 0.0001,
+    # Deliberately identical to sig_gdelt's coordinates, not just "nearby" —
+    # fusion_engine's geo-keying falls back to round(lat/lon, 1), and
+    # round() has a hard discontinuity at exactly the n.n5 boundary. ANY
+    # nonzero offset (0.002, then 0.0001 were both tried) has some nonzero
+    # chance of landing on opposite sides of that boundary if the random
+    # base point happens to sit close enough to it, which showed up in
+    # practice on two different offset sizes. Identical coordinates make
+    # "same geo_key" true by construction, with no dependency on where the
+    # random per-run base point falls.
+    "lat":           COLL_LAT,
+    "lon":           COLL_LON,
     "location_name": f"TEST SYNTHETIC LOCATION {test_tag}-B (AUTOMATED TEST — SAFE TO DELETE)",
     "country":       None,
     "rule_id":       "test_ais_rule",
