@@ -104,6 +104,7 @@ from location_extract import (
 )
 from article_extract import get_article_preview
 from article_intelligence import analyse_article
+import relevance_embedding
 import usage_tracker
 from classifier import classify_event
 import event_store as es
@@ -277,8 +278,17 @@ if not _api_key:
 client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
 
 CLAUDE_BUDGET_USD             = float(os.getenv("CLAUDE_BUDGET_USD",             "10.0"))
-CLAUDE_DAILY_HARD_CAP_USD     = float(os.getenv("CLAUDE_DAILY_HARD_CAP_USD",     "10.0"))
+# Default lives ONCE in usage_tracker.py (article_intelligence.py imports the same
+# constant) so main.py and article_intelligence.py can no longer silently diverge
+# on what "the" daily hard cap defaults to when CLAUDE_DAILY_HARD_CAP_USD is unset —
+# they previously fell back to 10.0 here and 0.65 there, self-throttling Haiku
+# calls at a far tighter effective limit than main.py's own gate enforced.
+CLAUDE_DAILY_HARD_CAP_USD     = float(os.getenv("CLAUDE_DAILY_HARD_CAP_USD",     str(usage_tracker.DEFAULT_DAILY_HARD_CAP_USD)))
 MAX_LLM_ARTICLE_CALLS_PER_DAY = int(  os.getenv("MAX_LLM_ARTICLE_CALLS_PER_DAY", "500"))
+# Module-level (was a local inside _run_news_conflict_extraction_sync) so
+# _classify_article_intel() — pulled out into its own testable function — can
+# reference it without needing the whole extraction loop's local scope.
+MAX_LLM_CALLS_PER_CYCLE       = 8     # cost reduction: was 50
 
 _COPERNICUS_CLIENT_ID = os.getenv("COPERNICUS_CLIENT_ID", "").strip()
 _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
@@ -604,6 +614,19 @@ _NEWS_STORE_MAX_ARTICLES = 2000
 _NEWS_WINDOW_HOURS = 168
 _NEWS_MARKER_WINDOW_HOURS = 168
 _NEWS_FEED_ENTRY_LIMIT = 50
+
+# ── Near-duplicate detection state ────────────────────────────────────────────
+# url -> (hashed TF vector, seen-at epoch seconds, canonical_url). Every article
+# that reaches the near-dup check registers itself here (canonical_url == its
+# own url if it's the first sighting of a story, or an earlier url if it's a
+# near-duplicate) so later articles in this cycle AND later cycles compare
+# against it. See relevance_embedding.py for why a hashed TF vector + cosine
+# similarity, not a neural embedding call, backs this.
+_NEWS_VECTOR_CACHE: CappedDict = CappedDict(maxsize=3_000)
+_NEAR_DUP_WINDOW_HOURS = 48     # only compare against articles seen in the last 2 days
+_NEAR_DUP_THRESHOLD    = 0.30   # cosine similarity above which two articles are treated as the same story
+                                # (calibrated against real reworded-wire-story text — see
+                                # test_news_near_duplicate.py for the worked examples)
 
 _FEED_RUN_STATS = {
     "feeds_total": 0,
@@ -6218,6 +6241,7 @@ def _gate1_filter_markers(markers: list[dict]) -> None:
             msg.usage.output_tokens,
             call_type="gate1_relevance",
             headline=f"Gate1: {len(batch)} articles",
+            model="claude-haiku-4-5-20251001",
         )
         raw = msg.content[0].text.strip()
         if raw.startswith("```"):
@@ -6315,7 +6339,7 @@ def _run_news_conflict_extraction_sync():
             pass
 
     MAX_NOM_CALLS           = 100   # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS_PER_CYCLE = 8     # cost reduction: was 50
+    # MAX_LLM_CALLS_PER_CYCLE is now a module-level constant (see top of file).
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
@@ -6459,33 +6483,40 @@ def _run_news_conflict_extraction_sync():
             # ── Event type pre-classification ─────────────────────────────────
             article_event_type = _classify_event_type(title, summary)
 
+            # ── Near-duplicate detection (same wire story, different outlet) ──
+            # Runs BEFORE Haiku so the same real-world event covered by multiple
+            # of the ~270 feeds gets classified once, with later sightings
+            # tracked as "also reported by" on the original rather than
+            # independently processed as separate stories.
+            _dup_match = _find_near_duplicate(url, title, summary)
+            if _dup_match:
+                _dup_canonical_url, _dup_score = _dup_match
+                _attach_duplicate_report(_dup_canonical_url, {
+                    "url": url, "source": source_name, "published": published_iso,
+                })
+                _log_classification(
+                    url=url, stage="dedup_suppressed",
+                    embedding_score=_dup_score, duplicate_of_url=_dup_canonical_url,
+                )
+                print(f"[news-dedup] '{title[:60]}' ~ existing story "
+                      f"(score={_dup_score:.2f}) — suppressed, tracked under {_dup_canonical_url}")
+                continue
+
             # ── LLM article analysis (before geocoding — gates on tier) ───────
-            _clean_body = re.sub(r'<[^>]+>', '', summary or '')
-            _intel = None
-            _intel_llm_called = False
             _article_calls_today = usage_tracker.get_calls_today_by_type("article_intelligence")
-            _prescore = _cheap_prescore(title, summary or '')
-            _can_call_llm = (
-                client
-                and llm_calls_this_cycle < MAX_LLM_CALLS_PER_CYCLE
-                and _article_calls_today < MAX_LLM_ARTICLE_CALLS_PER_DAY
-                and _claude_budget_ok()
-                and _prescore >= NEWS_ENRICHMENT_MIN_RELEVANCE_PRESCORE
+            _clf = _classify_article_intel(
+                title, summary, source_name, _ACTIVE_PROFILE,
+                llm_calls_this_cycle, _article_calls_today,
             )
-            if _can_call_llm:
-                try:
-                    print(f"[article_intel] Calling Haiku for: {title[:60]}")
-                    _intel = analyse_article(title, _clean_body, source_name)
-                    llm_calls_this_cycle += 1
-                    _intel_llm_called = True
-                    print(f"[article_intel] Got tier={_intel.get('tier')} "
-                          f"type={_intel.get('article_type')} "
-                          f"score={_intel.get('relevance_score')}")
-                    time.sleep(0.1)
-                except Exception as _ai_err:
-                    import traceback as _tb
-                    print(f"[article_intel] FAILED: {type(_ai_err).__name__}: {_ai_err}")
-                    _tb.print_exc()
+            _intel = _clf["intel"]
+            _intel_llm_called = _clf["llm_called"]
+            if _intel_llm_called:
+                llm_calls_this_cycle += 1
+                print(f"[article_intel] Called Haiku for: {title[:60]}")
+                print(f"[article_intel] Got tier={_intel.get('tier')} "
+                      f"type={_intel.get('article_type')} "
+                      f"score={_intel.get('relevance_score')}")
+                time.sleep(0.1)
             elif not client:
                 if llm_calls_this_cycle == 0:
                     print("[article_intel] SKIPPED — Anthropic client is None (ANTHROPIC_API_KEY not set?)")
@@ -6495,18 +6526,25 @@ def _run_news_conflict_extraction_sync():
             elif llm_calls_this_cycle >= MAX_LLM_CALLS_PER_CYCLE:
                 if llm_calls_this_cycle == MAX_LLM_CALLS_PER_CYCLE:
                     print(f"[article_intel] Cycle cap reached ({MAX_LLM_CALLS_PER_CYCLE}) — remaining articles use fallback")
-            if _intel is None:
-                _intel = {
-                    "location": None, "location_country": None, "location_confidence": "none",
-                    "article_type": "other", "icon_type": "other", "tier": 3,
-                    "relevance_score": 5.0, "event_title": None, "has_image": False,
-                    "is_breaking": False, "context_summary": "",
-                }
+            elif _clf["stage"] == "embedding_relevance_score_and_verdict":
+                print(f"[article_intel] embedding gate ({_clf['embedding_verdict']}, "
+                      f"score={_clf['embedding_score']:.3f}) — skipped Haiku for: {title[:60]}")
+
             _intel_tier    = int(_intel.get("tier") or 3)
             _intel_loc     = _intel.get("location")
             _intel_conf    = _intel.get("location_confidence", "none")
             _intel_country = _intel.get("location_country")
             _intel_score   = float(_intel.get("relevance_score") or 0)
+
+            _log_classification(
+                url=url, stage=_clf["stage"],
+                cheap_prescore=_clf["prescore"],
+                embedding_score=_clf["embedding_score"],
+                embedding_verdict=_clf["embedding_verdict"],
+                haiku_called=_intel_llm_called,
+                final_tier=_intel_tier,
+                final_relevance_score=_intel_score,
+            )
 
             # Drop tier 4 before geocoding (avoids wasting Nominatim quota)
             if _intel_tier >= 4:
@@ -6952,6 +6990,218 @@ def _cheap_prescore(title: str, description: str = '') -> int:
         if g in text:
             score += 1
     return min(score, 10)
+
+
+# ── Near-duplicate detection ──────────────────────────────────────────────────
+
+def _find_near_duplicate(url: str, title: str, summary: str):
+    """
+    Check whether this article is a near-duplicate of one already tracked
+    within the last _NEAR_DUP_WINDOW_HOURS (same real-world event, different
+    outlet/URL). Registers this article's vector in _NEWS_VECTOR_CACHE either
+    way — as its own canonical entry if novel, or pointing at the winning
+    canonical if it's a duplicate — so a THIRD/FOURTH occurrence of the same
+    story also collapses onto the original canonical rather than chaining.
+
+    Returns (canonical_url, similarity_score) if this is a near-duplicate,
+    else None.
+    """
+    text = f"{title} {summary or ''}".strip()
+    if not text:
+        return None
+    vec = relevance_embedding.embed(text)
+    cutoff = time.time() - _NEAR_DUP_WINDOW_HOURS * 3600
+    candidates = [
+        (canonical, cached_vec)
+        for _cached_url, (cached_vec, seen_at, canonical) in _NEWS_VECTOR_CACHE.items()
+        if seen_at >= cutoff
+    ]
+    match = relevance_embedding.top_match(vec, candidates)
+    if match is not None and match[1] >= _NEAR_DUP_THRESHOLD:
+        canonical_url, score = match
+        _NEWS_VECTOR_CACHE[url] = (vec, time.time(), canonical_url)
+        return canonical_url, score
+    _NEWS_VECTOR_CACHE[url] = (vec, time.time(), url)
+    return None
+
+
+def _attach_duplicate_report(canonical_url: str, dup: dict) -> None:
+    """Record that `dup` (url/source/published) is a near-duplicate report of
+    the canonical_url story, without creating a second card for it. No-op if
+    the canonical article was itself dropped before reaching the store (e.g.
+    tier-4 rejection) — a missed enrichment, not a crash."""
+    with _NEWS_STORE_LOCK:
+        existing = _NEWS_ARTICLE_STORE.get(canonical_url)
+        if not existing:
+            return
+        also = list(existing.get("also_reported_by") or [])
+        if not any(a.get("url") == dup.get("url") for a in also):
+            also.append(dup)
+        existing["also_reported_by"] = also
+        _NEWS_ARTICLE_STORE[canonical_url] = existing
+
+
+# ── Embedding-based Mission Profile relevance (pre-Haiku, cheap) ─────────────
+# Thresholds calibrated against realistic relevant/irrelevant article text run
+# through relevance_embedding.relevance_score() during development — relevant
+# articles against a populated profile scored ~0.17-0.23, irrelevant ones
+# ~0.0-0.05. See relevance_embedding.py's module docstring for why TF-hashing
+# cosine similarity, not a neural embedding call, computes this score.
+_EMBED_RELEVANT_THRESHOLD   = 0.12
+_EMBED_IRRELEVANT_THRESHOLD = 0.03
+
+# Static fallback intel — used whenever Haiku isn't (or can't be) called and
+# the embedding gate has no opinion either. Identical shape to the fallback
+# this funnel has always used (tier=3, relevance_score=5.0, "don't know").
+_STATIC_FALLBACK_INTEL: dict = {
+    "location": None, "location_country": None, "location_confidence": "none",
+    "article_type": "other", "icon_type": "other", "tier": 3,
+    "relevance_score": 5.0, "event_title": None, "has_image": False,
+    "is_breaking": False, "context_summary": "",
+}
+
+
+def _profile_has_signal(profile: dict | None) -> bool:
+    """
+    True only when the Mission Profile carries enough substantive content to
+    make the embedding-relevance verdict trustworthy enough to actually gate
+    Haiku calls on. The live backend/profile.json today has empty
+    focusRegions/infraDomains/chokepoints and a two-word activeSituations
+    ("Monitoring paris") — nowhere near enough signal to safely skip a real
+    Haiku classification based on cosine similarity against it. Until the
+    profile is fleshed out, _classify_article_intel() still computes and logs
+    the embedding score/verdict for every candidate article (so the data
+    exists and the mechanism is exercised), it just never uses it to suppress
+    a Haiku call — the funnel's actual Haiku volume is unchanged from before
+    this feature existed until the profile has real content.
+    """
+    if not profile:
+        return False
+    signal_tokens = 0
+    for key in ("focusRegions", "infraDomains", "chokepoints"):
+        signal_tokens += len(profile.get(key) or [])
+    active = (profile.get("activeSituations") or "").strip()
+    signal_tokens += len(active.split())
+    return signal_tokens >= 6
+
+
+def _classify_article_intel(
+    title: str,
+    summary: str,
+    source_name: str,
+    profile: dict | None,
+    llm_calls_this_cycle: int,
+    article_calls_today: int,
+) -> dict:
+    """
+    Decide whether to call Haiku (article_intelligence.analyse_article) for
+    one article, or use a cheaper deterministic/embedding-based substitute —
+    the real funnel logic _run_news_conflict_extraction_sync() uses, pulled
+    into its own function so it can be exercised directly by tests without a
+    live RSS feed fetch or network access.
+
+    Returns a dict: {intel, llm_called, stage, prescore, embedding_score,
+    embedding_verdict} where `stage` is one of "haiku_called_with_result",
+    "failed_cheap_prescore", "embedding_relevance_score_and_verdict", or
+    "fallback_default" (cap/budget/no-client reasons).
+    """
+    clean_body = re.sub(r'<[^>]+>', '', summary or '')
+    prescore = _cheap_prescore(title, summary or '')
+
+    profile_ctx = _format_profile_context(profile) if profile else ""
+    article_text = f"{title} {summary or ''}".strip()
+    embed_score = relevance_embedding.relevance_score(profile_ctx, article_text) if profile_ctx else 0.0
+    if not profile_ctx:
+        embed_verdict = "not_computed"
+    elif embed_score >= _EMBED_RELEVANT_THRESHOLD:
+        embed_verdict = "relevant"
+    elif embed_score <= _EMBED_IRRELEVANT_THRESHOLD:
+        embed_verdict = "irrelevant"
+    else:
+        embed_verdict = "uncertain"
+
+    profile_signal = _profile_has_signal(profile)
+    embed_gate_blocks_haiku = profile_signal and embed_verdict in ("relevant", "irrelevant")
+
+    can_call_llm = (
+        client is not None
+        and llm_calls_this_cycle < MAX_LLM_CALLS_PER_CYCLE
+        and article_calls_today < MAX_LLM_ARTICLE_CALLS_PER_DAY
+        and _claude_budget_ok()
+        and prescore >= NEWS_ENRICHMENT_MIN_RELEVANCE_PRESCORE
+        and not embed_gate_blocks_haiku
+    )
+
+    intel = None
+    llm_called = False
+    if can_call_llm:
+        try:
+            intel = analyse_article(title, clean_body, source_name)
+            llm_called = True
+        except Exception as exc:
+            import traceback as _tb
+            print(f"[article_intel] FAILED: {type(exc).__name__}: {exc}")
+            _tb.print_exc()
+
+    if intel is None:
+        if embed_gate_blocks_haiku and embed_verdict == "relevant":
+            intel = {**_STATIC_FALLBACK_INTEL, "tier": 2,
+                     "relevance_score": round(min(10.0, 5.0 + embed_score * 10), 1)}
+        elif embed_gate_blocks_haiku and embed_verdict == "irrelevant":
+            intel = {**_STATIC_FALLBACK_INTEL, "tier": 4,
+                     "relevance_score": round(embed_score * 5, 1)}
+        else:
+            intel = dict(_STATIC_FALLBACK_INTEL)
+
+    if llm_called:
+        stage = "haiku_called_with_result"
+    elif prescore < NEWS_ENRICHMENT_MIN_RELEVANCE_PRESCORE:
+        stage = "failed_cheap_prescore"
+    elif embed_gate_blocks_haiku:
+        stage = "embedding_relevance_score_and_verdict"
+    else:
+        stage = "fallback_default"
+
+    return {
+        "intel": intel,
+        "llm_called": llm_called,
+        "stage": stage,
+        "prescore": prescore,
+        "embedding_score": embed_score,
+        "embedding_verdict": embed_verdict,
+    }
+
+
+def _log_classification(
+    url: str,
+    stage: str,
+    cheap_prescore=None,
+    embedding_score=None,
+    embedding_verdict=None,
+    haiku_called: bool = False,
+    duplicate_of_url=None,
+    final_tier=None,
+    final_relevance_score=None,
+) -> None:
+    """Best-effort structured log of one article's funnel decision. Never
+    raises — a logging failure must not break article ingestion."""
+    try:
+        from database import NewsClassificationLog, get_db as _gdb_clf
+        with _gdb_clf() as _db_clf:
+            _db_clf.add(NewsClassificationLog(
+                url=url,
+                stage=stage,
+                cheap_prescore=cheap_prescore,
+                embedding_score=embedding_score,
+                embedding_verdict=embedding_verdict,
+                haiku_called=bool(haiku_called),
+                duplicate_of_url=duplicate_of_url,
+                final_tier=final_tier,
+                final_relevance_score=final_relevance_score,
+            ))
+            _db_clf.commit()
+    except Exception as exc:
+        print(f"[news-classification-log] write failed for {url}: {exc}")
 
 
 async def _extract_news_conflicts_loop():
@@ -13650,7 +13900,7 @@ async def mission_chat(request: Request):
     input_tokens  = response.usage.input_tokens
     output_tokens = response.usage.output_tokens
     cost_usd      = (input_tokens * 0.0000008) + (output_tokens * 0.000004)
-    usage_tracker.record_call(input_tokens, output_tokens)
+    usage_tracker.record_call(input_tokens, output_tokens, call_type="chat", model="claude-haiku-4-5-20251001")
 
     return {
         "response": response.content[0].text,
