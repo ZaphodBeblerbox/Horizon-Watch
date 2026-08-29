@@ -610,6 +610,17 @@ _PROCESSED_URLS: CappedDict = CappedDict(maxsize=50_000)  # url → timestamp, e
 _PROCESSED_URLS_TTL = 72 * 3600  # 72 hours in seconds
 _FIRST_EXTRACTION_DONE = False   # cleared on first cycle so all current articles are processed fresh
 _executor = ThreadPoolExecutor(max_workers=4)   # for blocking I/O in sync extraction
+# Dedicated, single-worker executor for the RSS news-extraction cycle only.
+# That sync function is a long-running batch job (up to 80 feeds, near-dup/
+# IDF/boilerplate scoring per candidate article) that previously ran on the
+# shared _executor above — a long cycle could hold one of only 4 shared
+# worker threads for the whole cycle duration, starving unrelated, short,
+# latency-sensitive interactive requests that also use _executor (e.g. a
+# ReportTask GET's 30s-bounded collection preview timing out while queued
+# behind a news cycle). Isolating it here means a slow news cycle can never
+# starve interactive request handling, regardless of how much per-article
+# work it does.
+_news_executor = ThreadPoolExecutor(max_workers=1)
 _NEWS_STORE_MAX_ARTICLES = 2000
 _NEWS_WINDOW_HOURS = 168
 _NEWS_MARKER_WINDOW_HOURS = 168
@@ -1347,7 +1358,7 @@ async def init_source(source: str):
         return {"ok": False, "source": source, "message": f"Unknown source. Valid: {', '.join(sorted(valid))}"}
     if source == "rss":
         loop = asyncio.get_event_loop()
-        loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
+        loop.run_in_executor(_news_executor, _run_news_conflict_extraction_sync)
         return {"ok": True, "source": source, "message": "RSS extraction triggered immediately"}
     # For oref/usgs/gdacs the loops are already running on their own schedules;
     # reset last_poll so the UI shows it as pending until the next cycle completes.
@@ -7218,7 +7229,7 @@ async def _extract_news_conflicts_loop():
     print(f"[news-conflicts] Starting first extraction cycle (feeds={len(_SCAN_FEEDS)})…")
     t0 = asyncio.get_event_loop().time()
     try:
-        await loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
+        await loop.run_in_executor(_news_executor, _run_news_conflict_extraction_sync)
         elapsed = asyncio.get_event_loop().time() - t0
         print(f"[news-conflicts] First cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
     except Exception as ex:
@@ -7227,7 +7238,7 @@ async def _extract_news_conflicts_loop():
         await asyncio.sleep(1800)   # 30 minutes
         t0 = asyncio.get_event_loop().time()
         try:
-            await loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
+            await loop.run_in_executor(_news_executor, _run_news_conflict_extraction_sync)
             elapsed = asyncio.get_event_loop().time() - t0
             print(f"[news-conflicts] Cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
             # Write news_points snapshot
@@ -18453,7 +18464,18 @@ async def get_report_task(task_id: str):
                             region=region, period_start=row.period_start, period_end=window_end,
                         ),
                     ),
-                    timeout=30,
+                    # prepare_intelligence_picture() itself normally takes ~7s.
+                    # 30s previously assumed no other CPU-bound work would be
+                    # running concurrently in this process — not a safe
+                    # assumption once a real background job (e.g. the RSS
+                    # news-extraction cycle) can hold the GIL for stretches
+                    # doing its own CPU-bound work (vector similarity scoring
+                    # across many articles). A separate executor for that
+                    # cycle doesn't fix this — the GIL is process-wide, not
+                    # per-executor. A more generous bound tolerates realistic
+                    # concurrent background load without masking a genuine
+                    # hang (60s is still 8x the normal ~7s runtime).
+                    timeout=60,
                 )
             except Exception as _e:
                 raise HTTPException(500, f"collection failed: {_e}")
@@ -18498,7 +18520,9 @@ async def finish_report_task_collection(task_id: str):
                         region=region, period_start=row.period_start, period_end=window_end,
                     ),
                 ),
-                timeout=30,
+                # See the matching comment in get_report_task() above — same
+                # reasoning, same 60s bound.
+                timeout=60,
             )
         except Exception as _e:
             raise HTTPException(500, f"collection failed: {_e}")
