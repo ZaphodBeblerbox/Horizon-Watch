@@ -9023,6 +9023,18 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
               f"(MMSI {mmsi}) ~ sanctioned '{hit.get('name')}' — needs MMSI/IMO to confirm")
         return
 
+    # NOTE: this site fires on a hard mmsi/name match without corroborating
+    # the live vessel's flag against the sanctions record's flag — unlike
+    # detectors/correlation_engine.py's `_check_sanctions_hit`, which now
+    # calls `_sanctions_hit_is_plausible()` to downgrade a hard MMSI/IMO
+    # match to a "needs review" alert when the live flag clearly contradicts
+    # the sanctions record (MMSI/IMO can be reassigned after a vessel is
+    # scrapped/reflagged/sold). Flagged as a known inconsistency rather than
+    # silently left as three subtly-different "is this hit trustworthy"
+    # implementations — this site and the STS block below could both adopt
+    # that same helper; not done here to avoid touching this call site's
+    # already-correct, already-shipped alerting behavior under time pressure.
+
     # In-memory cooldown — skip if alerted within last 6 hours
     now_epoch = time.time()
     if now_epoch - _sanctions_alerted.get(mmsi, 0) < 21600:
@@ -9109,9 +9121,17 @@ async def _run_sts_detection() -> None:
     global _sts_candidates
 
     with _AIS_LOCK:
+        # `.get("speed", 99)` only supplies the default when the key is
+        # absent — since _ais_websocket_loop now stores an explicit `None`
+        # for an unreported Sog rather than fabricating 0, a present-but-
+        # unknown speed must be excluded explicitly here too, rather than
+        # comparing None <= STS_SPEED_KNOTS (crash) or letting a missing
+        # reading masquerade as "confirmed slow enough to be an STS
+        # candidate".
         vessels = [
             dict(v) for v in _AIS_VESSELS.values()
-            if v.get("lat") and v.get("lon") and v.get("speed", 99) <= STS_SPEED_KNOTS
+            if v.get("lat") and v.get("lon")
+            and v.get("speed") is not None and v.get("speed") <= STS_SPEED_KNOTS
         ]
 
     now = datetime.utcnow()
@@ -9225,6 +9245,15 @@ async def _run_sts_detection() -> None:
             sanction_a = None
         if sanction_b and sanction_b.get("_match_type") == "fuzzy_name":
             sanction_b = None
+        # NOTE: same known gap as `_check_sanctions_on_update` above — a hard
+        # MMSI/IMO match here isn't further corroborated against the live
+        # vessel's flag (see detectors/correlation_engine.py's
+        # `_sanctions_hit_is_plausible` / `_check_sanctions_hit`, which does
+        # this and downgrades a flag-mismatched hit instead of firing
+        # "critical"/"SANCTIONED"). Left unwired here for the same reason —
+        # avoid touching this already-correct, already-shipped path without
+        # room to verify it thoroughly; a good follow-up would be sharing
+        # that helper across all three sanctions call sites.
         is_sanctions_related = bool(sanction_a or sanction_b)
         severity = "critical" if is_sanctions_related else "high"
 
@@ -9382,8 +9411,19 @@ async def _ais_websocket_loop():
                                 if lat is not None and lon is not None:
                                     vessel["lat"]         = float(lat)
                                     vessel["lon"]         = float(lon)
-                                    vessel["heading"]     = pr.get("TrueHeading") or pr.get("Cog") or 0
-                                    vessel["speed"]       = round(float(pr.get("Sog") or 0), 1)
+                                    # None (not 0) when absent — see
+                                    # _normalize_vessel()'s comment for why a
+                                    # fabricated 0 speed/heading is dangerous
+                                    # (false loitering signal). Also avoid the
+                                    # `a or b or 0` pattern here since a
+                                    # genuine 0 heading (due north) or 0 Sog
+                                    # is falsy and would otherwise be skipped.
+                                    _heading = pr.get("TrueHeading")
+                                    if _heading is None:
+                                        _heading = pr.get("Cog")
+                                    vessel["heading"] = float(_heading) if _heading is not None else None
+                                    _sog = pr.get("Sog")
+                                    vessel["speed"] = round(float(_sog), 1) if _sog is not None else None
                                     vessel["last_update"] = now
                                     if "ship_type_code" in vessel:
                                         vessel["ship_type"] = _ais_ship_type(vessel["ship_type_code"])
@@ -19117,13 +19157,30 @@ def _normalize_vessel(raw, mmsi=None):
         )
         if lat == 0 and lng == 0:
             return None
+        # Missing speed/heading must come through as None ("unknown"), not
+        # a fabricated 0 — a genuinely stopped vessel and a vessel whose
+        # Sog/heading field simply hasn't arrived yet must not look
+        # identical, since this feeds loitering/STS detection that gates on
+        # speed <= max_speed_knots. `a or b or c or 0` would also wrongly
+        # skip past a genuine 0 reading in an earlier field (0 is falsy) —
+        # walk the candidates explicitly instead so a real 0 is kept.
+        raw_speed = None
+        for _cand in (raw.get("speed"), raw.get("sog"), raw.get("SpeedOverGround")):
+            if _cand is not None:
+                raw_speed = _cand
+                break
+        raw_heading = None
+        for _cand in (raw.get("heading"), raw.get("cog"), raw.get("CourseOverGround")):
+            if _cand is not None:
+                raw_heading = _cand
+                break
         return {
             "mmsi":        str(mmsi or raw.get("mmsi") or raw.get("MMSI") or ""),
             "name":        raw.get("name") or raw.get("shipName") or raw.get("ship_name") or raw.get("Name") or f"MMSI:{mmsi}",
             "lat":         lat,
             "lng":         lng,
-            "speed":       float(raw.get("speed") or raw.get("sog") or raw.get("SpeedOverGround") or 0),
-            "heading":     float(raw.get("heading") or raw.get("cog") or raw.get("CourseOverGround") or 0),
+            "speed":       float(raw_speed) if raw_speed is not None else None,
+            "heading":     float(raw_heading) if raw_heading is not None else None,
             "ship_type":   str(raw.get("ship_type") or raw.get("type") or raw.get("Type") or raw.get("shipType") or ""),
             "destination": str(raw.get("destination") or raw.get("Destination") or ""),
             "flag":        str(raw.get("flag") or raw.get("country") or raw.get("Flag") or ""),
