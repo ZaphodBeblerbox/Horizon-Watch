@@ -553,7 +553,24 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
             _db = SessionLocal()
             try:
                 now = datetime.datetime.utcnow()
-                rows = _db.query(FusionSignal).filter(FusionSignal.expires_at > now).all()
+                # Exclude AUTOMATED TEST / TEST-* rows (test_gdelt_fusion_signal.py's
+                # own convention) — without this, every restart re-evaluates fusion
+                # for leftover test geo keys below (line ~615), minting a fresh
+                # "AUTOMATED TEST" FusionEvent and a Haiku assessment call attempt
+                # on every single startup for data that was already resolved.
+                rows = (
+                    _db.query(FusionSignal)
+                    .filter(FusionSignal.expires_at > now)
+                    .filter(
+                        (FusionSignal.location_name.is_(None))
+                        | (~FusionSignal.location_name.like("%AUTOMATED TEST%"))
+                    )
+                    .filter(
+                        (FusionSignal.signal_id.is_(None))
+                        | (~FusionSignal.signal_id.like("TEST-%"))
+                    )
+                    .all()
+                )
                 reloaded = 0
                 for row in rows:
                     try:
@@ -584,6 +601,14 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                 try:
                     recent_rows = list(reversed(
                         _db.query(FusionSignal)
+                        .filter(
+                            (FusionSignal.location_name.is_(None))
+                            | (~FusionSignal.location_name.like("%AUTOMATED TEST%"))
+                        )
+                        .filter(
+                            (FusionSignal.signal_id.is_(None))
+                            | (~FusionSignal.signal_id.like("TEST-%"))
+                        )
                         .order_by(FusionSignal.created_at.desc())
                         .limit(200)
                         .all()
