@@ -1096,6 +1096,13 @@ def migrate_db():
                 cur.execute(f'ALTER TABLE surge_events ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] surge_events: added column {col}')
 
+    # Sentinel detection instrument tagging (optical vs SAR)
+    if 'sentinel_detections' in tables:
+        sd_existing = [row[1] for row in cur.execute('PRAGMA table_info(sentinel_detections)').fetchall()]
+        if 'instrument' not in sd_existing:
+            cur.execute("ALTER TABLE sentinel_detections ADD COLUMN instrument TEXT DEFAULT 'OPTICAL'")
+            print('[db-migrate] sentinel_detections: added column instrument')
+
     # Alert correlation/dedup new columns
     alert_new_cols = [
         ('dedup_key',              'TEXT'),
