@@ -616,12 +616,16 @@ _NEWS_MARKER_WINDOW_HOURS = 168
 _NEWS_FEED_ENTRY_LIMIT = 50
 
 # ── Near-duplicate detection state ────────────────────────────────────────────
-# url -> (hashed TF vector, seen-at epoch seconds, canonical_url). Every article
-# that reaches the near-dup check registers itself here (canonical_url == its
-# own url if it's the first sighting of a story, or an earlier url if it's a
-# near-duplicate) so later articles in this cycle AND later cycles compare
-# against it. See relevance_embedding.py for why a hashed TF vector + cosine
-# similarity, not a neural embedding call, backs this.
+# url -> (IDF-weighted hybrid unigram/bigram vector, seen-at epoch seconds,
+# canonical_url). Every article that reaches the near-dup check registers
+# itself here (canonical_url == its own url if it's the first sighting of a
+# story, or an earlier url if it's a near-duplicate) so later articles in
+# this cycle AND later cycles compare against it. The vector itself comes
+# from relevance_embedding.embed_and_learn(), which ALSO folds the article's
+# vocabulary into a separate rolling document-frequency corpus used for IDF
+# weighting — see relevance_embedding.py's module docstring for why plain
+# hashed-TF cosine (no IDF) was a real, shipped bug here, and how the fix
+# works.
 _NEWS_VECTOR_CACHE: CappedDict = CappedDict(maxsize=3_000)
 _NEAR_DUP_WINDOW_HOURS = 48     # only compare against articles seen in the last 2 days
 _NEAR_DUP_THRESHOLD    = 0.30   # cosine similarity above which two articles are treated as the same story
@@ -7006,10 +7010,9 @@ def _find_near_duplicate(url: str, title: str, summary: str):
     Returns (canonical_url, similarity_score) if this is a near-duplicate,
     else None.
     """
-    text = f"{title} {summary or ''}".strip()
-    if not text:
+    if not (title or summary):
         return None
-    vec = relevance_embedding.embed(text)
+    vec = relevance_embedding.embed_and_learn(title, summary or '')
     cutoff = time.time() - _NEAR_DUP_WINDOW_HOURS * 3600
     candidates = [
         (canonical, cached_vec)
@@ -7044,9 +7047,13 @@ def _attach_duplicate_report(canonical_url: str, dup: dict) -> None:
 # ── Embedding-based Mission Profile relevance (pre-Haiku, cheap) ─────────────
 # Thresholds calibrated against realistic relevant/irrelevant article text run
 # through relevance_embedding.relevance_score() during development — relevant
-# articles against a populated profile scored ~0.17-0.23, irrelevant ones
-# ~0.0-0.05. See relevance_embedding.py's module docstring for why TF-hashing
-# cosine similarity, not a neural embedding call, computes this score.
+# articles against a populated profile scored ~0.11-0.22, irrelevant ones
+# ~0.0 (re-validated against a diverse sample after relevance_embedding.py's
+# near-duplicate-detection fix changed the underlying similarity mechanism —
+# see test_news_embedding_relevance_ranking.py and relevance_embedding.py's
+# module docstring for why IDF-weighted hybrid unigram/bigram cosine, not a
+# neural embedding call, computes this score, and why that fix didn't
+# require moving these thresholds).
 _EMBED_RELEVANT_THRESHOLD   = 0.12
 _EMBED_IRRELEVANT_THRESHOLD = 0.03
 

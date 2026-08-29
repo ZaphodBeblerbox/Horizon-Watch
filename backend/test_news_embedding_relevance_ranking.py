@@ -139,6 +139,78 @@ check("known-relevant article gets a HIGHER relevance_score than the known-irrel
       f"relevant_score={result_relevant['intel']['relevance_score']} "
       f"irrelevant_score={result_irrelevant['intel']['relevance_score']}")
 
+
+# ══════════════════════════════════════════════════════════════════════════
+#  REGRESSION: diverse sample sanity check. relevance_score() shares its
+#  underlying similarity mechanism with near-duplicate detection (see
+#  relevance_embedding.py's module docstring for the near-dup bug that
+#  mechanism shipped with), so this confirms the fix (IDF weighting,
+#  unigram/bigram hybrid, unigram-dominant 0.7/0.3 weighting) didn't break
+#  mission-profile relevance ranking — using several relevant/irrelevant
+#  pairs, not just the one hand-picked pair above.
+# ══════════════════════════════════════════════════════════════════════════
+print()
+print("=" * 70)
+print("  Diverse sample: relevance ranking against the test profile")
+print("=" * 70)
+
+_RELEVANT_SAMPLE = [
+    ("Houthi missile strike hits oil tanker near Bab el-Mandeb strait",
+     "A commercial oil tanker came under missile attack from Houthi forces "
+     "in Yemen as it transited the Bab el-Mandeb strait on Tuesday, the "
+     "latest naval escalation in Red Sea shipping lanes."),
+    ("Iran seizes another tanker near Strait of Hormuz amid rising tensions",
+     "Iran naval forces seized a foreign-flagged tanker near the Strait of "
+     "Hormuz on Wednesday, officials said, in the latest escalation amid "
+     "ongoing tensions with Gulf states."),
+    ("Energy markets on edge as Gulf tanker seizures continue",
+     "Energy markets were on edge Wednesday as tanker seizures continued "
+     "in the Gulf, analysts said, with shipping firms rerouting away from "
+     "Red Sea chokepoints."),
+    ("Houthi attacks on Red Sea shipping disrupt Middle East trade routes",
+     "Houthi attacks on Red Sea shipping have disrupted trade routes "
+     "across the Middle East, officials said, forcing many vessels to "
+     "avoid the Bab el-Mandeb strait."),
+]
+_IRRELEVANT_SAMPLE = [
+    ("Military junta seizes power in coup, deploys troops nationwide",
+     "Soldiers loyal to a breakaway military faction seized the "
+     "presidential palace overnight, declaring a state of emergency and "
+     "deploying troops to the capital after months of political crisis."),
+    ("Local bakery wins award for best pastry in the region",
+     "A small family-owned bakery has won a regional award for its "
+     "pastries, the owner said Wednesday, crediting decades of tradition "
+     "and a loyal customer base."),
+    ("Tech company announces new laptop with longer battery life",
+     "The company unveiled its newest laptop model on Wednesday, touting "
+     "a longer battery life and faster processor as its main selling "
+     "points, according to a press release."),
+    ("City council approves new public transit funding package",
+     "The city council voted 7-2 to approve a new funding package for "
+     "public transit improvements, including expanded bus routes and "
+     "station upgrades."),
+]
+
+relevant_scores = []
+for t, s in _RELEVANT_SAMPLE:
+    score = main.relevance_embedding.relevance_score(main._format_profile_context(TEST_PROFILE), f"{t} {s}")
+    relevant_scores.append(score)
+    print(f"  relevant   score={score:.4f}   {t[:55]!r}")
+
+irrelevant_scores = []
+for t, s in _IRRELEVANT_SAMPLE:
+    score = main.relevance_embedding.relevance_score(main._format_profile_context(TEST_PROFILE), f"{t} {s}")
+    irrelevant_scores.append(score)
+    print(f"  irrelevant score={score:.4f}   {t[:55]!r}")
+
+print(f"  relevant group:   min={min(relevant_scores):.4f} max={max(relevant_scores):.4f}")
+print(f"  irrelevant group: min={min(irrelevant_scores):.4f} max={max(irrelevant_scores):.4f}")
+
+check("every relevant-sample article scores above the irrelevant "
+      "group's ceiling (real margin, not just one lucky pair)",
+      min(relevant_scores) > max(irrelevant_scores),
+      f"relevant_min={min(relevant_scores):.4f} irrelevant_max={max(irrelevant_scores):.4f}")
+
 print("=" * 70)
 if FAILURES:
     print(f"  RESULT: {len(FAILURES)} FAILURE(S): {FAILURES}")
