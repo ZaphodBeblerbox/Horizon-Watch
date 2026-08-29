@@ -14,68 +14,42 @@ import uuid
 import json
 
 # ── Sanctions vessel detection ────────────────────────────────────────────────
-_sanctions_alert_cooldown: dict = {}  # mmsi → datetime of last fire
-
-
-def _sanctions_hit_is_plausible(hit: dict, vessel: dict) -> bool:
-    """
-    Best-effort corroboration for a sanctions hit found via a hard MMSI/IMO
-    match. A hard identifier match is not automatically the same physical
-    vessel forever — MMSI numbers get reassigned and IMO/vessels get
-    scrapped, reflagged, or sold — so this checks one genuinely independent
-    data point: does the live vessel's reported flag agree with the flag on
-    the sanctions record?
-
-    This is deliberately NOT a name check: sanctions_loader.check_vessel()
-    already does exact/fuzzy name matching as a separate, weaker match tier
-    (see its docstring and the `_match_type == "fuzzy_name"` gate callers
-    apply); re-comparing name here would just be a confusing duplicate of
-    that existing signal rather than a new one. Flag, by contrast, is a
-    completely separate field from whatever produced the hit (MMSI/IMO), so
-    a flag mismatch is real corroborating-or-contradicting evidence.
-
-    Returns False only when both flags are known, non-empty, and clearly
-    different after normalizing case/whitespace — a real contradiction.
-    Returns True when the flags agree, OR when either side is unknown/blank:
-    missing data can't corroborate OR contradict, so the policy choice here
-    is to fall back to the pre-existing behavior (fire normally) rather than
-    invent a rule for data we don't have.
-    """
-    hit_flag  = (hit.get("flag") or "").strip().upper()
-    live_flag = (vessel.get("flag") or vessel.get("country") or "").strip().upper()
-    if not hit_flag or not live_flag:
-        return True
-    return hit_flag == live_flag
+# The hit-detection / flag-plausibility-corroboration / cooldown logic lives
+# in sanctions_loader.check_sanctions_for_vessel() — shared with main.py's
+# _check_sanctions_on_update() and its ship-to-ship-transfer block, so all 3
+# "is this vessel sanctioned" call sites agree on what counts as a
+# trustworthy hit instead of each maintaining a slightly different copy (see
+# that function's docstring for the full rationale). This module now only
+# builds the DarkShipDetector-specific alert shape from the shared result.
 
 
 def _check_sanctions_hit(mmsi: str, vessel: dict) -> "dict | None":
     try:
-        from sanctions_loader import sanctions_loader as _sl
+        from sanctions_loader import check_sanctions_for_vessel as _check_shared
     except ImportError:
         return None
-    hit = _sl.check_vessel(mmsi=mmsi)
-    if not hit:
+
+    result = _check_shared(mmsi=mmsi, name=vessel.get("name") or vessel.get("vessel_name"), vessel=vessel)
+    if result is None:
         return None
-    if hit.get("_match_type") == "fuzzy_name":
-        # Consistent with the fuzzy-name gate applied at the other two
-        # sanctions call sites (main.py's _check_sanctions_on_update and
-        # ship-to-ship-transfer block) — a name-only match is not reliable
-        # enough evidence to fire a critical alert from. This function is
-        # currently only ever called with mmsi= (see DarkShipDetector.scan),
-        # so _match_type is always "mmsi" in practice today, but keep the
-        # gate for consistency and in case that changes.
-        return None
-    now = datetime.utcnow()
-    last_fired = _sanctions_alert_cooldown.get(mmsi)
-    if last_fired and (now - last_fired).total_seconds() < 6 * 3600:
-        return None
-    _sanctions_alert_cooldown[mmsi] = now
-    name = vessel.get("name") or vessel.get("vessel_name") or mmsi
-    lat  = float(vessel.get("lat") or 0)
-    lon  = float(vessel.get("lon") or vessel.get("lng") or 0)
+
+    hit  = result["hit"]
+    name = result["vessel_name"]
+    now  = datetime.utcnow()
+
+    # Position is optional and caller-supplied — never fabricate a 0,0
+    # default for a vessel with no reported position. A vessel genuinely
+    # sitting at 0,0 (Null Island) and a vessel whose position is simply
+    # unknown must not look identical on the map or in this alert's text.
+    raw_lat = vessel.get("lat")
+    raw_lon = vessel.get("lon") if vessel.get("lon") is not None else vessel.get("lng")
+    lat = float(raw_lat) if raw_lat is not None else None
+    lon = float(raw_lon) if raw_lon is not None else None
+    pos_str = f"{lat:.3f}, {lon:.3f}" if lat is not None and lon is not None else "an unreported position"
+
     flag = vessel.get("flag") or vessel.get("country") or hit.get("flag") or "unknown"
 
-    if not _sanctions_hit_is_plausible(hit, vessel):
+    if result["status"] == "possible":
         # Hard MMSI/IMO match, but the live vessel's reported flag clearly
         # contradicts the sanctions record's flag — MMSI/IMO reassignment
         # after scrapping/reflagging/sale means this could genuinely be a
@@ -111,7 +85,7 @@ def _check_sanctions_hit(mmsi: str, vessel: dict) -> "dict | None":
         "title":          f"Sanctioned Vessel: {name}",
         "description": (
             f"{name} ({mmsi}) — sanctioned vessel transmitting AIS at "
-            f"{lat:.3f}, {lon:.3f}. Flag: {flag}."
+            f"{pos_str}. Flag: {flag}."
         ),
         "lat":            lat,
         "lon":            lon,

@@ -134,7 +134,7 @@ def write_alert(alert_dict: dict):
     except Exception:
         pass
     return result
-from sanctions_loader import sanctions_loader
+from sanctions_loader import sanctions_loader, check_sanctions_for_vessel
 from entity_linker import entity_linker
 from event_bus import event_bus, Events
 
@@ -8695,7 +8695,6 @@ async def _startup_warmup_tasks():
 _AISSTREAM_KEY   = os.getenv("AISSTREAM_API_KEY", "")
 _AIS_VESSELS: CappedDict = CappedDict(maxsize=10_000)  # keyed by MMSI string
 _AIS_LOCK        = threading.Lock()
-_sanctions_alerted: dict = {}   # mmsi → epoch of last sanctions alert (in-memory cooldown)
 _sts_candidates:    dict = {}   # (mmsi_a, mmsi_b) → proximity tracking state
 
 # ── Forge detection engine instances ─────────────────────────────────────────
@@ -9000,77 +8999,71 @@ def _ais_ship_type(type_code: int) -> str:
 # ── Sanctions check (fired on every new AIS position, O(1) in-memory) ────────
 
 async def _check_sanctions_on_update(vessel: dict) -> None:
-    """Check if a vessel is on a sanctions list; write critical alert if so."""
-    global _sanctions_alerted
+    """Check if a vessel is on a sanctions list; write an alert if so.
+
+    Routes through the single shared `check_sanctions_for_vessel()`
+    (backend/sanctions_loader.py) — the fuzzy-name gate, hard-match
+    flag-plausibility corroboration, and cooldown are all owned there so
+    this call site, the ship-to-ship-transfer block below, and
+    detectors/correlation_engine.py's DarkShipDetector all agree on what
+    counts as a trustworthy sanctions hit instead of each reimplementing it
+    slightly differently.
+    """
     mmsi = str(vessel.get("mmsi", ""))
     name = vessel.get("name", "")
     if not mmsi:
         return
 
-    hit = sanctions_loader.check_vessel(mmsi=mmsi, name=name)
-    if not hit:
-        return
-    if hit.get("_match_type") == "fuzzy_name":
-        # A name-only fuzzy match is not reliable enough to fire a
-        # "critical: SANCTIONED VESSEL" alert off of — real MMSI/IMO
-        # traffic (including inland river/canal AIS, which is where this
-        # false-positive pattern actually showed up) can share a common
-        # word with a sanctioned vessel's name without being that vessel.
-        # Log it so it's not silently invisible, but don't fabricate a
-        # critical-confidence alert from unverified evidence.
-        print(f"[sanctions] fuzzy name match only (not alerting): vessel '{name}' "
-              f"(MMSI {mmsi}) ~ sanctioned '{hit.get('name')}' — needs MMSI/IMO to confirm")
+    result = check_sanctions_for_vessel(mmsi=mmsi, name=name, vessel=vessel)
+    if result is None:
         return
 
-    # NOTE: this site fires on a hard mmsi/name match without corroborating
-    # the live vessel's flag against the sanctions record's flag — unlike
-    # detectors/correlation_engine.py's `_check_sanctions_hit`, which now
-    # calls `_sanctions_hit_is_plausible()` to downgrade a hard MMSI/IMO
-    # match to a "needs review" alert when the live flag clearly contradicts
-    # the sanctions record (MMSI/IMO can be reassigned after a vessel is
-    # scrapped/reflagged/sold). Flagged as a known inconsistency rather than
-    # silently left as three subtly-different "is this hit trustworthy"
-    # implementations — this site and the STS block below could both adopt
-    # that same helper; not done here to avoid touching this call site's
-    # already-correct, already-shipped alerting behavior under time pressure.
-
-    # In-memory cooldown — skip if alerted within last 6 hours
-    now_epoch = time.time()
-    if now_epoch - _sanctions_alerted.get(mmsi, 0) < 21600:
-        return
-
-    # DB cooldown — avoid duplicate alerts even across restarts
-    try:
-        from database import get_db as _gdb, Alert as _Alert
-        with _gdb() as _db:
-            existing = _db.query(_Alert).filter(
-                _Alert.entity_id == mmsi,
-                _Alert.alert_type == "Sanctioned Vessel",
-                _Alert.created_at >= datetime.utcnow() - timedelta(hours=6),
-            ).first()
-            if existing:
-                _sanctions_alerted[mmsi] = now_epoch
-                return
-    except Exception:
-        pass
-
+    hit         = result["hit"]
+    vessel_name = result["vessel_name"]
+    confirmed   = result["status"] == "confirmed"
     explanation = sanctions_loader.get_sanction_explanation(hit)
-    vessel_name = hit.get("name") or name or mmsi
+
+    if confirmed:
+        alert_type      = "Sanctioned Vessel"
+        title           = f"⚠ SANCTIONED: {vessel_name} detected"
+        message         = (
+            f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected. "
+            f"Listed by: {', '.join(explanation['sanction_lists'][:2])}."
+        )
+        severity        = "critical"
+        confidence      = 0.95
+        relevance_score = 100
+    else:
+        # Hard MMSI/IMO match, but the live vessel's reported flag clearly
+        # contradicts the sanctions record's flag — MMSI/IMO reassignment
+        # after scrapping/reflagging/sale means this could genuinely be a
+        # different, innocent vessel. Downgrade instead of claiming a
+        # confirmed sanctions match we can't actually stand behind.
+        alert_type      = "Sanctioned Vessel (Possible)"
+        title           = f"⚠ Possible sanctions match (needs review): {vessel_name}"
+        message         = (
+            f"{vessel_name} (MMSI {mmsi}) — MMSI/IMO matches a sanctioned-vessel "
+            f"record ({', '.join(explanation['sanction_lists'][:2])}), but the "
+            f"live flag does not match the sanctions record's flag "
+            f"({hit.get('flag')}). MMSI/IMO can be reassigned after a vessel is "
+            f"scrapped, reflagged, or sold, so this is an unconfirmed possible "
+            f"match — needs human review, not an automatic critical alert."
+        )
+        severity        = "medium"
+        confidence      = 0.5
+        relevance_score = 50
 
     alert_dict = {
         "domain":         "AIS",
         "source":         "AIS",
-        "alert_type":     "Sanctioned Vessel",
+        "alert_type":     alert_type,
         "rule_id":        "AIS-SANCTIONS",
         "rule_name":      "Sanctioned Vessel",
-        "title":          f"⚠ SANCTIONED: {vessel_name} detected",
-        "message":        (
-            f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected. "
-            f"Listed by: {', '.join(explanation['sanction_lists'][:2])}."
-        ),
-        "severity":       "critical",
-        "confidence":     0.95,
-        "relevance_score": 100,
+        "title":          title,
+        "message":        message,
+        "severity":       severity,
+        "confidence":     confidence,
+        "relevance_score": relevance_score,
         "lat":            vessel.get("lat"),
         "lon":            vessel.get("lon"),
         "mmsi":           mmsi,
@@ -9082,25 +9075,25 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
         "entity_name":    vessel_name,
         "timestamp":      datetime.utcnow().isoformat(),
         "payload": {
-            "mmsi":           mmsi,
-            "imo":            hit.get("imo"),
-            "vessel_name":    vessel_name,
-            "sanction_lists": explanation["sanction_lists"],
-            "flag":           hit.get("flag"),
-            "owner":          hit.get("owner"),
-            "speed":          vessel.get("speed"),
-            "heading":        vessel.get("heading"),
-            "rule_name":      "Sanctioned Vessel",
-            "explanation":    explanation,
+            "mmsi":                mmsi,
+            "imo":                 hit.get("imo"),
+            "vessel_name":         vessel_name,
+            "sanction_lists":      explanation["sanction_lists"],
+            "flag":                hit.get("flag"),
+            "owner":               hit.get("owner"),
+            "speed":               vessel.get("speed"),
+            "heading":             vessel.get("heading"),
+            "rule_name":           "Sanctioned Vessel",
+            "sanctions_confirmed": confirmed,
+            "explanation":         explanation,
         },
     }
 
     write_alert(alert_dict)
     global _forge_alerts
     _forge_alerts.append(alert_dict)
-    _sanctions_alerted[mmsi] = now_epoch
-    print(f"[sanctions] CRITICAL: Sanctioned vessel {vessel_name} (MMSI {mmsi}) at "
-          f"{vessel.get('lat')}, {vessel.get('lon')}")
+    print(f"[sanctions] {'CRITICAL' if confirmed else 'POSSIBLE (flag mismatch, needs review)'}: "
+          f"{vessel_name} (MMSI {mmsi}) at {vessel.get('lat')}, {vessel.get('lon')}")
 
 
 # ── Ship-to-Ship transfer detection ──────────────────────────────────────────
@@ -9234,27 +9227,23 @@ async def _run_sts_detection() -> None:
 
         a_v = candidate["vessel_a"]
         b_v = candidate["vessel_b"]
-        sanction_a = sanctions_loader.check_vessel(mmsi=mmsi_a, name=a_v.get("name", ""))
-        sanction_b = sanctions_loader.check_vessel(mmsi=mmsi_b, name=b_v.get("name", ""))
-        # A fuzzy name-only match isn't reliable evidence a vessel is
-        # actually the sanctioned entity (see sanctions_loader.check_vessel
-        # docstring) — don't let it escalate severity or claim "SANCTIONED"
-        # in generated alert text for an unrelated ship.
-        if sanction_a and sanction_a.get("_match_type") == "fuzzy_name":
-            sanction_a = None
-        if sanction_b and sanction_b.get("_match_type") == "fuzzy_name":
-            sanction_b = None
-        # NOTE: same known gap as `_check_sanctions_on_update` above — a hard
-        # MMSI/IMO match here isn't further corroborated against the live
-        # vessel's flag (see detectors/correlation_engine.py's
-        # `_sanctions_hit_is_plausible` / `_check_sanctions_hit`, which does
-        # this and downgrades a flag-mismatched hit instead of firing
-        # "critical"/"SANCTIONED"). Left unwired here for the same reason —
-        # avoid touching this already-correct, already-shipped path without
-        # room to verify it thoroughly; a good follow-up would be sharing
-        # that helper across all three sanctions call sites.
-        is_sanctions_related = bool(sanction_a or sanction_b)
-        severity = "critical" if is_sanctions_related else "high"
+        # Routed through the single shared check_sanctions_for_vessel() (see
+        # backend/sanctions_loader.py) — same fuzzy-name gate, flag-
+        # plausibility corroboration, and cooldown as
+        # _check_sanctions_on_update() above and
+        # detectors/correlation_engine.py's DarkShipDetector, so a
+        # flag-mismatched hard match downgrades to "possible" here exactly
+        # like it does everywhere else, instead of unconditionally claiming
+        # "SANCTIONED"/critical off an uncorroborated hard identifier match.
+        sanction_result_a = check_sanctions_for_vessel(mmsi=mmsi_a, name=a_v.get("name", ""), vessel=a_v)
+        sanction_result_b = check_sanctions_for_vessel(mmsi=mmsi_b, name=b_v.get("name", ""), vessel=b_v)
+        sanction_a = sanction_result_a["hit"] if sanction_result_a else None
+        sanction_b = sanction_result_b["hit"] if sanction_result_b else None
+        sanction_a_confirmed = bool(sanction_result_a) and sanction_result_a["status"] == "confirmed"
+        sanction_b_confirmed = bool(sanction_result_b) and sanction_result_b["status"] == "confirmed"
+        is_sanctions_related  = bool(sanction_result_a or sanction_result_b)
+        is_sanctions_confirmed = sanction_a_confirmed or sanction_b_confirmed
+        severity = "critical" if is_sanctions_confirmed else "high"
 
         name_a = a_v.get("name") or mmsi_a
         name_b = b_v.get("name") or mmsi_b
@@ -9262,10 +9251,12 @@ async def _run_sts_detection() -> None:
         sanction_context = ""
         if sanction_a:
             exp = sanctions_loader.get_sanction_explanation(sanction_a)
-            sanction_context += f"\n⚠ {name_a} is SANCTIONED by {', '.join(exp['sanction_lists'][:2])}."
+            tag = "SANCTIONED" if sanction_a_confirmed else "a POSSIBLE sanctions match (unconfirmed — flag mismatch)"
+            sanction_context += f"\n⚠ {name_a} is {tag}, per {', '.join(exp['sanction_lists'][:2])}."
         if sanction_b:
             exp = sanctions_loader.get_sanction_explanation(sanction_b)
-            sanction_context += f"\n⚠ {name_b} is SANCTIONED by {', '.join(exp['sanction_lists'][:2])}."
+            tag = "SANCTIONED" if sanction_b_confirmed else "a POSSIBLE sanctions match (unconfirmed — flag mismatch)"
+            sanction_context += f"\n⚠ {name_b} is {tag}, per {', '.join(exp['sanction_lists'][:2])}."
 
         alert_dict = {
             "domain":         "AIS",
@@ -9282,7 +9273,7 @@ async def _run_sts_detection() -> None:
             ),
             "severity":       severity,
             "confidence":     min(0.9, 0.5 + duration_min / 200),
-            "relevance_score": 100 if is_sanctions_related else 70,
+            "relevance_score": 100 if is_sanctions_confirmed else (85 if is_sanctions_related else 70),
             "lat":            midlat,
             "lon":            midlon,
             "mmsi":           mmsi_a,
@@ -9304,6 +9295,7 @@ async def _run_sts_detection() -> None:
                 "min_distance_m":      int(candidate["min_dist"]),
                 "distance_to_port_km": round(dist_to_port, 1),
                 "is_sanctions_related": is_sanctions_related,
+                "is_sanctions_confirmed": is_sanctions_confirmed,
                 "sanctioned_vessel":   sanction_a or sanction_b,
                 "track_positions":     candidate["positions"][-10:],
                 "explanation": {
@@ -9331,7 +9323,8 @@ async def _run_sts_detection() -> None:
         _forge_alerts.append(alert_dict)
         candidate["alerted"] = True
         print(f"[ais] STS ALERT: {name_a} ↔ {name_b} "
-              f"({int(duration_min)}min, {'SANCTIONED' if is_sanctions_related else 'clean'})")
+              f"({int(duration_min)}min, "
+              f"{'SANCTIONED' if is_sanctions_confirmed else ('possible-sanctions' if is_sanctions_related else 'clean')})")
 
 
 async def _sts_detection_loop() -> None:

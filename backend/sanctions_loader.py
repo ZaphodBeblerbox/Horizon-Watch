@@ -448,3 +448,150 @@ class SanctionsLoader:
 
 
 sanctions_loader = SanctionsLoader()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SHARED SANCTIONS-HIT CHECK — single source of truth for all 3 call sites that
+# can each independently decide "is this vessel a sanctioned vessel":
+#   - main.py's _check_sanctions_on_update()   (fires per AIS position update)
+#   - main.py's ship-to-ship-transfer detection (fires per STS candidate pair)
+#   - detectors/correlation_engine.py's DarkShipDetector, via _check_sanctions_hit
+#
+# Lives here — rather than in detectors/correlation_engine.py, which already
+# had a copy of the flag-plausibility helper — because:
+#   - This module is the actual sanctions-data module, and the one dependency
+#     all 3 call sites already import unconditionally.
+#   - detectors/correlation_engine.py is only importable when main.py's
+#     `_HAS_DETECTORS` is True (guarded by a top-level try/except ImportError
+#     in main.py). main.py's AIS position-update path is NOT gated on
+#     `_HAS_DETECTORS` — it runs any time the AIS websocket is connected —
+#     so anchoring the shared check inside detectors/ would make sanctions
+#     checking silently disappear whenever the detectors package fails to
+#     import, even though it has nothing to do with the detector engines.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_sanctions_alert_cooldown: dict = {}  # mmsi (str) → datetime this function last returned a result for it
+
+
+def _sanctions_hit_is_plausible(hit: dict, vessel: dict) -> bool:
+    """
+    Best-effort corroboration for a sanctions hit found via a hard MMSI/IMO
+    (or exact-name) match. A hard identifier match is not automatically the
+    same physical vessel forever — MMSI numbers get reassigned and IMO/
+    vessels get scrapped, reflagged, or sold — so this checks one genuinely
+    independent data point: does the live vessel's reported flag agree with
+    the flag on the sanctions record?
+
+    This is deliberately NOT a name check: sanctions_loader.check_vessel()
+    already does exact/fuzzy name matching as a separate, weaker match tier
+    (see its docstring and the `_match_type == "fuzzy_name"` gate applied in
+    `check_sanctions_for_vessel` below); re-comparing name here would just be
+    a confusing duplicate of that existing signal rather than a new one.
+    Flag, by contrast, is a completely separate field from whatever produced
+    the hit (MMSI/IMO), so a flag mismatch is real corroborating-or-
+    contradicting evidence.
+
+    Returns False only when both flags are known, non-empty, and clearly
+    different after normalizing case/whitespace — a real contradiction.
+    Returns True when the flags agree, OR when either side is unknown/blank:
+    missing data can't corroborate OR contradict, so the policy choice here
+    is to fall back to the pre-existing behavior (fire normally) rather than
+    invent a rule for data we don't have.
+    """
+    hit_flag  = (hit.get("flag") or "").strip().upper()
+    live_flag = (vessel.get("flag") or vessel.get("country") or "").strip().upper()
+    if not hit_flag or not live_flag:
+        return True
+    return hit_flag == live_flag
+
+
+def check_sanctions_for_vessel(mmsi: str, name: str = None, vessel: dict = None,
+                                cooldown_seconds: int = 6 * 3600) -> "dict | None":
+    """
+    Single shared "is this vessel sanctioned" check, used by all 3 call sites
+    that can independently produce a "Sanctioned Vessel"-type alert.
+
+    - Calls sanctions_loader.check_vessel(mmsi=mmsi, name=name).
+    - Returns None on no hit.
+    - Discards `_match_type == "fuzzy_name"` hits (returns None) — a
+      name-only match is not reliable enough evidence to act on (matches
+      pre-existing behavior at all 3 sites; see check_vessel's docstring).
+    - For a hard match (mmsi/imo/exact_name), runs `_sanctions_hit_is_plausible`
+      against whatever vessel data the caller has available. If the caller
+      has no live flag/country data to pass (e.g. main.py's AIS
+      position-update path — aisstream.io position/static-data messages
+      don't carry a flag/country field today), the missing-data policy in
+      `_sanctions_hit_is_plausible` applies: treat it as "confirmed" rather
+      than invent a rule for data that doesn't exist at that call site.
+    - Applies ONE shared cooldown per mmsi: an in-memory dict (fast path)
+      backed by a DB check against previously-written Alert rows so the
+      cooldown survives a process restart — the more complete of the two
+      pre-consolidation cooldown stores (main.py's old `_sanctions_alerted`
+      had both an in-memory dict AND a DB backstop;
+      detectors/correlation_engine.py's old `_sanctions_alert_cooldown` was
+      in-memory only and reset on every restart).
+    - Does NOT build or return position (lat/lon) data — callers already
+      have their own vessel/pair position and should use that directly
+      rather than have this function fabricate a 0,0 default for a vessel
+      with no reported position.
+
+    vessel: optional dict that may carry "flag"/"country" (used for
+            plausibility) and "name" (fallback display name). Never
+            required, and never used for position.
+
+    Returns None (nothing to act on right now — no hit, fuzzy-only hit, or
+    still within cooldown) or:
+        {
+            "status":      "confirmed" | "possible",
+            "hit":         <raw sanctions record dict, includes _match_type>,
+            "mmsi":        str,
+            "vessel_name": str,   # best available display name
+        }
+    """
+    mmsi = str(mmsi or "").strip()
+    if not mmsi:
+        return None
+    vessel = vessel or {}
+
+    hit = sanctions_loader.check_vessel(mmsi=mmsi, name=name)
+    if not hit:
+        return None
+    if hit.get("_match_type") == "fuzzy_name":
+        # A name-only fuzzy match is not reliable enough to act on — real
+        # traffic (including inland river/canal AIS) can share a common word
+        # with a sanctioned vessel's name without being that vessel.
+        return None
+
+    now = datetime.utcnow()
+    last_fired = _sanctions_alert_cooldown.get(mmsi)
+    if last_fired and (now - last_fired).total_seconds() < cooldown_seconds:
+        return None
+
+    # DB-backed cooldown backstop — catches the case where a different
+    # process (or this one, since a restart) already alerted on this mmsi
+    # recently, even though the in-memory dict above has no record of it.
+    try:
+        from database import get_db as _gdb_sc, Alert as _Alert_sc
+        with _gdb_sc() as _db_sc:
+            existing = _db_sc.query(_Alert_sc).filter(
+                _Alert_sc.entity_id == mmsi,
+                _Alert_sc.alert_type.in_(["Sanctioned Vessel", "Sanctioned Vessel (Possible)"]),
+                _Alert_sc.created_at >= now - timedelta(seconds=cooldown_seconds),
+            ).first()
+            if existing:
+                _sanctions_alert_cooldown[mmsi] = now
+                return None
+    except Exception:
+        pass
+
+    _sanctions_alert_cooldown[mmsi] = now
+
+    plausible   = _sanctions_hit_is_plausible(hit, vessel)
+    vessel_name = hit.get("name") or name or vessel.get("name") or mmsi
+
+    return {
+        "status":      "confirmed" if plausible else "possible",
+        "hit":         hit,
+        "mmsi":        mmsi,
+        "vessel_name": vessel_name,
+    }
