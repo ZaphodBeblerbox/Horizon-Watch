@@ -109,6 +109,7 @@ from classifier import classify_event
 import event_store as es
 import event_bridge
 import threat_matrix
+import gdelt_events
 from alert_writer import write_alert as _write_alert_base, write_news_article
 
 def write_alert(alert_dict: dict):
@@ -542,6 +543,21 @@ _OREF_MAX_FAILURES       = 10
 _OREF_SUSPENDED          = False
 _USGS_SEEN_IDS: set      = set()      # dedup: USGS feature id
 _GDACS_SEEN_GUIDS: set   = set()      # dedup: GDACS entry guid
+_GDELT_SEEN_IDS: set     = set()      # dedup: GDELT event_id already fed to fusion engine
+
+# gdelt_events.py's Goldstein-derived severity_tier ("critical"/"significant"/
+# "elevated"/"low") -> fusion_engine's severity vocabulary ("info"/"medium"/
+# "high"/"critical"). gdelt_events only classifies conflictual events this way
+# for Goldstein < -3 (root codes 14/15/17/18/19/20 — protest..mass violence);
+# "low" also catches the rare Goldstein > +7 high-cooperation outlier, which is
+# NOT a low-severity conflict signal, so it maps to fusion's lowest tier
+# ("info") rather than "medium".
+_GDELT_SEVERITY_MAP = {
+    "critical":    "critical",   # Goldstein <= -7  (mass violence / armed assault)
+    "significant": "high",       # Goldstein <= -5  (coercion / armed fighting)
+    "elevated":    "medium",     # Goldstein  < -3  (protest / show of force)
+    "low":         "info",       # catches Goldstein > +7 (cooperation outlier, rare)
+}
 
 # ── Data source health tracking ───────────────────────────────────────────────
 _DS_STATUS: dict = {
@@ -555,6 +571,7 @@ _DS_STATUS: dict = {
     "power":    {"last_download": None, "count": 0},
     "copernicus": {"token_valid": False, "expires_at": None},
     "imb":      {"last_poll": None, "failures": 0},
+    "gdelt":    {"last_poll": None, "failures": 0, "events_pushed": 0},
 }
 _DS_STATUS_LOCK = threading.Lock()
 _IMB_INCIDENTS: list = []
@@ -11728,6 +11745,7 @@ async def startup_event():
     asyncio.create_task(_oref_loop())
     asyncio.create_task(_usgs_loop())
     asyncio.create_task(_gdacs_loop())
+    asyncio.create_task(_gdelt_loop())
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
@@ -12043,6 +12061,97 @@ async def _gdacs_loop():
                 _DS_STATUS["gdacs"]["failures"] = _DS_STATUS["gdacs"].get("failures", 0) + 1
         await asyncio.sleep(300)
 
+
+# ── GDELT signal domain (fusion-engine corroboration only) ───────────────────
+#
+# Feeds gdelt_events.py's already-filtered GDELT Event 2.0 output into the
+# fusion engine as its own domain ("GDELT"), exactly the way AIS/ADSB/NEWS
+# signals already do — one signal among several that can corroborate other
+# domains at the same location. This is deliberately narrow:
+#   * A lone GDELT signal is NEVER pushed to _forge_alerts, never written as
+#     a standalone DB Alert row, and never surfaced as an independently
+#     visible/confirmed event — only fusion_engine.on_signal() is called.
+#   * It shares no code path with the separate 270-feed NEWS/RSS ingestion
+#     pipeline or its relevance-filtering logic.
+# A FusionEvent only actually forms once >=2 distinct domains converge at the
+# same geo key within fusion's rolling window — that correlation logic lives
+# entirely in fusion_engine.py and is untouched here.
+async def _gdelt_loop():
+    global _GDELT_SEEN_IDS
+    await asyncio.sleep(45)  # staggered startup
+    loop = asyncio.get_event_loop()
+    seeded = False
+    while True:
+        try:
+            cached = await loop.run_in_executor(_executor, gdelt_events.refresh_cache)
+            events = cached.get("events", []) if isinstance(cached, dict) else []
+            new_count = 0
+            for ev in events:
+                eid = str(ev.get("event_id") or ev.get("id") or "")
+                if not eid:
+                    continue
+                if not seeded:
+                    # First cycle: seed dedup set without emitting signals, same
+                    # convention as _usgs_loop/_gdacs_loop (avoid a startup flood
+                    # of everything already sitting in gdelt_events' cache).
+                    _GDELT_SEEN_IDS.add(eid)
+                    continue
+                if eid in _GDELT_SEEN_IDS:
+                    continue
+                _GDELT_SEEN_IDS.add(eid)
+                if len(_GDELT_SEEN_IDS) > 5000:
+                    _GDELT_SEEN_IDS = set(list(_GDELT_SEEN_IDS)[-2500:])
+
+                lat = ev.get("lat")
+                lon = ev.get("lon")
+                if lat is None or lon is None:
+                    continue
+
+                tier     = str(ev.get("severity_tier") or "elevated")
+                severity = _GDELT_SEVERITY_MAP.get(tier, "medium")
+                # GDELT's ActionGeo_CountryCode is FIPS 10-4, not ISO-3166 —
+                # may not string-match other domains' country codes, but the
+                # fusion engine tries a strategic-zone bbox match on lat/lon
+                # before ever falling back to the country key, so this is a
+                # secondary/best-effort field, not load-bearing for corroboration.
+                country       = str(ev.get("country_code") or "").strip().upper() or None
+                location_name = str(ev.get("location_name") or ev.get("location") or "Unknown Location")
+                rule_name     = str(ev.get("event_type") or ev.get("event_label") or "GDELT Event")
+                summary       = str(ev.get("summary") or ev.get("headline") or "")
+
+                if _fusion_engine:
+                    try:
+                        _fusion_engine.on_signal(normalize_signal(
+                            "GDELT",
+                            {
+                                "severity":      severity,
+                                "lat":           lat,
+                                "lon":           lon,
+                                "location_name": location_name,
+                                "country":       country if country and len(country) == 2 else None,
+                                "rule_id":       f"gdelt_{ev.get('event_root_code', '')}",
+                                "rule_name":     rule_name,
+                                "title":         summary,
+                            },
+                        ))
+                        new_count += 1
+                    except Exception as _fe_err:
+                        print(f"[fusion] gdelt signal error: {_fe_err}")
+            seeded = True
+            with _DS_STATUS_LOCK:
+                _DS_STATUS["gdelt"]["last_poll"]     = datetime.now(timezone.utc).isoformat()
+                _DS_STATUS["gdelt"]["failures"]      = 0
+                _DS_STATUS["gdelt"]["events_pushed"] = _DS_STATUS["gdelt"].get("events_pushed", 0) + new_count
+            if new_count:
+                print(f"[gdelt] fed {new_count} new event(s) into fusion engine")
+        except Exception as ex:
+            print(f"[gdelt] fetch/refresh error: {ex}")
+            seeded = True
+            with _DS_STATUS_LOCK:
+                _DS_STATUS["gdelt"]["failures"] = _DS_STATUS["gdelt"].get("failures", 0) + 1
+        # GDELT Event 2.0 exports refresh every 15 minutes (lastupdate.txt) —
+        # polling faster would just re-check an unchanged file list.
+        await asyncio.sleep(900)
 
 
 @app.get("/api/alerts/new")
