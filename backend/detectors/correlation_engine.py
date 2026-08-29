@@ -17,6 +17,37 @@ import json
 _sanctions_alert_cooldown: dict = {}  # mmsi → datetime of last fire
 
 
+def _sanctions_hit_is_plausible(hit: dict, vessel: dict) -> bool:
+    """
+    Best-effort corroboration for a sanctions hit found via a hard MMSI/IMO
+    match. A hard identifier match is not automatically the same physical
+    vessel forever — MMSI numbers get reassigned and IMO/vessels get
+    scrapped, reflagged, or sold — so this checks one genuinely independent
+    data point: does the live vessel's reported flag agree with the flag on
+    the sanctions record?
+
+    This is deliberately NOT a name check: sanctions_loader.check_vessel()
+    already does exact/fuzzy name matching as a separate, weaker match tier
+    (see its docstring and the `_match_type == "fuzzy_name"` gate callers
+    apply); re-comparing name here would just be a confusing duplicate of
+    that existing signal rather than a new one. Flag, by contrast, is a
+    completely separate field from whatever produced the hit (MMSI/IMO), so
+    a flag mismatch is real corroborating-or-contradicting evidence.
+
+    Returns False only when both flags are known, non-empty, and clearly
+    different after normalizing case/whitespace — a real contradiction.
+    Returns True when the flags agree, OR when either side is unknown/blank:
+    missing data can't corroborate OR contradict, so the policy choice here
+    is to fall back to the pre-existing behavior (fire normally) rather than
+    invent a rule for data we don't have.
+    """
+    hit_flag  = (hit.get("flag") or "").strip().upper()
+    live_flag = (vessel.get("flag") or vessel.get("country") or "").strip().upper()
+    if not hit_flag or not live_flag:
+        return True
+    return hit_flag == live_flag
+
+
 def _check_sanctions_hit(mmsi: str, vessel: dict) -> "dict | None":
     try:
         from sanctions_loader import sanctions_loader as _sl
@@ -24,6 +55,15 @@ def _check_sanctions_hit(mmsi: str, vessel: dict) -> "dict | None":
         return None
     hit = _sl.check_vessel(mmsi=mmsi)
     if not hit:
+        return None
+    if hit.get("_match_type") == "fuzzy_name":
+        # Consistent with the fuzzy-name gate applied at the other two
+        # sanctions call sites (main.py's _check_sanctions_on_update and
+        # ship-to-ship-transfer block) — a name-only match is not reliable
+        # enough evidence to fire a critical alert from. This function is
+        # currently only ever called with mmsi= (see DarkShipDetector.scan),
+        # so _match_type is always "mmsi" in practice today, but keep the
+        # gate for consistency and in case that changes.
         return None
     now = datetime.utcnow()
     last_fired = _sanctions_alert_cooldown.get(mmsi)
@@ -34,6 +74,35 @@ def _check_sanctions_hit(mmsi: str, vessel: dict) -> "dict | None":
     lat  = float(vessel.get("lat") or 0)
     lon  = float(vessel.get("lon") or vessel.get("lng") or 0)
     flag = vessel.get("flag") or vessel.get("country") or hit.get("flag") or "unknown"
+
+    if not _sanctions_hit_is_plausible(hit, vessel):
+        # Hard MMSI/IMO match, but the live vessel's reported flag clearly
+        # contradicts the sanctions record's flag — MMSI/IMO reassignment
+        # after scrapping/reflagging/sale means this could genuinely be a
+        # different, innocent vessel. Downgrade instead of claiming a
+        # confirmed sanctions match we can't actually stand behind.
+        return {
+            "rule_id":        "SANCTIONS_VESSEL_POSSIBLE",
+            "alert_category": "SANCTIONS_VIOLATION",
+            "mmsi":           mmsi,
+            "vessel_name":    name,
+            "title":          f"Possible Sanctions Match (needs review): {name}",
+            "description": (
+                f"{name} ({mmsi}) — MMSI/IMO matches a sanctioned-vessel record, "
+                f"but the live flag ({flag}) does not match the sanctions "
+                f"record's flag ({hit.get('flag')}). MMSI/IMO can be reassigned "
+                f"after a vessel is scrapped, reflagged, or sold, so this is an "
+                f"unconfirmed possible match — needs human review, not an "
+                f"automatic critical alert."
+            ),
+            "lat":            lat,
+            "lon":            lon,
+            "severity":       "medium",
+            "sanctions_hit":  True,
+            "sanctions_hit_confirmed": False,
+            "timestamp":      now.isoformat(),
+        }
+
     return {
         "rule_id":        "SANCTIONS_VESSEL_DETECTED",
         "alert_category": "SANCTIONS_VIOLATION",
@@ -48,6 +117,7 @@ def _check_sanctions_hit(mmsi: str, vessel: dict) -> "dict | None":
         "lon":            lon,
         "severity":       "critical",
         "sanctions_hit":  True,
+        "sanctions_hit_confirmed": True,
         "timestamp":      now.isoformat(),
     }
 
@@ -1119,7 +1189,13 @@ class ChokepointActivityDetector:
                 try:
                     v_lat   = float(vessel.get("lat") or 0)
                     v_lon   = float(vessel.get("lng") or vessel.get("lon") or 0)
-                    v_speed = float(vessel.get("speed") or 0)
+                    # Missing speed is unknown, not zero — a genuinely
+                    # stopped vessel and a vessel whose Sog field simply
+                    # hasn't arrived yet must not look identical (that
+                    # would let a missing reading manufacture a false
+                    # chokepoint-loitering signal below).
+                    _raw_speed = vessel.get("speed")
+                    v_speed = float(_raw_speed) if _raw_speed is not None else None
                 except (TypeError, ValueError):
                     continue
                 if not v_lat or not v_lon:
@@ -1161,16 +1237,23 @@ class ChokepointActivityDetector:
 
                     cp = next((c for c in chokepoints if c.get("system_id") == sid), {})
 
+                    v_speed_txt = f"{v_speed:.1f}" if v_speed is not None else "unknown"
+
                     if monitor_transit and not state["transit_alerted"]:
                         state["transit_alerted"] = True
                         alerts.append(self._make_alert(
                             "CHOKEPOINT_TRANSIT", rule_id, rule_severity,
                             mmsi, v_name, v_lat, v_lon, v_speed, cp, now,
                             f"{v_name} entered {cp.get('name', sid)} "
-                            f"({v_type or 'vessel'}, {v_speed:.1f} kn)",
+                            f"({v_type or 'vessel'}, {v_speed_txt} kn)",
                         ))
 
-                    if monitor_loitering and v_speed <= max_loiter_spd:
+                    # Unknown speed can't confirm the vessel is within the
+                    # loitering speed gate — treat as "not evidence of
+                    # loitering" rather than defaulting it to 0 (which would
+                    # always satisfy `<= max_loiter_spd` and manufacture a
+                    # false loitering signal from a merely-missing reading).
+                    if monitor_loitering and v_speed is not None and v_speed <= max_loiter_spd:
                         dur_min    = (now - state["first_seen"]).total_seconds() / 60.0
                         alerted_at = state.get("loiter_alerted_at")
                         if dur_min >= min_loiter_min and (
@@ -1182,7 +1265,7 @@ class ChokepointActivityDetector:
                                 "CHOKEPOINT_LOITER", rule_id, rule_severity,
                                 mmsi, v_name, v_lat, v_lon, v_speed, cp, now,
                                 f"{v_name} loitering in {cp.get('name', sid)}: "
-                                f"{dur_min:.0f} min at {v_speed:.1f} kn",
+                                f"{dur_min:.0f} min at {v_speed_txt} kn",
                             ))
 
         return alerts

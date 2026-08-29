@@ -1,56 +1,46 @@
 """
-sanctions_loader.py — OpenSanctions vessel list integration.
+sanctions_loader.py — OpenSanctions maritime vessel list integration.
 
-Downloads and indexes sanctioned vessel data from OpenSanctions.
-Provides O(1) MMSI/IMO/name lookups for the AIS pipeline.
+Downloads and indexes sanctioned vessel data from OpenSanctions' dedicated
+maritime export. Provides O(1) MMSI/IMO/name lookups for the AIS pipeline.
 Refreshes every 24 hours.
+
+Data source note (2026-08-29): this used to pull the generic
+targets.simple.csv bulk export (people/companies/vessels mixed into one
+file), guess "is this row a vessel?" from a schema field with a keyword
+fallback, and regex-scrape MMSI/IMO out of a freeform semicolon-delimited
+"identifiers" field. That guessing was measurably bad: of the 2,714 rows
+the old logic tagged as vessels, 716 (26.4%) were not vessels at all —
+shipping companies/managers ("Benoil Shipping Inc", "RHINE SHIPPING DMCC")
+caught by the keyword fallback purely because their name contained a word
+like "shipping" — and 410 of those had no MMSI/IMO whatsoever, so they sat
+in `_sanctions_by_name` as bare name strings, inflating the fuzzy/exact
+name-match false-positive surface. 418/2714 (15.4%) of all old "vessel"
+rows had no usable MMSI/IMO and could only ever be reached via name
+matching.
+
+OpenSanctions' maritime export (maritime.csv) fixes this at the source:
+`type` is a reliable VESSEL/ORGANIZATION column (no keyword-guessing), and
+`imo`/`mmsi`/`flag` are clean, separate, already-formatted columns (no
+combined-field regex scraping). Filtering to type == "VESSEL" only, this
+source's name-only rate is 551/6,048 = 9.1% — see `_parse_csv` for the
+full before/after verification against real downloaded data.
 """
 
 import httpx
 import csv
 import io
 import json
-import re
 from datetime import datetime, timedelta
 from database import SessionLocal, SanctionedEntity
 
-_MMSI_RE = re.compile(r'^\d{9}$')
-_IMO_RE  = re.compile(r'^IMO(\d{7})$', re.IGNORECASE)
-
-
-def _extract_ids(identifiers_str: str) -> tuple[str | None, str | None]:
-    """Parse the identifiers field ('352002470;3E2311;IMO9253325') into (mmsi, imo)."""
-    mmsi = imo = None
-    for token in identifiers_str.split(";"):
-        token = token.strip()
-        m = _IMO_RE.match(token)
-        if m:
-            imo = m.group(1)
-            continue
-        if _MMSI_RE.match(token):
-            mmsi = token
-    return mmsi, imo
-
-
-# URLs tried in order — vessels endpoint was deprecated early 2025
+# URL tried first; JSON is a fallback if the CSV endpoint is unreachable.
 _CSV_URLS = [
-    "https://data.opensanctions.org/datasets/latest/sanctions/targets.simple.csv",
-    "https://data.opensanctions.org/datasets/latest/default/targets.simple.csv",
+    "https://data.opensanctions.org/datasets/latest/maritime/maritime.csv",
 ]
 _JSON_FALLBACK_URL = (
-    "https://data.opensanctions.org/datasets/latest/sanctions/entities.ftm.json"
+    "https://data.opensanctions.org/datasets/latest/maritime/entities.ftm.json"
 )
-
-_VESSEL_KEYWORDS = {"tanker", "cargo", "ship", "vessel", "ferry", "bulk", "lng", "lpg"}
-
-
-def _is_vessel_row(row: dict) -> bool:
-    schema = (row.get("schema") or "").strip()
-    if schema == "Vessel":
-        return True
-    # Fallback for rows without schema: keyword match on name
-    name = (row.get("name") or "").lower()
-    return any(kw in name for kw in _VESSEL_KEYWORDS)
 
 
 class SanctionsLoader:
@@ -68,7 +58,7 @@ class SanctionsLoader:
                 datetime.utcnow() - self._last_loaded < timedelta(hours=24)):
             return {"cached": True, "vessels": self._total_vessels}
 
-        print("[sanctions] Loading OpenSanctions vessel data…")
+        print("[sanctions] Loading OpenSanctions maritime data…")
 
         # Try CSV sources first
         data_text = None
@@ -119,6 +109,11 @@ class SanctionsLoader:
             name = vessel.get("name") or ""
             if mmsi:
                 new_mmsi[mmsi] = vessel
+            # A handful of vessels broadcast under more than one MMSI
+            # (observed on North Korea-linked hulls dodging tracking) —
+            # index every additional valid MMSI against the same record.
+            for extra in vessel.get("_extra_mmsi", []):
+                new_mmsi[extra] = vessel
             if imo:
                 new_imo[imo] = vessel
             if name:
@@ -150,36 +145,91 @@ class SanctionsLoader:
         }
 
     def _parse_csv(self, data_text: str) -> list:
-        # Column names as of 2025 CSV format:
-        # id, schema, name, aliases, birth_date, countries, addresses,
-        # identifiers, sanctions, phones, emails, program_ids, dataset,
-        # first_seen, last_seen, last_change
+        # Column layout of maritime.csv (verified against a live download,
+        # 2026-08-29):
+        #   type, caption, imo, risk, countries, flag, mmsi, id, url,
+        #   datasets, aliases
+        #
+        # Sanctions-scope filter — REQUIRED. This file is OpenSanctions'
+        # full maritime watchlist, not a sanctions-only list. Of 23,208
+        # real downloaded rows, `risk` (a semicolon-joined tag set) broke
+        # down as: '' (7,415), 'mare.detained' (6,740), 'sanction' (5,334),
+        # 'poi' (2,086), 'mare.shadow;poi' (857), 'mare.detained;reg.warn'
+        # (628), 'reg.warn' (148). 'mare.detained' / 'reg.warn' are Port
+        # State Control safety detentions / registry warnings (Tokyo MoU,
+        # Abuja MoU, Paris MoU, etc — confirmed via their `datasets`
+        # values, e.g. "abuja_mou_detention") — NOT sanctions, and must
+        # never reach check_vessel(), or a ship merely detained for a
+        # safety defect would trip the "critical: SANCTIONED VESSEL"
+        # alert path in main.py.
+        #
+        # Kept only rows where `risk` contains "sanction" or "poi".
+        # Verified every `datasets` value behind those two tags is a real
+        # government sanctions program — us_ofac_sdn, us_trade_csl,
+        # eu_sanctions_map, ua_war_sanctions, ca_dfatd_sema_sanctions,
+        # ch_seco_sanctions, gb_fcdo_sanctions, fr_tresor_gels_avoir,
+        # un_1718_vessels, eu_fsf, mc_fund_freezes, eu_journal_sanctions,
+        # us_cbp_forced_labor, be_fod_sanctions, ae_local_terrorists — with
+        # zero PSC-detention datasets leaking through. That kept 8,277 of
+        # 23,208 rows. Further restricting to type == "VESSEL" (dropping
+        # 2,229 ORGANIZATION rows — shipping companies/managers, not
+        # vessels themselves — this is the reliable column the old
+        # keyword-guessing heuristic never had) leaves 6,048 rows actually
+        # indexed, of which 5,497 (90.9%) carry a usable MMSI and/or IMO
+        # and 551 (9.1%) are name-only.
         reader = csv.DictReader(io.StringIO(data_text))
         vessels = []
         for row in reader:
-            if not _is_vessel_row(row):
+            if (row.get("type") or "").strip().upper() != "VESSEL":
                 continue
-            name      = (row.get("name")        or "").strip()
-            entity_id = (row.get("id")           or "").strip()
-            datasets  = (row.get("dataset")      or "").strip()
-            raw_ids   = (row.get("identifiers")  or "")
-            countries = (row.get("countries")    or "")
-            mmsi, imo = _extract_ids(raw_ids)
+            risk = (row.get("risk") or "").lower()
+            if "sanction" not in risk and "poi" not in risk:
+                continue
+
+            name      = (row.get("caption")  or "").strip()
+            entity_id = (row.get("id")       or "").strip()
+            datasets  = (row.get("datasets") or "").strip().replace(";", ",")
+            flag      = (row.get("flag")     or "").strip()
+
+            # imo/mmsi are clean, dedicated columns now — no more
+            # scanning a freeform "identifiers" field with regexes. imo
+            # arrives as "IMO<7digits>"; strip the literal prefix to keep
+            # the bare-digit form this module has always stored/indexed
+            # by. mmsi is a bare digit string for the overwhelming
+            # majority of rows, but a few carry multiple semicolon-joined
+            # values (see the multi-MMSI note above) — split and keep
+            # every 9-digit token.
+            imo_raw = (row.get("imo") or "").strip().upper()
+            imo = imo_raw[3:] if imo_raw.startswith("IMO") and imo_raw[3:].isdigit() else None
+
+            mmsi_tokens  = [t.strip() for t in (row.get("mmsi") or "").split(";") if t.strip()]
+            valid_mmsis  = [t for t in mmsi_tokens if t.isdigit() and len(t) == 9]
+            mmsi         = valid_mmsis[0] if valid_mmsis else None
+
             if not (mmsi or imo or name):
                 continue
+
             vessels.append({
-                "entity_id": entity_id,
-                "name":      name,
-                "mmsi":      mmsi,
-                "imo":       imo,
-                "datasets":  datasets,
-                "flag":      countries[:2] if countries else "",
-                "owner":     "",
-                "topics":    "",
+                "entity_id":   entity_id,
+                "name":        name,
+                "mmsi":        mmsi,
+                "imo":         imo,
+                "datasets":    datasets,
+                "flag":        flag,
+                "owner":       "",
+                "topics":      "",
+                "_extra_mmsi": valid_mmsis[1:],
             })
         return vessels
 
     def _parse_json(self, data_text: str) -> list:
+        """Fallback parser for entities.ftm.json (full FollowTheMoney dump).
+
+        Only used if the CSV endpoint is unreachable. Same sanctions-scope
+        filter as _parse_csv, expressed against this format's fields: a
+        Vessel entity's `properties.topics` carries the same "sanction" /
+        "poi" tags the CSV's `risk` column is derived from.
+        """
         vessels = []
         for line in data_text.splitlines():
             line = line.strip()
@@ -191,25 +241,34 @@ class SanctionsLoader:
                 continue
             if entity.get("schema") != "Vessel":
                 continue
-            props     = entity.get("properties", {})
+            props  = entity.get("properties", {})
+            topics = [t.lower() for t in props.get("topics", [])]
+            if not any("sanction" in t or "poi" in t for t in topics):
+                continue
+
             mmsi_list = props.get("mmsi", [])
             imo_list  = props.get("imoNumber", props.get("imo", []))
             name_list = props.get("name", [])
             datasets  = entity.get("datasets", [])
-            mmsi      = mmsi_list[0].strip()  if mmsi_list  else None
-            imo       = imo_list[0].strip()   if imo_list   else None
-            name      = name_list[0].strip()  if name_list  else None
+
+            imo_raw = (imo_list[0].strip().upper() if imo_list else "")
+            imo = imo_raw[3:] if imo_raw.startswith("IMO") and imo_raw[3:].isdigit() else (imo_raw or None)
+            mmsi = mmsi_list[0].strip() if mmsi_list else None
+            name = name_list[0].strip() if name_list else None
             if not (mmsi or imo or name):
                 continue
+
+            flag_list = props.get("flag") or props.get("country") or [None]
             vessels.append({
-                "entity_id": entity.get("id", ""),
-                "name":      name or "",
-                "mmsi":      mmsi,
-                "imo":       imo,
-                "datasets":  ",".join(datasets),
-                "flag":      (props.get("flag",  [None])[0] or ""),
-                "owner":     (props.get("owner", [None])[0] or ""),
-                "topics":    ",".join(entity.get("topics", [])),
+                "entity_id":   entity.get("id", ""),
+                "name":        name or "",
+                "mmsi":        mmsi,
+                "imo":         imo,
+                "datasets":    ",".join(datasets),
+                "flag":        flag_list[0] or "",
+                "owner":       (props.get("owner", [None])[0] or ""),
+                "topics":      ",".join(entity.get("topics", [])),
+                "_extra_mmsi": [t.strip() for t in mmsi_list[1:] if t.strip()],
             })
         return vessels
 
@@ -330,12 +389,25 @@ class SanctionsLoader:
         """Return human-readable explanation of a sanction record."""
         datasets = (sanction.get("datasets") or "").split(",")
         list_names = {
-            "us_ofac_sdn":       "OFAC SDN (US Treasury)",
-            "eu_fsf":            "EU Financial Sanctions (FSF)",
-            "un_sc_sanctions":   "UN Security Council",
-            "gb_hmt_sanctions":  "UK HM Treasury",
-            "ua_sfms_blacklist": "Ukraine SFMS",
-            "opensanctions":     "OpenSanctions",
+            "us_ofac_sdn":          "OFAC SDN (US Treasury)",
+            "us_trade_csl":         "US Commerce Consolidated Screening List",
+            "eu_fsf":               "EU Financial Sanctions (FSF)",
+            "eu_sanctions_map":     "EU Sanctions Map",
+            "eu_journal_sanctions": "EU Official Journal Sanctions",
+            "un_sc_sanctions":      "UN Security Council",
+            "un_1718_vessels":      "UN Security Council Resolution 1718 (North Korea)",
+            "gb_hmt_sanctions":     "UK HM Treasury",
+            "gb_fcdo_sanctions":    "UK FCDO Sanctions",
+            "ua_sfms_blacklist":    "Ukraine SFMS",
+            "ua_war_sanctions":     "Ukraine War Sanctions",
+            "ca_dfatd_sema_sanctions": "Canada SEMA Sanctions",
+            "ch_seco_sanctions":    "Switzerland SECO Sanctions",
+            "fr_tresor_gels_avoir": "France Treasury Asset Freeze",
+            "mc_fund_freezes":      "Monaco Fund Freezes",
+            "us_cbp_forced_labor":  "US CBP Forced Labor",
+            "be_fod_sanctions":     "Belgium FOD Sanctions",
+            "ae_local_terrorists":  "UAE Local Terrorist List",
+            "opensanctions":        "OpenSanctions",
         }
         readable_lists = [
             list_names.get(d.strip(), d.strip())

@@ -296,6 +296,11 @@ class SentinelDetection(Base):
     detection_id             = Column(String, unique=True, index=True, nullable=False)
     scan_id                  = Column(String, ForeignKey("sentinel_scans.scan_id"), nullable=False, index=True)
     zone_id                  = Column(Integer, ForeignKey("watch_zones.id"), nullable=False, index=True)
+    # Always populated (never inferred implicitly downstream) — "OPTICAL" for
+    # today's Sentinel-2/YOLO-OBB detections, "SAR" for Sentinel-1 detections
+    # from sar_detector.py. Defaults to "OPTICAL" so existing rows/writers
+    # (which predate this column) remain valid without a data migration.
+    instrument               = Column(String, nullable=False, default="OPTICAL")
     object_type              = Column(String, nullable=False)
     confidence               = Column(Float, nullable=False)
     centroid_lat             = Column(Float, nullable=False)
@@ -1090,6 +1095,13 @@ def migrate_db():
             if col not in se_existing:
                 cur.execute(f'ALTER TABLE surge_events ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] surge_events: added column {col}')
+
+    # Sentinel detection instrument tagging (optical vs SAR)
+    if 'sentinel_detections' in tables:
+        sd_existing = [row[1] for row in cur.execute('PRAGMA table_info(sentinel_detections)').fetchall()]
+        if 'instrument' not in sd_existing:
+            cur.execute("ALTER TABLE sentinel_detections ADD COLUMN instrument TEXT DEFAULT 'OPTICAL'")
+            print('[db-migrate] sentinel_detections: added column instrument')
 
     # Alert correlation/dedup new columns
     alert_new_cols = [

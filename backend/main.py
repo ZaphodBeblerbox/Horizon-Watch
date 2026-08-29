@@ -109,6 +109,7 @@ from classifier import classify_event
 import event_store as es
 import event_bridge
 import threat_matrix
+import gdelt_events
 from alert_writer import write_alert as _write_alert_base, write_news_article
 
 def write_alert(alert_dict: dict):
@@ -542,6 +543,21 @@ _OREF_MAX_FAILURES       = 10
 _OREF_SUSPENDED          = False
 _USGS_SEEN_IDS: set      = set()      # dedup: USGS feature id
 _GDACS_SEEN_GUIDS: set   = set()      # dedup: GDACS entry guid
+_GDELT_SEEN_IDS: set     = set()      # dedup: GDELT event_id already fed to fusion engine
+
+# gdelt_events.py's Goldstein-derived severity_tier ("critical"/"significant"/
+# "elevated"/"low") -> fusion_engine's severity vocabulary ("info"/"medium"/
+# "high"/"critical"). gdelt_events only classifies conflictual events this way
+# for Goldstein < -3 (root codes 14/15/17/18/19/20 — protest..mass violence);
+# "low" also catches the rare Goldstein > +7 high-cooperation outlier, which is
+# NOT a low-severity conflict signal, so it maps to fusion's lowest tier
+# ("info") rather than "medium".
+_GDELT_SEVERITY_MAP = {
+    "critical":    "critical",   # Goldstein <= -7  (mass violence / armed assault)
+    "significant": "high",       # Goldstein <= -5  (coercion / armed fighting)
+    "elevated":    "medium",     # Goldstein  < -3  (protest / show of force)
+    "low":         "info",       # catches Goldstein > +7 (cooperation outlier, rare)
+}
 
 # ── Data source health tracking ───────────────────────────────────────────────
 _DS_STATUS: dict = {
@@ -555,6 +571,7 @@ _DS_STATUS: dict = {
     "power":    {"last_download": None, "count": 0},
     "copernicus": {"token_valid": False, "expires_at": None},
     "imb":      {"last_poll": None, "failures": 0},
+    "gdelt":    {"last_poll": None, "failures": 0, "events_pushed": 0},
 }
 _DS_STATUS_LOCK = threading.Lock()
 _IMB_INCIDENTS: list = []
@@ -9023,6 +9040,18 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
               f"(MMSI {mmsi}) ~ sanctioned '{hit.get('name')}' — needs MMSI/IMO to confirm")
         return
 
+    # NOTE: this site fires on a hard mmsi/name match without corroborating
+    # the live vessel's flag against the sanctions record's flag — unlike
+    # detectors/correlation_engine.py's `_check_sanctions_hit`, which now
+    # calls `_sanctions_hit_is_plausible()` to downgrade a hard MMSI/IMO
+    # match to a "needs review" alert when the live flag clearly contradicts
+    # the sanctions record (MMSI/IMO can be reassigned after a vessel is
+    # scrapped/reflagged/sold). Flagged as a known inconsistency rather than
+    # silently left as three subtly-different "is this hit trustworthy"
+    # implementations — this site and the STS block below could both adopt
+    # that same helper; not done here to avoid touching this call site's
+    # already-correct, already-shipped alerting behavior under time pressure.
+
     # In-memory cooldown — skip if alerted within last 6 hours
     now_epoch = time.time()
     if now_epoch - _sanctions_alerted.get(mmsi, 0) < 21600:
@@ -9109,9 +9138,17 @@ async def _run_sts_detection() -> None:
     global _sts_candidates
 
     with _AIS_LOCK:
+        # `.get("speed", 99)` only supplies the default when the key is
+        # absent — since _ais_websocket_loop now stores an explicit `None`
+        # for an unreported Sog rather than fabricating 0, a present-but-
+        # unknown speed must be excluded explicitly here too, rather than
+        # comparing None <= STS_SPEED_KNOTS (crash) or letting a missing
+        # reading masquerade as "confirmed slow enough to be an STS
+        # candidate".
         vessels = [
             dict(v) for v in _AIS_VESSELS.values()
-            if v.get("lat") and v.get("lon") and v.get("speed", 99) <= STS_SPEED_KNOTS
+            if v.get("lat") and v.get("lon")
+            and v.get("speed") is not None and v.get("speed") <= STS_SPEED_KNOTS
         ]
 
     now = datetime.utcnow()
@@ -9225,6 +9262,15 @@ async def _run_sts_detection() -> None:
             sanction_a = None
         if sanction_b and sanction_b.get("_match_type") == "fuzzy_name":
             sanction_b = None
+        # NOTE: same known gap as `_check_sanctions_on_update` above — a hard
+        # MMSI/IMO match here isn't further corroborated against the live
+        # vessel's flag (see detectors/correlation_engine.py's
+        # `_sanctions_hit_is_plausible` / `_check_sanctions_hit`, which does
+        # this and downgrades a flag-mismatched hit instead of firing
+        # "critical"/"SANCTIONED"). Left unwired here for the same reason —
+        # avoid touching this already-correct, already-shipped path without
+        # room to verify it thoroughly; a good follow-up would be sharing
+        # that helper across all three sanctions call sites.
         is_sanctions_related = bool(sanction_a or sanction_b)
         severity = "critical" if is_sanctions_related else "high"
 
@@ -9382,8 +9428,19 @@ async def _ais_websocket_loop():
                                 if lat is not None and lon is not None:
                                     vessel["lat"]         = float(lat)
                                     vessel["lon"]         = float(lon)
-                                    vessel["heading"]     = pr.get("TrueHeading") or pr.get("Cog") or 0
-                                    vessel["speed"]       = round(float(pr.get("Sog") or 0), 1)
+                                    # None (not 0) when absent — see
+                                    # _normalize_vessel()'s comment for why a
+                                    # fabricated 0 speed/heading is dangerous
+                                    # (false loitering signal). Also avoid the
+                                    # `a or b or 0` pattern here since a
+                                    # genuine 0 heading (due north) or 0 Sog
+                                    # is falsy and would otherwise be skipped.
+                                    _heading = pr.get("TrueHeading")
+                                    if _heading is None:
+                                        _heading = pr.get("Cog")
+                                    vessel["heading"] = float(_heading) if _heading is not None else None
+                                    _sog = pr.get("Sog")
+                                    vessel["speed"] = round(float(_sog), 1) if _sog is not None else None
                                     vessel["last_update"] = now
                                     if "ship_type_code" in vessel:
                                         vessel["ship_type"] = _ais_ship_type(vessel["ship_type_code"])
@@ -11688,6 +11745,7 @@ async def startup_event():
     asyncio.create_task(_oref_loop())
     asyncio.create_task(_usgs_loop())
     asyncio.create_task(_gdacs_loop())
+    asyncio.create_task(_gdelt_loop())
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
@@ -12003,6 +12061,97 @@ async def _gdacs_loop():
                 _DS_STATUS["gdacs"]["failures"] = _DS_STATUS["gdacs"].get("failures", 0) + 1
         await asyncio.sleep(300)
 
+
+# ── GDELT signal domain (fusion-engine corroboration only) ───────────────────
+#
+# Feeds gdelt_events.py's already-filtered GDELT Event 2.0 output into the
+# fusion engine as its own domain ("GDELT"), exactly the way AIS/ADSB/NEWS
+# signals already do — one signal among several that can corroborate other
+# domains at the same location. This is deliberately narrow:
+#   * A lone GDELT signal is NEVER pushed to _forge_alerts, never written as
+#     a standalone DB Alert row, and never surfaced as an independently
+#     visible/confirmed event — only fusion_engine.on_signal() is called.
+#   * It shares no code path with the separate 270-feed NEWS/RSS ingestion
+#     pipeline or its relevance-filtering logic.
+# A FusionEvent only actually forms once >=2 distinct domains converge at the
+# same geo key within fusion's rolling window — that correlation logic lives
+# entirely in fusion_engine.py and is untouched here.
+async def _gdelt_loop():
+    global _GDELT_SEEN_IDS
+    await asyncio.sleep(45)  # staggered startup
+    loop = asyncio.get_event_loop()
+    seeded = False
+    while True:
+        try:
+            cached = await loop.run_in_executor(_executor, gdelt_events.refresh_cache)
+            events = cached.get("events", []) if isinstance(cached, dict) else []
+            new_count = 0
+            for ev in events:
+                eid = str(ev.get("event_id") or ev.get("id") or "")
+                if not eid:
+                    continue
+                if not seeded:
+                    # First cycle: seed dedup set without emitting signals, same
+                    # convention as _usgs_loop/_gdacs_loop (avoid a startup flood
+                    # of everything already sitting in gdelt_events' cache).
+                    _GDELT_SEEN_IDS.add(eid)
+                    continue
+                if eid in _GDELT_SEEN_IDS:
+                    continue
+                _GDELT_SEEN_IDS.add(eid)
+                if len(_GDELT_SEEN_IDS) > 5000:
+                    _GDELT_SEEN_IDS = set(list(_GDELT_SEEN_IDS)[-2500:])
+
+                lat = ev.get("lat")
+                lon = ev.get("lon")
+                if lat is None or lon is None:
+                    continue
+
+                tier     = str(ev.get("severity_tier") or "elevated")
+                severity = _GDELT_SEVERITY_MAP.get(tier, "medium")
+                # GDELT's ActionGeo_CountryCode is FIPS 10-4, not ISO-3166 —
+                # may not string-match other domains' country codes, but the
+                # fusion engine tries a strategic-zone bbox match on lat/lon
+                # before ever falling back to the country key, so this is a
+                # secondary/best-effort field, not load-bearing for corroboration.
+                country       = str(ev.get("country_code") or "").strip().upper() or None
+                location_name = str(ev.get("location_name") or ev.get("location") or "Unknown Location")
+                rule_name     = str(ev.get("event_type") or ev.get("event_label") or "GDELT Event")
+                summary       = str(ev.get("summary") or ev.get("headline") or "")
+
+                if _fusion_engine:
+                    try:
+                        _fusion_engine.on_signal(normalize_signal(
+                            "GDELT",
+                            {
+                                "severity":      severity,
+                                "lat":           lat,
+                                "lon":           lon,
+                                "location_name": location_name,
+                                "country":       country if country and len(country) == 2 else None,
+                                "rule_id":       f"gdelt_{ev.get('event_root_code', '')}",
+                                "rule_name":     rule_name,
+                                "title":         summary,
+                            },
+                        ))
+                        new_count += 1
+                    except Exception as _fe_err:
+                        print(f"[fusion] gdelt signal error: {_fe_err}")
+            seeded = True
+            with _DS_STATUS_LOCK:
+                _DS_STATUS["gdelt"]["last_poll"]     = datetime.now(timezone.utc).isoformat()
+                _DS_STATUS["gdelt"]["failures"]      = 0
+                _DS_STATUS["gdelt"]["events_pushed"] = _DS_STATUS["gdelt"].get("events_pushed", 0) + new_count
+            if new_count:
+                print(f"[gdelt] fed {new_count} new event(s) into fusion engine")
+        except Exception as ex:
+            print(f"[gdelt] fetch/refresh error: {ex}")
+            seeded = True
+            with _DS_STATUS_LOCK:
+                _DS_STATUS["gdelt"]["failures"] = _DS_STATUS["gdelt"].get("failures", 0) + 1
+        # GDELT Event 2.0 exports refresh every 15 minutes (lastupdate.txt) —
+        # polling faster would just re-check an unchanged file list.
+        await asyncio.sleep(900)
 
 
 @app.get("/api/alerts/new")
@@ -12683,6 +12832,7 @@ def _normalise_satellite_items(data: dict, source_label: str) -> list[dict]:
             "cloud_cover": props.get("eo:cloud_cover"),
             "platform": props.get("platform", "sentinel-2"),
             "collection": "sentinel-2-l2a",
+            "instrument": "OPTICAL",
             "source": source_label,
             "thumbnail": thumbnail,
             "visual_href": visual_href,
@@ -12690,6 +12840,45 @@ def _normalise_satellite_items(data: dict, source_label: str) -> list[dict]:
         if tile_id not in seen_tiles:
             seen_tiles[tile_id] = item
     return list(seen_tiles.values())
+
+
+def _normalise_sentinel1_items(data: dict, source_label: str) -> list[dict]:
+    """Normalise Earth Search 'sentinel-1-grd' STAC features into scene records.
+    Unlike Sentinel-2, the sentinel-1-grd collection's asset hrefs are
+    `s3://sentinel-s1-l1c/...` requester-pays object keys, not public HTTPS COGs
+    — so there is no usable `thumbnail`/`visual_href` here (confirmed via a live
+    STAC query 2026-08-29). This search is discovery-only (scene id, footprint,
+    acquisition time, orbit/polarization metadata); actual pixel fetching goes
+    through the Sentinel Hub Process API (`_fetch_sentinel1_image_bytes`
+    below), exactly as Sentinel-2 tiles are fetched via `_SH_PROCESS_URL`
+    rather than Earth Search's asset hrefs directly."""
+    seen_scenes: dict = {}
+    for feature in data.get("features", []):
+        props = feature.get("properties", {})
+        feature_id = feature.get("id", "")
+        if not feature_id:
+            continue
+        item = {
+            "id": feature_id,
+            "tile_id": feature_id,
+            "bbox": feature.get("bbox", []),
+            "geometry": feature.get("geometry"),
+            "datetime": props.get("datetime"),
+            "cloud_cover": None,  # not meaningful for SAR
+            "platform": props.get("platform", "sentinel-1"),
+            "collection": "sentinel-1-grd",
+            "instrument": "SAR",
+            "source": source_label,
+            "thumbnail": None,
+            "visual_href": None,
+            "sar_polarizations": props.get("sar:polarizations"),
+            "sar_instrument_mode": props.get("sar:instrument_mode"),
+            "sar_orbit_state": props.get("sat:orbit_state"),
+            "sar_relative_orbit": props.get("sat:relative_orbit"),
+        }
+        if feature_id not in seen_scenes:
+            seen_scenes[feature_id] = item
+    return list(seen_scenes.values())
 
 
 @app.get("/satellite/auth-status")
@@ -12820,6 +13009,97 @@ async def api_satellite_search(
         60,
         date_range=date,
     )
+
+
+# ── /satellite/search-sar — Sentinel-1 GRD scene discovery ───────────────────
+# Additive SAR counterpart to /satellite/search above. Same Earth Search STAC
+# API, same OAuth/token-cache path, just a different collection and no cloud-
+# cover filter (meaningless for radar). Every returned item carries
+# instrument="SAR" (see _normalise_sentinel1_items) so nothing downstream can
+# conflate a SAR scene with an optical one.
+
+async def _satellite_search_sentinel1_impl(bbox, days_back=60, date_range: str | None = None):
+    try:
+        bbox = [float(v) for v in bbox]
+        if len(bbox) != 4:
+            raise ValueError("bbox must have 4 values")
+    except Exception:
+        return {"items": [], "error": "Invalid bbox. Expected [west, south, east, north].", "count": 0}
+
+    try:
+        days_back = max(1, min(365, int(days_back)))
+    except Exception:
+        days_back = 60
+
+    if date_range:
+        dt_range = str(date_range)
+    else:
+        end_dt = datetime.now(timezone.utc)
+        start_dt = end_dt - timedelta(days=days_back)
+        dt_range = f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+
+    payload = {
+        "collections": ["sentinel-1-grd"],
+        "bbox": bbox,
+        "datetime": dt_range,
+        "sortby": [{"field": "properties.datetime", "direction": "desc"}],
+        "limit": 100,
+        "fields": {
+            "include": [
+                "id", "bbox", "geometry", "properties.datetime",
+                "properties.platform", "properties.sar:polarizations",
+                "properties.sar:instrument_mode", "properties.sat:orbit_state",
+                "properties.sat:relative_orbit",
+            ]
+        },
+    }
+
+    auth_mode = "public"
+    auth_error = None
+    source_label = "ESA / Copernicus via AWS Earth Search (Sentinel-1 GRD)"
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client_h:
+            if _COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET:
+                token, token_err = await _get_copernicus_access_token(client_h)
+                if token:
+                    auth_mode = "copernicus_oauth"
+                else:
+                    auth_error = token_err
+
+            resp = await client_h.post(_EARTH_SEARCH_STAC_URL, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+    except Exception as ex:
+        print(f"[satellite/search-sar] error: {ex}")
+        return {
+            "items": [], "error": str(ex), "count": 0,
+            "auth_mode": auth_mode, "auth_error": auth_error,
+        }
+
+    result = _normalise_sentinel1_items(data, source_label)
+    return {
+        "items": result,
+        "count": len(result),
+        "error": None,
+        "auth_mode": auth_mode,
+        "auth_error": None,
+        "credentials_configured": bool(_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET),
+    }
+
+
+@app.get("/api/satellite/search-sar")
+async def api_satellite_search_sar(
+    bbox: str = Query(..., description="west,south,east,north"),
+    date: str = Query(None, description="YYYY-MM-DD/YYYY-MM-DD"),
+    days_back: int = Query(60),
+):
+    try:
+        bbox_values = [float(v) for v in bbox.split(",")]
+    except Exception:
+        bbox_values = bbox
+    return await _satellite_search_sentinel1_impl(bbox_values, days_back=days_back, date_range=date)
 
 
 # ── /satellite/tile — Sentinel Hub Process API tile proxy ────────────────────
@@ -13128,6 +13408,152 @@ async def sentinel_imagery(request: Request):
         })
     except Exception as e:
         print(f"[sentinel/imagery] error: {e}")
+        return JSONResponse({"error": str(e)})
+
+
+
+# ── /api/sentinel/sar-imagery — Sentinel-1 GRD via Sentinel Hub Process API ──
+# SAR counterpart to /api/sentinel/imagery above. Reuses the exact same OAuth
+# token cache (_get_copernicus_access_token) and Process API endpoint
+# (_SH_PROCESS_URL) — only the request `data[0].type` ("sentinel-1-grd"
+# instead of "sentinel-2-l2a"), its processing options (sigma-nought
+# radiometric calibration, done server-side by Sentinel Hub), and the
+# evalscript (VV/VH backscatter instead of optical bands) differ. Every
+# successful fetch is tagged instrument="SAR" in its return dict.
+
+_EVALSCRIPT_SAR_VV_VH = """//VERSION=3
+function setup() {
+  return { input: ["VV", "VH", "dataMask"], output: { bands: 4 } }
+}
+// Simple dB-ish visual stretch of calibrated sigma-nought backscatter:
+// VV -> red, VH -> green, VV/VH ratio -> blue. Not a scientific product,
+// just a legible false-colour rendering of the two polarizations.
+function evaluatePixel(s) {
+  var vv = Math.max(0, Math.log(s.VV + 1e-6) / 10 + 1);
+  var vh = Math.max(0, Math.log(s.VH + 1e-6) / 10 + 1);
+  var ratio = Math.max(0, Math.min(1, vv - vh));
+  return [vv, vh, ratio, s.dataMask];
+}"""
+
+
+async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
+                                        width: int | None = None, height: int | None = None) -> dict:
+    """Core Sentinel-1 GRD Process API fetch — SAR counterpart of
+    _fetch_sentinel_image_bytes. Requests VV/VH bands with sigma-nought
+    (SIGMA0_ELLIPSOID) radiometric calibration and orthorectification done
+    server-side by Sentinel Hub (same pattern the task brief describes for
+    the existing Sentinel-2 path: no local SNAP-style calibration needed for
+    *this* visualisation path — the separate real ship-detection pipeline in
+    sar_detector.py works from raw downloaded SAFE products instead, since
+    that model expects uncalibrated amplitude).
+    Returns {"image_bytes", "width", "height", "instrument": "SAR"} on success,
+    or {"error": "..."} on any failure. Never raises."""
+    west  = bounds.get("west");  east  = bounds.get("east")
+    south = bounds.get("south"); north = bounds.get("north")
+    if None in (west, east, south, north):
+        return {"error": "bounds {north,south,east,west} required"}
+
+    if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
+        return {"error": "Copernicus credentials not configured"}
+
+    lat_span = abs(north - south); lng_span = abs(east - west)
+    if width and height:
+        width  = min(2500, max(32, int(width)))
+        height = min(2500, max(32, int(height)))
+    else:
+        max_span = max(lat_span, lng_span)
+        width = height = 512 if max_span < 0.1 else (1024 if max_span < 0.5 else 2048)
+
+    now = datetime.now(timezone.utc)
+    time_range = {
+        "from": (now - timedelta(days=max_age_days)).strftime("%Y-%m-%dT00:00:00Z"),
+        "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+    }
+
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": [west, south, east, north],
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+            },
+            "data": [{
+                "type": "sentinel-1-grd",
+                "dataFilter": {
+                    "timeRange": time_range,
+                    "mosaickingOrder": "mostRecent",
+                    "resolution": "HIGH",
+                },
+                "processing": {
+                    "backCoeff": "SIGMA0_ELLIPSOID",
+                    "orthorectify": True,
+                },
+            }],
+        },
+        "output": {
+            "width":  width,
+            "height": height,
+            "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+        },
+        "evalscript": _EVALSCRIPT_SAR_VV_VH,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client_h:
+            token, err = await _get_copernicus_access_token(client_h)
+            if not token:
+                return {"error": f"Sentinel Hub auth failed: {err}"}
+
+            resp = await client_h.post(
+                _SH_PROCESS_URL, json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        if resp.status_code == 200:
+            return {
+                "image_bytes": resp.content,
+                "width": width, "height": height,
+                "instrument": "SAR",
+                "collection": "sentinel-1-grd",
+            }
+        else:
+            detail = resp.text[:500]
+            print(f"[sentinel/sar-imagery] Process API {resp.status_code}: {detail}")
+            return {"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail}
+    except Exception as e:
+        print(f"[sentinel/sar-imagery] fetch error: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/api/sentinel/sar-imagery")
+async def sentinel_sar_imagery(request: Request):
+    """Fetch a full Sentinel-1 GRD (SAR) image for a drawn bounding box.
+    Additive counterpart to /api/sentinel/imagery — always tagged
+    instrument="SAR" in the response so the frontend/consumers never confuse
+    this with an optical Sentinel-2 fetch."""
+    import base64 as _b64
+    try:
+        body = await request.json()
+        bounds = body.get("bounds", {})
+        max_age_days = int(body.get("max_age_days", 30))
+        req_w = body.get("width"); req_h = body.get("height")
+
+        result = await _fetch_sentinel1_image_bytes(
+            bounds, max_age_days=max_age_days, width=req_w, height=req_h,
+        )
+        if result.get("error"):
+            return JSONResponse(result)
+
+        img_b64 = _b64.b64encode(result["image_bytes"]).decode()
+        return JSONResponse({
+            "image": img_b64,
+            "width": result["width"],
+            "height": result["height"],
+            "bounds": bounds,
+            "instrument": "SAR",
+            "collection": "sentinel-1-grd",
+        })
+    except Exception as e:
+        print(f"[sentinel/sar-imagery] error: {e}")
         return JSONResponse({"error": str(e)})
 
 
@@ -19117,13 +19543,30 @@ def _normalize_vessel(raw, mmsi=None):
         )
         if lat == 0 and lng == 0:
             return None
+        # Missing speed/heading must come through as None ("unknown"), not
+        # a fabricated 0 — a genuinely stopped vessel and a vessel whose
+        # Sog/heading field simply hasn't arrived yet must not look
+        # identical, since this feeds loitering/STS detection that gates on
+        # speed <= max_speed_knots. `a or b or c or 0` would also wrongly
+        # skip past a genuine 0 reading in an earlier field (0 is falsy) —
+        # walk the candidates explicitly instead so a real 0 is kept.
+        raw_speed = None
+        for _cand in (raw.get("speed"), raw.get("sog"), raw.get("SpeedOverGround")):
+            if _cand is not None:
+                raw_speed = _cand
+                break
+        raw_heading = None
+        for _cand in (raw.get("heading"), raw.get("cog"), raw.get("CourseOverGround")):
+            if _cand is not None:
+                raw_heading = _cand
+                break
         return {
             "mmsi":        str(mmsi or raw.get("mmsi") or raw.get("MMSI") or ""),
             "name":        raw.get("name") or raw.get("shipName") or raw.get("ship_name") or raw.get("Name") or f"MMSI:{mmsi}",
             "lat":         lat,
             "lng":         lng,
-            "speed":       float(raw.get("speed") or raw.get("sog") or raw.get("SpeedOverGround") or 0),
-            "heading":     float(raw.get("heading") or raw.get("cog") or raw.get("CourseOverGround") or 0),
+            "speed":       float(raw_speed) if raw_speed is not None else None,
+            "heading":     float(raw_heading) if raw_heading is not None else None,
             "ship_type":   str(raw.get("ship_type") or raw.get("type") or raw.get("Type") or raw.get("shipType") or ""),
             "destination": str(raw.get("destination") or raw.get("Destination") or ""),
             "flag":        str(raw.get("flag") or raw.get("country") or raw.get("Flag") or ""),

@@ -32,7 +32,14 @@ class AISAnomalyDetector:
             params  = rule.get("params", {})
 
             if trigger == "stationary_near_infrastructure":
-                speed = vessel.get("speed", 99)
+                # A missing speed reading is unknown, not "definitely fast
+                # and therefore not stationary" — don't let it slip through
+                # as if it satisfied the stationary gate. `.get(..., 99)`
+                # only supplies the default when the key is absent, not
+                # when it's explicitly None, so guard for None here too.
+                speed = vessel.get("speed")
+                if speed is None:
+                    speed = 99
                 if speed <= params.get("max_speed_knots", 0.5) and cables:
                     for cable in cables:
                         hit = self._nearest_cable_point(
@@ -66,7 +73,8 @@ class AISAnomalyDetector:
         if not vessel.get("lat") or not vessel.get("lng"):
             return []
         alerts = []
-        speed = float(vessel.get("speed") or 0)
+        _raw_speed = vessel.get("speed")
+        speed = float(_raw_speed) if _raw_speed is not None else None
 
         for rule in loiter_rules:
             if not rule.get("enabled", True):
@@ -76,6 +84,14 @@ class AISAnomalyDetector:
             distance_metres  = float(params.get("distance_metres", 500))
             duration_minutes = float(params.get("duration_minutes", 30))
             target           = str(params.get("target", "ALL")).upper()
+
+            if speed is None:
+                # Unknown speed — can't confirm the vessel is within the
+                # loiter speed gate. Skip this rule for this cycle rather
+                # than treating a missing reading as "stopped" (speed=0),
+                # which would manufacture a false loitering signal; leave
+                # any already-accumulated state untouched either way.
+                continue
 
             if speed > max_speed:
                 # Vessel too fast — clear any loiter state it had for this rule
@@ -172,7 +188,8 @@ class AISAnomalyDetector:
         if not vessel.get("lat") or not vessel.get("lng"):
             return []
         alerts = []
-        speed = float(vessel.get("speed") or 0)
+        _raw_speed = vessel.get("speed")
+        speed = float(_raw_speed) if _raw_speed is not None else None
 
         for rule in rules:
             if not rule.get("enabled", True):
@@ -184,6 +201,11 @@ class AISAnomalyDetector:
             target           = str(params.get("target", "ALL")).upper()
             icon_type        = params.get("icon_type", "LOITERING_PORT")
             severity         = rule.get("severity", "high")
+
+            if speed is None:
+                # Unknown speed — see check_loitering() for the same
+                # policy: don't treat a missing reading as "stopped".
+                continue
 
             if speed > max_speed:
                 for key in list(self._loiter.keys()):
