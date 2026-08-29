@@ -16018,6 +16018,14 @@ def api_ontology_entities(
 def _rule_row_to_dict(row) -> dict:
     import json as _jr
     params = _jr.loads(row.params) if isinstance(row.params, str) else (row.params or {})
+    # "wired": whether this rule_name actually has a live detector behind it
+    # (WIRED_RULE_NAMES). A row can exist with enabled=True and a rule_name
+    # outside that allowlist (e.g. a pre-existing AIS_DARK_SHIP row seeded
+    # before this check existed, or before its detector was ever wired up) —
+    # `enabled` alone would then lie about the rule actually being live.
+    # The Rules UI should treat wired=False as "has no live effect" even if
+    # enabled=True, rather than implying it's protecting anything.
+    is_wired = row.rule_name in WIRED_RULE_NAMES
     return {
         "id":           row.id,
         "system_id":    f"RULE-{row.id}",
@@ -16027,6 +16035,8 @@ def _rule_row_to_dict(row) -> dict:
         "severity":     row.severity or params.get("severity", "medium"),
         "icon_type":    row.icon_type or params.get("icon_type"),
         "enabled":      row.enabled,
+        "wired":        is_wired,
+        "live":         bool(row.enabled) and is_wired,
         "params":       params,
         "created_at":   row.created_at.isoformat() if row.created_at else None,
         "updated_at":   row.updated_at.isoformat() if row.updated_at else None,
@@ -16116,16 +16126,26 @@ def api_rules_update(rule_id: int, body: dict):
         row = db.query(RuleConfig).filter(RuleConfig.id == rule_id).first()
         if not row:
             raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
-        if "enabled" in body:
-            row.enabled = bool(body["enabled"])
-        if "params" in body:
-            row.params = _ju.dumps(body["params"], ensure_ascii=False)
         if "rule_name" in body:
             if body["rule_name"] not in WIRED_RULE_NAMES:
                 raise HTTPException(status_code=400,
                                      detail=f"rule_name must be one of {WIRED_RULE_NAMES} — these are the only "
                                             f"rule types currently wired into live detection.")
             row.rule_name = body["rule_name"]
+        if "enabled" in body:
+            new_enabled = bool(body["enabled"])
+            # Block turning a non-wired rule "on" — it would have zero live
+            # effect and would mislead the operator into thinking it's
+            # running. Disabling is always allowed regardless of wiring.
+            # (row.rule_name reflects any rule_name change just applied above.)
+            if new_enabled and row.rule_name not in WIRED_RULE_NAMES:
+                raise HTTPException(status_code=400,
+                                     detail=f"Cannot enable rule_name={row.rule_name!r} — it is not one of "
+                                            f"{WIRED_RULE_NAMES}, the rule types currently wired into live "
+                                            f"detection, so enabling it would have no real effect.")
+            row.enabled = new_enabled
+        if "params" in body:
+            row.params = _ju.dumps(body["params"], ensure_ascii=False)
         row.updated_at = _dt.datetime.utcnow()
         db.commit()
         db.refresh(row)
@@ -19092,26 +19112,6 @@ def _auto_add_correlation_to_ontology(assessment: dict):
         pass
 
 
-def _prep_cables_for_detector():
-    """Extract cable coordinate lists for proximity checks, sampled to cap CPU."""
-    try:
-        raw_cables = _get_cable_data().get("cables", [])
-        result = []
-        for feat in raw_cables[:60]:
-            geom = (feat.get("geometry") or {})
-            name = ((feat.get("properties") or {}).get("name") or "cable")
-            coords: list = []
-            if geom.get("type") == "LineString":
-                coords = geom.get("coordinates", [])
-            elif geom.get("type") == "MultiLineString":
-                for seg in geom.get("coordinates", []):
-                    coords.extend(seg)
-            result.append({"name": name, "coordinates": coords[::8]})
-        return result
-    except Exception:
-        return []
-
-
 _CABLES_DB_CACHE: list = []
 _CABLES_DB_CACHE_TS: float = 0.0
 _CABLES_DB_CACHE_TTL: float = 300.0   # refresh every 5 min
@@ -19357,6 +19357,47 @@ WIRED_RULE_DISPATCH = {
 }
 
 
+# Pipeline Canvas detector-node id -> RuleConfig.rule_name family it controls.
+# NEWS_PATTERN isn't in WIRED_RULE_DISPATCH (it's dispatched separately, from
+# _run_news_conflict_extraction_sync's own cycle — see that function) but is
+# still a real, live-wired rule type per WIRED_RULE_NAMES, so it belongs here
+# for det_news. det_overwatch (satellite) has no RuleConfig-backed rule type
+# yet, so it has no entry — toggling/deleting it only affects rules.json,
+# same as before.
+PIPELINE_NODE_RULE_FAMILIES = {
+    "det_ais":  ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY"],
+    "det_adsb": ["ADSB_LOITERING_NEAR_AIRPORT"],
+    "det_news": ["NEWS_PATTERN"],
+}
+
+
+def _sync_ruleconfig_family(node_id: str, enabled: bool) -> int:
+    """Flip RuleConfig.enabled for every row in the rule_name family that the
+    given Pipeline Canvas detector node controls. This is the real control
+    surface for live detection — rules.json's per-source status flip (done
+    alongside this in the pipeline endpoints below) no longer gates Stage 1
+    AIS detection, and never gated the DB-backed Stage 1b/1e/2b rules that
+    actually dispatch through WIRED_RULE_DISPATCH. Returns the number of
+    RuleConfig rows changed (0 if node_id has no family, e.g. det_overwatch)."""
+    family = PIPELINE_NODE_RULE_FAMILIES.get(node_id)
+    if not family:
+        return 0
+    from database import RuleConfig, get_db
+    changed = 0
+    try:
+        with get_db() as db:
+            rows = db.query(RuleConfig).filter(RuleConfig.rule_name.in_(family)).all()
+            for r in rows:
+                if r.enabled != enabled:
+                    r.enabled = enabled
+                    changed += 1
+            if changed:
+                db.commit()
+    except Exception as _sre:
+        print(f"[forge-pipeline] RuleConfig sync error for {node_id}: {_sre}")
+    return changed
+
+
 async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
     global _forge_alerts, _correlation_assessments, _last_cycle_stats
@@ -19385,10 +19426,25 @@ async def _forge_detection_cycle():
                     rules = []
             active_rules = [r for r in rules if r.get("status") == "active"]
 
-            cables = _prep_cables_for_detector()
-
-            # Stage 1 — AIS anomaly detection
-            _ais_detector.load_rules([r for r in active_rules if r.get("source") in ("AIS", "ais")])
+            # Stage 1 — AIS anomaly detection.
+            #
+            # The legacy rules.json-driven "stationary_near_infrastructure"
+            # check (AISAnomalyDetector.check_vessel(), rule_001 "Cable
+            # Loiterer") has been retired from the live cycle: it fired on a
+            # SINGLE AIS snapshot the instant any ping showed speed <=0.5kn
+            # within 10km of a cable, with no duration/cooldown tracking
+            # beyond dedup-by-(rule_id,mmsi,hour) — so it could fire a
+            # separate alert for the same physically-loitering vessel in the
+            # same hour that Stage 1b's DB-backed check also caught.
+            #
+            # DB RuleConfig "Cable Loitering — Global" (AIS_LOITERING_NEAR_INFRA,
+            # target=ALL, enabled) already covers every cable globally via
+            # AISAnomalyDetector.check_loitering() in Stage 1b below, with
+            # real per-(mmsi,cable,rule) state tracking and a proper
+            # min_duration_minutes gate before it fires once — that is now
+            # the ONE real implementation of this concept. check_vessel()
+            # itself is left intact in ais_detector.py (nothing else calls
+            # it); it is simply no longer invoked from this cycle.
             with _AIS_LOCK:
                 vessels_snap = dict(_AIS_VESSELS)
 
@@ -19401,18 +19457,8 @@ async def _forge_detection_cycle():
 
             new_ais_alerts: list = []
             vessels_checked = len(normalized_snap)
-            for mmsi, vessel in normalized_snap.items():
-                try:
-                    hits = _ais_detector.check_vessel(
-                        vessel,
-                        cables=cables,
-                        chokepoints=_CHOKEPOINT_DEFS,
-                        all_vessels=normalized_snap,
-                    )
-                    new_ais_alerts.extend(hits)
-                except Exception:
-                    pass
-            print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
+            print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels tracked "
+                  f"(rules.json stationary_near_infrastructure retired — see Stage 1b)")
 
             # Stage 1c — AIS spoofing / MMSI-integrity anomaly detection.
             # Always-on background check (like EscalationEngine) — not a
@@ -19472,7 +19518,20 @@ async def _forge_detection_cycle():
             except Exception as _cke:
                 print(f"[forge-brain] chokepoint check error: {_cke}")
 
-            # Stage 2 — ADS-B anomaly detection via _adsb_detector
+            # Stage 2 — ADS-B anomaly detection via _adsb_detector.
+            #
+            # rules.json here is read-only/labeling, not gating: confirmed
+            # that _adsb_detector.check_aircraft()'s actual detection logic
+            # (military-callsign-prefix match, emergency-squawk match) is
+            # 100% hardcoded and fires regardless of any rule content — the
+            # forge_prefixes/emergency_codes built below only ADD extra
+            # prefixes/codes on top of the detector's built-in defaults, and
+            # the per-hit lookup a few lines down only attaches a
+            # rule_id/rule_name/severity label to an alert that would have
+            # fired either way. So this can't produce the Stage-1-style
+            # duplicate-fire bug (there's only ever one code path that
+            # actually decides "alert or not"). Left as-is: a small, harmless
+            # exception rather than a live-detection duplicate.
             new_adsb_alerts: list = []
             adsb_forge_rules = [r for r in active_rules if r.get("source") in ("ADSB", "adsb")]
             # Build combined callsign prefix set from forge rules + detector built-ins
@@ -19512,7 +19571,26 @@ async def _forge_detection_cycle():
             except Exception as _ale:
                 print(f"[forge-brain] ADSB loiter check error: {_ale}")
 
-            # Stage 3 — News event scoring
+            # Stage 3 — News event scoring (rules.json-driven, kept as-is).
+            #
+            # Audited for redundancy against the DB RuleConfig-backed
+            # NEWS_PATTERN engine (_news_pattern_engine, dispatched from its
+            # own cycle in _run_news_conflict_extraction_sync, reloaded from
+            # RuleConfig.trigger_type == "NEWS_PATTERN" each pass) and found
+            # NOT redundant — the two operate on different data and
+            # different trigger mechanics:
+            #   - This stage fires on a SINGLE es.get_active_events() event
+            #     the instant it matches a keyword list + severity floor
+            #     (rules.json rule_010/011/012, "event_surge").
+            #   - NEWS_PATTERN requires a THRESHOLD COUNT of separate
+            #     articles about the same location within a rolling time
+            #     window (e.g. 5 conflict articles in 6h) before firing, and
+            #     buffers/cooldowns per (rule, location) — a genuinely
+            #     different volume/trend signal, not a duplicate of a
+            #     single-event keyword match.
+            # Left in place per this round's scope (Stage 1's rules.json
+            # duplicate-fire bug was the confirmed must-fix item; Stage 3 is
+            # murkier and lower-risk to leave than to touch).
             new_news_alerts: list = []
             news_rules = [r for r in active_rules if r.get("source") in ("NEWS", "news")]
             news_checked = 0
@@ -19716,7 +19794,15 @@ async def _forge_detection_cycle():
                 "last_cycle":        datetime.now(timezone.utc).isoformat(),
                 "vessels_tracked":   len(normalized_snap),
                 "aircraft_tracked":  len(_GLOBAL_ADSB_CACHE),
-                "rules_active":      active_rule_count,
+                # Legacy rules.json active-rule count — informational only.
+                # This is NOT what actually gates live detection any more
+                # (see Stage 1 comment above) and must not be confused with
+                # the real count. /api/forge/brain-status intentionally
+                # overwrites the "rules_active" key with _real_rule_stats()'s
+                # DB-backed enabled-RuleConfig count (dict-spread order below
+                # makes that explicit rather than relying on luck), which is
+                # what the Pipeline Canvas's "N rules active" label reads.
+                "rules_json_active": active_rule_count,
                 "ais_alerts":        len(new_ais_alerts),
                 "dark_alerts":       len(new_dark_alerts),
                 "adsb_alerts":       len(new_adsb_alerts),
@@ -22155,6 +22241,7 @@ async def forge_save_pipeline(request: Request):
 async def forge_delete_pipeline_node(request: Request):
     body    = await request.json()
     node_id = body.get("node_id", "")
+    rule_configs_changed = 0
     if node_id.startswith("det_"):
         src_map = {"det_ais": "AIS", "det_adsb": "ADSB", "det_news": "NEWS", "det_overwatch": "SATELLITE"}
         source  = src_map.get(node_id)
@@ -22164,7 +22251,14 @@ async def forge_delete_pipeline_node(request: Request):
                 if r.get("source") == source:
                     r["status"] = "disabled_by_pipeline"
             _forge_save("rules.json", rules)
-    return {"deleted": node_id}
+        # Real control surface: disable the RuleConfig rows this node
+        # actually dispatches (see PIPELINE_NODE_RULE_FAMILIES). Deleting a
+        # node is treated as "turn the whole family off", not a literal row
+        # delete — same non-destructive spirit as rules.json's
+        # "disabled_by_pipeline" status above.
+        rule_configs_changed = _sync_ruleconfig_family(node_id, False)
+        print(f"[forge-pipeline] delete-node {node_id} → {rule_configs_changed} RuleConfig row(s) disabled")
+    return {"deleted": node_id, "rule_configs_changed": rule_configs_changed}
 
 
 @app.post("/api/forge/pipeline/delete-edge")
@@ -22187,8 +22281,12 @@ async def forge_toggle_pipeline_node(request: Request):
             if r.get("source") == source:
                 r["status"] = "active" if new_status == "active" else "paused"
         _forge_save("rules.json", rules)
-    print(f"[forge-pipeline] {node_id} → {new_status}")
-    return {"node_id": node_id, "status": new_status}
+    # Real control surface: flip the RuleConfig rows this node actually
+    # dispatches (see PIPELINE_NODE_RULE_FAMILIES) — the rules.json flip
+    # above no longer gates live detection for det_ais/det_adsb/det_news.
+    rule_configs_changed = _sync_ruleconfig_family(node_id, new_status == "active")
+    print(f"[forge-pipeline] {node_id} → {new_status} ({rule_configs_changed} RuleConfig row(s) synced)")
+    return {"node_id": node_id, "status": new_status, "rule_configs_changed": rule_configs_changed}
 
 
 async def _apply_pipeline_changes(pipeline: dict):
@@ -22200,7 +22298,7 @@ async def _apply_pipeline_changes(pipeline: dict):
     changed = False
     for det_id, source in src_map.items():
         det_node  = next((n for n in nodes if n.get("id") == det_id), None)
-        is_active = det_id in active_dets and det_node and det_node.get("status") == "active"
+        is_active = bool(det_id in active_dets and det_node and det_node.get("status") == "active")
         for r in rules:
             if r.get("source") != source:
                 continue
@@ -22208,6 +22306,10 @@ async def _apply_pipeline_changes(pipeline: dict):
                 r["status"] = "paused_by_pipeline"; changed = True
             elif is_active and r.get("status") == "paused_by_pipeline":
                 r["status"] = "active"; changed = True
+        # Mirror the same on/off decision onto the real DB-backed RuleConfig
+        # family for this node — the one that actually gates live detection.
+        # See PIPELINE_NODE_RULE_FAMILIES / _sync_ruleconfig_family.
+        _sync_ruleconfig_family(det_id, is_active)
     if changed:
         _forge_save("rules.json", rules)
 

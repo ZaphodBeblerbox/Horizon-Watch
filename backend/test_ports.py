@@ -31,6 +31,17 @@ def post(path, body): return req("POST",   path, body)
 def delete(path):     return req("DELETE", path)
 
 
+def expect_http_error(method: str, path: str, body: dict, expected_code: int):
+    """Like req(), but asserts the call fails with expected_code — for
+    endpoints that are supposed to reject the request."""
+    try:
+        req(method, path, body)
+    except urllib.error.HTTPError as e:
+        assert e.code == expected_code, f"Expected HTTP {expected_code}, got {e.code}"
+        return
+    raise AssertionError(f"Expected HTTP {expected_code} but {method} {path} succeeded")
+
+
 print(f"Testing against {BASE}\n")
 
 # ── 1. DB spot-check: PortBoundary table has entries ─────────────────────────
@@ -94,8 +105,14 @@ print(f"   Sample: {sample.get('name', '?')} / {sample.get('system_id', '?')}")
 print("   PASS\n")
 
 
-# ── 6. Create AIS_DARK_SHIP rule via /api/rules ───────────────────────────────
-print("6. POST /api/rules — AIS_DARK_SHIP")
+# ── 6. AIS_DARK_SHIP is NOT one of WIRED_RULE_NAMES (no DarkShipDetector is
+#      ever instantiated — see main.py's WIRED_RULE_DISPATCH/PIPELINE_NODE_
+#      RULE_FAMILIES), so /api/rules must reject creating one rather than
+#      silently accepting a rule that would have zero live effect. This used
+#      to assert the opposite (that creation succeeded) from before that
+#      allowlist existed; updated to match the intentional, currently-
+#      enforced behavior — see the Stage-1/Dark-Ship consolidation audit.
+print("6. POST /api/rules — AIS_DARK_SHIP is correctly rejected (not wired)")
 dark_body = {
     "rule_name":    "Test Dark Ship Rule",
     "trigger_type": "AIS_DARK_SHIP",
@@ -106,31 +123,8 @@ dark_body = {
         "last_known_region":    "REG-MED",
     },
 }
-d = post("/api/rules", dark_body)
-assert "id" in d, f"Expected id in response: {d}"
-dark_id = d["id"]
-print(f"   Created dark-ship rule id={dark_id}")
-print("   PASS\n")
-
-
-# ── 7. Verify dark ship rule appears in GET /api/rules ───────────────────────
-print("7. GET /api/rules — verify dark ship rule present")
-d = get("/api/rules")
-rules = d.get("rules") or (d if isinstance(d, list) else [])
-ids = {r["id"] for r in rules}
-assert dark_id in ids, f"Dark ship rule {dark_id} not in /api/rules response"
-print(f"   Dark ship rule visible in rule list ({len(rules)} total)")
-print("   PASS\n")
-
-
-# ── 8. Cleanup: delete test rule ─────────────────────────────────────────────
-print("8. DELETE test rule")
-delete(f"/api/rules/{dark_id}")
-d = get("/api/rules")
-rules_after = d.get("rules") or (d if isinstance(d, list) else [])
-ids_after = {r["id"] for r in rules_after}
-assert dark_id not in ids_after, "Dark ship rule not deleted"
-print("   Test rule deleted")
+expect_http_error("POST", "/api/rules", dark_body, 400)
+print("   Correctly rejected with HTTP 400 (AIS_DARK_SHIP has no live detector)")
 print("   PASS\n")
 
 
