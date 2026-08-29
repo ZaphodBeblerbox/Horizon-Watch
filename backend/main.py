@@ -104,6 +104,7 @@ from location_extract import (
 )
 from article_extract import get_article_preview
 from article_intelligence import analyse_article
+import relevance_embedding
 import usage_tracker
 from classifier import classify_event
 import event_store as es
@@ -134,7 +135,7 @@ def write_alert(alert_dict: dict):
     except Exception:
         pass
     return result
-from sanctions_loader import sanctions_loader
+from sanctions_loader import sanctions_loader, check_sanctions_for_vessel
 from entity_linker import entity_linker
 from event_bus import event_bus, Events
 
@@ -277,8 +278,17 @@ if not _api_key:
 client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
 
 CLAUDE_BUDGET_USD             = float(os.getenv("CLAUDE_BUDGET_USD",             "10.0"))
-CLAUDE_DAILY_HARD_CAP_USD     = float(os.getenv("CLAUDE_DAILY_HARD_CAP_USD",     "10.0"))
+# Default lives ONCE in usage_tracker.py (article_intelligence.py imports the same
+# constant) so main.py and article_intelligence.py can no longer silently diverge
+# on what "the" daily hard cap defaults to when CLAUDE_DAILY_HARD_CAP_USD is unset —
+# they previously fell back to 10.0 here and 0.65 there, self-throttling Haiku
+# calls at a far tighter effective limit than main.py's own gate enforced.
+CLAUDE_DAILY_HARD_CAP_USD     = float(os.getenv("CLAUDE_DAILY_HARD_CAP_USD",     str(usage_tracker.DEFAULT_DAILY_HARD_CAP_USD)))
 MAX_LLM_ARTICLE_CALLS_PER_DAY = int(  os.getenv("MAX_LLM_ARTICLE_CALLS_PER_DAY", "500"))
+# Module-level (was a local inside _run_news_conflict_extraction_sync) so
+# _classify_article_intel() — pulled out into its own testable function — can
+# reference it without needing the whole extraction loop's local scope.
+MAX_LLM_CALLS_PER_CYCLE       = 8     # cost reduction: was 50
 
 _COPERNICUS_CLIENT_ID = os.getenv("COPERNICUS_CLIENT_ID", "").strip()
 _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
@@ -588,9 +598,6 @@ _DIRECTOR_JOBS: dict = {}   # job_id → { status, progress, intent, created_at,
 # ── Last prepared intelligence picture ───────────────────────────────────────
 _last_intelligence_picture: dict = {}
 
-# ── Anomaly alerts ───────────────────────────────────────────────────────────
-_ANOMALY_ALERTS: list = []
-
 # ── ADS-B and AIS history recording throttle ─────────────────────────────────
 _ADSB_LAST_RECORDED: CappedDict = CappedDict(maxsize=20_000)  # icao24 → last record timestamp
 _AIS_LAST_RECORDED:  CappedDict = CappedDict(maxsize=20_000)  # mmsi   → last record timestamp
@@ -603,10 +610,38 @@ _PROCESSED_URLS: CappedDict = CappedDict(maxsize=50_000)  # url → timestamp, e
 _PROCESSED_URLS_TTL = 72 * 3600  # 72 hours in seconds
 _FIRST_EXTRACTION_DONE = False   # cleared on first cycle so all current articles are processed fresh
 _executor = ThreadPoolExecutor(max_workers=4)   # for blocking I/O in sync extraction
+# Dedicated, single-worker executor for the RSS news-extraction cycle only.
+# That sync function is a long-running batch job (up to 80 feeds, near-dup/
+# IDF/boilerplate scoring per candidate article) that previously ran on the
+# shared _executor above — a long cycle could hold one of only 4 shared
+# worker threads for the whole cycle duration, starving unrelated, short,
+# latency-sensitive interactive requests that also use _executor (e.g. a
+# ReportTask GET's 30s-bounded collection preview timing out while queued
+# behind a news cycle). Isolating it here means a slow news cycle can never
+# starve interactive request handling, regardless of how much per-article
+# work it does.
+_news_executor = ThreadPoolExecutor(max_workers=1)
 _NEWS_STORE_MAX_ARTICLES = 2000
 _NEWS_WINDOW_HOURS = 168
 _NEWS_MARKER_WINDOW_HOURS = 168
 _NEWS_FEED_ENTRY_LIMIT = 50
+
+# ── Near-duplicate detection state ────────────────────────────────────────────
+# url -> (IDF-weighted hybrid unigram/bigram vector, seen-at epoch seconds,
+# canonical_url). Every article that reaches the near-dup check registers
+# itself here (canonical_url == its own url if it's the first sighting of a
+# story, or an earlier url if it's a near-duplicate) so later articles in
+# this cycle AND later cycles compare against it. The vector itself comes
+# from relevance_embedding.embed_and_learn(), which ALSO folds the article's
+# vocabulary into a separate rolling document-frequency corpus used for IDF
+# weighting — see relevance_embedding.py's module docstring for why plain
+# hashed-TF cosine (no IDF) was a real, shipped bug here, and how the fix
+# works.
+_NEWS_VECTOR_CACHE: CappedDict = CappedDict(maxsize=3_000)
+_NEAR_DUP_WINDOW_HOURS = 48     # only compare against articles seen in the last 2 days
+_NEAR_DUP_THRESHOLD    = 0.30   # cosine similarity above which two articles are treated as the same story
+                                # (calibrated against real reworded-wire-story text — see
+                                # test_news_near_duplicate.py for the worked examples)
 
 _FEED_RUN_STATS = {
     "feeds_total": 0,
@@ -1323,7 +1358,7 @@ async def init_source(source: str):
         return {"ok": False, "source": source, "message": f"Unknown source. Valid: {', '.join(sorted(valid))}"}
     if source == "rss":
         loop = asyncio.get_event_loop()
-        loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
+        loop.run_in_executor(_news_executor, _run_news_conflict_extraction_sync)
         return {"ok": True, "source": source, "message": "RSS extraction triggered immediately"}
     # For oref/usgs/gdacs the loops are already running on their own schedules;
     # reset last_poll so the UI shows it as pending until the next cycle completes.
@@ -6221,6 +6256,7 @@ def _gate1_filter_markers(markers: list[dict]) -> None:
             msg.usage.output_tokens,
             call_type="gate1_relevance",
             headline=f"Gate1: {len(batch)} articles",
+            model="claude-haiku-4-5-20251001",
         )
         raw = msg.content[0].text.strip()
         if raw.startswith("```"):
@@ -6318,7 +6354,7 @@ def _run_news_conflict_extraction_sync():
             pass
 
     MAX_NOM_CALLS           = 100   # hard cap per cycle (only counts uncached HTTP calls)
-    MAX_LLM_CALLS_PER_CYCLE = 8     # cost reduction: was 50
+    # MAX_LLM_CALLS_PER_CYCLE is now a module-level constant (see top of file).
     nom_calls = 0
     llm_calls_this_cycle = 0
     new_markers = []
@@ -6462,33 +6498,40 @@ def _run_news_conflict_extraction_sync():
             # ── Event type pre-classification ─────────────────────────────────
             article_event_type = _classify_event_type(title, summary)
 
+            # ── Near-duplicate detection (same wire story, different outlet) ──
+            # Runs BEFORE Haiku so the same real-world event covered by multiple
+            # of the ~270 feeds gets classified once, with later sightings
+            # tracked as "also reported by" on the original rather than
+            # independently processed as separate stories.
+            _dup_match = _find_near_duplicate(url, title, summary)
+            if _dup_match:
+                _dup_canonical_url, _dup_score = _dup_match
+                _attach_duplicate_report(_dup_canonical_url, {
+                    "url": url, "source": source_name, "published": published_iso,
+                })
+                _log_classification(
+                    url=url, stage="dedup_suppressed",
+                    embedding_score=_dup_score, duplicate_of_url=_dup_canonical_url,
+                )
+                print(f"[news-dedup] '{title[:60]}' ~ existing story "
+                      f"(score={_dup_score:.2f}) — suppressed, tracked under {_dup_canonical_url}")
+                continue
+
             # ── LLM article analysis (before geocoding — gates on tier) ───────
-            _clean_body = re.sub(r'<[^>]+>', '', summary or '')
-            _intel = None
-            _intel_llm_called = False
             _article_calls_today = usage_tracker.get_calls_today_by_type("article_intelligence")
-            _prescore = _cheap_prescore(title, summary or '')
-            _can_call_llm = (
-                client
-                and llm_calls_this_cycle < MAX_LLM_CALLS_PER_CYCLE
-                and _article_calls_today < MAX_LLM_ARTICLE_CALLS_PER_DAY
-                and _claude_budget_ok()
-                and _prescore >= NEWS_ENRICHMENT_MIN_RELEVANCE_PRESCORE
+            _clf = _classify_article_intel(
+                title, summary, source_name, _ACTIVE_PROFILE,
+                llm_calls_this_cycle, _article_calls_today,
             )
-            if _can_call_llm:
-                try:
-                    print(f"[article_intel] Calling Haiku for: {title[:60]}")
-                    _intel = analyse_article(title, _clean_body, source_name)
-                    llm_calls_this_cycle += 1
-                    _intel_llm_called = True
-                    print(f"[article_intel] Got tier={_intel.get('tier')} "
-                          f"type={_intel.get('article_type')} "
-                          f"score={_intel.get('relevance_score')}")
-                    time.sleep(0.1)
-                except Exception as _ai_err:
-                    import traceback as _tb
-                    print(f"[article_intel] FAILED: {type(_ai_err).__name__}: {_ai_err}")
-                    _tb.print_exc()
+            _intel = _clf["intel"]
+            _intel_llm_called = _clf["llm_called"]
+            if _intel_llm_called:
+                llm_calls_this_cycle += 1
+                print(f"[article_intel] Called Haiku for: {title[:60]}")
+                print(f"[article_intel] Got tier={_intel.get('tier')} "
+                      f"type={_intel.get('article_type')} "
+                      f"score={_intel.get('relevance_score')}")
+                time.sleep(0.1)
             elif not client:
                 if llm_calls_this_cycle == 0:
                     print("[article_intel] SKIPPED — Anthropic client is None (ANTHROPIC_API_KEY not set?)")
@@ -6498,18 +6541,25 @@ def _run_news_conflict_extraction_sync():
             elif llm_calls_this_cycle >= MAX_LLM_CALLS_PER_CYCLE:
                 if llm_calls_this_cycle == MAX_LLM_CALLS_PER_CYCLE:
                     print(f"[article_intel] Cycle cap reached ({MAX_LLM_CALLS_PER_CYCLE}) — remaining articles use fallback")
-            if _intel is None:
-                _intel = {
-                    "location": None, "location_country": None, "location_confidence": "none",
-                    "article_type": "other", "icon_type": "other", "tier": 3,
-                    "relevance_score": 5.0, "event_title": None, "has_image": False,
-                    "is_breaking": False, "context_summary": "",
-                }
+            elif _clf["stage"] == "embedding_relevance_score_and_verdict":
+                print(f"[article_intel] embedding gate ({_clf['embedding_verdict']}, "
+                      f"score={_clf['embedding_score']:.3f}) — skipped Haiku for: {title[:60]}")
+
             _intel_tier    = int(_intel.get("tier") or 3)
             _intel_loc     = _intel.get("location")
             _intel_conf    = _intel.get("location_confidence", "none")
             _intel_country = _intel.get("location_country")
             _intel_score   = float(_intel.get("relevance_score") or 0)
+
+            _log_classification(
+                url=url, stage=_clf["stage"],
+                cheap_prescore=_clf["prescore"],
+                embedding_score=_clf["embedding_score"],
+                embedding_verdict=_clf["embedding_verdict"],
+                haiku_called=_intel_llm_called,
+                final_tier=_intel_tier,
+                final_relevance_score=_intel_score,
+            )
 
             # Drop tier 4 before geocoding (avoids wasting Nominatim quota)
             if _intel_tier >= 4:
@@ -6957,6 +7007,221 @@ def _cheap_prescore(title: str, description: str = '') -> int:
     return min(score, 10)
 
 
+# ── Near-duplicate detection ──────────────────────────────────────────────────
+
+def _find_near_duplicate(url: str, title: str, summary: str):
+    """
+    Check whether this article is a near-duplicate of one already tracked
+    within the last _NEAR_DUP_WINDOW_HOURS (same real-world event, different
+    outlet/URL). Registers this article's vector in _NEWS_VECTOR_CACHE either
+    way — as its own canonical entry if novel, or pointing at the winning
+    canonical if it's a duplicate — so a THIRD/FOURTH occurrence of the same
+    story also collapses onto the original canonical rather than chaining.
+
+    Returns (canonical_url, similarity_score) if this is a near-duplicate,
+    else None.
+    """
+    if not (title or summary):
+        return None
+    vec = relevance_embedding.embed_and_learn(title, summary or '')
+    cutoff = time.time() - _NEAR_DUP_WINDOW_HOURS * 3600
+    candidates = [
+        (canonical, cached_vec)
+        for _cached_url, (cached_vec, seen_at, canonical) in _NEWS_VECTOR_CACHE.items()
+        if seen_at >= cutoff
+    ]
+    match = relevance_embedding.top_match(vec, candidates)
+    if match is not None and match[1] >= _NEAR_DUP_THRESHOLD:
+        canonical_url, score = match
+        _NEWS_VECTOR_CACHE[url] = (vec, time.time(), canonical_url)
+        return canonical_url, score
+    _NEWS_VECTOR_CACHE[url] = (vec, time.time(), url)
+    return None
+
+
+def _attach_duplicate_report(canonical_url: str, dup: dict) -> None:
+    """Record that `dup` (url/source/published) is a near-duplicate report of
+    the canonical_url story, without creating a second card for it. No-op if
+    the canonical article was itself dropped before reaching the store (e.g.
+    tier-4 rejection) — a missed enrichment, not a crash."""
+    with _NEWS_STORE_LOCK:
+        existing = _NEWS_ARTICLE_STORE.get(canonical_url)
+        if not existing:
+            return
+        also = list(existing.get("also_reported_by") or [])
+        if not any(a.get("url") == dup.get("url") for a in also):
+            also.append(dup)
+        existing["also_reported_by"] = also
+        _NEWS_ARTICLE_STORE[canonical_url] = existing
+
+
+# ── Embedding-based Mission Profile relevance (pre-Haiku, cheap) ─────────────
+# Thresholds calibrated against realistic relevant/irrelevant article text run
+# through relevance_embedding.relevance_score() during development — relevant
+# articles against a populated profile scored ~0.11-0.22, irrelevant ones
+# ~0.0 (re-validated against a diverse sample after relevance_embedding.py's
+# near-duplicate-detection fix changed the underlying similarity mechanism —
+# see test_news_embedding_relevance_ranking.py and relevance_embedding.py's
+# module docstring for why IDF-weighted hybrid unigram/bigram cosine, not a
+# neural embedding call, computes this score, and why that fix didn't
+# require moving these thresholds).
+_EMBED_RELEVANT_THRESHOLD   = 0.12
+_EMBED_IRRELEVANT_THRESHOLD = 0.03
+
+# Static fallback intel — used whenever Haiku isn't (or can't be) called and
+# the embedding gate has no opinion either. Identical shape to the fallback
+# this funnel has always used (tier=3, relevance_score=5.0, "don't know").
+_STATIC_FALLBACK_INTEL: dict = {
+    "location": None, "location_country": None, "location_confidence": "none",
+    "article_type": "other", "icon_type": "other", "tier": 3,
+    "relevance_score": 5.0, "event_title": None, "has_image": False,
+    "is_breaking": False, "context_summary": "",
+}
+
+
+def _profile_has_signal(profile: dict | None) -> bool:
+    """
+    True only when the Mission Profile carries enough substantive content to
+    make the embedding-relevance verdict trustworthy enough to actually gate
+    Haiku calls on. The live backend/profile.json today has empty
+    focusRegions/infraDomains/chokepoints and a two-word activeSituations
+    ("Monitoring paris") — nowhere near enough signal to safely skip a real
+    Haiku classification based on cosine similarity against it. Until the
+    profile is fleshed out, _classify_article_intel() still computes and logs
+    the embedding score/verdict for every candidate article (so the data
+    exists and the mechanism is exercised), it just never uses it to suppress
+    a Haiku call — the funnel's actual Haiku volume is unchanged from before
+    this feature existed until the profile has real content.
+    """
+    if not profile:
+        return False
+    signal_tokens = 0
+    for key in ("focusRegions", "infraDomains", "chokepoints"):
+        signal_tokens += len(profile.get(key) or [])
+    active = (profile.get("activeSituations") or "").strip()
+    signal_tokens += len(active.split())
+    return signal_tokens >= 6
+
+
+def _classify_article_intel(
+    title: str,
+    summary: str,
+    source_name: str,
+    profile: dict | None,
+    llm_calls_this_cycle: int,
+    article_calls_today: int,
+) -> dict:
+    """
+    Decide whether to call Haiku (article_intelligence.analyse_article) for
+    one article, or use a cheaper deterministic/embedding-based substitute —
+    the real funnel logic _run_news_conflict_extraction_sync() uses, pulled
+    into its own function so it can be exercised directly by tests without a
+    live RSS feed fetch or network access.
+
+    Returns a dict: {intel, llm_called, stage, prescore, embedding_score,
+    embedding_verdict} where `stage` is one of "haiku_called_with_result",
+    "failed_cheap_prescore", "embedding_relevance_score_and_verdict", or
+    "fallback_default" (cap/budget/no-client reasons).
+    """
+    clean_body = re.sub(r'<[^>]+>', '', summary or '')
+    prescore = _cheap_prescore(title, summary or '')
+
+    profile_ctx = _format_profile_context(profile) if profile else ""
+    article_text = f"{title} {summary or ''}".strip()
+    embed_score = relevance_embedding.relevance_score(profile_ctx, article_text) if profile_ctx else 0.0
+    if not profile_ctx:
+        embed_verdict = "not_computed"
+    elif embed_score >= _EMBED_RELEVANT_THRESHOLD:
+        embed_verdict = "relevant"
+    elif embed_score <= _EMBED_IRRELEVANT_THRESHOLD:
+        embed_verdict = "irrelevant"
+    else:
+        embed_verdict = "uncertain"
+
+    profile_signal = _profile_has_signal(profile)
+    embed_gate_blocks_haiku = profile_signal and embed_verdict in ("relevant", "irrelevant")
+
+    can_call_llm = (
+        client is not None
+        and llm_calls_this_cycle < MAX_LLM_CALLS_PER_CYCLE
+        and article_calls_today < MAX_LLM_ARTICLE_CALLS_PER_DAY
+        and _claude_budget_ok()
+        and prescore >= NEWS_ENRICHMENT_MIN_RELEVANCE_PRESCORE
+        and not embed_gate_blocks_haiku
+    )
+
+    intel = None
+    llm_called = False
+    if can_call_llm:
+        try:
+            intel = analyse_article(title, clean_body, source_name)
+            llm_called = True
+        except Exception as exc:
+            import traceback as _tb
+            print(f"[article_intel] FAILED: {type(exc).__name__}: {exc}")
+            _tb.print_exc()
+
+    if intel is None:
+        if embed_gate_blocks_haiku and embed_verdict == "relevant":
+            intel = {**_STATIC_FALLBACK_INTEL, "tier": 2,
+                     "relevance_score": round(min(10.0, 5.0 + embed_score * 10), 1)}
+        elif embed_gate_blocks_haiku and embed_verdict == "irrelevant":
+            intel = {**_STATIC_FALLBACK_INTEL, "tier": 4,
+                     "relevance_score": round(embed_score * 5, 1)}
+        else:
+            intel = dict(_STATIC_FALLBACK_INTEL)
+
+    if llm_called:
+        stage = "haiku_called_with_result"
+    elif prescore < NEWS_ENRICHMENT_MIN_RELEVANCE_PRESCORE:
+        stage = "failed_cheap_prescore"
+    elif embed_gate_blocks_haiku:
+        stage = "embedding_relevance_score_and_verdict"
+    else:
+        stage = "fallback_default"
+
+    return {
+        "intel": intel,
+        "llm_called": llm_called,
+        "stage": stage,
+        "prescore": prescore,
+        "embedding_score": embed_score,
+        "embedding_verdict": embed_verdict,
+    }
+
+
+def _log_classification(
+    url: str,
+    stage: str,
+    cheap_prescore=None,
+    embedding_score=None,
+    embedding_verdict=None,
+    haiku_called: bool = False,
+    duplicate_of_url=None,
+    final_tier=None,
+    final_relevance_score=None,
+) -> None:
+    """Best-effort structured log of one article's funnel decision. Never
+    raises — a logging failure must not break article ingestion."""
+    try:
+        from database import NewsClassificationLog, get_db as _gdb_clf
+        with _gdb_clf() as _db_clf:
+            _db_clf.add(NewsClassificationLog(
+                url=url,
+                stage=stage,
+                cheap_prescore=cheap_prescore,
+                embedding_score=embedding_score,
+                embedding_verdict=embedding_verdict,
+                haiku_called=bool(haiku_called),
+                duplicate_of_url=duplicate_of_url,
+                final_tier=final_tier,
+                final_relevance_score=final_relevance_score,
+            ))
+            _db_clf.commit()
+    except Exception as exc:
+        print(f"[news-classification-log] write failed for {url}: {exc}")
+
+
 async def _extract_news_conflicts_loop():
     """Async wrapper: staggered 45s startup delay, then every 30 minutes."""
     await asyncio.sleep(45)  # staggered startup — prevents thundering herd
@@ -6964,7 +7229,7 @@ async def _extract_news_conflicts_loop():
     print(f"[news-conflicts] Starting first extraction cycle (feeds={len(_SCAN_FEEDS)})…")
     t0 = asyncio.get_event_loop().time()
     try:
-        await loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
+        await loop.run_in_executor(_news_executor, _run_news_conflict_extraction_sync)
         elapsed = asyncio.get_event_loop().time() - t0
         print(f"[news-conflicts] First cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
     except Exception as ex:
@@ -6973,7 +7238,7 @@ async def _extract_news_conflicts_loop():
         await asyncio.sleep(1800)   # 30 minutes
         t0 = asyncio.get_event_loop().time()
         try:
-            await loop.run_in_executor(_executor, _run_news_conflict_extraction_sync)
+            await loop.run_in_executor(_news_executor, _run_news_conflict_extraction_sync)
             elapsed = asyncio.get_event_loop().time() - t0
             print(f"[news-conflicts] Cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
             # Write news_points snapshot
@@ -8698,7 +8963,6 @@ async def _startup_warmup_tasks():
 _AISSTREAM_KEY   = os.getenv("AISSTREAM_API_KEY", "")
 _AIS_VESSELS: CappedDict = CappedDict(maxsize=10_000)  # keyed by MMSI string
 _AIS_LOCK        = threading.Lock()
-_sanctions_alerted: dict = {}   # mmsi → epoch of last sanctions alert (in-memory cooldown)
 _sts_candidates:    dict = {}   # (mmsi_a, mmsi_b) → proximity tracking state
 
 # ── Forge detection engine instances ─────────────────────────────────────────
@@ -8857,25 +9121,10 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
     _forge_alerts.append(_alert)
     print(f"[news-pattern] fired {pattern_type} for {location.upper()} ({count} articles, conf={confidence:.2f})")
 
-    # Feed fusion engine via normalize_signal
-    if _fusion_engine:
-        try:
-            _fusion_engine.on_signal(normalize_signal(
-                "NEWS",
-                {
-                    "severity":      pdef.get("severity", "medium"),
-                    "lat":           lat,
-                    "lon":           lon,
-                    "location_name": location.upper(),
-                    "country":       location if len(location) == 2 else None,
-                    "rule_id":       rule.get("id"),
-                    "rule_name":     rule.get("name") or rule.get("rule_name"),
-                    "title":         headline,
-                    "assessment_id": assess_id,
-                },
-            ))
-        except Exception as _fe_err:
-            print(f"[fusion] news signal error: {_fe_err}")
+    # NOTE: no separate _fusion_engine.on_signal() call here — write_alert() above
+    # already feeds this alert into the fusion engine internally. A second explicit
+    # call here previously generated a brand-new random signal_id for the same
+    # semantic signal, inflating FusionSignal row counts and candidate_pool size.
 
 
 # ── Graph SSE client registry ──────────────────────────────────────────────
@@ -9018,77 +9267,71 @@ def _ais_ship_type(type_code: int) -> str:
 # ── Sanctions check (fired on every new AIS position, O(1) in-memory) ────────
 
 async def _check_sanctions_on_update(vessel: dict) -> None:
-    """Check if a vessel is on a sanctions list; write critical alert if so."""
-    global _sanctions_alerted
+    """Check if a vessel is on a sanctions list; write an alert if so.
+
+    Routes through the single shared `check_sanctions_for_vessel()`
+    (backend/sanctions_loader.py) — the fuzzy-name gate, hard-match
+    flag-plausibility corroboration, and cooldown are all owned there so
+    this call site, the ship-to-ship-transfer block below, and
+    detectors/correlation_engine.py's DarkShipDetector all agree on what
+    counts as a trustworthy sanctions hit instead of each reimplementing it
+    slightly differently.
+    """
     mmsi = str(vessel.get("mmsi", ""))
     name = vessel.get("name", "")
     if not mmsi:
         return
 
-    hit = sanctions_loader.check_vessel(mmsi=mmsi, name=name)
-    if not hit:
-        return
-    if hit.get("_match_type") == "fuzzy_name":
-        # A name-only fuzzy match is not reliable enough to fire a
-        # "critical: SANCTIONED VESSEL" alert off of — real MMSI/IMO
-        # traffic (including inland river/canal AIS, which is where this
-        # false-positive pattern actually showed up) can share a common
-        # word with a sanctioned vessel's name without being that vessel.
-        # Log it so it's not silently invisible, but don't fabricate a
-        # critical-confidence alert from unverified evidence.
-        print(f"[sanctions] fuzzy name match only (not alerting): vessel '{name}' "
-              f"(MMSI {mmsi}) ~ sanctioned '{hit.get('name')}' — needs MMSI/IMO to confirm")
+    result = check_sanctions_for_vessel(mmsi=mmsi, name=name, vessel=vessel)
+    if result is None:
         return
 
-    # NOTE: this site fires on a hard mmsi/name match without corroborating
-    # the live vessel's flag against the sanctions record's flag — unlike
-    # detectors/correlation_engine.py's `_check_sanctions_hit`, which now
-    # calls `_sanctions_hit_is_plausible()` to downgrade a hard MMSI/IMO
-    # match to a "needs review" alert when the live flag clearly contradicts
-    # the sanctions record (MMSI/IMO can be reassigned after a vessel is
-    # scrapped/reflagged/sold). Flagged as a known inconsistency rather than
-    # silently left as three subtly-different "is this hit trustworthy"
-    # implementations — this site and the STS block below could both adopt
-    # that same helper; not done here to avoid touching this call site's
-    # already-correct, already-shipped alerting behavior under time pressure.
-
-    # In-memory cooldown — skip if alerted within last 6 hours
-    now_epoch = time.time()
-    if now_epoch - _sanctions_alerted.get(mmsi, 0) < 21600:
-        return
-
-    # DB cooldown — avoid duplicate alerts even across restarts
-    try:
-        from database import get_db as _gdb, Alert as _Alert
-        with _gdb() as _db:
-            existing = _db.query(_Alert).filter(
-                _Alert.entity_id == mmsi,
-                _Alert.alert_type == "Sanctioned Vessel",
-                _Alert.created_at >= datetime.utcnow() - timedelta(hours=6),
-            ).first()
-            if existing:
-                _sanctions_alerted[mmsi] = now_epoch
-                return
-    except Exception:
-        pass
-
+    hit         = result["hit"]
+    vessel_name = result["vessel_name"]
+    confirmed   = result["status"] == "confirmed"
     explanation = sanctions_loader.get_sanction_explanation(hit)
-    vessel_name = hit.get("name") or name or mmsi
+
+    if confirmed:
+        alert_type      = "Sanctioned Vessel"
+        title           = f"⚠ SANCTIONED: {vessel_name} detected"
+        message         = (
+            f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected. "
+            f"Listed by: {', '.join(explanation['sanction_lists'][:2])}."
+        )
+        severity        = "critical"
+        confidence      = 0.95
+        relevance_score = 100
+    else:
+        # Hard MMSI/IMO match, but the live vessel's reported flag clearly
+        # contradicts the sanctions record's flag — MMSI/IMO reassignment
+        # after scrapping/reflagging/sale means this could genuinely be a
+        # different, innocent vessel. Downgrade instead of claiming a
+        # confirmed sanctions match we can't actually stand behind.
+        alert_type      = "Sanctioned Vessel (Possible)"
+        title           = f"⚠ Possible sanctions match (needs review): {vessel_name}"
+        message         = (
+            f"{vessel_name} (MMSI {mmsi}) — MMSI/IMO matches a sanctioned-vessel "
+            f"record ({', '.join(explanation['sanction_lists'][:2])}), but the "
+            f"live flag does not match the sanctions record's flag "
+            f"({hit.get('flag')}). MMSI/IMO can be reassigned after a vessel is "
+            f"scrapped, reflagged, or sold, so this is an unconfirmed possible "
+            f"match — needs human review, not an automatic critical alert."
+        )
+        severity        = "medium"
+        confidence      = 0.5
+        relevance_score = 50
 
     alert_dict = {
         "domain":         "AIS",
         "source":         "AIS",
-        "alert_type":     "Sanctioned Vessel",
+        "alert_type":     alert_type,
         "rule_id":        "AIS-SANCTIONS",
         "rule_name":      "Sanctioned Vessel",
-        "title":          f"⚠ SANCTIONED: {vessel_name} detected",
-        "message":        (
-            f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected. "
-            f"Listed by: {', '.join(explanation['sanction_lists'][:2])}."
-        ),
-        "severity":       "critical",
-        "confidence":     0.95,
-        "relevance_score": 100,
+        "title":          title,
+        "message":        message,
+        "severity":       severity,
+        "confidence":     confidence,
+        "relevance_score": relevance_score,
         "lat":            vessel.get("lat"),
         "lon":            vessel.get("lon"),
         "mmsi":           mmsi,
@@ -9100,25 +9343,25 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
         "entity_name":    vessel_name,
         "timestamp":      datetime.utcnow().isoformat(),
         "payload": {
-            "mmsi":           mmsi,
-            "imo":            hit.get("imo"),
-            "vessel_name":    vessel_name,
-            "sanction_lists": explanation["sanction_lists"],
-            "flag":           hit.get("flag"),
-            "owner":          hit.get("owner"),
-            "speed":          vessel.get("speed"),
-            "heading":        vessel.get("heading"),
-            "rule_name":      "Sanctioned Vessel",
-            "explanation":    explanation,
+            "mmsi":                mmsi,
+            "imo":                 hit.get("imo"),
+            "vessel_name":         vessel_name,
+            "sanction_lists":      explanation["sanction_lists"],
+            "flag":                hit.get("flag"),
+            "owner":               hit.get("owner"),
+            "speed":               vessel.get("speed"),
+            "heading":             vessel.get("heading"),
+            "rule_name":           "Sanctioned Vessel",
+            "sanctions_confirmed": confirmed,
+            "explanation":         explanation,
         },
     }
 
     write_alert(alert_dict)
     global _forge_alerts
     _forge_alerts.append(alert_dict)
-    _sanctions_alerted[mmsi] = now_epoch
-    print(f"[sanctions] CRITICAL: Sanctioned vessel {vessel_name} (MMSI {mmsi}) at "
-          f"{vessel.get('lat')}, {vessel.get('lon')}")
+    print(f"[sanctions] {'CRITICAL' if confirmed else 'POSSIBLE (flag mismatch, needs review)'}: "
+          f"{vessel_name} (MMSI {mmsi}) at {vessel.get('lat')}, {vessel.get('lon')}")
 
 
 # ── Ship-to-Ship transfer detection ──────────────────────────────────────────
@@ -9252,27 +9495,23 @@ async def _run_sts_detection() -> None:
 
         a_v = candidate["vessel_a"]
         b_v = candidate["vessel_b"]
-        sanction_a = sanctions_loader.check_vessel(mmsi=mmsi_a, name=a_v.get("name", ""))
-        sanction_b = sanctions_loader.check_vessel(mmsi=mmsi_b, name=b_v.get("name", ""))
-        # A fuzzy name-only match isn't reliable evidence a vessel is
-        # actually the sanctioned entity (see sanctions_loader.check_vessel
-        # docstring) — don't let it escalate severity or claim "SANCTIONED"
-        # in generated alert text for an unrelated ship.
-        if sanction_a and sanction_a.get("_match_type") == "fuzzy_name":
-            sanction_a = None
-        if sanction_b and sanction_b.get("_match_type") == "fuzzy_name":
-            sanction_b = None
-        # NOTE: same known gap as `_check_sanctions_on_update` above — a hard
-        # MMSI/IMO match here isn't further corroborated against the live
-        # vessel's flag (see detectors/correlation_engine.py's
-        # `_sanctions_hit_is_plausible` / `_check_sanctions_hit`, which does
-        # this and downgrades a flag-mismatched hit instead of firing
-        # "critical"/"SANCTIONED"). Left unwired here for the same reason —
-        # avoid touching this already-correct, already-shipped path without
-        # room to verify it thoroughly; a good follow-up would be sharing
-        # that helper across all three sanctions call sites.
-        is_sanctions_related = bool(sanction_a or sanction_b)
-        severity = "critical" if is_sanctions_related else "high"
+        # Routed through the single shared check_sanctions_for_vessel() (see
+        # backend/sanctions_loader.py) — same fuzzy-name gate, flag-
+        # plausibility corroboration, and cooldown as
+        # _check_sanctions_on_update() above and
+        # detectors/correlation_engine.py's DarkShipDetector, so a
+        # flag-mismatched hard match downgrades to "possible" here exactly
+        # like it does everywhere else, instead of unconditionally claiming
+        # "SANCTIONED"/critical off an uncorroborated hard identifier match.
+        sanction_result_a = check_sanctions_for_vessel(mmsi=mmsi_a, name=a_v.get("name", ""), vessel=a_v)
+        sanction_result_b = check_sanctions_for_vessel(mmsi=mmsi_b, name=b_v.get("name", ""), vessel=b_v)
+        sanction_a = sanction_result_a["hit"] if sanction_result_a else None
+        sanction_b = sanction_result_b["hit"] if sanction_result_b else None
+        sanction_a_confirmed = bool(sanction_result_a) and sanction_result_a["status"] == "confirmed"
+        sanction_b_confirmed = bool(sanction_result_b) and sanction_result_b["status"] == "confirmed"
+        is_sanctions_related  = bool(sanction_result_a or sanction_result_b)
+        is_sanctions_confirmed = sanction_a_confirmed or sanction_b_confirmed
+        severity = "critical" if is_sanctions_confirmed else "high"
 
         name_a = a_v.get("name") or mmsi_a
         name_b = b_v.get("name") or mmsi_b
@@ -9280,10 +9519,12 @@ async def _run_sts_detection() -> None:
         sanction_context = ""
         if sanction_a:
             exp = sanctions_loader.get_sanction_explanation(sanction_a)
-            sanction_context += f"\n⚠ {name_a} is SANCTIONED by {', '.join(exp['sanction_lists'][:2])}."
+            tag = "SANCTIONED" if sanction_a_confirmed else "a POSSIBLE sanctions match (unconfirmed — flag mismatch)"
+            sanction_context += f"\n⚠ {name_a} is {tag}, per {', '.join(exp['sanction_lists'][:2])}."
         if sanction_b:
             exp = sanctions_loader.get_sanction_explanation(sanction_b)
-            sanction_context += f"\n⚠ {name_b} is SANCTIONED by {', '.join(exp['sanction_lists'][:2])}."
+            tag = "SANCTIONED" if sanction_b_confirmed else "a POSSIBLE sanctions match (unconfirmed — flag mismatch)"
+            sanction_context += f"\n⚠ {name_b} is {tag}, per {', '.join(exp['sanction_lists'][:2])}."
 
         alert_dict = {
             "domain":         "AIS",
@@ -9300,7 +9541,7 @@ async def _run_sts_detection() -> None:
             ),
             "severity":       severity,
             "confidence":     min(0.9, 0.5 + duration_min / 200),
-            "relevance_score": 100 if is_sanctions_related else 70,
+            "relevance_score": 100 if is_sanctions_confirmed else (85 if is_sanctions_related else 70),
             "lat":            midlat,
             "lon":            midlon,
             "mmsi":           mmsi_a,
@@ -9322,6 +9563,7 @@ async def _run_sts_detection() -> None:
                 "min_distance_m":      int(candidate["min_dist"]),
                 "distance_to_port_km": round(dist_to_port, 1),
                 "is_sanctions_related": is_sanctions_related,
+                "is_sanctions_confirmed": is_sanctions_confirmed,
                 "sanctioned_vessel":   sanction_a or sanction_b,
                 "track_positions":     candidate["positions"][-10:],
                 "explanation": {
@@ -9349,7 +9591,8 @@ async def _run_sts_detection() -> None:
         _forge_alerts.append(alert_dict)
         candidate["alerted"] = True
         print(f"[ais] STS ALERT: {name_a} ↔ {name_b} "
-              f"({int(duration_min)}min, {'SANCTIONED' if is_sanctions_related else 'clean'})")
+              f"({int(duration_min)}min, "
+              f"{'SANCTIONED' if is_sanctions_confirmed else ('possible-sanctions' if is_sanctions_related else 'clean')})")
 
 
 async def _sts_detection_loop() -> None:
@@ -10000,7 +10243,15 @@ async def _global_adsb_cache_loop():
 
 
 def _cross_domain_correlation(now_iso: str) -> list:
-    """Check for military vessels/aircraft near recent high-severity news events."""
+    """Check for military vessels/aircraft near recent high-severity news events.
+
+    NOTE: this is no longer called from any live code path — its only caller,
+    _anomaly_detection_loop(), was deleted as dead code (disabled background task,
+    see git history). It is kept here because test_null_island_correlation.py has a
+    dedicated regression test directly exercising this function's Null-Island
+    fabricated-position guard (vessel/aircraft with no reported lat/lon must never be
+    treated as being at (0, 0)). Do not delete without also removing/updating that test.
+    """
     results = []
     cutoff_iso = (datetime.utcnow() - timedelta(hours=2)).isoformat()
     recent_news = [
@@ -10067,139 +10318,6 @@ def _cross_domain_correlation(now_iso: str) -> list:
     return results
 
 
-async def _anomaly_detection_loop():
-    """Run rule-based anomaly checks every 5 minutes."""
-    global _ANOMALY_ALERTS
-    await asyncio.sleep(60)   # let startup settle
-    while True:
-        await asyncio.sleep(300)
-        try:
-            new_alerts = []
-            now_iso = datetime.utcnow().isoformat()
-
-            # Check 1: vessel stopped in chokepoint
-            with _AIS_LOCK:
-                vessels_snapshot = list(_AIS_VESSELS.items())
-            for mmsi, vessel in vessels_snapshot:
-                speed = vessel.get('speed', 0) or 0
-                lat = vessel.get('lat', 0) or 0
-                lon = vessel.get('lon', 0) or 0
-                if speed < 0.5 and lat and lon:
-                    for cp_name, cp_data in _ANOMALY_CHOKEPOINTS.items():
-                        dist = _haversine(lat, lon, cp_data['center_lat'], cp_data['center_lon'])
-                        if dist < 50:
-                            vessel_name = vessel.get('name', 'Unknown')
-                            vessel_flag = vessel.get('flag', '') or ''
-                            vessel_type = vessel.get('ship_type_text', '') or 'vessel'
-                            new_alerts.append({
-                                "id": str(uuid.uuid4()),
-                                "type": "vessel_stopped_chokepoint",
-                                "severity": "elevated",
-                                "title": f"Vessel stationary in {cp_name}",
-                                "subtitle": f"{vessel_name} ({(vessel_flag + '-flagged ') if vessel_flag else ''}{vessel_type})",
-                                "description": f"MMSI {mmsi} — {vessel_name} has been stationary ({speed:.1f} kts) within the {cp_name} shipping lane. Normal transit speed is 12–15 knots.",
-                                "reason": f"Speed ({speed:.1f} kts) below 0.5 kt threshold while within {round(dist):.0f}km of {cp_name}",
-                                "lat": lat, "lon": lon,
-                                "timestamp": now_iso,
-                                "entity": mmsi,
-                                "entity_name": vessel_name,
-                                "entity_type": "vessel",
-                                "classification": None,
-                                "pinned": False,
-                                "dismissed": False,
-                            })
-
-            # Check 2: military aircraft far from known chokepoints (uses global cache for wider coverage)
-            all_ac = list(_GLOBAL_ADSB_CACHE.values())
-            if not all_ac:
-                for entry in _adsb_cache.values():
-                    all_ac.extend(entry.get('data', []))
-            for ac in all_ac:
-                callsign = ac.get('flight', '')
-                if ac.get('military') or _is_military_callsign(callsign):
-                    lat = ac.get('lat', 0) or 0
-                    lon = ac.get('lon', 0) or 0
-                    if not lat or not lon:
-                        continue
-                    min_dist = min(
-                        _haversine(lat, lon, cp['center_lat'], cp['center_lon'])
-                        for cp in _ANOMALY_CHOKEPOINTS.values()
-                    )
-                    if min_dist > 1500:
-                        icao = ac.get('icao', ac.get('hex', ''))
-                        cs_display = callsign.strip() or icao
-                        new_alerts.append({
-                            "id": str(uuid.uuid4()),
-                            "type": "military_aircraft_unusual",
-                            "severity": "elevated",
-                            "title": "Military aircraft in unusual position",
-                            "subtitle": f"{cs_display} — {int(min_dist)}km from nearest chokepoint",
-                            "description": f"Military aircraft {cs_display} is operating {int(min_dist)}km from the nearest monitored chokepoint. This may indicate a long-range patrol, strategic movement, or unscheduled operation.",
-                            "reason": f"Military callsign/flag detected {int(min_dist)}km from nearest chokepoint (threshold: 1500km)",
-                            "lat": lat, "lon": lon,
-                            "timestamp": now_iso,
-                            "entity": icao,
-                            "entity_name": cs_display,
-                            "entity_type": "aircraft",
-                            "classification": None,
-                            "pinned": False,
-                            "dismissed": False,
-                        })
-
-            # Check 3: news spike (4+ markers in same 100km area within 2 hours)
-            cutoff_dt = datetime.utcnow() - timedelta(hours=2)
-            cutoff_iso = cutoff_dt.isoformat()
-            recent_markers = [
-                m for m in _NEWS_CONFLICT_MARKERS
-                if isinstance(m, dict) and m.get('timestamp', '') > cutoff_iso and m.get('lat') and m.get('lon')
-            ]
-            if recent_markers:
-                clusters = _cluster_by_location(recent_markers, radius_km=100)
-                for cluster in clusters:
-                    if len(cluster) >= 4:
-                        center = _cluster_center(cluster)
-                        area_name = cluster[0].get('location', '') or f"({center[0]:.1f}, {center[1]:.1f})"
-                        headlines = "; ".join(c.get('title', '')[:60] for c in cluster[:3])
-                        new_alerts.append({
-                            "id": str(uuid.uuid4()),
-                            "type": "news_spike",
-                            "severity": "significant",
-                            "title": f"News spike: {len(cluster)} articles near {area_name}",
-                            "subtitle": f"{len(cluster)} reports within 100km in the past 2 hours",
-                            "description": f"Multiple news sources are reporting from near {area_name}. Sample headlines: {headlines}",
-                            "reason": f"{len(cluster)} news markers clustered within 100km radius in 2 hours (threshold: 4)",
-                            "lat": center[0], "lon": center[1],
-                            "timestamp": now_iso,
-                            "entity": f"cluster_{int(center[0]*10)}_{int(center[1]*10)}",
-                            "entity_name": area_name,
-                            "entity_type": "news_cluster",
-                            "classification": None,
-                            "pinned": False,
-                            "dismissed": False,
-                        })
-
-            # Check 4: cross-domain correlation
-            new_alerts.extend(_cross_domain_correlation(now_iso))
-
-            # Deduplicate and append (skip dismissed alerts from matching)
-            existing_keys = {(a.get('entity'), a.get('type')) for a in _ANOMALY_ALERTS if not a.get('dismissed')}
-            for alert in new_alerts:
-                key = (alert.get('entity'), alert.get('type'))
-                if key not in existing_keys:
-                    if not alert.get('id'):
-                        alert['id'] = str(uuid.uuid4())
-                    _ANOMALY_ALERTS.append(alert)
-                    existing_keys.add(key)
-                    print(f"[anomaly] new alert: {alert['title']}")
-
-            # Keep last 100
-            if len(_ANOMALY_ALERTS) > 100:
-                _ANOMALY_ALERTS[:] = _ANOMALY_ALERTS[-100:]
-
-        except Exception as e:
-            print(f"[anomaly] detection loop error: {e}")
-
-
 def _calculate_overall_threat_level(alerts):
     if any(a.get('severity') == 'critical' for a in alerts):
         return 'critical'
@@ -10210,33 +10328,24 @@ def _calculate_overall_threat_level(alerts):
     return 'normal'
 
 
-@app.get("/api/alerts/anomalies")
-async def get_anomaly_alerts(user=None):
-    return {"count": len(_ANOMALY_ALERTS), "alerts": _ANOMALY_ALERTS[-50:]}
-
-
 @app.get("/api/alerts/recent")
 async def get_recent_alerts(
-    rule_name: str = Query(None, description="Filter by rule_name (checks both _ANOMALY_ALERTS and _forge_alerts)"),
+    rule_name: str = Query(None, description="Filter by rule_name"),
     hours: int = Query(6, description="Lookback window in hours"),
     user=None,
 ):
+    # Sourced entirely from _forge_alerts (real AIS/ADSB/NEWS/loitering alerts).
+    # This previously also checked _ANOMALY_ALERTS, a buffer only ever populated by
+    # _anomaly_detection_loop() — a background task that has been disabled
+    # (commented out) since before this round, so that buffer was always empty.
+    # Removed along with the dead loop; this endpoint now serves only real data.
     cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-    recent = [a for a in _ANOMALY_ALERTS if a.get('timestamp', '') > cutoff and not a.get('dismissed')]
+    recent = [a for a in _forge_alerts if a.get('timestamp', '') > cutoff and not a.get('dismissed')]
     if rule_name:
-        # Also search the forge alert buffer (contains AIS/ADSB/NEWS/loitering alerts)
-        forge_recent = [
-            a for a in _forge_alerts
-            if a.get('timestamp', '') > cutoff
-            and (a.get('rule_name') == rule_name or a.get('rule_trigger') == rule_name)
-        ]
-        if forge_recent:
-            return {"count": len(forge_recent), "alerts": forge_recent[-50:], "threat_level": "normal"}
-        filtered = [a for a in recent if a.get('rule_name') == rule_name]
-        return {"count": len(filtered), "alerts": filtered, "threat_level": "normal"}
+        recent = [a for a in recent if a.get('rule_name') == rule_name or a.get('rule_trigger') == rule_name]
     return {
         "count": len(recent),
-        "alerts": recent,
+        "alerts": recent[-50:],
         "threat_level": _calculate_overall_threat_level(recent),
     }
 
@@ -10245,7 +10354,7 @@ async def get_recent_alerts(
 async def classify_alert(alert_id: str, request: Request, user=None):
     body = await request.json()
     classification = body.get("classification")
-    for alert in _ANOMALY_ALERTS:
+    for alert in _forge_alerts:
         if alert.get("id") == alert_id:
             alert["classification"] = classification
             alert["classified_by"] = getattr(user, "email", "anonymous") if user else "anonymous"
@@ -10258,7 +10367,7 @@ async def classify_alert(alert_id: str, request: Request, user=None):
 
 @app.post("/api/alerts/{alert_id}/pin")
 async def pin_alert(alert_id: str, user=None):
-    for alert in _ANOMALY_ALERTS:
+    for alert in _forge_alerts:
         if alert.get("id") == alert_id:
             alert["pinned"] = not alert.get("pinned", False)
             return {"status": "ok", "pinned": alert["pinned"]}
@@ -10315,9 +10424,12 @@ async def _generate_weekly_snapshot():
         if sev in news_by_severity:
             news_by_severity[sev] += 1
 
+    # Was _ANOMALY_ALERTS (a buffer only populated by the now-deleted, long-disabled
+    # _anomaly_detection_loop() — always empty). Use the real _forge_alerts buffer,
+    # grouped by rule_name (its closest analog to a "type").
     alert_by_type = {}
-    for alert in _ANOMALY_ALERTS:
-        atype = alert.get('type', 'unknown')
+    for alert in _forge_alerts:
+        atype = alert.get('rule_name') or alert.get('type') or 'unknown'
         alert_by_type[atype] = alert_by_type.get(atype, 0) + 1
 
     maritime_stats = {
@@ -11751,7 +11863,6 @@ async def startup_event():
     asyncio.create_task(_ais_websocket_loop())
     asyncio.create_task(_prune_history_loop())
     asyncio.create_task(_ais_aggregate_loop())
-    # asyncio.create_task(_anomaly_detection_loop())  # disabled — too many false positives
     asyncio.create_task(_weekly_snapshot_loop())
     asyncio.create_task(_global_adsb_cache_loop())
     # Forge detection engine
@@ -13807,7 +13918,7 @@ async def mission_chat(request: Request):
     input_tokens  = response.usage.input_tokens
     output_tokens = response.usage.output_tokens
     cost_usd      = (input_tokens * 0.0000008) + (output_tokens * 0.000004)
-    usage_tracker.record_call(input_tokens, output_tokens)
+    usage_tracker.record_call(input_tokens, output_tokens, call_type="chat", model="claude-haiku-4-5-20251001")
 
     return {
         "response": response.content[0].text,
@@ -16175,6 +16286,14 @@ def api_ontology_entities(
 def _rule_row_to_dict(row) -> dict:
     import json as _jr
     params = _jr.loads(row.params) if isinstance(row.params, str) else (row.params or {})
+    # "wired": whether this rule_name actually has a live detector behind it
+    # (WIRED_RULE_NAMES). A row can exist with enabled=True and a rule_name
+    # outside that allowlist (e.g. a pre-existing AIS_DARK_SHIP row seeded
+    # before this check existed, or before its detector was ever wired up) —
+    # `enabled` alone would then lie about the rule actually being live.
+    # The Rules UI should treat wired=False as "has no live effect" even if
+    # enabled=True, rather than implying it's protecting anything.
+    is_wired = row.rule_name in WIRED_RULE_NAMES
     return {
         "id":           row.id,
         "system_id":    f"RULE-{row.id}",
@@ -16184,6 +16303,8 @@ def _rule_row_to_dict(row) -> dict:
         "severity":     row.severity or params.get("severity", "medium"),
         "icon_type":    row.icon_type or params.get("icon_type"),
         "enabled":      row.enabled,
+        "wired":        is_wired,
+        "live":         bool(row.enabled) and is_wired,
         "params":       params,
         "created_at":   row.created_at.isoformat() if row.created_at else None,
         "updated_at":   row.updated_at.isoformat() if row.updated_at else None,
@@ -16273,16 +16394,26 @@ def api_rules_update(rule_id: int, body: dict):
         row = db.query(RuleConfig).filter(RuleConfig.id == rule_id).first()
         if not row:
             raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
-        if "enabled" in body:
-            row.enabled = bool(body["enabled"])
-        if "params" in body:
-            row.params = _ju.dumps(body["params"], ensure_ascii=False)
         if "rule_name" in body:
             if body["rule_name"] not in WIRED_RULE_NAMES:
                 raise HTTPException(status_code=400,
                                      detail=f"rule_name must be one of {WIRED_RULE_NAMES} — these are the only "
                                             f"rule types currently wired into live detection.")
             row.rule_name = body["rule_name"]
+        if "enabled" in body:
+            new_enabled = bool(body["enabled"])
+            # Block turning a non-wired rule "on" — it would have zero live
+            # effect and would mislead the operator into thinking it's
+            # running. Disabling is always allowed regardless of wiring.
+            # (row.rule_name reflects any rule_name change just applied above.)
+            if new_enabled and row.rule_name not in WIRED_RULE_NAMES:
+                raise HTTPException(status_code=400,
+                                     detail=f"Cannot enable rule_name={row.rule_name!r} — it is not one of "
+                                            f"{WIRED_RULE_NAMES}, the rule types currently wired into live "
+                                            f"detection, so enabling it would have no real effect.")
+            row.enabled = new_enabled
+        if "params" in body:
+            row.params = _ju.dumps(body["params"], ensure_ascii=False)
         row.updated_at = _dt.datetime.utcnow()
         db.commit()
         db.refresh(row)
@@ -18333,7 +18464,18 @@ async def get_report_task(task_id: str):
                             region=region, period_start=row.period_start, period_end=window_end,
                         ),
                     ),
-                    timeout=30,
+                    # prepare_intelligence_picture() itself normally takes ~7s.
+                    # 30s previously assumed no other CPU-bound work would be
+                    # running concurrently in this process — not a safe
+                    # assumption once a real background job (e.g. the RSS
+                    # news-extraction cycle) can hold the GIL for stretches
+                    # doing its own CPU-bound work (vector similarity scoring
+                    # across many articles). A separate executor for that
+                    # cycle doesn't fix this — the GIL is process-wide, not
+                    # per-executor. A more generous bound tolerates realistic
+                    # concurrent background load without masking a genuine
+                    # hang (60s is still 8x the normal ~7s runtime).
+                    timeout=60,
                 )
             except Exception as _e:
                 raise HTTPException(500, f"collection failed: {_e}")
@@ -18378,7 +18520,9 @@ async def finish_report_task_collection(task_id: str):
                         region=region, period_start=row.period_start, period_end=window_end,
                     ),
                 ),
-                timeout=30,
+                # See the matching comment in get_report_task() above — same
+                # reasoning, same 60s bound.
+                timeout=60,
             )
         except Exception as _e:
             raise HTTPException(500, f"collection failed: {_e}")
@@ -18855,209 +18999,25 @@ def get_report_pdf(report_id: str):
     )
 
 
-# ── Auto-rule generation ──────────────────────────────────────────────────────
-
-@app.post("/api/forge/auto-generate-rules")
-async def forge_auto_generate_rules(request: Request):
-    body        = await request.json()
-    mission_id  = body.get("mission_id", "mission_default")
-    ontology    = _forge_ontology_load()
-    existing    = _load_forge_rules()
-    exist_names = {r["name"] for r in existing}
-    new_rules   = []
-
-    def _next_id():
-        return f"rule_auto_{len(existing) + len(new_rules) + 1}_{int(datetime.utcnow().timestamp())}"
-
-    for cable in (n for n in ontology["nodes"] if n["type"] == "cable"):
-        name = f"Cable Loiterer — {cable['label'][:30]}"
-        if name not in exist_names:
-            new_rules.append({
-                "id": _next_id(), "name": name,
-                "description": f"Vessel stationary near {cable['label']}",
-                "source": "AIS", "trigger_type": "stationary_near_infrastructure",
-                "status": "active", "triggers": 0, "lastTrigger": "never",
-                "params": {"infra_type": "cable", "infra_name": cable["label"],
-                           "max_speed_knots": 0.5, "proximity_km": 10, "min_duration_minutes": 120},
-                "severity": "high", "auto_generated": True, "entity_id": cable.get("id"),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-            exist_names.add(name)
-
-    for cp in (n for n in ontology["nodes"] if n["type"] == "chokepoint"):
-        name = f"Dark Ship — {cp['label'][:30]}"
-        if name not in exist_names:
-            new_rules.append({
-                "id": _next_id(), "name": name,
-                "description": f"AIS transponder gap near {cp['label']}",
-                "source": "AIS", "trigger_type": "transponder_gap",
-                "status": "active", "triggers": 0, "lastTrigger": "never",
-                "params": {"gap_minutes": 30, "proximity_km": 100, "chokepoint": cp["label"]},
-                "severity": "high", "auto_generated": True, "entity_id": cp.get("id"),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-            exist_names.add(name)
-
-    fac_count = 0
-    for fac in (n for n in ontology["nodes"] if n["type"] in ("facility", "airport") and n.get("lat")):
-        if fac_count >= 10:
-            break
-        name = f"Satellite Watch — {fac['label'][:30]}"
-        if name not in exist_names:
-            new_rules.append({
-                "id": _next_id(), "name": name,
-                "description": f"Weekly satellite scan of {fac['label']}",
-                "source": "SATELLITE", "trigger_type": "change_detection",
-                "status": "active", "triggers": 0, "lastTrigger": "never",
-                "params": {"lat": fac["lat"], "lng": fac["lng"], "frequency": "weekly", "change_threshold_pct": 20},
-                "severity": "medium", "auto_generated": True, "entity_id": fac.get("id"),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-            exist_names.add(name)
-            fac_count += 1
-
-    nodes_by_id = {n["id"]: n for n in ontology["nodes"]}
-    for edge in ontology.get("edges", []):
-        if edge.get("type") not in ("threatens", "operates"):
-            continue
-        src = nodes_by_id.get(edge.get("source"))
-        tgt = nodes_by_id.get(edge.get("target"))
-        if src and tgt and src["type"] == "group" and tgt["type"] in ("country", "chokepoint"):
-            name = f"News Surge — {src['label']} / {tgt['label']}"
-            if name not in exist_names:
-                new_rules.append({
-                    "id": _next_id(), "name": name,
-                    "description": f"Elevated news mentioning {src['label']} and {tgt['label']}",
-                    "source": "NEWS", "trigger_type": "event_surge",
-                    "status": "active", "triggers": 0, "lastTrigger": "never",
-                    "params": {"keywords": [src["label"], tgt["label"]], "multiplier": 2, "window_days": 7},
-                    "severity": "medium", "auto_generated": True,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                })
-                exist_names.add(name)
-
-    if new_rules:
-        _forge_save("rules.json", existing + new_rules)
-
-    return {"rules_generated": len(new_rules), "rules": new_rules}
-
-
-@app.get("/api/forge/rules")
-def forge_get_rules():
-    return {"rules": _forge_load("rules.json")}
-
-
-@app.post("/api/forge/rules")
-async def forge_create_rule(request: Request):
-    body = await request.json()
-    rules = _forge_load("rules.json")
-    rule = {
-        "id":          str(uuid.uuid4()),
-        "name":        body.get("name", "Unnamed Rule"),
-        "source":      body.get("source", "AIS"),
-        "trigger_type": body.get("trigger_type", ""),
-        "description": body.get("description", ""),
-        "status":      body.get("status", "active"),
-        "triggers":    0,
-        "lastTrigger": "never",
-        "created_at":  datetime.now(timezone.utc).isoformat(),
+def _real_rule_stats() -> dict:
+    """Real, live rule counts from the DB-backed RuleConfig table (rule_configs) —
+    the table the actual Rules UI (/api/rules) manages. Do NOT source these from the
+    legacy rules.json file: that file has been frozen since 2026-05-13 and has no
+    relationship to the rules an analyst actually creates/edits/enables today."""
+    from database import RuleConfig, get_db
+    by_source: dict = {}
+    with get_db() as db:
+        rows = db.query(RuleConfig).all()
+        total = len(rows)
+        active = sum(1 for r in rows if r.enabled)
+        for r in rows:
+            prefix = (r.rule_name or "UNKNOWN").split("_")[0] or "UNKNOWN"
+            by_source[prefix] = by_source.get(prefix, 0) + 1
+    return {
+        "rules_total":     total,
+        "rules_active":    active,
+        "rules_by_source": by_source,
     }
-    rules.insert(0, rule)
-    _forge_save("rules.json", rules)
-    return rule
-
-
-@app.put("/api/forge/rules/{rule_id}")
-async def forge_update_rule(rule_id: str, request: Request):
-    body = await request.json()
-    rules = _forge_load("rules.json")
-    for i, r in enumerate(rules):
-        if r.get("id") == rule_id:
-            rules[i] = {**r, **{k: v for k, v in body.items() if k != "id"}}
-            _forge_save("rules.json", rules)
-            return rules[i]
-    raise HTTPException(status_code=404, detail="Rule not found")
-
-
-@app.delete("/api/forge/rules/{rule_id}")
-def forge_delete_rule(rule_id: str):
-    rules = _forge_load("rules.json")
-    rules = [r for r in rules if r.get("id") != rule_id]
-    _forge_save("rules.json", rules)
-    return {"ok": True}
-
-
-@app.get("/api/forge/watch-areas")
-def forge_get_watch_areas():
-    return {"areas": _forge_load("watch_areas.json")}
-
-
-@app.post("/api/forge/watch-areas")
-async def forge_create_watch_area(request: Request):
-    body = await request.json()
-    areas = _forge_load("watch_areas.json")
-    area = {
-        "id":         str(uuid.uuid4()),
-        "name":       body.get("name", "Unnamed Area"),
-        "coords":     body.get("coords", ""),
-        "lat":        body.get("lat"),
-        "lon":        body.get("lon"),
-        "frequency":  body.get("frequency", "Weekly"),
-        "lastScan":   "never",
-        "detections": 0,
-        "change":     "No data",
-        "status":     "normal",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    areas.insert(0, area)
-    _forge_save("watch_areas.json", areas)
-    return area
-
-
-@app.delete("/api/forge/watch-areas/{area_id}")
-def forge_delete_watch_area(area_id: str):
-    areas = _forge_load("watch_areas.json")
-    areas = [a for a in areas if a.get("id") != area_id]
-    _forge_save("watch_areas.json", areas)
-    return {"ok": True}
-
-
-@app.post("/api/forge/watch-areas/{area_id}/scan")
-async def forge_scan_watch_area(area_id: str, request: Request):
-    areas = _forge_load("watch_areas.json")
-    area  = next((a for a in areas if a.get("id") == area_id), None)
-    if not area:
-        raise HTTPException(status_code=404, detail="Watch area not found")
-
-    bounds = area.get("bounds")
-    if not bounds and area.get("lat") and area.get("lng"):
-        lat, lng = float(area["lat"]), float(area.get("lng") or area.get("lon", 0))
-        delta = 0.5
-        bounds = [lat - delta, lng - delta, lat + delta, lng + delta]
-    if not bounds:
-        raise HTTPException(status_code=422, detail="Watch area has no bounds or coordinates")
-
-    try:
-        loop  = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            functools.partial(_run_overwatch_inference, bounds, 17, 0.2, False, "dota"),
-        )
-        detections = result.get("detections", []) if isinstance(result, dict) else []
-    except Exception as _se:
-        detections = []
-        print(f"[forge/scan] {area_id} error: {_se}")
-
-    now = datetime.now(timezone.utc).isoformat()
-    for a in areas:
-        if a.get("id") == area_id:
-            a["last_scan"]   = now
-            a["detections"]  = len(detections)
-            a["last_change"] = now
-            a["status"]      = "alert" if len(detections) > (a.get("baseline_detections") or 0) else "ok"
-            break
-    _forge_save("watch_areas.json", areas)
-    return {"ok": True, "detections": len(detections), "last_scan": now, "status": areas[next((i for i, a in enumerate(areas) if a.get("id") == area_id), 0)].get("status")}
 
 
 @app.get("/api/forge/brain-status")
@@ -19067,47 +19027,9 @@ def forge_brain_status():
         "detector_ready": _HAS_DETECTORS,
         "alerts_in_memory": len(_forge_alerts),
         "correlations_in_memory": len(_correlation_assessments),
+        **_real_rule_stats(),
     }
 
-
-@app.get("/api/forge/detections")
-def forge_get_detections():
-    return {"detections": _forge_load("detection_corrections.json")}
-
-
-@app.post("/api/forge/detection/{detection_id}/confirm")
-def forge_confirm_detection(detection_id: str):
-    items = _forge_load("detection_corrections.json")
-    for item in items:
-        if item.get("id") == detection_id:
-            item["review"] = "confirmed"
-            item["reviewed_at"] = datetime.now(timezone.utc).isoformat()
-            break
-    else:
-        items.append({"id": detection_id, "review": "confirmed", "reviewed_at": datetime.now(timezone.utc).isoformat()})
-    _forge_save("detection_corrections.json", items)
-    return {"ok": True}
-
-
-@app.post("/api/forge/detection/{detection_id}/correct")
-async def forge_correct_detection(detection_id: str, request: Request):
-    body = await request.json()
-    items = _forge_load("detection_corrections.json")
-    for item in items:
-        if item.get("id") == detection_id:
-            item["review"] = "corrected"
-            item["correct_label"] = body.get("label")
-            item["reviewed_at"] = datetime.now(timezone.utc).isoformat()
-            break
-    else:
-        items.append({
-            "id": detection_id,
-            "review": "corrected",
-            "correct_label": body.get("label"),
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
-        })
-    _forge_save("detection_corrections.json", items)
-    return {"ok": True}
 
 
 # ── Forge Phase 2: batch scan helper ──────────────────────────────────────────
@@ -19279,10 +19201,12 @@ async def forge_overwatch_generate_batch(request: Request):
     body = await request.json()
     n = min(int(body.get("n", 10)), 20)
 
+    # Was: also appended custom sites from watch_areas.json (the legacy
+    # /api/forge/watch-areas file-backed CRUD). That endpoint set was deleted as
+    # dead code (no frontend callers, backing file never existed on disk) so this
+    # loop always iterated an empty list — removed along with it; falls back to
+    # _FORGE_SCAN_SITES only, same as before in practice.
     sites = list(_FORGE_SCAN_SITES)
-    for area in _forge_load("watch_areas.json"):
-        if area.get("lat") and area.get("lon"):
-            sites.append({"name": area["name"], "lat": area["lat"], "lon": area["lon"]})
     random.shuffle(sites)
 
     loop = asyncio.get_event_loop()
@@ -19379,7 +19303,7 @@ async def forge_label_detection(request: Request):
         "severity":     body.get("severity"),
         "event_type":   body.get("event_type"),
         "labeled_at":   datetime.now(timezone.utc).isoformat(),
-        "labeled_by":   getattr(_user, "email", None) or getattr(_user, "username", None),
+        "labeled_by":   "operator",
     }
     for i, existing in enumerate(labels):
         if existing.get("id") == detection_id:
@@ -19467,26 +19391,6 @@ def _auto_add_correlation_to_ontology(assessment: dict):
         _forge_ontology_save(ontology)
     except Exception:
         pass
-
-
-def _prep_cables_for_detector():
-    """Extract cable coordinate lists for proximity checks, sampled to cap CPU."""
-    try:
-        raw_cables = _get_cable_data().get("cables", [])
-        result = []
-        for feat in raw_cables[:60]:
-            geom = (feat.get("geometry") or {})
-            name = ((feat.get("properties") or {}).get("name") or "cable")
-            coords: list = []
-            if geom.get("type") == "LineString":
-                coords = geom.get("coordinates", [])
-            elif geom.get("type") == "MultiLineString":
-                for seg in geom.get("coordinates", []):
-                    coords.extend(seg)
-            result.append({"name": name, "coordinates": coords[::8]})
-        return result
-    except Exception:
-        return []
 
 
 _CABLES_DB_CACHE: list = []
@@ -19734,6 +19638,47 @@ WIRED_RULE_DISPATCH = {
 }
 
 
+# Pipeline Canvas detector-node id -> RuleConfig.rule_name family it controls.
+# NEWS_PATTERN isn't in WIRED_RULE_DISPATCH (it's dispatched separately, from
+# _run_news_conflict_extraction_sync's own cycle — see that function) but is
+# still a real, live-wired rule type per WIRED_RULE_NAMES, so it belongs here
+# for det_news. det_overwatch (satellite) has no RuleConfig-backed rule type
+# yet, so it has no entry — toggling/deleting it only affects rules.json,
+# same as before.
+PIPELINE_NODE_RULE_FAMILIES = {
+    "det_ais":  ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY"],
+    "det_adsb": ["ADSB_LOITERING_NEAR_AIRPORT"],
+    "det_news": ["NEWS_PATTERN"],
+}
+
+
+def _sync_ruleconfig_family(node_id: str, enabled: bool) -> int:
+    """Flip RuleConfig.enabled for every row in the rule_name family that the
+    given Pipeline Canvas detector node controls. This is the real control
+    surface for live detection — rules.json's per-source status flip (done
+    alongside this in the pipeline endpoints below) no longer gates Stage 1
+    AIS detection, and never gated the DB-backed Stage 1b/1e/2b rules that
+    actually dispatch through WIRED_RULE_DISPATCH. Returns the number of
+    RuleConfig rows changed (0 if node_id has no family, e.g. det_overwatch)."""
+    family = PIPELINE_NODE_RULE_FAMILIES.get(node_id)
+    if not family:
+        return 0
+    from database import RuleConfig, get_db
+    changed = 0
+    try:
+        with get_db() as db:
+            rows = db.query(RuleConfig).filter(RuleConfig.rule_name.in_(family)).all()
+            for r in rows:
+                if r.enabled != enabled:
+                    r.enabled = enabled
+                    changed += 1
+            if changed:
+                db.commit()
+    except Exception as _sre:
+        print(f"[forge-pipeline] RuleConfig sync error for {node_id}: {_sre}")
+    return changed
+
+
 async def _forge_detection_cycle():
     """Run every 5 minutes: apply all active Forge rules to live data, then correlate."""
     global _forge_alerts, _correlation_assessments, _last_cycle_stats
@@ -19762,10 +19707,25 @@ async def _forge_detection_cycle():
                     rules = []
             active_rules = [r for r in rules if r.get("status") == "active"]
 
-            cables = _prep_cables_for_detector()
-
-            # Stage 1 — AIS anomaly detection
-            _ais_detector.load_rules([r for r in active_rules if r.get("source") in ("AIS", "ais")])
+            # Stage 1 — AIS anomaly detection.
+            #
+            # The legacy rules.json-driven "stationary_near_infrastructure"
+            # check (AISAnomalyDetector.check_vessel(), rule_001 "Cable
+            # Loiterer") has been retired from the live cycle: it fired on a
+            # SINGLE AIS snapshot the instant any ping showed speed <=0.5kn
+            # within 10km of a cable, with no duration/cooldown tracking
+            # beyond dedup-by-(rule_id,mmsi,hour) — so it could fire a
+            # separate alert for the same physically-loitering vessel in the
+            # same hour that Stage 1b's DB-backed check also caught.
+            #
+            # DB RuleConfig "Cable Loitering — Global" (AIS_LOITERING_NEAR_INFRA,
+            # target=ALL, enabled) already covers every cable globally via
+            # AISAnomalyDetector.check_loitering() in Stage 1b below, with
+            # real per-(mmsi,cable,rule) state tracking and a proper
+            # min_duration_minutes gate before it fires once — that is now
+            # the ONE real implementation of this concept. check_vessel()
+            # itself is left intact in ais_detector.py (nothing else calls
+            # it); it is simply no longer invoked from this cycle.
             with _AIS_LOCK:
                 vessels_snap = dict(_AIS_VESSELS)
 
@@ -19778,18 +19738,8 @@ async def _forge_detection_cycle():
 
             new_ais_alerts: list = []
             vessels_checked = len(normalized_snap)
-            for mmsi, vessel in normalized_snap.items():
-                try:
-                    hits = _ais_detector.check_vessel(
-                        vessel,
-                        cables=cables,
-                        chokepoints=_CHOKEPOINT_DEFS,
-                        all_vessels=normalized_snap,
-                    )
-                    new_ais_alerts.extend(hits)
-                except Exception:
-                    pass
-            print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels → {len(new_ais_alerts)} alerts")
+            print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels tracked "
+                  f"(rules.json stationary_near_infrastructure retired — see Stage 1b)")
 
             # Stage 1c — AIS spoofing / MMSI-integrity anomaly detection.
             # Always-on background check (like EscalationEngine) — not a
@@ -19849,7 +19799,20 @@ async def _forge_detection_cycle():
             except Exception as _cke:
                 print(f"[forge-brain] chokepoint check error: {_cke}")
 
-            # Stage 2 — ADS-B anomaly detection via _adsb_detector
+            # Stage 2 — ADS-B anomaly detection via _adsb_detector.
+            #
+            # rules.json here is read-only/labeling, not gating: confirmed
+            # that _adsb_detector.check_aircraft()'s actual detection logic
+            # (military-callsign-prefix match, emergency-squawk match) is
+            # 100% hardcoded and fires regardless of any rule content — the
+            # forge_prefixes/emergency_codes built below only ADD extra
+            # prefixes/codes on top of the detector's built-in defaults, and
+            # the per-hit lookup a few lines down only attaches a
+            # rule_id/rule_name/severity label to an alert that would have
+            # fired either way. So this can't produce the Stage-1-style
+            # duplicate-fire bug (there's only ever one code path that
+            # actually decides "alert or not"). Left as-is: a small, harmless
+            # exception rather than a live-detection duplicate.
             new_adsb_alerts: list = []
             adsb_forge_rules = [r for r in active_rules if r.get("source") in ("ADSB", "adsb")]
             # Build combined callsign prefix set from forge rules + detector built-ins
@@ -19889,7 +19852,26 @@ async def _forge_detection_cycle():
             except Exception as _ale:
                 print(f"[forge-brain] ADSB loiter check error: {_ale}")
 
-            # Stage 3 — News event scoring
+            # Stage 3 — News event scoring (rules.json-driven, kept as-is).
+            #
+            # Audited for redundancy against the DB RuleConfig-backed
+            # NEWS_PATTERN engine (_news_pattern_engine, dispatched from its
+            # own cycle in _run_news_conflict_extraction_sync, reloaded from
+            # RuleConfig.trigger_type == "NEWS_PATTERN" each pass) and found
+            # NOT redundant — the two operate on different data and
+            # different trigger mechanics:
+            #   - This stage fires on a SINGLE es.get_active_events() event
+            #     the instant it matches a keyword list + severity floor
+            #     (rules.json rule_010/011/012, "event_surge").
+            #   - NEWS_PATTERN requires a THRESHOLD COUNT of separate
+            #     articles about the same location within a rolling time
+            #     window (e.g. 5 conflict articles in 6h) before firing, and
+            #     buffers/cooldowns per (rule, location) — a genuinely
+            #     different volume/trend signal, not a duplicate of a
+            #     single-event keyword match.
+            # Left in place per this round's scope (Stage 1's rules.json
+            # duplicate-fire bug was the confirmed must-fix item; Stage 3 is
+            # murkier and lower-risk to leave than to touch).
             new_news_alerts: list = []
             news_rules = [r for r in active_rules if r.get("source") in ("NEWS", "news")]
             news_checked = 0
@@ -20064,23 +20046,12 @@ async def _forge_detection_cycle():
                 except Exception as _aw_e:
                     print(f"[alert-writer] alert persist error: {_aw_e}")
 
-            # Feed AIS and ADSB alerts into fusion engine via normalize_signal
-            if _fusion_engine:
-                try:
-                    for _fa in new_ais_alerts:
-                        _fusion_engine.on_signal(normalize_signal(
-                            "AIS",
-                            {**_fa, "location_name": _fa.get("location_name") or _fa.get("vessel") or ""},
-                            alert_id=_fa.get("id"),
-                        ))
-                    for _fa in new_adsb_alerts:
-                        _fusion_engine.on_signal(normalize_signal(
-                            "ADSB",
-                            {**_fa, "location_name": _fa.get("location_name") or _fa.get("aircraft") or ""},
-                            alert_id=_fa.get("id"),
-                        ))
-                except Exception as _fe_err2:
-                    print(f"[fusion] forge-brain signal error: {_fe_err2}")
+            # NOTE: no separate AIS/ADSB fusion feed here — write_alert() above (called
+            # for every entry in all_new, which includes new_ais_alerts/new_adsb_alerts)
+            # already feeds each alert into the fusion engine internally. A second
+            # explicit on_signal() call here previously generated a brand-new random
+            # signal_id for the same semantic signal, inflating FusionSignal row counts
+            # and candidate_pool size used in fusion evaluation.
 
             # Trim to 24h
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -20104,7 +20075,15 @@ async def _forge_detection_cycle():
                 "last_cycle":        datetime.now(timezone.utc).isoformat(),
                 "vessels_tracked":   len(normalized_snap),
                 "aircraft_tracked":  len(_GLOBAL_ADSB_CACHE),
-                "rules_active":      active_rule_count,
+                # Legacy rules.json active-rule count — informational only.
+                # This is NOT what actually gates live detection any more
+                # (see Stage 1 comment above) and must not be confused with
+                # the real count. /api/forge/brain-status intentionally
+                # overwrites the "rules_active" key with _real_rule_stats()'s
+                # DB-backed enabled-RuleConfig count (dict-spread order below
+                # makes that explicit rather than relying on luck), which is
+                # what the Pipeline Canvas's "N rules active" label reads.
+                "rules_json_active": active_rule_count,
                 "ais_alerts":        len(new_ais_alerts),
                 "dark_alerts":       len(new_dark_alerts),
                 "adsb_alerts":       len(new_adsb_alerts),
@@ -20243,82 +20222,6 @@ async def forge_update_source_config(source_id: str, request: Request):
     return cfg[source_id]
 
 
-# ── Forge rule dry-run ────────────────────────────────────────────────────────
-
-@app.post("/api/forge/rules/{rule_id}/test")
-def forge_test_rule(rule_id: str):
-    if not _HAS_DETECTORS:
-        raise HTTPException(status_code=503, detail="Detector engine not available")
-    rules = _forge_load("rules.json")
-    rule = next((r for r in rules if r.get("id") == rule_id), None)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Rule not found")
-
-    source = rule.get("source", "AIS")
-    hits: list = []
-    checked = 0
-
-    if source == "AIS":
-        tester = _AISAnomalyDetector()
-        tester.load_rules([{**rule, "status": "active"}])
-        cables = _prep_cables_for_detector()
-        with _AIS_LOCK:
-            vessels_snap = dict(_AIS_VESSELS)
-        normalized = {}
-        for _m, _v in vessels_snap.items():
-            _n = _normalize_vessel(_v, _m)
-            if _n:
-                normalized[_m] = _n
-        checked = min(len(normalized), 500)
-        for vessel in list(normalized.values())[:500]:
-            hits.extend(tester.check_vessel(vessel, cables=cables,
-                                            chokepoints=_CHOKEPOINT_DEFS,
-                                            all_vessels=normalized))
-        label = "vessels"
-
-    elif source == "ADSB":
-        for ac in list(_GLOBAL_ADSB_CACHE.values())[:500]:
-            checked += 1
-            hits.extend(_adsb_detector.check_aircraft(ac))
-        label = "aircraft"
-
-    elif source == "NEWS":
-        keywords = [kw.lower() for kw in rule.get("params", {}).get("keywords", [])]
-        sev_map  = {"critical": 5, "high": 4, "elevated": 3, "medium": 2, "low": 1}
-        try:
-            events = es.get_active_events()
-        except Exception:
-            events = []
-        for ev in events[:500]:
-            checked += 1
-            text = ((ev.get("headline") or ev.get("title") or "") + " " +
-                    (ev.get("summary") or ev.get("body") or "")).lower()
-            sev_raw = ev.get("severity") or ev.get("score", 0)
-            sev_num = sev_map.get(str(sev_raw).lower(), 0) if isinstance(sev_raw, str) else (sev_raw or 0)
-            matched = (any(kw in text for kw in keywords) if keywords else sev_num >= 4)
-            if matched:
-                hits.append({
-                    "message":  f"Match: '{(ev.get('headline') or ev.get('title') or '')[:60]}'",
-                    "severity": ev.get("severity", "medium"),
-                })
-        label = "news events"
-
-    else:
-        label = "items"
-
-    return {
-        "rule_id":       rule_id,
-        "rule_name":     rule.get("name"),
-        "source":        source,
-        "checked":       checked,
-        "label":         label,
-        "would_trigger": len(hits),
-        "hits":          len(hits),
-        "sample_alerts": hits[:5],
-        "sample":        hits[:5],
-    }
-
-
 # ── Forge training stats ──────────────────────────────────────────────────────
 
 @app.get("/api/forge/training/stats/{detector_id}")
@@ -20429,7 +20332,6 @@ def forge_download_model(model_name: str):
 
 @app.get("/api/forge/brain/inspect")
 def forge_brain_inspect():
-    rules = _forge_load("rules.json")
     labels = _forge_load("forge_labels.json")
     confirmed = sum(1 for l in labels if l.get("label") in ("confirm", "confirmed", "correct"))
     corrected  = sum(1 for l in labels if l.get("label") in ("correct", "corrected", "adjusted"))
@@ -20446,28 +20348,26 @@ def forge_brain_inspect():
                 "status":  "active" if "obb" in fname else "standby",
             })
 
-    # Correlation engine params
+    # Correlation engine params. CorrelationEngine.__init__ only ever defines
+    # entity_history and confidence_weights — there is no time_window / distance_km /
+    # min_confidence / min_signals attribute anywhere on the class, so those were
+    # previously fabricated fallback numbers (and didn't even match the real hardcoded
+    # radius_km=100 used by CorrelationEngine.correlate() -> _cluster_by_proximity).
+    # Report only what's real: the actual hardcoded clustering radius, the actual
+    # domain-diversity requirement to form an assessment (correlate(): len(domains) >= 2),
+    # and the real confidence_weights attribute.
     corr_params = {}
     if _correlation_engine:
-        try:
-            corr_params = {
-                "time_window_s":    getattr(_correlation_engine, "time_window",    3600),
-                "distance_km":      getattr(_correlation_engine, "distance_km",    150),
-                "min_confidence":   getattr(_correlation_engine, "min_confidence", 0.6),
-                "min_signals":      getattr(_correlation_engine, "min_signals",    2),
-            }
-        except Exception:
-            pass
+        corr_params = {
+            "distance_km":                  100,   # CorrelationEngine.correlate() -> _cluster_by_proximity(radius_km=100), hardcoded
+            "min_domains_for_correlation":  2,      # CorrelationEngine.correlate(): requires len(domains) >= 2
+            "confidence_weights":           _correlation_engine.confidence_weights,
+        }
 
     return {
         "weights":         _threat_engine.weights if _threat_engine else {},
         "corr_params":     corr_params,
-        "rules_total":     len(rules),
-        "rules_active":    sum(1 for r in rules if r.get("status") == "active"),
-        "rules_by_source": {
-            src: sum(1 for r in rules if r.get("source") == src)
-            for src in ("AIS", "ADSB", "NEWS", "SATELLITE")
-        },
+        **_real_rule_stats(),
         "models":          models,
         "training_labels": len(labels),
         "training_accuracy": round(confirmed / max(confirmed + corrected, 1) * 100, 1),
@@ -20662,6 +20562,16 @@ def api_fusions_list(
                 q = q.filter(_FE.created_at >= _since_dt)
             except ValueError:
                 pass
+        # Exclude synthetic rows written by test_gdelt_fusion_signal.py's own
+        # (intentional, documented) practice of writing real FusionEvent rows into
+        # this same production DB. That test tags every row it creates with
+        # "AUTOMATED TEST" in location_name and a "TEST-"-prefixed fusion_id/signal_id
+        # — filter those out permanently, not as a one-time cleanup, since the test
+        # keeps running and keeps writing new rows. (Guard against NULL location_name/
+        # fusion_id with OR ... IS NULL — a bare NOT LIKE silently drops NULL rows in SQL.)
+        from sqlalchemy import or_ as _or_fus
+        q = q.filter(_or_fus(_FE.location_name.is_(None), ~_FE.location_name.like("%AUTOMATED TEST%")))
+        q = q.filter(_or_fus(_FE.fusion_id.is_(None), ~_FE.fusion_id.like("TEST-%")))
         rows = q.order_by(_FE.created_at.desc()).limit(limit).all()
         result = []
         for r in rows:
@@ -21058,6 +20968,14 @@ def api_signals_recent(limit: int = 50):
     if not _fusion_engine:
         return []
     sigs = _fusion_engine.get_recent_signals()
+    # Exclude synthetic test signals (see /api/fusions for the same convention):
+    # test_gdelt_fusion_signal.py tags every signal it writes with "AUTOMATED TEST"
+    # in location_name and a "TEST-"-prefixed signal_id.
+    sigs = [
+        sig for sig in sigs
+        if "AUTOMATED TEST" not in (sig.get("location_name") or "")
+        and not str(sig.get("signal_id") or "").startswith("TEST-")
+    ]
     result = []
     for sig in sigs[-limit:]:
         ts = sig.get("timestamp")
@@ -22176,111 +22094,6 @@ async def forge_alert_feedback(alert_idx: int, request: Request):
     return {"weights": _threat_engine.weights, "rule_adjusted": rule_id if rule_adjusted else None}
 
 
-# ── Threat scores ─────────────────────────────────────────────────────────────
-
-_THREAT_REGION_BOUNDS = {
-    "Persian Gulf":    {"lat": [23.0, 30.0], "lng": [48.0, 60.0]},
-    "Red Sea":         {"lat": [12.0, 30.0], "lng": [32.0, 45.0]},
-    "East Med":        {"lat": [30.0, 37.0], "lng": [25.0, 37.0]},
-    "Sahel":           {"lat": [10.0, 20.0], "lng": [-15.0, 15.0]},
-    "Horn of Africa":  {"lat": [-5.0, 15.0], "lng": [35.0, 55.0]},
-    "South China Sea": {"lat": [5.0, 25.0],  "lng": [105.0, 125.0]},
-    "Black Sea":       {"lat": [40.0, 47.0], "lng": [27.0, 42.0]},
-    "Baltic":          {"lat": [53.0, 66.0], "lng": [10.0, 30.0]},
-}
-
-
-def _in_region(lat, lng, bounds):
-    if lat is None or lng is None:
-        return False
-    return (bounds["lat"][0] <= lat <= bounds["lat"][1] and
-            bounds["lng"][0] <= lng <= bounds["lng"][1])
-
-
-_THREAT_REGION_BOUNDS_V2 = {
-    "Persian Gulf":          {"lat": [23.0, 30.0], "lng": [48.0, 60.0]},
-    "Red Sea / Bab el-Mandeb": {"lat": [12.0, 22.0], "lng": [32.0, 45.0]},
-    "East Mediterranean":    {"lat": [30.0, 37.0], "lng": [25.0, 37.0]},
-    "Sahel":                 {"lat": [10.0, 20.0], "lng": [-15.0, 15.0]},
-    "Horn of Africa":        {"lat": [-5.0, 15.0], "lng": [35.0, 55.0]},
-    "South China Sea":       {"lat":  [5.0, 25.0], "lng": [105.0, 125.0]},
-    "Black Sea / Ukraine":   {"lat": [40.0, 50.0], "lng": [27.0, 42.0]},
-    "Baltic":                {"lat": [53.0, 66.0], "lng": [10.0, 30.0]},
-    "Taiwan Strait":         {"lat": [22.0, 28.0], "lng": [116.0, 125.0]},
-    "Indian Ocean":          {"lat": [-10.0, 15.0], "lng": [55.0, 80.0]},
-}
-
-
-@app.get("/api/forge/threat-scores")
-def forge_threat_scores():
-    if not _HAS_DETECTORS:
-        return []
-
-    # Snapshot live data once
-    with _AIS_LOCK:
-        vessels_snap = list(_AIS_VESSELS.values())
-    active_events = []
-    try:
-        active_events = es.get_active_events()
-    except Exception as e:
-        logger.exception("forge_threat_scores: event store query failed")
-        pass
-
-    scores = []
-    for region_name, bounds in _THREAT_REGION_BOUNDS_V2.items():
-        # Forge alerts
-        region_alerts = [a for a in _forge_alerts if _in_region(a.get("lat"), a.get("lng"), bounds)]
-        ais_alerts    = [a for a in region_alerts if a.get("source") == "AIS"]
-        adsb_alerts   = [a for a in region_alerts if a.get("source") == "ADSB"]
-
-        # ALL news events in region (not just high severity — density matters)
-        news_count = sum(
-            1 for ev in active_events
-            if _in_region(ev.get("lat"), ev.get("lng") or ev.get("lon"), bounds)
-        )
-
-        # High-severity news for escalation signal
-        news_high = sum(
-            1 for ev in active_events
-            if _in_region(ev.get("lat"), ev.get("lng") or ev.get("lon"), bounds)
-            and (ev.get("severity") or "").lower() in ("high", "critical")
-        )
-
-        # Live vessels in region (even without alerts — density is signal)
-        vessel_count = sum(
-            1 for v in vessels_snap
-            if _in_region(v.get("lat"), v.get("lon") or v.get("lng"), bounds)
-        )
-
-        region_corrs = [c for c in _correlation_assessments
-                        if _in_region(c.get("lat"), c.get("lng"), bounds)]
-
-        signals = {
-            "ais_anomaly":      min(len(ais_alerts)  * 0.15, 1.0),
-            "adsb_anomaly":     min(len(adsb_alerts) * 0.20, 1.0),
-            "news_escalation":  min(news_high         * 0.08 + news_count * 0.01, 1.0),
-            "satellite_change": 0.0,
-            "event_density":    min(news_count * 0.02 + vessel_count * 0.005, 1.0),
-        }
-        result = _threat_engine.calculate_region_threat(region_name, signals, correlations=region_corrs)
-        result["alert_count"]    = len(region_alerts)
-        result["vessel_count"]   = vessel_count
-        result["news_count"]     = news_count
-        result["corr_count"]     = len(region_corrs)
-        result["signals_raw"] = {
-            "ais_alerts":       len(ais_alerts),
-            "adsb_alerts":      len(adsb_alerts),
-            "news_events":      news_count,
-            "news_high":        news_high,
-            "vessels_tracked":  vessel_count,
-            "correlations":     len(region_corrs),
-        }
-        scores.append(result)
-
-    scores.sort(key=lambda x: x["score"], reverse=True)
-    return scores
-
-
 @app.get("/api/analytics/threat-matrix")
 def analytics_threat_matrix():
     """Current threat scores for all regions — from hourly in-memory cache."""
@@ -22342,22 +22155,6 @@ def analytics_threat_matrix_history(
             }
             for r in rows
         ]
-
-
-# ── Training data export ──────────────────────────────────────────────────────
-
-@app.get("/api/forge/export-training-data")
-def forge_export_training_data():
-    labels = _forge_load("forge_labels.json")
-    confirmed = [l for l in labels if l.get("label") == "confirmed"]
-    corrected  = [l for l in labels if l.get("label") == "corrected"]
-    return {
-        "total":               len(labels),
-        "confirmed":           len(confirmed),
-        "corrected":           len(corrected),
-        "labels":              labels,
-        "ready_for_training":  len(labels) >= 500,
-    }
 
 
 # ── Ontology ──────────────────────────────────────────────────────────────────
@@ -22686,70 +22483,6 @@ def get_ontology_positions():
         return {}
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FORGE MISSIONS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_FORGE_MISSION_FILE = "forge_missions.json"
-
-_DEFAULT_MISSION = {
-    "id": "mission_default",
-    "name": "Global Monitoring",
-    "description": "Full-spectrum global intelligence monitoring",
-    "active": True,
-    "created": "2026-01-01T00:00:00",
-    "regions": [
-        {"name": "Persian Gulf",    "bounds": [23, 48, 30, 60]},
-        {"name": "Red Sea",         "bounds": [12, 32, 30, 45]},
-        {"name": "East Med",        "bounds": [30, 25, 37, 36]},
-        {"name": "Sahel",           "bounds": [10, -15, 20, 15]},
-        {"name": "Horn of Africa",  "bounds": [-5, 35, 15, 55]},
-        {"name": "South China Sea", "bounds": [5, 105, 25, 125]},
-        {"name": "Black Sea",       "bounds": [40, 27, 47, 42]},
-        {"name": "Baltic",          "bounds": [53, 10, 66, 30]},
-    ],
-    "data_sources": {
-        "ais":       {"enabled": True,  "bboxes": "global"},
-        "adsb":      {"enabled": True,  "regions": "global"},
-        "news":      {"enabled": True,  "feeds": "all", "keywords": []},
-        "satellite": {"enabled": True,  "watch_areas": []},
-    },
-    "rules": "all",
-    "focus_entities": [],
-}
-
-
-@app.get("/api/forge/missions")
-def forge_get_missions():
-    missions = _forge_load(_FORGE_MISSION_FILE)
-    if not missions:
-        missions = [_DEFAULT_MISSION]
-        _forge_save(_FORGE_MISSION_FILE, missions)
-    return missions
-
-
-@app.post("/api/forge/missions")
-async def forge_create_mission(request: Request):
-    body = await request.json()
-    missions = _forge_load(_FORGE_MISSION_FILE)
-    if not missions:
-        missions = [_DEFAULT_MISSION]
-    mission = {
-        "id":             f"mission_{int(datetime.now(timezone.utc).timestamp())}",
-        "name":           body.get("name", "Untitled Mission"),
-        "description":    body.get("description", ""),
-        "active":         False,
-        "created":        datetime.now(timezone.utc).isoformat(),
-        "regions":        body.get("regions", []),
-        "data_sources":   body.get("data_sources", {}),
-        "rules":          body.get("rules", "all"),
-        "focus_entities": body.get("focus_entities", []),
-    }
-    missions.append(mission)
-    _forge_save(_FORGE_MISSION_FILE, missions)
-    return mission
-
-
 # ── Pipeline persistence ───────────────────────────────────────────────────────
 
 _FORGE_PIPELINE_FILE = _FORGE_DIR / "pipeline.json"
@@ -22789,6 +22522,7 @@ async def forge_save_pipeline(request: Request):
 async def forge_delete_pipeline_node(request: Request):
     body    = await request.json()
     node_id = body.get("node_id", "")
+    rule_configs_changed = 0
     if node_id.startswith("det_"):
         src_map = {"det_ais": "AIS", "det_adsb": "ADSB", "det_news": "NEWS", "det_overwatch": "SATELLITE"}
         source  = src_map.get(node_id)
@@ -22798,7 +22532,14 @@ async def forge_delete_pipeline_node(request: Request):
                 if r.get("source") == source:
                     r["status"] = "disabled_by_pipeline"
             _forge_save("rules.json", rules)
-    return {"deleted": node_id}
+        # Real control surface: disable the RuleConfig rows this node
+        # actually dispatches (see PIPELINE_NODE_RULE_FAMILIES). Deleting a
+        # node is treated as "turn the whole family off", not a literal row
+        # delete — same non-destructive spirit as rules.json's
+        # "disabled_by_pipeline" status above.
+        rule_configs_changed = _sync_ruleconfig_family(node_id, False)
+        print(f"[forge-pipeline] delete-node {node_id} → {rule_configs_changed} RuleConfig row(s) disabled")
+    return {"deleted": node_id, "rule_configs_changed": rule_configs_changed}
 
 
 @app.post("/api/forge/pipeline/delete-edge")
@@ -22821,8 +22562,12 @@ async def forge_toggle_pipeline_node(request: Request):
             if r.get("source") == source:
                 r["status"] = "active" if new_status == "active" else "paused"
         _forge_save("rules.json", rules)
-    print(f"[forge-pipeline] {node_id} → {new_status}")
-    return {"node_id": node_id, "status": new_status}
+    # Real control surface: flip the RuleConfig rows this node actually
+    # dispatches (see PIPELINE_NODE_RULE_FAMILIES) — the rules.json flip
+    # above no longer gates live detection for det_ais/det_adsb/det_news.
+    rule_configs_changed = _sync_ruleconfig_family(node_id, new_status == "active")
+    print(f"[forge-pipeline] {node_id} → {new_status} ({rule_configs_changed} RuleConfig row(s) synced)")
+    return {"node_id": node_id, "status": new_status, "rule_configs_changed": rule_configs_changed}
 
 
 async def _apply_pipeline_changes(pipeline: dict):
@@ -22834,7 +22579,7 @@ async def _apply_pipeline_changes(pipeline: dict):
     changed = False
     for det_id, source in src_map.items():
         det_node  = next((n for n in nodes if n.get("id") == det_id), None)
-        is_active = det_id in active_dets and det_node and det_node.get("status") == "active"
+        is_active = bool(det_id in active_dets and det_node and det_node.get("status") == "active")
         for r in rules:
             if r.get("source") != source:
                 continue
@@ -22842,19 +22587,12 @@ async def _apply_pipeline_changes(pipeline: dict):
                 r["status"] = "paused_by_pipeline"; changed = True
             elif is_active and r.get("status") == "paused_by_pipeline":
                 r["status"] = "active"; changed = True
+        # Mirror the same on/off decision onto the real DB-backed RuleConfig
+        # family for this node — the one that actually gates live detection.
+        # See PIPELINE_NODE_RULE_FAMILIES / _sync_ruleconfig_family.
+        _sync_ruleconfig_family(det_id, is_active)
     if changed:
         _forge_save("rules.json", rules)
-
-
-@app.put("/api/forge/missions/{mission_id}/activate")
-def forge_activate_mission(mission_id: str):
-    missions = _forge_load(_FORGE_MISSION_FILE)
-    if not missions:
-        missions = [_DEFAULT_MISSION]
-    for m in missions:
-        m["active"] = (m["id"] == mission_id)
-    _forge_save(_FORGE_MISSION_FILE, missions)
-    return {"activated": mission_id}
 
 
 # ── Strategic Zones API ───────────────────────────────────────────────────────

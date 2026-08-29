@@ -714,6 +714,39 @@ class NewsArticle(Base):
     )
 
 
+class NewsClassificationLog(Base):
+    """
+    Structured, queryable record of every classification-funnel decision made
+    for a news article — dedup suppression, cheap-prescore rejection,
+    embedding-relevance verdict, whether Haiku was actually invoked, and the
+    final tier/relevance_score assigned. Previously this funnel only emitted
+    print() debug lines; nothing was queryable. NOT intended to train a
+    classifier this round — this table exists so that future round doesn't
+    need a retrofit to get the data in the first place.
+    """
+    __tablename__ = "news_classification_log"
+
+    id                     = Column(Integer, primary_key=True)
+    url                    = Column(String, nullable=False, index=True)
+    ts                     = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    stage                  = Column(String, nullable=False, index=True)
+    # stage ∈ {dedup_suppressed, failed_cheap_prescore,
+    #          embedding_relevance_score_and_verdict, haiku_called_with_result,
+    #          fallback_default}
+    cheap_prescore         = Column(Integer, nullable=True)
+    embedding_score        = Column(Float, nullable=True)
+    embedding_verdict      = Column(String, nullable=True)   # relevant|uncertain|irrelevant|not_computed
+    haiku_called           = Column(Boolean, default=False)
+    duplicate_of_url       = Column(String, nullable=True)   # set only when stage == dedup_suppressed
+    final_tier             = Column(Integer, nullable=True)
+    final_relevance_score  = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("ix_newsclf_stage_time", "stage", "ts"),
+        Index("ix_newsclf_url_time",   "url",   "ts"),
+    )
+
+
 class OntologyLink(Base):
     """Directed link from an event (alert/signal/article) to an ontology entity."""
     __tablename__ = "ontology_links"

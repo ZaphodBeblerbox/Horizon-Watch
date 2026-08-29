@@ -82,7 +82,14 @@ class AISAnomalyDetector:
             params           = rule.get("params") or {}
             max_speed        = float(params.get("max_speed_knots", 2.0))
             distance_metres  = float(params.get("distance_metres", 500))
-            duration_minutes = float(params.get("duration_minutes", 30))
+            # seed_rules.py (the real rule-creation script) and the Rules UI
+            # both write "min_duration_minutes" — that must be read first, or
+            # every real Cable/Port Loitering RuleConfig row silently falls
+            # back to the 30/60min default below regardless of what an
+            # operator actually configured. "duration_minutes" is kept as a
+            # fallback for older callers/tests that still use that key.
+            duration_minutes = float(params.get("min_duration_minutes",
+                                      params.get("duration_minutes", 30)))
             target           = str(params.get("target", "ALL")).upper()
 
             if speed is None:
@@ -197,7 +204,11 @@ class AISAnomalyDetector:
             params           = rule.get("params") or {}
             max_speed        = float(params.get("max_speed_knots", 2.0))
             proximity_m      = float(params.get("proximity_metres", 2000))
-            duration_minutes = float(params.get("duration_minutes", 60))
+            # See check_loitering()'s comment: prefer "min_duration_minutes"
+            # (what seed_rules.py / the Rules UI actually write) over the
+            # legacy "duration_minutes" key.
+            duration_minutes = float(params.get("min_duration_minutes",
+                                      params.get("duration_minutes", 60)))
             target           = str(params.get("target", "ALL")).upper()
             icon_type        = params.get("icon_type", "LOITERING_PORT")
             severity         = rule.get("severity", "high")

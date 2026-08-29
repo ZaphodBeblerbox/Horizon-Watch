@@ -21,9 +21,64 @@ from typing import Any
 BASE_DIR       = Path(__file__).resolve().parent
 USAGE_LOG_PATH = BASE_DIR / "usage_log.json"
 
-# Sonnet pricing (claude-sonnet-4)
-PRICE_INPUT_PER_TOKEN  = 0.000003   # $3  / 1M input tokens
-PRICE_OUTPUT_PER_TOKEN = 0.000015   # $15 / 1M output tokens
+# ── Per-model pricing ──────────────────────────────────────────────────────────
+# Previously this module hardcoded ONE flat rate (Sonnet's) for every call type.
+# article_intelligence.py's analyse_article() and main.py's _gate1_filter_markers()
+# both call Haiku (claude-haiku-4-5), which is ~3x cheaper than Sonnet on both
+# input and output tokens — so every recorded "today's cost" for a Haiku call was
+# actually ~3x the true dollar cost. Prices below are current Anthropic API rates
+# (verified via the claude-api skill's pricing table, cached 2026-06-24):
+#   Haiku 4.5:  $1/1M input,  $5/1M output
+#   Sonnet 4.x: $3/1M input, $15/1M output
+#   Opus:       $5/1M input, $25/1M output  (not currently called anywhere in this
+#                                             codebase; included for completeness)
+# Keyed by a lowercase substring of the model id — every "claude-sonnet-*" /
+# "claude-haiku-*" / "claude-opus-*" id in this codebase matches one entry
+# without needing an exact-string table that goes stale on every new dated
+# snapshot id.
+_PRICE_TABLE: dict[str, tuple[float, float]] = {
+    "claude-haiku":  (0.000001, 0.000005),
+    "claude-sonnet": (0.000003, 0.000015),
+    "claude-opus":   (0.000005, 0.000025),
+}
+# Preserves the old flat-rate behaviour for any call site that doesn't (yet) pass
+# a model= or a recognised call_type — i.e. this is the previous hardcoded price,
+# now only the FALLBACK rather than the only rate that exists.
+_DEFAULT_PRICE = _PRICE_TABLE["claude-sonnet"]
+PRICE_INPUT_PER_TOKEN, PRICE_OUTPUT_PER_TOKEN = _DEFAULT_PRICE  # kept for any external readers
+
+# call_type → model-family hint, used only when a call site records a call
+# without an explicit model= (defense in depth — every call site that matters
+# for cost accounting has been updated to pass model= explicitly too).
+_CALL_TYPE_MODEL_HINT: dict[str, str] = {
+    "article_intelligence": "claude-haiku",
+    "gate1_relevance":      "claude-haiku",
+}
+
+# Single shared default for CLAUDE_DAILY_HARD_CAP_USD. main.py previously
+# defaulted this env var to 10.0 while article_intelligence.py defaulted the
+# SAME env var to 0.65 — since backend/.env never set it explicitly, the two
+# code paths self-throttled Haiku calls at wildly different effective daily
+# budgets. Both now import this one constant instead of hardcoding their own
+# fallback string.
+DEFAULT_DAILY_HARD_CAP_USD = 10.0
+
+
+def _price_for(model: str | None, call_type: str | None = None) -> tuple[float, float]:
+    """Return (input_price_per_token, output_price_per_token) for a call.
+    Prefers an explicit model id; falls back to a call_type hint; falls back
+    to the historical flat Sonnet-equivalent rate for anything unrecognised."""
+    if model:
+        m = model.lower()
+        for prefix, price in _PRICE_TABLE.items():
+            if prefix in m:
+                return price
+    if call_type:
+        hint = _CALL_TYPE_MODEL_HINT.get(call_type)
+        if hint:
+            return _PRICE_TABLE[hint]
+    return _DEFAULT_PRICE
+
 
 DEDUP_TTL_SECONDS = 24 * 3600
 
@@ -65,9 +120,11 @@ def record_call(
     output_tokens: int,
     call_type:     str = "analysis",   # "briefing" | "analysis" | "route" | "background"
     headline:      str = "",
+    model:         str | None = None,  # e.g. "claude-haiku-4-5-20251001" — drives correct per-model pricing
 ) -> None:
     """Accumulate token counts and cost after a successful Claude call."""
-    cost  = (input_tokens * PRICE_INPUT_PER_TOKEN) + (output_tokens * PRICE_OUTPUT_PER_TOKEN)
+    price_in, price_out = _price_for(model, call_type)
+    cost  = (input_tokens * price_in) + (output_tokens * price_out)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     now   = time.time()
     with _lock:

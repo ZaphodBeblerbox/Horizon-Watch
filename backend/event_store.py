@@ -11,6 +11,22 @@ Architecture:
 - Events expire after 72 hours (configurable)
 - Theater filter applies at query time, not ingest time
 - No Claude calls — all logic is deterministic Python
+
+NOTE on `corroboration_count` vs. fusion_engine.py's corroboration:
+This module's `corroboration_count` (see `ingest_event()`/`build_threads()`) counts
+repeated NEWS-source mentions of the *same story* — e.g. 5 different outlets all
+reporting one airstrike increments this to 5. It has no domain-diversity requirement:
+all 5 mentions can come from the news feed alone, and it directly nudges a thread's
+`significance_score` upward on each repeat.
+
+This is a *different, weaker* concept from `fusion_engine.py`'s corroboration, which
+requires signals from >=2 distinct sensor *domains* (AIS/ADSB/NEWS/SATELLITE) to
+agree before a `FusionEvent` is raised — "N outlets reported this story" vs.
+"N independent sensor domains corroborate this". Do not conflate the two: a high
+`corroboration_count` here means one thing was widely reported, not that it was
+independently confirmed across domains. See GlobeFusionPopup.jsx's "Multi-domain
+corroboration note" for the UI surface of the *fusion_engine* concept — that one is
+fine as-is and reads `f.signal_count`/domains, not this module's `corroboration_count`.
 """
 
 from __future__ import annotations

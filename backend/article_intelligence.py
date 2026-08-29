@@ -108,7 +108,11 @@ def analyse_article(
     try:
         import os as _os
         import usage_tracker as _ut
-        _daily_cap = float(_os.getenv("CLAUDE_DAILY_HARD_CAP_USD", "0.65"))
+        # Shared default (see usage_tracker.DEFAULT_DAILY_HARD_CAP_USD) — this used
+        # to hardcode "0.65" here while main.py hardcoded "10.0" for the SAME env
+        # var, so the two code paths self-throttled at wildly different effective
+        # daily budgets whenever CLAUDE_DAILY_HARD_CAP_USD was left unset.
+        _daily_cap = float(_os.getenv("CLAUDE_DAILY_HARD_CAP_USD", str(_ut.DEFAULT_DAILY_HARD_CAP_USD)))
         _today_cost = _ut.get_today_cost()
         if _today_cost >= _daily_cap:
             print(f"[article-intelligence] Daily cap ${_daily_cap} hit "
@@ -133,6 +137,7 @@ def analyse_article(
             msg.usage.output_tokens,
             call_type="article_intelligence",
             headline=(title or "")[:120],
+            model="claude-haiku-4-5-20251001",
         )
         raw = _STRIP_MD.sub("", msg.content[0].text.strip())
         data = json.loads(raw)
