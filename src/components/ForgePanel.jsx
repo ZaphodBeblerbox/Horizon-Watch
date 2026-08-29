@@ -5206,37 +5206,8 @@ function TrainingWorkspace({ detectorSource }) {
                                 .then(r => r.blob()).then(blob => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = "yolov8n-obb.onnx"; a.click(); URL.revokeObjectURL(u) })
                         }} style={actionBtn("#94a3b8")}>↓ Download yolov8n-obb.onnx</button>
                     </Section>
-                    <Section title="Upload Retrained Model">
-                        <ModelUploadZone />
-                    </Section>
                 </div>
             )}
-        </div>
-    )
-}
-
-function ModelUploadZone() {
-    const [uploading, setUploading] = useState(false)
-    const [msg, setMsg] = useState("")
-    const fileRef = useRef(null)
-    const upload = async (e) => {
-        const file = e.target.files?.[0]; if (!file) return
-        setUploading(true); setMsg("")
-        const fd = new FormData(); fd.append("file", file)
-        try {
-            const res = await fetch(`${API}/api/forge/models/upload`, { method: "POST", headers: forgeFormHeaders(), body: fd })
-            const d = await res.json()
-            setMsg(res.ok ? `Uploaded: ${d.name || file.name}` : d.detail || "Failed")
-        } catch (_e) { setMsg("Upload failed") }
-        finally { setUploading(false); if (fileRef.current) fileRef.current.value = "" }
-    }
-    return (
-        <div>
-            <input ref={fileRef} type="file" accept=".onnx" onChange={upload} disabled={uploading} style={{ display: "none" }} id="model-upload" />
-            <label htmlFor="model-upload" style={{ display: "block", border: "1px dashed rgba(148,163,184,0.12)", borderRadius: 4, padding: 20, textAlign: "center", cursor: uploading ? "default" : "pointer", color: "#475569", fontSize: 11 }}>
-                {uploading ? "Uploading…" : "Drop .onnx file or click to upload"}
-            </label>
-            {msg && <div style={{ color: msg.startsWith("Uploaded") ? "#4ade80" : "#f87171", fontSize: 11, marginTop: 6 }}>{msg}</div>}
         </div>
     )
 }
@@ -6333,6 +6304,15 @@ function OntologyWorkspace() {
                 <span style={{ color: "#334155", fontSize: 10 }}>{nodes.length} · {edges.length}</span>
                 {buildMsg && <span style={{ color: buildMsg.startsWith("Error") ? "#f87171" : "#4ade80", fontSize: 10 }}>{buildMsg}</span>}
             </Toolbar>
+            {(view === "table" || view === "graph" || view === "live") && (
+                <div style={{ padding: "4px 12px", fontSize: 10, lineHeight: 1.4, color: "#64748b", borderBottom: "1px solid rgba(148,163,184,0.06)", background: "#0a0e1a" }}>
+                    {view === "live" ? (
+                        <><b style={{ color: "#ec4899" }}>Live Operational Graph</b> — the DB-backed entity/link graph (OntologyEntity/OntologyLink), continuously populated from raw AIS/ADSB/cable/news feeds. Unreviewed by an analyst; this is a different dataset from the Reviewed Claims Graph, not another view of it.</>
+                    ) : (
+                        <><b style={{ color: "#60a5fa" }}>Reviewed Claims Graph</b> — built only from claims an analyst has approved (upload document → Claude extracts claims → analyst approves → edge added). Distinct from the Live Operational Graph; not the same data.</>
+                    )}
+                </div>
+            )}
             {(showAdd || showLink) && (
                 <div style={{ padding: "4px 12px", borderBottom: "1px solid rgba(148,163,184,0.06)", background: "#080c16" }}>
                     {showAdd  && <AddEntityRow     onAdd={entity => addEntity(entity)} />}

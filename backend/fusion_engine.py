@@ -573,6 +573,44 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                         pass
                 print(f"[fusion] Reloaded {reloaded} signals from DB "
                       f"({len(self.active_signals)} geo keys)")
+
+                # Also restore _recent_signals — this (not active_signals) is what
+                # GET /api/signals/recent / the Signal Monitor panel actually serves.
+                # Previously only active_signals was restored here, so the panel
+                # always showed "0 signals" after every restart even when real
+                # signal history existed in the DB. Respect the same maxsize=200
+                # cap and oldest-first storage order _log_signal() uses (
+                # get_recent_signals() reverses to most-recent-first at read time).
+                try:
+                    recent_rows = list(reversed(
+                        _db.query(FusionSignal)
+                        .order_by(FusionSignal.created_at.desc())
+                        .limit(200)
+                        .all()
+                    ))
+                    _recent: list = []
+                    for row in recent_rows:
+                        try:
+                            payload = _json.loads(row.payload or "{}")
+                        except Exception:
+                            payload = {}
+                        ts = payload.get("timestamp")
+                        if not isinstance(ts, str):
+                            ts = row.created_at.isoformat() if row.created_at else ""
+                        _recent.append({
+                            "signal_id":     payload.get("signal_id") or row.signal_id,
+                            "domain":        payload.get("domain") or row.domain,
+                            "severity":      payload.get("severity") or row.severity,
+                            "rule_name":     payload.get("rule_name") or row.rule_name,
+                            "location_name": payload.get("location_name") or row.location_name,
+                            "summary":       str(payload.get("summary") or row.summary or "")[:120],
+                            "timestamp":     ts,
+                        })
+                    self._recent_signals = _recent
+                    print(f"[fusion] Reloaded {len(self._recent_signals)} recent signals from DB")
+                except Exception as _rs_e:
+                    print(f"[fusion] recent-signals reload error: {_rs_e}")
+
                 # Re-evaluate fusion for any geo key that now meets thresholds
                 for geo_key in list(self.active_signals.keys()):
                     self._evaluate_fusion(geo_key)
