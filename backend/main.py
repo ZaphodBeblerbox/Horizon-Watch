@@ -588,9 +588,6 @@ _DIRECTOR_JOBS: dict = {}   # job_id → { status, progress, intent, created_at,
 # ── Last prepared intelligence picture ───────────────────────────────────────
 _last_intelligence_picture: dict = {}
 
-# ── Anomaly alerts ───────────────────────────────────────────────────────────
-_ANOMALY_ALERTS: list = []
-
 # ── ADS-B and AIS history recording throttle ─────────────────────────────────
 _ADSB_LAST_RECORDED: CappedDict = CappedDict(maxsize=20_000)  # icao24 → last record timestamp
 _AIS_LAST_RECORDED:  CappedDict = CappedDict(maxsize=20_000)  # mmsi   → last record timestamp
@@ -8857,25 +8854,10 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
     _forge_alerts.append(_alert)
     print(f"[news-pattern] fired {pattern_type} for {location.upper()} ({count} articles, conf={confidence:.2f})")
 
-    # Feed fusion engine via normalize_signal
-    if _fusion_engine:
-        try:
-            _fusion_engine.on_signal(normalize_signal(
-                "NEWS",
-                {
-                    "severity":      pdef.get("severity", "medium"),
-                    "lat":           lat,
-                    "lon":           lon,
-                    "location_name": location.upper(),
-                    "country":       location if len(location) == 2 else None,
-                    "rule_id":       rule.get("id"),
-                    "rule_name":     rule.get("name") or rule.get("rule_name"),
-                    "title":         headline,
-                    "assessment_id": assess_id,
-                },
-            ))
-        except Exception as _fe_err:
-            print(f"[fusion] news signal error: {_fe_err}")
+    # NOTE: no separate _fusion_engine.on_signal() call here — write_alert() above
+    # already feeds this alert into the fusion engine internally. A second explicit
+    # call here previously generated a brand-new random signal_id for the same
+    # semantic signal, inflating FusionSignal row counts and candidate_pool size.
 
 
 # ── Graph SSE client registry ──────────────────────────────────────────────
@@ -10000,7 +9982,15 @@ async def _global_adsb_cache_loop():
 
 
 def _cross_domain_correlation(now_iso: str) -> list:
-    """Check for military vessels/aircraft near recent high-severity news events."""
+    """Check for military vessels/aircraft near recent high-severity news events.
+
+    NOTE: this is no longer called from any live code path — its only caller,
+    _anomaly_detection_loop(), was deleted as dead code (disabled background task,
+    see git history). It is kept here because test_null_island_correlation.py has a
+    dedicated regression test directly exercising this function's Null-Island
+    fabricated-position guard (vessel/aircraft with no reported lat/lon must never be
+    treated as being at (0, 0)). Do not delete without also removing/updating that test.
+    """
     results = []
     cutoff_iso = (datetime.utcnow() - timedelta(hours=2)).isoformat()
     recent_news = [
@@ -10067,139 +10057,6 @@ def _cross_domain_correlation(now_iso: str) -> list:
     return results
 
 
-async def _anomaly_detection_loop():
-    """Run rule-based anomaly checks every 5 minutes."""
-    global _ANOMALY_ALERTS
-    await asyncio.sleep(60)   # let startup settle
-    while True:
-        await asyncio.sleep(300)
-        try:
-            new_alerts = []
-            now_iso = datetime.utcnow().isoformat()
-
-            # Check 1: vessel stopped in chokepoint
-            with _AIS_LOCK:
-                vessels_snapshot = list(_AIS_VESSELS.items())
-            for mmsi, vessel in vessels_snapshot:
-                speed = vessel.get('speed', 0) or 0
-                lat = vessel.get('lat', 0) or 0
-                lon = vessel.get('lon', 0) or 0
-                if speed < 0.5 and lat and lon:
-                    for cp_name, cp_data in _ANOMALY_CHOKEPOINTS.items():
-                        dist = _haversine(lat, lon, cp_data['center_lat'], cp_data['center_lon'])
-                        if dist < 50:
-                            vessel_name = vessel.get('name', 'Unknown')
-                            vessel_flag = vessel.get('flag', '') or ''
-                            vessel_type = vessel.get('ship_type_text', '') or 'vessel'
-                            new_alerts.append({
-                                "id": str(uuid.uuid4()),
-                                "type": "vessel_stopped_chokepoint",
-                                "severity": "elevated",
-                                "title": f"Vessel stationary in {cp_name}",
-                                "subtitle": f"{vessel_name} ({(vessel_flag + '-flagged ') if vessel_flag else ''}{vessel_type})",
-                                "description": f"MMSI {mmsi} — {vessel_name} has been stationary ({speed:.1f} kts) within the {cp_name} shipping lane. Normal transit speed is 12–15 knots.",
-                                "reason": f"Speed ({speed:.1f} kts) below 0.5 kt threshold while within {round(dist):.0f}km of {cp_name}",
-                                "lat": lat, "lon": lon,
-                                "timestamp": now_iso,
-                                "entity": mmsi,
-                                "entity_name": vessel_name,
-                                "entity_type": "vessel",
-                                "classification": None,
-                                "pinned": False,
-                                "dismissed": False,
-                            })
-
-            # Check 2: military aircraft far from known chokepoints (uses global cache for wider coverage)
-            all_ac = list(_GLOBAL_ADSB_CACHE.values())
-            if not all_ac:
-                for entry in _adsb_cache.values():
-                    all_ac.extend(entry.get('data', []))
-            for ac in all_ac:
-                callsign = ac.get('flight', '')
-                if ac.get('military') or _is_military_callsign(callsign):
-                    lat = ac.get('lat', 0) or 0
-                    lon = ac.get('lon', 0) or 0
-                    if not lat or not lon:
-                        continue
-                    min_dist = min(
-                        _haversine(lat, lon, cp['center_lat'], cp['center_lon'])
-                        for cp in _ANOMALY_CHOKEPOINTS.values()
-                    )
-                    if min_dist > 1500:
-                        icao = ac.get('icao', ac.get('hex', ''))
-                        cs_display = callsign.strip() or icao
-                        new_alerts.append({
-                            "id": str(uuid.uuid4()),
-                            "type": "military_aircraft_unusual",
-                            "severity": "elevated",
-                            "title": "Military aircraft in unusual position",
-                            "subtitle": f"{cs_display} — {int(min_dist)}km from nearest chokepoint",
-                            "description": f"Military aircraft {cs_display} is operating {int(min_dist)}km from the nearest monitored chokepoint. This may indicate a long-range patrol, strategic movement, or unscheduled operation.",
-                            "reason": f"Military callsign/flag detected {int(min_dist)}km from nearest chokepoint (threshold: 1500km)",
-                            "lat": lat, "lon": lon,
-                            "timestamp": now_iso,
-                            "entity": icao,
-                            "entity_name": cs_display,
-                            "entity_type": "aircraft",
-                            "classification": None,
-                            "pinned": False,
-                            "dismissed": False,
-                        })
-
-            # Check 3: news spike (4+ markers in same 100km area within 2 hours)
-            cutoff_dt = datetime.utcnow() - timedelta(hours=2)
-            cutoff_iso = cutoff_dt.isoformat()
-            recent_markers = [
-                m for m in _NEWS_CONFLICT_MARKERS
-                if isinstance(m, dict) and m.get('timestamp', '') > cutoff_iso and m.get('lat') and m.get('lon')
-            ]
-            if recent_markers:
-                clusters = _cluster_by_location(recent_markers, radius_km=100)
-                for cluster in clusters:
-                    if len(cluster) >= 4:
-                        center = _cluster_center(cluster)
-                        area_name = cluster[0].get('location', '') or f"({center[0]:.1f}, {center[1]:.1f})"
-                        headlines = "; ".join(c.get('title', '')[:60] for c in cluster[:3])
-                        new_alerts.append({
-                            "id": str(uuid.uuid4()),
-                            "type": "news_spike",
-                            "severity": "significant",
-                            "title": f"News spike: {len(cluster)} articles near {area_name}",
-                            "subtitle": f"{len(cluster)} reports within 100km in the past 2 hours",
-                            "description": f"Multiple news sources are reporting from near {area_name}. Sample headlines: {headlines}",
-                            "reason": f"{len(cluster)} news markers clustered within 100km radius in 2 hours (threshold: 4)",
-                            "lat": center[0], "lon": center[1],
-                            "timestamp": now_iso,
-                            "entity": f"cluster_{int(center[0]*10)}_{int(center[1]*10)}",
-                            "entity_name": area_name,
-                            "entity_type": "news_cluster",
-                            "classification": None,
-                            "pinned": False,
-                            "dismissed": False,
-                        })
-
-            # Check 4: cross-domain correlation
-            new_alerts.extend(_cross_domain_correlation(now_iso))
-
-            # Deduplicate and append (skip dismissed alerts from matching)
-            existing_keys = {(a.get('entity'), a.get('type')) for a in _ANOMALY_ALERTS if not a.get('dismissed')}
-            for alert in new_alerts:
-                key = (alert.get('entity'), alert.get('type'))
-                if key not in existing_keys:
-                    if not alert.get('id'):
-                        alert['id'] = str(uuid.uuid4())
-                    _ANOMALY_ALERTS.append(alert)
-                    existing_keys.add(key)
-                    print(f"[anomaly] new alert: {alert['title']}")
-
-            # Keep last 100
-            if len(_ANOMALY_ALERTS) > 100:
-                _ANOMALY_ALERTS[:] = _ANOMALY_ALERTS[-100:]
-
-        except Exception as e:
-            print(f"[anomaly] detection loop error: {e}")
-
-
 def _calculate_overall_threat_level(alerts):
     if any(a.get('severity') == 'critical' for a in alerts):
         return 'critical'
@@ -10210,33 +10067,24 @@ def _calculate_overall_threat_level(alerts):
     return 'normal'
 
 
-@app.get("/api/alerts/anomalies")
-async def get_anomaly_alerts(user=None):
-    return {"count": len(_ANOMALY_ALERTS), "alerts": _ANOMALY_ALERTS[-50:]}
-
-
 @app.get("/api/alerts/recent")
 async def get_recent_alerts(
-    rule_name: str = Query(None, description="Filter by rule_name (checks both _ANOMALY_ALERTS and _forge_alerts)"),
+    rule_name: str = Query(None, description="Filter by rule_name"),
     hours: int = Query(6, description="Lookback window in hours"),
     user=None,
 ):
+    # Sourced entirely from _forge_alerts (real AIS/ADSB/NEWS/loitering alerts).
+    # This previously also checked _ANOMALY_ALERTS, a buffer only ever populated by
+    # _anomaly_detection_loop() — a background task that has been disabled
+    # (commented out) since before this round, so that buffer was always empty.
+    # Removed along with the dead loop; this endpoint now serves only real data.
     cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-    recent = [a for a in _ANOMALY_ALERTS if a.get('timestamp', '') > cutoff and not a.get('dismissed')]
+    recent = [a for a in _forge_alerts if a.get('timestamp', '') > cutoff and not a.get('dismissed')]
     if rule_name:
-        # Also search the forge alert buffer (contains AIS/ADSB/NEWS/loitering alerts)
-        forge_recent = [
-            a for a in _forge_alerts
-            if a.get('timestamp', '') > cutoff
-            and (a.get('rule_name') == rule_name or a.get('rule_trigger') == rule_name)
-        ]
-        if forge_recent:
-            return {"count": len(forge_recent), "alerts": forge_recent[-50:], "threat_level": "normal"}
-        filtered = [a for a in recent if a.get('rule_name') == rule_name]
-        return {"count": len(filtered), "alerts": filtered, "threat_level": "normal"}
+        recent = [a for a in recent if a.get('rule_name') == rule_name or a.get('rule_trigger') == rule_name]
     return {
         "count": len(recent),
-        "alerts": recent,
+        "alerts": recent[-50:],
         "threat_level": _calculate_overall_threat_level(recent),
     }
 
@@ -10245,7 +10093,7 @@ async def get_recent_alerts(
 async def classify_alert(alert_id: str, request: Request, user=None):
     body = await request.json()
     classification = body.get("classification")
-    for alert in _ANOMALY_ALERTS:
+    for alert in _forge_alerts:
         if alert.get("id") == alert_id:
             alert["classification"] = classification
             alert["classified_by"] = getattr(user, "email", "anonymous") if user else "anonymous"
@@ -10258,7 +10106,7 @@ async def classify_alert(alert_id: str, request: Request, user=None):
 
 @app.post("/api/alerts/{alert_id}/pin")
 async def pin_alert(alert_id: str, user=None):
-    for alert in _ANOMALY_ALERTS:
+    for alert in _forge_alerts:
         if alert.get("id") == alert_id:
             alert["pinned"] = not alert.get("pinned", False)
             return {"status": "ok", "pinned": alert["pinned"]}
@@ -10315,9 +10163,12 @@ async def _generate_weekly_snapshot():
         if sev in news_by_severity:
             news_by_severity[sev] += 1
 
+    # Was _ANOMALY_ALERTS (a buffer only populated by the now-deleted, long-disabled
+    # _anomaly_detection_loop() — always empty). Use the real _forge_alerts buffer,
+    # grouped by rule_name (its closest analog to a "type").
     alert_by_type = {}
-    for alert in _ANOMALY_ALERTS:
-        atype = alert.get('type', 'unknown')
+    for alert in _forge_alerts:
+        atype = alert.get('rule_name') or alert.get('type') or 'unknown'
         alert_by_type[atype] = alert_by_type.get(atype, 0) + 1
 
     maritime_stats = {
@@ -11751,7 +11602,6 @@ async def startup_event():
     asyncio.create_task(_ais_websocket_loop())
     asyncio.create_task(_prune_history_loop())
     asyncio.create_task(_ais_aggregate_loop())
-    # asyncio.create_task(_anomaly_detection_loop())  # disabled — too many false positives
     asyncio.create_task(_weekly_snapshot_loop())
     asyncio.create_task(_global_adsb_cache_loop())
     # Forge detection engine
@@ -18855,209 +18705,25 @@ def get_report_pdf(report_id: str):
     )
 
 
-# ── Auto-rule generation ──────────────────────────────────────────────────────
-
-@app.post("/api/forge/auto-generate-rules")
-async def forge_auto_generate_rules(request: Request):
-    body        = await request.json()
-    mission_id  = body.get("mission_id", "mission_default")
-    ontology    = _forge_ontology_load()
-    existing    = _load_forge_rules()
-    exist_names = {r["name"] for r in existing}
-    new_rules   = []
-
-    def _next_id():
-        return f"rule_auto_{len(existing) + len(new_rules) + 1}_{int(datetime.utcnow().timestamp())}"
-
-    for cable in (n for n in ontology["nodes"] if n["type"] == "cable"):
-        name = f"Cable Loiterer — {cable['label'][:30]}"
-        if name not in exist_names:
-            new_rules.append({
-                "id": _next_id(), "name": name,
-                "description": f"Vessel stationary near {cable['label']}",
-                "source": "AIS", "trigger_type": "stationary_near_infrastructure",
-                "status": "active", "triggers": 0, "lastTrigger": "never",
-                "params": {"infra_type": "cable", "infra_name": cable["label"],
-                           "max_speed_knots": 0.5, "proximity_km": 10, "min_duration_minutes": 120},
-                "severity": "high", "auto_generated": True, "entity_id": cable.get("id"),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-            exist_names.add(name)
-
-    for cp in (n for n in ontology["nodes"] if n["type"] == "chokepoint"):
-        name = f"Dark Ship — {cp['label'][:30]}"
-        if name not in exist_names:
-            new_rules.append({
-                "id": _next_id(), "name": name,
-                "description": f"AIS transponder gap near {cp['label']}",
-                "source": "AIS", "trigger_type": "transponder_gap",
-                "status": "active", "triggers": 0, "lastTrigger": "never",
-                "params": {"gap_minutes": 30, "proximity_km": 100, "chokepoint": cp["label"]},
-                "severity": "high", "auto_generated": True, "entity_id": cp.get("id"),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-            exist_names.add(name)
-
-    fac_count = 0
-    for fac in (n for n in ontology["nodes"] if n["type"] in ("facility", "airport") and n.get("lat")):
-        if fac_count >= 10:
-            break
-        name = f"Satellite Watch — {fac['label'][:30]}"
-        if name not in exist_names:
-            new_rules.append({
-                "id": _next_id(), "name": name,
-                "description": f"Weekly satellite scan of {fac['label']}",
-                "source": "SATELLITE", "trigger_type": "change_detection",
-                "status": "active", "triggers": 0, "lastTrigger": "never",
-                "params": {"lat": fac["lat"], "lng": fac["lng"], "frequency": "weekly", "change_threshold_pct": 20},
-                "severity": "medium", "auto_generated": True, "entity_id": fac.get("id"),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-            exist_names.add(name)
-            fac_count += 1
-
-    nodes_by_id = {n["id"]: n for n in ontology["nodes"]}
-    for edge in ontology.get("edges", []):
-        if edge.get("type") not in ("threatens", "operates"):
-            continue
-        src = nodes_by_id.get(edge.get("source"))
-        tgt = nodes_by_id.get(edge.get("target"))
-        if src and tgt and src["type"] == "group" and tgt["type"] in ("country", "chokepoint"):
-            name = f"News Surge — {src['label']} / {tgt['label']}"
-            if name not in exist_names:
-                new_rules.append({
-                    "id": _next_id(), "name": name,
-                    "description": f"Elevated news mentioning {src['label']} and {tgt['label']}",
-                    "source": "NEWS", "trigger_type": "event_surge",
-                    "status": "active", "triggers": 0, "lastTrigger": "never",
-                    "params": {"keywords": [src["label"], tgt["label"]], "multiplier": 2, "window_days": 7},
-                    "severity": "medium", "auto_generated": True,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                })
-                exist_names.add(name)
-
-    if new_rules:
-        _forge_save("rules.json", existing + new_rules)
-
-    return {"rules_generated": len(new_rules), "rules": new_rules}
-
-
-@app.get("/api/forge/rules")
-def forge_get_rules():
-    return {"rules": _forge_load("rules.json")}
-
-
-@app.post("/api/forge/rules")
-async def forge_create_rule(request: Request):
-    body = await request.json()
-    rules = _forge_load("rules.json")
-    rule = {
-        "id":          str(uuid.uuid4()),
-        "name":        body.get("name", "Unnamed Rule"),
-        "source":      body.get("source", "AIS"),
-        "trigger_type": body.get("trigger_type", ""),
-        "description": body.get("description", ""),
-        "status":      body.get("status", "active"),
-        "triggers":    0,
-        "lastTrigger": "never",
-        "created_at":  datetime.now(timezone.utc).isoformat(),
+def _real_rule_stats() -> dict:
+    """Real, live rule counts from the DB-backed RuleConfig table (rule_configs) —
+    the table the actual Rules UI (/api/rules) manages. Do NOT source these from the
+    legacy rules.json file: that file has been frozen since 2026-05-13 and has no
+    relationship to the rules an analyst actually creates/edits/enables today."""
+    from database import RuleConfig, get_db
+    by_source: dict = {}
+    with get_db() as db:
+        rows = db.query(RuleConfig).all()
+        total = len(rows)
+        active = sum(1 for r in rows if r.enabled)
+        for r in rows:
+            prefix = (r.rule_name or "UNKNOWN").split("_")[0] or "UNKNOWN"
+            by_source[prefix] = by_source.get(prefix, 0) + 1
+    return {
+        "rules_total":     total,
+        "rules_active":    active,
+        "rules_by_source": by_source,
     }
-    rules.insert(0, rule)
-    _forge_save("rules.json", rules)
-    return rule
-
-
-@app.put("/api/forge/rules/{rule_id}")
-async def forge_update_rule(rule_id: str, request: Request):
-    body = await request.json()
-    rules = _forge_load("rules.json")
-    for i, r in enumerate(rules):
-        if r.get("id") == rule_id:
-            rules[i] = {**r, **{k: v for k, v in body.items() if k != "id"}}
-            _forge_save("rules.json", rules)
-            return rules[i]
-    raise HTTPException(status_code=404, detail="Rule not found")
-
-
-@app.delete("/api/forge/rules/{rule_id}")
-def forge_delete_rule(rule_id: str):
-    rules = _forge_load("rules.json")
-    rules = [r for r in rules if r.get("id") != rule_id]
-    _forge_save("rules.json", rules)
-    return {"ok": True}
-
-
-@app.get("/api/forge/watch-areas")
-def forge_get_watch_areas():
-    return {"areas": _forge_load("watch_areas.json")}
-
-
-@app.post("/api/forge/watch-areas")
-async def forge_create_watch_area(request: Request):
-    body = await request.json()
-    areas = _forge_load("watch_areas.json")
-    area = {
-        "id":         str(uuid.uuid4()),
-        "name":       body.get("name", "Unnamed Area"),
-        "coords":     body.get("coords", ""),
-        "lat":        body.get("lat"),
-        "lon":        body.get("lon"),
-        "frequency":  body.get("frequency", "Weekly"),
-        "lastScan":   "never",
-        "detections": 0,
-        "change":     "No data",
-        "status":     "normal",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    areas.insert(0, area)
-    _forge_save("watch_areas.json", areas)
-    return area
-
-
-@app.delete("/api/forge/watch-areas/{area_id}")
-def forge_delete_watch_area(area_id: str):
-    areas = _forge_load("watch_areas.json")
-    areas = [a for a in areas if a.get("id") != area_id]
-    _forge_save("watch_areas.json", areas)
-    return {"ok": True}
-
-
-@app.post("/api/forge/watch-areas/{area_id}/scan")
-async def forge_scan_watch_area(area_id: str, request: Request):
-    areas = _forge_load("watch_areas.json")
-    area  = next((a for a in areas if a.get("id") == area_id), None)
-    if not area:
-        raise HTTPException(status_code=404, detail="Watch area not found")
-
-    bounds = area.get("bounds")
-    if not bounds and area.get("lat") and area.get("lng"):
-        lat, lng = float(area["lat"]), float(area.get("lng") or area.get("lon", 0))
-        delta = 0.5
-        bounds = [lat - delta, lng - delta, lat + delta, lng + delta]
-    if not bounds:
-        raise HTTPException(status_code=422, detail="Watch area has no bounds or coordinates")
-
-    try:
-        loop  = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            functools.partial(_run_overwatch_inference, bounds, 17, 0.2, False, "dota"),
-        )
-        detections = result.get("detections", []) if isinstance(result, dict) else []
-    except Exception as _se:
-        detections = []
-        print(f"[forge/scan] {area_id} error: {_se}")
-
-    now = datetime.now(timezone.utc).isoformat()
-    for a in areas:
-        if a.get("id") == area_id:
-            a["last_scan"]   = now
-            a["detections"]  = len(detections)
-            a["last_change"] = now
-            a["status"]      = "alert" if len(detections) > (a.get("baseline_detections") or 0) else "ok"
-            break
-    _forge_save("watch_areas.json", areas)
-    return {"ok": True, "detections": len(detections), "last_scan": now, "status": areas[next((i for i, a in enumerate(areas) if a.get("id") == area_id), 0)].get("status")}
 
 
 @app.get("/api/forge/brain-status")
@@ -19067,47 +18733,9 @@ def forge_brain_status():
         "detector_ready": _HAS_DETECTORS,
         "alerts_in_memory": len(_forge_alerts),
         "correlations_in_memory": len(_correlation_assessments),
+        **_real_rule_stats(),
     }
 
-
-@app.get("/api/forge/detections")
-def forge_get_detections():
-    return {"detections": _forge_load("detection_corrections.json")}
-
-
-@app.post("/api/forge/detection/{detection_id}/confirm")
-def forge_confirm_detection(detection_id: str):
-    items = _forge_load("detection_corrections.json")
-    for item in items:
-        if item.get("id") == detection_id:
-            item["review"] = "confirmed"
-            item["reviewed_at"] = datetime.now(timezone.utc).isoformat()
-            break
-    else:
-        items.append({"id": detection_id, "review": "confirmed", "reviewed_at": datetime.now(timezone.utc).isoformat()})
-    _forge_save("detection_corrections.json", items)
-    return {"ok": True}
-
-
-@app.post("/api/forge/detection/{detection_id}/correct")
-async def forge_correct_detection(detection_id: str, request: Request):
-    body = await request.json()
-    items = _forge_load("detection_corrections.json")
-    for item in items:
-        if item.get("id") == detection_id:
-            item["review"] = "corrected"
-            item["correct_label"] = body.get("label")
-            item["reviewed_at"] = datetime.now(timezone.utc).isoformat()
-            break
-    else:
-        items.append({
-            "id": detection_id,
-            "review": "corrected",
-            "correct_label": body.get("label"),
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
-        })
-    _forge_save("detection_corrections.json", items)
-    return {"ok": True}
 
 
 # ── Forge Phase 2: batch scan helper ──────────────────────────────────────────
@@ -19279,10 +18907,12 @@ async def forge_overwatch_generate_batch(request: Request):
     body = await request.json()
     n = min(int(body.get("n", 10)), 20)
 
+    # Was: also appended custom sites from watch_areas.json (the legacy
+    # /api/forge/watch-areas file-backed CRUD). That endpoint set was deleted as
+    # dead code (no frontend callers, backing file never existed on disk) so this
+    # loop always iterated an empty list — removed along with it; falls back to
+    # _FORGE_SCAN_SITES only, same as before in practice.
     sites = list(_FORGE_SCAN_SITES)
-    for area in _forge_load("watch_areas.json"):
-        if area.get("lat") and area.get("lon"):
-            sites.append({"name": area["name"], "lat": area["lat"], "lon": area["lon"]})
     random.shuffle(sites)
 
     loop = asyncio.get_event_loop()
@@ -19379,7 +19009,7 @@ async def forge_label_detection(request: Request):
         "severity":     body.get("severity"),
         "event_type":   body.get("event_type"),
         "labeled_at":   datetime.now(timezone.utc).isoformat(),
-        "labeled_by":   getattr(_user, "email", None) or getattr(_user, "username", None),
+        "labeled_by":   "operator",
     }
     for i, existing in enumerate(labels):
         if existing.get("id") == detection_id:
@@ -20064,23 +19694,12 @@ async def _forge_detection_cycle():
                 except Exception as _aw_e:
                     print(f"[alert-writer] alert persist error: {_aw_e}")
 
-            # Feed AIS and ADSB alerts into fusion engine via normalize_signal
-            if _fusion_engine:
-                try:
-                    for _fa in new_ais_alerts:
-                        _fusion_engine.on_signal(normalize_signal(
-                            "AIS",
-                            {**_fa, "location_name": _fa.get("location_name") or _fa.get("vessel") or ""},
-                            alert_id=_fa.get("id"),
-                        ))
-                    for _fa in new_adsb_alerts:
-                        _fusion_engine.on_signal(normalize_signal(
-                            "ADSB",
-                            {**_fa, "location_name": _fa.get("location_name") or _fa.get("aircraft") or ""},
-                            alert_id=_fa.get("id"),
-                        ))
-                except Exception as _fe_err2:
-                    print(f"[fusion] forge-brain signal error: {_fe_err2}")
+            # NOTE: no separate AIS/ADSB fusion feed here — write_alert() above (called
+            # for every entry in all_new, which includes new_ais_alerts/new_adsb_alerts)
+            # already feeds each alert into the fusion engine internally. A second
+            # explicit on_signal() call here previously generated a brand-new random
+            # signal_id for the same semantic signal, inflating FusionSignal row counts
+            # and candidate_pool size used in fusion evaluation.
 
             # Trim to 24h
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -20243,82 +19862,6 @@ async def forge_update_source_config(source_id: str, request: Request):
     return cfg[source_id]
 
 
-# ── Forge rule dry-run ────────────────────────────────────────────────────────
-
-@app.post("/api/forge/rules/{rule_id}/test")
-def forge_test_rule(rule_id: str):
-    if not _HAS_DETECTORS:
-        raise HTTPException(status_code=503, detail="Detector engine not available")
-    rules = _forge_load("rules.json")
-    rule = next((r for r in rules if r.get("id") == rule_id), None)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Rule not found")
-
-    source = rule.get("source", "AIS")
-    hits: list = []
-    checked = 0
-
-    if source == "AIS":
-        tester = _AISAnomalyDetector()
-        tester.load_rules([{**rule, "status": "active"}])
-        cables = _prep_cables_for_detector()
-        with _AIS_LOCK:
-            vessels_snap = dict(_AIS_VESSELS)
-        normalized = {}
-        for _m, _v in vessels_snap.items():
-            _n = _normalize_vessel(_v, _m)
-            if _n:
-                normalized[_m] = _n
-        checked = min(len(normalized), 500)
-        for vessel in list(normalized.values())[:500]:
-            hits.extend(tester.check_vessel(vessel, cables=cables,
-                                            chokepoints=_CHOKEPOINT_DEFS,
-                                            all_vessels=normalized))
-        label = "vessels"
-
-    elif source == "ADSB":
-        for ac in list(_GLOBAL_ADSB_CACHE.values())[:500]:
-            checked += 1
-            hits.extend(_adsb_detector.check_aircraft(ac))
-        label = "aircraft"
-
-    elif source == "NEWS":
-        keywords = [kw.lower() for kw in rule.get("params", {}).get("keywords", [])]
-        sev_map  = {"critical": 5, "high": 4, "elevated": 3, "medium": 2, "low": 1}
-        try:
-            events = es.get_active_events()
-        except Exception:
-            events = []
-        for ev in events[:500]:
-            checked += 1
-            text = ((ev.get("headline") or ev.get("title") or "") + " " +
-                    (ev.get("summary") or ev.get("body") or "")).lower()
-            sev_raw = ev.get("severity") or ev.get("score", 0)
-            sev_num = sev_map.get(str(sev_raw).lower(), 0) if isinstance(sev_raw, str) else (sev_raw or 0)
-            matched = (any(kw in text for kw in keywords) if keywords else sev_num >= 4)
-            if matched:
-                hits.append({
-                    "message":  f"Match: '{(ev.get('headline') or ev.get('title') or '')[:60]}'",
-                    "severity": ev.get("severity", "medium"),
-                })
-        label = "news events"
-
-    else:
-        label = "items"
-
-    return {
-        "rule_id":       rule_id,
-        "rule_name":     rule.get("name"),
-        "source":        source,
-        "checked":       checked,
-        "label":         label,
-        "would_trigger": len(hits),
-        "hits":          len(hits),
-        "sample_alerts": hits[:5],
-        "sample":        hits[:5],
-    }
-
-
 # ── Forge training stats ──────────────────────────────────────────────────────
 
 @app.get("/api/forge/training/stats/{detector_id}")
@@ -20429,7 +19972,6 @@ def forge_download_model(model_name: str):
 
 @app.get("/api/forge/brain/inspect")
 def forge_brain_inspect():
-    rules = _forge_load("rules.json")
     labels = _forge_load("forge_labels.json")
     confirmed = sum(1 for l in labels if l.get("label") in ("confirm", "confirmed", "correct"))
     corrected  = sum(1 for l in labels if l.get("label") in ("correct", "corrected", "adjusted"))
@@ -20446,28 +19988,26 @@ def forge_brain_inspect():
                 "status":  "active" if "obb" in fname else "standby",
             })
 
-    # Correlation engine params
+    # Correlation engine params. CorrelationEngine.__init__ only ever defines
+    # entity_history and confidence_weights — there is no time_window / distance_km /
+    # min_confidence / min_signals attribute anywhere on the class, so those were
+    # previously fabricated fallback numbers (and didn't even match the real hardcoded
+    # radius_km=100 used by CorrelationEngine.correlate() -> _cluster_by_proximity).
+    # Report only what's real: the actual hardcoded clustering radius, the actual
+    # domain-diversity requirement to form an assessment (correlate(): len(domains) >= 2),
+    # and the real confidence_weights attribute.
     corr_params = {}
     if _correlation_engine:
-        try:
-            corr_params = {
-                "time_window_s":    getattr(_correlation_engine, "time_window",    3600),
-                "distance_km":      getattr(_correlation_engine, "distance_km",    150),
-                "min_confidence":   getattr(_correlation_engine, "min_confidence", 0.6),
-                "min_signals":      getattr(_correlation_engine, "min_signals",    2),
-            }
-        except Exception:
-            pass
+        corr_params = {
+            "distance_km":                  100,   # CorrelationEngine.correlate() -> _cluster_by_proximity(radius_km=100), hardcoded
+            "min_domains_for_correlation":  2,      # CorrelationEngine.correlate(): requires len(domains) >= 2
+            "confidence_weights":           _correlation_engine.confidence_weights,
+        }
 
     return {
         "weights":         _threat_engine.weights if _threat_engine else {},
         "corr_params":     corr_params,
-        "rules_total":     len(rules),
-        "rules_active":    sum(1 for r in rules if r.get("status") == "active"),
-        "rules_by_source": {
-            src: sum(1 for r in rules if r.get("source") == src)
-            for src in ("AIS", "ADSB", "NEWS", "SATELLITE")
-        },
+        **_real_rule_stats(),
         "models":          models,
         "training_labels": len(labels),
         "training_accuracy": round(confirmed / max(confirmed + corrected, 1) * 100, 1),
@@ -20662,6 +20202,16 @@ def api_fusions_list(
                 q = q.filter(_FE.created_at >= _since_dt)
             except ValueError:
                 pass
+        # Exclude synthetic rows written by test_gdelt_fusion_signal.py's own
+        # (intentional, documented) practice of writing real FusionEvent rows into
+        # this same production DB. That test tags every row it creates with
+        # "AUTOMATED TEST" in location_name and a "TEST-"-prefixed fusion_id/signal_id
+        # — filter those out permanently, not as a one-time cleanup, since the test
+        # keeps running and keeps writing new rows. (Guard against NULL location_name/
+        # fusion_id with OR ... IS NULL — a bare NOT LIKE silently drops NULL rows in SQL.)
+        from sqlalchemy import or_ as _or_fus
+        q = q.filter(_or_fus(_FE.location_name.is_(None), ~_FE.location_name.like("%AUTOMATED TEST%")))
+        q = q.filter(_or_fus(_FE.fusion_id.is_(None), ~_FE.fusion_id.like("TEST-%")))
         rows = q.order_by(_FE.created_at.desc()).limit(limit).all()
         result = []
         for r in rows:
@@ -21058,6 +20608,14 @@ def api_signals_recent(limit: int = 50):
     if not _fusion_engine:
         return []
     sigs = _fusion_engine.get_recent_signals()
+    # Exclude synthetic test signals (see /api/fusions for the same convention):
+    # test_gdelt_fusion_signal.py tags every signal it writes with "AUTOMATED TEST"
+    # in location_name and a "TEST-"-prefixed signal_id.
+    sigs = [
+        sig for sig in sigs
+        if "AUTOMATED TEST" not in (sig.get("location_name") or "")
+        and not str(sig.get("signal_id") or "").startswith("TEST-")
+    ]
     result = []
     for sig in sigs[-limit:]:
         ts = sig.get("timestamp")
@@ -22176,111 +21734,6 @@ async def forge_alert_feedback(alert_idx: int, request: Request):
     return {"weights": _threat_engine.weights, "rule_adjusted": rule_id if rule_adjusted else None}
 
 
-# ── Threat scores ─────────────────────────────────────────────────────────────
-
-_THREAT_REGION_BOUNDS = {
-    "Persian Gulf":    {"lat": [23.0, 30.0], "lng": [48.0, 60.0]},
-    "Red Sea":         {"lat": [12.0, 30.0], "lng": [32.0, 45.0]},
-    "East Med":        {"lat": [30.0, 37.0], "lng": [25.0, 37.0]},
-    "Sahel":           {"lat": [10.0, 20.0], "lng": [-15.0, 15.0]},
-    "Horn of Africa":  {"lat": [-5.0, 15.0], "lng": [35.0, 55.0]},
-    "South China Sea": {"lat": [5.0, 25.0],  "lng": [105.0, 125.0]},
-    "Black Sea":       {"lat": [40.0, 47.0], "lng": [27.0, 42.0]},
-    "Baltic":          {"lat": [53.0, 66.0], "lng": [10.0, 30.0]},
-}
-
-
-def _in_region(lat, lng, bounds):
-    if lat is None or lng is None:
-        return False
-    return (bounds["lat"][0] <= lat <= bounds["lat"][1] and
-            bounds["lng"][0] <= lng <= bounds["lng"][1])
-
-
-_THREAT_REGION_BOUNDS_V2 = {
-    "Persian Gulf":          {"lat": [23.0, 30.0], "lng": [48.0, 60.0]},
-    "Red Sea / Bab el-Mandeb": {"lat": [12.0, 22.0], "lng": [32.0, 45.0]},
-    "East Mediterranean":    {"lat": [30.0, 37.0], "lng": [25.0, 37.0]},
-    "Sahel":                 {"lat": [10.0, 20.0], "lng": [-15.0, 15.0]},
-    "Horn of Africa":        {"lat": [-5.0, 15.0], "lng": [35.0, 55.0]},
-    "South China Sea":       {"lat":  [5.0, 25.0], "lng": [105.0, 125.0]},
-    "Black Sea / Ukraine":   {"lat": [40.0, 50.0], "lng": [27.0, 42.0]},
-    "Baltic":                {"lat": [53.0, 66.0], "lng": [10.0, 30.0]},
-    "Taiwan Strait":         {"lat": [22.0, 28.0], "lng": [116.0, 125.0]},
-    "Indian Ocean":          {"lat": [-10.0, 15.0], "lng": [55.0, 80.0]},
-}
-
-
-@app.get("/api/forge/threat-scores")
-def forge_threat_scores():
-    if not _HAS_DETECTORS:
-        return []
-
-    # Snapshot live data once
-    with _AIS_LOCK:
-        vessels_snap = list(_AIS_VESSELS.values())
-    active_events = []
-    try:
-        active_events = es.get_active_events()
-    except Exception as e:
-        logger.exception("forge_threat_scores: event store query failed")
-        pass
-
-    scores = []
-    for region_name, bounds in _THREAT_REGION_BOUNDS_V2.items():
-        # Forge alerts
-        region_alerts = [a for a in _forge_alerts if _in_region(a.get("lat"), a.get("lng"), bounds)]
-        ais_alerts    = [a for a in region_alerts if a.get("source") == "AIS"]
-        adsb_alerts   = [a for a in region_alerts if a.get("source") == "ADSB"]
-
-        # ALL news events in region (not just high severity — density matters)
-        news_count = sum(
-            1 for ev in active_events
-            if _in_region(ev.get("lat"), ev.get("lng") or ev.get("lon"), bounds)
-        )
-
-        # High-severity news for escalation signal
-        news_high = sum(
-            1 for ev in active_events
-            if _in_region(ev.get("lat"), ev.get("lng") or ev.get("lon"), bounds)
-            and (ev.get("severity") or "").lower() in ("high", "critical")
-        )
-
-        # Live vessels in region (even without alerts — density is signal)
-        vessel_count = sum(
-            1 for v in vessels_snap
-            if _in_region(v.get("lat"), v.get("lon") or v.get("lng"), bounds)
-        )
-
-        region_corrs = [c for c in _correlation_assessments
-                        if _in_region(c.get("lat"), c.get("lng"), bounds)]
-
-        signals = {
-            "ais_anomaly":      min(len(ais_alerts)  * 0.15, 1.0),
-            "adsb_anomaly":     min(len(adsb_alerts) * 0.20, 1.0),
-            "news_escalation":  min(news_high         * 0.08 + news_count * 0.01, 1.0),
-            "satellite_change": 0.0,
-            "event_density":    min(news_count * 0.02 + vessel_count * 0.005, 1.0),
-        }
-        result = _threat_engine.calculate_region_threat(region_name, signals, correlations=region_corrs)
-        result["alert_count"]    = len(region_alerts)
-        result["vessel_count"]   = vessel_count
-        result["news_count"]     = news_count
-        result["corr_count"]     = len(region_corrs)
-        result["signals_raw"] = {
-            "ais_alerts":       len(ais_alerts),
-            "adsb_alerts":      len(adsb_alerts),
-            "news_events":      news_count,
-            "news_high":        news_high,
-            "vessels_tracked":  vessel_count,
-            "correlations":     len(region_corrs),
-        }
-        scores.append(result)
-
-    scores.sort(key=lambda x: x["score"], reverse=True)
-    return scores
-
-
 @app.get("/api/analytics/threat-matrix")
 def analytics_threat_matrix():
     """Current threat scores for all regions — from hourly in-memory cache."""
@@ -22342,22 +21795,6 @@ def analytics_threat_matrix_history(
             }
             for r in rows
         ]
-
-
-# ── Training data export ──────────────────────────────────────────────────────
-
-@app.get("/api/forge/export-training-data")
-def forge_export_training_data():
-    labels = _forge_load("forge_labels.json")
-    confirmed = [l for l in labels if l.get("label") == "confirmed"]
-    corrected  = [l for l in labels if l.get("label") == "corrected"]
-    return {
-        "total":               len(labels),
-        "confirmed":           len(confirmed),
-        "corrected":           len(corrected),
-        "labels":              labels,
-        "ready_for_training":  len(labels) >= 500,
-    }
 
 
 # ── Ontology ──────────────────────────────────────────────────────────────────
@@ -22686,70 +22123,6 @@ def get_ontology_positions():
         return {}
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FORGE MISSIONS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_FORGE_MISSION_FILE = "forge_missions.json"
-
-_DEFAULT_MISSION = {
-    "id": "mission_default",
-    "name": "Global Monitoring",
-    "description": "Full-spectrum global intelligence monitoring",
-    "active": True,
-    "created": "2026-01-01T00:00:00",
-    "regions": [
-        {"name": "Persian Gulf",    "bounds": [23, 48, 30, 60]},
-        {"name": "Red Sea",         "bounds": [12, 32, 30, 45]},
-        {"name": "East Med",        "bounds": [30, 25, 37, 36]},
-        {"name": "Sahel",           "bounds": [10, -15, 20, 15]},
-        {"name": "Horn of Africa",  "bounds": [-5, 35, 15, 55]},
-        {"name": "South China Sea", "bounds": [5, 105, 25, 125]},
-        {"name": "Black Sea",       "bounds": [40, 27, 47, 42]},
-        {"name": "Baltic",          "bounds": [53, 10, 66, 30]},
-    ],
-    "data_sources": {
-        "ais":       {"enabled": True,  "bboxes": "global"},
-        "adsb":      {"enabled": True,  "regions": "global"},
-        "news":      {"enabled": True,  "feeds": "all", "keywords": []},
-        "satellite": {"enabled": True,  "watch_areas": []},
-    },
-    "rules": "all",
-    "focus_entities": [],
-}
-
-
-@app.get("/api/forge/missions")
-def forge_get_missions():
-    missions = _forge_load(_FORGE_MISSION_FILE)
-    if not missions:
-        missions = [_DEFAULT_MISSION]
-        _forge_save(_FORGE_MISSION_FILE, missions)
-    return missions
-
-
-@app.post("/api/forge/missions")
-async def forge_create_mission(request: Request):
-    body = await request.json()
-    missions = _forge_load(_FORGE_MISSION_FILE)
-    if not missions:
-        missions = [_DEFAULT_MISSION]
-    mission = {
-        "id":             f"mission_{int(datetime.now(timezone.utc).timestamp())}",
-        "name":           body.get("name", "Untitled Mission"),
-        "description":    body.get("description", ""),
-        "active":         False,
-        "created":        datetime.now(timezone.utc).isoformat(),
-        "regions":        body.get("regions", []),
-        "data_sources":   body.get("data_sources", {}),
-        "rules":          body.get("rules", "all"),
-        "focus_entities": body.get("focus_entities", []),
-    }
-    missions.append(mission)
-    _forge_save(_FORGE_MISSION_FILE, missions)
-    return mission
-
-
 # ── Pipeline persistence ───────────────────────────────────────────────────────
 
 _FORGE_PIPELINE_FILE = _FORGE_DIR / "pipeline.json"
@@ -22844,17 +22217,6 @@ async def _apply_pipeline_changes(pipeline: dict):
                 r["status"] = "active"; changed = True
     if changed:
         _forge_save("rules.json", rules)
-
-
-@app.put("/api/forge/missions/{mission_id}/activate")
-def forge_activate_mission(mission_id: str):
-    missions = _forge_load(_FORGE_MISSION_FILE)
-    if not missions:
-        missions = [_DEFAULT_MISSION]
-    for m in missions:
-        m["active"] = (m["id"] == mission_id)
-    _forge_save(_FORGE_MISSION_FILE, missions)
-    return {"activated": mission_id}
 
 
 # ── Strategic Zones API ───────────────────────────────────────────────────────
