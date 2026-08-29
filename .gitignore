@@ -29,6 +29,9 @@ backend/data/akili.db-wal
 backend/yolov8m-obb.onnx
 backend/yolov8m-obb.pt
 backend/runs/
+# Sentinel-1 SAR vessel-detection weights (allenai/vessel-detection-sentinels)
+# — downloaded + SHA-256-verified at runtime by sar_detector.py, not committed.
+backend/data/model_weights/
 __pycache__/
 *.py[cod]
 *$py.class

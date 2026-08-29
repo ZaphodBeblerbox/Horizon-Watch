@@ -95,6 +95,12 @@ class SentinelScanner:
                         detection_id=f"DET-{uuid.uuid4().hex[:12]}",
                         scan_id=scan_id,
                         zone_id=zone_id,
+                        # This scanner only ever runs the optical Sentinel-2 /
+                        # YOLO-OBB pipeline (sentinel_ml.py) — real Sentinel-1
+                        # SAR detections come from the separate sar_detector.py
+                        # pipeline and are never written through this path, so
+                        # "OPTICAL" is always correct here, not a guess.
+                        instrument=det.get("instrument", "OPTICAL"),
                         object_type=det["object_type"],
                         confidence=det["confidence"],
                         centroid_lat=det["centroid_lat"],

@@ -296,6 +296,11 @@ class SentinelDetection(Base):
     detection_id             = Column(String, unique=True, index=True, nullable=False)
     scan_id                  = Column(String, ForeignKey("sentinel_scans.scan_id"), nullable=False, index=True)
     zone_id                  = Column(Integer, ForeignKey("watch_zones.id"), nullable=False, index=True)
+    # Always populated (never inferred implicitly downstream) — "OPTICAL" for
+    # today's Sentinel-2/YOLO-OBB detections, "SAR" for Sentinel-1 detections
+    # from sar_detector.py. Defaults to "OPTICAL" so existing rows/writers
+    # (which predate this column) remain valid without a data migration.
+    instrument               = Column(String, nullable=False, default="OPTICAL")
     object_type              = Column(String, nullable=False)
     confidence               = Column(Float, nullable=False)
     centroid_lat             = Column(Float, nullable=False)

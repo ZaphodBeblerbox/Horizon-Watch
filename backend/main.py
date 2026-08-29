@@ -12832,6 +12832,7 @@ def _normalise_satellite_items(data: dict, source_label: str) -> list[dict]:
             "cloud_cover": props.get("eo:cloud_cover"),
             "platform": props.get("platform", "sentinel-2"),
             "collection": "sentinel-2-l2a",
+            "instrument": "OPTICAL",
             "source": source_label,
             "thumbnail": thumbnail,
             "visual_href": visual_href,
@@ -12839,6 +12840,45 @@ def _normalise_satellite_items(data: dict, source_label: str) -> list[dict]:
         if tile_id not in seen_tiles:
             seen_tiles[tile_id] = item
     return list(seen_tiles.values())
+
+
+def _normalise_sentinel1_items(data: dict, source_label: str) -> list[dict]:
+    """Normalise Earth Search 'sentinel-1-grd' STAC features into scene records.
+    Unlike Sentinel-2, the sentinel-1-grd collection's asset hrefs are
+    `s3://sentinel-s1-l1c/...` requester-pays object keys, not public HTTPS COGs
+    — so there is no usable `thumbnail`/`visual_href` here (confirmed via a live
+    STAC query 2026-08-29). This search is discovery-only (scene id, footprint,
+    acquisition time, orbit/polarization metadata); actual pixel fetching goes
+    through the Sentinel Hub Process API (`_fetch_sentinel1_image_bytes`
+    below), exactly as Sentinel-2 tiles are fetched via `_SH_PROCESS_URL`
+    rather than Earth Search's asset hrefs directly."""
+    seen_scenes: dict = {}
+    for feature in data.get("features", []):
+        props = feature.get("properties", {})
+        feature_id = feature.get("id", "")
+        if not feature_id:
+            continue
+        item = {
+            "id": feature_id,
+            "tile_id": feature_id,
+            "bbox": feature.get("bbox", []),
+            "geometry": feature.get("geometry"),
+            "datetime": props.get("datetime"),
+            "cloud_cover": None,  # not meaningful for SAR
+            "platform": props.get("platform", "sentinel-1"),
+            "collection": "sentinel-1-grd",
+            "instrument": "SAR",
+            "source": source_label,
+            "thumbnail": None,
+            "visual_href": None,
+            "sar_polarizations": props.get("sar:polarizations"),
+            "sar_instrument_mode": props.get("sar:instrument_mode"),
+            "sar_orbit_state": props.get("sat:orbit_state"),
+            "sar_relative_orbit": props.get("sat:relative_orbit"),
+        }
+        if feature_id not in seen_scenes:
+            seen_scenes[feature_id] = item
+    return list(seen_scenes.values())
 
 
 @app.get("/satellite/auth-status")
@@ -12969,6 +13009,97 @@ async def api_satellite_search(
         60,
         date_range=date,
     )
+
+
+# ── /satellite/search-sar — Sentinel-1 GRD scene discovery ───────────────────
+# Additive SAR counterpart to /satellite/search above. Same Earth Search STAC
+# API, same OAuth/token-cache path, just a different collection and no cloud-
+# cover filter (meaningless for radar). Every returned item carries
+# instrument="SAR" (see _normalise_sentinel1_items) so nothing downstream can
+# conflate a SAR scene with an optical one.
+
+async def _satellite_search_sentinel1_impl(bbox, days_back=60, date_range: str | None = None):
+    try:
+        bbox = [float(v) for v in bbox]
+        if len(bbox) != 4:
+            raise ValueError("bbox must have 4 values")
+    except Exception:
+        return {"items": [], "error": "Invalid bbox. Expected [west, south, east, north].", "count": 0}
+
+    try:
+        days_back = max(1, min(365, int(days_back)))
+    except Exception:
+        days_back = 60
+
+    if date_range:
+        dt_range = str(date_range)
+    else:
+        end_dt = datetime.now(timezone.utc)
+        start_dt = end_dt - timedelta(days=days_back)
+        dt_range = f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+
+    payload = {
+        "collections": ["sentinel-1-grd"],
+        "bbox": bbox,
+        "datetime": dt_range,
+        "sortby": [{"field": "properties.datetime", "direction": "desc"}],
+        "limit": 100,
+        "fields": {
+            "include": [
+                "id", "bbox", "geometry", "properties.datetime",
+                "properties.platform", "properties.sar:polarizations",
+                "properties.sar:instrument_mode", "properties.sat:orbit_state",
+                "properties.sat:relative_orbit",
+            ]
+        },
+    }
+
+    auth_mode = "public"
+    auth_error = None
+    source_label = "ESA / Copernicus via AWS Earth Search (Sentinel-1 GRD)"
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client_h:
+            if _COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET:
+                token, token_err = await _get_copernicus_access_token(client_h)
+                if token:
+                    auth_mode = "copernicus_oauth"
+                else:
+                    auth_error = token_err
+
+            resp = await client_h.post(_EARTH_SEARCH_STAC_URL, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+    except Exception as ex:
+        print(f"[satellite/search-sar] error: {ex}")
+        return {
+            "items": [], "error": str(ex), "count": 0,
+            "auth_mode": auth_mode, "auth_error": auth_error,
+        }
+
+    result = _normalise_sentinel1_items(data, source_label)
+    return {
+        "items": result,
+        "count": len(result),
+        "error": None,
+        "auth_mode": auth_mode,
+        "auth_error": None,
+        "credentials_configured": bool(_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET),
+    }
+
+
+@app.get("/api/satellite/search-sar")
+async def api_satellite_search_sar(
+    bbox: str = Query(..., description="west,south,east,north"),
+    date: str = Query(None, description="YYYY-MM-DD/YYYY-MM-DD"),
+    days_back: int = Query(60),
+):
+    try:
+        bbox_values = [float(v) for v in bbox.split(",")]
+    except Exception:
+        bbox_values = bbox
+    return await _satellite_search_sentinel1_impl(bbox_values, days_back=days_back, date_range=date)
 
 
 # ── /satellite/tile — Sentinel Hub Process API tile proxy ────────────────────
@@ -13277,6 +13408,152 @@ async def sentinel_imagery(request: Request):
         })
     except Exception as e:
         print(f"[sentinel/imagery] error: {e}")
+        return JSONResponse({"error": str(e)})
+
+
+
+# ── /api/sentinel/sar-imagery — Sentinel-1 GRD via Sentinel Hub Process API ──
+# SAR counterpart to /api/sentinel/imagery above. Reuses the exact same OAuth
+# token cache (_get_copernicus_access_token) and Process API endpoint
+# (_SH_PROCESS_URL) — only the request `data[0].type` ("sentinel-1-grd"
+# instead of "sentinel-2-l2a"), its processing options (sigma-nought
+# radiometric calibration, done server-side by Sentinel Hub), and the
+# evalscript (VV/VH backscatter instead of optical bands) differ. Every
+# successful fetch is tagged instrument="SAR" in its return dict.
+
+_EVALSCRIPT_SAR_VV_VH = """//VERSION=3
+function setup() {
+  return { input: ["VV", "VH", "dataMask"], output: { bands: 4 } }
+}
+// Simple dB-ish visual stretch of calibrated sigma-nought backscatter:
+// VV -> red, VH -> green, VV/VH ratio -> blue. Not a scientific product,
+// just a legible false-colour rendering of the two polarizations.
+function evaluatePixel(s) {
+  var vv = Math.max(0, Math.log(s.VV + 1e-6) / 10 + 1);
+  var vh = Math.max(0, Math.log(s.VH + 1e-6) / 10 + 1);
+  var ratio = Math.max(0, Math.min(1, vv - vh));
+  return [vv, vh, ratio, s.dataMask];
+}"""
+
+
+async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
+                                        width: int | None = None, height: int | None = None) -> dict:
+    """Core Sentinel-1 GRD Process API fetch — SAR counterpart of
+    _fetch_sentinel_image_bytes. Requests VV/VH bands with sigma-nought
+    (SIGMA0_ELLIPSOID) radiometric calibration and orthorectification done
+    server-side by Sentinel Hub (same pattern the task brief describes for
+    the existing Sentinel-2 path: no local SNAP-style calibration needed for
+    *this* visualisation path — the separate real ship-detection pipeline in
+    sar_detector.py works from raw downloaded SAFE products instead, since
+    that model expects uncalibrated amplitude).
+    Returns {"image_bytes", "width", "height", "instrument": "SAR"} on success,
+    or {"error": "..."} on any failure. Never raises."""
+    west  = bounds.get("west");  east  = bounds.get("east")
+    south = bounds.get("south"); north = bounds.get("north")
+    if None in (west, east, south, north):
+        return {"error": "bounds {north,south,east,west} required"}
+
+    if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
+        return {"error": "Copernicus credentials not configured"}
+
+    lat_span = abs(north - south); lng_span = abs(east - west)
+    if width and height:
+        width  = min(2500, max(32, int(width)))
+        height = min(2500, max(32, int(height)))
+    else:
+        max_span = max(lat_span, lng_span)
+        width = height = 512 if max_span < 0.1 else (1024 if max_span < 0.5 else 2048)
+
+    now = datetime.now(timezone.utc)
+    time_range = {
+        "from": (now - timedelta(days=max_age_days)).strftime("%Y-%m-%dT00:00:00Z"),
+        "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+    }
+
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": [west, south, east, north],
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+            },
+            "data": [{
+                "type": "sentinel-1-grd",
+                "dataFilter": {
+                    "timeRange": time_range,
+                    "mosaickingOrder": "mostRecent",
+                    "resolution": "HIGH",
+                },
+                "processing": {
+                    "backCoeff": "SIGMA0_ELLIPSOID",
+                    "orthorectify": True,
+                },
+            }],
+        },
+        "output": {
+            "width":  width,
+            "height": height,
+            "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+        },
+        "evalscript": _EVALSCRIPT_SAR_VV_VH,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client_h:
+            token, err = await _get_copernicus_access_token(client_h)
+            if not token:
+                return {"error": f"Sentinel Hub auth failed: {err}"}
+
+            resp = await client_h.post(
+                _SH_PROCESS_URL, json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        if resp.status_code == 200:
+            return {
+                "image_bytes": resp.content,
+                "width": width, "height": height,
+                "instrument": "SAR",
+                "collection": "sentinel-1-grd",
+            }
+        else:
+            detail = resp.text[:500]
+            print(f"[sentinel/sar-imagery] Process API {resp.status_code}: {detail}")
+            return {"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail}
+    except Exception as e:
+        print(f"[sentinel/sar-imagery] fetch error: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/api/sentinel/sar-imagery")
+async def sentinel_sar_imagery(request: Request):
+    """Fetch a full Sentinel-1 GRD (SAR) image for a drawn bounding box.
+    Additive counterpart to /api/sentinel/imagery — always tagged
+    instrument="SAR" in the response so the frontend/consumers never confuse
+    this with an optical Sentinel-2 fetch."""
+    import base64 as _b64
+    try:
+        body = await request.json()
+        bounds = body.get("bounds", {})
+        max_age_days = int(body.get("max_age_days", 30))
+        req_w = body.get("width"); req_h = body.get("height")
+
+        result = await _fetch_sentinel1_image_bytes(
+            bounds, max_age_days=max_age_days, width=req_w, height=req_h,
+        )
+        if result.get("error"):
+            return JSONResponse(result)
+
+        img_b64 = _b64.b64encode(result["image_bytes"]).decode()
+        return JSONResponse({
+            "image": img_b64,
+            "width": result["width"],
+            "height": result["height"],
+            "bounds": bounds,
+            "instrument": "SAR",
+            "collection": "sentinel-1-grd",
+        })
+    except Exception as e:
+        print(f"[sentinel/sar-imagery] error: {e}")
         return JSONResponse({"error": str(e)})
 
 
