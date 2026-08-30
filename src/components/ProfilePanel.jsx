@@ -7,7 +7,7 @@ const getClearances = (profile) => {
         { name: "Map Intelligence",  status: "GRANTED" },
         { name: "Briefings Access",  status: "GRANTED" },
         { name: "Claude Analysis",   status: "GRANTED" },
-        { name: "Forge Access",      status: "GRANTED" },
+        { name: "Sources Access",    status: "GRANTED" },
         { name: "Export Reports",    status: "GRANTED" },
     ]
 }
