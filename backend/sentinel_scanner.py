@@ -218,13 +218,14 @@ class SentinelScanner:
         alert_fired = False
 
         if "ship_detection" in run_tasks:
-            # _run_yolo_sliding_window returns [] both when the model failed to load AND when it
+            # run_ship_detection() returns [] both when the OBB model failed to load AND when it
             # genuinely found nothing - check the session explicitly so those two cases are never
-            # conflated (a load failure must never be reported as "0 vessels found").
-            if sentinel_ml._load_ort_session("coco") is None:
+            # conflated (a load failure must never be reported as "0 vessels found"). This is the
+            # same shared YOLO-OBB (DOTA) session main.py's ESRI/Overwatch path uses.
+            if sentinel_ml._get_obb_session() is None:
                 return {
                     "status": "error",
-                    "error_message": "ONNX model (yolov8n.onnx) failed to load - cannot run ship_detection",
+                    "error_message": "ONNX model (yolov8n-obb.onnx) failed to load - cannot run ship_detection",
                     **base_meta,
                 }
             ships = sentinel_ml.run_ship_detection(images, ml_bbox)

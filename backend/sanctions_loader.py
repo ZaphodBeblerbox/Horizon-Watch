@@ -53,10 +53,34 @@ class SanctionsLoader:
         self._total_vessels: int = 0
 
     async def load_or_refresh(self, db=None) -> dict:
-        """Load sanctions list. Refresh if older than 24h. Returns stats dict."""
+        """Load sanctions list. Refresh if older than 24h. Returns stats dict.
+
+        This is the single choke point both the startup call and the 24h
+        scheduled loop go through, so it's also where main.py's
+        _DS_STATUS["sanctions"] health entry is updated — on success:
+        last_loaded/vessel_count/failures=0/error=None; on any failure path:
+        last_attempt, failures incremented, error set to the already-computed
+        error string.
+        """
         if (self._last_loaded and
                 datetime.utcnow() - self._last_loaded < timedelta(hours=24)):
             return {"cached": True, "vessels": self._total_vessels}
+
+        # Imported lazily (not at module top) because main.py imports this
+        # module eagerly at its own top level (`from sanctions_loader import
+        # sanctions_loader, ...`) — a top-level import back here would be
+        # circular. By the time load_or_refresh() actually runs, main.py is
+        # already fully loaded, so this always succeeds.
+        try:
+            from main import _DS_STATUS, _DS_STATUS_LOCK
+        except ImportError:
+            from backend.main import _DS_STATUS, _DS_STATUS_LOCK
+
+        def _mark_attempt_failed(error_msg: str) -> None:
+            with _DS_STATUS_LOCK:
+                _DS_STATUS["sanctions"]["last_attempt"] = datetime.utcnow().isoformat()
+                _DS_STATUS["sanctions"]["failures"] = _DS_STATUS["sanctions"].get("failures", 0) + 1
+                _DS_STATUS["sanctions"]["error"] = error_msg
 
         print("[sanctions] Loading OpenSanctions maritime data…")
 
@@ -90,12 +114,14 @@ class SanctionsLoader:
                 print(f"[sanctions] Downloaded JSON from {_JSON_FALLBACK_URL}")
             except Exception as e:
                 print(f"[sanctions] All sources failed: {e}")
+                _mark_attempt_failed(f"all sources failed: {e}")
                 if db:
                     self._load_from_db(db)
                 return {"error": str(e), "vessels": self._total_vessels}
 
         if not vessels:
             print("[sanctions] No vessel records parsed — falling back to DB cache")
+            _mark_attempt_failed("no_vessels_parsed")
             if db:
                 self._load_from_db(db)
             return {"error": "no_vessels_parsed", "vessels": self._total_vessels}
@@ -134,6 +160,12 @@ class SanctionsLoader:
                     self._persist_to_db(vessels, _db)
             except Exception:
                 pass
+
+        with _DS_STATUS_LOCK:
+            _DS_STATUS["sanctions"]["last_loaded"] = self._last_loaded.isoformat()
+            _DS_STATUS["sanctions"]["vessel_count"] = self._total_vessels
+            _DS_STATUS["sanctions"]["failures"] = 0
+            _DS_STATUS["sanctions"]["error"] = None
 
         print(f"[sanctions] Loaded {len(vessels)} sanctioned vessels "
               f"({len(new_mmsi)} by MMSI, {len(new_imo)} by IMO) from {used_url}")

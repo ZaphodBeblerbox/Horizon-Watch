@@ -607,9 +607,30 @@ _DS_STATUS: dict = {
     "airports": {"last_download": None, "count": 0},
     "ports":    {"last_download": None, "count": 0},
     "power":    {"last_download": None, "count": 0},
-    "copernicus": {"token_valid": False, "expires_at": None},
+    # sar_last_success/sar_failures/sar_last_error: Sentinel-1 SAR image fetch
+    # (_fetch_sentinel1_image_bytes), reusing this entry's existing
+    # token_valid rather than duplicating a second Copernicus auth flag.
+    "copernicus": {"token_valid": False, "expires_at": None,
+                   "sar_last_success": None, "sar_failures": 0, "sar_last_error": None},
     "imb":      {"last_poll": None, "failures": 0},
     "gdelt":    {"last_poll": None, "failures": 0, "events_pushed": 0},
+    # OpenSanctions maritime vessel list (sanctions_loader.py load_or_refresh()).
+    "sanctions": {"last_loaded": None, "last_attempt": None, "failures": 0,
+                  "vessel_count": 0, "error": None},
+    # AllenAI SAR ship detector (sar_detector.py) — pre-provisioned prerequisite
+    # only. Confirmed (2026-08 audit) that nothing outside test_sar_detector.py
+    # calls this module yet — no live loop/endpoint wires it in. This key exists
+    # so /api/health/detailed already has a place to report through once a real
+    # caller is added; it is never updated by this pass.
+    "sar_detection": {"last_run": None, "last_success": None, "failures": 0,
+                       "last_error": None, "model_loaded": False,
+                       "detections_last_run": 0},
+    # News funnel's near-dup / embedding-relevance stage (relevance_embedding.py,
+    # called from the per-article loop in _run_news_conflict_extraction_sync).
+    "embedding_relevance": {"failures": 0, "last_error": None, "last_success_ts": None},
+    # Ontology entity linker (entity_linker.py).
+    "entity_linker": {"loaded": False, "links_written": 0, "failures": 0,
+                       "last_error": None, "last_success": None},
 }
 _DS_STATUS_LOCK = threading.Lock()
 _IMB_INCIDENTS: list = []
@@ -1008,6 +1029,23 @@ def get_health_detailed():
             return "pending"
         return "degraded" if failures > 2 else "ok"
 
+    # Sanctions: degraded if the last load attempt errored, OR the last
+    # successful load is stale beyond ~48h (the loader refreshes every 24h,
+    # so 48h stale means at least one full refresh cycle was missed).
+    _sanctions_last_loaded_iso = ds["sanctions"].get("last_loaded")
+    _sanctions_stale = False
+    if _sanctions_last_loaded_iso:
+        try:
+            _sanctions_stale = (
+                datetime.utcnow() - datetime.fromisoformat(_sanctions_last_loaded_iso)
+            ) > timedelta(hours=48)
+        except Exception:
+            _sanctions_stale = False
+    _sanctions_status = (
+        "degraded" if (ds["sanctions"].get("error") or _sanctions_stale)
+        else ("ok" if _sanctions_last_loaded_iso else "pending")
+    )
+
     sources = [
         {
             "id":        "oref",
@@ -1094,6 +1132,9 @@ def get_health_detailed():
             "status":    "ok" if ds["copernicus"].get("token_valid") else "degraded",
             "token_valid": ds["copernicus"].get("token_valid", False),
             "expires_at":  ds["copernicus"].get("expires_at"),
+            "sar_last_success": ds["copernicus"].get("sar_last_success"),
+            "sar_failures":     ds["copernicus"].get("sar_failures", 0),
+            "sar_last_error":   ds["copernicus"].get("sar_last_error"),
         },
         {
             "id":        "imb",
@@ -1102,6 +1143,60 @@ def get_health_detailed():
             "last_fetch": ds["imb"].get("last_poll"),
             "status":    _status(ds["imb"].get("failures", 0), ds["imb"].get("last_poll")),
             "failures":  ds["imb"].get("failures", 0),
+        },
+        {
+            "id":        "gdelt",
+            "name":      "GDELT Event Database",
+            "type":      "news",
+            "last_fetch": ds["gdelt"].get("last_poll"),
+            "status":    _status(ds["gdelt"].get("failures", 0), ds["gdelt"].get("last_poll")),
+            "failures":  ds["gdelt"].get("failures", 0),
+            "events_pushed": ds["gdelt"].get("events_pushed", 0),
+        },
+        {
+            "id":        "sanctions",
+            "name":      "OpenSanctions Maritime Vessel List",
+            "type":      "maritime",
+            "last_fetch": ds["sanctions"].get("last_loaded"),
+            "status":    _sanctions_status,
+            "failures":  ds["sanctions"].get("failures", 0),
+            "last_attempt": ds["sanctions"].get("last_attempt"),
+            "vessel_count": ds["sanctions"].get("vessel_count", 0),
+            "message":   ds["sanctions"].get("error"),
+        },
+        {
+            "id":        "sar_detection",
+            "name":      "AllenAI SAR Ship Detector",
+            "type":      "satellite",
+            "last_fetch": ds["sar_detection"].get("last_run"),
+            "status":    _status(ds["sar_detection"].get("failures", 0), ds["sar_detection"].get("last_run")),
+            "failures":  ds["sar_detection"].get("failures", 0),
+            "last_success": ds["sar_detection"].get("last_success"),
+            "model_loaded": ds["sar_detection"].get("model_loaded", False),
+            "detections_last_run": ds["sar_detection"].get("detections_last_run", 0),
+            "message":   None if ds["sar_detection"].get("last_run") else
+                         "Not yet wired into a live caller — pre-provisioned status only",
+        },
+        {
+            "id":        "embedding_relevance",
+            "name":      "News Near-Dup / Embedding Relevance Stage",
+            "type":      "news",
+            "last_fetch": ds["embedding_relevance"].get("last_success_ts"),
+            "status":    "degraded" if ds["embedding_relevance"].get("last_error") else "ok",
+            "failures":  ds["embedding_relevance"].get("failures", 0),
+            "last_error": ds["embedding_relevance"].get("last_error"),
+        },
+        {
+            "id":        "entity_linker",
+            "name":      "Ontology Entity Linker",
+            "type":      "ontology",
+            "last_fetch": ds["entity_linker"].get("last_success"),
+            "status":    ("degraded" if ds["entity_linker"].get("last_error")
+                          else ("ok" if ds["entity_linker"].get("loaded") else "pending")),
+            "failures":  ds["entity_linker"].get("failures", 0),
+            "loaded":    ds["entity_linker"].get("loaded", False),
+            "links_written": ds["entity_linker"].get("links_written", 0),
+            "last_error": ds["entity_linker"].get("last_error"),
         },
         {
             "id":        "pipelines",
@@ -6531,7 +6626,17 @@ def _run_news_conflict_extraction_sync():
             # of the ~270 feeds gets classified once, with later sightings
             # tracked as "also reported by" on the original rather than
             # independently processed as separate stories.
-            _dup_match = _find_near_duplicate(url, title, summary)
+            try:
+                _dup_match = _find_near_duplicate(url, title, summary)
+            except Exception as _dup_ex:
+                print(f"[news-dedup] near-duplicate check crashed for {url}: {_dup_ex} — skipping article")
+                with _DS_STATUS_LOCK:
+                    _DS_STATUS["embedding_relevance"]["failures"] = _DS_STATUS["embedding_relevance"].get("failures", 0) + 1
+                    _DS_STATUS["embedding_relevance"]["last_error"] = str(_dup_ex)
+                continue
+            else:
+                with _DS_STATUS_LOCK:
+                    _DS_STATUS["embedding_relevance"]["last_success_ts"] = datetime.now(timezone.utc).isoformat()
             if _dup_match:
                 _dup_canonical_url, _dup_score = _dup_match
                 _attach_duplicate_report(_dup_canonical_url, {
@@ -6547,10 +6652,19 @@ def _run_news_conflict_extraction_sync():
 
             # ── LLM article analysis (before geocoding — gates on tier) ───────
             _article_calls_today = usage_tracker.get_calls_today_by_type("article_intelligence")
-            _clf = _classify_article_intel(
-                title, summary, source_name, _ACTIVE_PROFILE,
-                llm_calls_this_cycle, _article_calls_today,
-            )
+            try:
+                _clf = _classify_article_intel(
+                    title, summary, source_name, _ACTIVE_PROFILE,
+                    llm_calls_this_cycle, _article_calls_today,
+                )
+            except Exception as _clf_ex:
+                print(f"[article_intel] classification crashed for {url}: {_clf_ex} — skipping article")
+                with _DS_STATUS_LOCK:
+                    _DS_STATUS["embedding_relevance"]["failures"] = _DS_STATUS["embedding_relevance"].get("failures", 0) + 1
+                    _DS_STATUS["embedding_relevance"]["last_error"] = str(_clf_ex)
+                continue
+            with _DS_STATUS_LOCK:
+                _DS_STATUS["embedding_relevance"]["last_success_ts"] = datetime.now(timezone.utc).isoformat()
             _intel = _clf["intel"]
             _intel_llm_called = _clf["llm_called"]
             if _intel_llm_called:
@@ -13677,6 +13791,10 @@ async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
             )
 
         if resp.status_code == 200:
+            with _DS_STATUS_LOCK:
+                _DS_STATUS["copernicus"]["sar_last_success"] = datetime.now(timezone.utc).isoformat()
+                _DS_STATUS["copernicus"]["sar_failures"] = 0
+                _DS_STATUS["copernicus"]["sar_last_error"] = None
             return {
                 "image_bytes": resp.content,
                 "width": width, "height": height,
@@ -13686,9 +13804,15 @@ async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
         else:
             detail = resp.text[:500]
             print(f"[sentinel/sar-imagery] Process API {resp.status_code}: {detail}")
+            with _DS_STATUS_LOCK:
+                _DS_STATUS["copernicus"]["sar_failures"] = _DS_STATUS["copernicus"].get("sar_failures", 0) + 1
+                _DS_STATUS["copernicus"]["sar_last_error"] = f"Sentinel Hub API error {resp.status_code}"
             return {"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail}
     except Exception as e:
         print(f"[sentinel/sar-imagery] fetch error: {e}")
+        with _DS_STATUS_LOCK:
+            _DS_STATUS["copernicus"]["sar_failures"] = _DS_STATUS["copernicus"].get("sar_failures", 0) + 1
+            _DS_STATUS["copernicus"]["sar_last_error"] = str(e)
         return {"error": str(e)}
 
 

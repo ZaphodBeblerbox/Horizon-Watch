@@ -297,9 +297,13 @@ class SentinelDetection(Base):
     scan_id                  = Column(String, ForeignKey("sentinel_scans.scan_id"), nullable=False, index=True)
     zone_id                  = Column(Integer, ForeignKey("watch_zones.id"), nullable=False, index=True)
     # Always populated (never inferred implicitly downstream) — "OPTICAL" for
-    # today's Sentinel-2/YOLO-OBB detections, "SAR" for Sentinel-1 detections
-    # from sar_detector.py. Defaults to "OPTICAL" so existing rows/writers
-    # (which predate this column) remain valid without a data migration.
+    # today's Sentinel-2/YOLO-OBB detections (sentinel_ml.run_ship_detection(),
+    # via main.py's shared yolov8n-obb.onnx/DOTA inference — confirmed real as
+    # of the 2026-08 audit fix; it previously ran a plain axis-aligned COCO
+    # detector despite this comment, which has since been corrected in code
+    # rather than just here), "SAR" for Sentinel-1 detections from
+    # sar_detector.py. Defaults to "OPTICAL" so existing rows/writers (which
+    # predate this column) remain valid without a data migration.
     instrument               = Column(String, nullable=False, default="OPTICAL")
     object_type              = Column(String, nullable=False)
     confidence               = Column(Float, nullable=False)
