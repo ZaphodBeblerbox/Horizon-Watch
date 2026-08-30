@@ -116,6 +116,7 @@ export default function InspectorPanel({
     onSelectRelated = noop,
     onJumpToLocation = noop,
     onOpenInOntology = noop,
+    onTrackEntity = null,
     style,
 }) {
     const [links, setLinks] = useState([])
@@ -223,15 +224,20 @@ export default function InspectorPanel({
             </div>
 
             {/* Actions */}
-            {(actions.canJumpToLocation || actions.canOpenInOntology) && (
+            {(actions.canJumpToLocation || actions.canOpenInOntology || (onTrackEntity && entityId)) && (
                 <div style={{
-                    display: "flex", gap: "var(--space-2)",
+                    display: "flex", gap: "var(--space-2)", flexWrap: "wrap",
                     padding: "var(--space-3) var(--space-4)",
                     borderTop: "var(--elevation-1)", flexShrink: 0,
                 }}>
                     {actions.canJumpToLocation && (
                         <Button variant="ghost" size="sm" style={{ flex: 1 }} onClick={() => onJumpToLocation(data)}>
                             Jump to globe
+                        </Button>
+                    )}
+                    {onTrackEntity && entityId && (
+                        <Button variant="ghost" size="sm" style={{ flex: 1 }} onClick={() => onTrackEntity(entityId)}>
+                            Track on globe
                         </Button>
                     )}
                     {actions.canOpenInOntology && (

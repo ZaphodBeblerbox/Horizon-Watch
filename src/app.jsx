@@ -1558,7 +1558,26 @@ export default function App() {
                 {/* News Feed — mounted only while a news tab exists */}
                 {tabs.some(t => t.type === "news") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "news" ? "flex" : "none", flexDirection: "column" }}>
-                        <NewsPage onClose={() => closeTab(tabs.find(t => t.type === "news")?.id)} />
+                        <NewsPage
+                            onClose={() => closeTab(tabs.find(t => t.type === "news")?.id)}
+                            onJumpToLocation={(story) => {
+                                const lat = story?.lat
+                                const lon = story?.lon ?? story?.lng
+                                if (lat == null || lon == null) return
+                                window.dispatchEvent(new CustomEvent("akili:open-map"))
+                                setTimeout(() => {
+                                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat, lon, altitude: 100_000 } }))
+                                }, 50)
+                            }}
+                            onOpenInspector={(story) => {
+                                window.dispatchEvent(new CustomEvent("akili:open-map"))
+                                setTimeout(() => {
+                                    window.dispatchEvent(new CustomEvent("akili:open-inspector", {
+                                        detail: { entityType: "event", entityId: story?.id || story?.url || null, data: story },
+                                    }))
+                                }, 100)
+                            }}
+                        />
                     </div>
                 )}
 

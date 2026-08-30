@@ -1,25 +1,26 @@
 import { useState, useEffect, useRef } from "react"
 import {
     ScreenSpaceEventHandler, ScreenSpaceEventType,
-    defined, SceneTransforms,
+    defined, SceneTransforms, Cartesian3,
     Cartographic, Math as CesiumMath, Cartesian2,
 } from "cesium"
 import { getEntity } from "./entityStore.js"
-import GlobeAircraftPopup from "./GlobeAircraftPopup.jsx"
-import GlobeVesselPopup   from "./GlobeVesselPopup.jsx"
-import GlobeEventPopup    from "./GlobeEventPopup.jsx"
-import GlobeEEZPopup      from "./GlobeEEZPopup.jsx"
-import GlobeCablePopup    from "./GlobeCablePopup.jsx"
-import GlobeInfraPopup    from "./GlobeInfraPopup.jsx"
-import GlobeHeatmapPopup  from "./GlobeHeatmapPopup.jsx"
-import GlobeAlertPopup      from "./GlobeAlertPopup.jsx"
-import GlobeAssessmentPopup from "./GlobeAssessmentPopup.jsx"
-import GlobeFusionPopup     from "./GlobeFusionPopup.jsx"
-import GlobeAirportPopup       from "./GlobeAirportPopup.jsx"
-import GlobePortPopup           from "./GlobePortPopup.jsx"
-import SentinelDetectionPopup   from "./SentinelDetectionPopup.jsx"
-import GlobeChokepointPopup     from "./GlobeChokepointPopup.jsx"
+import InspectorPanel from "../components/InspectorPanel.jsx"
 import API_BASE                  from "../apiBase.js"
+
+// Entity types InspectorPanel (Round 2's unified detail panel) renders
+// directly. "threat_region" keeps its own bespoke popup below — it has a
+// real async "explain" fetch (region threat-matrix narrative) that isn't
+// part of InspectorPanel's generic entity model, and folding it in would
+// mean either losing that feature or building new inspector machinery just
+// for one entity type; "html" is the raw Cesium entity-description fallback
+// for entities with no registered type at all, which was never a
+// bespoke *component* to begin with.
+export const INSPECTOR_TYPES = new Set([
+    "aircraft", "vessel", "event", "eez", "cable", "infra", "heatmap_cell",
+    "alert", "assessment", "fusion", "airport", "port",
+    "sentinel_detection", "chokepoint",
+])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
 const THREAT_COLORS = { critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }
@@ -270,9 +271,29 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
         return () => window.removeEventListener("akili:show-entity", handler)
     }, [viewerRef])
 
-    // Keep click popup anchored on entity position as camera moves
+    // Deep-link entry point for callers that already have a full raw entity
+    // payload in hand but no entityStore registration to look it up by id
+    // (e.g. NewsPage.jsx's "Open in Inspector" action on a selected story —
+    // it has the real article object already, registering it in entityStore
+    // just to immediately look it up again would be pure ceremony). Opens
+    // the same InspectorPanel a real globe click would, using the caller's
+    // own data directly.
+    useEffect(() => {
+        const handler = (e) => {
+            const { entityType, entityId, data } = e.detail || {}
+            if (!entityType) return
+            setPopup({ type: entityType, data: data || {}, x: 0, y: 0, entityId: entityId || null })
+        }
+        window.addEventListener("akili:open-inspector", handler)
+        return () => window.removeEventListener("akili:open-inspector", handler)
+    }, [])
+
+    // Keep click popup anchored on entity position as camera moves — only
+    // needed for the two remaining floating (x/y-positioned) popup types.
+    // InspectorPanel is a fixed docked panel and ignores popup.x/y entirely.
     useEffect(() => {
         if (!popup?.entityId) return
+        if (popup.type !== "threat_region" && popup.type !== "html") return
         const viewer = viewerRef.current?.cesiumElement
         if (!viewer) return
         const entity = viewer.entities.getById(popup.entityId)
@@ -287,16 +308,59 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
         }
         viewer.scene.postRender.addEventListener(update)
         return () => viewer.scene.postRender.removeEventListener(update)
-    }, [popup?.entityId, viewerRef])
+    }, [popup?.entityId, popup?.type, viewerRef])
 
     const isMob = window.innerWidth < 768
     const W     = isMob ? 260 : 300
     const handleClose = () => setPopup(null)
-    const handleFollow = () => {
+
+    // Real position fields, wherever they live on the payload — mirrors
+    // src/inspector/adapters.js's pointOf() so "Jump to globe" flies to the
+    // same place InspectorPanel's attribute row shows, never a fabricated one.
+    const handleJumpToLocation = (data) => {
+        const viewer = viewerRef.current?.cesiumElement
+        const lat = data?.lat ?? data?.latitude
+        const lon = data?.lon ?? data?.lng ?? data?.longitude
+        if (!viewer || lat == null || lon == null) return
+        viewer.camera.flyTo({
+            destination: Cartesian3.fromDegrees(Number(lon), Number(lat), 100_000),
+            duration: 1.5,
+        })
+    }
+
+    const handleTrackEntity = (entityId) => {
         const viewer = viewerRef.current?.cesiumElement
         if (!viewer) return
-        const entity = viewer.entities.getById(popup.entityId)
+        const entity = viewer.entities.getById(entityId)
         if (entity) viewer.trackedEntity = entity
+        setPopup(null)
+    }
+
+    // Related-entity navigation — fetches the real ontology profile for the
+    // clicked link and opens ITS inspector, using the same real
+    // /api/entities/{type}/{id}/profile endpoint InspectorPanel documents.
+    // Position (x/y) is irrelevant for InspectorPanel's fixed docking; kept
+    // at 0 since nothing reads it for this type.
+    const handleSelectRelated = async (entityType, entityId) => {
+        if (!entityType || !entityId) return
+        try {
+            const r = await fetch(`${API_BASE}/api/entities/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/profile`)
+            const d = r.ok ? await r.json() : null
+            setPopup({ type: entityType, data: d?.entity || {}, x: 0, y: 0, entityId })
+        } catch {
+            setPopup({ type: entityType, data: {}, x: 0, y: 0, entityId })
+        }
+    }
+
+    // Forge's ontology graph is a real, already-wired workspace
+    // (akili:forge-nav {workspace:"ontology"}, see ForgePanel.jsx) — this
+    // reuses it rather than adding new Forge-side plumbing, which is out of
+    // scope for this round. It lands on the ontology graph in general, not
+    // auto-focused on this specific node — that would need a new Forge-side
+    // deep-link this round deliberately doesn't build.
+    const handleOpenInOntology = () => {
+        window.dispatchEvent(new CustomEvent("akili:open-forge"))
+        window.dispatchEvent(new CustomEvent("akili:forge-nav", { detail: { workspace: "ontology" } }))
         setPopup(null)
     }
 
@@ -327,8 +391,23 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                 </div>
             )}
 
-            {/* Click popup */}
-            {popup && (
+            {/* Unified inspector — fixed docked panel, positions itself */}
+            {popup && INSPECTOR_TYPES.has(popup.type) && (
+                <InspectorPanel
+                    entityType={popup.type}
+                    entityId={popup.entityId}
+                    data={popup.data}
+                    onClose={handleClose}
+                    onSelectRelated={handleSelectRelated}
+                    onJumpToLocation={handleJumpToLocation}
+                    onOpenInOntology={handleOpenInOntology}
+                    onTrackEntity={handleTrackEntity}
+                />
+            )}
+
+            {/* Floating popup — the 2 entity kinds NOT covered by InspectorPanel
+                (see INSPECTOR_TYPES comment above) */}
+            {popup && !INSPECTOR_TYPES.has(popup.type) && (
                 <div
                     style={{
                         position:      "absolute",
@@ -344,36 +423,8 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                         pointerEvents: "auto",
                     }}
                 >
-                    {popup.type === "aircraft" ? (
-                        <GlobeAircraftPopup data={popup.data} onClose={handleClose} onFollow={handleFollow} />
-                    ) : popup.type === "vessel" ? (
-                        <GlobeVesselPopup data={popup.data} onClose={handleClose} onFollow={handleFollow} />
-                    ) : popup.type === "event" ? (
-                        <GlobeEventPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "eez" ? (
-                        <GlobeEEZPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "cable" ? (
-                        <GlobeCablePopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "infra" ? (
-                        <GlobeInfraPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "heatmap_cell" ? (
-                        <GlobeHeatmapPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "alert" ? (
-                        <GlobeAlertPopup data={popup.data} onClose={handleClose} viewerRef={viewerRef} />
-                    ) : popup.type === "assessment" ? (
-                        <GlobeAssessmentPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "fusion" ? (
-                        <GlobeFusionPopup data={popup.data} onClose={handleClose} viewerRef={viewerRef} />
-                    ) : popup.type === "airport" ? (
-                        <GlobeAirportPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "threat_region" ? (
+                    {popup.type === "threat_region" ? (
                         <ThreatRegionPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "port" ? (
-                        <GlobePortPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "sentinel_detection" ? (
-                        <SentinelDetectionPopup data={popup.data} onClose={handleClose} />
-                    ) : popup.type === "chokepoint" ? (
-                        <GlobeChokepointPopup data={popup.data} onClose={handleClose} />
                     ) : (
                         <>
                             <button
