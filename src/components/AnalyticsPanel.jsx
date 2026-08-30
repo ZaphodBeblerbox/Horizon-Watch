@@ -550,10 +550,9 @@ function ExplainModal({ regionName, onClose }) {
                 onClick={e => e.stopPropagation()}
                 style={{
                     width: 420, maxHeight: "80vh", overflowY: "auto",
-                    background: "#0a101e", border: "1px solid rgba(56,139,255,0.2)",
+                    background: "#0a101e", border: "var(--elevation-2)",
                     borderRadius: 10, padding: "20px 22px",
-                    boxShadow: "0 24px 64px rgba(0,0,0,0.7)",
-                    fontFamily: "system-ui, sans-serif",
+                    fontFamily: "var(--font-sans)",
                 }}
             >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>

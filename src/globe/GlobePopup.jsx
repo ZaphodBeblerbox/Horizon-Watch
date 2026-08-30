@@ -321,7 +321,6 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                         maxWidth:      200,
                         overflow:      "hidden",
                         textOverflow:  "ellipsis",
-                        boxShadow:     "0 2px 8px rgba(0,0,0,0.5)",
                     }}
                 >
                     {tooltip.name}
@@ -340,9 +339,8 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                         maxHeight:     520,
                         overflowY:     "auto",
                         background:    "#0F1721",
-                        border:        "1px solid #2C3645",
+                        border:        "var(--elevation-2)",
                         borderRadius:  8,
-                        boxShadow:     "0 8px 32px rgba(0,0,0,0.7)",
                         pointerEvents: "auto",
                     }}
                 >

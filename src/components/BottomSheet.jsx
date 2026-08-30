@@ -79,8 +79,7 @@ export default function BottomSheet({
                     flexDirection:    "column",
                     transform:        `translateY(${dragY}px)`,
                     transition:       isDragging ? "none" : "transform 0.3s ease-out",
-                    fontFamily:       "Inter, -apple-system, sans-serif",
-                    boxShadow:        "0 -8px 40px rgba(0,0,0,0.5)",
+                    fontFamily:       "var(--font-sans)",
                 }}
             >
                 {/* Drag handle */}

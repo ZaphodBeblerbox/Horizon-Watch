@@ -54,6 +54,10 @@ export default defineConfig({
     build: {
         sourcemap: true,
     },
+    test: {
+        environment: "node",
+        include: ["src/**/*.test.{js,jsx}"],
+    },
     optimizeDeps: {
         include: ["leaflet.vectorgrid"],
     },

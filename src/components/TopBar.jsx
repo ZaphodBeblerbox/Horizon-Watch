@@ -293,13 +293,13 @@ export default function TopBar({
         <div style={{
             height:       40,
             flexShrink:   0,
-            background:   "linear-gradient(180deg, #0d1119 0%, var(--akili-surface) 100%)",
+            background:   "var(--akili-surface)",
             borderBottom: "1px solid var(--akili-border)",
             display:      "flex",
             alignItems:   "stretch",
             zIndex:       100,
             boxSizing:    "border-box",
-            fontFamily:   "system-ui, -apple-system, sans-serif",
+            fontFamily:   "var(--font-sans)",
         }}>
             <style>{`@keyframes tb-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 

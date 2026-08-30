@@ -7,7 +7,7 @@
 }
 
 body {
-    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: var(--font-sans);
     background: var(--akili-surface);
     color: var(--akili-text-primary);
     height: 100vh;
@@ -60,10 +60,9 @@ body {
 
 .leaflet-popup-content-wrapper {
     border-radius: 4px !important;
-    border: 1px solid var(--akili-border) !important;
+    border: var(--elevation-2) !important;
     background: var(--akili-panel) !important;
     color: var(--akili-text-primary) !important;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
     backdrop-filter: blur(16px) !important;
 }
 
@@ -91,7 +90,6 @@ body {
     border-radius: 8px !important;
     padding: 0 !important;
     overflow: hidden !important;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 20px rgba(56,189,248,0.08) !important;
     backdrop-filter: blur(20px) !important;
 }
 .vessel-popup .leaflet-popup-content {
@@ -113,7 +111,6 @@ body {
     width: 2px !important;
     height: 20px !important;
     background: #38bdf8 !important;
-    box-shadow: 0 0 6px rgba(56,189,248,0.7) !important;
     transform: none !important;
     margin: 0 auto !important;
     border-radius: 1px;
@@ -313,7 +310,6 @@ textarea::placeholder {
     font-family: inherit;
     font-size: 11px;
     line-height: 1.5;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     white-space: nowrap;
 }
 .shipping-tooltip-inner strong {
@@ -329,7 +325,6 @@ textarea::placeholder {
     color: #e2e8f0 !important;
     padding: 5px 10px !important;
     font-size: 12px !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
 }
 .country-tooltip::before {
     display: none !important;
@@ -343,7 +338,6 @@ textarea::placeholder {
     color: #e2e8f0 !important;
     padding: 5px 10px !important;
     font-size: 12px !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
 }
 .eez-tooltip::before {
     display: none !important;

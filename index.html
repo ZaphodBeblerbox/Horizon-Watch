@@ -15,26 +15,98 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        /* ── Horizon Watch theme CSS variables ──────────────────────────── */
+        /* ── Horizon Watch design tokens ──────────────────────────────────
+           Single reconciled token system (Round 1 of the UI rebuild).
+           Two naming schemes existed before this: a flat `--bg-*`/`--text-*`/
+           `--accent`/`--severity-*` set (defined here, aliased through
+           legacy `--akili-*` names used at ~254 call sites) and a more
+           scalable `--space-*`/`--text-xs..xl`/`--sev-*`/`--font-mono` set
+           that ForesightPanel.jsx and GlobeChokepointPopup.jsx already
+           referenced but which was never defined anywhere. This block
+           defines BOTH vocabularies for real, off one shared set of
+           values, and keeps every legacy alias resolving so existing call
+           sites keep working unchanged. ───────────────────────────────── */
         :root {
-            /* Semantic palette */
-            --bg-primary:    #050c1c;
-            --bg-secondary:  #080f28;
-            --bg-elevated:   #0a1530;
-            --bg-glass:      rgba(6,14,45,0.88);
+            /* ── Surfaces (elevation via lightness, not shadow) ───────────── */
+            --bg-primary:    #0A0E16; /* deepest surface */
+            --bg-secondary:  #0F1520; /* elevation step 1 */
+            --bg-elevated:   #141B29; /* elevation step 2 */
+            --bg-glass:      rgba(10,14,22,0.88);
             --border-subtle: rgba(255,255,255,0.08);
-            --text-primary:  #f0f4f8;
-            --text-secondary:#8899aa;
-            --text-muted:    #3d5068;
-            --accent:        #1a6eb5;
-            --accent-bright: #2d8fe8;
-            --accent-glow:   rgba(29,110,181,0.3);
-            --severity-critical:    #dc2626;
-            --severity-significant: #d97706;
-            --severity-elevated:    #1a6eb5;
-            --severity-low:         #3d5068;
+            --border-dim:    rgba(255,255,255,0.05);
 
-            /* Legacy --akili-* mapped to new palette */
+            /* ── Text colors ───────────────────────────────────────────────
+               Contrast vs --bg-primary (#0A0E16), WCAG relative-luminance:
+               text-primary 17.48:1, text-secondary 6.61:1, text-dim 3.57:1,
+               text-muted 2.34:1 (inherited unchanged from the prior palette;
+               low by design for de-emphasised text, flagged in round report). */
+            --text-primary:   #f0f4f8;
+            --text-secondary: #8899aa;
+            --text-dim:       #5c6b82;
+            --text-muted:     #3d5068;
+
+            /* ── UI accent — "this is interactive" (selection/focus/active-
+               tab/links). Meaning-free: never use for severity.
+               Contrast vs bg-primary/bg-secondary/bg-elevated:
+               10.69:1 / 10.12:1 / 9.54:1 — comfortably passes AA/AAA. ───── */
+            --accent:        #22D3EE;
+            --accent-bright: #67E8F9;
+            --accent-faint:  rgba(34,211,238,0.12);
+            --accent-border: rgba(34,211,238,0.35);
+            --accent-glow:   rgba(34,211,238,0.3);
+
+            /* ── Severity ramp — ONLY for actual severity / affiliation /
+               data-quality meaning, never decorative.
+               Contrast vs bg-primary: critical 4.00:1, high 8.99:1,
+               medium 10.07:1, low 8.48:1. Critical falls just short of the
+               4.5:1 AA threshold for small body text (it clears the 3:1
+               large-text/UI-component threshold easily) — use it for
+               badges/borders/icons/large labels, not small paragraph text.
+               `medium` has no anchor value in the round spec (which only
+               defines 3 stops); interpolated as amber-yellow between
+               `high` and `low` since ForesightPanel's 4-stop probability
+               scale (>=0.70/0.40/0.20/else) needs it. ─────────────────── */
+            --sev-critical: #DC2626;
+            --sev-high:     #F59E0B;
+            --sev-medium:   #EAB308;
+            --sev-low:      #22C55E;
+            /* Legacy 4-tier names: no call sites reference these directly
+               today (verified), kept defined and re-pointed for safety. */
+            --severity-critical:    var(--sev-critical);
+            --severity-significant: var(--sev-high);
+            --severity-elevated:    var(--sev-medium);
+            --severity-low:         var(--sev-low);
+
+            /* ── Typography ────────────────────────────────────────────── */
+            --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: "IBM Plex Mono", "Courier New", monospace;
+            --text-xs: 11px;
+            --text-sm: 12px;
+            --text-md: 13px;
+            --text-lg: 15px;
+            --text-xl: 20px;
+            --weight-normal:   400;
+            --weight-semibold: 600;
+            --weight-bold:     700;
+
+            /* ── Spacing ───────────────────────────────────────────────── */
+            --space-1: 4px;
+            --space-2: 8px;
+            --space-3: 12px;
+            --space-4: 16px;
+
+            /* ── Radius ────────────────────────────────────────────────── */
+            --radius: 3px;
+
+            /* ── Elevation — hard-edge replacement for the old soft/diffuse
+               box-shadow convention. Depth is a border, not a blur. ──────── */
+            --elevation-1: 1px solid var(--border-subtle);   /* cards/panels */
+            --elevation-2: 1px solid rgba(255,255,255,0.16); /* modals/popups
+                                                                  over arbitrary
+                                                                  backgrounds */
+
+            /* Legacy --akili-* aliases — kept resolving, re-pointed at the
+               new values above. ~254 existing call sites depend on these. */
             --akili-surface:        var(--bg-primary);
             --akili-panel:          var(--bg-glass);
             --akili-panel-blur:     var(--bg-glass);
@@ -50,9 +122,9 @@
             --akili-input-bg:       var(--bg-elevated);
             --akili-input-border:   var(--border-subtle);
             --akili-accent:         var(--accent);
-            --akili-accent-bg:      rgba(26,110,181,0.12);
-            --akili-accent-border:  rgba(26,110,181,0.35);
-            --akili-overlay:        rgba(6,13,26,0.95);
+            --akili-accent-bg:      var(--accent-faint);
+            --akili-accent-border:  var(--accent-border);
+            --akili-overlay:        rgba(10,14,22,0.95);
         }
 /* ── User location pulse animation ──────────────────────────────── */
         @keyframes akiliUserLocPulse {

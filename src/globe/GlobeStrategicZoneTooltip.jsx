@@ -126,11 +126,10 @@ function Tooltip({ zone, x, y, visible, onClose }) {
                 background:      "rgba(10, 18, 35, 0.92)",
                 backdropFilter:  "blur(16px)",
                 WebkitBackdropFilter: "blur(16px)",
-                border:          "1px solid rgba(255,255,255,0.08)",
+                border:          "var(--elevation-2)",
                 borderRadius:    12,
                 overflow:        "hidden",
                 zIndex:          9000,
-                boxShadow:       "0 8px 32px rgba(0,0,0,0.6)",
                 fontFamily:      "Inter, system-ui, sans-serif",
                 color:           "#fff",
                 opacity:         visible ? 1 : 0,
@@ -179,7 +178,7 @@ function Tooltip({ zone, x, y, visible, onClose }) {
                         alignItems:     "center",
                         justifyContent: "center",
                         gap:            8,
-                        background:     `linear-gradient(135deg, rgba(${hexToRgb(typeColour)},0.2) 0%, rgba(10,18,35,0.9) 100%)`,
+                        background:     `rgba(${hexToRgb(typeColour)},0.12)`,
                     }}>
                         <span style={{ fontSize: 32, opacity: 0.45 }}>{zoneTypeIcon(zone.zone_type)}</span>
                         <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{zone.name}</span>

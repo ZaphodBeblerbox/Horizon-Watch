@@ -4,7 +4,7 @@ const GLASS_DARK = {
     background:          "rgba(10,14,20,0.82)",
     backdropFilter:      "blur(16px)",
     WebkitBackdropFilter: "blur(16px)",
-    boxShadow:           "0 2px 8px rgba(0,0,0,0.4)",
+    border:              "var(--elevation-1)",
 }
 
 export default function WorkspacesPanel({

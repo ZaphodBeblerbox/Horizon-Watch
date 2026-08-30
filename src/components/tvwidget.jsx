@@ -6,9 +6,8 @@ const GLASS = {
     backdropFilter: "blur(12px)",
     border: "1px solid rgba(255,255,255,0.10)",
     borderRadius: 12,
-    boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
     color: "#fff",
-    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    fontFamily: "var(--font-sans)",
 }
 
 function createDragHandler(panelRef, setPos, containerRef) {
