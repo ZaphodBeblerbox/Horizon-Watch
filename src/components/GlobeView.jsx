@@ -22,6 +22,7 @@ import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
 import GlobeSurgeLayer          from "../globe/GlobeSurgeLayer.jsx"
+import GlobeCameraLayer         from "../globe/GlobeCameraLayer.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -98,6 +99,9 @@ export default function GlobeView({
     overwatchSentinelOverlay = null,
     // Satellite imagery overlay (Sentinel-2)
     satelliteEnabled = false,
+    satelliteOpacity = 0.9,
+    // Live CCTV camera feeds (real public webcams + local YOLO detection server)
+    cctvEnabled = false,
     // Infrastructure layers
     airportsEnabled = false,
     portsEnabled    = false,
@@ -314,7 +318,6 @@ export default function GlobeView({
 
     // When any raster imagery overlay is active, swap from 3D photorealistic tiles to
     // flat ESRI satellite so ImageryLayers render on the ellipsoid unobstructed.
-    const overlayActive = nauticalEnabled || infraEnabled || satelliteEnabled
 
     if (webglLost) return (
         <div style={{
@@ -380,7 +383,7 @@ export default function GlobeView({
             >
                 {/* Raster overlays — rendered on top of ESRI base when active */}
                 {satelliteEnabled && sentinelProvider && (
-                    <ImageryLayer imageryProvider={sentinelProvider} alpha={0.9} maximumTerrainLevel={18} />
+                    <ImageryLayer imageryProvider={sentinelProvider} alpha={satelliteOpacity} maximumTerrainLevel={18} />
                 )}
                 {nauticalEnabled && (
                     <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} maximumTerrainLevel={18} />
@@ -429,6 +432,9 @@ export default function GlobeView({
 
                 {/* ── Threat heatmap layer ─────────────────────────────────────── */}
                 <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />
+
+                {/* ── Live CCTV camera feeds ───────────────────────────────────── */}
+                {cctvEnabled && <GlobeCameraLayer />}
 
                 {/* ── Passive auto mode ────────────────────────────────────────── */}
                 <GlobeAutoMode enabled={autoModeEnabled} isMobile={isMobile} />

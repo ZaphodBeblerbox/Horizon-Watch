@@ -1440,6 +1440,8 @@ export default function App() {
                             onOverwatchPolygon={handleOverwatchPolygon}
                             overwatchSentinelOverlay={owSentinelOverlay}
                             satelliteEnabled={directorSatelliteOverride ?? (activeWorkspace?.layers?.satellite ?? false)}
+                            satelliteOpacity={activeWorkspace?.layers?.satelliteOpacity ?? 0.9}
+                            cctvEnabled={activeWorkspace?.layers?.cctvFeeds ?? false}
                             directorScene={directorScene}
                             autoModeEnabled={showAutoMode}
                         />
