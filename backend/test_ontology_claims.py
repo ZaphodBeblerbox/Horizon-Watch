@@ -32,6 +32,7 @@ print("  Ontology claims pipeline — verification")
 print("="*70)
 
 import main  # noqa: E402
+from routers import forge as _forge_router  # noqa: E402  (_process_document_upload lives here now)
 
 # Auth has been removed — every endpoint is open, no token needed.
 HEADERS = {}
@@ -152,7 +153,7 @@ with TestClient(main.app) as client:
             tf.write("Stub document text for extraction test.")
             tmp_path = tf.name
         import asyncio as _aio
-        result = _aio.run(main._process_document_upload(
+        result = _aio.run(_forge_router._process_document_upload(
             tmp_path, "Stub description",
             source_title="Stub Source Title", source_publisher="Stub Publisher",
             source_date="2026-08-24", source_url="https://example.org/stub",
