@@ -101,13 +101,16 @@ function Tooltip({ zone, x, y, visible, onClose }) {
         setImgIdx(cur => (cur + 1) % Math.max(images.length, 1))
     }, [images.length])
 
-    const handleOpenForge = useCallback(() => {
-        window.dispatchEvent(new CustomEvent("akili:open-forge"))
-        setTimeout(() => {
-            window.dispatchEvent(new CustomEvent("akili:forge-nav", { detail: { workspace: "strategic-zones" } }))
-        }, 120)
+    // Full UI rebuild: there is no "Forge" destination anymore — rule/AOI
+    // management for a zone like this now lives in the real "Sources"
+    // destination (Detection Rules + Watch Areas). Real, destination-neutral
+    // navigation event (akili:navigate), following this codebase's existing
+    // cross-component navigation-request pattern rather than inventing a
+    // new mechanism — app.jsx listens for it and switches destinations.
+    const handleOpenInSources = useCallback(() => {
+        window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "sources", zoneId: zone.zone_id } }))
         onClose()
-    }, [onClose])
+    }, [onClose, zone.zone_id])
 
     const typeColour     = TYPE_COLOURS[zone.zone_type]     || "#8E8E93"
     const severityColour = SEVERITY_COLOURS[zone.severity_baseline] || "#8E8E93"
@@ -312,7 +315,7 @@ function Tooltip({ zone, x, y, visible, onClose }) {
 
                     {/* Buttons */}
                     <div style={{ display: "flex", gap: 6, padding: "0 14px 12px" }}>
-                        <button onClick={handleOpenForge} style={btnStyle("#007AFF")}>Open in Forge</button>
+                        <button onClick={handleOpenInSources} style={btnStyle("#007AFF")}>Manage in Sources</button>
                         <button onClick={() => setWatching(w => !w)} style={btnStyle(watching ? "#FF9500" : "#1C2539", watching)}>
                             {watching ? "Watching" : "Watch"}
                         </button>

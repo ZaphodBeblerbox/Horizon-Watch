@@ -77,6 +77,12 @@ function zoomToAlt(zoom) {
 export default function GlobeView({
     center           = [20, 10],
     zoom             = 3,
+    // Whether the Globe/Maritime home screen is the currently-active
+    // destination — GlobeView stays mounted (display:none) rather than
+    // unmounting when it isn't, for render-performance reasons, so
+    // GlobePopup needs this to know when to close its own open inspector
+    // per the full-UI-rebuild spec's docked-inspector exclusivity rules.
+    isVisible        = true,
     // Layer toggles — mirror workspace layer keys
     infraEnabled     = false,
     nauticalEnabled  = false,
@@ -460,7 +466,7 @@ export default function GlobeView({
             </Viewer>
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
-            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} />
+            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} />
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
             {cesiumViewer && (
