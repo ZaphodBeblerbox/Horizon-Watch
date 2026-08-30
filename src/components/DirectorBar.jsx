@@ -19,7 +19,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { markerSvg, AFFILIATION, ENTITY_FUNCTION } from "../globe/markerRenderer.js"
+import Icon from "../ui/Icon.jsx"
 
 const BAR_STYLES = `
   @keyframes director-bar-slide-up {
@@ -477,15 +477,10 @@ export default function DirectorBar({
             className="db-strip-logo"
             style={{ display: "flex", alignItems: "center", gap: 5 }}
           >
-            <span
-              style={{ display: "inline-block", verticalAlign: "middle" }}
-              dangerouslySetInnerHTML={{ __html: markerSvg({
-                  affiliation: AFFILIATION.NEUTRAL,
-                  entityFunction: ENTITY_FUNCTION.FUSION,
-                  size: 14,
-                  accentColor: "#388bff",
-              }) }}
-            />
+            {/* Plain UI-chrome icon (not a Cesium billboard) — real shared
+                Icon.jsx component, same "fusion" glyph src/globe/entityIcons.js
+                uses for real fusion-event markers elsewhere in this app. */}
+            <Icon name="aiCouncil" size={14} color="#388bff" />
             Director
           </span>
 

@@ -29,7 +29,7 @@ import {
     SceneTransforms,
 } from "cesium"
 import API_BASE from "../apiBase.js"
-import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
+import { getEntityMarkerDataUri } from "./entityIcons.js"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
 
 // ── Icon sizes mirror demoIconUtils.js ─────────────────────────────────────────
@@ -141,13 +141,12 @@ function _directorIconCanvas(type) {
     const iconKey = _DIRECTOR_TYPE_ICON[key] || "UNKNOWN_CONTACT"
     if (!_DIRECTOR_ICON_CACHE[iconKey]) {
         const color = ALERT_ICONS[iconKey]?.color || "#8E8E93"
-        // Director Mode scenario markers use the same Neutral-framed
-        // news/event glyph as real assessment markers (see markerRenderer.js),
+        // Director Mode scenario markers use the same real "news_event"
+        // glyph as real assessment markers (see src/globe/entityIcons.js),
         // tinted by the scenario's own ALERT_ICONS colour.
-        _DIRECTOR_ICON_CACHE[iconKey] = getMarkerCanvas({
-            affiliation: AFFILIATION.NEUTRAL,
-            entityFunction: ENTITY_FUNCTION.NEWS_EVENT,
-            accentColor: color,
+        _DIRECTOR_ICON_CACHE[iconKey] = getEntityMarkerDataUri({
+            entityType: "news_event",
+            color,
             size: 40,
         })
     }

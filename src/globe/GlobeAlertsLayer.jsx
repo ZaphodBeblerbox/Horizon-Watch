@@ -3,10 +3,8 @@ import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import {
-    getMarkerCanvas, resolveAlertAffiliation, resolveAlertEntityFunction,
-    AFFILIATION, ENTITY_FUNCTION,
-} from "./markerRenderer.js"
+import { getEntityMarkerDataUri, resolveSanctionsStatus } from "./entityIcons.js"
+import { alertEntityTypeAndSubtype } from "../inspector/adapters.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
 
@@ -18,16 +16,22 @@ function forgeHeaders() {
 
 function alertIcon(a) {
     const iconType = a.icon_type || ""
-    const affiliation    = resolveAlertAffiliation(a)
-    const entityFunction = resolveAlertEntityFunction(a)
+    // Same real domain-based classification InspectorPanel already uses
+    // (src/inspector/adapters.js's alertEntityTypeAndSubtype) — AIS -> vessel
+    // glyph, ADS-B -> aircraft glyph with a real military/general sub-type
+    // badge, everything else (including NEWS assessments) -> the generic
+    // alert glyph. One shared source of truth, not a second copy of the
+    // same real logic.
+    const { entityType, subtype } = alertEntityTypeAndSubtype(a)
+    const sanctionsStatus = resolveSanctionsStatus(a)
 
     // News assessment — pattern-specific accent colour carried over from
     // ALERT_ICONS (real, still-used table — see src/constants/alertIcons.js).
     const isAssessment = a.domain === "NEWS" && !!(iconType && ALERT_ICONS[iconType])
-    const accentColor  = isAssessment ? (ALERT_ICONS[iconType]?.color || "#FF6B35") : undefined
+    const color = isAssessment ? (ALERT_ICONS[iconType]?.color || "#FF6B35") : undefined
     const size = isAssessment ? 40 : 38
 
-    return getMarkerCanvas({ affiliation, entityFunction, size, accentColor })
+    return getEntityMarkerDataUri({ entityType, subtype, sanctionsStatus, size, color })
 }
 
 function isSanctioned(a) {
@@ -114,17 +118,16 @@ function filterAlert(a, sanctionedMmsiSet) {
 }
 
 // Fusion events are multi-domain correlations, not identity-bearing
-// contacts — Neutral affiliation frame (square) throughout, carrying the
-// established fusion accent colour (#BF5AF2, same one ALERT_ICONS.FUSION_EVENT
-// and GlobeAlertPopup's SRC_COLOR.FUSION already use) as the glyph tint, with
-// a pulse ring for higher-severity fusions.
+// contacts — the real "fusion" entity glyph (see src/globe/entityIcons.js),
+// carrying the established fusion accent colour (#BF5AF2, same one
+// ALERT_ICONS.FUSION_EVENT and GlobeAlertPopup's SRC_COLOR.FUSION already
+// use) as the glyph tint, with a pulse ring for higher-severity fusions.
 function fusionIcon(severity) {
     const size = severity === "critical" ? 64 : severity === "high" ? 56 : 48
-    return getMarkerCanvas({
-        affiliation:    AFFILIATION.NEUTRAL,
-        entityFunction: ENTITY_FUNCTION.FUSION,
-        accentColor:    "#BF5AF2",
-        pulse:          severity === "critical" || severity === "high",
+    return getEntityMarkerDataUri({
+        entityType: "fusion",
+        color:      "#BF5AF2",
+        pulse:      severity === "critical" || severity === "high",
         size,
     })
 }
@@ -258,14 +261,15 @@ export default function GlobeAlertsLayer({ enabled }) {
 
                 const sanctioned = isSanctioned(a)
                 const sts        = isSts(a)
-                const affiliation = resolveAlertAffiliation(a)
-                // Suspect means the backend's confirmed/possible corroboration
-                // downgraded this sanctions hit — label it distinctly rather
-                // than showing the same "SANCTIONED" text a confirmed
-                // (Hostile) hit gets. See resolveAlertAffiliation() in
-                // markerRenderer.js for the real backend fields this reads.
+                const sanctionsStatus = resolveSanctionsStatus(a)
+                // "possible" means the backend's confirmed/possible
+                // corroboration downgraded this sanctions hit — label it
+                // distinctly rather than showing the same "SANCTIONED" text
+                // a "confirmed" hit gets. See resolveSanctionsStatus() in
+                // src/globe/entityIcons.js for the real backend fields this
+                // reads (same fields the old resolveAlertAffiliation() did).
                 const labelText  = sanctioned
-                    ? (affiliation === AFFILIATION.SUSPECT ? "⚠ POSSIBLE MATCH — REVIEW" : "⚠ SANCTIONED")
+                    ? (sanctionsStatus === "possible" ? "⚠ POSSIBLE MATCH — REVIEW" : "⚠ SANCTIONED")
                     : sts ? "STS DETECTED"
                     : null
 
@@ -287,7 +291,7 @@ export default function GlobeAlertsLayer({ enabled }) {
                         label={labelText ? {
                             text:            labelText,
                             font:            "bold 9px Arial",
-                            fillColor:       (sanctioned && affiliation !== AFFILIATION.SUSPECT)
+                            fillColor:       (sanctioned && sanctionsStatus !== "possible")
                                                  ? Color.fromCssColorString("#FF3B30")
                                                  : Color.fromCssColorString("#FF9500"),
                             outlineColor:    Color.fromCssColorString("#0F1721"),

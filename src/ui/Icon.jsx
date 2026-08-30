@@ -3,7 +3,7 @@ import {
     Bell, Layers, SlidersHorizontal, Target, ZoomIn, ZoomOut, Maximize, Pencil,
     Save, Send, Upload, Download, Clipboard, LayoutDashboard, FileText, Radio,
     Sparkles, Search, Settings, User, ChevronRight, X, Menu, Home, Locate,
-    RotateCcw, ExternalLink, Check, ArrowUpRight,
+    RotateCcw, ExternalLink, Check, ArrowUpRight, PlaneTakeoff, Anchor, Cable,
 } from "lucide-react"
 
 /**
@@ -25,6 +25,15 @@ const ICONS = {
     poi: MapPin,
     satellite: Satellite,
     facility: Building2,
+    // Real, distinct search-result-type icons (TopBar.jsx's InlineSearch /
+    // GlobalSearch.jsx dropdown rows) — replacing that table's old raw emoji
+    // (✈⚓〰) with real lucide glyphs rather than force-fitting every
+    // infrastructure type into the generic "facility" icon above, which
+    // would make airport/port/cable results visually indistinguishable in
+    // a list that shows all three at once.
+    airport: PlaneTakeoff,
+    port: Anchor,
+    cable: Cable,
     warning: TriangleAlert,
     lock: Lock,
     ruler: Ruler,
