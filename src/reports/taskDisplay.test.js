@@ -16,22 +16,22 @@ describe("statusBadgeColor — every real ReportTask status maps to a real color
         // approved is a favorable outcome moving toward publish; rejected is a
         // real dead-end failure — these must not collapse to the same color.
         expect(statusBadgeColor("approved")).not.toBe(statusBadgeColor("rejected"))
-        expect(statusBadgeColor("rejected")).toBe("var(--sev-critical)")
+        expect(statusBadgeColor("rejected")).toBe("var(--danger)")
     })
 
     it("maps council_review and human_review to the attention-needed color", () => {
-        expect(statusBadgeColor("council_review")).toBe("var(--sev-high)")
-        expect(statusBadgeColor("human_review")).toBe("var(--sev-high)")
+        expect(statusBadgeColor("council_review")).toBe("var(--warn)")
+        expect(statusBadgeColor("human_review")).toBe("var(--warn)")
     })
 
     it("maps published to the success color and archived to a dim/inactive color", () => {
-        expect(statusBadgeColor("published")).toBe("var(--sev-low)")
-        expect(statusBadgeColor("archived")).toBe("var(--text-dim)")
+        expect(statusBadgeColor("published")).toBe("var(--live)")
+        expect(statusBadgeColor("archived")).toBe("var(--text-muted)")
     })
 
     it("falls back to a defined dim color for an unrecognized status rather than undefined", () => {
-        expect(statusBadgeColor("some_future_status")).toBe("var(--text-dim)")
-        expect(statusBadgeColor(undefined)).toBe("var(--text-dim)")
+        expect(statusBadgeColor("some_future_status")).toBe("var(--text-muted)")
+        expect(statusBadgeColor(undefined)).toBe("var(--text-muted)")
     })
 })
 

@@ -79,7 +79,7 @@ export default function TaskStatusBar({ task, onAction, busy = false }) {
                     </Button>
                 )}
                 {msg && (
-                    <span style={{ color: msg === "Done" ? "var(--sev-low)" : "var(--sev-critical)", fontSize: "var(--text-xs)" }}>
+                    <span style={{ color: msg === "Done" ? "var(--live)" : "var(--danger)", fontSize: "var(--text-xs)" }}>
                         {msg}
                     </span>
                 )}

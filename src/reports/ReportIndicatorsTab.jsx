@@ -48,7 +48,7 @@ export default function ReportIndicatorsTab({ collected }) {
                     <div key={r.zone || i} style={{ padding: "6px 0", borderBottom: "1px solid var(--border-dim)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
                             <span style={{ color: "var(--text-primary)", fontSize: "var(--text-sm)", fontWeight: 600 }}>{r.zone}</span>
-                            <span style={{ color: "var(--sev-high)", fontSize: "var(--text-sm)" }}>{Math.round((r.escalation_probability || 0) * 100)}%</span>
+                            <span style={{ color: "var(--warn)", fontSize: "var(--text-sm)" }}>{Math.round((r.escalation_probability || 0) * 100)}%</span>
                         </div>
                         {r.situation && <div style={{ color: "var(--text-dim)", fontSize: "var(--text-xs)", marginTop: 2 }}>{r.situation}</div>}
                     </div>

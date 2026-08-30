@@ -12,28 +12,33 @@ export const TASK_STATUSES = [
     "published", "archived",
 ]
 
-// Status -> Round 1 design-token color mapping.
+// Status -> design-token color mapping (new-token names, per the Reports
+// destination rebuild — see PR notes: --accent-blue/--danger/--warn/--live
+// instead of the legacy --accent/--sev-critical/--sev-high/--sev-low; the
+// new palette has no 4th severity stop, so the old --sev-medium
+// "in-progress" case collapses onto --warn, same as index.html's own
+// legacy alias does).
 //
 // Reasoning:
-//   queued/collecting     — nothing to review yet, dim/neutral (--text-dim / --sev-medium for the
+//   queued/collecting     — nothing to review yet, dim/neutral (--text-muted / --warn for the
 //                            "in progress" collecting state, so it reads as active-but-not-actionable)
-//   ready_to_draft/drafting — this task is now actionable by the analyst -> --accent
-//   council_review/human_review — needs a human's attention/judgment -> --sev-high (amber)
-//   approved            — favorable outcome, on its way to publish -> --accent (still "in the drafting/approval pipeline")
-//   rejected            — a real dead-end/failure outcome -> --sev-critical
-//   published           — done, successful, live -> --sev-low (green)
-//   archived            — finished, inactive -> --text-dim
+//   ready_to_draft/drafting — this task is now actionable by the analyst -> --accent-blue
+//   council_review/human_review — needs a human's attention/judgment -> --warn (amber)
+//   approved            — favorable outcome, on its way to publish -> --accent-blue (still "in the drafting/approval pipeline")
+//   rejected            — a real dead-end/failure outcome -> --danger
+//   published           — done, successful, live -> --live (green)
+//   archived            — finished, inactive -> --text-muted
 const STATUS_COLORS = {
-    queued:          "var(--text-dim)",
-    collecting:      "var(--sev-medium)",
-    ready_to_draft:  "var(--accent)",
-    drafting:        "var(--accent)",
-    council_review:  "var(--sev-high)",
-    human_review:    "var(--sev-high)",
-    approved:        "var(--accent)",
-    rejected:        "var(--sev-critical)",
-    published:       "var(--sev-low)",
-    archived:        "var(--text-dim)",
+    queued:          "var(--text-muted)",
+    collecting:      "var(--warn)",
+    ready_to_draft:  "var(--accent-blue)",
+    drafting:        "var(--accent-blue)",
+    council_review:  "var(--warn)",
+    human_review:    "var(--warn)",
+    approved:        "var(--accent-blue)",
+    rejected:        "var(--danger)",
+    published:       "var(--live)",
+    archived:        "var(--text-muted)",
 }
 
 /**
@@ -43,7 +48,7 @@ const STATUS_COLORS = {
  * --text-dim rather than undefined, so a badge never renders unstyled.
  */
 export function statusBadgeColor(status) {
-    return STATUS_COLORS[status] || "var(--text-dim)"
+    return STATUS_COLORS[status] || "var(--text-muted)"
 }
 
 /**
