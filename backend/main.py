@@ -273,6 +273,7 @@ try:
         ADSBLoiterDetector as _ADSBLoiterDetector,
         ChokepointActivityDetector as _ChokepointActivityDetector,
         AISSpoofingDetector as _AISSpoofingDetector,
+        DarkShipDetector as _DarkShipDetector,
         NewsPatternEngine as _NewsPatternEngine,
         NEWS_PATTERNS as _NEWS_PATTERNS,
         news_pattern_engine as _news_pattern_engine,
@@ -9002,11 +9003,13 @@ if _HAS_DETECTORS:
     _adsb_loiter_detector = _ADSBLoiterDetector()
     _chokepoint_detector  = _ChokepointActivityDetector()
     _ais_spoofing_detector = _AISSpoofingDetector()
+    _dark_ship_detector    = _DarkShipDetector()
 else:
     _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
     _escalation_engine = _adsb_loiter_detector = None
     _chokepoint_detector = None
     _ais_spoofing_detector = None
+    _dark_ship_detector = None
     _news_pattern_engine = None
 
 
@@ -10166,6 +10169,33 @@ def _distance_to_nearest_port_km(lat, lon) -> float:
         return min(dists) if dists else 999.0
     except Exception:
         return 999.0
+
+
+def _nearest_port_region_id(lat, lon, deg_r: float = 0.5):
+    """Best-effort lat/lon -> region_id, via nearest PortBoundary within a
+    small bounding box (same bbox-prefilter pattern as
+    _distance_to_nearest_port_km above). Returns None if no port with a
+    known region_id is found nearby — callers must treat None as "region
+    unknown", never as an implicit match for any specific region scope.
+
+    Used by DarkShipDetector's region_fn — only invoked when a real,
+    non-"ALL" AIS_DARK_SHIP rule scope actually needs it (see
+    _run_dark_ship_rules / _forge_detection_cycle), since this runs one DB
+    query per vessel and the seeded/real production rule never needs it."""
+    try:
+        from database import PortBoundary as _PB2, get_db as _gdb2
+        with _gdb2() as _db2:
+            ports = _db2.query(_PB2).filter(
+                _PB2.latitude.between(lat - deg_r, lat + deg_r),
+                _PB2.longitude.between(lon - deg_r, lon + deg_r),
+                _PB2.region_id.isnot(None),
+            ).all()
+        if not ports:
+            return None
+        best = min(ports, key=lambda p: _haversine(lat, lon, p.latitude, p.longitude))
+        return best.region_id
+    except Exception:
+        return None
 
 
 def _is_military_callsign(callsign):
@@ -16341,7 +16371,7 @@ def _rule_row_to_dict(row) -> dict:
 # Rule types actually read by live detection code (see: AIS loitering/chokepoint checks in the
 # fusion/detection cycle, ADSB loitering-near-airport check). Any other rule_name can be stored
 # but will never fire — so creation/update of one is rejected rather than silently accepted.
-WIRED_RULE_NAMES = ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY", "ADSB_LOITERING_NEAR_AIRPORT", "NEWS_PATTERN"]
+WIRED_RULE_NAMES = ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY", "ADSB_LOITERING_NEAR_AIRPORT", "ADSB_LOITERING_NEAR_CHOKEPOINT", "AIS_DARK_SHIP", "NEWS_PATTERN"]
 
 
 @app.get("/api/rules")
@@ -19655,14 +19685,118 @@ def _run_adsb_loiter_rules(rule_rows, cycle_now):
     return new_adsb_loiter_alerts
 
 
+def _run_adsb_chokepoint_rules(rule_rows, cycle_now):
+    """Handle ADSB_LOITERING_NEAR_CHOKEPOINT rule type.
+
+    Reuses ADSBLoiterDetector.check() as-is (same proximity/duration/speed
+    tracking and re-alert suppression as ADSB_LOITERING_NEAR_AIRPORT) against
+    _CHOKEPOINT_DEFS instead of the Airport table — no new detection logic.
+
+    Collision check: check()'s internal _tracking dict is keyed by
+    (icao24, system_id). Airport system_ids are "ARPT-xxxxx" (see
+    database.py's Airport.system_id comment) and chokepoint system_ids are
+    "CHOKE-xxx" (see _CHOKEPOINT_DEFS) — disjoint prefixes, so the two rule
+    types sharing one _adsb_loiter_detector instance never collide.
+
+    check() hardcodes the literal "ADSB_LOITERING_NEAR_AIRPORT" into every
+    returned alert's trigger_type and provenance.trigger_reason regardless of
+    which rule actually fired it. Corrected here by post-processing this
+    handler's own alerts, rather than changing the shared detector class —
+    lower risk to the existing, already-live ADSB_LOITERING_NEAR_AIRPORT path.
+    """
+    import json as _json_ck2
+
+    ck_rules = [
+        {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
+         "severity": r.severity or "medium",
+         "params": _json_ck2.loads(r.params) if isinstance(r.params, str) else r.params}
+        for r in rule_rows
+    ]
+    if not ck_rules or _adsb_loiter_detector is None:
+        return []
+
+    def _chokepoints_fn(region_id=None, types=None):
+        # Chokepoints have no region_id / airport_type concept — always
+        # return the full fixed list. "ID:<system_id>" target scoping (the
+        # only scoping this rule type supports, per its params docstring) is
+        # applied by check() itself after this callback returns, so it works
+        # unchanged even though this callback ignores region_id/types.
+        return _CHOKEPOINT_DEFS
+
+    ac_snap = {k: v for k, v in _GLOBAL_ADSB_CACHE.items()}
+    new_adsb_chokepoint_alerts = _adsb_loiter_detector.check(
+        ac_snap, ck_rules, cycle_now, airports_fn=_chokepoints_fn
+    )
+    for _cpa in new_adsb_chokepoint_alerts:
+        _cpa["trigger_type"] = "ADSB_LOITERING_NEAR_CHOKEPOINT"
+        if isinstance(_cpa.get("provenance"), dict):
+            _cpa["provenance"]["trigger_reason"] = "ADSB_LOITERING_NEAR_CHOKEPOINT"
+    # _tracking is shared with _run_adsb_loiter_rules, whose purge_stale call
+    # is skipped when it early-returns (no enabled ADSB_LOITERING_NEAR_AIRPORT
+    # rules) — call it here too so stale entries are still cleaned up even if
+    # only the chokepoint rule type is enabled. Idempotent to call twice.
+    _adsb_loiter_detector.purge_stale(cycle_now)
+    for _cpalrt in new_adsb_chokepoint_alerts:
+        try:
+            _broadcast_push(
+                title=_cpalrt.get("title", "Aircraft loitering near chokepoint"),
+                body=_cpalrt.get("message", ""),
+                data={"type": "adsb_chokepoint_loiter_alert",
+                      "lat": _cpalrt.get("lat"), "lng": _cpalrt.get("lng")},
+            )
+        except Exception:
+            pass
+    print(f"[forge-brain] Stage2c ADSB chokepoint: {len(ck_rules)} rule(s), {len(new_adsb_chokepoint_alerts)} alert(s)")
+    return new_adsb_chokepoint_alerts
+
+
+def _run_dark_ship_rules(rule_rows, normalized_snap, cycle_now):
+    """Handle AIS_DARK_SHIP rule type.
+
+    State tracking (_dark_ship_detector.update()) runs unconditionally every
+    cycle from _forge_detection_cycle itself, regardless of whether any
+    AIS_DARK_SHIP rule is currently enabled — see the call site near "Stage
+    1f" below. This handler only parses the enabled rule rows and runs
+    scan()/purge_stale() against that already-current state.
+    """
+    import json as _json_ds
+
+    dark_rules = [
+        {"id": r.id, "rule_name": r.rule_name, "enabled": r.enabled,
+         "severity": r.severity or "medium",
+         "params": _json_ds.loads(r.params) if isinstance(r.params, str) else r.params}
+        for r in rule_rows
+    ]
+    if _dark_ship_detector is None:
+        return []
+
+    new_dark_alerts = _dark_ship_detector.scan(
+        dark_rules, cycle_now, active_mmsis=set(normalized_snap.keys())
+    )
+    _dark_ship_detector.purge_stale(cycle_now)
+    for _da in new_dark_alerts:
+        try:
+            _broadcast_push(
+                title=f"Dark ship — {_da.get('vessel', 'vessel')}",
+                body=_da.get("message", "AIS transponder gap detected"),
+                data={"type": "dark_ship_alert", "lat": _da.get("lat"), "lng": _da.get("lng")},
+            )
+        except Exception:
+            pass
+    print(f"[forge-brain] Stage1f dark-ship: {len(dark_rules)} rule(s), {len(new_dark_alerts)} alert(s)")
+    return new_dark_alerts
+
+
 # Dispatch table: canonical rule_name/trigger_type constant -> the handler that already
 # implements it. Adding a new live-wired rule type means adding one entry here (plus the
 # handler function above) — NOT a new hardcoded DB query stage in _forge_detection_cycle.
 WIRED_RULE_DISPATCH = {
-    "AIS_LOITERING_NEAR_INFRA":    _run_ais_loitering_rules,
-    "AIS_LOITERING_NEAR_CABLE":    _run_ais_loitering_rules,
-    "AIS_CHOKEPOINT_ACTIVITY":     _run_chokepoint_rules,
-    "ADSB_LOITERING_NEAR_AIRPORT": _run_adsb_loiter_rules,
+    "AIS_LOITERING_NEAR_INFRA":       _run_ais_loitering_rules,
+    "AIS_LOITERING_NEAR_CABLE":       _run_ais_loitering_rules,
+    "AIS_CHOKEPOINT_ACTIVITY":        _run_chokepoint_rules,
+    "ADSB_LOITERING_NEAR_AIRPORT":    _run_adsb_loiter_rules,
+    "ADSB_LOITERING_NEAR_CHOKEPOINT": _run_adsb_chokepoint_rules,
+    "AIS_DARK_SHIP":                  _run_dark_ship_rules,
 }
 
 
@@ -19674,8 +19808,8 @@ WIRED_RULE_DISPATCH = {
 # yet, so it has no entry — toggling/deleting it only affects rules.json,
 # same as before.
 PIPELINE_NODE_RULE_FAMILIES = {
-    "det_ais":  ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY"],
-    "det_adsb": ["ADSB_LOITERING_NEAR_AIRPORT"],
+    "det_ais":  ["AIS_LOITERING_NEAR_INFRA", "AIS_LOITERING_NEAR_CABLE", "AIS_CHOKEPOINT_ACTIVITY", "AIS_DARK_SHIP"],
+    "det_adsb": ["ADSB_LOITERING_NEAR_AIRPORT", "ADSB_LOITERING_NEAR_CHOKEPOINT"],
     "det_news": ["NEWS_PATTERN"],
 }
 
@@ -19830,6 +19964,30 @@ async def _forge_detection_cycle():
 
             cycle_now = datetime.now(timezone.utc)
 
+            # Dark-ship state tracking must run every cycle regardless of
+            # whether any AIS_DARK_SHIP rule is currently enabled — vessel
+            # last-seen state has to stay continuous across the rule being
+            # toggled off/on, exactly like _ais_spoofing_detector's always-on
+            # per-cycle update. Only build a real region_fn (which costs one
+            # DB query per vessel) when an enabled rule actually needs region
+            # scoping — the seeded/real production rule uses
+            # last_known_region="ALL", which never needs it.
+            if _dark_ship_detector is not None:
+                try:
+                    import json as _json_dsr
+                    _dark_rule_rows_now = _rows_by_handler.get(_run_dark_ship_rules, [])
+                    _needs_region = any(
+                        str((_json_dsr.loads(_r.params) if isinstance(_r.params, str) else (_r.params or {}))
+                            .get("last_known_region", "ALL") or "ALL").upper() != "ALL"
+                        for _r in _dark_rule_rows_now
+                    )
+                    _dark_ship_detector.update(
+                        normalized_snap, cycle_now,
+                        region_fn=_nearest_port_region_id if _needs_region else None,
+                    )
+                except Exception as _due:
+                    print(f"[forge-brain] dark-ship update error: {_due}")
+
             # Stage 1b — Loitering near infrastructure (cables + ports)
             try:
                 loiter_hits = _run_ais_loitering_rules(
@@ -19848,6 +20006,21 @@ async def _forge_detection_cycle():
                 new_ais_alerts.extend(new_choke_alerts)
             except Exception as _cke:
                 print(f"[forge-brain] chokepoint check error: {_cke}")
+
+            # Stage 1f — AIS dark-ship (transponder gap) detection. Dark-ship
+            # alerts are folded into new_ais_alerts (not kept separate) so
+            # they flow through the same escalation/correlation/persistence
+            # path as loitering/chokepoint alerts — required for the seeded
+            # "Cable Loitering + Dark Ship" / "Strategic Port Loitering +
+            # Dark Ship" escalation chains to ever actually fire.
+            new_dark_alerts: list = []
+            try:
+                new_dark_alerts = _run_dark_ship_rules(
+                    _rows_by_handler.get(_run_dark_ship_rules, []), normalized_snap, cycle_now
+                )
+                new_ais_alerts.extend(new_dark_alerts)
+            except Exception as _dse:
+                print(f"[forge-brain] dark-ship check error: {_dse}")
 
             # Stage 2 — ADS-B anomaly detection via _adsb_detector.
             #
@@ -19901,6 +20074,17 @@ async def _forge_detection_cycle():
                 new_adsb_alerts.extend(new_adsb_loiter_alerts)
             except Exception as _ale:
                 print(f"[forge-brain] ADSB loiter check error: {_ale}")
+
+            # Stage 2c — ADSB loitering near strategic maritime chokepoint
+            # (reuses ADSBLoiterDetector as-is — see _run_adsb_chokepoint_rules)
+            new_adsb_chokepoint_alerts: list = []
+            try:
+                new_adsb_chokepoint_alerts = _run_adsb_chokepoint_rules(
+                    _rows_by_handler.get(_run_adsb_chokepoint_rules, []), cycle_now
+                )
+                new_adsb_alerts.extend(new_adsb_chokepoint_alerts)
+            except Exception as _ace:
+                print(f"[forge-brain] ADSB chokepoint check error: {_ace}")
 
             # Stage 3 — News event scoring (rules.json-driven, kept as-is).
             #
@@ -19969,7 +20153,9 @@ async def _forge_detection_cycle():
 
             # Stage 4 — Cross-domain correlation engine
             new_assessments: list = []
-            new_dark_alerts: list = []
+            # (new_dark_alerts is populated earlier, at Stage 1f — not reset
+            # here; it already flows into new_ais_alerts, which correlate()
+            # reads via ais_alerts=new_ais_alerts below.)
             try:
                 ontology = _forge_ontology_load()
                 recent_events: list = []
