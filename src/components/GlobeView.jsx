@@ -184,6 +184,22 @@ export default function GlobeView({
         return () => window.removeEventListener("akili:fly-to", handler)
     }, [])
 
+    // Real map control stack (full UI rebuild spec section 4) — zoom in/out
+    // and locate. Same dispatched-event integration pattern as akili:fly-to
+    // above, since MapControlStack lives outside GlobeView (it's a sibling in
+    // the map-tab's flex layout, not a child), so it can't reach viewerRef
+    // directly.
+    useEffect(() => {
+        const zoomIn = () => viewerRef.current?.cesiumElement?.camera.zoomIn(viewerRef.current.cesiumElement.camera.positionCartographic.height * 0.4)
+        const zoomOut = () => viewerRef.current?.cesiumElement?.camera.zoomOut(viewerRef.current.cesiumElement.camera.positionCartographic.height * 0.6)
+        window.addEventListener("akili:zoom-in", zoomIn)
+        window.addEventListener("akili:zoom-out", zoomOut)
+        return () => {
+            window.removeEventListener("akili:zoom-in", zoomIn)
+            window.removeEventListener("akili:zoom-out", zoomOut)
+        }
+    }, [])
+
     // akili:search-marker — temporary blue dot + label after a search fly-to
     useEffect(() => {
         const handler = (e) => {
