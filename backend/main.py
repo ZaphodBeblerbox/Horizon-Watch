@@ -19377,6 +19377,7 @@ def _auto_add_correlation_to_ontology(assessment: dict):
             "lng":         assessment.get("lng"),
             "severity":    assessment["severity"],
             "confidence":  assessment.get("confidence"),
+            "source":      "live:correlation",
         })
         for entity in assessment.get("related_entities", []):
             edge_id = f"e_{corr_id}_{entity['id']}"
@@ -19696,12 +19697,34 @@ async def _forge_detection_cycle():
                     _forge_save("rules.json", rules)
                     print("[forge-brain] bootstrapped default rules")
                 else:
+                    default_ids = {r.get("id") for r in _DR}
                     existing_ids = {r.get("id") for r in rules}
                     added = [r for r in _DR if r.get("id") not in existing_ids]
                     if added:
                         rules = rules + added
                         _forge_save("rules.json", rules)
                         print(f"[forge-brain] backfilled {len(added)} missing default rules: {[r['id'] for r in added]}")
+                    # rules.json only ever grows via the backfill above — nothing here
+                    # ever removes an entry whose id disappeared from DEFAULT_RULES.
+                    # That's exactly how rule_003 ("Speed Anomaly") and rule_006
+                    # ("Ship-to-Ship Proximity") survived — marked "active" and still
+                    # being reported (rule counts, ontology rule nodes) — for months
+                    # after two commits explicitly deleted their detection logic from
+                    # this codebase ("permanently delete Speed Anomaly rule" /
+                    # "permanently delete Ship-to-Ship Proximity rule from all
+                    # layers"). Flag any such orphan going forward instead of silently
+                    # running dead detection logic forever; a human decides whether to
+                    # remove it from rules.json, this code never does that on its own.
+                    orphaned = [r for r in rules if r.get("status") == "active"
+                                and r.get("id") not in default_ids]
+                    if orphaned:
+                        logger.warning(
+                            "[forge-brain] %d active rule(s) in rules.json no longer "
+                            "exist in detectors/default_rules.py — their detection "
+                            "logic may have been removed from the codebase while the "
+                            "rule definition itself was never purged: %s",
+                            len(orphaned), [(r.get("id"), r.get("name")) for r in orphaned],
+                        )
             except ImportError:
                 if not rules:
                     rules = []
@@ -22169,8 +22192,51 @@ def _forge_ontology_load():
         return {"nodes": [], "edges": []}
 
 
+def _forge_ontology_integrity_check(ontology: dict) -> list[dict]:
+    """Every node persisted into forge_ontology.json should be traceable to a
+    real source: an uploaded-document citation (`source: "upload"`, set by
+    _add_entities_to_ontology), a live subsystem snapshot (`source:
+    "live:<type>"`, set by forge_build_ontology's add_node() and by
+    _auto_add_correlation_to_ontology), or an explicit operator entry
+    (`manual: True`, set by POST /api/forge/ontology/node). A node with none
+    of these — and that isn't even the endpoint of an edge carrying a real
+    `claim_id` (the human-approved-claims path) — has no traceable origin at
+    all. That is exactly the shape of the old bug this safeguard exists for:
+    forge_build_ontology() used to inject ~45 hardcoded country/group/person
+    nodes as frozen Python literals with zero sourcing, indistinguishable
+    from genuinely-computed graph output, and because this file is only ever
+    merge-added-to (see forge_build_ontology's dedup-by-label logic — nothing
+    here ever purges), those nodes would have sat in this file forever even
+    after the generating code was fixed.
+    This check never deletes or mutates anything — deletion should be a
+    deliberate human decision, not something a safeguard does silently. It
+    only flags, so a future regression (a new code path that writes a node
+    with no real source) shows up immediately in the logs instead of quietly
+    accumulating for months like the original bug did.
+    """
+    nodes = ontology.get("nodes", [])
+    edges = ontology.get("edges", [])
+    claim_backed_ids = {e.get("source") for e in edges if e.get("claim_id")}
+    claim_backed_ids |= {e.get("target") for e in edges if e.get("claim_id")}
+    flagged = []
+    for n in nodes:
+        if n.get("source") or n.get("manual") or n.get("id") in claim_backed_ids:
+            continue
+        flagged.append({"id": n.get("id"), "type": n.get("type"), "label": n.get("label")})
+    return flagged
+
+
 def _forge_ontology_save(ontology: dict):
     _FORGE_DIR.mkdir(parents=True, exist_ok=True)
+    flagged = _forge_ontology_integrity_check(ontology)
+    if flagged:
+        sample = "; ".join(f"{f.get('type')}:{f.get('label')}" for f in flagged[:10])
+        logger.warning(
+            "[ontology-integrity] %d node(s) with no traceable source (no "
+            "'source'/'manual' tag, not backed by a claim_id edge) — "
+            "flagged, NOT auto-removed. Sample: %s",
+            len(flagged), sample,
+        )
     _atomic_write_text(
         _FORGE_DIR / "forge_ontology.json",
         _json.dumps(ontology, indent=2, ensure_ascii=False),
@@ -22182,6 +22248,8 @@ def forge_get_ontology():
     result = _forge_ontology_load()
     if not result.get("nodes"):
         result = api_ontology_graph(current_user=None)
+    flagged = _forge_ontology_integrity_check(result)
+    result["integrity"] = {"unsourced_count": len(flagged), "unsourced_sample": flagged[:20]}
     return result
 
 
@@ -22203,8 +22271,14 @@ async def forge_build_ontology():
         existing_labels.add(key)
         _nc[0] += 1
         nid = f"{type_}_{_nc[0]}"
+        # Every node built here comes from a real live subsystem snapshot
+        # (AIS/ADSB/DB/news/rules/alerts — see the call sites below), never a
+        # hardcoded literal, so it's safe to auto-tag provenance by type. This
+        # is exactly the `source` tag _forge_ontology_save()'s integrity check
+        # looks for — see the comment there for why this exists.
         nodes.append({"id": nid, "type": type_, "label": label,
-                      "description": description, "lat": lat, "lng": lng})
+                      "description": description, "lat": lat, "lng": lng,
+                      "source": f"live:{type_}"})
         return nid
 
     def add_edge(src, tgt, rel):

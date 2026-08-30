@@ -66,6 +66,21 @@ with TestClient(main.app) as client:
         db.commit()
         created_zone_ids.append(sz.zone_id)
 
+        # A second zone, at a completely different location, whose name
+        # deliberately shares a generic word ("Zone") with the first zone's
+        # name — reproduces the geo_sanity false-positive bug (a short/
+        # generic shared word used to validate a claim against the WRONG
+        # zone under the old plain substring check).
+        sz2_polygon = {"type": "Polygon", "coordinates": [[[60.0, 30.0], [60.2, 30.0], [60.2, 30.2], [60.0, 30.2], [60.0, 30.0]]]}
+        sz2 = StrategicZone(
+            zone_id=f"{PREFIX}-SZONE-2", name=f"{PREFIX} Danger Zone", zone_type="CHOKEPOINT_EXTENDED",
+            polygon_geojson=json.dumps(sz2_polygon),
+            bbox_min_lon=60.0, bbox_min_lat=30.0, bbox_max_lon=60.2, bbox_max_lat=30.2, enabled=True,
+        )
+        db.add(sz2)
+        db.commit()
+        created_zone_ids.append(sz2.zone_id)
+
     # ── 1. Reject: missing title / missing snapshot_id / unknown snapshot ──────
     r = client.post("/api/reports", json={"snapshot_id": f"{PREFIX}-SNAP-1"}, headers=HEADERS)
     check("missing title is rejected (400)", r.status_code == 400, r.text)
@@ -87,6 +102,14 @@ with TestClient(main.app) as client:
         {"text": "The signal falls within the test zone.",
          "citation": {"type": "external", "url": "https://example.org/testrpt-zone"},
          "asserted_zone": f"{PREFIX} Test Zone", "lat": 12.1, "lon": 44.1},
+        {"text": "geo_sanity false-positive regression: names the WRONG zone "
+                  "(shares only the generic word 'Zone' with the real one).",
+         "citation": {"type": "external", "url": "https://example.org/testrpt-zone-fp"},
+         "asserted_zone": f"{PREFIX} Danger Zone", "lat": 12.1, "lon": 44.1},
+        {"text": "geo_sanity false-negative regression: names the correct zone "
+                  "WITH extra qualifying words.",
+         "citation": {"type": "external", "url": "https://example.org/testrpt-zone-fn"},
+         "asserted_zone": f"{PREFIX} Test Zone Naval Buildup", "lat": 12.1, "lon": 44.1},
     ]
     r = client.post("/api/reports", json={
         "title": f"{PREFIX} Draft Report", "snapshot_id": f"{PREFIX}-SNAP-1", "claims": claims,
@@ -94,7 +117,7 @@ with TestClient(main.app) as client:
     check("create report returns 200", r.status_code == 200, r.text)
     report = r.json()
     check("status starts as draft", report.get("status") == "draft", report)
-    check("4 claims persisted with generated claim_ids", len(report.get("claims", [])) == 4 and all(c.get("claim_id") for c in report["claims"]), report)
+    check("6 claims persisted with generated claim_ids", len(report.get("claims", [])) == 6 and all(c.get("claim_id") for c in report["claims"]), report)
     report_id = report.get("report_id")
     if report_id:
         created_report_ids.append(report_id)
@@ -153,12 +176,20 @@ with TestClient(main.app) as client:
         valid_claim_id = claims_from_report[0]["claim_id"]
         bad_claim_id = claims_from_report[2]["claim_id"]
         zone_claim_id = claims_from_report[3]["claim_id"]
+        fp_claim_id = claims_from_report[4]["claim_id"]
+        fn_claim_id = claims_from_report[5]["claim_id"]
         valid_check = next((f for f in det if f["claim_id"] == valid_claim_id and f["check"] == "citation_exists"), None)
         bad_check   = next((f for f in det if f["claim_id"] == bad_claim_id and f["check"] == "citation_exists"), None)
         zone_check  = next((f for f in det if f["claim_id"] == zone_claim_id and f["check"] == "geo_sanity"), None)
+        fp_check    = next((f for f in det if f["claim_id"] == fp_claim_id and f["check"] == "geo_sanity"), None)
+        fn_check    = next((f for f in det if f["claim_id"] == fn_claim_id and f["check"] == "geo_sanity"), None)
         check("deterministic pass verifies the real citation as passed", valid_check and valid_check["passed"] is True, valid_check)
         check("deterministic pass catches the unfindable citation as failed", bad_check and bad_check["passed"] is False, bad_check)
         check("deterministic pass confirms real geo-sanity (point genuinely inside asserted zone)", zone_check and zone_check["passed"] is True, zone_check)
+        check("geo_sanity false-positive regression: wrong zone sharing only a generic word does NOT pass",
+              fp_check and fp_check["passed"] is False, fp_check)
+        check("geo_sanity false-negative regression: correct zone name with extra qualifying words DOES pass",
+              fn_check and fn_check["passed"] is True, fn_check)
 
         check("citation_fidelity lens ran (stubbed client) with ok status", findings["citation_fidelity"].get("status") == "ok", findings["citation_fidelity"])
         check("completeness lens ran (stubbed client) with ok status", findings["completeness"].get("status") == "ok", findings["completeness"])

@@ -200,6 +200,23 @@ with _cleanup_get_db() as _cdb:
     check("cleanup removed all TEST-prefixed ontology claims", _remaining == 0,
           f"{_remaining} left over")
 
+# The approve step above (and _process_document_upload's entity extraction)
+# also merge-writes real nodes/edges into the live forge_ontology.json — a
+# file that is only ever merge-added to and never purges anything on its own
+# (see main.py's forge_build_ontology / _forge_ontology_save). This script
+# used to clean up only the DB rows above and leave every "TEST — "-prefixed
+# node + its approved edges sitting in forge_ontology.json forever — found
+# during a hardening pass as literal 17 duplicate edges from repeated runs.
+# Mirror test_assets.py's ontology cleanup so this suite is actually
+# repeatable end-to-end, not just DB-repeatable.
+_ontology = main._forge_ontology_load()
+_before_n = len(_ontology.get("nodes", []))
+_ontology["nodes"] = [n for n in _ontology.get("nodes", []) if not (n.get("label") or "").startswith("TEST —")]
+_kept_ids = {n["id"] for n in _ontology["nodes"]}
+_ontology["edges"] = [e for e in _ontology.get("edges", []) if e.get("source") in _kept_ids and e.get("target") in _kept_ids]
+main._forge_ontology_save(_ontology)
+check("cleanup removed TEST-prefixed ontology nodes", len(_ontology["nodes"]) < _before_n or _before_n == 0)
+
 print("="*70)
 if FAILURES:
     print(f"  RESULT: {len(FAILURES)} FAILURE(S): {FAILURES}")
