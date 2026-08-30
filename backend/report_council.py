@@ -42,6 +42,14 @@ _SNAPSHOT_SECTION_ID_FIELDS = {
     "news_assessments":    "assessment_id",
     "strategic_zones":     "zone_id",
     "top_articles":        "url",
+    # Real forward-looking data (ForesightAssessment) was already present in
+    # every snapshot's content_json but wasn't citable — a claim couldn't cite
+    # it and have citation_exists mean anything. Added so the "Outlook / Watch
+    # Items" report section (report_sections.py) can have genuinely
+    # citation-checked content instead of being permanently uncitable. "zone"
+    # (the zone name) is the real per-item identifying field — see
+    # briefing_prep.py's _get_foresight_risks().
+    "foresight_risks":     "zone",
 }
 
 
