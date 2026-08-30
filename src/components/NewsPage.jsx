@@ -119,7 +119,7 @@ function ArticleCard({ a, borderOverride }) {
                 flexShrink:     0,
                 background:     img
                     ? `url(${img}) center/cover`
-                    : "linear-gradient(135deg, #1e293b 0%, #334155 100%)",
+                    : "#293548",
                 position:       "relative",
                 display:        "flex",
                 alignItems:     "center",
@@ -365,7 +365,7 @@ function PanelFeaturedCard({ a, accentColor = "rgba(239,68,68,0.3)" }) {
                 width: "45%", flexShrink: 0,
                 background: img
                     ? `url(${img}) center/cover`
-                    : "linear-gradient(135deg, #1e293b 0%, #334155 100%)",
+                    : "#293548",
                 position: "relative", display: "flex", alignItems: "center", justifyContent: "center",
             }}>
                 {!img && (
@@ -798,7 +798,7 @@ export default function NewsPage({ onClose }) {
                     flexShrink: 0,
                     background: img
                         ? `url(${img}) center/cover`
-                        : "linear-gradient(135deg, #1e293b 0%, #334155 100%)",
+                        : "#293548",
                     position:   "relative",
                     display:    "flex",
                     alignItems: "center",

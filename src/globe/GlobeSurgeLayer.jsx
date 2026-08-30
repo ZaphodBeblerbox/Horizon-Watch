@@ -8,6 +8,7 @@ import {
     SceneTransforms,
 } from "cesium"
 import API_BASE from "../apiBase.js"
+import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
 
 // ── Article-type → human explanation ──────────────────────────────────────────
 
@@ -26,64 +27,17 @@ const SURGE_EXPLANATIONS = {
 
 const SEV_COLOR = { critical: "#FF3B30", high: "#FF9500", medium: "#FFCC00", low: "#34C759" }
 
-// ── Canvas hexagon icon ───────────────────────────────────────────────────────
-
-const ICON_CACHE = {}
-
-function _hexPath(ctx, cx, cy, r) {
-    for (let i = 0; i < 6; i++) {
-        const a = (Math.PI / 6) + (Math.PI / 3) * i
-        if (i === 0) ctx.moveTo(cx + r * Math.cos(a), cy + r * Math.sin(a))
-        else         ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a))
-    }
-    ctx.closePath()
-}
-
+// News surges are a news/event entity function like GlobeEventsLayer's
+// markers — Neutral (square) affiliation frame, severity carried as the
+// glyph accent tint (see src/globe/markerRenderer.js).
 function makeSurgeIcon(severity) {
-    const key = `surge-${severity}`
-    if (ICON_CACHE[key]) return ICON_CACHE[key]
-
-    const dpr  = Math.max(window.devicePixelRatio || 2, 2)
-    const size = 16
-    const pad  = 8
-    const full = (size + pad) * 2
-    const canvas = document.createElement("canvas")
-    canvas.width  = full * dpr
-    canvas.height = full * dpr
-    const ctx = canvas.getContext("2d")
-    ctx.scale(dpr, dpr)
-
     const hex = SEV_COLOR[severity] || "#FF9500"
-    const r   = parseInt(hex.slice(1, 3), 16)
-    const g   = parseInt(hex.slice(3, 5), 16)
-    const b   = parseInt(hex.slice(5, 7), 16)
-    const cx  = full / 2
-    const cy  = full / 2
-
-    // Outer glow ring
-    ctx.beginPath()
-    _hexPath(ctx, cx, cy, size + 5)
-    ctx.strokeStyle = `rgba(${r},${g},${b},0.28)`
-    ctx.lineWidth = 2
-    ctx.stroke()
-
-    // Filled hex
-    ctx.beginPath()
-    _hexPath(ctx, cx, cy, size)
-    ctx.fillStyle = `rgba(${r},${g},${b},0.22)`
-    ctx.fill()
-    ctx.strokeStyle = `rgba(${r},${g},${b},0.9)`
-    ctx.lineWidth = 1.8
-    ctx.stroke()
-
-    // Centre dot
-    ctx.beginPath()
-    ctx.arc(cx, cy, 3, 0, Math.PI * 2)
-    ctx.fillStyle = hex
-    ctx.fill()
-
-    ICON_CACHE[key] = canvas
-    return canvas
+    return getMarkerCanvas({
+        affiliation:    AFFILIATION.NEUTRAL,
+        entityFunction: ENTITY_FUNCTION.NEWS_EVENT,
+        accentColor:    hex,
+        size:           40,
+    })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

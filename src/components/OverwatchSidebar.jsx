@@ -271,7 +271,6 @@ export default function OverwatchSidebar({
             color:          "white",
             overflow:       "hidden",
             zIndex:         1150,
-            boxShadow:      "-4px 0 20px rgba(0,0,0,0.4)",
         },
         header: {
             padding:        "14px 16px 10px",

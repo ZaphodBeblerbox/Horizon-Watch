@@ -42,8 +42,7 @@ export default function StartupModal({ onDismiss, onReadBriefing, onViewAlerts }
                 borderRadius:  12,
                 padding:       "32px 28px 24px",
                 width:         380,
-                boxShadow:     "0 16px 48px rgba(0,0,0,0.6)",
-                fontFamily:    "Inter, -apple-system, sans-serif",
+                fontFamily:    "var(--font-sans)",
             }}>
                 <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(56,189,248,0.7)", marginBottom: 10 }}>
                     AKILI

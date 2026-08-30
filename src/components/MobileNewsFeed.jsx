@@ -69,7 +69,7 @@ const SEVERITY_STYLE = {
 function SkeletonCard() {
   return (
     <div style={{ position:"absolute", top:44, bottom:60, left:12, right:12, borderRadius:12, overflow:"hidden", background:"#0a1628" }}>
-      <div style={{ position:"absolute", inset:0, background:"linear-gradient(135deg, #0a1628 0%, #112038 100%)" }} />
+      <div style={{ position:"absolute", inset:0, background:"#112038" }} />
       <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"24px 18px 24px" }}>
         <div style={{ height:10, borderRadius:4, background:"rgba(255,255,255,0.07)", width:"30%", marginBottom:12, animation:"sk-pulse 1.5s ease-in-out infinite" }} />
         <div style={{ height:26, borderRadius:4, background:"rgba(255,255,255,0.1)", width:"95%", marginBottom:8, animation:"sk-pulse 1.5s ease-in-out 0.15s infinite" }} />
@@ -187,7 +187,7 @@ export default function MobileNewsFeed({ tab = "world" }) {
               onError={e => { e.target.style.display = "none" }}
             />
           ) : (
-            <div style={{ width:"100%", height:"100%", background:"linear-gradient(135deg, #0a1628 0%, #1a2f4e 50%, #0f1e35 100%)" }} />
+            <div style={{ width:"100%", height:"100%", background:"#132540" }} />
           )}
           <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.1) 30%, rgba(0,0,0,0.25) 60%, rgba(0,0,0,0.88) 100%)" }} />
         </div>

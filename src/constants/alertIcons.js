@@ -11,36 +11,42 @@ export const NEWS_PATTERN_ICONS = {
   ENERGY_SUPPLY_RISK:    { label: "Energy Supply Risk",     color: "#FFCC00", description: "Threat to energy supply chain detected" },
 }
 
+// Note: this table used to also carry a `icon:` field holding a Lucide
+// icon-component name string (e.g. "TrendingUp"). lucide-react was never
+// installed and nothing ever resolved that field to a rendered icon — it was
+// dead on arrival. Real globe/graph/UI icons now come from the affiliation +
+// entity-function symbology in src/globe/markerRenderer.js; only `.label`/
+// `.color`/`.description` below are real and consumed anywhere.
 export const ALERT_ICONS = {
   // ── News assessment icons (pattern-fired) ────────────────────────────────
-  RISING_TENSIONS:       { label: "Rising Tensions",        icon: "TrendingUp",  color: "#FF6B35", description: "Multiple conflict articles detected in same location" },
-  PORT_DISRUPTION:       { label: "Port Disruption",        icon: "Anchor",      color: "#FF9500", description: "Maritime disruption signals at port" },
-  INFRASTRUCTURE_THREAT: { label: "Infrastructure Threat",  icon: "Zap",         color: "#FF2D55", description: "Articles signalling infrastructure attack or damage" },
-  ESCALATION_SPIKE:      { label: "Escalation Spike",       icon: "Activity",    color: "#9B0000", description: "Sudden surge in conflict article volume" },
-  SANCTIONS_PRESSURE:    { label: "Sanctions Pressure",     icon: "Scale",       color: "#5856D6", description: "Multiple sanctions-related articles targeting same country" },
-  MILITARY_MOBILISATION: { label: "Military Mobilisation",  icon: "Crosshair",   color: "#FF3B30", description: "Troop movement or military buildup signals" },
-  HUMANITARIAN_CRISIS:   { label: "Humanitarian Crisis",    icon: "Heart",       color: "#FF6B35", description: "Civilian casualty or displacement signals" },
-  CEASEFIRE_BREAKDOWN:   { label: "Ceasefire Breakdown",    icon: "ShieldOff",   color: "#9B0000", description: "Peace process failure or ceasefire violation signals" },
-  ENERGY_SUPPLY_RISK:    { label: "Energy Supply Risk",     icon: "Flame",       color: "#FFCC00", description: "Threat to energy supply chain detected" },
-  LOITERING_CABLE:    { label: "Cable Loiterer",          icon: "Anchor",         color: "#FF6B35", description: "Vessel loitering within cable proximity" },
-  LOITERING_PORT:     { label: "Port Loiterer",           icon: "Ship",           color: "#FF6B35", description: "Vessel loitering outside a port boundary" },
-  LOITERING_INFRA:    { label: "Infra Loiterer",          icon: "AlertTriangle",  color: "#FF9500", description: "Vessel loitering near critical infrastructure" },
-  DARK_SHIP:          { label: "Dark Ship",               icon: "EyeOff",         color: "#8E8E93", description: "Vessel AIS signal lost while underway" },
-  DARK_SHIP_CABLE:    { label: "Dark Ship near Cable",    icon: "ZapOff",         color: "#FF2D55", description: "Dark ship last seen near submarine cable" },
-  CHOKEPOINT_TRANSIT: { label: "Chokepoint Transit",      icon: "Navigation",     color: "#34AADC", description: "Vessel transiting a strategic chokepoint" },
-  CHOKEPOINT_LOITER:  { label: "Chokepoint Loiterer",     icon: "MapPin",         color: "#FF6B35", description: "Vessel loitering at a strategic chokepoint" },
-  ESCALATED_DUAL:     { label: "Dual Rule Escalation",    icon: "ShieldAlert",    color: "#FF2D55", description: "Two simultaneous anomaly rules fired on same vessel" },
-  ESCALATED_TRIPLE:   { label: "Triple Rule Escalation",  icon: "Siren",          color: "#9B0000", description: "Three or more anomaly rules fired on same vessel" },
-  BORDER_CROSSING:    { label: "Border Crossing",         icon: "Flag",           color: "#5AC8FA", description: "Vessel crossing a maritime border zone" },
-  SANCTIONED_VESSEL:  { label: "Sanctioned Vessel",       icon: "Ban",            color: "#FF3B30", description: "Vessel on sanctions or watch list" },
-  FORMATION_SAILING:  { label: "Formation Sailing",       icon: "Users",          color: "#FFCC00", description: "Multiple vessels moving in coordinated formation" },
-  REVERSE_COURSE:     { label: "Reverse Course",          icon: "RefreshCw",      color: "#FF9500", description: "Vessel reversed heading unexpectedly" },
-  PORT_SKIP:          { label: "Port Skip",               icon: "SkipForward",    color: "#5856D6", description: "Vessel bypassed declared destination port" },
-  IDENTITY_CHANGE:    { label: "Identity Change",         icon: "UserX",          color: "#FF2D55", description: "Vessel MMSI or name changed while at sea" },
-  POSITION_JUMP:      { label: "Position Jump",           icon: "Rocket",         color: "#FF3B30", description: "Vessel position jumped a physically impossible distance between reports" },
-  CONVOY:             { label: "Convoy Movement",         icon: "Truck",          color: "#34AADC", description: "Multiple vessels moving in convoy pattern" },
-  UNKNOWN_CONTACT:    { label: "Unknown Contact",         icon: "HelpCircle",     color: "#8E8E93", description: "Unidentified vessel contact requiring investigation" },
-  FUSION_EVENT:       { label: "Intelligence Fusion Event", icon: "Layers",       color: "#BF5AF2", description: "Multi-domain correlated intelligence event" },
+  RISING_TENSIONS:       { label: "Rising Tensions",        color: "#FF6B35", description: "Multiple conflict articles detected in same location" },
+  PORT_DISRUPTION:       { label: "Port Disruption",        color: "#FF9500", description: "Maritime disruption signals at port" },
+  INFRASTRUCTURE_THREAT: { label: "Infrastructure Threat",  color: "#FF2D55", description: "Articles signalling infrastructure attack or damage" },
+  ESCALATION_SPIKE:      { label: "Escalation Spike",       color: "#9B0000", description: "Sudden surge in conflict article volume" },
+  SANCTIONS_PRESSURE:    { label: "Sanctions Pressure",     color: "#5856D6", description: "Multiple sanctions-related articles targeting same country" },
+  MILITARY_MOBILISATION: { label: "Military Mobilisation",  color: "#FF3B30", description: "Troop movement or military buildup signals" },
+  HUMANITARIAN_CRISIS:   { label: "Humanitarian Crisis",    color: "#FF6B35", description: "Civilian casualty or displacement signals" },
+  CEASEFIRE_BREAKDOWN:   { label: "Ceasefire Breakdown",    color: "#9B0000", description: "Peace process failure or ceasefire violation signals" },
+  ENERGY_SUPPLY_RISK:    { label: "Energy Supply Risk",     color: "#FFCC00", description: "Threat to energy supply chain detected" },
+  LOITERING_CABLE:    { label: "Cable Loiterer",          color: "#FF6B35", description: "Vessel loitering within cable proximity" },
+  LOITERING_PORT:     { label: "Port Loiterer",           color: "#FF6B35", description: "Vessel loitering outside a port boundary" },
+  LOITERING_INFRA:    { label: "Infra Loiterer",          color: "#FF9500", description: "Vessel loitering near critical infrastructure" },
+  DARK_SHIP:          { label: "Dark Ship",               color: "#8E8E93", description: "Vessel AIS signal lost while underway" },
+  DARK_SHIP_CABLE:    { label: "Dark Ship near Cable",    color: "#FF2D55", description: "Dark ship last seen near submarine cable" },
+  CHOKEPOINT_TRANSIT: { label: "Chokepoint Transit",      color: "#34AADC", description: "Vessel transiting a strategic chokepoint" },
+  CHOKEPOINT_LOITER:  { label: "Chokepoint Loiterer",     color: "#FF6B35", description: "Vessel loitering at a strategic chokepoint" },
+  ESCALATED_DUAL:     { label: "Dual Rule Escalation",    color: "#FF2D55", description: "Two simultaneous anomaly rules fired on same vessel" },
+  ESCALATED_TRIPLE:   { label: "Triple Rule Escalation",  color: "#9B0000", description: "Three or more anomaly rules fired on same vessel" },
+  BORDER_CROSSING:    { label: "Border Crossing",         color: "#5AC8FA", description: "Vessel crossing a maritime border zone" },
+  SANCTIONED_VESSEL:  { label: "Sanctioned Vessel",       color: "#FF3B30", description: "Vessel on sanctions or watch list" },
+  FORMATION_SAILING:  { label: "Formation Sailing",       color: "#FFCC00", description: "Multiple vessels moving in coordinated formation" },
+  REVERSE_COURSE:     { label: "Reverse Course",          color: "#FF9500", description: "Vessel reversed heading unexpectedly" },
+  PORT_SKIP:          { label: "Port Skip",               color: "#5856D6", description: "Vessel bypassed declared destination port" },
+  IDENTITY_CHANGE:    { label: "Identity Change",         color: "#FF2D55", description: "Vessel MMSI or name changed while at sea" },
+  POSITION_JUMP:      { label: "Position Jump",           color: "#FF3B30", description: "Vessel position jumped a physically impossible distance between reports" },
+  CONVOY:             { label: "Convoy Movement",         color: "#34AADC", description: "Multiple vessels moving in convoy pattern" },
+  UNKNOWN_CONTACT:    { label: "Unknown Contact",         color: "#8E8E93", description: "Unidentified vessel contact requiring investigation" },
+  FUSION_EVENT:       { label: "Intelligence Fusion Event", color: "#BF5AF2", description: "Multi-domain correlated intelligence event" },
 }
 
 export const FORGE_EXPLANATIONS = {

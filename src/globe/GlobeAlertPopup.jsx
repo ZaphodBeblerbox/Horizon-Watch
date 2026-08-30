@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import * as Cesium from "cesium"
 import API_BASE from "../apiBase.js"
 import { ALERT_ICONS, FORGE_EXPLANATIONS } from "../constants/alertIcons.js"
+import { resolveAlertAffiliation, AFFILIATION } from "./markerRenderer.js"
 
 const SEV_COLOR = {
     critical: "#f87171",
@@ -50,20 +51,27 @@ function FlagImg({ url, emoji, size = 20 }) {
     )
 }
 
-function SanctionedVesselPanel({ payload }) {
+function SanctionedVesselPanel({ payload, affiliation }) {
     const lists = payload?.sanction_lists || []
     const flag  = payload?.flag
     const owner = payload?.owner
+    // Suspect = the backend's check_sanctions_for_vessel() corroboration
+    // downgraded this to a "possible" match (flag mismatch / no flag data to
+    // corroborate) — render distinctly from a confirmed Hostile hit rather
+    // than the same solid-red "SANCTIONS MATCH" banner. See
+    // resolveAlertAffiliation() in markerRenderer.js.
+    const isPossible = affiliation === AFFILIATION.SUSPECT
+    const accent = isPossible ? "#F59E0B" : "#FF2D2D" // mirrors --sev-high / real hostile red
     return (
         <div style={{
             margin: "8px 0",
             padding: "10px",
-            background: "rgba(255,45,45,0.08)",
-            border: "1px solid rgba(255,45,45,0.3)",
+            background: isPossible ? "rgba(245,158,11,0.08)" : "rgba(255,45,45,0.08)",
+            border: `1px solid ${isPossible ? "rgba(245,158,11,0.35)" : "rgba(255,45,45,0.3)"}`,
             borderRadius: 6,
         }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#FF2D2D", letterSpacing: 1.5, marginBottom: 6 }}>
-                ⚠ SANCTIONS MATCH
+            <div style={{ fontSize: 10, fontWeight: 700, color: accent, letterSpacing: 1.5, marginBottom: 6 }}>
+                {isPossible ? "⚠ POSSIBLE SANCTIONS MATCH — NEEDS REVIEW" : "⚠ SANCTIONS MATCH"}
             </div>
             {lists.map((list, i) => (
                 <div key={i} style={{ fontSize: 11, color: "rgba(255,80,80,0.85)", marginBottom: 2 }}>
@@ -109,17 +117,24 @@ function StsPanel({ payload }) {
                 {payload?.min_distance_m  != null && <span>📏 {payload.min_distance_m}m proximity</span>}
                 {payload?.distance_to_port_km != null && <span>🌊 {payload.distance_to_port_km}km offshore</span>}
             </div>
-            {payload?.is_sanctions_related && (
-                <div style={{
-                    padding: "6px 10px",
-                    background: "rgba(255,45,45,0.1)",
-                    border: "1px solid rgba(255,45,45,0.3)",
-                    borderRadius: 4, fontSize: 11,
-                    color: "#FF2D2D", fontWeight: 700,
-                }}>
-                    ⚠ SANCTIONED VESSEL INVOLVED
-                </div>
-            )}
+            {payload?.is_sanctions_related && (() => {
+                // is_sanctions_confirmed comes straight from main.py's STS-pair
+                // path (check_sanctions_for_vessel() on both vessels — see
+                // markerRenderer.js's resolveAlertAffiliation for the same field).
+                const confirmed = payload?.is_sanctions_confirmed === true
+                const accent = confirmed ? "#FF2D2D" : "#F59E0B"
+                return (
+                    <div style={{
+                        padding: "6px 10px",
+                        background: confirmed ? "rgba(255,45,45,0.1)" : "rgba(245,158,11,0.1)",
+                        border: `1px solid ${confirmed ? "rgba(255,45,45,0.3)" : "rgba(245,158,11,0.35)"}`,
+                        borderRadius: 4, fontSize: 11,
+                        color: accent, fontWeight: 700,
+                    }}>
+                        {confirmed ? "⚠ SANCTIONED VESSEL INVOLVED" : "⚠ POSSIBLE SANCTIONS MATCH — NEEDS REVIEW"}
+                    </div>
+                )
+            })()}
         </div>
     )
 }
@@ -154,6 +169,7 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
     })()
     const isSanctioned = a.rule_name === "Sanctioned Vessel"
     const isSts        = a.rule_name === "Ship-to-Ship Transfer"
+    const affiliation  = resolveAlertAffiliation(a)
 
     // Fetch forge connections (ontology links for this alert)
     useEffect(() => {
@@ -315,7 +331,7 @@ export default function GlobeAlertPopup({ data: a, onClose, viewerRef }) {
                 )}
 
                 {/* Sanctioned vessel panel */}
-                {isSanctioned && <SanctionedVesselPanel payload={payload} />}
+                {isSanctioned && <SanctionedVesselPanel payload={payload} affiliation={affiliation} />}
 
                 {/* Ship-to-ship transfer panel */}
                 {isSts && <StsPanel payload={payload} />}

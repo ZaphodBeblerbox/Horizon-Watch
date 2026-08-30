@@ -1,20 +1,34 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
+import { markerSvg, AFFILIATION, ENTITY_FUNCTION } from "../globe/markerRenderer.js"
 
 // ── Type metadata ─────────────────────────────────────────────────────────────
+// Real symbology (see src/globe/markerRenderer.js) instead of raw emoji —
+// every result type is Neutral affiliation (a search result, not a threat
+// assessment) with a real entity-function glyph, tinted by the same accent
+// colours this table always used.
 
 const TYPE_META = {
-    airport:    { icon: "✈",  label: "Airport",    color: "#a78bfa" },
-    port:       { icon: "⚓", label: "Port",        color: "#34d399" },
-    cable:      { icon: "〰", label: "Cable",       color: "#fb923c" },
-    chokepoint: { icon: "🔺", label: "Chokepoint",  color: "#fbbf24" },
-    assessment: { icon: "⚡", label: "Assessment",  color: "#ef4444" },
-    fusion:     { icon: "🔮", label: "Fusion",      color: "#8b5cf6" },
-    zone:       { icon: "👁", label: "Zone",        color: "#10b981" },
-    rule:       { icon: "⚙", label: "Rule",        color: "#6b7280" },
-    location:   { icon: "📌", label: "Location",   color: "#e2e8f0" },
-    country:    { icon: "🌍", label: "Country",    color: "#38bdf8" },
-    city:       { icon: "🏙", label: "City",       color: "#cbd5e1" },
+    airport:    { entityFunction: ENTITY_FUNCTION.INFRA_AIRPORT, label: "Airport",    color: "#a78bfa" },
+    port:       { entityFunction: ENTITY_FUNCTION.INFRA_PORT,    label: "Port",       color: "#34d399" },
+    cable:      { entityFunction: ENTITY_FUNCTION.INFRA_CABLE,   label: "Cable",      color: "#fb923c" },
+    chokepoint: { entityFunction: ENTITY_FUNCTION.ZONE,          label: "Chokepoint", color: "#fbbf24" },
+    assessment: { entityFunction: ENTITY_FUNCTION.NEWS_EVENT,    label: "Assessment", color: "#ef4444" },
+    fusion:     { entityFunction: ENTITY_FUNCTION.FUSION,        label: "Fusion",     color: "#8b5cf6" },
+    zone:       { entityFunction: ENTITY_FUNCTION.ZONE,          label: "Zone",       color: "#10b981" },
+    rule:       { entityFunction: ENTITY_FUNCTION.GENERIC,       label: "Rule",       color: "#6b7280" },
+    location:   { entityFunction: ENTITY_FUNCTION.GENERIC,       label: "Location",   color: "#e2e8f0" },
+    country:    { entityFunction: ENTITY_FUNCTION.GENERIC,       label: "Country",    color: "#38bdf8" },
+    city:       { entityFunction: ENTITY_FUNCTION.GENERIC,       label: "City",       color: "#cbd5e1" },
+}
+
+function typeMetaSvg(meta) {
+    return markerSvg({
+        affiliation: AFFILIATION.NEUTRAL,
+        entityFunction: meta.entityFunction,
+        accentColor: meta.color,
+        size: 16,
+    })
 }
 
 const FILTER_GROUPS = [
@@ -336,7 +350,10 @@ export default function GlobalSearch({ onResult, apiBase = API_BASE }) {
                                         transition:   "background 0.1s",
                                     }}
                                 >
-                                    <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1, width: 18, textAlign: "center" }}>{meta.icon}</span>
+                                    <span
+                                        style={{ flexShrink: 0, width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                                        dangerouslySetInnerHTML={{ __html: typeMetaSvg(meta) }}
+                                    />
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                         <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                             {r.name}

@@ -487,7 +487,7 @@ function RuleNode({ rule, pos, onDragStart, onConnectStart, onConnectOver, onCon
                 cursor:      isMobile ? "default" : "grab",
                 userSelect:  "none",
                 boxSizing:   "border-box",
-                boxShadow:   isConnectTarget ? `0 0 0 2px #60a5fa44` : "0 2px 8px rgba(0,0,0,0.4)",
+                boxShadow:   isConnectTarget ? `0 0 0 2px #60a5fa44` : "none",
                 zIndex:      10,
             }}
         >
@@ -874,7 +874,6 @@ function RuleLogicWorkspace({ isMobile = false }) {
                         maxWidth: 280, background: "#0d1425",
                         border: `1px solid ${EDGE_COLORS[hoverConn.conn.relationship_type] || "#8E8E93"}44`,
                         borderRadius: 7, padding: "10px 12px", zIndex: 3500,
-                        boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
                     }}
                 >
                     <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{hoverConn.conn.connection_name}</div>
@@ -5409,7 +5408,7 @@ function EntitySelect({ nodes, value, onChange, placeholder }) {
                 {selected ? `${selected.label} (${selected.type})` : placeholder || "Select…"}
             </button>
             {open && (
-                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 40, background: "#0f1219", border: "1px solid rgba(148,163,184,0.1)", borderRadius: 4, maxHeight: 240, overflow: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }}>
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 40, background: "#0f1219", border: "1px solid rgba(148,163,184,0.1)", borderRadius: 4, maxHeight: 240, overflow: "auto" }}>
                     <input autoFocus value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
                         style={{ width: "100%", padding: "6px 8px", background: "#111827", border: "none", borderBottom: "1px solid rgba(148,163,184,0.06)", color: "#cbd5e1", fontSize: 10, outline: "none", boxSizing: "border-box" }} />
                     {flat ? flat.slice(0, 40).map(n => (

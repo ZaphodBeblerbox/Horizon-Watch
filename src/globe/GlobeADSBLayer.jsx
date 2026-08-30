@@ -2,12 +2,17 @@ import { useEffect, useMemo, useState, useRef } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
-    Math as CesiumMath, Transforms, HeadingPitchRoll,
-    NearFarScalar, DistanceDisplayCondition, ColorBlendMode,
+    Math as CesiumMath,
+    NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { altColorHex } from "./iconUtils.js"
+import { acClassify } from "./iconUtils.js"
+import {
+    getMarkerCanvas, resolveAircraftAffiliation, aircraftClassToFunction,
+} from "./markerRenderer.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
+
+const BILLBOARD_SIZE = 26
 
 function drCalc(lat, lon, track, gs, dt) {
     if (!gs || gs < 10) return [lat, lon]
@@ -109,25 +114,26 @@ export default function GlobeADSBLayer({ aircraft, viewBounds }) {
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                const hexCol  = altColorHex(altNum)
-                const color   = Color.fromCssColorString(hexCol)
-                const position = Cartesian3.fromDegrees(lon, lat, altM)
+                const acClass       = acClassify(ac)
+                const entityFunction = aircraftClassToFunction(acClass)
+                const affiliation    = resolveAircraftAffiliation(ac)
+                const icon = getMarkerCanvas({ affiliation, entityFunction, size: BILLBOARD_SIZE })
+                const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
-                const hpr         = new HeadingPitchRoll(CesiumMath.toRadians(track + 90), 0, 0)
-                const orientation = Transforms.headingPitchRollQuaternion(position, hpr)
+                const position = Cartesian3.fromDegrees(lon, lat, altM)
 
                 return (
                     <Entity
                         id={`adsb-${icao}`}
                         key={icao || `${lat}-${lon}`}
                         position={position}
-                        orientation={orientation}
-                        model={{
-                            uri:              "/models/aircraft.glb",
-                            minimumPixelSize: 28,
-                            maximumScale:     400,
-                            color,
-                            colorBlendMode:   ColorBlendMode.REPLACE,
+                        billboard={{
+                            image:           icon,
+                            width:           BILLBOARD_SIZE,
+                            height:          BILLBOARD_SIZE,
+                            rotation:        CesiumMath.toRadians(-track),
+                            alignedAxis:     Cartesian3.ZERO,
+                            scaleByDistance: new NearFarScalar(1000, 1.0, 4_000_000, 0.35),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
                         }}
                         label={isMobile ? undefined : {
@@ -146,7 +152,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds }) {
                         polyline={isMobile ? undefined : {
                             positions: [position, Cartesian3.fromDegrees(lon, lat, 0)],
                             width:    1,
-                            material: color.withAlpha(0.25),
+                            material: dropColor.withAlpha(0.25),
                         }}
                     />
                 )

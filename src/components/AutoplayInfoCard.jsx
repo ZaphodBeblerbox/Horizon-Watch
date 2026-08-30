@@ -36,9 +36,8 @@ export default function AutoplayInfoCard({ segment, index, total }) {
             borderLeft:    `3px solid ${color}`,
             borderRadius:  4,
             padding:       '12px 14px',
-            fontFamily:    '"IBM Plex Mono", "Courier New", monospace',
+            fontFamily:    'var(--font-mono)',
             zIndex:        190,
-            boxShadow:     '0 4px 24px rgba(0,0,0,0.55)',
         }}>
             {/* Badge + counter */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>

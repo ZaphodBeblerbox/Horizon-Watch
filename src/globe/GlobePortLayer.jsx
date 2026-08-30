@@ -2,13 +2,19 @@ import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
-import { makePortCanvas } from "./iconUtils.js"
+import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-const ICON_CACHE = {}
+// Ports are real, non-flagged maritime infrastructure — Neutral (square)
+// affiliation frame with the real anchor glyph (see markerRenderer.js).
+// Importance tier (Very Large/Large/Medium/Small) is conveyed via size
+// (ICON_SIZE below), same as before.
 function getIcon(portSize) {
-    if (!ICON_CACHE[portSize]) ICON_CACHE[portSize] = makePortCanvas(portSize)
-    return ICON_CACHE[portSize]
+    return getMarkerCanvas({
+        affiliation:    AFFILIATION.NEUTRAL,
+        entityFunction: ENTITY_FUNCTION.INFRA_PORT,
+        size: 32,
+    })
 }
 
 const ICON_SIZE = {

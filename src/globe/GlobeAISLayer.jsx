@@ -1,13 +1,18 @@
 import { useEffect, useMemo } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color,
-    Math as CesiumMath, Transforms, HeadingPitchRoll,
-    NearFarScalar, DistanceDisplayCondition, ColorBlendMode,
+    Cartesian3, Cartesian2, Color, HeightReference,
+    Math as CesiumMath,
+    NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { vesselShipType, VESSEL_COLORS } from "./iconUtils.js"
+import { vesselShipType } from "./iconUtils.js"
+import {
+    getMarkerCanvas, resolveVesselAffiliation, vesselTypeToFunction,
+} from "./markerRenderer.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
+
+const BILLBOARD_SIZE = 26
 
 const DESKTOP_AIS_CAP = 200
 
@@ -52,30 +57,30 @@ export default function GlobeAISLayer({ vessels, viewBounds }) {
             {filtered.map(v => {
                 if (v.lat == null || v.lon == null || !isFinite(v.lat) || !isFinite(v.lon)) return null
 
-                const shipType = vesselShipType(v)
-                const hex      = VESSEL_COLORS[shipType] || VESSEL_COLORS.other
-                const color    = Color.fromCssColorString(hex)
+                const shipType      = vesselShipType(v)
+                const entityFunction = vesselTypeToFunction(shipType)
+                const affiliation    = resolveVesselAffiliation(v)
+                const icon = getMarkerCanvas({ affiliation, entityFunction, size: BILLBOARD_SIZE })
 
                 const hdg = isFinite(Number(v.heading)) && Number(v.heading) !== 511
                     ? Number(v.heading)
                     : isFinite(Number(v.cog)) ? Number(v.cog) : 0
 
-                const position    = Cartesian3.fromDegrees(v.lon, v.lat, 0)
-                const hpr         = new HeadingPitchRoll(CesiumMath.toRadians(hdg), 0, 0)
-                const orientation = Transforms.headingPitchRollQuaternion(position, hpr)
+                const position = Cartesian3.fromDegrees(v.lon, v.lat, 0)
 
                 return (
                     <Entity
                         id={`ais-${v.mmsi}`}
                         key={v.mmsi}
                         position={position}
-                        orientation={orientation}
-                        model={{
-                            uri:              "/models/vessel.glb",
-                            minimumPixelSize: 20,
-                            maximumScale:     300,
-                            color,
-                            colorBlendMode:   ColorBlendMode.REPLACE,
+                        billboard={{
+                            image:           icon,
+                            width:           BILLBOARD_SIZE,
+                            height:          BILLBOARD_SIZE,
+                            rotation:        CesiumMath.toRadians(-hdg),
+                            alignedAxis:     Cartesian3.ZERO,
+                            heightReference: HeightReference.CLAMP_TO_GROUND,
+                            scaleByDistance: new NearFarScalar(1000, 1.0, 3_000_000, 0.35),
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
                         }}
                         label={isMobile ? undefined : {

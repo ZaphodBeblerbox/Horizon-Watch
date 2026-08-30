@@ -1736,7 +1736,6 @@ export default function App() {
                             borderRadius: 10,
                             color: "#38bdf8", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em",
                             cursor: "pointer",
-                            boxShadow: "0 0 28px rgba(56,189,248,0.2), 0 4px 20px rgba(0,0,0,0.5)",
                             transition: "background 0.15s, box-shadow 0.15s",
                             fontFamily: "inherit",
                         }}
@@ -1791,7 +1790,7 @@ export default function App() {
                     gap: 10, padding: "10px 16px", background: "rgba(10,15,25,0.92)",
                     backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
                     border: "1px solid rgba(0,170,255,0.3)", borderRadius: 22,
-                    zIndex: 8000, boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+                    zIndex: 8000,
                 }}>
                     <div style={{
                         width: 14, height: 14,
@@ -1823,7 +1822,6 @@ export default function App() {
                         WebkitBackdropFilter: "blur(16px)",
                         border: "1px solid rgba(0,170,255,0.4)", borderRadius: 14,
                         cursor: "pointer", zIndex: 9000,
-                        boxShadow: "0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(0,170,255,0.15)",
                         animation: "director-ready-slide-in 500ms cubic-bezier(0.34,1.56,0.64,1)",
                         maxWidth: isMobile ? "calc(100vw - 20px)" : 400,
                     }}
@@ -1923,7 +1921,6 @@ export default function App() {
                         cursor:         "pointer",
                         backdropFilter: "blur(10px)",
                         WebkitBackdropFilter: "blur(10px)",
-                        boxShadow:      "0 2px 12px rgba(0,0,0,0.4)",
                         display:        "flex",
                         alignItems:     "center",
                         gap:            6,

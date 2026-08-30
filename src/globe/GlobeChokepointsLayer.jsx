@@ -1,12 +1,27 @@
 import { useState, useEffect } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color,
+    Cartesian3, Cartesian2, Color, HeightReference,
     PolygonHierarchy, ClassificationType,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
+import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+
+// Chokepoints previously had no point marker at all — just the polygon +
+// text label below, which disappears at typical zoomed-out camera heights.
+// A small Zone/AOI billboard (see markerRenderer.js — a documented extension
+// since the real boundary is drawn as the polygon, not this point icon)
+// keeps the chokepoint visible/clickable at any zoom level. Lazily built
+// (not at module load) so importing this file never touches the DOM.
+let _chokeIcon = null
+function getChokeIcon() {
+    if (!_chokeIcon) {
+        _chokeIcon = getMarkerCanvas({ affiliation: AFFILIATION.NEUTRAL, entityFunction: ENTITY_FUNCTION.ZONE, size: 26 })
+    }
+    return _chokeIcon
+}
 
 export default function GlobeChokepointsLayer({ enabled }) {
     const [data, setData] = useState([])
@@ -58,6 +73,14 @@ export default function GlobeChokepointsLayer({ enabled }) {
                         id={entityId}
                         key={entityId}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
+                        billboard={{
+                            image:           getChokeIcon(),
+                            width:           26,
+                            height:          26,
+                            heightReference: HeightReference.CLAMP_TO_GROUND,
+                            scaleByDistance: new NearFarScalar(1000, 1.2, 8_000_000, 0.25),
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, 10_000_000),
+                        }}
                         polygon={polyPositions.length >= 3 ? {
                             hierarchy:          new PolygonHierarchy(polyPositions),
                             material:           Color.fromCssColorString("#FF6D00").withAlpha(0.12),

@@ -28,7 +28,6 @@ export default function HeatmapTimeSlider({ hours, onHoursChange, isMobile = fal
                 alignItems:    "center",
                 gap:           10,
                 pointerEvents: "auto",
-                boxShadow:     "0 4px 20px rgba(0,0,0,0.5)",
                 userSelect:    "none",
             }}
         >

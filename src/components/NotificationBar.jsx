@@ -40,8 +40,7 @@ function Toast({ toast, onDismiss, onClick, isMobile }) {
                 transform:    visible ? "translateY(0)" : "translateY(-20px)",
                 opacity:      visible ? 1 : 0,
                 transition:   "transform 0.3s cubic-bezier(0.16,1,0.3,1), opacity 0.3s ease",
-                boxShadow:    `0 4px 20px rgba(0,0,0,0.5), 0 0 12px ${color}18`,
-                fontFamily:   "Inter, -apple-system, sans-serif",
+                fontFamily:   "var(--font-sans)",
                 userSelect:   "none",
             }}
         >
