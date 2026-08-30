@@ -23,6 +23,8 @@ import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
 import GlobeSurgeLayer          from "../globe/GlobeSurgeLayer.jsx"
 import GlobeCameraLayer         from "../globe/GlobeCameraLayer.jsx"
+import ScaleBar                 from "./ScaleBar.jsx"
+import CoordinateReadout        from "./CoordinateReadout.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -122,6 +124,14 @@ export default function GlobeView({
     const [aircraft, setAircraft] = useState([])
     const [viewBounds, setViewBounds] = useState(null)
     const [webglLost, setWebglLost] = useState(false)
+    const [cesiumViewer, setCesiumViewer] = useState(null)
+
+    // Expose the live Cesium.Viewer once Resium has mounted it, for the
+    // bottom-left map-chrome overlays (ScaleBar/CoordinateReadout) which
+    // need a real viewer instance rather than the ref wrapper.
+    useEffect(() => {
+        setCesiumViewer(viewerRef.current?.cesiumElement || null)
+    }, [])
 
     // AIS — use external prop if provided, otherwise fetch internally
     useEffect(() => {
@@ -451,6 +461,14 @@ export default function GlobeView({
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} />
+
+            {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
+            {cesiumViewer && (
+                <div style={{ position: "absolute", left: 12, bottom: 12, zIndex: 40, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <ScaleBar viewer={cesiumViewer} />
+                    <CoordinateReadout viewer={cesiumViewer} />
+                </div>
+            )}
 
         </div>
         </GlobeErrorBoundary>
