@@ -3,13 +3,23 @@ import BottomSheet from "./BottomSheet.jsx"
 import { buttonStyle } from "../ui/styleHelpers.js"
 import { LAYER_GROUPS, isLayerOn, countActive, clampOpacity } from "./layerRailConfig.js"
 
+// Real 36x20px toggle switch, exactly per spec section 2: "--border when
+// off, --accent-blue when on, 16px white circular thumb."
 function Toggle({ on, onClick }) {
     return (
         <button
             onClick={(e) => { e.stopPropagation(); onClick() }}
-            style={{ ...buttonStyle({ variant: "ghost", size: "sm", active: on }), minWidth: 40 }}
+            aria-pressed={on}
+            style={{
+                width: 36, height: 20, borderRadius: "var(--radius-pill)", border: "none",
+                background: on ? "var(--accent-blue)" : "var(--border)", cursor: "pointer",
+                position: "relative", flexShrink: 0, padding: 0, transition: "background 0.15s ease",
+            }}
         >
-            {on ? "ON" : "OFF"}
+            <span style={{
+                position: "absolute", top: 2, left: on ? 18 : 2, width: 16, height: 16,
+                borderRadius: "50%", background: "#fff", transition: "left 0.15s ease", display: "block",
+            }} />
         </button>
     )
 }
@@ -110,9 +120,42 @@ function GroupSection({ group, active, expanded, onToggleExpand, onToggle, onLay
     )
 }
 
-function GroupList({ active, onToggle, onLayerSet, expandedKey, setExpandedKey, autoModeEnabled, onAutoMode }) {
+// Real legend — kept accurate to what's actually rendered on the globe
+// (Round 2's real entity-marker system, src/globe/entityIcons.js) rather
+// than decorative filler.
+function Legend() {
+    const row = (swatch, label) => (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "3px 0" }}>
+            {swatch}
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>{label}</span>
+        </div>
+    )
+    return (
+        <div style={{ padding: "var(--space-3) var(--space-2)", borderTop: "1px solid var(--border)" }}>
+            <div style={{
+                fontSize: 10, textTransform: "uppercase", color: "var(--text-muted)",
+                letterSpacing: "0.08em", marginBottom: "var(--space-2)",
+            }}>
+                Legend
+            </div>
+            {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="var(--accent-blue)" strokeWidth="2" /></svg>, "Track (AIS/ADS-B)")}
+            {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="var(--accent-cyan)" strokeWidth="2" strokeDasharray="4 3" /></svg>, "AOI boundary")}
+            {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--danger)", display: "inline-block" }} />, "Sanctions — confirmed")}
+            {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--warn)", display: "inline-block" }} />, "Sanctions — possible")}
+            {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--accent-cyan)", display: "inline-block" }} />, "Selected entity")}
+        </div>
+    )
+}
+
+function GroupList({ active, onToggle, onLayerSet, expandedKey, setExpandedKey, autoModeEnabled, onAutoMode, onExportView }) {
     return (
         <>
+            <div style={{
+                fontSize: 10, textTransform: "uppercase", color: "var(--text-muted)",
+                letterSpacing: "0.08em", padding: "var(--space-4) var(--space-2) var(--space-2)",
+            }}>
+                Layers
+            </div>
             {onAutoMode && (
                 <div style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -135,6 +178,21 @@ function GroupList({ active, onToggle, onLayerSet, expandedKey, setExpandedKey, 
                     onLayerSet={onLayerSet}
                 />
             ))}
+            <Legend />
+            {onExportView && (
+                <div style={{ padding: "var(--space-3) var(--space-2)" }}>
+                    <button
+                        onClick={onExportView}
+                        style={{
+                            width: "100%", background: "none", border: "none", cursor: "pointer",
+                            color: "var(--accent-blue)", fontSize: "var(--text-body)", fontFamily: "var(--font-sans)",
+                            padding: "6px 0", textAlign: "left",
+                        }}
+                    >
+                        Export View
+                    </button>
+                </div>
+            )}
         </>
     )
 }
@@ -157,6 +215,7 @@ export default function LayerRail({
     onLayerSet = null,
     autoModeEnabled = false,
     onAutoMode = null,
+    onExportView = null,
     style = {},
     mobileOpen = false,
     onMobileClose = null,
@@ -174,6 +233,7 @@ export default function LayerRail({
             active={active} onToggle={onToggle} onLayerSet={onLayerSet}
             expandedKey={expandedKey} setExpandedKey={setExpandedKey}
             autoModeEnabled={autoModeEnabled} onAutoMode={onAutoMode}
+            onExportView={onExportView}
         />
     )
 
@@ -188,15 +248,19 @@ export default function LayerRail({
 
     return (
         <div style={{
-            position: "fixed",
-            top: 54,
-            left: 0,
-            width: 220,
-            maxHeight: "calc(100vh - 54px)",
+            // Full UI rebuild spec section 5: a real docked column, NOT a
+            // floating overlay — this is a flex/grid SIBLING of the map
+            // canvas (its parent container must be display:flex; this div
+            // just occupies its allotted width, nothing more). The old
+            // position:"fixed" here was the confirmed real bug: the rail
+            // rendered on top of unrelated content (e.g. the News tab)
+            // instead of the map canvas visibly shrinking to accommodate it.
+            width: 240,
+            flexShrink: 0,
+            height: "100%",
             overflowY: "auto",
-            background: "var(--bg-secondary)",
-            borderRight: "var(--elevation-1)",
-            zIndex: 800,
+            background: "var(--bg-panel)",
+            borderRight: "1px solid var(--border)",
             fontFamily: "var(--font-sans)",
             ...style,
         }}>

@@ -123,10 +123,21 @@ function buildOverpassQuery(lat, lon, radius) {
     return `[out:json][timeout:8];(way["power"](around:${radius},${lat},${lon});way["man_made"="pipeline"](around:${radius},${lat},${lon});node["power"~"substation|transformer"](around:${radius},${lat},${lon});way["telecom"](around:${radius},${lat},${lon}););out body 5;`
 }
 
-export default function GlobePopup({ viewerRef, infraEnabled = false }) {
+export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible = true }) {
     const [popup,   setPopup]   = useState(null)
     const [tooltip, setTooltip] = useState(null)  // { name, x, y }
     const handlerRef = useRef(null)
+
+    // Full UI rebuild spec section 7's exclusivity rules: "Navigating to a
+    // different top-level destination... automatically closes any open
+    // inspector first." GlobeView (this component's parent) stays mounted
+    // via display:none rather than unmounting when the Globe destination
+    // isn't active (for render-performance reasons unrelated to this fix),
+    // so `popup` state would otherwise silently persist across a nav-away-
+    // and-back — confirmed real gap, fixed here.
+    useEffect(() => {
+        if (!isVisible) { setPopup(null); setTooltip(null) }
+    }, [isVisible])
 
     useEffect(() => {
         let attempts = 0
@@ -352,18 +363,6 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
         }
     }
 
-    // Forge's ontology graph is a real, already-wired workspace
-    // (akili:forge-nav {workspace:"ontology"}, see ForgePanel.jsx) — this
-    // reuses it rather than adding new Forge-side plumbing, which is out of
-    // scope for this round. It lands on the ontology graph in general, not
-    // auto-focused on this specific node — that would need a new Forge-side
-    // deep-link this round deliberately doesn't build.
-    const handleOpenInOntology = () => {
-        window.dispatchEvent(new CustomEvent("akili:open-forge"))
-        window.dispatchEvent(new CustomEvent("akili:forge-nav", { detail: { workspace: "ontology" } }))
-        setPopup(null)
-    }
-
     return (
         <>
             {/* Hover tooltip */}
@@ -400,7 +399,6 @@ export default function GlobePopup({ viewerRef, infraEnabled = false }) {
                     onClose={handleClose}
                     onSelectRelated={handleSelectRelated}
                     onJumpToLocation={handleJumpToLocation}
-                    onOpenInOntology={handleOpenInOntology}
                     onTrackEntity={handleTrackEntity}
                 />
             )}

@@ -77,6 +77,12 @@ function zoomToAlt(zoom) {
 export default function GlobeView({
     center           = [20, 10],
     zoom             = 3,
+    // Whether the Globe/Maritime home screen is the currently-active
+    // destination — GlobeView stays mounted (display:none) rather than
+    // unmounting when it isn't, for render-performance reasons, so
+    // GlobePopup needs this to know when to close its own open inspector
+    // per the full-UI-rebuild spec's docked-inspector exclusivity rules.
+    isVisible        = true,
     // Layer toggles — mirror workspace layer keys
     infraEnabled     = false,
     nauticalEnabled  = false,
@@ -176,6 +182,22 @@ export default function GlobeView({
         }
         window.addEventListener("akili:fly-to", handler)
         return () => window.removeEventListener("akili:fly-to", handler)
+    }, [])
+
+    // Real map control stack (full UI rebuild spec section 4) — zoom in/out
+    // and locate. Same dispatched-event integration pattern as akili:fly-to
+    // above, since MapControlStack lives outside GlobeView (it's a sibling in
+    // the map-tab's flex layout, not a child), so it can't reach viewerRef
+    // directly.
+    useEffect(() => {
+        const zoomIn = () => viewerRef.current?.cesiumElement?.camera.zoomIn(viewerRef.current.cesiumElement.camera.positionCartographic.height * 0.4)
+        const zoomOut = () => viewerRef.current?.cesiumElement?.camera.zoomOut(viewerRef.current.cesiumElement.camera.positionCartographic.height * 0.6)
+        window.addEventListener("akili:zoom-in", zoomIn)
+        window.addEventListener("akili:zoom-out", zoomOut)
+        return () => {
+            window.removeEventListener("akili:zoom-in", zoomIn)
+            window.removeEventListener("akili:zoom-out", zoomOut)
+        }
     }, [])
 
     // akili:search-marker — temporary blue dot + label after a search fly-to
@@ -460,7 +482,7 @@ export default function GlobeView({
             </Viewer>
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
-            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} />
+            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} />
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
             {cesiumViewer && (

@@ -9,42 +9,37 @@ import {
     adaptInfrastructure,
     adaptGeneric,
 } from "./adapters.js"
-import { AFFILIATION, ENTITY_FUNCTION } from "../globe/markerRenderer.js"
 
 function findAttr(attributes, label) {
     return attributes.find((a) => a.label === label)
 }
 
-describe("adaptVessel — sanctions corroboration reuses markerRenderer's Suspect/Hostile decision", () => {
-    it("a vessel carrying an uncorroborated ('possible') sanctions hit maps to Suspect, not Hostile", () => {
+describe("adaptVessel — real sanctions corroboration status feeds the status ring, not a shape", () => {
+    it("a vessel carrying an uncorroborated ('possible') sanctions hit maps to sanctionsStatus 'possible'", () => {
         const vessel = {
             mmsi: "123456789", name: "MV SHADOW", ship_type: "Crude Oil Tanker",
             sanctions: { status: "possible", hit: { list: "OFAC SDN" }, mmsi: "123456789", vessel_name: "MV SHADOW" },
         }
         const result = adaptVessel(vessel)
-        expect(result.identity.affiliation).toBe(AFFILIATION.SUSPECT)
-        expect(result.identity.affiliation).not.toBe(AFFILIATION.HOSTILE)
+        expect(result.identity.sanctionsStatus).toBe("possible")
+        expect(result.identity.entityType).toBe("vessel")
+        expect(result.identity.subtype).toBe("tanker")
         expect(findAttr(result.attributes, "Sanctions").value).toMatch(/possible/)
     })
 
-    it("a vessel with a corroborated ('confirmed') sanctions hit maps to Hostile", () => {
+    it("a vessel with a corroborated ('confirmed') sanctions hit maps to sanctionsStatus 'confirmed'", () => {
         const vessel = { mmsi: "1", name: "MV BAD", ship_type: "tanker", sanctions: { status: "confirmed" } }
-        expect(adaptVessel(vessel).identity.affiliation).toBe(AFFILIATION.HOSTILE)
+        expect(adaptVessel(vessel).identity.sanctionsStatus).toBe("confirmed")
     })
 
-    it("a clean vessel with no sanctions signal maps to Neutral", () => {
+    it("a clean vessel with no sanctions signal has no sanctionsStatus", () => {
         const vessel = { mmsi: "111222333", name: "MV EXAMPLE", ship_type: "General Cargo Ship", sog: 12.4, heading: 88 }
         const result = adaptVessel(vessel)
-        expect(result.identity.affiliation).toBe(AFFILIATION.NEUTRAL)
+        expect(result.identity.sanctionsStatus).toBeNull()
         expect(result.identity.title).toBe("MV EXAMPLE")
         expect(findAttr(result.attributes, "MMSI").value).toBe("111222333")
         expect(findAttr(result.attributes, "Speed").value).toBe("12.4 kn")
         expect(findAttr(result.attributes, "Course").value).toBe("88°")
-    })
-
-    it("a vessel with no identifying data at all maps to Unknown", () => {
-        expect(adaptVessel({ mmsi: "1" }).identity.affiliation).toBe(AFFILIATION.UNKNOWN)
-        expect(adaptVessel({}).identity.affiliation).toBe(AFFILIATION.UNKNOWN)
     })
 
     it("omits fields that aren't present rather than fabricating them", () => {
@@ -67,20 +62,21 @@ describe("adaptVessel — sanctions corroboration reuses markerRenderer's Suspec
 })
 
 describe("adaptAircraft", () => {
-    it("maps a commercial aircraft with position/heading/speed/altitude", () => {
+    it("maps a commercial aircraft with position/heading/speed/altitude and the real sub-type", () => {
         const ac = { flight: "UAL123", category: "A3", lat: 40.1, lon: -74.2, track: 270, gs: 420, alt_baro: 35000 }
         const result = adaptAircraft(ac)
         expect(result.identity.title).toBe("UAL123")
-        expect(result.identity.affiliation).toBe(AFFILIATION.NEUTRAL)
-        expect(result.identity.entityFunction).toBe(ENTITY_FUNCTION.AIRCRAFT_COMMERCIAL)
+        expect(result.identity.entityType).toBe("aircraft")
+        expect(result.identity.subtype).toBe("commercial")
         expect(findAttr(result.attributes, "Position").value).toContain("40.100")
         expect(findAttr(result.attributes, "Heading").value).toBe("270°")
         expect(findAttr(result.attributes, "Speed").value).toBe("420 kts")
         expect(findAttr(result.attributes, "Altitude").value).toBe("35,000 ft")
     })
 
-    it("falls back to Unknown affiliation when there's no identifying data", () => {
-        expect(adaptAircraft({}).identity.affiliation).toBe(AFFILIATION.UNKNOWN)
+    it("classifies a military aircraft distinctly from a general one", () => {
+        expect(adaptAircraft({ military: true }).identity.subtype).toBe("military")
+        expect(adaptAircraft({}).identity.subtype).toBe("general")
     })
 })
 
@@ -100,18 +96,34 @@ describe("adaptAlert", () => {
         expect(findAttr(result.attributes, "Evidence").value).toMatch(/transponder/)
     })
 
-    it("reuses resolveAlertAffiliation — an unconfirmed sanctions alert is Suspect, not Hostile", () => {
+    it("an unconfirmed sanctions alert maps to sanctionsStatus 'possible', not 'confirmed'", () => {
         const alert = {
             rule_name: "Sanctioned Vessel", severity: "medium",
             sanctions_hit: true, sanctions_hit_confirmed: false,
         }
-        expect(adaptAlert(alert).identity.affiliation).toBe(AFFILIATION.SUSPECT)
+        expect(adaptAlert(alert).identity.sanctionsStatus).toBe("possible")
     })
 
-    it("a dark-ship alert maps to the Unknown affiliation and the vessel/aircraft glyph via domain", () => {
+    it("a confirmed sanctions alert maps to sanctionsStatus 'confirmed'", () => {
+        const alert = { rule_name: "Sanctioned Vessel", sanctions_hit: true, sanctions_hit_confirmed: true }
+        expect(adaptAlert(alert).identity.sanctionsStatus).toBe("confirmed")
+    })
+
+    it("picks the entity glyph by real domain — AIS alerts get the vessel glyph", () => {
         const result = adaptAlert({ alert_category: "DARK_SHIP", domain: "AIS", severity: "high" })
-        expect(result.identity.affiliation).toBe(AFFILIATION.UNKNOWN)
-        expect(result.identity.entityFunction).toBe(ENTITY_FUNCTION.VESSEL_OTHER)
+        expect(result.identity.entityType).toBe("vessel")
+        expect(result.identity.sanctionsStatus).toBeNull()
+    })
+
+    it("picks the aircraft glyph with a military sub-type for a real military-squawk alert", () => {
+        const result = adaptAlert({ domain: "ADSB", rule_name: "Military Squawk" })
+        expect(result.identity.entityType).toBe("aircraft")
+        expect(result.identity.subtype).toBe("military")
+    })
+
+    it("falls back to the generic alert glyph for a domain-less alert", () => {
+        const result = adaptAlert({ rule_name: "Something Else", severity: "low" })
+        expect(result.identity.entityType).toBe("alert")
     })
 })
 
@@ -125,6 +137,7 @@ describe("adaptZone", () => {
         }
         const result = adaptZone(zone)
         expect(result.identity.title).toBe("Strait Watch Zone")
+        expect(result.identity.entityType).toBe("zone")
         expect(findAttr(result.attributes, "Bounds").value).toContain("43.00")
         expect(findAttr(result.attributes, "Associated rules").value).toBe("Dark Ship, Ship-to-Ship Transfer")
         expect(result.actions.canJumpToLocation).toBe(true)
@@ -151,6 +164,7 @@ describe("adaptNews — news/event surface items", () => {
         }
         const result = adaptNews(item)
         expect(result.identity.title).toBe("Tanker seized near chokepoint")
+        expect(result.identity.entityType).toBe("news_event")
         expect(findAttr(result.attributes, "Source").value).toBe("Reuters")
         expect(findAttr(result.attributes, "Timestamp")).toBeTruthy()
         expect(findAttr(result.attributes, "Category").value).toBe("maritime")
@@ -168,6 +182,7 @@ describe("adaptInfrastructure", () => {
         const infra = { name: "Suez Substation", infra_type: "substation", lat: 30.5, lon: 32.3, operator: "Egyptian Electricity" }
         const result = adaptInfrastructure(infra)
         expect(result.identity.title).toBe("Suez Substation")
+        expect(result.identity.entityType).toBe("facility")
         expect(findAttr(result.attributes, "Location")).toBeTruthy()
         expect(findAttr(result.attributes, "Operator").value).toBe("Egyptian Electricity")
     })
@@ -186,6 +201,7 @@ describe("adaptGeneric — unknown entity types never crash and list raw fields 
         expect(() => adaptGeneric(data, "threat_region")).not.toThrow()
         const result = adaptGeneric(data, "threat_region")
         expect(result.identity.title).toBe("Bab-el-Mandeb")
+        expect(result.identity.entityType).toBe("generic")
         expect(findAttr(result.attributes, "Threat Score").value).toBe("62")
         expect(findAttr(result.attributes, "Trend").value).toBe("escalating")
     })
@@ -199,7 +215,7 @@ describe("adaptGeneric — unknown entity types never crash and list raw fields 
     it("does not crash on null/undefined data", () => {
         expect(() => adaptGeneric(undefined, "mystery")).not.toThrow()
         expect(() => normalizeEntity("mystery", null)).not.toThrow()
-        expect(normalizeEntity("mystery", null).identity.entityFunction).toBe(ENTITY_FUNCTION.GENERIC)
+        expect(normalizeEntity("mystery", null).identity.entityType).toBe("generic")
     })
 
     it("skips nested objects/arrays rather than rendering '[object Object]'", () => {
@@ -214,23 +230,23 @@ describe("normalizeEntity — dispatch", () => {
     it("routes 'event' and 'news' entity types to the same news adapter", () => {
         const a = normalizeEntity("event", { headline: "X", event_type: "fire" })
         const b = normalizeEntity("news", { headline: "X", event_type: "fire" })
-        expect(a.identity.entityFunction).toBe(b.identity.entityFunction)
+        expect(a.identity.entityType).toBe(b.identity.entityType)
     })
 
     it("routes 'infra' and 'infrastructure' to the same adapter", () => {
         const a = normalizeEntity("infra", { name: "X", infra_type: "port" })
         const b = normalizeEntity("infrastructure", { name: "X", infra_type: "port" })
-        expect(a.identity.entityFunction).toBe(b.identity.entityFunction)
+        expect(a.identity.entityType).toBe(b.identity.entityType)
     })
 
     it("routes unknown types through adaptGeneric without throwing", () => {
         expect(() => normalizeEntity("sentinel_detection", { detection_id: "D1", confidence: 0.9 })).not.toThrow()
     })
 
-    it("every adapter's actions.canOpenInOntology is a real boolean, not undefined", () => {
+    it("every adapter's actions.canJumpToLocation is a real boolean, not undefined", () => {
         for (const type of ["vessel", "aircraft", "alert", "zone", "news", "infra", "chokepoint"]) {
             const result = normalizeEntity(type, {})
-            expect(typeof result.actions.canOpenInOntology).toBe("boolean")
+            expect(typeof result.actions.canJumpToLocation).toBe("boolean")
         }
     })
 })

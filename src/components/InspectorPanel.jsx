@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
-import { markerSvg } from "../globe/markerRenderer.js"
+import { entityMarkerSvg } from "../globe/entityIcons.js"
 import { normalizeEntity } from "../inspector/adapters.js"
 import { Panel, Button, EmptyState } from "../ui/index.js"
 
@@ -36,12 +36,17 @@ import { Panel, Button, EmptyState } from "../ui/index.js"
  *     onClose:            () => void
  *     onSelectRelated:    (entityType, entityId) => void
  *     onJumpToLocation:   (data) => void
- *     onOpenInOntology:   (entityType, entityId) => void
  *     style:              object — optional style override for the root panel
  *   }
  *
  * All callback props are optional and no-op by default — this component
  * only ever invokes them, it never decides what they do.
+ *
+ * Docked per the full-UI-rebuild spec section 7 exactly: 340px wide, full
+ * height, --bg-panel background, 1px --border on the left edge. Closes on
+ * Escape (spec section 7's exclusivity rules) — the "close on destination
+ * change" half of those rules is the caller's responsibility (this
+ * component doesn't know what a "destination" is), see GlobePopup.jsx.
  */
 
 const DEFAULT_DOCK_STYLE = {
@@ -55,6 +60,8 @@ const DEFAULT_DOCK_STYLE = {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
+    background: "var(--bg-panel)",
+    borderLeft: "1px solid var(--border)",
 }
 
 function noop() {}
@@ -115,7 +122,6 @@ export default function InspectorPanel({
     onClose = noop,
     onSelectRelated = noop,
     onJumpToLocation = noop,
-    onOpenInOntology = noop,
     onTrackEntity = null,
     style,
 }) {
@@ -139,7 +145,21 @@ export default function InspectorPanel({
         return () => { cancelled = true }
     }, [entityType, entityId])
 
-    const iconSvg = markerSvg({ affiliation: identity.affiliation, entityFunction: identity.entityFunction, size: 36 })
+    // Full-UI-rebuild spec section 7: "Pressing Escape... closes the
+    // inspector entirely." Self-contained here since this component always
+    // represents "the one open inspector" whenever it's mounted at all.
+    useEffect(() => {
+        const onKey = (e) => { if (e.key === "Escape") onClose() }
+        window.addEventListener("keydown", onKey)
+        return () => window.removeEventListener("keydown", onKey)
+    }, [onClose])
+
+    const iconSvg = entityMarkerSvg({
+        entityType: identity.entityType,
+        subtype: identity.subtype,
+        sanctionsStatus: identity.sanctionsStatus,
+        size: 36,
+    })
 
     return (
         <Panel
@@ -157,8 +177,8 @@ export default function InspectorPanel({
             }}>
                 <div
                     style={{ flexShrink: 0, width: 36, height: 36 }}
-                    // markerSvg() is a pure, trusted, locally-generated SVG string
-                    // from Round 1's markerRenderer.js — not user-controlled HTML.
+                    // entityMarkerSvg() is a pure, trusted, locally-generated SVG
+                    // string (src/globe/entityIcons.js) — not user-controlled HTML.
                     dangerouslySetInnerHTML={{ __html: iconSvg }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -224,7 +244,7 @@ export default function InspectorPanel({
             </div>
 
             {/* Actions */}
-            {(actions.canJumpToLocation || actions.canOpenInOntology || (onTrackEntity && entityId)) && (
+            {(actions.canJumpToLocation || (onTrackEntity && entityId)) && (
                 <div style={{
                     display: "flex", gap: "var(--space-2)", flexWrap: "wrap",
                     padding: "var(--space-3) var(--space-4)",
@@ -238,11 +258,6 @@ export default function InspectorPanel({
                     {onTrackEntity && entityId && (
                         <Button variant="ghost" size="sm" style={{ flex: 1 }} onClick={() => onTrackEntity(entityId)}>
                             Track on globe
-                        </Button>
-                    )}
-                    {actions.canOpenInOntology && (
-                        <Button variant="ghost" size="sm" style={{ flex: 1 }} onClick={() => onOpenInOntology(entityType, entityId)}>
-                            Open in Forge ontology view
                         </Button>
                     )}
                 </div>

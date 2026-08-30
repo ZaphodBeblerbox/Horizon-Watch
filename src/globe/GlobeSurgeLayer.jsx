@@ -8,7 +8,7 @@ import {
     SceneTransforms,
 } from "cesium"
 import API_BASE from "../apiBase.js"
-import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
+import { getEntityMarkerDataUri } from "./entityIcons.js"
 
 // ── Article-type → human explanation ──────────────────────────────────────────
 
@@ -27,17 +27,11 @@ const SURGE_EXPLANATIONS = {
 
 const SEV_COLOR = { critical: "#FF3B30", high: "#FF9500", medium: "#FFCC00", low: "#34C759" }
 
-// News surges are a news/event entity function like GlobeEventsLayer's
-// markers — Neutral (square) affiliation frame, severity carried as the
-// glyph accent tint (see src/globe/markerRenderer.js).
+// News surges are a "news_event" entity like GlobeEventsLayer's markers —
+// severity carried as the glyph color, same as before.
 function makeSurgeIcon(severity) {
     const hex = SEV_COLOR[severity] || "#FF9500"
-    return getMarkerCanvas({
-        affiliation:    AFFILIATION.NEUTRAL,
-        entityFunction: ENTITY_FUNCTION.NEWS_EVENT,
-        accentColor:    hex,
-        size:           40,
-    })
+    return getEntityMarkerDataUri({ entityType: "news_event", color: hex, size: 40 })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

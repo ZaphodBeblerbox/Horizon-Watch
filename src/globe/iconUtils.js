@@ -1,16 +1,12 @@
 // Real, still-used vessel/aircraft classification helpers.
 //
-// This file used to also hold a grab-bag of ad hoc canvas icon builders
-// (makeAircraftCanvas, makeVesselCanvas, makeEventCanvas, makeChokepointCanvas,
-// makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas, makeTypedEventCanvas,
-// makePortCanvas, makeAirportCanvas, altColorHex) plus their supporting path/
-// color tables. All of that has been superseded by the real MIL-STD-inspired
-// affiliation+entity-function symbology in ./markerRenderer.js, which every
-// globe layer now uses for billboard icons — see that file for the canonical
-// icon system. What remains here is real classification logic with no icon-
-// drawing code of its own: vesselShipType()/VESSEL_COLORS (used by
-// GlobeVesselPopup.jsx for its accent color) and acClassify() (used by
-// markerRenderer.js's aircraft entity-function resolver).
+// This file used to also hold a grab-bag of ad hoc canvas icon builders,
+// later superseded by markerRenderer.js's MIL-STD-inspired affiliation
+// system — which the full UI rebuild has since cancelled and replaced with
+// src/globe/entityIcons.js's outline-icon + corner-badge system. What
+// remains here is real classification logic with no icon-drawing code of
+// its own: vesselShipType() (feeds src/inspector/adapters.js's vessel
+// sub-type badge) and acClassify() (feeds its aircraft sub-type badge).
 
 // ── Vessel ship-type classification ───────────────────────────────────────────
 

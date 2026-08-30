@@ -6,9 +6,7 @@ import {
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType } from "./iconUtils.js"
-import {
-    getMarkerCanvas, resolveVesselAffiliation, vesselTypeToFunction,
-} from "./markerRenderer.js"
+import { getEntityMarkerDataUri } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
 
@@ -57,10 +55,13 @@ export default function GlobeAISLayer({ vessels, viewBounds }) {
             {filtered.map(v => {
                 if (v.lat == null || v.lon == null || !isFinite(v.lat) || !isFinite(v.lon)) return null
 
-                const shipType      = vesselShipType(v)
-                const entityFunction = vesselTypeToFunction(shipType)
-                const affiliation    = resolveVesselAffiliation(v)
-                const icon = getMarkerCanvas({ affiliation, entityFunction, size: BILLBOARD_SIZE })
+                // Base AIS tracks have no sanctions/affiliation signal at
+                // this layer (that only exists on the alert overlay — see
+                // GlobeAlertsLayer.jsx) — real ship-type sub-type only, no
+                // status ring. See src/globe/entityIcons.js's own header for
+                // why a plain vessel track never fabricates a status here.
+                const shipType = vesselShipType(v)
+                const icon = getEntityMarkerDataUri({ entityType: "vessel", subtype: shipType, size: BILLBOARD_SIZE })
 
                 const hdg = isFinite(Number(v.heading)) && Number(v.heading) !== 511
                     ? Number(v.heading)

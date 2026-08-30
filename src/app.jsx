@@ -1,7 +1,16 @@
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
+import { REGION_COORDS } from "./data/regionCoords.js"
 const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
-import TopBar from "./components/TopBar.jsx"
-import Sidebar from "./components/Sidebar.jsx"
+import AppHeader from "./components/AppHeader.jsx"
+import AppFooter from "./components/AppFooter.jsx"
+import MapControlStack from "./components/MapControlStack.jsx"
+import { DESTINATION_KEYS } from "./data/destinations.js"
+import { summarizeHealth } from "./utils/systemHealth.js"
+import WatchlistsPage from "./components/WatchlistsPage.jsx"
+import Dashboard from "./destinations/Dashboard.jsx"
+import Sources from "./destinations/Sources.jsx"
+import AICouncil from "./destinations/AICouncil.jsx"
+import ReportsPage from "./reports/ReportsPage.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
 import ChatPanel from "./components/ChatPanel.jsx"
@@ -19,9 +28,6 @@ import LoadingScreen from "./components/LoadingScreen.jsx"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import PreferencesPanel, { loadSettings } from "./components/PreferencesPanel.jsx"
 import NotificationBar from "./components/NotificationBar.jsx"
-import NewsPage from "./components/NewsPage.jsx"
-import BottomNav from "./components/BottomNav.jsx"
-import MobileDrawer from "./components/MobileDrawer.jsx"
 import NewsReels from "./components/NewsReels.jsx"
 import DirectorBar from "./components/DirectorBar.jsx"
 import DirectorSidebar from "./components/DirectorSidebar.jsx"
@@ -33,11 +39,8 @@ import { DemoRunner } from "./services/demoRunner.js"
 import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
 import LayerRail from "./components/LayerRail.jsx"
-import SecondaryMenu from "./components/SecondaryMenu.jsx"
-import NotificationsDrawer from "./components/NotificationsDrawer.jsx"
 import { mergeNotificationItems } from "./components/notificationsNormalize.js"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
-import ForgePanel from "./components/ForgePanel.jsx"
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
 import NewsTicker from "./components/NewsTicker.jsx"
 import WorldClocksBar from "./components/WorldClocksBar.jsx"
@@ -66,26 +69,6 @@ function loadTabsFromStorage() {
     return defaultTabs()
 }
 
-
-const REGION_COORDS = {
-    "East Africa":    { lat: -2,  lon: 37, zoom: 5 },
-    "Great Lakes Region": { lat: -3, lon: 30, zoom: 6 },
-    "Sahel":          { lat: 15,  lon: 5,  zoom: 5 },
-    "Red Sea / Arabian Peninsula": { lat: 20, lon: 43, zoom: 5 },
-    "Gulf States":    { lat: 25,  lon: 53, zoom: 6 },
-    "Middle East":    { lat: 25,  lon: 45, zoom: 5 },
-    "Horn of Africa": { lat: 8,   lon: 46, zoom: 5 },
-    "North Africa":   { lat: 25,  lon: 17, zoom: 4 },
-    "West Africa":    { lat: 12,  lon: -2, zoom: 5 },
-    "Central Africa": { lat: 2,   lon: 24, zoom: 5 },
-    "Southern Africa":{ lat: -22, lon: 25, zoom: 5 },
-    "Indian Ocean":   { lat: -8,  lon: 67, zoom: 4 },
-    "Mediterranean":  { lat: 36,  lon: 18, zoom: 5 },
-    "South Asia":     { lat: 25,  lon: 72, zoom: 5 },
-    "Southeast Asia": { lat: 10,  lon: 108, zoom: 5 },
-    "Central Asia":   { lat: 42,  lon: 60, zoom: 5 },
-    "Europe":         { lat: 52,  lon: 12, zoom: 4 },
-}
 
 // ── Workspace helpers ─────────────────────────────────────────────────────────
 
@@ -236,7 +219,6 @@ export default function App() {
     const [directorScene, setDirectorScene] = useState(null)
     const [directorScanProgress,  setDirectorScanProgress]  = useState(null)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
-    const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
     const [showReels, setShowReels] = useState(false)
     const [showAutoMode, setShowAutoMode] = useState(false)
     const [heatmapHours, setHeatmapHours] = useState(24)
@@ -312,13 +294,27 @@ export default function App() {
     const activeTab     = tabs.find(t => t.id === activeTabId) || tabs[0]
     const activeTabType = activeTab?.type || "map"
 
+    // Full UI rebuild: which of the 5 fixed destinations (if any) is active —
+    // null when on the Globe/Maritime home screen ("map") or a real
+    // non-destination tab ("analytics"), since neither is one of the 5.
+    const activeDestination = DESTINATION_KEYS.includes(activeTabType) ? activeTabType : null
+    const MODE_LABELS = {
+        map: "MARITIME OPERATIONAL VIEW",
+        dashboard: "DASHBOARD",
+        reports: "REPORTS",
+        watchlists: "WATCHLISTS",
+        sources: "SOURCES",
+        aiCouncil: "AI COUNCIL",
+        analytics: "ANALYTICS",
+    }
+    const modeLabel = MODE_LABELS[activeTabType] || activeTabType.toUpperCase()
+
     // ── Navigation ────────────────────────────────────────────────────────────
     const [searchTarget, setSearchTarget] = useState(null)
 
     // ── Right panel slot — mutually exclusive ─────────────────────────────────
     // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts"
     const [rightPanel, setRightPanel] = useState(null)
-    const [secondaryMenuOpen, setSecondaryMenuOpen] = useState(false)
 
     const openRightPanel = useCallback((id) => {
         setRightPanel(prev => prev === id ? null : id)
@@ -328,8 +324,6 @@ export default function App() {
     const [surfaceItems,     setSurfaceItems]     = useState([])
     const [surfaceUpdatedAt, setSurfaceUpdatedAt] = useState(null)
     const [selectedSurface,  setSelectedSurface]  = useState(null)
-    const [notifOpen,        setNotifOpen]        = useState(false)
-    const [notifSortMode,    setNotifSortMode]    = useState("relevance")
     const [readIds,          setReadIds]          = useState(() => {
         try { return new Set(JSON.parse(localStorage.getItem("akili-notif-read-v1") || "[]")) }
         catch { return new Set() }
@@ -363,13 +357,32 @@ export default function App() {
         })
     }, [])
 
-    const handleNotifSelect = useCallback((item) => {
-        handleMarkRead(item.id)
-        setNotifOpen(false)
-        setSelectedSurface(item)
-        setRightPanel("detail")
-        setSearchTarget({ lat: item.lat, lon: item.lon, zoom: 7, key: Date.now() })
-    }, [handleMarkRead])  // eslint-disable-line react-hooks/exhaustive-deps
+    // Watchlists destination's entity chips only expose a real, concrete
+    // (entityType, entityId) pair when one is genuinely derivable (see
+    // WatchlistsPage.jsx) — reuses the same akili:show-entity deep-link
+    // GlobePopup.jsx already listens for (entityStore lookup), same 2-event
+    // "open the map, then show the entity" pattern NewsPage.jsx's own
+    // onOpenInspector already establishes.
+    const handleWatchlistSelectEntity = (entityType, entityId) => {
+        openTab("map")
+        setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("akili:show-entity", { detail: { entityType, entityId } }))
+        }, 50)
+    }
+
+    // ── Header/footer real system status pill (full UI rebuild spec 3.1/3.2) ──
+    const [healthData, setHealthData] = useState(null)
+    useEffect(() => {
+        let cancelled = false
+        const load = () => fetch(`${API}/api/health/detailed`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled) setHealthData(d) })
+            .catch(() => { if (!cancelled) setHealthData(null) })
+        load()
+        const t = setInterval(load, 60000)
+        return () => { cancelled = true; clearInterval(t) }
+    }, [])
+    const systemHealth = useMemo(() => summarizeHealth(healthData), [healthData])
 
     useEffect(() => {
         if (!profile) return
@@ -462,18 +475,6 @@ export default function App() {
     }, [selectedSurface])
 
     // ── Daily briefing ────────────────────────────────────────────────────────
-    const BRIEFING_READ_KEY = "akili-briefing-read-at-v1"
-    const [briefingUnread, setBriefingUnread] = useState(() => {
-        // Unread if no read timestamp stored, or the stored timestamp is older than
-        // the last briefing generation (checked after fetch)
-        return false
-    })
-
-    const handleBriefingMarkRead = useCallback(() => {
-        localStorage.setItem(BRIEFING_READ_KEY, new Date().toISOString())
-        setBriefingUnread(false)
-    }, [])
-
     // Persist readyBriefing to localStorage whenever it changes
     useEffect(() => {
         if (!readyBriefing) return
@@ -497,27 +498,6 @@ export default function App() {
             })
             .catch(() => {})
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Poll /api/briefing/latest every 30 min to detect new auto-generated briefings
-    useEffect(() => {
-        if (!profile) return
-        const check = () => {
-            fetch(`${API}/api/briefing/latest`)
-                .then(r => r.ok ? r.json() : null)
-                .then(d => {
-                    if (!d?.briefing) return
-                    const generatedAt = d.briefing.generated_at
-                    const readAt      = localStorage.getItem(BRIEFING_READ_KEY)
-                    if (!readAt || readAt < generatedAt) {
-                        setBriefingUnread(true)
-                    }
-                })
-                .catch(() => {})
-        }
-        check()
-        const t = setInterval(check, 1800000)  // 30 min
-        return () => clearInterval(t)
-    }, [profile])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── App settings (from PreferencesPanel) ─────────────────────────────────
     const [appSettings, setAppSettings] = useState(loadSettings)
@@ -690,20 +670,6 @@ export default function App() {
         return () => clearInterval(tid)
     }, [showAnomalyNotification])  // eslint-disable-line react-hooks/exhaustive-deps
 
-// ── Budget (for sidebar indicator) ────────────────────────────────────────
-    const [budgetPct, setBudgetPct] = useState(null)
-
-    useEffect(() => {
-        const fetchBudget = () => {
-            fetch(`${API}/api/usage`)
-                .then(r => r.ok ? r.json() : null)
-                .then(d => d && setBudgetPct(d.budget_remaining_pct ?? null))
-                .catch(() => {})
-        }
-        fetchBudget()
-        const t = setInterval(fetchBudget, 60000)
-        return () => clearInterval(t)
-    }, [])
 
     const [mapViewport, setMapViewport] = useState(null)
 
@@ -796,7 +762,17 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        const LABELS = { map: "Map", briefing: "Briefings", news: "News Feed", analytics: "Analytics", forge: "Forge" }
+        // Full UI rebuild: the 5 fixed destinations (src/data/destinations.js)
+        // plus "map" (the Globe/Maritime home screen) and "analytics" (still
+        // real, reachable from the header's system-status pill — see below —
+        // not one of the 5 primary destinations). "briefing"/"news"/"forge"
+        // are retired from this LABELS map along with their tab-mount blocks
+        // further down — see this round's PR notes for what replaced each.
+        const LABELS = {
+            map: "Map", analytics: "Analytics",
+            dashboard: "Dashboard", reports: "Reports", watchlists: "Watchlists",
+            sources: "Sources", aiCouncil: "AI Council",
+        }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
         const newId = crypto.randomUUID()
@@ -807,17 +783,20 @@ export default function App() {
         switchTab(newId)
     }, [tabs, switchTab])
 
-    // Allow globe components to open Forge via custom event
+    // Real, destination-neutral navigation event (see
+    // src/globe/GlobeStrategicZoneTooltip.jsx's "Manage in Sources" action) —
+    // replaces the old akili:open-forge/akili:forge-nav pair now that Forge
+    // is no longer a primary-nav destination.
     useEffect(() => {
-        const h = () => openTab("forge")
-        window.addEventListener("akili:open-forge", h)
-        return () => window.removeEventListener("akili:open-forge", h)
+        const h = (e) => { if (e.detail?.destination) openTab(e.detail.destination) }
+        window.addEventListener("akili:navigate", h)
+        return () => window.removeEventListener("akili:navigate", h)
     }, [openTab])
 
-    // Reverse direction — a Forge report claim's "Locate on Map" deep link
-    // (src/services/reportDeepLink.js) needs the map tab open before the
-    // akili:fly-to / akili:show-entity events it fires right after this can
-    // find a mounted GlobeView to act on.
+    // Reverse direction — real deep links from non-map destinations (e.g.
+    // NewsPage's "jump to location", Watchlists' entity chips) need the map
+    // tab open before the akili:fly-to / akili:show-entity events they fire
+    // right after this can find a mounted GlobeView to act on.
     useEffect(() => {
         const h = () => openTab("map")
         window.addEventListener("akili:open-map", h)
@@ -981,17 +960,6 @@ export default function App() {
             } else { setOwMode("idle") }
         } catch (e) { console.error("[Sentinel ML]", e); setOwMode("idle") }
     }, [owSentinelOverlay, owBounds, _saveScanRecord]) // eslint-disable-line react-hooks/exhaustive-deps
-
-    const handleReplayBriefing = useCallback(async (briefing) => {
-        if (!briefing?.actions?.length) return
-        // Switch to map tab first
-        const mapTab = tabs.find(t => t.type === "map")
-        if (mapTab) setActiveTabId(mapTab.id)
-        // Small delay so map tab mounts before runner tries to access mapRef
-        setTimeout(() => {
-            _startDirectorPlayback({ actions: briefing.actions }, briefing.intent || "")
-        }, 300)
-    }, [tabs]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Post-process CommandRunner scenes: auto-enrich with hotspots + country highlights ──
     const _postProcessSequence = useCallback(async (scenes) => {
@@ -1343,15 +1311,24 @@ export default function App() {
           .demo-runner-rich-tooltip img { display: block !important; }
         `}</style>
             {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
-            {/* ── Topbar — 40px, full width ─────────────────────────────────── */}
-            {!showAutoMode && <TopBar
-                activeTabType={activeTabType}
-                onOpenTab={openTab}
-                navBadges={{ briefing: briefingUnread }}
-                showSearch={activeTabType === "map"}
-                onSearchResult={(r) => setSearchTarget({ lat: r.lat, lon: r.lon, zoom: r.zoom, label: r.label, key: Date.now() })}
-                searchApiBase={API}
-            />}
+            {/* ── Header — 52px, full width, never scrolls away (full UI rebuild spec 3.1) ── */}
+            {!showAutoMode && (
+                <AppHeader
+                    activeDestination={activeDestination}
+                    onNavigate={(key) => openTab(key)}
+                    onGoHome={() => openTab("map")}
+                    modeLabel={modeLabel}
+                    systemHealth={systemHealth}
+                    alertUnreadCount={unreadCount}
+                    onOpenWatchlists={() => openTab("watchlists")}
+                    onSearchResult={(r) => {
+                        openTab("map")
+                        setSearchTarget({ lat: r.lat, lon: r.lon, zoom: 7, key: Date.now() })
+                    }}
+                    onOpenSettings={() => openRightPanel("settings")}
+                    profile={profile}
+                />
+            )}
 
             {/* ── Notification toasts — new event alerts ─────────────────────── */}
             <NotificationBar onEventClick={(n) => {
@@ -1364,66 +1341,44 @@ export default function App() {
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
             <div style={{ flex: 1, display: "flex", minHeight: 0, paddingBottom: (isMobile && !showAutoMode) ? 56 : 0 }}>
 
-                {/* Sidebar — 48px, desktop only */}
-                {!isMobile && !showAutoMode && (
-                    <Sidebar
-                        alertLogOpen={notifOpen}
-                        alertLogUnread={unreadCount}
-                        onToggleAlertLog={() => setNotifOpen(v => !v)}
-                        secondaryMenuOpen={secondaryMenuOpen}
-                        onToggleSecondaryMenu={() => setSecondaryMenuOpen(v => !v)}
-                        budgetPct={budgetPct}
-                    />
-                )}
-                {!isMobile && !showAutoMode && (
-                    <SecondaryMenu
-                        open={secondaryMenuOpen}
-                        onClose={() => setSecondaryMenuOpen(false)}
-                        style={{ left: 52, bottom: 44 }}
-                        overwatchActive={overwatchActive}
-                        onToggleOverwatch={() => setOverwatchActive(v => !v)}
-                        directorActive={directorVisible}
-                        onDirectorClick={() => {
-                            if (directorVisible) {
-                                handleDirectorClose()
-                            } else {
-                                setDirectorModalOpen(true)
-                            }
-                        }}
-                        onOpenAnalytics={() => openRightPanel("analytics")}
-                        analyticsActive={rightPanel === "analytics"}
-                        onOpenThreats={() => openRightPanel("threats")}
-                        threatsActive={rightPanel === "threats"}
-                        onOpenHealth={() => openRightPanel("health")}
-                        healthActive={rightPanel === "health"}
-                        tvOpen={showTV}
-                        onToggleTV={() => setShowTV(v => !v)}
-                        soundMuted={soundMuted}
-                        onToggleSound={onToggleSound}
-                        onOpenSettings={() => openRightPanel("settings")}
-                        settingsActive={rightPanel === "settings"}
-                        profile={profile}
-                        profileActive={rightPanel === "profile"}
-                        onOpenProfile={() => openRightPanel("profile")}
-                    />
-                )}
-
-                {/* ── Alert log — real surface-pool alerts + real fusion/correlation hits ── */}
-                <NotificationsDrawer
-                    items={notifItems}
-                    readIds={readIds}
-                    onMarkRead={handleMarkRead}
-                    onSelectItem={handleNotifSelect}
-                    open={notifOpen}
-                    onClose={() => setNotifOpen(false)}
-                    sortMode={notifSortMode}
-                    onSortModeChange={setNotifSortMode}
-                />
-
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
 
-                {/* Map — exclusive: only one renderer alive at a time */}
-                <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", display: activeTabType === "map" ? "block" : "none", paddingTop: showAutoMode ? 36 : 0, paddingBottom: showAutoMode ? 32 : 0 }}>
+                {/* Map — exclusive: only one renderer alive at a time. Full UI
+                    rebuild spec section 5: LayerRail is a real docked flex
+                    SIBLING of the map canvas here (not an overlay on top of
+                    it) — this row is the fix for the confirmed real docking
+                    bug (LayerRail.jsx itself no longer uses position:fixed;
+                    this is the other half, giving it real layout space). */}
+                <div style={{ display: activeTabType === "map" ? "flex" : "none", flex: 1, minWidth: 0, height: "100%" }}>
+                    <LayerRail
+                        active={activeWorkspace?.layers ?? {}}
+                        onToggle={(key) => handleLayersChange({
+                            ...(activeWorkspace?.layers ?? {}),
+                            [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
+                        })}
+                        onLayerSet={(key, val) => handleLayersChange({
+                            ...(activeWorkspace?.layers ?? {}),
+                            [key]: val,
+                        })}
+                        autoModeEnabled={showAutoMode}
+                        onAutoMode={(v) => {
+                            setShowAutoMode(v)
+                            if (v) setRightPanel(null)
+                        }}
+                        onExportView={() => {
+                            const canvas = document.querySelector("#cesiumContainer canvas") || document.querySelector("canvas")
+                            if (!canvas) return
+                            const a = document.createElement("a")
+                            a.href = canvas.toDataURL("image/png")
+                            a.download = `horizon-watch-view-${Date.now()}.png`
+                            document.body.appendChild(a)
+                            a.click()
+                            a.remove()
+                        }}
+                        mobileOpen={rightPanel === "layers"}
+                        onMobileClose={() => setRightPanel(null)}
+                    />
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", paddingTop: showAutoMode ? 36 : 0, paddingBottom: showAutoMode ? 32 : 0 }}>
                     <Suspense fallback={
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "#050c1c", color: "rgba(148,163,184,0.7)", fontFamily: "system-ui", fontSize: 14 }}>
                             Loading 3D Globe…
@@ -1463,25 +1418,25 @@ export default function App() {
                             cctvEnabled={activeWorkspace?.layers?.cctvFeeds ?? false}
                             directorScene={directorScene}
                             autoModeEnabled={showAutoMode}
+                            isVisible={activeTabType === "map"}
                         />
                     </Suspense>
-                    <LayerRail
-                        active={activeWorkspace?.layers ?? {}}
-                        onToggle={(key) => handleLayersChange({
-                            ...(activeWorkspace?.layers ?? {}),
-                            [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
-                        })}
-                        onLayerSet={(key, val) => handleLayersChange({
-                            ...(activeWorkspace?.layers ?? {}),
-                            [key]: val,
-                        })}
-                        autoModeEnabled={showAutoMode}
-                        onAutoMode={(v) => {
-                            setShowAutoMode(v)
-                            if (v) setRightPanel(null)
+                    <MapControlStack
+                        onToggleLayers={() => setRightPanel(p => p === "layers" ? null : "layers")}
+                        onLocate={() => {
+                            if (!navigator.geolocation) return
+                            navigator.geolocation.getCurrentPosition((pos) => {
+                                window.dispatchEvent(new CustomEvent("akili:fly-to", {
+                                    detail: { lat: pos.coords.latitude, lon: pos.coords.longitude, altitude: 500_000 },
+                                }))
+                            }, () => {})
                         }}
-                        mobileOpen={rightPanel === "layers"}
-                        onMobileClose={() => setRightPanel(null)}
+                        onZoomIn={() => window.dispatchEvent(new CustomEvent("akili:zoom-in"))}
+                        onZoomOut={() => window.dispatchEvent(new CustomEvent("akili:zoom-out"))}
+                        onFullscreen={() => {
+                            if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+                            else document.documentElement.requestFullscreen().catch(() => {})
+                        }}
                     />
                     {(activeWorkspace?.layers?.aisHeatmap || activeWorkspace?.layers?.adsbHeatmap) && (
                         <HeatmapTimeSlider
@@ -1536,6 +1491,7 @@ export default function App() {
                         onClose={handleDirectorClose}
                         savedStatus={directorSavedStatus}
                     />
+                    </div>
                 </div>
 
                 {/* TV overlay */}
@@ -1543,41 +1499,53 @@ export default function App() {
                     <TVWidget onClose={() => setShowTV(false)} />
                 )}
 
-                {/* Briefings — mounted only while a briefing tab exists */}
-                {tabs.some(t => t.type === "briefing") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "briefing" ? "flex" : "none", flexDirection: "column" }}>
-                        <BriefingPanel
-                            onClose={() => closeTab(tabs.find(t => t.type === "briefing")?.id)}
-                            onMarkRead={handleBriefingMarkRead}
-                            onReplay={handleReplayBriefing}
+                {/* Full UI rebuild — the 5 fixed destinations (src/data/destinations.js).
+                    "briefing" (BriefingPanel.jsx — a real, older "Claude
+                    Briefings" document library, distinct from the ReportTask/
+                    Report system below), "news" (NewsPage.jsx) and "forge"
+                    (ForgePanel.jsx) are deliberately not replaced 1:1 here —
+                    the new spec's 5 destinations don't include an equivalent
+                    for any of them (News is a map-layer group only per
+                    section 5; Reports below is the ReportTask/Report system,
+                    not Claude Briefings; Sources absorbs only Forge's real
+                    Watch-Area/Detection-Rule CRUD). Their source files are
+                    untouched and still real — just no longer mounted here,
+                    since nothing in the new nav model can open a "briefing"/
+                    "news"/"forge" tab anymore. Flagged explicitly in this
+                    round's PR notes as a deliberate scope decision, not an
+                    oversight. */}
+                {tabs.some(t => t.type === "dashboard") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "dashboard" ? "flex" : "none", flexDirection: "column" }}>
+                        <Dashboard />
+                    </div>
+                )}
+
+                {tabs.some(t => t.type === "reports") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "reports" ? "flex" : "none", flexDirection: "column" }}>
+                        <ReportsPage />
+                    </div>
+                )}
+
+                {tabs.some(t => t.type === "watchlists") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "watchlists" ? "flex" : "none", flexDirection: "column" }}>
+                        <WatchlistsPage
+                            items={notifItems}
+                            readIds={readIds}
+                            onMarkRead={handleMarkRead}
+                            onSelectEntity={handleWatchlistSelectEntity}
                         />
                     </div>
                 )}
 
+                {tabs.some(t => t.type === "sources") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "sources" ? "flex" : "none", flexDirection: "column" }}>
+                        <Sources />
+                    </div>
+                )}
 
-                {/* News Feed — mounted only while a news tab exists */}
-                {tabs.some(t => t.type === "news") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "news" ? "flex" : "none", flexDirection: "column" }}>
-                        <NewsPage
-                            onClose={() => closeTab(tabs.find(t => t.type === "news")?.id)}
-                            onJumpToLocation={(story) => {
-                                const lat = story?.lat
-                                const lon = story?.lon ?? story?.lng
-                                if (lat == null || lon == null) return
-                                window.dispatchEvent(new CustomEvent("akili:open-map"))
-                                setTimeout(() => {
-                                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat, lon, altitude: 100_000 } }))
-                                }, 50)
-                            }}
-                            onOpenInspector={(story) => {
-                                window.dispatchEvent(new CustomEvent("akili:open-map"))
-                                setTimeout(() => {
-                                    window.dispatchEvent(new CustomEvent("akili:open-inspector", {
-                                        detail: { entityType: "event", entityId: story?.id || story?.url || null, data: story },
-                                    }))
-                                }, 100)
-                            }}
-                        />
+                {tabs.some(t => t.type === "aiCouncil") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "aiCouncil" ? "flex" : "none", flexDirection: "column" }}>
+                        <AICouncil onOpenReport={(reportId) => openTab("reports")} />
                     </div>
                 )}
 
@@ -1592,20 +1560,6 @@ export default function App() {
                         <AnalyticsPanel
                             isTabMode={true}
                             onClose={() => closeTab(tabs.find(t => t.type === "analytics")?.id)}
-                        />
-                    </div>
-                )}
-
-                {/* Forge — intelligence training lab */}
-                {tabs.some(t => t.type === "forge") && (
-                    <div style={{
-                        flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
-                        display: activeTabType === "forge" ? "block" : "none",
-                        position: "relative",
-                    }}>
-                        <ForgePanel
-                            isMobile={isMobile}
-                            onClose={() => closeTab(tabs.find(t => t.type === "forge")?.id)}
                         />
                     </div>
                 )}
@@ -1969,44 +1923,15 @@ export default function App() {
                 </button>
             )}
 
-            {/* Mobile bottom nav */}
-            {isMobile && !showAutoMode && (
-                <BottomNav
-                    activeTabType={activeTabType}
-                    onSwitchToMap={() => openTab("map")}
-                    onSwitchToNews={() => openTab("news")}
-                    onOpenBriefings={() => openTab("briefing")}
-                    reportsUnread={briefingUnread}
-                    onOpenForge={() => openTab("forge")}
-                    alertLogUnread={unreadCount}
-                    onToggleAlertLog={() => setNotifOpen(v => !v)}
-                    onOpenMenu={() => setMobileDrawerOpen(true)}
-                />
-            )}
-
-            {/* Mobile drawer — secondary/overflow menu */}
-            {isMobile && !showAutoMode && (
-                <MobileDrawer
-                    open={mobileDrawerOpen}
-                    onClose={() => setMobileDrawerOpen(false)}
-                    rightPanel={rightPanel}
-                    onRightPanel={openRightPanel}
-                    activeTabType={activeTabType}
-                    onOpenLayers={() => openRightPanel("layers")}
-                    onOpenReels={() => setShowReels(true)}
-                    profile={profile}
-                    soundMuted={soundMuted}
-                    onToggleSound={onToggleSound}
-                    tvOpen={showTV}
-                    onToggleTV={() => setShowTV(v => !v)}
-                    overwatchActive={overwatchActive}
-                    onToggleOverwatch={() => setOverwatchActive(v => !v)}
-                    directorActive={directorVisible}
-                    onDirectorTap={() => directorVisible ? handleDirectorClose() : setDirectorModalOpen(true)}
-                />
-            )}
-
             {showReels && <NewsReels onClose={() => setShowReels(false)} />}
+
+            {/* Full UI rebuild spec section 3.2 — persistent footer, never
+                changes size or disappears. "There is no mobile layout in
+                this pass" (section 3.3) — BottomNav.jsx/MobileDrawer.jsx are
+                retired along with the rest of the old mobile chrome; the
+                real isMobile detection elsewhere in this file (unrelated
+                layout adaptations) is untouched. */}
+            {!showAutoMode && <AppFooter modeLabel={modeLabel} systemHealth={systemHealth} />}
         </div>
     )
 }

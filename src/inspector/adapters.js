@@ -6,33 +6,26 @@
  * it to a normalized shape:
  *
  *   {
- *     identity:   { title, subtitle, affiliation, entityFunction },
+ *     identity:   { title, subtitle, entityType, subtype, sanctionsStatus },
  *     attributes: [{ label, value }, ...],   // only fields actually present
  *     provenance: { feed, ingestedAt } | null,
- *     actions:    { canJumpToLocation, canOpenInOntology },
+ *     actions:    { canJumpToLocation },
  *   }
  *
  * These are pure functions — no React, no DOM, no fetch — so they're unit
- * tested directly in adapters.test.js without mounting anything. The
- * affiliation/entity-function DECISION always comes from markerRenderer.js
- * (Round 1) — nothing here re-implements or second-guesses that logic, it
- * only feeds markerRenderer's resolvers the fields they already know how to
- * read.
+ * tested directly in adapters.test.js without mounting anything.
+ *
+ * `identity.entityType`/`subtype`/`sanctionsStatus` feed directly into
+ * src/globe/entityIcons.js's entityMarkerSvg() — the full-UI-rebuild icon
+ * system (real outline glyph + real sub-type corner badge + a real status
+ * ring for genuine sanctions corroboration, never an affiliation-frame
+ * shape). This replaces the Round-1 markerRenderer.js AFFILIATION/
+ * ENTITY_FUNCTION system that the rebuild spec explicitly cancels.
  *
  * Ground rule: never invent a field. If something isn't in `data`, omit it.
  */
 
-import {
-    AFFILIATION,
-    ENTITY_FUNCTION,
-    resolveVesselAffiliation,
-    resolveAircraftAffiliation,
-    resolveAlertAffiliation,
-    resolveAlertEntityFunction,
-    vesselTypeToFunction,
-    aircraftClassToFunction,
-    graphNodeSymbol,
-} from "../globe/markerRenderer.js"
+import { resolveSanctionsStatus } from "../globe/entityIcons.js"
 import { vesselShipType, acClassify } from "../globe/iconUtils.js"
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -98,18 +91,6 @@ function extractProvenance(data) {
     return { feed: feed || null, ingestedAt: ingestedAtRaw ? fmtTimestamp(ingestedAtRaw) : null }
 }
 
-// Canonical entity types that Round 1's ForceGraph/ontology graph actually
-// renders as nodes (see markerRenderer.js's GRAPH_NODE_SYMBOL). Used only to
-// decide whether "Open in Forge ontology view" makes sense — not to pick
-// icons (that stays 100% inside markerRenderer.js).
-const ONTOLOGY_GRAPH_TYPES = new Set([
-    "vessel", "aircraft", "alert", "surge",
-    "fusion", "fusion_event",
-    "assessment",
-    "port", "airport", "cable",
-    "zone", "watch_zone", "strategic_zone",
-])
-
 function humanizeKey(key) {
     return key
         .replace(/_/g, " ")
@@ -121,23 +102,13 @@ function humanizeKey(key) {
 /**
  * Sanctions corroboration lives on vessel data as whatever the caller already
  * fetched from check_sanctions_for_vessel() (backend/sanctions_loader.py) —
- * shape `{status: "confirmed"|"possible", hit, mmsi, vessel_name}`. A base
- * AIS vessel record with no sanctions signal can only be Neutral/Unknown
- * (resolveVesselAffiliation); a corroborated/uncorroborated sanctions hit is
- * routed through resolveAlertAffiliation — the ONE real integration point
- * for confirmed-vs-possible — rather than duplicating that decision here.
+ * shape `{status: "confirmed"|"possible", hit, mmsi, vessel_name}`. Fed
+ * straight into entityIcons.js's status ring (real color, no frame shape).
  */
 export function adaptVessel(data = {}) {
-    const shipTypeBucket = vesselTypeToFunction(vesselShipType(data))
+    const subtype = vesselShipType(data)
     const sanctions = data.sanctions || data.sanctions_check || null
-
-    const affiliation = sanctions?.status
-        ? resolveAlertAffiliation({
-              rule_name: "Sanctioned Vessel",
-              sanctions_hit: true,
-              sanctions_hit_confirmed: sanctions.status === "confirmed",
-          })
-        : resolveVesselAffiliation(data)
+    const sanctionsStatus = sanctions?.status || null
 
     const sog = data.sog ?? data.speed
     const hdg = isFiniteNum(data.heading) && Number(data.heading) !== 511
@@ -165,14 +136,14 @@ export function adaptVessel(data = {}) {
         identity: {
             title: data.name || "Unknown Vessel",
             subtitle: data.ship_type || null,
-            affiliation,
-            entityFunction: shipTypeBucket,
+            entityType: "vessel",
+            subtype,
+            sanctionsStatus,
         },
         attributes,
         provenance: extractProvenance(data),
         actions: {
             canJumpToLocation: !!point,
-            canOpenInOntology: ONTOLOGY_GRAPH_TYPES.has("vessel"),
         },
     }
 }
@@ -181,8 +152,6 @@ export function adaptVessel(data = {}) {
 
 export function adaptAircraft(data = {}) {
     const acClass = acClassify(data)
-    const entityFunction = aircraftClassToFunction(acClass)
-    const affiliation = resolveAircraftAffiliation(data)
 
     const registration = data.registration || data.tail_number || null
     const callsign = (data.flight || data.callsign || "").trim() || null
@@ -208,23 +177,45 @@ export function adaptAircraft(data = {}) {
         identity: {
             title: callsign || registration || icao || "Unknown Aircraft",
             subtitle: acClass ? humanizeKey(acClass) : null,
-            affiliation,
-            entityFunction,
+            entityType: "aircraft",
+            subtype: acClass,
+            sanctionsStatus: null,
         },
         attributes,
         provenance: extractProvenance(data),
         actions: {
             canJumpToLocation: !!point,
-            canOpenInOntology: ONTOLOGY_GRAPH_TYPES.has("aircraft"),
         },
     }
 }
 
 // ── alert ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Real domain-based icon choice for an alert — same logic
+ * markerRenderer.js's resolveAlertEntityFunction() used (AIS -> vessel
+ * glyph, ADS-B -> aircraft glyph with a real military/general sub-type
+ * badge, everything else -> the generic alert/warning glyph).
+ *
+ * Exported so src/globe/GlobeAlertsLayer.jsx's real Cesium billboards can
+ * reuse the exact same domain-based classification this file already uses
+ * for InspectorPanel — one source of truth for "what glyph does this alert
+ * get", not two independently-maintained copies of the same real logic.
+ */
+export function alertEntityTypeAndSubtype(a) {
+    const domain = (a.domain || a.source || "").toUpperCase()
+    if (domain === "AIS") return { entityType: "vessel", subtype: null }
+    if (domain === "ADSB") {
+        const isMilitary = a.alert_category === "MILITARY_AIRCRAFT" ||
+            a.alert_type === "military_aircraft" || a.rule_name === "Military Squawk" || a.aircraft_military
+        return { entityType: "aircraft", subtype: isMilitary ? "military" : "general" }
+    }
+    return { entityType: "alert", subtype: null }
+}
+
 export function adaptAlert(data = {}) {
-    const affiliation = resolveAlertAffiliation(data)
-    const entityFunction = resolveAlertEntityFunction(data)
+    const { entityType, subtype } = alertEntityTypeAndSubtype(data)
+    const sanctionsStatus = resolveSanctionsStatus(data)
     const point = pointOf(data)
     const domain = data.domain || data.source || null
     const summary = data.message || data.title || data.summary || null
@@ -244,14 +235,14 @@ export function adaptAlert(data = {}) {
         identity: {
             title: data.vessel || data.aircraft || data.entity_name || data.rule_name || "Alert",
             subtitle: (data.severity || "").toUpperCase() || null,
-            affiliation,
-            entityFunction,
+            entityType,
+            subtype,
+            sanctionsStatus,
         },
         attributes,
         provenance: extractProvenance(data),
         actions: {
             canJumpToLocation: !!point,
-            canOpenInOntology: ONTOLOGY_GRAPH_TYPES.has("alert"),
         },
     }
 }
@@ -298,7 +289,6 @@ function zoneCentroid(data) {
 }
 
 export function adaptZone(data = {}) {
-    const symbol = graphNodeSymbol(data.zone_type ? "strategic_zone" : "watch_zone")
     const bounds = zoneBoundsText(data)
     const rules = zoneRulesText(data)
     const point = zoneCentroid(data)
@@ -316,8 +306,9 @@ export function adaptZone(data = {}) {
         identity: {
             title: data.name || "Zone",
             subtitle: data.zone_type || null,
-            affiliation: symbol.affiliation,
-            entityFunction: symbol.entityFunction,
+            entityType: "zone",
+            subtype: null,
+            sanctionsStatus: null,
         },
         attributes,
         provenance: extractProvenance(data),
@@ -326,7 +317,6 @@ export function adaptZone(data = {}) {
             // bounds data) has a real point to fly to — only offer the
             // action when one can be honestly derived.
             canJumpToLocation: !!point,
-            canOpenInOntology: ONTOLOGY_GRAPH_TYPES.has("zone"),
         },
     }
 }
@@ -354,14 +344,14 @@ export function adaptNews(data = {}) {
         identity: {
             title: headline || "News Event",
             subtitle: category || null,
-            affiliation: AFFILIATION.NEUTRAL,
-            entityFunction: ENTITY_FUNCTION.NEWS_EVENT,
+            entityType: "news_event",
+            subtype: null,
+            sanctionsStatus: null,
         },
         attributes,
         provenance: extractProvenance(data),
         actions: {
             canJumpToLocation: !!point,
-            canOpenInOntology: ONTOLOGY_GRAPH_TYPES.has("surge"),
         },
     }
 }
@@ -374,15 +364,11 @@ const INFRA_TYPE_LABELS = {
     pipeline: "Pipeline", telecoms: "Telecoms Line",
 }
 
-function infraKindAndFunction(tags, data) {
-    if (tags.power) return { kind: INFRA_TYPE_LABELS[tags.power] || "Power infrastructure", fn: ENTITY_FUNCTION.GENERIC }
-    if (tags.man_made === "pipeline") return { kind: "Pipeline", fn: ENTITY_FUNCTION.GENERIC }
-    if (tags.telecom) return { kind: "Telecoms", fn: ENTITY_FUNCTION.INFRA_CABLE }
-    const t = (data.infra_type || data.type || "").toLowerCase()
-    if (t.includes("port")) return { kind: data.infra_type || data.type, fn: ENTITY_FUNCTION.INFRA_PORT }
-    if (t.includes("airport")) return { kind: data.infra_type || data.type, fn: ENTITY_FUNCTION.INFRA_AIRPORT }
-    if (t.includes("cable")) return { kind: data.infra_type || data.type, fn: ENTITY_FUNCTION.INFRA_CABLE }
-    return { kind: data.infra_type || data.type || "Infrastructure", fn: ENTITY_FUNCTION.GENERIC }
+function infraKind(tags, data) {
+    if (tags.power) return INFRA_TYPE_LABELS[tags.power] || "Power infrastructure"
+    if (tags.man_made === "pipeline") return "Pipeline"
+    if (tags.telecom) return "Telecoms"
+    return data.infra_type || data.type || "Infrastructure"
 }
 
 export function adaptInfrastructure(data = {}) {
@@ -391,7 +377,7 @@ export function adaptInfrastructure(data = {}) {
     // normalized ontology infrastructure record (name/infra_type/lat/lon).
     const el = Array.isArray(data.elements) && data.elements.length ? data.elements[0] : data
     const tags = el.tags || {}
-    const { kind, fn } = infraKindAndFunction(tags, data)
+    const kind = infraKind(tags, data)
     const name = tags.name || tags.ref || data.name || kind
     const lat = el.lat ?? el.center?.lat ?? data.lat
     const lon = el.lon ?? el.center?.lon ?? data.lon ?? data.lng
@@ -412,14 +398,14 @@ export function adaptInfrastructure(data = {}) {
         identity: {
             title: name || "Infrastructure",
             subtitle: kind || null,
-            affiliation: AFFILIATION.NEUTRAL,
-            entityFunction: fn,
+            entityType: "facility",
+            subtype: null,
+            sanctionsStatus: null,
         },
         attributes,
         provenance: extractProvenance(data),
         actions: {
             canJumpToLocation: !!point,
-            canOpenInOntology: false,
         },
     }
 }
@@ -445,14 +431,14 @@ export function adaptGeneric(data = {}, entityType) {
         identity: {
             title,
             subtitle: entityType || null,
-            affiliation: AFFILIATION.UNKNOWN,
-            entityFunction: ENTITY_FUNCTION.GENERIC,
+            entityType: "generic",
+            subtype: null,
+            sanctionsStatus: null,
         },
         attributes,
         provenance: extractProvenance(data),
         actions: {
             canJumpToLocation: !!point,
-            canOpenInOntology: ONTOLOGY_GRAPH_TYPES.has((entityType || "").toLowerCase()),
         },
     }
 }
@@ -484,5 +470,3 @@ export function normalizeEntity(entityType, data) {
     if (adapter) return adapter(data || {})
     return adaptGeneric(data || {}, entityType)
 }
-
-export { ONTOLOGY_GRAPH_TYPES }

@@ -6,9 +6,7 @@ import {
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { acClassify } from "./iconUtils.js"
-import {
-    getMarkerCanvas, resolveAircraftAffiliation, aircraftClassToFunction,
-} from "./markerRenderer.js"
+import { getEntityMarkerDataUri } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 
@@ -114,10 +112,11 @@ export default function GlobeADSBLayer({ aircraft, viewBounds }) {
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                const acClass       = acClassify(ac)
-                const entityFunction = aircraftClassToFunction(acClass)
-                const affiliation    = resolveAircraftAffiliation(ac)
-                const icon = getMarkerCanvas({ affiliation, entityFunction, size: BILLBOARD_SIZE })
+                // Base ADSB tracks have no affiliation/sanctions signal at
+                // this layer (see GlobeAISLayer.jsx's identical reasoning) —
+                // real aircraft-class sub-type only, no status ring.
+                const acClass = acClassify(ac)
+                const icon = getEntityMarkerDataUri({ entityType: "aircraft", subtype: acClass, size: BILLBOARD_SIZE })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
                 const position = Cartesian3.fromDegrees(lon, lat, altM)

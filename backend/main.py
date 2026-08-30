@@ -18364,6 +18364,43 @@ def publish_report(report_id: str):
         return _report_to_dict(row)
 
 
+def _load_snapshot_for_report(row, db) -> tuple[Optional[dict], Optional[dict]]:
+    """Real snapshot content + metadata for a Report row, or (None, None) if
+    its snapshot no longer exists. Shared by the PDF renderer and the
+    sections API so both build from the exact same source."""
+    from database import ReportSnapshot
+    if not row.snapshot_id:
+        return None, None
+    snap = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first()
+    if not snap:
+        return None, None
+    content = _json.loads(snap.content_json) if snap.content_json else {}
+    meta = {
+        "label": snap.label,
+        "source": snap.source,
+        "period_start": snap.period_start.isoformat() if snap.period_start else None,
+        "period_end": snap.period_end.isoformat() if snap.period_end else None,
+    }
+    return content, meta
+
+
+@app.get("/api/reports/{report_id}/sections")
+def get_report_sections(report_id: str):
+    """The exact same 10-fixed-section + Annex mapping the PDF export uses
+    (report_sections.build_report_sections) — real claims grouped by their
+    real citation section, real council findings attached per-claim, so the
+    in-app editor and the exported PDF read from one shared source and can't
+    structurally diverge."""
+    from database import Report, get_db as _gdb_rptsec
+    import report_sections as _sections
+    with _gdb_rptsec() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        snapshot_content, snapshot_meta = _load_snapshot_for_report(row, db)
+        return _sections.build_report_sections(_report_to_dict(row), snapshot_content, snapshot_meta)
+
+
 @app.get("/api/reports/{report_id}/pdf")
 def get_report_pdf(report_id: str):
     from database import Report, get_db as _gdb_rptpdf
@@ -18372,7 +18409,8 @@ def get_report_pdf(report_id: str):
         row = db.query(Report).filter(Report.report_id == report_id).first()
         if not row:
             raise HTTPException(404, "Report not found")
-        pdf_bytes = _pdf.render_report_pdf(_report_to_dict(row))
+        snapshot_content, snapshot_meta = _load_snapshot_for_report(row, db)
+        pdf_bytes = _pdf.render_report_pdf(_report_to_dict(row), snapshot_content, snapshot_meta)
     return FastAPIResponse(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{report_id}.pdf"'},

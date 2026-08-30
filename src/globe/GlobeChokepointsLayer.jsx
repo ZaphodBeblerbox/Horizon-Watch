@@ -6,19 +6,19 @@ import {
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
-import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
+import { getEntityMarkerDataUri } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
 // Chokepoints previously had no point marker at all — just the polygon +
 // text label below, which disappears at typical zoomed-out camera heights.
-// A small Zone/AOI billboard (see markerRenderer.js — a documented extension
-// since the real boundary is drawn as the polygon, not this point icon)
-// keeps the chokepoint visible/clickable at any zoom level. Lazily built
-// (not at module load) so importing this file never touches the DOM.
+// A small "zone" billboard (the real boundary is drawn as the polygon, not
+// this point icon) keeps the chokepoint visible/clickable at any zoom level.
+// Lazily built (not at module load) so importing this file never touches
+// the DOM.
 let _chokeIcon = null
 function getChokeIcon() {
     if (!_chokeIcon) {
-        _chokeIcon = getMarkerCanvas({ affiliation: AFFILIATION.NEUTRAL, entityFunction: ENTITY_FUNCTION.ZONE, size: 26 })
+        _chokeIcon = getEntityMarkerDataUri({ entityType: "zone", size: 26 })
     }
     return _chokeIcon
 }

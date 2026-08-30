@@ -1,34 +1,28 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
-import { markerSvg, AFFILIATION, ENTITY_FUNCTION } from "../globe/markerRenderer.js"
+import Icon from "../ui/Icon.jsx"
 
 // ── Type metadata ─────────────────────────────────────────────────────────────
-// Real symbology (see src/globe/markerRenderer.js) instead of raw emoji —
-// every result type is Neutral affiliation (a search result, not a threat
-// assessment) with a real entity-function glyph, tinted by the same accent
-// colours this table always used.
-
+// This is plain UI chrome (a dropdown list), not a Cesium billboard, so it
+// routes through the one shared src/ui/Icon.jsx component rather than
+// src/globe/entityIcons.js (which is only for Cesium billboard/canvas
+// rendering) — replacing the old markerRenderer.js affiliation-framed
+// symbology with a real Icon.jsx name per result type, tinted by the same
+// accent colours this table always used. See TopBar.jsx's InlineSearch
+// (the currently-mounted version of this same search-dropdown concept) for
+// the identical mapping and its reasoning.
 const TYPE_META = {
-    airport:    { entityFunction: ENTITY_FUNCTION.INFRA_AIRPORT, label: "Airport",    color: "#a78bfa" },
-    port:       { entityFunction: ENTITY_FUNCTION.INFRA_PORT,    label: "Port",       color: "#34d399" },
-    cable:      { entityFunction: ENTITY_FUNCTION.INFRA_CABLE,   label: "Cable",      color: "#fb923c" },
-    chokepoint: { entityFunction: ENTITY_FUNCTION.ZONE,          label: "Chokepoint", color: "#fbbf24" },
-    assessment: { entityFunction: ENTITY_FUNCTION.NEWS_EVENT,    label: "Assessment", color: "#ef4444" },
-    fusion:     { entityFunction: ENTITY_FUNCTION.FUSION,        label: "Fusion",     color: "#8b5cf6" },
-    zone:       { entityFunction: ENTITY_FUNCTION.ZONE,          label: "Zone",       color: "#10b981" },
-    rule:       { entityFunction: ENTITY_FUNCTION.GENERIC,       label: "Rule",       color: "#6b7280" },
-    location:   { entityFunction: ENTITY_FUNCTION.GENERIC,       label: "Location",   color: "#e2e8f0" },
-    country:    { entityFunction: ENTITY_FUNCTION.GENERIC,       label: "Country",    color: "#38bdf8" },
-    city:       { entityFunction: ENTITY_FUNCTION.GENERIC,       label: "City",       color: "#cbd5e1" },
-}
-
-function typeMetaSvg(meta) {
-    return markerSvg({
-        affiliation: AFFILIATION.NEUTRAL,
-        entityFunction: meta.entityFunction,
-        accentColor: meta.color,
-        size: 16,
-    })
+    airport:    { iconName: "airport",   label: "Airport",    color: "#a78bfa" },
+    port:       { iconName: "port",      label: "Port",       color: "#34d399" },
+    cable:      { iconName: "cable",     label: "Cable",      color: "#fb923c" },
+    chokepoint: { iconName: "target",    label: "Chokepoint", color: "#fbbf24" },
+    assessment: { iconName: "warning",   label: "Assessment", color: "#ef4444" },
+    fusion:     { iconName: "aiCouncil", label: "Fusion",     color: "#8b5cf6" },
+    zone:       { iconName: "target",    label: "Zone",       color: "#10b981" },
+    rule:       { iconName: "settings",  label: "Rule",       color: "#6b7280" },
+    location:   { iconName: "poi",       label: "Location",   color: "#e2e8f0" },
+    country:    { iconName: "poi",       label: "Country",    color: "#38bdf8" },
+    city:       { iconName: "poi",       label: "City",       color: "#cbd5e1" },
 }
 
 const FILTER_GROUPS = [
@@ -352,8 +346,9 @@ export default function GlobalSearch({ onResult, apiBase = API_BASE }) {
                                 >
                                     <span
                                         style={{ flexShrink: 0, width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-                                        dangerouslySetInnerHTML={{ __html: typeMetaSvg(meta) }}
-                                    />
+                                    >
+                                        <Icon name={meta.iconName} size={16} color={meta.color} />
+                                    </span>
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                         <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                             {r.name}

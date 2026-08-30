@@ -9,15 +9,15 @@
  * different mapping library — this keeps exactly one way lightweight
  * embedded globes get built in this codebase.
  *
- * Marker glyphs come from globe/markerRenderer.js's NEWS_EVENT entity
- * function (the same glyph GlobeEventsLayer.jsx uses for news markers on the
- * main globe) — no new marker style is invented here. The selected marker is
+ * Marker glyphs come from globe/entityIcons.js's "news_event" entity type
+ * (the same glyph GlobeEventsLayer.jsx uses for news markers on the main
+ * globe) — no new marker style is invented here. The selected marker is
  * drawn larger, in the Round 1 accent color (--accent, #22D3EE from
  * index.html :root), with a pulse ring, so selection is immediately visible.
  */
 import { useEffect, useRef, useState } from "react"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
-import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "../globe/markerRenderer.js"
+import { getEntityMarkerDataUri } from "../globe/entityIcons.js"
 
 // Mirrors NewsPage.jsx's TIER_COLOR — duplicated here (not exported/shared)
 // because NewsPage.jsx already duplicates these same literal hexes in more
@@ -110,19 +110,16 @@ export default function NewsMiniMap({ markers = [], selectedId = null, onSelectM
                 }
             }
 
-            const dpr = Math.max(window.devicePixelRatio || 2, 2)
             for (const m of markers) {
                 const isSelected = m.id === selectedId
                 const hex = TIER_COLOR[m.article?.severity_tier] || DEFAULT_COLOR
-                const canvas = getMarkerCanvas({
-                    affiliation:    AFFILIATION.NEUTRAL,
-                    entityFunction: ENTITY_FUNCTION.NEWS_EVENT,
-                    accentColor:    isSelected ? SELECTED_COLOR : hex,
-                    size:           isSelected ? 40 : 26,
-                    pulse:          isSelected,
+                const size = isSelected ? 40 : 26
+                const icon = getEntityMarkerDataUri({
+                    entityType: "news_event",
+                    color:      isSelected ? SELECTED_COLOR : hex,
+                    size,
+                    pulse:      isSelected,
                 })
-                const w = canvas.width / dpr
-                const h = canvas.height / dpr
 
                 let ent = entitiesRef.current.get(m.id)
                 if (!ent) {
@@ -130,17 +127,17 @@ export default function NewsMiniMap({ markers = [], selectedId = null, onSelectM
                         id: m.id,
                         position: Cartesian3.fromDegrees(m.lon, m.lat, 0),
                         billboard: {
-                            image: canvas,
-                            width: w,
-                            height: h,
+                            image: icon,
+                            width: size,
+                            height: size,
                             disableDepthTestDistance: Number.POSITIVE_INFINITY,
                         },
                     })
                     entitiesRef.current.set(m.id, ent)
                 } else {
-                    ent.billboard.image  = canvas
-                    ent.billboard.width  = w
-                    ent.billboard.height = h
+                    ent.billboard.image  = icon
+                    ent.billboard.width  = size
+                    ent.billboard.height = size
                 }
             }
         })
