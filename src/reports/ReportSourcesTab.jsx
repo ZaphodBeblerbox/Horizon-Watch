@@ -19,7 +19,7 @@ export default function ReportSourcesTab({ collected }) {
                         href={a.url}
                         target="_blank"
                         rel="noreferrer"
-                        style={{ color: "var(--accent)", fontSize: "var(--text-sm)", textDecoration: "none" }}
+                        style={{ color: "var(--text-link)", fontSize: "var(--text-sm)", textDecoration: "none" }}
                     >
                         {a.title || a.url}
                     </a>

@@ -15,7 +15,7 @@ function forgeHeaders() {
 
 const inputStyle = {
     padding: "6px 10px",
-    background: "var(--bg-elevated)",
+    background: "var(--bg-card)",
     border: "1px solid var(--border-subtle)",
     borderRadius: "var(--radius)",
     color: "var(--text-primary)",
@@ -83,7 +83,7 @@ function TaskCreateForm({ onSaved, onCancel }) {
                                 padding: "3px 8px", borderRadius: 10,
                                 border: `1px solid ${regions.includes(r) ? "var(--accent-border)" : "var(--border-subtle)"}`,
                                 background: regions.includes(r) ? "var(--accent-faint)" : "transparent",
-                                color: regions.includes(r) ? "var(--accent)" : "var(--text-secondary)",
+                                color: regions.includes(r) ? "var(--accent-blue)" : "var(--text-secondary)",
                                 fontSize: "var(--text-xs)", cursor: "pointer",
                             }}
                         >{r}</button>
@@ -100,7 +100,7 @@ function TaskCreateForm({ onSaved, onCancel }) {
                     <input type="datetime-local" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
                 </div>
             </div>
-            {err && <div style={{ color: "var(--sev-critical)", fontSize: "var(--text-xs)", marginBottom: "var(--space-2)" }}>{err}</div>}
+            {err && <div style={{ color: "var(--danger)", fontSize: "var(--text-xs)", marginBottom: "var(--space-2)" }}>{err}</div>}
             <div style={{ display: "flex", gap: "var(--space-2)" }}>
                 <Button variant="ghost" onClick={onCancel}>Cancel</Button>
                 <Button variant="primary" onClick={submit} disabled={saving || !canSubmit}>
