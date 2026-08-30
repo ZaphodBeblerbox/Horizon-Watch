@@ -22,6 +22,7 @@ import NotificationBar from "./components/NotificationBar.jsx"
 import NewsPage from "./components/NewsPage.jsx"
 import BottomNav from "./components/BottomNav.jsx"
 import MobileDrawer from "./components/MobileDrawer.jsx"
+import NewsReels from "./components/NewsReels.jsx"
 import DirectorBar from "./components/DirectorBar.jsx"
 import DirectorSidebar from "./components/DirectorSidebar.jsx"
 import DirectorModal from "./components/DirectorModal.jsx"
@@ -31,7 +32,10 @@ import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDir
 import { DemoRunner } from "./services/demoRunner.js"
 import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
-import LayersPanel from "./components/LayersPanel.jsx"
+import LayerRail from "./components/LayerRail.jsx"
+import SecondaryMenu from "./components/SecondaryMenu.jsx"
+import NotificationsDrawer from "./components/NotificationsDrawer.jsx"
+import { mergeNotificationItems } from "./components/notificationsNormalize.js"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
 import ForgePanel from "./components/ForgePanel.jsx"
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
@@ -233,6 +237,7 @@ export default function App() {
     const [directorScanProgress,  setDirectorScanProgress]  = useState(null)
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+    const [showReels, setShowReels] = useState(false)
     const [showAutoMode, setShowAutoMode] = useState(false)
     const [heatmapHours, setHeatmapHours] = useState(24)
     const [overwatchDetections, setOverwatchDetections] = useState([])
@@ -313,6 +318,7 @@ export default function App() {
     // ── Right panel slot — mutually exclusive ─────────────────────────────────
     // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts"
     const [rightPanel, setRightPanel] = useState(null)
+    const [secondaryMenuOpen, setSecondaryMenuOpen] = useState(false)
 
     const openRightPanel = useCallback((id) => {
         setRightPanel(prev => prev === id ? null : id)
@@ -328,7 +334,25 @@ export default function App() {
         try { return new Set(JSON.parse(localStorage.getItem("akili-notif-read-v1") || "[]")) }
         catch { return new Set() }
     })
-    const unreadCount = surfaceItems.filter(i => !readIds.has(i.id)).length
+    // Real correlation-engine hits, merged into the same alert log as the
+    // surface-pool items above (see NotificationsDrawer's kind:"fusion" row).
+    const [fusionEvents, setFusionEvents] = useState([])
+    useEffect(() => {
+        if (!profile) return
+        let cancelled = false
+        const load = () => fetch(`${API}/api/fusions?status=active&limit=50`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && Array.isArray(d)) setFusionEvents(d) })
+            .catch(() => {})
+        load()
+        const t = setInterval(load, 60000)
+        return () => { cancelled = true; clearInterval(t) }
+    }, [profile])
+    const notifItems = useMemo(
+        () => mergeNotificationItems(surfaceItems, fusionEvents),
+        [surfaceItems, fusionEvents]
+    )
+    const unreadCount = notifItems.filter(i => !readIds.has(i.id)).length
 
     const handleMarkRead = useCallback((id) => {
         setReadIds(prev => {
@@ -682,7 +706,6 @@ export default function App() {
     }, [])
 
     const [mapViewport, setMapViewport] = useState(null)
-    const flaggedEvents = []
 
     // ── Workspace state ───────────────────────────────────────────────────────
     const [workspaces,        setWorkspaces]        = useState(() => loadWorkspaces())
@@ -820,30 +843,6 @@ export default function App() {
         }
         tabHistoryRef.current = tabHistoryRef.current.filter(x => x !== id)
     }, [tabs, activeTabId])
-
-    const reorderTabs = useCallback((fromIdx, toIdx) => {
-        setTabs(prev => {
-            const next = [...prev]
-            const [moved] = next.splice(fromIdx, 1)
-            next.splice(toIdx, 0, moved)
-            return next
-        })
-    }, [])
-
-    const renameTab = useCallback((id, label) => {
-        setTabs(prev => prev.map(t => t.id === id ? { ...t, label } : t))
-    }, [])
-
-    const openNewTab = useCallback(() => {
-        const order = [
-            { type: "briefing",  label: "Briefings" },
-            { type: "news",      label: "News Feed" },
-            { type: "analytics", label: "Analytics" },
-        ]
-        for (const { type } of order) {
-            if (!tabs.find(t => t.type === type)) { openTab(type); return }
-        }
-    }, [tabs, openTab])
 
     // Persist tabs to localStorage
     useEffect(() => {
@@ -1346,13 +1345,9 @@ export default function App() {
             {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
             {/* ── Topbar — 40px, full width ─────────────────────────────────── */}
             {!showAutoMode && <TopBar
-                tabs={tabs}
-                activeTabId={activeTabId}
-                onTabSwitch={switchTab}
-                onTabClose={closeTab}
-                onTabNew={openNewTab}
-                onTabReorder={reorderTabs}
-                onTabRename={renameTab}
+                activeTabType={activeTabType}
+                onOpenTab={openTab}
+                navBadges={{ briefing: briefingUnread }}
                 showSearch={activeTabType === "map"}
                 onSearchResult={(r) => setSearchTarget({ lat: r.lat, lon: r.lon, zoom: r.zoom, label: r.label, key: Date.now() })}
                 searchApiBase={API}
@@ -1372,21 +1367,19 @@ export default function App() {
                 {/* Sidebar — 48px, desktop only */}
                 {!isMobile && !showAutoMode && (
                     <Sidebar
-                        rightPanel={rightPanel}
-                        onRightPanel={openRightPanel}
-                        activeTabType={activeTabType}
-                        onOpenTab={openTab}
-                        profile={profile}
-                        alertCount={flaggedEvents.length}
+                        alertLogOpen={notifOpen}
+                        alertLogUnread={unreadCount}
+                        onToggleAlertLog={() => setNotifOpen(v => !v)}
+                        secondaryMenuOpen={secondaryMenuOpen}
+                        onToggleSecondaryMenu={() => setSecondaryMenuOpen(v => !v)}
                         budgetPct={budgetPct}
-                        notifOpen={notifOpen}
-                        notifUnread={unreadCount}
-                        onToggleNotif={() => setNotifOpen(v => !v)}
-                        briefingUnread={briefingUnread}
-                        soundMuted={soundMuted}
-                        onToggleSound={onToggleSound}
-                        tvOpen={showTV}
-                        onToggleTV={() => setShowTV(v => !v)}
+                    />
+                )}
+                {!isMobile && !showAutoMode && (
+                    <SecondaryMenu
+                        open={secondaryMenuOpen}
+                        onClose={() => setSecondaryMenuOpen(false)}
+                        style={{ left: 52, bottom: 44 }}
                         overwatchActive={overwatchActive}
                         onToggleOverwatch={() => setOverwatchActive(v => !v)}
                         directorActive={directorVisible}
@@ -1397,9 +1390,35 @@ export default function App() {
                                 setDirectorModalOpen(true)
                             }
                         }}
-                        onOpenForge={() => openTab("forge")}
+                        onOpenAnalytics={() => openRightPanel("analytics")}
+                        analyticsActive={rightPanel === "analytics"}
+                        onOpenThreats={() => openRightPanel("threats")}
+                        threatsActive={rightPanel === "threats"}
+                        onOpenHealth={() => openRightPanel("health")}
+                        healthActive={rightPanel === "health"}
+                        tvOpen={showTV}
+                        onToggleTV={() => setShowTV(v => !v)}
+                        soundMuted={soundMuted}
+                        onToggleSound={onToggleSound}
+                        onOpenSettings={() => openRightPanel("settings")}
+                        settingsActive={rightPanel === "settings"}
+                        profile={profile}
+                        profileActive={rightPanel === "profile"}
+                        onOpenProfile={() => openRightPanel("profile")}
                     />
                 )}
+
+                {/* ── Alert log — real surface-pool alerts + real fusion/correlation hits ── */}
+                <NotificationsDrawer
+                    items={notifItems}
+                    readIds={readIds}
+                    onMarkRead={handleMarkRead}
+                    onSelectItem={handleNotifSelect}
+                    open={notifOpen}
+                    onClose={() => setNotifOpen(false)}
+                    sortMode={notifSortMode}
+                    onSortModeChange={setNotifSortMode}
+                />
 
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
 
@@ -1446,25 +1465,24 @@ export default function App() {
                             autoModeEnabled={showAutoMode}
                         />
                     </Suspense>
-                    {rightPanel === "layers" && (
-                        <LayersPanel
-                            active={activeWorkspace?.layers ?? {}}
-                            onToggle={(key) => handleLayersChange({
-                                ...(activeWorkspace?.layers ?? {}),
-                                [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
-                            })}
-                            onLayerSet={(key, val) => handleLayersChange({
-                                ...(activeWorkspace?.layers ?? {}),
-                                [key]: val,
-                            })}
-                            onClose={() => setRightPanel(null)}
-                            autoModeEnabled={showAutoMode}
-                            onAutoMode={(v) => {
-                                setShowAutoMode(v)
-                                if (v) setRightPanel(null)
-                            }}
-                        />
-                    )}
+                    <LayerRail
+                        active={activeWorkspace?.layers ?? {}}
+                        onToggle={(key) => handleLayersChange({
+                            ...(activeWorkspace?.layers ?? {}),
+                            [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
+                        })}
+                        onLayerSet={(key, val) => handleLayersChange({
+                            ...(activeWorkspace?.layers ?? {}),
+                            [key]: val,
+                        })}
+                        autoModeEnabled={showAutoMode}
+                        onAutoMode={(v) => {
+                            setShowAutoMode(v)
+                            if (v) setRightPanel(null)
+                        }}
+                        mobileOpen={rightPanel === "layers"}
+                        onMobileClose={() => setRightPanel(null)}
+                    />
                     {(activeWorkspace?.layers?.aisHeatmap || activeWorkspace?.layers?.adsbHeatmap) && (
                         <HeatmapTimeSlider
                             hours={heatmapHours}
@@ -1936,24 +1954,18 @@ export default function App() {
             {isMobile && !showAutoMode && (
                 <BottomNav
                     activeTabType={activeTabType}
-                    rightPanel={rightPanel}
                     onSwitchToMap={() => openTab("map")}
                     onSwitchToNews={() => openTab("news")}
                     onOpenBriefings={() => openTab("briefing")}
-                    onOpenAnalytics={() => openTab("analytics")}
+                    reportsUnread={briefingUnread}
                     onOpenForge={() => openTab("forge")}
-                    onOpenLayers={() => openRightPanel("layers")}
-                    notifUnread={unreadCount}
-                    onToggleNotif={() => setNotifOpen(v => !v)}
+                    alertLogUnread={unreadCount}
+                    onToggleAlertLog={() => setNotifOpen(v => !v)}
                     onOpenMenu={() => setMobileDrawerOpen(true)}
-                    overwatchActive={overwatchActive}
-                    onToggleOverwatch={() => setOverwatchActive(v => !v)}
-                    directorActive={directorVisible}
-                    onDirectorTap={() => directorVisible ? handleDirectorClose() : setDirectorModalOpen(true)}
                 />
             )}
 
-            {/* Mobile drawer overlay */}
+            {/* Mobile drawer — secondary/overflow menu */}
             {isMobile && !showAutoMode && (
                 <MobileDrawer
                     open={mobileDrawerOpen}
@@ -1961,20 +1973,21 @@ export default function App() {
                     rightPanel={rightPanel}
                     onRightPanel={openRightPanel}
                     activeTabType={activeTabType}
-                    onOpenTab={openTab}
+                    onOpenLayers={() => openRightPanel("layers")}
+                    onOpenReels={() => setShowReels(true)}
                     profile={profile}
-                    alertCount={flaggedEvents.length}
-                    notifUnread={unreadCount}
-                    onToggleNotif={() => setNotifOpen(v => !v)}
-                    briefingUnread={briefingUnread}
                     soundMuted={soundMuted}
                     onToggleSound={onToggleSound}
                     tvOpen={showTV}
                     onToggleTV={() => setShowTV(v => !v)}
+                    overwatchActive={overwatchActive}
+                    onToggleOverwatch={() => setOverwatchActive(v => !v)}
                     directorActive={directorVisible}
                     onDirectorTap={() => directorVisible ? handleDirectorClose() : setDirectorModalOpen(true)}
                 />
             )}
+
+            {showReels && <NewsReels onClose={() => setShowReels(false)} />}
         </div>
     )
 }

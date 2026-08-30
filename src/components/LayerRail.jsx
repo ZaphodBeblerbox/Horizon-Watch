@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import BottomSheet from "./BottomSheet.jsx"
 import { buttonStyle } from "../ui/styleHelpers.js"
 import { LAYER_GROUPS, isLayerOn, countActive, clampOpacity } from "./layerRailConfig.js"
 
@@ -109,36 +110,9 @@ function GroupSection({ group, active, expanded, onToggleExpand, onToggle, onLay
     )
 }
 
-/**
- * Always-visible, domain-grouped layer rail — replaces LayersPanel.jsx's
- * floating GIS-style layer tree. Same `active`/`onToggle`/`onLayerSet`
- * contract as the panel it supersedes, so the underlying workspace-layers
- * state in app.jsx doesn't need to change shape.
- */
-export default function LayerRail({
-    active = {},
-    onToggle,
-    onLayerSet = null,
-    autoModeEnabled = false,
-    onAutoMode = null,
-    style = {},
-}) {
-    const [expandedKey, setExpandedKey] = useState(null)
-
+function GroupList({ active, onToggle, onLayerSet, expandedKey, setExpandedKey, autoModeEnabled, onAutoMode }) {
     return (
-        <div style={{
-            position: "fixed",
-            top: 54,
-            left: 0,
-            width: 220,
-            maxHeight: "calc(100vh - 54px)",
-            overflowY: "auto",
-            background: "var(--bg-secondary)",
-            borderRight: "var(--elevation-1)",
-            zIndex: 800,
-            fontFamily: "var(--font-sans)",
-            ...style,
-        }}>
+        <>
             {onAutoMode && (
                 <div style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -161,6 +135,72 @@ export default function LayerRail({
                     onLayerSet={onLayerSet}
                 />
             ))}
+        </>
+    )
+}
+
+/**
+ * Domain-grouped layer rail — replaces LayersPanel.jsx's floating GIS-style
+ * layer tree. Same `active`/`onToggle`/`onLayerSet` contract as the panel it
+ * supersedes, so the underlying workspace-layers state in app.jsx doesn't
+ * need to change shape.
+ *
+ * Desktop: always-visible fixed rail (per the round's "no floating layer
+ * panel" requirement). Mobile: a permanently-visible 220px rail doesn't fit
+ * a narrow viewport, so the same grouped content renders inside the
+ * existing BottomSheet pattern instead — opened via `mobileOpen`/`onMobileClose`
+ * (e.g. from a "Layers" row in the mobile menu), not always-on.
+ */
+export default function LayerRail({
+    active = {},
+    onToggle,
+    onLayerSet = null,
+    autoModeEnabled = false,
+    onAutoMode = null,
+    style = {},
+    mobileOpen = false,
+    onMobileClose = null,
+}) {
+    const [expandedKey, setExpandedKey] = useState(null)
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+    useEffect(() => {
+        const h = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+
+    const content = (
+        <GroupList
+            active={active} onToggle={onToggle} onLayerSet={onLayerSet}
+            expandedKey={expandedKey} setExpandedKey={setExpandedKey}
+            autoModeEnabled={autoModeEnabled} onAutoMode={onAutoMode}
+        />
+    )
+
+    if (isMobile) {
+        if (!onMobileClose) return null
+        return (
+            <BottomSheet isOpen={mobileOpen} title="Layers" onClose={onMobileClose} height="full">
+                <div style={{ padding: "0 0 24px" }}>{content}</div>
+            </BottomSheet>
+        )
+    }
+
+    return (
+        <div style={{
+            position: "fixed",
+            top: 54,
+            left: 0,
+            width: 220,
+            maxHeight: "calc(100vh - 54px)",
+            overflowY: "auto",
+            background: "var(--bg-secondary)",
+            borderRight: "var(--elevation-1)",
+            zIndex: 800,
+            fontFamily: "var(--font-sans)",
+            ...style,
+        }}>
+            {content}
         </div>
     )
 }

@@ -1,60 +1,40 @@
-// BottomNav — swipable mobile bottom tab bar (< 768px)
-// Horizontally scrollable so all items fit; scroll-snap keeps taps precise.
-
-import { useState } from "react"
-import NewsReels from "./NewsReels.jsx"
+// BottomNav — mobile bottom tab bar (< 768px).
+// Trimmed to the same fixed 4 top-level modes as desktop's TopNav, plus the
+// alert log and the secondary/overflow menu (Overwatch, Director Mode,
+// Analytics, Threats, Health, TV, Sound, Settings, Profile, Reels all live
+// in MobileDrawer now — moved out of the primary bar, not deleted).
 
 const BOTTOM_NAV_STYLES = `
-@keyframes director-nav-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%       { opacity: 0.7; transform: scale(1.15); }
-}
-.director-nav-icon-active {
-  animation: director-nav-pulse 1.6s ease-in-out infinite;
-  color: #f59e0b !important;
-}
 .bottom-nav-scroll::-webkit-scrollbar { display: none; }
 .bottom-nav-scroll { -ms-overflow-style: none; scrollbar-width: none; }
 `
 
-
 export default function BottomNav({
     activeTabType,
-    rightPanel,
     onSwitchToMap,
     onSwitchToNews,
     onOpenBriefings,
-    onOpenAnalytics,
-    notifUnread,
-    onToggleNotif,
-    onOpenMenu,
-    overwatchActive,
-    onToggleOverwatch,
+    reportsUnread = false,
     onOpenForge,
-    onOpenLayers,
-    directorActive = false,
-    onDirectorTap = null,
+    alertLogUnread = 0,
+    onToggleAlertLog,
+    onOpenMenu,
 }) {
-    const [showReels, setShowReels] = useState(false)
-
     const items = [
         {
-            id:    "map",
-            label: "Map",
-            icon:  (
+            id: "map", label: "Globe",
+            icon: (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
                     <polygon points="1,2 7,4 7,17 1,15" fill="none"/>
                     <polygon points="7,4 13,2 13,15 7,17" fill="none"/>
                     <polygon points="13,2 19,4 19,17 13,15" fill="none"/>
                 </svg>
             ),
-            onClick: onSwitchToMap,
-            active: activeTabType === "map",
+            onClick: onSwitchToMap, active: activeTabType === "map",
         },
         {
-            id:    "news",
-            label: "News",
-            icon:  (
+            id: "news", label: "News",
+            icon: (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="2" y="3" width="16" height="14" rx="1.5" fill="none"/>
                     <line x1="6" y1="7"  x2="14" y2="7"/>
@@ -62,30 +42,11 @@ export default function BottomNav({
                     <line x1="6" y1="13" x2="10" y2="13"/>
                 </svg>
             ),
-            onClick: onSwitchToNews,
-            active: activeTabType === "news",
+            onClick: onSwitchToNews, active: activeTabType === "news",
         },
         {
-            id:    "reels",
-            label: "Reels",
-            icon:  (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                    <rect x="2"  y="3" width="6" height="18" rx="2" fill="currentColor" opacity="0.9"/>
-                    <rect x="9"  y="3" width="6" height="18" rx="2" fill="currentColor" opacity="0.6"/>
-                    <rect x="16" y="3" width="6" height="18" rx="2" fill="currentColor" opacity="0.3"/>
-                    <circle cx="5"  cy="8"  r="1.5" fill="white" opacity="0.6"/>
-                    <circle cx="5"  cy="12" r="1.5" fill="white" opacity="0.6"/>
-                    <circle cx="5"  cy="16" r="1.5" fill="white" opacity="0.6"/>
-                </svg>
-            ),
-            onClick:     () => setShowReels(true),
-            active:      showReels,
-            activeColor: "#FF3B30",
-        },
-        {
-            id:    "briefings",
-            label: "Briefs",
-            icon:  (
+            id: "reports", label: "Reports",
+            icon: (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="2" y="2" width="16" height="16" rx="2" fill="none"/>
                     <line x1="6" y1="7"  x2="14" y2="7"/>
@@ -93,52 +54,43 @@ export default function BottomNav({
                     <path d="M13 13 L16 10 L14 8 L11 11 L11 13 Z" strokeWidth="1.2"/>
                 </svg>
             ),
-            onClick: onOpenBriefings,
-            active: activeTabType === "briefing",
+            onClick: onOpenBriefings, active: activeTabType === "briefing", dot: reportsUnread,
         },
         {
-            id:    "analytics",
-            label: "Analytics",
-            icon:  (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="2,15 6,9 10,12 14,5 18,8"/>
-                    <line x1="2" y1="18" x2="18" y2="18"/>
-                </svg>
-            ),
-            onClick: onOpenAnalytics,
-            active: activeTabType === "analytics",
-        },
-        {
-            id:    "forge",
-            label: "Forge",
-            icon:  (
+            id: "forge", label: "Forge",
+            icon: (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
                     <polygon points="10,2 13,7 18,7 14.5,11 16,16 10,13 4,16 5.5,11 2,7 7,7"/>
                 </svg>
             ),
-            onClick: onOpenForge,
-            active: activeTabType === "forge",
-            activeColor: "#4A9EE0",
+            onClick: onOpenForge, active: activeTabType === "forge", activeColor: "#4A9EE0",
         },
         {
-            id:    "menu",
-            label: "Menu",
-            icon:  (
+            id: "alerts", label: "Alerts",
+            icon: (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10 3C10 3 6 4.5 6 10V14L3.5 16H16.5L14 14V10C14 4.5 10 3 10 3Z" fill="none"/>
+                    <line x1="8" y1="16" x2="12" y2="16"/>
+                </svg>
+            ),
+            onClick: onToggleAlertLog, active: false, badge: alertLogUnread,
+        },
+        {
+            id: "menu", label: "Menu",
+            icon: (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                     <line x1="3" y1="5" x2="17" y2="5"/>
                     <line x1="3" y1="10" x2="17" y2="10"/>
                     <line x1="3" y1="15" x2="17" y2="15"/>
                 </svg>
             ),
-            onClick: onOpenMenu,
-            active: false,
+            onClick: onOpenMenu, active: false,
         },
     ]
 
     return (
         <>
         <style>{BOTTOM_NAV_STYLES}</style>
-        {showReels && <NewsReels onClose={() => setShowReels(false)} />}
         <nav style={{
             position:       "fixed",
             bottom:         0,
@@ -153,13 +105,13 @@ export default function BottomNav({
             zIndex:         1200,
             fontFamily:     "Inter, -apple-system, sans-serif",
         }}>
-            {/* Static row — 7 items each flex:1 */}
             <div style={{ display: "flex", alignItems: "stretch", height: 56 }}>
                 {items.map(item => (
                     <button
                         key={item.id}
                         onClick={item.onClick}
                         style={{
+                            position:       "relative",
                             flex:           1,
                             display:        "flex",
                             flexDirection:  "column",
@@ -183,6 +135,22 @@ export default function BottomNav({
                     >
                         {item.icon}
                         {item.label}
+                        {item.dot && (
+                            <span style={{
+                                position: "absolute", top: 6, right: "30%", width: 6, height: 6,
+                                borderRadius: "50%", background: "var(--akili-accent)",
+                            }} />
+                        )}
+                        {item.badge > 0 && (
+                            <span style={{
+                                position: "absolute", top: 4, right: "28%", minWidth: 14, height: 14,
+                                borderRadius: 7, background: "var(--akili-accent)", color: "#fff",
+                                fontSize: 8, fontWeight: 700, display: "flex", alignItems: "center",
+                                justifyContent: "center", lineHeight: 1, padding: "0 3px",
+                            }}>
+                                {item.badge > 99 ? "99+" : item.badge}
+                            </span>
+                        )}
                     </button>
                 ))}
             </div>

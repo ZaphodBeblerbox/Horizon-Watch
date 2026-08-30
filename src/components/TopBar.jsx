@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react"
-import TabBar from "./TabBar.jsx"
+import TopNav from "./TopNav.jsx"
 import Logo from "./Logo.jsx"
 import API_BASE from "../apiBase.js"
 
@@ -233,13 +233,9 @@ function InlineSearch({ onResult, apiBase }) {
 // ── TopBar ────────────────────────────────────────────────────────────────────
 
 export default function TopBar({
-    tabs           = [],
-    activeTabId    = null,
-    onTabSwitch,
-    onTabClose,
-    onTabNew,
-    onTabReorder,
-    onTabRename,
+    activeTabType  = "map",
+    onOpenTab,
+    navBadges      = {},
     // Search
     showSearch     = false,
     onSearchResult = null,
@@ -286,8 +282,11 @@ export default function TopBar({
         }
     }
 
-    const utc   = time.toUTCString()
-    const clock = utc.slice(17, 22) + " UTC"
+    const utc      = time.toUTCString()
+    const utcClock = utc.slice(17, 22) + " UTC"
+    const localClock = time.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false })
+    const tzAbbrev = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+        .formatToParts(time).find(p => p.type === "timeZoneName")?.value || "LOCAL"
 
     return (
         <div style={{
@@ -329,18 +328,7 @@ export default function TopBar({
             {/* Centre: tabs + search */}
             {!isMobile ? (
                 <div style={{ flex: 1, display: "flex", alignItems: "center", minWidth: 0, gap: 8, paddingRight: 8 }}>
-                    <TabBar
-                        tabs={tabs}
-                        activeTabId={activeTabId}
-                        height={32}
-                        iconSize={14}
-                        onSwitch={onTabSwitch}
-                        onClose={onTabClose}
-                        onNew={onTabNew}
-                        onReorder={onTabReorder}
-                        onRename={onTabRename}
-                        canClose={tab => tab.type !== "map"}
-                    />
+                    <TopNav activeTabType={activeTabType} onOpenTab={onOpenTab} badges={navBadges} />
                     {showSearch && onSearchResult && (
                         <InlineSearch onResult={onSearchResult} apiBase={searchApiBase} />
                     )}
@@ -366,9 +354,12 @@ export default function TopBar({
                     >
                         {fullscreen ? <IconCompress /> : <IconExpand />}
                     </button>
-                    <div style={{ display: "flex", alignItems: "center", paddingLeft: 8, paddingRight: 16, borderLeft: "1px solid rgba(255,255,255,0.06)" }}>
-                        <span style={{ fontSize: 11, color: "var(--akili-text-muted)", fontVariantNumeric: "tabular-nums", fontFamily: "monospace", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
-                            {clock}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, paddingLeft: 8, paddingRight: 16, borderLeft: "1px solid rgba(255,255,255,0.06)" }}>
+                        <span style={{ fontSize: 11, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-mono)", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
+                            {utcClock}
+                        </span>
+                        <span style={{ fontSize: 11, color: "var(--akili-text-muted)", fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-mono)", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
+                            {localClock} {tzAbbrev}
                         </span>
                     </div>
                 </div>
