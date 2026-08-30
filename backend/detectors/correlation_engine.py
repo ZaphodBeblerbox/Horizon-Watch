@@ -593,54 +593,152 @@ class DarkShipDetector:
     """
     Detects vessels that disappear from AIS while underway (transponder gap).
 
-    Maintains last_seen[mmsi] = {timestamp, lat, lon, speed, name, region_id}
-    Scans every cycle for vessels not updated in >= min_gap_minutes.
+    Maintains last_seen[mmsi] = {timestamp, lat, lon, speed, name, region_id,
+    alerted_at}. update() is called every cycle with the CURRENT (visible)
+    AIS snapshot, refreshing last_seen for every vessel that is actually
+    reporting this cycle. scan() is called every cycle with the set of
+    currently-visible MMSIs and looks for vessels present in last_seen but
+    ABSENT from that set for >= a rule's min_gap_minutes — i.e. genuinely
+    missing from this cycle's feed, not merely a vessel this detector never
+    got around to removing.
+
+    Rule trigger_type: AIS_DARK_SHIP
+    Rule params:
+        target                str   "ALL" | "MMSI:<mmsi>"
+        min_gap_minutes        float vessel must be missing at least this long
+        last_known_region      str   "ALL" | a region_id — best-effort: only
+                                      matches when update()'s region_fn
+                                      actually resolved one for this vessel;
+                                      a vessel with no resolvable region never
+                                      matches a non-"ALL" scope (fails closed,
+                                      not open)
+        min_speed_before_gap    float vessel's last reported speed (knots)
+                                      must be >= this — a vessel that was
+                                      already slow/anchored before going quiet
+                                      is not a "went dark while underway"
+                                      signal
     """
 
     def __init__(self):
-        # mmsi → {timestamp, lat, lon, speed, name, region_id, alerted_at}
+        # mmsi (str) → {timestamp, lat, lon, speed, name, region_id, alerted_at}
         self._last_seen: dict = {}
 
     def update(self, vessels: dict, now: datetime, region_fn=None) -> None:
-        """Update last-seen from current AIS snapshot."""
+        """Refresh last-seen state from the CURRENT cycle's visible AIS
+        snapshot. Every mmsi passed here is, by definition, live this cycle,
+        so alerted_at is always cleared here: a vessel that reappears after a
+        previous dark-ship alert must be eligible to alert again the next
+        time it goes dark, rather than carrying a stale alerted_at forever."""
         for mmsi, v in vessels.items():
             if not (v.get("lat") and v.get("lng")):
                 continue
             lat = v["lat"]
             lon = v.get("lng") or v.get("lon", 0)
-            region_id = region_fn(lat, lon) if region_fn else None
+            region_id = None
+            if region_fn is not None:
+                try:
+                    region_id = region_fn(lat, lon)
+                except Exception:
+                    region_id = None
             self._last_seen[str(mmsi)] = {
-                "timestamp": now,
-                "lat":       lat,
-                "lon":       lon,
-                "speed":     float(v.get("speed") or 0),
-                "name":      v.get("name") or str(mmsi),
-                "region_id": region_id,
-                "alerted_at": self._last_seen.get(str(mmsi), {}).get("alerted_at"),
+                "timestamp":  now,
+                "lat":        lat,
+                "lon":        lon,
+                "speed":      float(v.get("speed") or 0),
+                "name":       v.get("name") or str(mmsi),
+                "region_id":  region_id,
+                "alerted_at": None,  # cleared — this vessel is live this cycle
             }
 
     def scan(self, rules: list, now: datetime, active_mmsis: set) -> list:
         """
         Scan for vessels absent from the live feed for >= min_gap_minutes.
         active_mmsis: set of mmsi strings currently visible in AIS feed.
+        Never raises, never returns None.
         """
         alerts: list = []
+        if not rules:
+            return alerts
 
-        # Sanctions check — runs on ALL known vessels (active and dark)
         for mmsi, state in list(self._last_seen.items()):
-            sanction_alert = _check_sanctions_hit(mmsi, {
-                "name": state["name"],
-                "lat":  state["lat"],
-                "lon":  state["lon"],
-            })
-            if sanction_alert:
-                alerts.append(sanction_alert)
+            if mmsi in active_mmsis:
+                continue  # still reporting this cycle — not dark
+            try:
+                elapsed_min = (now - state["timestamp"]).total_seconds() / 60.0
+            except Exception:
+                continue
+
+            if state.get("alerted_at") is not None:
+                continue  # already alerted for this gap
+
+            for rule in rules:
+                try:
+                    if not rule.get("enabled", True):
+                        continue
+                    params = rule.get("params") or {}
+
+                    min_gap = float(params.get("min_gap_minutes", 60))
+                    if elapsed_min < min_gap:
+                        continue
+
+                    min_speed = float(params.get("min_speed_before_gap", 0) or 0)
+                    if state["speed"] < min_speed:
+                        continue  # already slow/anchored before going quiet
+
+                    target = str(params.get("target", "ALL") or "ALL").upper()
+                    if target.startswith("MMSI:") and target.split(":", 1)[1] != str(mmsi):
+                        continue
+
+                    region_scope = str(params.get("last_known_region", "ALL") or "ALL").upper()
+                    if region_scope != "ALL":
+                        if not state.get("region_id") or str(state["region_id"]).upper() != region_scope:
+                            continue
+
+                    state["alerted_at"] = now
+                    alerts.append(self._make_alert(mmsi, state, rule, elapsed_min, now))
+                    break  # one alert per vessel-gap per cycle, regardless of rule count
+                except Exception:
+                    continue
 
         return alerts
 
     def purge_stale(self, now: datetime, max_age_hours: float = 48.0) -> None:
         cutoff = now - timedelta(hours=max_age_hours)
         self._last_seen = {k: v for k, v in self._last_seen.items() if v["timestamp"] >= cutoff}
+
+    @staticmethod
+    def _make_alert(mmsi, state: dict, rule: dict, elapsed_min: float, now: datetime) -> dict:
+        mmsi = str(mmsi)
+        name = state.get("name") or mmsi
+        speed = state.get("speed") or 0.0
+        params = rule.get("params") or {}
+        return {
+            "id":           f"darkship_{int(now.timestamp()*1000)}_{mmsi}",
+            "rule_id":      rule.get("id"),
+            "rule_name":    rule.get("rule_name", "AIS_DARK_SHIP"),
+            "rule_trigger": "AIS_DARK_SHIP",
+            "source":       "AIS",
+            "severity":     rule.get("severity", "medium"),
+            "icon_type":    params.get("icon_type", "DARK_SHIP"),
+            "vessel":       name,
+            "mmsi":         mmsi,
+            "lat":          state.get("lat"),
+            "lng":          state.get("lon"),
+            "speed":        speed,
+            "message": (
+                f"{name} (MMSI {mmsi}) has not reported an AIS position in "
+                f"{elapsed_min:.0f} min (last known speed {speed:.1f} kn, "
+                f"underway) — possible AIS transponder gap / dark-ship event."
+            ),
+            "timestamp":    now.isoformat(),
+            "provenance": {
+                "source_type":       "AIS",
+                "source_entity":     mmsi,
+                "detection_rule":    rule.get("rule_name", "AIS_DARK_SHIP"),
+                "trigger_reason":    "ais_gap_exceeds_threshold",
+                "params_at_trigger": params,
+            },
+        }
 
 
 # ══════════════════════════════════════════════════════════════════════════════

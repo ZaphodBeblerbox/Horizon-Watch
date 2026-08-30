@@ -51,6 +51,33 @@ _AIRPORT_KM      = 20.0
 _ZONE_MARGIN_KM  = 15.0   # "near but not inside" margin, measured from the real polygon boundary
 
 
+def _ds_status_lock_and_dict():
+    """Lazily fetch main.py's _DS_STATUS / _DS_STATUS_LOCK. Imported lazily
+    (function-local, not at module top) because main.py imports entity_linker
+    only indirectly through fusion_engine.py/surge_engine.py at call time, not
+    eagerly at its own top level — but a top-level import here would still
+    risk import-order issues at process start, so this defers to call time
+    the same way sentinel_ml.py's `_get_obb_session` does for main.py."""
+    try:
+        from main import _DS_STATUS, _DS_STATUS_LOCK
+    except ImportError:
+        from backend.main import _DS_STATUS, _DS_STATUS_LOCK
+    return _DS_STATUS, _DS_STATUS_LOCK
+
+
+def _mark_entity_linker_failure(err: str) -> None:
+    """Best-effort health-tracking update. Never raises — a health-tracking
+    bug must never break real entity-linking behavior."""
+    try:
+        _DS_STATUS, _DS_STATUS_LOCK = _ds_status_lock_and_dict()
+        with _DS_STATUS_LOCK:
+            st = _DS_STATUS["entity_linker"]
+            st["failures"] = st.get("failures", 0) + 1
+            st["last_error"] = err
+    except Exception:
+        pass
+
+
 class EntityLinker:
     """
     Maintains lightweight in-memory caches of static ontology entities
@@ -187,6 +214,12 @@ class EntityLinker:
             # Always mark loaded so link methods don't no-op
             with self._lock:
                 self._loaded = True
+            try:
+                _DS_STATUS, _DS_STATUS_LOCK = _ds_status_lock_and_dict()
+                with _DS_STATUS_LOCK:
+                    _DS_STATUS["entity_linker"]["loaded"] = True
+            except Exception:
+                pass
             if own_db:
                 ctx.__exit__(None, None, None)
 
@@ -209,6 +242,7 @@ class EntityLinker:
             self._persist_links(links)
         except Exception as ex:
             print(f"[entity-linker] link_alert FAILED ({alert_id}): {type(ex).__name__}: {ex}")
+            _mark_entity_linker_failure(f"link_alert({alert_id}): {type(ex).__name__}: {ex}")
 
     def link_article(self, url: str,
                      lat: Optional[float], lon: Optional[float],
@@ -216,11 +250,19 @@ class EntityLinker:
         """Write OntologyLink rows for a news article."""
         if not self._loaded:
             return
-        links = self._proximity_links("article", url, lat, lon)
-        links += self._mention_links("article", url, title)
-        if entities:
-            links += self._entity_mention_links("article", url, entities)
-        self._persist_links(links)
+        # Real guard (not just relying on the caller's broad wrapper) — a
+        # crash here used to propagate up to whatever try/except main.py
+        # happens to wrap the call site in, which is fragile and gave no
+        # dedicated health signal. Matches link_alert's existing pattern.
+        try:
+            links = self._proximity_links("article", url, lat, lon)
+            links += self._mention_links("article", url, title)
+            if entities:
+                links += self._entity_mention_links("article", url, entities)
+            self._persist_links(links)
+        except Exception as ex:
+            print(f"[entity-linker] link_article FAILED ({url}): {type(ex).__name__}: {ex}")
+            _mark_entity_linker_failure(f"link_article({url}): {type(ex).__name__}: {ex}")
 
     def link_fusion_event(self, fusion_id: str,
                           lat: Optional[float], lon: Optional[float],
@@ -228,9 +270,15 @@ class EntityLinker:
         """Write OntologyLink rows for a fusion event."""
         if not self._loaded:
             return
-        links = self._proximity_links("fusion", fusion_id, lat, lon)
-        links += self._mention_links("fusion", fusion_id, title)
-        self._persist_links(links)
+        # Real guard (not just relying on the caller's broad wrapper) — see
+        # link_article's comment above; same rationale.
+        try:
+            links = self._proximity_links("fusion", fusion_id, lat, lon)
+            links += self._mention_links("fusion", fusion_id, title)
+            self._persist_links(links)
+        except Exception as ex:
+            print(f"[entity-linker] link_fusion_event FAILED ({fusion_id}): {type(ex).__name__}: {ex}")
+            _mark_entity_linker_failure(f"link_fusion_event({fusion_id}): {type(ex).__name__}: {ex}")
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -428,6 +476,7 @@ class EntityLinker:
         links = [l for l in links if l is not None]
         if not links:
             return
+        written = 0
         try:
             with get_db() as db:
                 for lnk in links:
@@ -440,9 +489,20 @@ class EntityLinker:
                     ).first()
                     if not exists:
                         db.add(OntologyLink(**lnk))
+                        written += 1
                 db.commit()
+            try:
+                _DS_STATUS, _DS_STATUS_LOCK = _ds_status_lock_and_dict()
+                with _DS_STATUS_LOCK:
+                    st = _DS_STATUS["entity_linker"]
+                    st["links_written"] = st.get("links_written", 0) + written
+                    st["failures"] = 0
+                    st["last_success"] = datetime.datetime.utcnow().isoformat()
+            except Exception:
+                pass
         except Exception as ex:
             print(f"[entity-linker] persist error: {ex}")
+            _mark_entity_linker_failure(f"_persist_links: {type(ex).__name__}: {ex}")
 
 
 # Singleton

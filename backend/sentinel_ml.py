@@ -26,28 +26,29 @@ from typing import Optional
 import numpy as np
 from PIL import Image
 
-# ── ONNX session (shared with main.py via lazy load) ──────────────────────────
-_ML_BASE_DIR   = os.path.dirname(__file__)
-_ort_lock      = threading.Lock()
-_ort_sessions: dict = {}
+# ── ONNX session ────────────────────────────────────────────────────────────
+# Ship detection (below) does NOT load its own ONNX session — it delegates to
+# main.py's `_get_ort_session`/`_run_inference_on_image`, the same shared YOLO-
+# OBB (DOTA) inference pipeline the ESRI/Overwatch draw-a-box path
+# (`/api/overwatch/detect`) already uses. This keeps the (correct) oriented-
+# bounding-box decode logic — tiled inference, angle extraction, rotated-
+# corner math — in exactly one place instead of duplicating it here.
+_ML_BASE_DIR = os.path.dirname(__file__)
 
 
-def _load_ort_session(model_key: str = "coco"):
-    """Lazy-load ONNX session. coco=yolov8n.onnx for ship detection."""
-    with _ort_lock:
-        if model_key in _ort_sessions:
-            return _ort_sessions[model_key]
-        try:
-            import onnxruntime as ort
-            fname = "yolov8n-obb.onnx" if model_key == "dota" else "yolov8n.onnx"
-            path  = os.path.join(_ML_BASE_DIR, fname)
-            sess  = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
-            _ort_sessions[model_key] = sess
-            print(f"[sentinel_ml] loaded {fname}")
-        except Exception as e:
-            print(f"[sentinel_ml] session load failed ({model_key}): {e}")
-            _ort_sessions[model_key] = None
-        return _ort_sessions[model_key]
+def _get_obb_session():
+    """Return the shared YOLO-OBB (DOTA, yolov8n-obb.onnx) ONNX session via
+    main.py's session cache, or None if it failed to load. Imported lazily
+    (function-local, not at module top) because main.py imports sentinel_ml
+    indirectly through sentinel_scanner.py at call time, not at import time —
+    a top-level import here would risk a circular import at process start.
+    By the time this is actually called (a real scan is running), main.py is
+    already fully loaded."""
+    try:
+        from main import _get_ort_session
+    except ImportError:
+        from backend.main import _get_ort_session
+    return _get_ort_session("dota")
 
 
 # ── Geo helpers ────────────────────────────────────────────────────────────────
@@ -83,149 +84,6 @@ def _pixel_resolution_m(bbox: dict, img_w: int, img_h: int) -> float:
     lon_span_m = _haversine_m(lat_centre, bbox["min_lon"], lat_centre, bbox["max_lon"])
     lat_span_m = _haversine_m(bbox["min_lat"], bbox["min_lon"], bbox["max_lat"], bbox["min_lon"])
     return min(lon_span_m / max(img_w, 1), lat_span_m / max(img_h, 1))
-
-
-# ── NMS ────────────────────────────────────────────────────────────────────────
-
-def _nms(boxes_xyxy: np.ndarray, scores: np.ndarray, iou_threshold: float = 0.45):
-    if len(boxes_xyxy) == 0:
-        return []
-    x1, y1, x2, y2 = boxes_xyxy[:, 0], boxes_xyxy[:, 1], boxes_xyxy[:, 2], boxes_xyxy[:, 3]
-    areas = np.maximum(0, x2 - x1) * np.maximum(0, y2 - y1)
-    order = scores.argsort()[::-1]
-    keep  = []
-    while order.size > 0:
-        i = order[0]; keep.append(i)
-        xx1 = np.maximum(x1[i], x1[order[1:]]); yy1 = np.maximum(y1[i], y1[order[1:]])
-        xx2 = np.minimum(x2[i], x2[order[1:]]); yy2 = np.minimum(y2[i], y2[order[1:]])
-        inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
-        iou   = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
-        order = order[np.where(iou <= iou_threshold)[0] + 1]
-    return keep
-
-
-# ── Sliding window ONNX inference ─────────────────────────────────────────────
-
-WINDOW_SZ = 640
-STRIDE    = 320   # 50 % overlap
-
-
-def _run_yolo_sliding_window(img: Image.Image, confidence: float = 0.25,
-                              model_key: str = "coco") -> list:
-    """
-    Run YOLOv8 (COCO) on `img` using a 640×640 sliding window with 320px stride.
-    Returns list of dicts: {x1,y1,x2,y2,confidence,class_id,class_name,
-                             cx,cy,w_px,h_px}  in full-image pixel coords.
-    """
-    session = _load_ort_session(model_key)
-    if session is None:
-        return []
-
-    img_arr = np.array(img.convert("RGB"), dtype=np.float32)
-    img_h, img_w = img_arr.shape[:2]
-
-    # COCO class names (80 classes) — we care about "boat", "ship"
-    COCO_NAMES = [
-        "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
-        "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
-        "dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack",
-        "umbrella","handbag","tie","suitcase","frisbee","skis","snowboard",
-        "sports ball","kite","baseball bat","baseball glove","skateboard","surfboard",
-        "tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl",
-        "banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza",
-        "donut","cake","chair","couch","potted plant","bed","dining table","toilet",
-        "tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven",
-        "toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear",
-        "hair drier","toothbrush",
-    ]
-
-    def _tile_starts(dim):
-        if dim <= WINDOW_SZ:
-            return [0]
-        starts = list(range(0, dim - WINDOW_SZ, STRIDE))
-        if starts and starts[-1] + WINDOW_SZ < dim:
-            starts.append(dim - WINDOW_SZ)
-        return starts if starts else [0]
-
-    xs_starts = _tile_starts(img_w)
-    ys_starts = _tile_starts(img_h)
-
-    all_boxes: list  = []
-    all_scores: list = []
-    all_cls: list    = []
-
-    for ty in ys_starts:
-        for tx in xs_starts:
-            tw = min(WINDOW_SZ, img_w - tx)
-            th = min(WINDOW_SZ, img_h - ty)
-            tile = img_arr[ty:ty + th, tx:tx + tw]
-
-            # Letterbox to 640×640
-            scale = min(WINDOW_SZ / tw, WINDOW_SZ / th)
-            nw, nh = int(tw * scale), int(th * scale)
-            resized = Image.fromarray(tile.astype(np.uint8)).resize((nw, nh), Image.BILINEAR)
-            pad_img = np.full((WINDOW_SZ, WINDOW_SZ, 3), 114, dtype=np.float32)
-            px_off = (WINDOW_SZ - nw) // 2
-            py_off = (WINDOW_SZ - nh) // 2
-            pad_img[py_off:py_off + nh, px_off:px_off + nw] = np.array(resized, dtype=np.float32)
-
-            tensor = (pad_img / 255.0).transpose(2, 0, 1)[np.newaxis]
-            try:
-                out = session.run(None, {session.get_inputs()[0].name: tensor})[0]
-            except Exception as e:
-                print(f"[sentinel_ml] inference error at tile ({tx},{ty}): {e}")
-                continue
-
-            preds = out[0].T  # (N, 84)
-            bxy   = preds[:, :4]
-            cls_s = preds[:, 4:]
-            max_s = cls_s.max(axis=1)
-            ci    = cls_s.argmax(axis=1)
-            mask  = max_s > confidence
-            if not mask.any():
-                continue
-
-            for bx, cy_p, w_p, h_p, sc, ci_i in zip(
-                bxy[mask, 0], bxy[mask, 1], bxy[mask, 2], bxy[mask, 3],
-                max_s[mask], ci[mask],
-            ):
-                # Unpad and unscale back to full-image coords
-                x1_t = ((bx - w_p / 2) - px_off) / scale + tx
-                y1_t = ((cy_p - h_p / 2) - py_off) / scale + ty
-                x2_t = ((bx + w_p / 2) - px_off) / scale + tx
-                y2_t = ((cy_p + h_p / 2) - py_off) / scale + ty
-                # Clip to image
-                x1_t = max(0.0, min(float(img_w - 1), float(x1_t)))
-                y1_t = max(0.0, min(float(img_h - 1), float(y1_t)))
-                x2_t = max(0.0, min(float(img_w - 1), float(x2_t)))
-                y2_t = max(0.0, min(float(img_h - 1), float(y2_t)))
-                if x2_t <= x1_t or y2_t <= y1_t:
-                    continue
-                all_boxes.append([x1_t, y1_t, x2_t, y2_t])
-                all_scores.append(float(sc))
-                all_cls.append(int(ci_i))
-
-    if not all_boxes:
-        return []
-
-    boxes_arr  = np.array(all_boxes,  dtype=np.float32)
-    scores_arr = np.array(all_scores, dtype=np.float32)
-    kept = _nms(boxes_arr, scores_arr, iou_threshold=0.45)
-
-    results = []
-    for idx in kept:
-        x1, y1, x2, y2 = boxes_arr[idx]
-        cx = (x1 + x2) / 2
-        cy = (y1 + y2) / 2
-        results.append({
-            "x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2),
-            "cx": float(cx), "cy": float(cy),
-            "w_px": float(x2 - x1), "h_px": float(y2 - y1),
-            "confidence": all_scores[idx],
-            "class_id":   all_cls[idx],
-            "class_name": COCO_NAMES[all_cls[idx]] if all_cls[idx] < len(COCO_NAMES) else "unknown",
-        })
-    return results
 
 
 # ── Detection ID counter ───────────────────────────────────────────────────────
@@ -328,8 +186,22 @@ def _find_blobs(mask: np.ndarray, min_pixels: int = 10):
 def run_ship_detection(images: dict, bbox: dict, zone_baseline: float = 0.0) -> list:
     """
     TASK: ship_detection
-    Band: True Colour (true_colour key).  Uses YOLOv8-COCO sliding window.
-    Returns vessel detections with geo bbox, estimated length/width.
+    Band: True Colour (true_colour key).
+
+    Real functional fix (2026-08): this used to run a plain axis-aligned-box
+    COCO YOLOv8n detector (yolov8n.onnx, filtered to class "boat") — a model
+    trained on ordinary photos, a meaningfully worse fit for overhead
+    Sentinel-2 imagery where ships appear at arbitrary headings. It now
+    delegates to main.py's `_run_inference_on_image` — the same tiled
+    YOLO-OBB (DOTA, yolov8n-obb.onnx) inference pipeline the ESRI/Overwatch
+    draw-a-box path already uses — so this module does not maintain a second,
+    independent OBB-decoding implementation. Only the SentinelDetection-shape
+    conversion below is specific to this module; the actual box/angle decode
+    math lives in exactly one place (main.py).
+
+    Returns vessel detections with a real oriented (angle-aware) geo polygon
+    built from the model's rotated corners — not an axis-aligned bbox —
+    plus estimated length/width and centroid.
     """
     tc = images.get("true_colour")
     if tc is None:
@@ -337,37 +209,73 @@ def run_ship_detection(images: dict, bbox: dict, zone_baseline: float = 0.0) -> 
 
     img_w, img_h = tc.size
     res_m = _pixel_resolution_m(bbox, img_w, img_h)
-    raw = _run_yolo_sliding_window(tc, confidence=0.25, model_key="coco")
 
-    # Filter to maritime objects — COCO class 8 = "boat"
-    vessel_classes = {"boat", "ship"}
-    raw = [r for r in raw if r["class_name"] in vessel_classes or r["class_id"] == 8]
+    try:
+        from main import _run_inference_on_image
+    except ImportError:
+        from backend.main import _run_inference_on_image
+
+    # main.py's inference helper takes {north,south,east,west}; this module's
+    # callers (sentinel_scanner.py) pass {min_lon,min_lat,max_lon,max_lat}.
+    bounds_nsew = {
+        "north": bbox["max_lat"], "south": bbox["min_lat"],
+        "east":  bbox["max_lon"], "west":  bbox["min_lon"],
+    }
+    result = _run_inference_on_image(
+        tc, bounds_nsew, confidence=0.25, enhance=False,
+        model_key="dota", keep_px=True,
+    )
+    # DOTA's 15 classes include "ship" but no "boat" — this is the maritime one.
+    raw = [d for d in (result.get("detections") or []) if d.get("class") == "ship"]
 
     alert_tier, severity = _vessel_tier(len(raw), zone_baseline)
     detections = []
     for r in raw:
-        lon, lat = _affine(r["cx"], r["cy"], img_w, img_h, bbox)
-        geo_poly  = _px_to_geo_polygon(r["x1"], r["y1"], r["x2"], r["y2"], img_w, img_h, bbox)
-        est_len   = round(r["w_px"] * res_m, 1)
-        est_wid   = round(r["h_px"] * res_m, 1)
+        corners = r.get("corners") or []   # 4x [lat, lon], in rotated OBB order
+        center  = r.get("center") or [0.0, 0.0]
+        lat, lon = float(center[0]), float(center[1])
+
+        geo_poly = None
+        est_len = est_wid = area_m2 = angle_deg = None
+        if len(corners) == 4:
+            # Build the polygon from the actual rotated corners (not a
+            # min/max axis-aligned box) so orientation survives into the
+            # stored geometry — the entire point of switching to OBB.
+            ring = [[float(c[1]), float(c[0])] for c in corners]  # [lon, lat]
+            ring.append(ring[0])
+            geo_poly = {"type": "Polygon", "coordinates": [ring]}
+
+            side_a = _haversine_m(corners[0][0], corners[0][1], corners[1][0], corners[1][1])
+            side_b = _haversine_m(corners[1][0], corners[1][1], corners[2][0], corners[2][1])
+            est_len = round(max(side_a, side_b), 1)
+            est_wid = round(min(side_a, side_b), 1)
+            area_m2 = round(side_a * side_b, 1)
+            dy = corners[1][0] - corners[0][0]
+            dx = corners[1][1] - corners[0][1]
+            angle_deg = round(math.degrees(math.atan2(dy, dx)) % 180, 1)
+
+        px = r.get("_px")
         detections.append({
             "detection_id":    _next_det_id(),
             "object_type":     "vessel",
-            "confidence":      round(r["confidence"], 3),
+            "confidence":      round(float(r.get("confidence", 0.0)), 3),
             "centroid_lat":    round(lat, 6),
             "centroid_lon":    round(lon, 6),
-            "geo_geometry":    json.dumps(geo_poly),
-            "area_m2":         round(est_len * est_wid, 1),
+            "geo_geometry":    json.dumps(geo_poly) if geo_poly else None,
+            "area_m2":         area_m2,
             "severity":        severity,
             "alert_tier":      alert_tier,
             "matched_to_ais":  False,
             "attributes":      json.dumps({
-                "pixel_bbox":         {"x_min": r["x1"], "y_min": r["y1"], "x_max": r["x2"], "y_max": r["y2"]},
+                "pixel_bbox":         ({"x_min": px[0], "y_min": px[1], "x_max": px[2], "y_max": px[3]}
+                                        if px else None),
                 "estimated_length_m": est_len,
                 "estimated_width_m":  est_wid,
                 "pixel_resolution_m": round(res_m, 2),
                 "geolocation_uncertainty_m": round(res_m * 1.5, 1),
-                "yolo_class":         r["class_name"],
+                "yolo_class":         r.get("class", "ship"),
+                "obb_angle_deg":      angle_deg,
+                "model":              "yolov8n-obb (DOTA)",
             }),
         })
     return detections

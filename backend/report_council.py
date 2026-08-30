@@ -81,6 +81,55 @@ def verify_citation(citation: dict, snapshot_content: dict) -> tuple[bool, str]:
     return False, f"unrecognized citation type '{ctype}' (expected 'snapshot_ref' or 'external')"
 
 
+_ZONE_NAME_STOPWORDS = {"of", "the", "a", "an", "and", "in", "at", "to", "&"}
+
+
+def _normalize_zone_tokens(name: str) -> set[str]:
+    """Lowercase, fold dashes/punctuation (em/en-dash, hyphens, parens, etc.)
+    to spaces, then split into significant words — dropping tiny connector
+    words so e.g. 'Strait of Hormuz Extended' and 'Horn of Africa —
+    Maritime Risk' normalize to comparable word sets."""
+    s = (name or "").lower()
+    s = re.sub(r"[—–\-_/,;:()\[\]]+", " ", s)
+    s = re.sub(r"[^\w\s]", " ", s)
+    return {w for w in s.split() if w and w not in _ZONE_NAME_STOPWORDS}
+
+
+def _zone_names_match(claim_zone: str, real_zone: str) -> bool:
+    """Normalized-token-SET comparison, checked in EITHER direction — not
+    another substring variant. This replaces a plain `a in b` substring test
+    that had two real bugs: (1) false positive — a short/generic word in the
+    claim (e.g. "Sea", "Strait", "Africa") would match ANY genuinely-
+    containing zone whose full name happens to contain that word, even if
+    it's the wrong specific zone (real seeded zones include "Taiwan Strait",
+    "Strait of Hormuz Extended", "Horn of Africa — Maritime Risk", all
+    sharing common geographic nouns); (2) false negative — the old check only
+    tested claim-in-real, never the reverse, so a claim naming the correct
+    zone WITH extra qualifying words ("Taiwan Strait Naval Buildup" for real
+    zone "Taiwan Strait") wrongly failed since the longer claim string isn't
+    a substring of the shorter real name.
+    Fix: exact token-set equality always matches; a subset match in EITHER
+    direction also matches (handles both the "claim has extra words" and
+    "real zone name has an extra qualifier" cases) — but ONLY if the smaller
+    (subset) side contributes at least 2 significant words. That length
+    floor is what actually closes the false-positive hole: a single bare
+    generic word (len 1) can never validate a match on its own, since it can
+    only ever satisfy the subset branch when it's the *smaller* side, which
+    is exactly the case being guarded against.
+    """
+    a = _normalize_zone_tokens(claim_zone)
+    b = _normalize_zone_tokens(real_zone)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) >= 2 and a.issubset(b):
+        return True
+    if len(b) >= 2 and b.issubset(a):
+        return True
+    return False
+
+
 def check_geo_sanity(claim: dict, db=None) -> Optional[tuple[bool, str]]:
     """If a claim asserts a zone name alongside coordinates, verify the real
     zone polygon actually contains that point (reuses the same genuine
@@ -96,7 +145,7 @@ def check_geo_sanity(claim: dict, db=None) -> Optional[tuple[bool, str]]:
         containing = relevance_scorer.get_containing_zones(float(lat), float(lon), db)
     except Exception as ex:
         return False, f"zone check failed to run: {ex}"
-    hit = any(zone_name.lower() in (z.get("name") or "").lower() for z in containing)
+    hit = any(_zone_names_match(zone_name, z.get("name") or "") for z in containing)
     if hit:
         return True, f"'{zone_name}' genuinely contains ({lat}, {lon})"
     names = ", ".join(z.get("name", "?") for z in containing) or "none"

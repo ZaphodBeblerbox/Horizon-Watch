@@ -105,14 +105,15 @@ print(f"   Sample: {sample.get('name', '?')} / {sample.get('system_id', '?')}")
 print("   PASS\n")
 
 
-# ── 6. AIS_DARK_SHIP is NOT one of WIRED_RULE_NAMES (no DarkShipDetector is
-#      ever instantiated — see main.py's WIRED_RULE_DISPATCH/PIPELINE_NODE_
-#      RULE_FAMILIES), so /api/rules must reject creating one rather than
-#      silently accepting a rule that would have zero live effect. This used
-#      to assert the opposite (that creation succeeded) from before that
-#      allowlist existed; updated to match the intentional, currently-
-#      enforced behavior — see the Stage-1/Dark-Ship consolidation audit.
-print("6. POST /api/rules — AIS_DARK_SHIP is correctly rejected (not wired)")
+# ── 6. AIS_DARK_SHIP IS now one of WIRED_RULE_NAMES — DarkShipDetector.scan()
+#      is now a real implementation, dispatched via WIRED_RULE_DISPATCH /
+#      PIPELINE_NODE_RULE_FAMILIES (main.py), so /api/rules must accept
+#      creating one instead of rejecting it as having zero live effect. This
+#      used to assert the opposite (HTTP 400 rejection) from before
+#      DarkShipDetector.scan() actually implemented gap detection; updated to
+#      match the new, intentional, currently-enforced behavior — see the
+#      dark-ship-detection wiring change.
+print("6. POST /api/rules — AIS_DARK_SHIP is now accepted (wired)")
 dark_body = {
     "rule_name":    "Test Dark Ship Rule",
     "trigger_type": "AIS_DARK_SHIP",
@@ -123,8 +124,15 @@ dark_body = {
         "last_known_region":    "REG-MED",
     },
 }
-expect_http_error("POST", "/api/rules", dark_body, 400)
-print("   Correctly rejected with HTTP 400 (AIS_DARK_SHIP has no live detector)")
+created = post("/api/rules", dark_body)
+assert created.get("rule_name") == "AIS_DARK_SHIP", created
+assert created.get("wired") is True, f"AIS_DARK_SHIP should be wired now: {created}"
+print(f"   Created rule id={created.get('id')} wired={created.get('wired')} live={created.get('live')}")
+# Clean up: disable it again so this test stays repeatable (disabling a rule
+# is always allowed regardless of wiring — see api_rules_update).
+disabled = req("PUT", f"/api/rules/{created['id']}", {"enabled": False})
+assert disabled.get("enabled") is False, disabled
+print("   Correctly accepted with HTTP 200, then disabled for repeatability")
 print("   PASS\n")
 
 

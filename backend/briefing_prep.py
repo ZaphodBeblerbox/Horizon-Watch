@@ -8,6 +8,7 @@ Designed to run synchronously inside a ThreadPoolExecutor from an async context.
 """
 from __future__ import annotations
 import json
+import math
 import datetime
 from datetime import timedelta
 
@@ -58,6 +59,47 @@ def _period_ok(ts_value, period_start, period_end) -> bool:
     return True
 
 
+def _sql_region_filter(lat_col, lon_col, region: list[str] | None):
+    """Build a SQLAlchemy filter expression that restricts a query to rows whose
+    (lat_col, lon_col) fall inside a bounding box around any of the named
+    `region` entries — buffered by the same 400km margin `_region_ok()` uses,
+    so this is a deliberately over-inclusive SQL-level prefilter (a rectangle
+    with a generous buffer, not the exact haversine-buffered check). It exists
+    so the LIMIT applied afterwards bounds an already-region-scoped result set
+    instead of the unscoped table — `_region_ok()` still runs per-row
+    afterwards and remains the sole source of truth for exact inclusion.
+
+    Returns None (no SQL-level restriction — caller should skip filtering and
+    rely on `_region_ok()` alone) when `region` is falsy, or when none of the
+    requested names resolve to a known bbox — same "unrecognised name is
+    ignored, never silently excludes everything" rule `_region_ok()` follows.
+    """
+    if not region:
+        return None
+    from sqlalchemy import and_, or_
+    from scoring import REGION_BBOXES
+    clauses = []
+    for rname in region:
+        bbox = REGION_BBOXES.get(rname)
+        if bbox is None:
+            continue  # unrecognised name (or "Global", which _region_ok also ignores) — skip
+        s, n, w, e = bbox
+        lat_buf = 400.0 / 111.0
+        # Longitude degrees-per-km shrinks with latitude; use the most extreme
+        # (closest-to-pole) latitude in the buffered box so the buffer is never
+        # too tight at any point along it.
+        extreme_lat = min(max(abs(s), abs(n)) + lat_buf, 89.0)
+        cos_lat = max(math.cos(math.radians(extreme_lat)), 0.05)
+        lon_buf = 400.0 / (111.0 * cos_lat)
+        clauses.append(and_(
+            lat_col >= s - lat_buf, lat_col <= n + lat_buf,
+            lon_col >= w - lon_buf, lon_col <= e + lon_buf,
+        ))
+    if not clauses:
+        return None
+    return or_(*clauses)
+
+
 def prepare_intelligence_picture(
     db,
     forge_alerts: list | None = None,
@@ -90,6 +132,22 @@ def prepare_intelligence_picture(
     cutoff_24h = now - timedelta(hours=24)
     cutoff_48h = now - timedelta(hours=48)
 
+    # A scoped call (region and/or period actually requested) needs a much
+    # higher DB fetch ceiling than the default unscoped snapshot: today's real
+    # numbers already show 177 real quality-passing Alert rows in 24h against
+    # a hardcoded limit(100) applied BEFORE the region/period filter below ever
+    # ran — silently dropping 77 real rows on every single call, regardless of
+    # region. Region/period restrictions are now pushed into the SQL query
+    # itself (via `_sql_region_filter` / direct created_at bounds) so the
+    # LIMIT below bounds an already-scoped result set rather than truncating
+    # the unscoped table first — the raised ceiling is extra headroom on top
+    # of that, not a substitute for it. Omitting region/period (the default,
+    # existing call sites) reproduces the exact prior limits unchanged.
+    scoped = bool(region) or bool(period_start) or bool(period_end)
+
+    def _scoped_limit(base: int) -> int:
+        return base * 10 if scoped else base
+
     alerts = list(forge_alerts or [])
     excluded_low_quality_alerts = 0
 
@@ -102,18 +160,25 @@ def prepare_intelligence_picture(
     # filtered later where it's easy to forget.
     try:
         from database import Alert as _AlertDB, NewsArticle as _NADB, OntologyLink as _OLDB
+        _alert_q = db.query(_AlertDB).filter(
+            _AlertDB.status == "active",
+            _AlertDB.created_at >= cutoff_24h,
+            _AlertDB.alert_type.isnot(None),
+            _AlertDB.alert_type != "unknown",
+            _AlertDB.title.isnot(None),
+            _AlertDB.title != "",
+        )
+        _alert_region_clause = _sql_region_filter(_AlertDB.lat, _AlertDB.lon, region)
+        if _alert_region_clause is not None:
+            _alert_q = _alert_q.filter(_alert_region_clause)
+        if period_start:
+            _alert_q = _alert_q.filter(_AlertDB.created_at >= period_start)
+        if period_end:
+            _alert_q = _alert_q.filter(_AlertDB.created_at <= period_end)
         db_alert_rows = (
-            db.query(_AlertDB)
-            .filter(
-                _AlertDB.status == "active",
-                _AlertDB.created_at >= cutoff_24h,
-                _AlertDB.alert_type.isnot(None),
-                _AlertDB.alert_type != "unknown",
-                _AlertDB.title.isnot(None),
-                _AlertDB.title != "",
-            )
+            _alert_q
             .order_by(_AlertDB.created_at.desc())
-            .limit(100)
+            .limit(_scoped_limit(100))
             .all()
         )
         total_active_count = (
@@ -149,11 +214,18 @@ def prepare_intelligence_picture(
                 })
 
         # Top tier-1/2 news articles (last 24h, or the requested period)
+        _news_q = db.query(_NADB).filter(
+            _NADB.tier.in_([1, 2]), _NADB.ingested_at >= (period_start or cutoff_24h)
+        )
+        _news_region_clause = _sql_region_filter(_NADB.lat, _NADB.lon, region)
+        if _news_region_clause is not None:
+            _news_q = _news_q.filter(_news_region_clause)
+        if period_end:
+            _news_q = _news_q.filter(_NADB.ingested_at <= period_end)
         top_articles = (
-            db.query(_NADB)
-            .filter(_NADB.tier.in_([1, 2]), _NADB.ingested_at >= (period_start or cutoff_24h))
+            _news_q
             .order_by(_NADB.relevance_score.desc())
-            .limit(20)
+            .limit(_scoped_limit(20))
             .all()
         )
         top_articles = [
@@ -327,14 +399,21 @@ def prepare_intelligence_picture(
 
     # ── 5. Recent Sentinel detections (48h, immediate tier) ───────────────────
     try:
+        _sent_q = db.query(SentinelDetection).filter(
+            SentinelDetection.alert_tier == "immediate",
+            SentinelDetection.created_at > (period_start or cutoff_48h),
+        )
+        _sent_region_clause = _sql_region_filter(
+            SentinelDetection.centroid_lat, SentinelDetection.centroid_lon, region
+        )
+        if _sent_region_clause is not None:
+            _sent_q = _sent_q.filter(_sent_region_clause)
+        if period_end:
+            _sent_q = _sent_q.filter(SentinelDetection.created_at <= period_end)
         sentinel_rows = (
-            db.query(SentinelDetection)
-            .filter(
-                SentinelDetection.alert_tier == "immediate",
-                SentinelDetection.created_at > (period_start or cutoff_48h),
-            )
+            _sent_q
             .order_by(SentinelDetection.confidence.desc())
-            .limit(20)
+            .limit(_scoped_limit(20))
             .all()
         )
     except Exception:
@@ -372,15 +451,24 @@ def prepare_intelligence_picture(
     # ── 6. Top news assessments (high/critical, not expired) ──────────────────
     try:
         from sqlalchemy import or_ as _or
+        _assess_q = db.query(IntelligenceAssessment).filter(
+            IntelligenceAssessment.domain == "NEWS",
+            IntelligenceAssessment.expires_at > now,
+            IntelligenceAssessment.severity.in_(["high", "critical"]),
+        )
+        _assess_region_clause = _sql_region_filter(
+            IntelligenceAssessment.lat, IntelligenceAssessment.lon, region
+        )
+        if _assess_region_clause is not None:
+            _assess_q = _assess_q.filter(_assess_region_clause)
+        if period_start:
+            _assess_q = _assess_q.filter(IntelligenceAssessment.created_at >= period_start)
+        if period_end:
+            _assess_q = _assess_q.filter(IntelligenceAssessment.created_at <= period_end)
         assessments = (
-            db.query(IntelligenceAssessment)
-            .filter(
-                IntelligenceAssessment.domain == "NEWS",
-                IntelligenceAssessment.expires_at > now,
-                IntelligenceAssessment.severity.in_(["high", "critical"]),
-            )
+            _assess_q
             .order_by(IntelligenceAssessment.confidence.desc())
-            .limit(15)
+            .limit(_scoped_limit(15))
             .all()
         )
     except Exception:
