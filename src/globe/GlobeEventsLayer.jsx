@@ -3,7 +3,7 @@ import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { makeTypedEventCanvas } from "./iconUtils.js"
+import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, EVENTS_CAP } from "./isMobile.js"
 
@@ -40,31 +40,11 @@ const ARTICLE_TYPE_HEX = {
     other:          "#636366",
 }
 
-const TYPE_MAP = {
-    missile:      "missile",
-    airstrike:    "explosion",
-    explosion:    "explosion",
-    armed_clash:  "armed_clash",
-    fight:        "armed_clash",
-    maritime:     "maritime",
-    protest:      "protest",
-    earthquake:   "earthquake",
-    fire:         "fire",
-    aviation:     "aviation",
-    energy:       "energy",
-    medical:      "medical",
-}
-
 function hexForEvent(ev) {
     const it = (ev.icon_type || ev.article_type || "").toLowerCase()
     if (it && ARTICLE_TYPE_HEX[it]) return ARTICLE_TYPE_HEX[it]
     const t = (ev.event_type || ev.type || "").toLowerCase()
     return TYPE_HEX[t] || DEFAULT_HEX
-}
-
-function typeForEvent(ev) {
-    const t = (ev.event_type || ev.type || "").toLowerCase()
-    return TYPE_MAP[t] || "general"
 }
 
 const ICON_CACHE = {}
@@ -119,10 +99,20 @@ function decorateTier1Icon(base, hex, isBreaking) {
     return canvas
 }
 
-function getIcon(type, hex, tier, isBreaking) {
-    const key = `${type}-${hex}-t${tier}-b${isBreaking ? 1 : 0}`
+// News/event entity function is one glyph regardless of article sub-type
+// (see markerRenderer.js — MIL-STD has no official news symbol, and this
+// product's real data doesn't distinguish sub-types finely enough to
+// justify more than one glyph); sub-type is still conveyed via the accent
+// colour (hexForEvent) exactly as before.
+function getIcon(hex, tier, isBreaking) {
+    const key = `${hex}-t${tier}-b${isBreaking ? 1 : 0}`
     if (!ICON_CACHE[key]) {
-        const base = makeTypedEventCanvas(type, hex)
+        const base = getMarkerCanvas({
+            affiliation: AFFILIATION.NEUTRAL,
+            entityFunction: ENTITY_FUNCTION.NEWS_EVENT,
+            accentColor: hex,
+            size: 32,
+        })
         ICON_CACHE[key] = (tier === 1) ? decorateTier1Icon(base, hex, !!isBreaking) : base
     }
     return ICON_CACHE[key]
@@ -232,8 +222,7 @@ export default function GlobeEventsLayer({
                 const prec    = isPrecision(ev)
                 const baseHex = hexForEvent(ev)
                 const hex     = (!prec && numTier >= 3) ? mutedHex(baseHex) : baseHex
-                const type    = typeForEvent(ev)
-                const icon    = getIcon(type, hex, numTier, !!ev.is_breaking)
+                const icon    = getIcon(hex, numTier, !!ev.is_breaking)
                 if (!icon || icon.width === 0 || icon.height === 0) return null
 
                 // Base icon size from location confidence

@@ -3,7 +3,10 @@ import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { makeAlertCanvas, makeAssessmentCanvas, makeFusionCanvas } from "./iconUtils.js"
+import {
+    getMarkerCanvas, resolveAlertAffiliation, resolveAlertEntityFunction,
+    AFFILIATION, ENTITY_FUNCTION,
+} from "./markerRenderer.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
 
@@ -13,24 +16,18 @@ function forgeHeaders() {
     }
 }
 
-const ICON_CACHE = {}
-
 function alertIcon(a) {
     const iconType = a.icon_type || ""
-    const severity = a.severity || "medium"
+    const affiliation    = resolveAlertAffiliation(a)
+    const entityFunction = resolveAlertEntityFunction(a)
 
-    // News assessment — diamond icon with pattern colour
-    if (a.domain === "NEWS" && iconType && ALERT_ICONS[iconType]) {
-        const color = ALERT_ICONS[iconType]?.color || "#FF6B35"
-        const key   = `assess-${iconType}-${severity}`
-        if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAssessmentCanvas(color, severity)
-        return ICON_CACHE[key]
-    }
+    // News assessment — pattern-specific accent colour carried over from
+    // ALERT_ICONS (real, still-used table — see src/constants/alertIcons.js).
+    const isAssessment = a.domain === "NEWS" && !!(iconType && ALERT_ICONS[iconType])
+    const accentColor  = isAssessment ? (ALERT_ICONS[iconType]?.color || "#FF6B35") : undefined
+    const size = isAssessment ? 40 : 38
 
-    // Standard forge alert — source-coloured circle
-    const key = `${a.source || "NEWS"}-${severity}`
-    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeAlertCanvas(a.source || "NEWS", severity)
-    return ICON_CACHE[key]
+    return getMarkerCanvas({ affiliation, entityFunction, size, accentColor })
 }
 
 function isSanctioned(a) {
@@ -116,10 +113,20 @@ function filterAlert(a, sanctionedMmsiSet) {
     return true
 }
 
+// Fusion events are multi-domain correlations, not identity-bearing
+// contacts — Neutral affiliation frame (square) throughout, carrying the
+// established fusion accent colour (#BF5AF2, same one ALERT_ICONS.FUSION_EVENT
+// and GlobeAlertPopup's SRC_COLOR.FUSION already use) as the glyph tint, with
+// a pulse ring for higher-severity fusions.
 function fusionIcon(severity) {
-    const key = `fusion-${severity}`
-    if (!ICON_CACHE[key]) ICON_CACHE[key] = makeFusionCanvas(severity)
-    return ICON_CACHE[key]
+    const size = severity === "critical" ? 64 : severity === "high" ? 56 : 48
+    return getMarkerCanvas({
+        affiliation:    AFFILIATION.NEUTRAL,
+        entityFunction: ENTITY_FUNCTION.FUSION,
+        accentColor:    "#BF5AF2",
+        pulse:          severity === "critical" || severity === "high",
+        size,
+    })
 }
 
 export default function GlobeAlertsLayer({ enabled }) {
@@ -251,9 +258,16 @@ export default function GlobeAlertsLayer({ enabled }) {
 
                 const sanctioned = isSanctioned(a)
                 const sts        = isSts(a)
-                const labelText  = sanctioned ? "⚠ SANCTIONED"
-                                 : sts        ? "STS DETECTED"
-                                 : null
+                const affiliation = resolveAlertAffiliation(a)
+                // Suspect means the backend's confirmed/possible corroboration
+                // downgraded this sanctions hit — label it distinctly rather
+                // than showing the same "SANCTIONED" text a confirmed
+                // (Hostile) hit gets. See resolveAlertAffiliation() in
+                // markerRenderer.js for the real backend fields this reads.
+                const labelText  = sanctioned
+                    ? (affiliation === AFFILIATION.SUSPECT ? "⚠ POSSIBLE MATCH — REVIEW" : "⚠ SANCTIONED")
+                    : sts ? "STS DETECTED"
+                    : null
 
                 return (
                     <Entity
@@ -273,7 +287,9 @@ export default function GlobeAlertsLayer({ enabled }) {
                         label={labelText ? {
                             text:            labelText,
                             font:            "bold 9px Arial",
-                            fillColor:       sanctioned ? Color.fromCssColorString("#FF3B30") : Color.fromCssColorString("#FF9500"),
+                            fillColor:       (sanctioned && affiliation !== AFFILIATION.SUSPECT)
+                                                 ? Color.fromCssColorString("#FF3B30")
+                                                 : Color.fromCssColorString("#FF9500"),
                             outlineColor:    Color.fromCssColorString("#0F1721"),
                             outlineWidth:    2,
                             style:           2,

@@ -19,7 +19,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { natoIconSvg } from "../globe/natoIcons.js"
+import { markerSvg, AFFILIATION, ENTITY_FUNCTION } from "../globe/markerRenderer.js"
 
 const BAR_STYLES = `
   @keyframes director-bar-slide-up {
@@ -479,7 +479,12 @@ export default function DirectorBar({
           >
             <span
               style={{ display: "inline-block", verticalAlign: "middle" }}
-              dangerouslySetInnerHTML={{ __html: natoIconSvg("FUSION_EVENT", 14, "#388bff") }}
+              dangerouslySetInnerHTML={{ __html: markerSvg({
+                  affiliation: AFFILIATION.NEUTRAL,
+                  entityFunction: ENTITY_FUNCTION.FUSION,
+                  size: 14,
+                  accentColor: "#388bff",
+              }) }}
             />
             Director
           </span>

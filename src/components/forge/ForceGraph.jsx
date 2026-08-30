@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import API_BASE from "../../apiBase.js"
-import { drawNatoIcon, entityTypeToIcon, iconColor } from "../../globe/natoIcons.js"
+import { drawMarker, graphNodeSymbol, graphNodeColor } from "../../globe/markerRenderer.js"
 
 // ── Canonical type normalization (DB mixed-case → canonical lowercase) ────────
 const _TYPE_MAP = {
@@ -398,7 +398,7 @@ export default function ForceGraph({ onNodeClick }) {
             for (const node of visible) {
                 const ct   = canonType(node.type)
                 const r    = nodeR(node)
-                const c    = iconColor(ct)
+                const c    = graphNodeColor(ct)
                 const sev  = node.severity || node.data?.severity || ""
                 const glow = SEV_GLOW[sev]
                 const isHov = node.id === hovId
@@ -408,7 +408,8 @@ export default function ForceGraph({ onNodeClick }) {
                     ctx.shadowBlur  = isHov ? 20 : glow
                     ctx.shadowColor = c
                 }
-                drawNatoIcon(ctx, entityTypeToIcon(ct), node.x, node.y, r, c)
+                const { affiliation, entityFunction } = graphNodeSymbol(ct)
+                drawMarker(ctx, node.x, node.y, r, { affiliation, entityFunction })
                 ctx.restore()
 
                 // Labels: always for priority types, hover-only for others
@@ -619,8 +620,8 @@ export default function ForceGraph({ onNodeClick }) {
                                     <div style={{
                                         display: "inline-block", fontSize: 9, fontWeight: 700,
                                         padding: "2px 6px", borderRadius: 3, marginBottom: 6,
-                                        background: iconColor(canonType(detailNode.type)) + "22",
-                                        color: iconColor(canonType(detailNode.type)),
+                                        background: graphNodeColor(canonType(detailNode.type)) + "22",
+                                        color: graphNodeColor(canonType(detailNode.type)),
                                         letterSpacing: "0.08em", textTransform: "uppercase",
                                     }}>{detailNode.type || "entity"}</div>
                                     <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", lineHeight: 1.3 }}>

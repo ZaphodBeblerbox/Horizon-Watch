@@ -2,13 +2,18 @@ import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
-import { makeAirportCanvas } from "./iconUtils.js"
+import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-const ICON_CACHE = {}
-function getIcon(airportType) {
-    if (!ICON_CACHE[airportType]) ICON_CACHE[airportType] = makeAirportCanvas(airportType)
-    return ICON_CACHE[airportType]
+// Airports are real, non-flagged aviation infrastructure — Neutral (square)
+// affiliation frame with the airfield glyph (see markerRenderer.js).
+// Importance tier is conveyed via size (ICON_SIZE below), same as before.
+function getIcon() {
+    return getMarkerCanvas({
+        affiliation:    AFFILIATION.NEUTRAL,
+        entityFunction: ENTITY_FUNCTION.INFRA_AIRPORT,
+        size: 32,
+    })
 }
 
 // Icon size varies by airport importance
