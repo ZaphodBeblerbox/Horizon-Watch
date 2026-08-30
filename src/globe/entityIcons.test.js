@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest"
-import { statusRingColor, entityMarkerSvg, getEntityMarkerDataUri, resolveSanctionsStatus } from "./entityIcons.js"
+import {
+    statusRingColor, entityMarkerSvg, getEntityMarkerDataUri, resolveSanctionsStatus,
+    graphNodeIcon,
+} from "./entityIcons.js"
 
 describe("resolveSanctionsStatus", () => {
     it("returns 'confirmed' for a confirmed sanctions hit", () => {
@@ -66,6 +69,55 @@ describe("entityMarkerSvg", () => {
     })
 })
 
+describe("entityMarkerSvg pulse", () => {
+    it("draws a translucent halo ring when pulse is true and there's no status ring", () => {
+        const plain = entityMarkerSvg({ entityType: "fusion", color: "#BF5AF2" })
+        const pulsed = entityMarkerSvg({ entityType: "fusion", color: "#BF5AF2", pulse: true })
+        expect(plain).not.toMatch(/stroke="#BF5AF255"/)
+        expect(pulsed).toMatch(/stroke="#BF5AF255"/)
+    })
+
+    it("does not draw a pulse ring when a real status ring is already present", () => {
+        const svg = entityMarkerSvg({ entityType: "vessel", color: "#BF5AF2", pulse: true, sanctionsStatus: "confirmed" })
+        expect(svg).not.toMatch(/stroke="#BF5AF255"/)
+        expect(svg).toMatch(/stroke="#EF4444"/) // the real status ring still renders
+    })
+})
+
+describe("fusion entity type", () => {
+    it("renders the fusion glyph without throwing (real, still-used entity kind)", () => {
+        expect(() => entityMarkerSvg({ entityType: "fusion" })).not.toThrow()
+    })
+})
+
+describe("graphNodeIcon", () => {
+    it("maps every real ForceGraph canonical type to a real entityType", () => {
+        expect(graphNodeIcon("vessel").entityType).toBe("vessel")
+        expect(graphNodeIcon("aircraft").entityType).toBe("aircraft")
+        expect(graphNodeIcon("alert").entityType).toBe("alert")
+        expect(graphNodeIcon("surge").entityType).toBe("alert")
+        expect(graphNodeIcon("fusion_event").entityType).toBe("fusion")
+        expect(graphNodeIcon("assessment").entityType).toBe("news_event")
+        expect(graphNodeIcon("port").entityType).toBe("facility")
+        expect(graphNodeIcon("airport").entityType).toBe("facility")
+        expect(graphNodeIcon("cable").entityType).toBe("facility")
+        expect(graphNodeIcon("watch_zone").entityType).toBe("zone")
+        expect(graphNodeIcon("strategic_zone").entityType).toBe("zone")
+        expect(graphNodeIcon("rule").entityType).toBe("generic")
+    })
+
+    it("falls back to a muted generic glyph for an unrecognized type, never throwing", () => {
+        const result = graphNodeIcon("not-a-real-type")
+        expect(result.entityType).toBe("generic")
+        expect(result.color).toBe("#6B7A90")
+    })
+
+    it("gives every recognized type the same standard glyph tone", () => {
+        expect(graphNodeIcon("vessel").color).toBe("#E8EEF7")
+        expect(graphNodeIcon("rule").color).toBe("#E8EEF7")
+    })
+})
+
 describe("getEntityMarkerDataUri", () => {
     it("returns a valid data URI", () => {
         const uri = getEntityMarkerDataUri({ entityType: "aircraft" })
@@ -82,5 +134,11 @@ describe("getEntityMarkerDataUri", () => {
         const a = getEntityMarkerDataUri({ entityType: "aircraft", subtype: "military" })
         const b = getEntityMarkerDataUri({ entityType: "aircraft", subtype: "commercial" })
         expect(a).not.toBe(b)
+    })
+
+    it("caches pulse separately from a non-pulsed marker with otherwise-identical options", () => {
+        const plain  = getEntityMarkerDataUri({ entityType: "fusion", color: "#BF5AF2" })
+        const pulsed = getEntityMarkerDataUri({ entityType: "fusion", color: "#BF5AF2", pulse: true })
+        expect(plain).not.toBe(pulsed)
     })
 })

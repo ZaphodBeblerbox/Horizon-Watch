@@ -2,18 +2,18 @@ import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
-import { getMarkerCanvas, AFFILIATION, ENTITY_FUNCTION } from "./markerRenderer.js"
+import { getEntityMarkerDataUri } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-// Airports are real, non-flagged aviation infrastructure — Neutral (square)
-// affiliation frame with the airfield glyph (see markerRenderer.js).
-// Importance tier is conveyed via size (ICON_SIZE below), same as before.
+// Airports are real, non-flagged aviation infrastructure. The new outline-
+// icon system has one shared "facility" glyph for all infrastructure
+// (matching src/inspector/adapters.js's adaptInfrastructure(), which already
+// collapses airports/ports/cables/pipelines/etc. to entityType "facility"
+// for InspectorPanel — same real distinction, same resolution, applied
+// consistently here). Importance tier is still conveyed via size (ICON_SIZE
+// below), unchanged from before.
 function getIcon() {
-    return getMarkerCanvas({
-        affiliation:    AFFILIATION.NEUTRAL,
-        entityFunction: ENTITY_FUNCTION.INFRA_AIRPORT,
-        size: 32,
-    })
+    return getEntityMarkerDataUri({ entityType: "facility", size: 32 })
 }
 
 // Icon size varies by airport importance

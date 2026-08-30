@@ -25,7 +25,7 @@
  */
 import { renderToStaticMarkup } from "react-dom/server"
 import { createElement } from "react"
-import { Ship, Plane, Building2, MapPin, Newspaper, TriangleAlert, Target } from "lucide-react"
+import { Ship, Plane, Building2, MapPin, Newspaper, TriangleAlert, Target, Sparkles } from "lucide-react"
 
 export const ENTITY_ICON_COMPONENT = {
     vessel: Ship,
@@ -35,6 +35,15 @@ export const ENTITY_ICON_COMPONENT = {
     news_event: Newspaper,
     alert: TriangleAlert,
     zone: Target,
+    // "fusion" is a real, still-used entity kind (backend /api/fusions
+    // multi-domain correlated intelligence events — see GlobeAlertsLayer.jsx's
+    // fusionIcon() — plus DirectorBar's own logo mark and ForceGraph's
+    // fusion_event graph nodes). markerRenderer.js gave it a bespoke
+    // spark/cross glyph; the new outline set has no dedicated symbol, so this
+    // reuses the same Sparkles glyph Icon.jsx's "aiCouncil" UI-chrome icon
+    // already uses for "AI-synthesized insight" — a real, already-established
+    // meaning in this codebase, not an invented one.
+    fusion: Sparkles,
     generic: MapPin,
 }
 
@@ -122,7 +131,10 @@ function badgeColorFor(entityType, subtype) {
  * data-URI) — Cesium loads it asynchronously itself, same pattern
  * markerRenderer.js's markerSvg() already used for non-Cesium UI.
  */
-export function entityMarkerSvg({ entityType = "generic", subtype = null, sanctionsStatus = null, size = 32, color = "#E8EEF7" } = {}) {
+export function entityMarkerSvg({
+    entityType = "generic", subtype = null, sanctionsStatus = null,
+    size = 32, color = "#E8EEF7", pulse = false,
+} = {}) {
     const Cmp = ENTITY_ICON_COMPONENT[entityType] || ENTITY_ICON_COMPONENT.generic
     const iconSize = Math.round(size * 0.56)
     const iconMarkup = renderToStaticMarkup(createElement(Cmp, { size: iconSize, color, strokeWidth: 1.5 }))
@@ -131,6 +143,17 @@ export function entityMarkerSvg({ entityType = "generic", subtype = null, sancti
     const ring = statusRingColor(sanctionsStatus)
     const ringEl = ring
         ? `<circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1.5}" fill="none" stroke="${ring}" stroke-width="2"/>`
+        : ""
+
+    // Real, still-used visual emphasis carried over from markerRenderer.js's
+    // drawMarker() `pulse` flag (a static translucent halo ring, not an
+    // animated one — same as before) for higher-severity fusion events
+    // (GlobeAlertsLayer.jsx) and the selected marker on NewsMiniMap. Drawn in
+    // the marker's own `color` rather than a fabricated affiliation color,
+    // and only when there's no status ring already occupying that space (a
+    // ring already conveys "real signal here" on its own).
+    const pulseEl = (pulse && !ring)
+        ? `<circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 3}" fill="none" stroke="${color}55" stroke-width="2"/>`
         : ""
 
     const badge = badgeColorFor(entityType, subtype)
@@ -142,6 +165,7 @@ export function entityMarkerSvg({ entityType = "generic", subtype = null, sancti
         : ""
 
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
+        + pulseEl
         + ringEl
         + `<g transform="translate(${iconOffset}, ${iconOffset})">${iconMarkup}</g>`
         + badgeEl
@@ -156,9 +180,105 @@ export function entityMarkerDataUri(opts) {
 const _cache = new Map()
 /** Cached wrapper — key includes every option that changes the pixels. */
 export function getEntityMarkerDataUri(opts = {}) {
-    const key = JSON.stringify([opts.entityType, opts.subtype, opts.sanctionsStatus, opts.size ?? 32, opts.color ?? ""])
+    const key = JSON.stringify([
+        opts.entityType, opts.subtype, opts.sanctionsStatus,
+        opts.size ?? 32, opts.color ?? "", !!opts.pulse,
+    ])
     if (_cache.has(key)) return _cache.get(key)
     const uri = entityMarkerDataUri(opts)
     _cache.set(key, uri)
     return uri
+}
+
+// ── ForceGraph (forge entity graph) support ───────────────────────────────────
+// Maps a canonical graph node type (ForceGraph.jsx's canonType()) to this
+// module's real {entityType} identity — replaces markerRenderer.js's
+// graphNodeSymbol()/graphNodeColor(). Every node here maps onto a real,
+// already-established entityType bucket used elsewhere in this module
+// (vessel/aircraft/alert/news_event/facility/zone/fusion/generic) — no new
+// glyph vocabulary invented for the graph specifically.
+//
+// Deliberately NOT reproducing the old Neutral (green) vs Unknown (yellow)
+// affiliation-frame color pair for "recognized vs unrecognized node type":
+// that distinction never carried a real threat/identity signal (the graph
+// shows ontology structure, not live assessment — see markerRenderer.js's own
+// comment on GRAPH_NODE_SYMBOL), and the rebuild spec explicitly retires
+// affiliation-style color coding. The generic glyph shape itself already
+// signals "unrecognized type" on its own; GRAPH_UNKNOWN_COLOR just mutes it
+// rather than inventing a fabricated status color.
+const GRAPH_NODE_ENTITY = {
+    vessel:         "vessel",
+    aircraft:       "aircraft",
+    alert:          "alert",
+    surge:          "alert",
+    // Real backend fusion events — see the `fusion` entry in
+    // ENTITY_ICON_COMPONENT above.
+    fusion_event:   "fusion",
+    // News-derived pattern assessments (ALERT_ICONS-keyed) — real, distinct
+    // from raw AIS/ADSB alerts, so they get the news glyph rather than the
+    // generic alert triangle (mirrors src/inspector/adapters.js's own
+    // domain-based split for real alert records).
+    assessment:     "news_event",
+    // Real maritime/aviation/cable infrastructure — collapsed to the single
+    // shared "facility" glyph, matching the precedent already set by
+    // src/inspector/adapters.js's adaptInfrastructure() for the exact same
+    // real distinction (port/airport/cable/pipeline/substation/etc. all
+    // resolve to entityType "facility" there too).
+    port:           "facility",
+    airport:        "facility",
+    cable:          "facility",
+    watch_zone:     "zone",
+    strategic_zone: "zone",
+    rule:           "generic",
+}
+
+const GRAPH_KNOWN_COLOR   = "#E8EEF7" // recognized node type — standard glyph tone
+const GRAPH_UNKNOWN_COLOR = TEXT_MUTED // unrecognized type — muted, not a fabricated warning color
+
+export function graphNodeIcon(canonType) {
+    const entityType = GRAPH_NODE_ENTITY[canonType]
+    return { entityType: entityType || "generic", color: entityType ? GRAPH_KNOWN_COLOR : GRAPH_UNKNOWN_COLOR }
+}
+
+const _graphIconImageCache = new Map()
+
+/**
+ * Synchronous per-frame canvas draw for ForceGraph.jsx's force-directed
+ * simulation loop. ForceGraph redraws every visible node on every animation
+ * frame directly into a live 2D context — structurally different from every
+ * other consumer here, which hands Cesium a one-shot billboard `image`
+ * string/canvas built once and cached. Calling entityMarkerSvg() (which
+ * renders real React/lucide markup via renderToStaticMarkup()) 150 times ×
+ * 60fps would be real, avoidable work, and Path2D can't rasterize an SVG
+ * string synchronously either.
+ *
+ * So instead: reuse the exact same real entityMarkerSvg() glyph (never a
+ * second hand-drawn icon language), pre-rendered to a real <img> exactly
+ * once per (entityType, color, size) combination — decoding an <img> is
+ * asynchronous, so the very first frame for a given combination draws a
+ * plain placeholder circle in the node's real color, then every subsequent
+ * frame (milliseconds later, once the image decodes) draws the real cached
+ * glyph bitmap. Same cache-once-blit-forever technique
+ * getEntityMarkerDataUri() already uses for Cesium billboards.
+ */
+export function drawGraphNode(ctx, cx, cy, r, canonType) {
+    const { entityType, color } = graphNodeIcon(canonType)
+    const size = Math.max(8, Math.round(r * 2.2))
+    const key = `${entityType}|${color}|${size}`
+    let img = _graphIconImageCache.get(key)
+    if (!img) {
+        img = new Image()
+        img.decoding = "async"
+        img.src = entityMarkerDataUri({ entityType, color, size })
+        _graphIconImageCache.set(key, img)
+    }
+    if (img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, cx - size / 2, cy - size / 2, size, size)
+    } else {
+        ctx.beginPath()
+        ctx.arc(cx, cy, r * 0.6, 0, Math.PI * 2)
+        ctx.strokeStyle = color
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+    }
 }

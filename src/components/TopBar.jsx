@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import TopNav from "./TopNav.jsx"
 import Logo from "./Logo.jsx"
+import Icon from "../ui/Icon.jsx"
 import API_BASE from "../apiBase.js"
 
 function IconExpand() {
@@ -26,19 +27,36 @@ function IconCompress() {
 }
 
 // ── Search helpers ────────────────────────────────────────────────────────────
-
-const TYPE_META = {
-    airport:    { icon: "✈",  color: "#a78bfa" },
-    port:       { icon: "⚓", color: "#34d399" },
-    cable:      { icon: "〰", color: "#fb923c" },
-    chokepoint: { icon: "🔺", color: "#fbbf24" },
-    assessment: { icon: "⚡", color: "#ef4444" },
-    fusion:     { icon: "🔮", color: "#8b5cf6" },
-    zone:       { icon: "👁", color: "#10b981" },
-    rule:       { icon: "⚙", color: "#6b7280" },
-    location:   { icon: "📌", color: "#e2e8f0" },
-    country:    { icon: "🌍", color: "#38bdf8" },
-    city:       { icon: "🏙", color: "#cbd5e1" },
+// Real Icon.jsx names, replacing the previous raw-emoji table (✈⚓〰🔺⚡🔮👁⚙📌🌍🏙)
+// per the full UI rebuild spec — every icon in the app routes through the one
+// shared Icon.jsx component. Reasoning for non-obvious picks: airport/port/
+// cable each get a real, distinct lucide glyph (PlaneTakeoff/Anchor/Cable)
+// rather than being force-fit into the generic "facility" icon, since this
+// list shows all three types side by side and needs them visually
+// distinguishable at a glance, same as the old emoji did. chokepoint/zone
+// share "target" (crosshair/AOI reads for both). assessment reuses "warning"
+// (TriangleAlert). fusion reuses "aiCouncil" (Sparkles) — the same glyph
+// src/globe/entityIcons.js now uses for real fusion-event billboards
+// elsewhere in this app. rule reuses "settings" (a rule-engine concept).
+// location/country/city all reuse "poi" — no dedicated country/city glyph
+// exists in Icon.jsx and none of these three needs to be visually distinct
+// from the others in practice (they're never shown differentiated by icon
+// alone; the type label text to the right already disambiguates them).
+// Exported (not just module-local) so it's a plain, directly-testable data
+// table — see TopBar.test.js — rather than only reachable by mounting the
+// component (this project has no DOM-mounting test library).
+export const TYPE_META = {
+    airport:    { iconName: "airport",   color: "#a78bfa" },
+    port:       { iconName: "port",      color: "#34d399" },
+    cable:      { iconName: "cable",     color: "#fb923c" },
+    chokepoint: { iconName: "target",    color: "#fbbf24" },
+    assessment: { iconName: "warning",   color: "#ef4444" },
+    fusion:     { iconName: "aiCouncil", color: "#8b5cf6" },
+    zone:       { iconName: "target",    color: "#10b981" },
+    rule:       { iconName: "settings",  color: "#6b7280" },
+    location:   { iconName: "poi",       color: "#e2e8f0" },
+    country:    { iconName: "poi",       color: "#38bdf8" },
+    city:       { iconName: "poi",       color: "#cbd5e1" },
 }
 
 async function runUnifiedSearch(query, apiBase) {
@@ -215,7 +233,9 @@ function InlineSearch({ onResult, apiBase }) {
                                     borderBottom: i < results.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
                                 }}
                             >
-                                <span style={{ fontSize: 12, flexShrink: 0 }}>{meta.icon}</span>
+                                <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center" }}>
+                                    <Icon name={meta.iconName} size={12} color={meta.color} />
+                                </span>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontSize: 11, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
                                     {sub && <div style={{ fontSize: 10, color: "rgba(148,163,184,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{sub}</div>}

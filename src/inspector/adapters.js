@@ -196,8 +196,13 @@ export function adaptAircraft(data = {}) {
  * markerRenderer.js's resolveAlertEntityFunction() used (AIS -> vessel
  * glyph, ADS-B -> aircraft glyph with a real military/general sub-type
  * badge, everything else -> the generic alert/warning glyph).
+ *
+ * Exported so src/globe/GlobeAlertsLayer.jsx's real Cesium billboards can
+ * reuse the exact same domain-based classification this file already uses
+ * for InspectorPanel — one source of truth for "what glyph does this alert
+ * get", not two independently-maintained copies of the same real logic.
  */
-function alertEntityTypeAndSubtype(a) {
+export function alertEntityTypeAndSubtype(a) {
     const domain = (a.domain || a.source || "").toUpperCase()
     if (domain === "AIS") return { entityType: "vessel", subtype: null }
     if (domain === "ADSB") {
