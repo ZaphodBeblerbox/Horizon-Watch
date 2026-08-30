@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import API_BASE from "../apiBase.js"
 import { TV_CHANNELS as RAW_CHANNELS } from "./tvchannels.js"
 import MobileNewsFeed from "./MobileNewsFeed.jsx"
+import NewsMiniMap from "./NewsMiniMap.jsx"
+import { getPlottableArticles, findHighlightedMarker, buildStoryActions, hasRealCoordinates } from "../globe/newsMapUtils.js"
 
 // Build embed URLs from verified youtubeId list in tvchannels.js
 const YT = (id) => `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`
@@ -77,7 +79,11 @@ function useOGImage(href, initialImg) {
 }
 
 // ── Desktop article card ───────────────────────────────────────────────────────
-function ArticleCard({ a, borderOverride }) {
+// `onSelect(a)` is optional — only wired up by the World News two-pane layout
+// (selects the story for the mini-map highlight + detail panel); every other
+// call site (city/markets/spaceflight panels) leaves it undefined and keeps
+// its existing click-opens-article behavior unchanged.
+function ArticleCard({ a, borderOverride, onSelect }) {
     const title   = a.headline || a.clean_title || a.title || "Untitled"
     const ts      = a.latest_event || a.published_at || a.timestamp || a.published
     const tier    = a.severity_tier
@@ -92,7 +98,7 @@ function ArticleCard({ a, borderOverride }) {
 
     return (
         <div
-            onClick={() => href && window.open(href, "_blank")}
+            onClick={() => { onSelect?.(a); href && window.open(href, "_blank") }}
             style={{
                 display:       "flex",
                 flexDirection: "column",
@@ -189,6 +195,67 @@ function ArticleCard({ a, borderOverride }) {
                         <span style={{ color: "rgba(56,189,248,0.55)" }}>{a.region || a.country}</span>
                     )}
                 </div>
+            </div>
+        </div>
+    )
+}
+
+// ── Selected-story detail panel (mini-map sidebar) ────────────────────────────
+// Real "Jump to Globe" / "Open Inspector" actions for the story selected in
+// the list. NewsPage doesn't own app-level tab/globe-camera state, so both
+// are optional callback props with no-op defaults (see buildStoryActions) —
+// wired to real behavior by whoever owns that state (app.jsx).
+function SelectedStoryPanel({ story, onJumpToLocation, onOpenInspector }) {
+    if (!story) {
+        return (
+            <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, lineHeight: 1.5 }}>
+                Select a story from the list to see it highlighted on the map.
+            </div>
+        )
+    }
+
+    const title    = story.headline || story.clean_title || story.title || "Untitled"
+    const src      = story.source_name || story.source || ""
+    const ts       = story.latest_event || story.published_at || story.timestamp || story.published
+    const summary  = story.summary || story.auto_brief || story.description || ""
+    const geolocated = hasRealCoordinates(story)
+    const actions  = buildStoryActions(story, { onJumpToLocation, onOpenInspector })
+
+    const btn = (enabled) => ({
+        flex:         1,
+        padding:      "8px 10px",
+        fontSize:     11,
+        fontWeight:   600,
+        border:       `1px solid ${enabled ? "rgba(56,189,248,0.35)" : "rgba(255,255,255,0.06)"}`,
+        borderRadius: 6,
+        background:   enabled ? "rgba(56,189,248,0.1)" : "rgba(255,255,255,0.02)",
+        color:        enabled ? "#38bdf8" : "rgba(255,255,255,0.25)",
+        cursor:       enabled ? "pointer" : "default",
+    })
+
+    return (
+        <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.4, marginBottom: 8 }}>
+                {title}
+            </div>
+            <div style={{ display: "flex", gap: 6, fontSize: 10, color: "rgba(255,255,255,0.35)", marginBottom: 12, flexWrap: "wrap" }}>
+                {src && <span>{src}</span>}
+                {ts && <span>{formatAge(ts)}</span>}
+                {(story.region || story.country) && <span>{story.region || story.country}</span>}
+            </div>
+            {summary && (
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.55, marginBottom: 14 }}>
+                    {summary}
+                </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+                <button
+                    onClick={actions.jumpToLocation}
+                    disabled={!geolocated}
+                    title={geolocated ? "Fly the main globe to this story's location" : "No real coordinates for this story"}
+                    style={btn(geolocated)}
+                >📍 Jump to Globe</button>
+                <button onClick={actions.openInspector} style={btn(true)}>Open in Inspector</button>
             </div>
         </div>
     )
@@ -624,7 +691,7 @@ function MarketsPanel() {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function NewsPage({ onClose }) {
+export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenInspector = () => {} }) {
     const [articles,       setArticles]       = useState([])
     const [loading,        setLoading]        = useState(true)
     const [fetchError,     setFetchError]     = useState(null)
@@ -641,6 +708,7 @@ export default function NewsPage({ onClose }) {
     const [tvCollapsed,    setTvCollapsed]    = useState(true)
     const [isMobile,       setIsMobile]       = useState(() => window.innerWidth < 768)
     const [viewMode,       setViewMode]       = useState(() => window.innerWidth < 768 ? "feed" : "grid")
+    const [selectedStory,  setSelectedStory]  = useState(null)  // desktop World News mini-map selection
     const retryTimerRef = useRef(null)
 
     useEffect(() => {
@@ -764,8 +832,16 @@ export default function NewsPage({ onClose }) {
     // ── Articles for TikTok feed (world + spaceflight; cities handled separately) ─
     const feedArticles = section === "space" ? spaceArticles : filtered
 
+    // ── Mini-map data — World News two-pane layout (desktop only) ────────────
+    // Only articles with real lat/lon are plottable; nothing is fabricated.
+    const plottableMarkers = useMemo(() => getPlottableArticles(filtered), [filtered])
+    const highlightedMarker = useMemo(
+        () => findHighlightedMarker(plottableMarkers, selectedStory),
+        [plottableMarkers, selectedStory]
+    )
+
     // ── Featured card — desktop only (first item as wide card) ───────────────
-    const renderFeatured = (a) => {
+    const renderFeatured = (a, { onSelect } = {}) => {
         const title   = a.headline || a.clean_title || a.title || "Untitled"
         const ts      = a.latest_event || a.published_at || a.timestamp || a.published
         const tier    = a.severity_tier
@@ -777,7 +853,7 @@ export default function NewsPage({ onClose }) {
 
         return (
             <div
-                onClick={() => href && window.open(href, "_blank")}
+                onClick={() => { onSelect?.(a); href && window.open(href, "_blank") }}
                 style={{
                     display:      "flex",
                     minHeight:    220,
@@ -1388,20 +1464,53 @@ export default function NewsPage({ onClose }) {
                             )}
                         </div>
                     ) : (
-                        /* World News */
-                        <div style={{ padding: 20 }}>
-                            {(loading || filtered.length === 0) ? renderEmpty() : (
-                                <>
-                                    {renderFeatured(filtered[0])}
-                                    {filtered.length > 1 && (
-                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
-                                            {filtered.slice(1).map((a, i) => (
-                                                <ArticleCard key={a.id || i} a={a} />
-                                            ))}
+                        /* World News — desktop two-pane: dense list + persistent mini-map */
+                        <div style={{ display: "flex", height: "100%", gap: 16, padding: 20 }}>
+                            <div style={{ flex: "1 1 auto", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
+                                {(loading || filtered.length === 0) ? renderEmpty() : (
+                                    <>
+                                        {renderFeatured(filtered[0], { onSelect: setSelectedStory })}
+                                        {filtered.length > 1 && (
+                                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                                                {filtered.slice(1).map((a, i) => (
+                                                    <ArticleCard key={a.id || i} a={a} onSelect={setSelectedStory} />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Persistent mini-map + selected-story detail (desktop only) */}
+                            <div style={{ flex: "0 0 320px", display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
+                                <div style={{ flex: "0 0 220px", borderRadius: 8, overflow: "hidden", border: "1px solid rgba(56,189,248,0.15)" }}>
+                                    <NewsMiniMap
+                                        markers={plottableMarkers}
+                                        selectedId={highlightedMarker?.id ?? null}
+                                        onSelectMarker={(id) => {
+                                            const m = plottableMarkers.find(x => x.id === id)
+                                            if (m) setSelectedStory(m.article)
+                                        }}
+                                    />
+                                </div>
+                                <div style={{
+                                    flex: 1, minHeight: 0, overflowY: "auto",
+                                    background: "rgba(30,41,59,0.5)", border: "1px solid rgba(56,189,248,0.1)",
+                                    borderRadius: 8, padding: 14,
+                                }}>
+                                    {selectedStory ? (
+                                        <SelectedStoryPanel
+                                            story={selectedStory}
+                                            onJumpToLocation={onJumpToLocation}
+                                            onOpenInspector={onOpenInspector}
+                                        />
+                                    ) : (
+                                        <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, lineHeight: 1.5 }}>
+                                            {plottableMarkers.length} of {filtered.length} stories geolocated. Select one from the list to see it highlighted on the map.
                                         </div>
                                     )}
-                                </>
-                            )}
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div>

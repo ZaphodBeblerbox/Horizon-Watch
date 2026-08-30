@@ -22,6 +22,9 @@ import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
 import GlobeSurgeLayer          from "../globe/GlobeSurgeLayer.jsx"
+import GlobeCameraLayer         from "../globe/GlobeCameraLayer.jsx"
+import ScaleBar                 from "./ScaleBar.jsx"
+import CoordinateReadout        from "./CoordinateReadout.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -98,6 +101,9 @@ export default function GlobeView({
     overwatchSentinelOverlay = null,
     // Satellite imagery overlay (Sentinel-2)
     satelliteEnabled = false,
+    satelliteOpacity = 0.9,
+    // Live CCTV camera feeds (real public webcams + local YOLO detection server)
+    cctvEnabled = false,
     // Infrastructure layers
     airportsEnabled = false,
     portsEnabled    = false,
@@ -118,6 +124,14 @@ export default function GlobeView({
     const [aircraft, setAircraft] = useState([])
     const [viewBounds, setViewBounds] = useState(null)
     const [webglLost, setWebglLost] = useState(false)
+    const [cesiumViewer, setCesiumViewer] = useState(null)
+
+    // Expose the live Cesium.Viewer once Resium has mounted it, for the
+    // bottom-left map-chrome overlays (ScaleBar/CoordinateReadout) which
+    // need a real viewer instance rather than the ref wrapper.
+    useEffect(() => {
+        setCesiumViewer(viewerRef.current?.cesiumElement || null)
+    }, [])
 
     // AIS — use external prop if provided, otherwise fetch internally
     useEffect(() => {
@@ -314,7 +328,6 @@ export default function GlobeView({
 
     // When any raster imagery overlay is active, swap from 3D photorealistic tiles to
     // flat ESRI satellite so ImageryLayers render on the ellipsoid unobstructed.
-    const overlayActive = nauticalEnabled || infraEnabled || satelliteEnabled
 
     if (webglLost) return (
         <div style={{
@@ -380,7 +393,7 @@ export default function GlobeView({
             >
                 {/* Raster overlays — rendered on top of ESRI base when active */}
                 {satelliteEnabled && sentinelProvider && (
-                    <ImageryLayer imageryProvider={sentinelProvider} alpha={0.9} maximumTerrainLevel={18} />
+                    <ImageryLayer imageryProvider={sentinelProvider} alpha={satelliteOpacity} maximumTerrainLevel={18} />
                 )}
                 {nauticalEnabled && (
                     <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} maximumTerrainLevel={18} />
@@ -430,6 +443,9 @@ export default function GlobeView({
                 {/* ── Threat heatmap layer ─────────────────────────────────────── */}
                 <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />
 
+                {/* ── Live CCTV camera feeds ───────────────────────────────────── */}
+                {cctvEnabled && <GlobeCameraLayer />}
+
                 {/* ── Passive auto mode ────────────────────────────────────────── */}
                 <GlobeAutoMode enabled={autoModeEnabled} isMobile={isMobile} />
 
@@ -445,6 +461,14 @@ export default function GlobeView({
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} />
+
+            {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
+            {cesiumViewer && (
+                <div style={{ position: "absolute", left: 12, bottom: 12, zIndex: 40, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <ScaleBar viewer={cesiumViewer} />
+                    <CoordinateReadout viewer={cesiumViewer} />
+                </div>
+            )}
 
         </div>
         </GlobeErrorBoundary>

@@ -1,5 +1,10 @@
-// MobileDrawer — slide-in overlay replacing Sidebar on mobile
+// MobileDrawer — mobile secondary/overflow menu.
 // Sits between TopBar (40px) and BottomNav (56px) — does NOT cover either.
+// The 4 fixed top-level modes + Alerts live in BottomNav now; this drawer is
+// mobile's equivalent of desktop's SecondaryMenu — real features that
+// aren't a top-level mode (Analytics, Reels, Overwatch, Director Mode,
+// Threats, Health, TV, Sound, Settings, Profile), plus the mobile-only
+// Layers entry (LayerRail renders as a BottomSheet on narrow screens).
 
 const SECTION_HEADER = {
     fontSize:      9,
@@ -61,17 +66,15 @@ export default function MobileDrawer({
     rightPanel,
     onRightPanel,
     activeTabType,
-    onOpenTab,
-    onOpenForge,
+    onOpenLayers,
+    onOpenReels,
     profile,
-    alertCount,
-    notifUnread,
-    onToggleNotif,
-    briefingUnread,
     soundMuted,
     onToggleSound,
     tvOpen,
     onToggleTV,
+    overwatchActive = false,
+    onToggleOverwatch = null,
     directorActive = false,
     onDirectorTap = null,
 }) {
@@ -139,7 +142,7 @@ export default function MobileDrawer({
                     flexShrink:     0,
                 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>
-                        Menu
+                        More
                     </span>
                     <button
                         onClick={onClose}
@@ -161,64 +164,48 @@ export default function MobileDrawer({
                 </div>
 
                 <div style={{ flex: 1, overflowY: "auto" }}>
-                    {/* Panels */}
-                    <div style={SECTION_HEADER}>Panels</div>
-                    {panelRow("layers", "Layers")}
-                    {panelRow("alerts", "Alerts", alertCount > 0 ? alertCount : 0)}
-                    <Row
-                        label={`Notifications${notifUnread > 0 ? ` (${notifUnread})` : ""}`}
-                        active={false}
-                        onClick={() => { onToggleNotif(); onClose() }}
-                    />
+                    <div style={SECTION_HEADER}>Map</div>
+                    <Row label="Layers" active={false} onClick={() => { onOpenLayers(); onClose() }} />
+
+                    <div style={SECTION_HEADER}>Intelligence</div>
+                    {panelRow("analytics", "Analytics")}
+                    {panelRow("threats", "Threats")}
+                    {panelRow("health", "System Health")}
+                    <Row label="Reels" active={false} onClick={() => { onOpenReels(); onClose() }} />
                     <button
-                            onClick={() => { onDirectorTap?.(); onClose() }}
-                            style={{
-                                width:          "100%",
-                                display:        "flex",
-                                alignItems:     "center",
-                                gap:            8,
-                                background:     directorActive ? "rgba(245,158,11,0.10)" : "none",
-                                border:         "none",
-                                borderLeft:     directorActive ? "3px solid #f59e0b" : "3px solid transparent",
-                                color:          directorActive ? "#f59e0b" : "rgba(255,255,255,0.7)",
-                                fontSize:       13,
-                                fontWeight:     directorActive ? 600 : 400,
-                                cursor:         "pointer",
-                                padding:        "12px 16px 12px 13px",
-                                textAlign:      "left",
-                                transition:     "background 0.1s, color 0.1s",
-                                WebkitTapHighlightColor: "transparent",
-                                minHeight:      44,
-                            }}
-                        >
-                            <span style={{ fontSize: 16, lineHeight: 1 }}>◈</span>
-                            Director Mode
-                        </button>
+                        onClick={() => { onDirectorTap?.(); onClose() }}
+                        style={{
+                            width:          "100%",
+                            display:        "flex",
+                            alignItems:     "center",
+                            gap:            8,
+                            background:     directorActive ? "rgba(245,158,11,0.10)" : "none",
+                            border:         "none",
+                            borderLeft:     directorActive ? "3px solid #f59e0b" : "3px solid transparent",
+                            color:          directorActive ? "#f59e0b" : "rgba(255,255,255,0.7)",
+                            fontSize:       13,
+                            fontWeight:     directorActive ? 600 : 400,
+                            cursor:         "pointer",
+                            padding:        "12px 16px 12px 13px",
+                            textAlign:      "left",
+                            transition:     "background 0.1s, color 0.1s",
+                            WebkitTapHighlightColor: "transparent",
+                            minHeight:      44,
+                        }}
+                    >
+                        <span style={{ fontSize: 16, lineHeight: 1 }}>◈</span>
+                        Director Mode
+                    </button>
+                    {onToggleOverwatch && (
+                        <Row label="Overwatch" active={overwatchActive} onClick={() => { onToggleOverwatch(); onClose() }} />
+                    )}
                     {panelRow("workspaces", "Workspaces")}
                     {panelRow("situations", "Situations")}
 
-                    {/* Navigation */}
-                    <div style={SECTION_HEADER}>Navigation</div>
-                    <Row
-                        label={`Briefings${briefingUnread > 0 ? ` (${briefingUnread})` : ""}`}
-                        active={activeTabType === "briefing"}
-                        onClick={() => { onOpenTab("briefing"); onClose() }}
-                    />
-                    <Row
-                        label="Analytics"
-                        active={activeTabType === "analytics"}
-                        onClick={() => { onOpenTab("analytics"); onClose() }}
-                    />
-                    <Row
-                        label="Forge"
-                        active={activeTabType === "forge"}
-                        onClick={() => { onOpenTab("forge"); onClose() }}
-                    />
                     {/* Settings */}
                     <div style={SECTION_HEADER}>Settings</div>
                     {panelRow("profile", "Profile")}
                     {panelRow("settings", "Preferences")}
-                    {panelRow("health", "System Health")}
                     <Row
                         label={soundMuted ? "Sound: Muted" : "Sound: On"}
                         active={false}
