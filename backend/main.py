@@ -114,7 +114,15 @@ import gdelt_events
 from alert_writer import write_alert as _write_alert_base, write_news_article
 
 def write_alert(alert_dict: dict):
-    """Write alert to DB and feed to fusion engine."""
+    """Write alert to DB, feed to fusion engine, and link entities.
+
+    Entity-linking lives here — not at each call site — so every alert gets
+    OntologyLink rows regardless of which of the (today: 4) real alert-writing
+    code paths produced it, rather than requiring each call site to remember
+    to call entity_linker separately (an audit found 2 of 4 real paths had
+    forgotten to). Both side effects are best-effort: a fusion-feed or
+    entity-linking failure must never break the primary alert write itself.
+    """
     result = _write_alert_base(alert_dict)
     # Feed every alert to the fusion engine for multi-domain correlation
     try:
@@ -132,6 +140,25 @@ def write_alert(alert_dict: dict):
                 "summary":       (alert_dict.get("title") or "")[:200],
                 "created_at":    datetime.now(timezone.utc).isoformat(),
             })
+    except Exception:
+        pass
+    # Link entities (cables/ports/airports/zones) for every alert. Prefer the
+    # id the DB write actually used (`result`) over alert_dict's own "id" —
+    # several call sites don't set one up front and rely on write_alert/
+    # alert_writer to generate it, so alert_dict.get("id") alone would be
+    # None for those and no link would ever be recorded for them.
+    try:
+        _el_id = result or alert_dict.get("id") or ""
+        if _el_id:
+            _el_lat = alert_dict.get("lat")
+            _el_lon = alert_dict.get("lng") or alert_dict.get("lon")
+            entity_linker.link_alert(
+                _el_id,
+                str(alert_dict.get("source") or alert_dict.get("domain") or "alert").lower(),
+                _el_lat,
+                _el_lon,
+                alert_dict.get("title") or alert_dict.get("message", ""),
+            )
     except Exception:
         pass
     return result
@@ -9075,7 +9102,8 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
     except Exception as _db_err:
         print(f"[news-pattern] DB write failed: {_db_err}")
 
-    # Persist as Alert + OntologyLinks + mark region dirty
+    # Persist as Alert (write_alert() itself now handles OntologyLinks — see
+    # its docstring) + mark region dirty
     try:
         _region_id = trigger_article.get("region_id") or None
         write_alert({
@@ -9088,7 +9116,6 @@ def _news_assessment_fire(rule: dict, matching_articles: list, location: str, tr
             "lon":        lon,
             "region":     _region_id,
         })
-        entity_linker.link_alert(assess_id, "article", lat, lon, headline)
         from alert_writer import _mark_region_dirty as _mrd_naf
         _mrd_naf(_region_id)
     except Exception as _naf_e:
@@ -20051,21 +20078,12 @@ async def _forge_detection_cycle():
             all_new = new_ais_alerts + new_adsb_alerts + new_news_alerts
             _forge_alerts.extend(all_new)
             _correlation_assessments.extend(new_assessments)
-            # Persist new alerts to DB
+            # Persist new alerts to DB (write_alert() itself now handles
+            # OntologyLinks — see its docstring)
             for _aw_alert in all_new:
                 try:
                     _src = "ais" if _aw_alert in new_ais_alerts else ("adsb" if _aw_alert in new_adsb_alerts else "news")
                     write_alert({**_aw_alert, "source": _src})
-                    _a_lat = _aw_alert.get("lat")
-                    _a_lon = _aw_alert.get("lng") or _aw_alert.get("lon")
-                    if _a_lat is not None and _a_lon is not None:
-                        entity_linker.link_alert(
-                            alert_id=_aw_alert.get("id", ""),
-                            source_type=_src,
-                            lat=_a_lat,
-                            lon=_a_lon,
-                            title=_aw_alert.get("title") or _aw_alert.get("message", ""),
-                        )
                 except Exception as _aw_e:
                     print(f"[alert-writer] alert persist error: {_aw_e}")
 
