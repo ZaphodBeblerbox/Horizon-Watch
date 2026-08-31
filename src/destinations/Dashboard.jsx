@@ -4,13 +4,29 @@
  * content region when the integrator's active destination is "dashboard".
  * Not wired into app.jsx by this file — the integrator renders it.
  *
- * Layout: two columns filling the content region (left ~66% AOI overview
- * map, right ~34% --bg-panel Watch Queue), plus a bottom stat-tile band.
+ * Layout: two columns filling the content region (left ~66% real embedded
+ * globe — GlobeView, the same real Cesium map every other destination uses,
+ * not a second map implementation — right ~34% --bg-panel-translucent Watch
+ * Queue), plus a bottom stat-tile band. The map can expand to fill the
+ * ENTIRE content region (`fullscreen` local state) — see the prop contract
+ * below.
  *
- * Real data sources — no fabricated numbers anywhere:
- *   - GET /api/watch-zones               → AOI boxes (WatchZone rows)
- *   - GET /api/watch-zones/{id}/analytics → per-zone real baseline comparison
- *     (vessel_activity_trend) — see dashboardLogic.js's zoneExceedsBaseline()
+ * Prop contract (UI correction pass, Part 4):
+ *   - canonicalView {"maritime"|"aerial"|"infrastructure"|"imageAnalysis"}
+ *     (default "maritime") — which Canonical operational view's default
+ *     layer set to use, but ONLY while the map is in `fullscreen`. The
+ *     normal windowed view always uses its own separate AIS/ADS-B/events/
+ *     alerts overview default, regardless of this prop.
+ *   - onFullscreenChange(bool) — called every time local `fullscreen`
+ *     state changes, so the caller (app.jsx / AppHeader) knows when to
+ *     show/hide the Canonical-view header dropdown. Dashboard does not
+ *     render that dropdown itself.
+ *
+ * Real data sources — no fabricated numbers anywhere. UI correction pass,
+ * Part 1: the map is now the real GlobeView (see below), not the WatchZone
+ * AOI-box overview AoiMiniMap.jsx used to render, so this destination no
+ * longer fetches GET /api/watch-zones itself (AoiMiniMap.jsx remains the
+ * real component Sources.jsx still uses for AOI-box drawing/selection):
  *   - GET /api/surface + GET /api/fusions → merged via the SAME
  *     mergeNotificationItems() Watchlists/NotificationsDrawer already uses
  *     (src/components/notificationsNormalize.js) — no second alert-fetching
@@ -19,21 +35,64 @@
  *   - GET /api/reports?status=in_review   → pending AI Council reviews count
  *     (src/destinations/reportsPending.js's countPendingCouncilReviews(),
  *     shared with AICouncil.jsx so the two destinations never disagree)
+ *
+ * The embedded map itself renders real AIS/ADS-B/news/alert entities via the
+ * real GlobeView component (src/components/GlobeView.jsx) — the same
+ * component the old standalone "Maritime Operational View" destination used
+ * — with the real shared MapControlStack (locate/zoom/fullscreen/layers) and
+ * LayersFlyout, rather than a second bespoke map+controls implementation.
+ * GlobeView's own bottom-left ScaleBar/CoordinateReadout come along for free.
  */
 import { useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { Panel, EmptyState } from "../ui/index.js"
 import Icon from "../ui/Icon.jsx"
-import AoiMiniMap from "./AoiMiniMap.jsx"
+import GlobeView from "../components/GlobeView.jsx"
+import MapControlStack from "../components/MapControlStack.jsx"
+import { LAYER_GROUPS, isLayerOn } from "../components/layerRailConfig.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { summarizeHealth } from "../utils/systemHealth.js"
 import { countPendingCouncilReviews } from "./reportsPending.js"
 import {
-    buildWatchQueueRows, filterWithinHours, timeAgoLabel, zoneExceedsBaseline,
+    buildWatchQueueRows, sortRowsBySeverity, filterWithinHours, timeAgoLabel,
 } from "./dashboardLogic.js"
 
 const API = API_BASE
 const REFRESH_MS = 60000
+
+// Real layer keys — see src/components/layerRailConfig.js (the ONE layer-key
+// source of truth in the app; not re-derived/guessed here).
+const LAYER_DEFS_BY_KEY = Object.fromEntries(LAYER_GROUPS.flatMap(g => g.layers).map(d => [d.key, d]))
+function layerOn(active, key) {
+    const def = LAYER_DEFS_BY_KEY[key]
+    return def ? isLayerOn(active, def) : !!active?.[key]
+}
+
+// Windowed (normal, non-fullscreen) Dashboard overview default — real
+// vessels/aircraft/news/alerts on, matching the Globe home screen's own
+// workspace defaults (src/app.jsx's <GlobeView> mount: aisVessels/adsb off
+// by default there, but this destination's whole point is "show me what's
+// happening", so this destination's own separate default turns them on).
+const WINDOWED_DEFAULT_LAYERS = { aisVessels: true, adsb: true, unifiedEvents: true, forgeAlerts: true }
+
+// Canonical operational view defaults (UI correction pass, Part 4/5) — only
+// applied while the map is in `fullscreen`, keyed by the exact real layer
+// key names from layerRailConfig.js.
+const CANONICAL_LAYER_DEFAULTS = {
+    maritime:       { aisVessels: true, ports: true, cables: true, chokepoints: true },
+    aerial:         { adsb: true, airports: true },
+    infrastructure: { oim: true },
+    // imageAnalysis renders a placeholder instead of a map — no layer set needed.
+}
+
+// Real severity-token -> hex map (index.html's --danger/--warn/--live), used
+// only to derive a low-alpha tint for a Watch Queue row's card background —
+// the spec's permitted secondary visual cue (never a colored border/stripe).
+const SEVERITY_TINT_HEX = { "var(--danger)": "#EF4444", "var(--warn)": "#F5A524", "var(--live)": "#22C55E" }
+function tintBackground(hex, alpha) {
+    const n = parseInt(hex.slice(1), 16)
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
+}
 
 function StatTile({ label, value, icon }) {
     return (
@@ -56,70 +115,90 @@ function StatTile({ label, value, icon }) {
     )
 }
 
-function WatchQueueRow({ row }) {
+// UI correction pass, Part 6/7.2: no colored left-border stripe (deleted
+// outright, not toned down); translucent card background; the one permitted
+// secondary visual cue is a subtle full-card low-opacity severity tint,
+// layered under the translucent background, never a border.
+function WatchQueueRow({ row, onSelect }) {
+    const tintHex = SEVERITY_TINT_HEX[row.severityToken]
     return (
-        <div style={{
-            display: "flex", alignItems: "stretch", borderBottom: "1px solid var(--border)",
-        }}>
-            <div style={{ width: 3, flexShrink: 0, background: row.severityToken }} />
-            <div style={{ flex: 1, minWidth: 0, padding: "var(--space-2) var(--space-3)" }}>
+        <div
+            onClick={() => onSelect(row)}
+            style={{
+                borderBottom: "1px solid var(--border)",
+                background: "var(--bg-card-translucent)",
+                backgroundImage: tintHex ? `linear-gradient(${tintBackground(tintHex, 0.06)}, ${tintBackground(tintHex, 0.06)})` : "none",
+                padding: "var(--space-2) var(--space-3)",
+                cursor: "pointer",
+            }}
+        >
+            <div style={{
+                fontSize: "var(--text-callout-title)", fontWeight: "var(--weight-semibold)",
+                color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+                {row.title}
+            </div>
+            {row.description && (
                 <div style={{
-                    fontSize: "var(--text-callout-title)", fontWeight: "var(--weight-semibold)",
-                    color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    fontSize: "var(--text-callout-meta)", color: "var(--text-secondary)", marginTop: 2,
+                    overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box",
+                    WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
                 }}>
-                    {row.title}
+                    {row.description}
                 </div>
-                {row.description && (
-                    <div style={{
-                        fontSize: "var(--text-callout-meta)", color: "var(--text-secondary)", marginTop: 2,
-                        overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box",
-                        WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                    }}>
-                        {row.description}
-                    </div>
-                )}
-                <div style={{
-                    display: "flex", gap: "var(--space-2)", marginTop: 4,
-                    fontFamily: "var(--font-mono)", fontSize: "var(--text-callout-meta)", color: "var(--text-muted)",
-                }}>
-                    {row.aoi && <span>{row.aoi}</span>}
-                    <span>{timeAgoLabel(row.publishedAt)}</span>
-                    <span>{row.confidencePct === null ? "conf —" : `conf ${row.confidencePct}%`}</span>
-                </div>
+            )}
+            <div style={{
+                display: "flex", gap: "var(--space-2)", marginTop: 4,
+                fontFamily: "var(--font-mono)", fontSize: "var(--text-callout-meta)", color: "var(--text-muted)",
+            }}>
+                {row.aoi && <span>{row.aoi}</span>}
+                <span>{timeAgoLabel(row.publishedAt)}</span>
+                <span>{row.confidencePct === null ? "conf —" : `conf ${row.confidencePct}%`}</span>
             </div>
         </div>
     )
 }
 
-export default function Dashboard() {
-    const [zones, setZones]       = useState([])
-    const [analytics, setAnalytics] = useState({}) // system_id -> analytics dict
+// UI correction pass, Part 4: imageAnalysis is a deliberately-unbuilt
+// Canonical view — a clearly-labeled placeholder, not a fake functional UI.
+function ImageAnalysisPlaceholder() {
+    return (
+        <div style={{
+            position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: "var(--space-2)",
+            background: "var(--bg-app)", fontFamily: "var(--font-sans)", textAlign: "center", padding: "var(--space-4)",
+        }}>
+            <Icon name="layers" size={28} style={{ color: "var(--text-muted)" }} />
+            <div style={{ fontSize: "var(--text-section-head)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)" }}>
+                Image Analysis
+            </div>
+            <div style={{ fontSize: "var(--text-body)", color: "var(--text-muted)" }}>
+                Coming soon
+            </div>
+        </div>
+    )
+}
+
+export default function Dashboard({ canonicalView = "maritime", onFullscreenChange = null }) {
     const [surfaceItems, setSurfaceItems] = useState([])
     const [fusionEvents, setFusionEvents] = useState([])
     const [health, setHealth]     = useState(null)
     const [reports, setReports]   = useState([])
-    const [selectedZoneId, setSelectedZoneId] = useState(null)
+
+    const [fullscreen, setFullscreen] = useState(false)
+    const [windowedLayers, setWindowedLayers] = useState(WINDOWED_DEFAULT_LAYERS)
+    const [fullscreenLayers, setFullscreenLayers] = useState(() => CANONICAL_LAYER_DEFAULTS[canonicalView] || {})
+
+    // Re-seed the fullscreen layer set whenever the caller's Canonical-view
+    // selection changes (the header dropdown this destination doesn't render
+    // itself), so switching Canonical views always starts from that view's
+    // own real defaults rather than leaking the previous view's toggles.
+    useEffect(() => {
+        setFullscreenLayers(CANONICAL_LAYER_DEFAULTS[canonicalView] || {})
+    }, [canonicalView])
 
     useEffect(() => {
         let cancelled = false
-
-        const loadZones = () =>
-            fetch(`${API}/api/watch-zones`)
-                .then(r => r.ok ? r.json() : [])
-                .then(d => {
-                    if (cancelled) return
-                    const list = Array.isArray(d) ? d : []
-                    setZones(list)
-                    // Real per-zone baseline analytics — capped fan-out, this list
-                    // is operator-curated (a handful of AOIs), not user-scale data.
-                    list.slice(0, 25).forEach((z) => {
-                        fetch(`${API}/api/watch-zones/${z.system_id}/analytics`)
-                            .then(r => r.ok ? r.json() : null)
-                            .then(a => { if (!cancelled && a) setAnalytics(prev => ({ ...prev, [z.system_id]: a })) })
-                            .catch(() => {})
-                    })
-                })
-                .catch(() => {})
 
         const loadSurface = () =>
             fetch(`${API}/api/surface`)
@@ -145,7 +224,7 @@ export default function Dashboard() {
                 .then(d => { if (!cancelled) setReports(Array.isArray(d) ? d : []) })
                 .catch(() => {})
 
-        const loadAll = () => { loadZones(); loadSurface(); loadFusions(); loadHealth(); loadReports() }
+        const loadAll = () => { loadSurface(); loadFusions(); loadHealth(); loadReports() }
         loadAll()
         const t = setInterval(loadAll, REFRESH_MS)
         return () => { cancelled = true; clearInterval(t) }
@@ -155,35 +234,125 @@ export default function Dashboard() {
         () => mergeNotificationItems(surfaceItems, fusionEvents),
         [surfaceItems, fusionEvents],
     )
-    const watchQueueRows = useMemo(() => buildWatchQueueRows(watchQueueItems), [watchQueueItems])
+    // Part 6/7.2 — severity as the PRIMARY sort signal (most urgent first),
+    // reusing the same real severity-tier ranking dashboardLogic.js's
+    // severityRank() derives from src/app.jsx's own Watchlists comparator
+    // rather than a second invented taxonomy.
+    const watchQueueRows  = useMemo(() => sortRowsBySeverity(buildWatchQueueRows(watchQueueItems)), [watchQueueItems])
     const healthSummary  = useMemo(() => summarizeHealth(health), [health])
     const pendingReviews = useMemo(() => countPendingCouncilReviews(reports), [reports])
     const hitsLast4h      = useMemo(() => filterWithinHours(watchQueueItems, 4).length, [watchQueueItems])
 
-    const pulsingIds = useMemo(() => {
-        const ids = new Set()
-        for (const [systemId, a] of Object.entries(analytics)) {
-            if (zoneExceedsBaseline(a)) ids.add(systemId)
+    const activeLayers = fullscreen ? fullscreenLayers : windowedLayers
+    const setLayers     = fullscreen ? setFullscreenLayers : setWindowedLayers
+
+    const handleFullscreenToggle = () => {
+        setFullscreen(prev => {
+            const next = !prev
+            onFullscreenChange?.(next)
+            return next
+        })
+    }
+
+    // Real map control stack integration — the exact same 3 dispatched
+    // window events src/app.jsx's own Globe-home-screen MapControlStack
+    // usage establishes (grepped there directly), not a reinvented mechanism.
+    const handleLocate = () => {
+        if (!navigator.geolocation) return
+        navigator.geolocation.getCurrentPosition((pos) => {
+            window.dispatchEvent(new CustomEvent("akili:fly-to", {
+                detail: { lat: pos.coords.latitude, lon: pos.coords.longitude, altitude: 500_000 },
+            }))
+        }, () => {})
+    }
+    const handleZoomIn  = () => window.dispatchEvent(new CustomEvent("akili:zoom-in"))
+    const handleZoomOut = () => window.dispatchEvent(new CustomEvent("akili:zoom-out"))
+
+    // Clicking a Watch Queue item flies the embedded map to its real
+    // lat/lon (when present — never fabricated) and opens the real docked
+    // InspectorPanel via GlobePopup.jsx's akili:open-inspector event, using
+    // the item's own real data — no second inspector built here.
+    const handleRowSelect = (row) => {
+        if (row.lat != null && row.lon != null) {
+            window.dispatchEvent(new CustomEvent("akili:fly-to", {
+                detail: { lat: row.lat, lon: row.lon, altitude: 300_000 },
+            }))
         }
-        return ids
-    }, [analytics])
+        window.dispatchEvent(new CustomEvent("akili:open-inspector", {
+            detail: { entityType: row.kind, entityId: row.id, data: row.raw },
+        }))
+    }
+
+    const showPlaceholder = fullscreen && canonicalView === "imageAnalysis"
+
+    const mapRegion = (
+        <div style={{ position: "relative", width: "100%", height: "100%" }}>
+            {showPlaceholder ? (
+                <ImageAnalysisPlaceholder />
+            ) : (
+                <>
+                    <GlobeView
+                        aisEnabled={layerOn(activeLayers, "aisVessels")}
+                        adsbEnabled={layerOn(activeLayers, "adsb")}
+                        eventsEnabled={layerOn(activeLayers, "unifiedEvents")}
+                        precisionEventsEnabled={layerOn(activeLayers, "precisionEvents")}
+                        eventsMinRelevance={activeLayers?.eventsMinRelevance ?? 0}
+                        alertsEnabled={layerOn(activeLayers, "forgeAlerts")}
+                        portsEnabled={layerOn(activeLayers, "ports")}
+                        cablesEnabled={layerOn(activeLayers, "cables")}
+                        chokepointsEnabled={layerOn(activeLayers, "chokepoints")}
+                        airportsEnabled={layerOn(activeLayers, "airports")}
+                        infraEnabled={layerOn(activeLayers, "oim")}
+                        eezEnabled={layerOn(activeLayers, "eez")}
+                        strategicZonesEnabled={layerOn(activeLayers, "showStrategicZones")}
+                        threatHeatmapEnabled={layerOn(activeLayers, "threatHeatmap")}
+                        cityLabelsEnabled={layerOn(activeLayers, "cityLabels")}
+                        nauticalEnabled={layerOn(activeLayers, "shippingLanes")}
+                        satelliteEnabled={layerOn(activeLayers, "satellite")}
+                        satelliteOpacity={activeLayers?.satelliteOpacity ?? 0.9}
+                        cctvEnabled={layerOn(activeLayers, "cctvFeeds")}
+                        aisHeatmapEnabled={layerOn(activeLayers, "aisHeatmap")}
+                        adsbHeatmapEnabled={layerOn(activeLayers, "adsbHeatmap")}
+                    />
+                    <MapControlStack
+                        layers={{
+                            active: activeLayers,
+                            onToggle: (key) => setLayers(prev => ({ ...prev, [key]: !layerOn(prev, key) })),
+                            onLayerSet: (key, val) => setLayers(prev => ({ ...prev, [key]: val })),
+                        }}
+                        onLocate={handleLocate}
+                        onZoomIn={handleZoomIn}
+                        onZoomOut={handleZoomOut}
+                        onFullscreen={handleFullscreenToggle}
+                        isFullscreen={fullscreen}
+                    />
+                </>
+            )}
+        </div>
+    )
+
+    if (fullscreen) {
+        return (
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", fontFamily: "var(--font-sans)" }}>
+                <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                    {mapRegion}
+                </div>
+            </div>
+        )
+    }
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100%", fontFamily: "var(--font-sans)" }}>
             <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-                {/* Left ~66% — AOI overview map */}
-                <div style={{ flex: 2, minWidth: 0, borderRight: "1px solid var(--border)" }}>
-                    <AoiMiniMap
-                        zones={zones}
-                        selectedZoneId={selectedZoneId}
-                        onSelectZone={setSelectedZoneId}
-                        pulsingIds={pulsingIds}
-                    />
+                {/* Left ~66% — real embedded globe overview */}
+                <div style={{ flex: 2, minWidth: 0, borderRight: "1px solid var(--border)", position: "relative" }}>
+                    {mapRegion}
                 </div>
 
-                {/* Right ~34% — Watch Queue */}
+                {/* Right ~34% — Watch Queue (UI correction pass, Part 6/7.2:
+                    translucent panel + rows, no colored border stripe) */}
                 <div style={{
-                    flex: 1, minWidth: 280, background: "var(--bg-panel)",
+                    flex: 1, minWidth: 280, background: "var(--bg-panel-translucent)",
                     display: "flex", flexDirection: "column", minHeight: 0,
                 }}>
                     <div style={{
@@ -201,7 +370,7 @@ export default function Dashboard() {
                         {watchQueueRows.length === 0 ? (
                             <EmptyState title="No active watch items" description="Nothing in the surface pool or fusion feed right now." />
                         ) : (
-                            watchQueueRows.map(row => <WatchQueueRow key={row.id} row={row} />)
+                            watchQueueRows.map(row => <WatchQueueRow key={row.id} row={row} onSelect={handleRowSelect} />)
                         )}
                     </div>
                 </div>

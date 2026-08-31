@@ -6,6 +6,7 @@ import {
 } from "cesium"
 import { getEntity } from "./entityStore.js"
 import InspectorPanel from "../components/InspectorPanel.jsx"
+import { normalizeEntity } from "../inspector/adapters.js"
 import API_BASE                  from "../apiBase.js"
 
 // Entity types InspectorPanel (Round 2's unified detail panel) renders
@@ -117,7 +118,12 @@ function ThreatRegionPopup({ data, onClose }) {
     )
 }
 
-const HOVER_TYPES = new Set(["eez", "cable"])
+// UI correction pass, Part 3.1: the master spec's map hover-callout card
+// (section 9) was never actually built — this hover mechanism only ever
+// showed a bare name label, and only for 2 entity types (eez/cable). Now
+// covers every real inspectable entity (same set INSPECTOR_TYPES already
+// supports for click), showing a real callout card instead of a plain label.
+const HOVER_TYPES = INSPECTOR_TYPES
 
 function buildOverpassQuery(lat, lon, radius) {
     return `[out:json][timeout:8];(way["power"](around:${radius},${lat},${lon});way["man_made"="pipeline"](around:${radius},${lat},${lon});node["power"~"substation|transformer"](around:${radius},${lat},${lon});way["telecom"](around:${radius},${lat},${lon}););out body 5;`
@@ -125,7 +131,8 @@ function buildOverpassQuery(lat, lon, radius) {
 
 export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible = true }) {
     const [popup,   setPopup]   = useState(null)
-    const [tooltip, setTooltip] = useState(null)  // { name, x, y }
+    const [tooltip, setTooltip] = useState(null)  // { title, subtitle, position, x, y }
+    const hoveredIdRef = useRef(null)
     const handlerRef = useRef(null)
 
     // Full UI rebuild spec section 7's exclusivity rules: "Navigating to a
@@ -136,7 +143,7 @@ export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible 
     // so `popup` state would otherwise silently persist across a nav-away-
     // and-back — confirmed real gap, fixed here.
     useEffect(() => {
-        if (!isVisible) { setPopup(null); setTooltip(null) }
+        if (!isVisible) { setPopup(null); setTooltip(null); hoveredIdRef.current = null }
     }, [isVisible])
 
     useEffect(() => {
@@ -150,26 +157,40 @@ export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible 
 
             const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
 
-            // ── Hover tooltip ────────────────────────────────────────────────
+            // ── Hover callout card ───────────────────────────────────────────
             handler.setInputAction((move) => {
                 const picked = viewer.scene.pick(move.endPosition)
                 if (defined(picked) && picked.id) {
                     const stored = getEntity(picked.id.id)
                     if (stored && HOVER_TYPES.has(stored.type)) {
-                        setTooltip({
-                            name: stored.data.name || stored.data.eez1 || "",
-                            x:    move.endPosition.x,
-                            y:    move.endPosition.y,
-                        })
+                        const entityId = picked.id.id
+                        // Only re-run normalizeEntity when the hovered entity
+                        // actually changes, not on every mousemove pixel while
+                        // still hovering the same one.
+                        if (hoveredIdRef.current !== entityId) {
+                            hoveredIdRef.current = entityId
+                            const normalized = normalizeEntity(stored.type, stored.data)
+                            setTooltip({
+                                title: normalized.identity.title,
+                                subtitle: normalized.identity.subtitle,
+                                position: (normalized.attributes || []).find(a => a.label === "Position")?.value || null,
+                                x: move.endPosition.x,
+                                y: move.endPosition.y,
+                            })
+                        } else {
+                            setTooltip(prev => prev ? { ...prev, x: move.endPosition.x, y: move.endPosition.y } : prev)
+                        }
                         return
                     }
                 }
+                hoveredIdRef.current = null
                 setTooltip(null)
             }, ScreenSpaceEventType.MOUSE_MOVE)
 
             // ── Click popup ──────────────────────────────────────────────────
             handler.setInputAction(async (click) => {
                 setTooltip(null)
+                hoveredIdRef.current = null
 
                 // Primary pick; if it misses, search a ring of nearby pixels
                 // to handle fat-finger taps on mobile 3D models.
@@ -365,28 +386,47 @@ export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible 
 
     return (
         <>
-            {/* Hover tooltip */}
+            {/* Map hover-callout card — full UI rebuild spec section 9, built
+                for real in the UI correction pass (Part 3.1): a small
+                floating plate, --bg-card-translucent, 8px radius, 1px
+                --border-strong, the one permitted drop-shadow anywhere in
+                the app. Only one ever visible (this component has exactly
+                one `tooltip` state slot); a full click always replaces it
+                with the full docked inspector (see the click handler above,
+                which clears this first). */}
             {tooltip && (
                 <div
                     style={{
                         position:      "absolute",
-                        left:          Math.min(tooltip.x + 14, (window.innerWidth || 1200) - 220),
-                        top:           Math.max(Math.min(tooltip.y - 36, (window.innerHeight || 800) - 60 - (isMob ? 56 : 16)), 56),
+                        left:          Math.min(tooltip.x + 14, (window.innerWidth || 1200) - 240),
+                        top:           Math.max(Math.min(tooltip.y - 36, (window.innerHeight || 800) - 100 - (isMob ? 56 : 16)), 56),
                         zIndex:        10001,
-                        background:    "rgba(10,14,20,0.92)",
-                        border:        "1px solid rgba(255,255,255,0.12)",
-                        borderRadius:  5,
-                        padding:       "5px 10px",
-                        fontSize:      11,
-                        color:         "#E2E8F0",
+                        width:         "min(220px, calc(100vw - 32px))",
+                        background:    "var(--bg-card-translucent)",
+                        border:        "1px solid var(--border-strong)",
+                        borderRadius:  "var(--radius-md)",
+                        boxShadow:     "var(--shadow-callout)",
+                        padding:       "10px 12px",
                         pointerEvents: "none",
-                        whiteSpace:    "nowrap",
-                        maxWidth:      200,
-                        overflow:      "hidden",
-                        textOverflow:  "ellipsis",
+                        fontFamily:    "var(--font-sans)",
                     }}
                 >
-                    {tooltip.name}
+                    <div style={{
+                        fontSize: "var(--text-callout-title)", fontWeight: "var(--weight-semibold)",
+                        color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>
+                        {tooltip.title}
+                    </div>
+                    {tooltip.subtitle && (
+                        <div style={{ fontSize: "var(--text-chip)", color: "var(--text-secondary)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                            {tooltip.subtitle}
+                        </div>
+                    )}
+                    {tooltip.position && (
+                        <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-callout-meta)", color: "var(--text-secondary)", marginTop: 4 }}>
+                            {tooltip.position}
+                        </div>
+                    )}
                 </div>
             )}
 

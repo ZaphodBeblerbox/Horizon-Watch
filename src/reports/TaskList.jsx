@@ -113,8 +113,15 @@ function TaskCreateForm({ onSaved, onCancel }) {
 
 /**
  * Task row — restyled from ForgePanel.jsx's TasksPanel row (~line 1994) using
- * Round 1 tokens instead of inline hex colors. The status-color left border +
- * badge both come from the shared statusBadgeColor() mapping.
+ * Round 1 tokens instead of inline hex colors.
+ *
+ * UI correction pass, Part 6/12: the hard `borderLeft: 3px solid ${color}`
+ * status stripe this used to render is removed — flagged twice in the
+ * correction brief as a real, live issue. Replaced with a plain translucent
+ * card (--bg-card-translucent) matching the correction pass's card
+ * treatment elsewhere; the status color still carries through as the
+ * existing status badge/pill (background/text, via statusBadgeColor()) so
+ * status is still visually distinguishable, just never as a stripe/border.
  */
 function TaskRow({ task, onSelectTask }) {
     const color = statusBadgeColor(task.status)
@@ -122,7 +129,7 @@ function TaskRow({ task, onSelectTask }) {
         <Panel
             as="div"
             onClick={() => onSelectTask(task.task_id)}
-            style={{ marginBottom: "var(--space-2)", cursor: "pointer", borderLeft: `3px solid ${color}` }}
+            style={{ marginBottom: "var(--space-2)", cursor: "pointer", background: "var(--bg-card-translucent)" }}
         >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ color: "var(--text-primary)", fontSize: "var(--text-sm)", fontWeight: 600 }}>{task.focus || task.task_id}</span>

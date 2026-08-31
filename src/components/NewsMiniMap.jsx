@@ -18,6 +18,8 @@
 import { useEffect, useRef, useState } from "react"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import { getEntityMarkerDataUri } from "../globe/entityIcons.js"
+import ScaleBar from "./ScaleBar.jsx"
+import CoordinateReadout from "./CoordinateReadout.jsx"
 
 // Mirrors NewsPage.jsx's TIER_COLOR — duplicated here (not exported/shared)
 // because NewsPage.jsx already duplicates these same literal hexes in more
@@ -158,6 +160,16 @@ export default function NewsMiniMap({ markers = [], selectedId = null, onSelectM
                     position: "absolute", top: 8, left: 8, right: 8,
                     color: "rgba(255,255,255,0.4)", fontSize: 10, pointerEvents: "none",
                 }}>No geotagged stories in this list yet</div>
+            )}
+            {/* UI correction pass, Part 7.5: every real map instance needs the
+                bottom-left scale bar + coordinate readout — this one was
+                missing it. Both components take a plain `viewer` prop and
+                don't need resium/useCesium() context. */}
+            {ready && viewerRef.current && (
+                <>
+                    <ScaleBar viewer={viewerRef.current} />
+                    <CoordinateReadout viewer={viewerRef.current} />
+                </>
             )}
         </div>
     )

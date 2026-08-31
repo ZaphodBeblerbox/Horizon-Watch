@@ -1,10 +1,22 @@
-import { useState, useEffect } from "react"
-import BottomSheet from "./BottomSheet.jsx"
+import { useState } from "react"
+import FlyoutMenu from "../ui/FlyoutMenu.jsx"
 import { buttonStyle } from "../ui/styleHelpers.js"
 import { LAYER_GROUPS, isLayerOn, countActive, clampOpacity } from "./layerRailConfig.js"
 
-// Real 36x20px toggle switch, exactly per spec section 2: "--border when
-// off, --accent-blue when on, 16px white circular thumb."
+/**
+ * LayersFlyout — the ONE layers-control pattern in the app now (UI
+ * correction pass, Part 9), replacing the master prompt's always-docked
+ * 240px LayerRail everywhere a layers control appears: the Globe home
+ * screen, the Dashboard's map, each Canonical operational view. A layers
+ * icon button in the same visual family as the other map control buttons
+ * (locate/zoom/fullscreen — same fill/border/radius, via FlyoutMenu), opening
+ * a small TRANSLUCENT panel with the same real domain-grouped toggle rows +
+ * legend content the old rail had — content unchanged, just repackaged into
+ * a flyout instead of a permanently-docked column.
+ *
+ * Same `active`/`onToggle`/`onLayerSet` contract the old rail used, so the
+ * underlying workspace-layers state shape doesn't need to change.
+ */
 function Toggle({ on, onClick }) {
     return (
         <button
@@ -43,14 +55,10 @@ function OpacitySlider({ value, onChange }) {
     return (
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, marginLeft: "var(--space-2)" }}>
             <input
-                type="range"
-                min={0.1}
-                max={1}
-                step={0.05}
-                value={value}
+                type="range" min={0.1} max={1} step={0.05} value={value}
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => onChange(clampOpacity(parseFloat(e.target.value)))}
-                style={{ flex: 1, accentColor: "var(--accent)" }}
+                style={{ flex: 1, accentColor: "var(--accent-blue)" }}
             />
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", color: "var(--text-secondary)", width: 32, textAlign: "right" }}>
                 {Math.round(value * 100)}%
@@ -67,22 +75,16 @@ function LayerRow({ def, active, onToggle, onLayerSet }) {
                 <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)" }}>{def.label}</div>
                     {def.hint && (
-                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 1 }}>{def.hint}</div>
+                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 1 }}>{def.hint}</div>
                     )}
                 </div>
                 <Toggle on={on} onClick={() => onToggle(def.key)} />
             </div>
             {on && def.hasRelevanceFilter && onLayerSet && (
-                <RelevanceFilter
-                    value={active?.eventsMinRelevance ?? 0}
-                    onChange={(v) => onLayerSet("eventsMinRelevance", v)}
-                />
+                <RelevanceFilter value={active?.eventsMinRelevance ?? 0} onChange={(v) => onLayerSet("eventsMinRelevance", v)} />
             )}
             {on && def.hasOpacity && onLayerSet && (
-                <OpacitySlider
-                    value={clampOpacity(active?.satelliteOpacity ?? 0.9)}
-                    onChange={(v) => onLayerSet("satelliteOpacity", v)}
-                />
+                <OpacitySlider value={clampOpacity(active?.satelliteOpacity ?? 0.9)} onChange={(v) => onLayerSet("satelliteOpacity", v)} />
             )}
         </div>
     )
@@ -91,21 +93,15 @@ function LayerRow({ def, active, onToggle, onLayerSet }) {
 function GroupSection({ group, active, expanded, onToggleExpand, onToggle, onLayerSet }) {
     const n = countActive(active, group)
     return (
-        <div style={{ borderBottom: "1px solid var(--border-dim)" }}>
+        <div style={{ borderBottom: "1px solid var(--border)" }}>
             <div
                 onClick={onToggleExpand}
-                style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "var(--space-2) var(--space-2)", cursor: "pointer",
-                }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-2)", cursor: "pointer" }}
             >
-                <span style={{
-                    fontSize: "var(--text-xs)", fontWeight: "var(--weight-bold)",
-                    letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--accent)",
-                }}>
+                <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-bold)", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--accent-blue)" }}>
                     {group.label}
                 </span>
-                <span style={{ fontSize: "var(--text-xs)", color: n > 0 ? "var(--accent)" : "var(--text-dim)" }}>
+                <span style={{ fontSize: "var(--text-xs)", color: n > 0 ? "var(--accent-blue)" : "var(--text-muted)" }}>
                     {n}/{group.layers.length}
                 </span>
             </div>
@@ -121,8 +117,7 @@ function GroupSection({ group, active, expanded, onToggleExpand, onToggle, onLay
 }
 
 // Real legend — kept accurate to what's actually rendered on the globe
-// (Round 2's real entity-marker system, src/globe/entityIcons.js) rather
-// than decorative filler.
+// (src/globe/entityIcons.js) rather than decorative filler.
 function Legend() {
     const row = (swatch, label) => (
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "3px 0" }}>
@@ -131,11 +126,8 @@ function Legend() {
         </div>
     )
     return (
-        <div style={{ padding: "var(--space-3) var(--space-2)", borderTop: "1px solid var(--border)" }}>
-            <div style={{
-                fontSize: 10, textTransform: "uppercase", color: "var(--text-muted)",
-                letterSpacing: "0.08em", marginBottom: "var(--space-2)",
-            }}>
+        <div style={{ padding: "var(--space-3) var(--space-2)" }}>
+            <div style={{ fontSize: 10, textTransform: "uppercase", color: "var(--text-muted)", letterSpacing: "0.08em", marginBottom: "var(--space-2)" }}>
                 Legend
             </div>
             {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="var(--accent-blue)" strokeWidth="2" /></svg>, "Track (AIS/ADS-B)")}
@@ -147,23 +139,18 @@ function Legend() {
     )
 }
 
-function GroupList({ active, onToggle, onLayerSet, expandedKey, setExpandedKey, autoModeEnabled, onAutoMode, onExportView }) {
+export default function LayersFlyout({
+    active = {}, onToggle, onLayerSet = null,
+    autoModeEnabled = false, onAutoMode = null, onExportView = null,
+    buttonSize = 32, hotkey = "l",
+}) {
+    const [expandedKey, setExpandedKey] = useState(null)
+
     return (
-        <>
-            <div style={{
-                fontSize: 10, textTransform: "uppercase", color: "var(--text-muted)",
-                letterSpacing: "0.08em", padding: "var(--space-4) var(--space-2) var(--space-2)",
-            }}>
-                Layers
-            </div>
+        <FlyoutMenu icon="layers" title="Layers (L)" align="right" direction="up" panelWidth={260} buttonSize={buttonSize} hotkey={hotkey}>
             {onAutoMode && (
-                <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "var(--space-2)", borderBottom: "1px solid var(--border-dim)",
-                }}>
-                    <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)" }}>
-                        Auto Mode
-                    </span>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-2) var(--space-3)", borderBottom: "1px solid var(--border)" }}>
+                    <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)" }}>Auto Mode</span>
                     <Toggle on={autoModeEnabled} onClick={() => onAutoMode(!autoModeEnabled)} />
                 </div>
             )}
@@ -180,7 +167,7 @@ function GroupList({ active, onToggle, onLayerSet, expandedKey, setExpandedKey, 
             ))}
             <Legend />
             {onExportView && (
-                <div style={{ padding: "var(--space-3) var(--space-2)" }}>
+                <div style={{ padding: "var(--space-3)", borderTop: "1px solid var(--border)" }}>
                     <button
                         onClick={onExportView}
                         style={{
@@ -193,78 +180,6 @@ function GroupList({ active, onToggle, onLayerSet, expandedKey, setExpandedKey, 
                     </button>
                 </div>
             )}
-        </>
-    )
-}
-
-/**
- * Domain-grouped layer rail — replaces LayersPanel.jsx's floating GIS-style
- * layer tree. Same `active`/`onToggle`/`onLayerSet` contract as the panel it
- * supersedes, so the underlying workspace-layers state in app.jsx doesn't
- * need to change shape.
- *
- * Desktop: always-visible fixed rail (per the round's "no floating layer
- * panel" requirement). Mobile: a permanently-visible 220px rail doesn't fit
- * a narrow viewport, so the same grouped content renders inside the
- * existing BottomSheet pattern instead — opened via `mobileOpen`/`onMobileClose`
- * (e.g. from a "Layers" row in the mobile menu), not always-on.
- */
-export default function LayerRail({
-    active = {},
-    onToggle,
-    onLayerSet = null,
-    autoModeEnabled = false,
-    onAutoMode = null,
-    onExportView = null,
-    style = {},
-    mobileOpen = false,
-    onMobileClose = null,
-}) {
-    const [expandedKey, setExpandedKey] = useState(null)
-    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
-    useEffect(() => {
-        const h = () => setIsMobile(window.innerWidth < 768)
-        window.addEventListener("resize", h)
-        return () => window.removeEventListener("resize", h)
-    }, [])
-
-    const content = (
-        <GroupList
-            active={active} onToggle={onToggle} onLayerSet={onLayerSet}
-            expandedKey={expandedKey} setExpandedKey={setExpandedKey}
-            autoModeEnabled={autoModeEnabled} onAutoMode={onAutoMode}
-            onExportView={onExportView}
-        />
-    )
-
-    if (isMobile) {
-        if (!onMobileClose) return null
-        return (
-            <BottomSheet isOpen={mobileOpen} title="Layers" onClose={onMobileClose} height="full">
-                <div style={{ padding: "0 0 24px" }}>{content}</div>
-            </BottomSheet>
-        )
-    }
-
-    return (
-        <div style={{
-            // Full UI rebuild spec section 5: a real docked column, NOT a
-            // floating overlay — this is a flex/grid SIBLING of the map
-            // canvas (its parent container must be display:flex; this div
-            // just occupies its allotted width, nothing more). The old
-            // position:"fixed" here was the confirmed real bug: the rail
-            // rendered on top of unrelated content (e.g. the News tab)
-            // instead of the map canvas visibly shrinking to accommodate it.
-            width: 240,
-            flexShrink: 0,
-            height: "100%",
-            overflowY: "auto",
-            background: "var(--bg-panel)",
-            borderRight: "1px solid var(--border)",
-            fontFamily: "var(--font-sans)",
-            ...style,
-        }}>
-            {content}
-        </div>
+        </FlyoutMenu>
     )
 }
