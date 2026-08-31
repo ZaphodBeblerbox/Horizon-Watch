@@ -48,6 +48,16 @@
             --border-strong: #2A3B55; /* active tab underline, focused card border */
             --overlay-map: rgba(7,11,20,0.55); /* legend/scale-bar plates over imagery */
 
+            /* ── Translucent surfaces — UI correction pass ────────────────────
+               Deliberate, narrow exception to "no glassmorphism": alpha
+               transparency only, never a blur filter. For anything that
+               "flies in" and isn't part of the persistent base shell (header,
+               footer, docked inspector, the layers flyout's own trigger
+               button) — flyout menus, floating/transient cards, drawers.
+               Borders stay crisp hard 1px edges regardless. */
+            --bg-panel-translucent: rgba(14,22,36,0.88);  /* --bg-panel  #0E1624 at ~88% */
+            --bg-card-translucent:  rgba(18,28,44,0.88);  /* --bg-card   #121C2C at ~88% */
+
             /* No pure black anywhere, no gradients anywhere, no box-shadow for
                elevation except the one map-callout exception below. */
             --shadow-callout: 0 8px 16px rgba(0,0,0,0.2);

@@ -15,19 +15,15 @@ import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
 import ChatPanel from "./components/ChatPanel.jsx"
 import TVWidget from "./components/tvwidget.jsx"
-import MissionProfilePanel, { loadProfile, saveProfileToStorage } from "./components/MissionProfilePanel.jsx"
+import { loadProfile, saveProfileToStorage } from "./components/MissionProfilePanel.jsx"
 import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
-import BriefingPanel from "./components/BriefingPanel.jsx"
-import ToastSystem from "./components/ToastSystem.jsx"
 import { playAlert, resumeAudio } from "./soundSystem.js"
-import SettingsPanel from "./components/SettingsPanel.jsx"
 import HealthPanel from "./components/HealthPanel.jsx"
 import AnalyticsPanel from "./components/AnalyticsPanel.jsx"
 import API_BASE from "./apiBase.js"
 import LoadingScreen from "./components/LoadingScreen.jsx"
 import ProfilePanel from "./components/ProfilePanel.jsx"
-import PreferencesPanel, { loadSettings } from "./components/PreferencesPanel.jsx"
-import NotificationBar from "./components/NotificationBar.jsx"
+import { loadSettings } from "./components/PreferencesPanel.jsx"
 import NewsReels from "./components/NewsReels.jsx"
 import DirectorBar from "./components/DirectorBar.jsx"
 import DirectorSidebar from "./components/DirectorSidebar.jsx"
@@ -38,7 +34,6 @@ import { CommandRunner, generateDirectorSequence, fetchDirectorSnapshot, saveDir
 import { DemoRunner } from "./services/demoRunner.js"
 import { DEMO_BRIEFING_HORMUZ } from "./data/demoBriefing.js"
 import HeatmapTimeSlider from "./components/HeatmapTimeSlider.jsx"
-import LayerRail from "./components/LayerRail.jsx"
 import { mergeNotificationItems } from "./components/notificationsNormalize.js"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
@@ -511,9 +506,12 @@ export default function App() {
         return () => window.removeEventListener("akili:settings-changed", h)
     }, [])
 
-    // ── Real-time alert toasts ────────────────────────────────────────────────
-    const [toasts,           setToasts]           = useState([])
+    // ── Real-time alert sound cues (UI correction pass: toast popups removed
+    // entirely — alerts surface exclusively via the header bell badge and the
+    // Watchlists console now; this effect keeps the real audio-cue behavior,
+    // which is a distinct "Sound" toggle, not a toast) ────────────────────────
     const alertSinceRef = useRef(new Date().toISOString())
+    const seenAlertIdsRef = useRef(new Set())
 
     // Derived from unified settings (fixes dual-key conflict with old "akili-sound-muted")
     const soundMuted = appSettings.soundMuted
@@ -527,19 +525,6 @@ export default function App() {
         })
     }, [])
 
-    const dismissToast = useCallback((id) => {
-        setToasts(prev => prev.filter(t => t.id !== id))
-    }, [])
-
-    const openToast = useCallback((alert) => {
-        setSelectedSurface(alert)
-        setRightPanel("detail")
-        if (alert.lat && alert.lon) {
-            setSearchTarget({ lat: alert.lat, lon: alert.lon, zoom: 8, key: Date.now() })
-        }
-        setActiveTabId("map")
-    }, [])   // eslint-disable-line react-hooks/exhaustive-deps
-
     useEffect(() => {
         if (!profile) return
         const poll = () => {
@@ -550,36 +535,27 @@ export default function App() {
                 .then(d => {
                     if (!d?.alerts?.length) return
                     alertSinceRef.current = new Date().toISOString()
-                    let incoming = d.alerts.filter(a => a.priority !== false)
+                    const incoming = d.alerts.filter(a => a.priority !== false)
                     if (!incoming.length) return
-                    // Toast filtering
-                    if (!s.toastsEnabled) return
-                    if (s.toastsCriticalOnly) {
-                        incoming = incoming.filter(a => a.severity_tier === "critical")
-                        if (!incoming.length) return
-                    }
-                    setToasts(prev => {
-                        const existingIds = new Set(prev.map(t => t.id))
-                        const fresh = incoming.filter(a => !existingIds.has(a.id))
-                        if (fresh.length && !s.soundMuted) {
-                            const top = fresh.reduce((a, b) =>
-                                (["critical","significant","elevated","low"].indexOf(a.severity_tier) <=
-                                 ["critical","significant","elevated","low"].indexOf(b.severity_tier)) ? a : b
-                            )
-                            // Per-tier sound gate
-                            const tier = top.severity_tier
-                            const shouldPlay =
-                                (tier === "critical"    && s.soundCritical)    ||
-                                (tier === "significant" && s.soundSignificant) ||
-                                (tier === "elevated"    && s.soundElevated)    ||
-                                (tier === "low")
-                            if (shouldPlay) {
-                                resumeAudio()
-                                playAlert(tier, top.type)
-                            }
+                    const fresh = incoming.filter(a => !seenAlertIdsRef.current.has(a.id))
+                    fresh.forEach(a => seenAlertIdsRef.current.add(a.id))
+                    if (fresh.length && !s.soundMuted) {
+                        const top = fresh.reduce((a, b) =>
+                            (["critical","significant","elevated","low"].indexOf(a.severity_tier) <=
+                             ["critical","significant","elevated","low"].indexOf(b.severity_tier)) ? a : b
+                        )
+                        // Per-tier sound gate
+                        const tier = top.severity_tier
+                        const shouldPlay =
+                            (tier === "critical"    && s.soundCritical)    ||
+                            (tier === "significant" && s.soundSignificant) ||
+                            (tier === "elevated"    && s.soundElevated)    ||
+                            (tier === "low")
+                        if (shouldPlay) {
+                            resumeAudio()
+                            playAlert(tier, top.type)
                         }
-                        return [...prev, ...fresh].slice(-5)   // cap at 5 visible toasts
-                    })
+                    }
                     // Also surface unread notification count
                     setReadIds(prev => prev)   // trigger recompute
                 })
@@ -590,85 +566,11 @@ export default function App() {
         return () => clearInterval(tid)
     }, [profile, appSettings.alertInterval])  // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Anomaly alert polling (System 6) — every 2 minutes ────────────────────
-    const anomalySeenRef = useRef(new Set())
-    const showAnomalyNotification = useCallback((alert) => {
-        const existing = document.getElementById(`hw-anomaly-${alert.id}`)
-        if (existing) return
-        const pulse = alert.severity === 'critical' ? 'rgba(255,50,50,0.5)' : 'rgba(255,170,0,0.4)'
-        const color = alert.severity === 'critical' ? '#ff4444' : '#ffaa00'
-        const el = document.createElement('div')
-        el.id = `hw-anomaly-${alert.id}`
-        const _mob = window.innerWidth < 768
-        el.style.cssText = `position:fixed;top:${_mob ? '52px' : '80px'};right:${_mob ? '10px' : '20px'};width:340px;max-width:calc(100vw - 20px);background:rgba(10,15,25,0.95);backdrop-filter:blur(16px);border:1px solid ${pulse};border-radius:12px;padding:${_mob ? '12px' : '16px'};z-index:9500;box-shadow:0 8px 32px rgba(0,0,0,0.5);font-family:system-ui;animation:hw-slide-in-r 400ms ease-out;`
-        el.innerHTML = `
-            <style>@keyframes hw-slide-in-r{from{transform:translateX(120px);opacity:0}to{transform:translateX(0);opacity:1}}</style>
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                <div style="flex:1;min-width:0;">
-                    <div style="font-size:10px;letter-spacing:2px;color:${color};text-transform:uppercase;margin-bottom:4px;">${(alert.type || '').replace(/_/g, ' ')}</div>
-                    <div style="font-size:14px;font-weight:700;color:white;margin-bottom:4px;">${alert.title || 'Anomaly'}</div>
-                    ${alert.subtitle ? `<div style="font-size:12px;color:rgba(0,170,255,0.85);margin-bottom:5px;">${alert.subtitle}</div>` : ''}
-                    <div style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1.45;margin-bottom:8px;">${alert.reason || alert.description || ''}</div>
-                </div>
-                <button id="hw-an-close-${alert.id}" style="background:none;border:none;color:rgba(255,255,255,0.3);font-size:18px;cursor:pointer;padding:0 2px;line-height:1;flex-shrink:0;">×</button>
-            </div>
-            <div style="display:flex;gap:8px;">
-                ${alert.lat != null ? `<button id="hw-an-map-${alert.id}" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:rgba(0,170,255,0.15);border:1px solid rgba(0,170,255,0.3);color:#00aaff;">Show on Map</button>` : ''}
-                <button id="hw-an-pin-${alert.id}" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:rgba(255,170,0,0.15);border:1px solid rgba(255,170,0,0.3);color:#ffaa00;">Pin</button>
-                <button id="hw-an-dismiss-${alert.id}" style="padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.4);">Dismiss</button>
-            </div>`
-        document.body.appendChild(el)
-        const remove = () => { el.style.opacity = '0'; el.style.transition = 'opacity 300ms'; setTimeout(() => el.remove(), 300) }
-        const closeBtn = document.getElementById(`hw-an-close-${alert.id}`)
-        if (closeBtn) closeBtn.onclick = remove
-        const mapBtn = document.getElementById(`hw-an-map-${alert.id}`)
-        if (mapBtn) mapBtn.onclick = () => {
-            setSearchTarget({ lat: alert.lat, lon: alert.lon, zoom: 9, key: Date.now() })
-            const mapTab = tabs.find(t => t.type === 'map')
-            if (mapTab) switchTab(mapTab.id)
-            remove()
-        }
-        const pinBtn = document.getElementById(`hw-an-pin-${alert.id}`)
-        if (pinBtn) pinBtn.onclick = () => {
-            const tok = localStorage.getItem('hw-auth-token')
-            fetch(`${API}/api/alerts/${alert.id}/pin`, { method: 'POST', headers: tok ? { Authorization: `Bearer ${tok}` } : {} }).catch(() => {})
-            remove()
-        }
-        const dismissBtn = document.getElementById(`hw-an-dismiss-${alert.id}`)
-        if (dismissBtn) dismissBtn.onclick = () => {
-            const tok = localStorage.getItem('hw-auth-token')
-            fetch(`${API}/api/alerts/${alert.id}/classify`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
-                body: JSON.stringify({ classification: 'dismiss' })
-            }).catch(() => {})
-            remove()
-        }
-        setTimeout(() => { if (document.body.contains(el)) remove() }, 15000)
-    }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        const poll = () => {
-            const tok = localStorage.getItem("hw-auth-token")
-            const headers = tok ? { Authorization: `Bearer ${tok}` } : {}
-            fetch(`${API}/api/alerts/recent`, { headers })
-                .then(r => r.ok ? r.json() : null)
-                .then(d => {
-                    if (!d?.alerts?.length) return
-                    d.alerts.forEach(alert => {
-                        if (!alert.id || anomalySeenRef.current.has(alert.id)) return
-                        // Suppress automated anomaly alerts (unusual aircraft/vessels) —
-                        // these generate too many false positives for operational use
-                        if (/unusual|anomal/i.test(alert.type || "")) return
-                        anomalySeenRef.current.add(alert.id)
-                        showAnomalyNotification(alert)
-                    })
-                })
-                .catch(() => {})
-        }
-        const tid = setInterval(poll, 120_000)
-        poll()
-        return () => clearInterval(tid)
-    }, [showAnomalyNotification])  // eslint-disable-line react-hooks/exhaustive-deps
+    // UI correction pass: the raw-DOM "anomaly" toast that used to live here
+    // (System 6, /api/alerts/recent polling every 2 minutes) is removed
+    // entirely — no exceptions, per the explicit ground rule. That endpoint's
+    // real alerts already surface through the header bell badge and the
+    // Watchlists console via the existing /api/alerts/new poll above.
 
 
     const [mapViewport, setMapViewport] = useState(null)
@@ -1325,59 +1227,38 @@ export default function App() {
                         openTab("map")
                         setSearchTarget({ lat: r.lat, lon: r.lon, zoom: 7, key: Date.now() })
                     }}
-                    onOpenSettings={() => openRightPanel("settings")}
                     profile={profile}
+                    overwatchActive={overwatchActive}
+                    onToggleOverwatch={() => setOverwatchActive(v => !v)}
+                    directorActive={directorVisible}
+                    onToggleDirector={() => {
+                        if (directorVisible) handleDirectorClose()
+                        else setDirectorModalOpen(true)
+                    }}
+                    analyticsActive={rightPanel === "analytics"}
+                    onToggleAnalytics={() => openRightPanel("analytics")}
+                    threatsActive={rightPanel === "threats"}
+                    onToggleThreats={() => openRightPanel("threats")}
+                    healthActive={rightPanel === "health"}
+                    onToggleHealth={() => openRightPanel("health")}
+                    tvActive={showTV}
+                    onToggleTV={() => setShowTV(v => !v)}
+                    soundMuted={soundMuted}
+                    onToggleSound={onToggleSound}
                 />
             )}
-
-            {/* ── Notification toasts — new event alerts ─────────────────────── */}
-            <NotificationBar onEventClick={(n) => {
-                if (n.lat && n.lon) {
-                    window.dispatchEvent(new CustomEvent("akili:jump-to", { detail: { lat: n.lat, lon: n.lon } }))
-                }
-                window.dispatchEvent(new CustomEvent("akili:show-event", { detail: n }))
-            }} />
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
             <div style={{ flex: 1, display: "flex", minHeight: 0, paddingBottom: (isMobile && !showAutoMode) ? 56 : 0 }}>
 
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
 
-                {/* Map — exclusive: only one renderer alive at a time. Full UI
-                    rebuild spec section 5: LayerRail is a real docked flex
-                    SIBLING of the map canvas here (not an overlay on top of
-                    it) — this row is the fix for the confirmed real docking
-                    bug (LayerRail.jsx itself no longer uses position:fixed;
-                    this is the other half, giving it real layout space). */}
+                {/* Map — exclusive: only one renderer alive at a time. UI
+                    correction pass, Part 9: the layers control is now the
+                    shared translucent LayersFlyout, folded into
+                    MapControlStack below — the old always-docked 240px rail
+                    is deleted entirely. */}
                 <div style={{ display: activeTabType === "map" ? "flex" : "none", flex: 1, minWidth: 0, height: "100%" }}>
-                    <LayerRail
-                        active={activeWorkspace?.layers ?? {}}
-                        onToggle={(key) => handleLayersChange({
-                            ...(activeWorkspace?.layers ?? {}),
-                            [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
-                        })}
-                        onLayerSet={(key, val) => handleLayersChange({
-                            ...(activeWorkspace?.layers ?? {}),
-                            [key]: val,
-                        })}
-                        autoModeEnabled={showAutoMode}
-                        onAutoMode={(v) => {
-                            setShowAutoMode(v)
-                            if (v) setRightPanel(null)
-                        }}
-                        onExportView={() => {
-                            const canvas = document.querySelector("#cesiumContainer canvas") || document.querySelector("canvas")
-                            if (!canvas) return
-                            const a = document.createElement("a")
-                            a.href = canvas.toDataURL("image/png")
-                            a.download = `horizon-watch-view-${Date.now()}.png`
-                            document.body.appendChild(a)
-                            a.click()
-                            a.remove()
-                        }}
-                        mobileOpen={rightPanel === "layers"}
-                        onMobileClose={() => setRightPanel(null)}
-                    />
                     <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", paddingTop: showAutoMode ? 36 : 0, paddingBottom: showAutoMode ? 32 : 0 }}>
                     <Suspense fallback={
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "#050c1c", color: "rgba(148,163,184,0.7)", fontFamily: "system-ui", fontSize: 14 }}>
@@ -1422,7 +1303,32 @@ export default function App() {
                         />
                     </Suspense>
                     <MapControlStack
-                        onToggleLayers={() => setRightPanel(p => p === "layers" ? null : "layers")}
+                        layers={{
+                            active: activeWorkspace?.layers ?? {},
+                            onToggle: (key) => handleLayersChange({
+                                ...(activeWorkspace?.layers ?? {}),
+                                [key]: !(activeWorkspace?.layers?.[key] ?? (key === "unifiedEvents" ? true : false)),
+                            }),
+                            onLayerSet: (key, val) => handleLayersChange({
+                                ...(activeWorkspace?.layers ?? {}),
+                                [key]: val,
+                            }),
+                            autoModeEnabled: showAutoMode,
+                            onAutoMode: (v) => {
+                                setShowAutoMode(v)
+                                if (v) setRightPanel(null)
+                            },
+                            onExportView: () => {
+                                const canvas = document.querySelector("#cesiumContainer canvas") || document.querySelector("canvas")
+                                if (!canvas) return
+                                const a = document.createElement("a")
+                                a.href = canvas.toDataURL("image/png")
+                                a.download = `horizon-watch-view-${Date.now()}.png`
+                                document.body.appendChild(a)
+                                a.click()
+                                a.remove()
+                            },
+                        }}
                         onLocate={() => {
                             if (!navigator.geolocation) return
                             navigator.geolocation.getCurrentPosition((pos) => {
@@ -1594,11 +1500,12 @@ export default function App() {
                     </div>
                 )}
 
-                {rightPanel === "settings" && (
-                    <div style={panelStyle}>
-                        <PreferencesPanel onClose={() => setRightPanel(null)} />
-                    </div>
-                )}
+                {/* UI correction pass, Part 13: the Settings/Preferences window is
+                    removed for now (acknowledged as not worth keeping in its
+                    current form — will be rebuilt properly later). The header
+                    gear icon stays present but shows a real, clear "coming
+                    soon" flyout instead of silently doing nothing — see
+                    AppHeader.jsx. */}
 
                 {rightPanel === "health" && (
                     <div style={panelStyle}>
@@ -1881,14 +1788,6 @@ export default function App() {
                     isMobile={isMobile}
                 />
             )}
-
-            {/* Real-time toast notifications */}
-            <ToastSystem
-                toasts={toasts}
-                onDismiss={dismissToast}
-                onOpen={openToast}
-                toastDuration={appSettings.toastDuration}
-            />
 
             {/* Autoplay overlays — world clocks + news ticker */}
             <WorldClocksBar visible={showAutoMode} />

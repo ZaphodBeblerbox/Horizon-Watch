@@ -2,8 +2,30 @@ import { useState, useEffect } from "react"
 import Logo from "./Logo.jsx"
 import Icon from "../ui/Icon.jsx"
 import HeaderSearch from "./HeaderSearch.jsx"
+import FlyoutMenu from "../ui/FlyoutMenu.jsx"
 import { DESTINATIONS } from "../data/destinations.js"
 import { STATUS_COLOR_TOKEN, STATUS_WORD } from "../utils/systemHealth.js"
+
+function ToolRow({ label, active, onClick }) {
+    return (
+        <button
+            onClick={onClick}
+            style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+                padding: "var(--space-2) var(--space-3)", background: "none", border: "none",
+                borderBottom: "1px solid var(--border)", cursor: "pointer", fontFamily: "var(--font-sans)",
+                fontSize: "var(--text-body)", color: active ? "var(--accent-blue)" : "var(--text-primary)",
+                textAlign: "left",
+            }}
+        >
+            <span>{label}</span>
+            <span style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: active ? "var(--accent-blue)" : "var(--border-strong)",
+            }} />
+        </button>
+    )
+}
 
 /**
  * The persistent application header — full UI rebuild spec section 3.1.
@@ -22,8 +44,19 @@ export default function AppHeader({
     alertUnreadCount = 0,
     onOpenWatchlists,
     onSearchResult,
-    onOpenSettings,
     profile = null,
+    // "Tools" flyout (UI correction pass, Part 2) — the utility toggles that
+    // lost their only entry point when the old SecondaryMenu was deleted.
+    // Every value/handler pair is independently optional, same as
+    // SecondaryMenu's old contract — a row only renders if its handler is
+    // passed.
+    overwatchActive, onToggleOverwatch,
+    directorActive, onToggleDirector,
+    analyticsActive, onToggleAnalytics,
+    threatsActive, onToggleThreats,
+    healthActive, onToggleHealth,
+    tvActive, onToggleTV,
+    soundMuted, onToggleSound,
 }) {
     const [now, setNow] = useState(() => new Date())
     useEffect(() => {
@@ -141,17 +174,26 @@ export default function AppHeader({
                     )}
                 </button>
 
-                <button
-                    onClick={onOpenSettings}
-                    title="Settings"
-                    aria-label="Settings"
-                    style={{
-                        width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center",
-                        background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)",
-                    }}
-                >
-                    <Icon name="settings" size={18} />
-                </button>
+                <FlyoutMenu icon="filter" label="Tools" title="Tools" buttonSize={36} panelWidth={220}>
+                    {onToggleOverwatch && <ToolRow label="Overwatch" active={overwatchActive} onClick={onToggleOverwatch} />}
+                    {onToggleDirector && <ToolRow label="Director Mode" active={directorActive} onClick={onToggleDirector} />}
+                    {onToggleAnalytics && <ToolRow label="Analytics" active={analyticsActive} onClick={onToggleAnalytics} />}
+                    {onToggleThreats && <ToolRow label="Threats" active={threatsActive} onClick={onToggleThreats} />}
+                    {onToggleHealth && <ToolRow label="Health" active={healthActive} onClick={onToggleHealth} />}
+                    {onToggleTV && <ToolRow label="TV" active={tvActive} onClick={onToggleTV} />}
+                    {onToggleSound && <ToolRow label="Sound" active={!soundMuted} onClick={onToggleSound} />}
+                </FlyoutMenu>
+
+                {/* Settings/Preferences window removed for now (UI correction
+                    pass, Part 13) — acknowledged as not worth keeping in its
+                    current form. Gear icon stays present but inert, with a
+                    real, clear "coming soon" state rather than silently doing
+                    nothing. */}
+                <FlyoutMenu icon="settings" title="Settings" buttonSize={36} panelWidth={200}>
+                    <div style={{ padding: "var(--space-3)", color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
+                        Settings — coming soon.
+                    </div>
+                </FlyoutMenu>
 
                 <div style={{
                     width: 28, height: 28, borderRadius: "50%", background: "var(--bg-card-2)",
