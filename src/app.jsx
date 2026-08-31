@@ -307,6 +307,13 @@ export default function App() {
     // ── Navigation ────────────────────────────────────────────────────────────
     const [searchTarget, setSearchTarget] = useState(null)
 
+    // UI correction pass, Part 6 — Dashboard's fullscreen map + Canonical
+    // operational-view switcher. Lifted here (not owned by Dashboard.jsx
+    // itself) since the Canonical dropdown lives in the persistent header,
+    // a sibling component Dashboard has no direct access to.
+    const [dashboardFullscreen, setDashboardFullscreen] = useState(false)
+    const [canonicalView, setCanonicalView] = useState("maritime")
+
     // ── Right panel slot — mutually exclusive ─────────────────────────────────
     // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts"
     const [rightPanel, setRightPanel] = useState(null)
@@ -1220,6 +1227,8 @@ export default function App() {
                     onNavigate={(key) => openTab(key)}
                     onGoHome={() => openTab("map")}
                     modeLabel={modeLabel}
+                    canonicalView={dashboardFullscreen ? canonicalView : null}
+                    onCanonicalViewChange={dashboardFullscreen ? setCanonicalView : null}
                     systemHealth={systemHealth}
                     alertUnreadCount={unreadCount}
                     onOpenWatchlists={() => openTab("watchlists")}
@@ -1422,7 +1431,7 @@ export default function App() {
                     oversight. */}
                 {tabs.some(t => t.type === "dashboard") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "dashboard" ? "flex" : "none", flexDirection: "column" }}>
-                        <Dashboard />
+                        <Dashboard canonicalView={canonicalView} onFullscreenChange={setDashboardFullscreen} />
                     </div>
                 )}
 

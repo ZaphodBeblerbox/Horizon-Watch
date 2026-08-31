@@ -20,7 +20,7 @@ import Icon from "./Icon.jsx"
  * the left edges (for a map-control-stack button whose panel should open
  * toward the map, not off-screen).
  */
-export default function FlyoutMenu({ icon, label, title, align = "right", direction = "down", panelWidth = 260, buttonSize = 32, buttonStyle, hotkey = null, children }) {
+export default function FlyoutMenu({ icon, buttonText, label, title, align = "right", direction = "down", panelWidth = 260, buttonSize = 32, buttonStyle, hotkey = null, children }) {
     const [open, setOpen] = useState(false)
     const containerRef = useRef(null)
 
@@ -63,7 +63,15 @@ export default function FlyoutMenu({ icon, label, title, align = "right", direct
                 title={title || label}
                 aria-label={title || label}
                 aria-expanded={open}
-                style={{
+                style={buttonText ? {
+                    height: buttonSize, borderRadius: "var(--radius-md)",
+                    background: "var(--bg-card)", border: "1px solid var(--border)",
+                    display: "flex", alignItems: "center", gap: 6, padding: "0 10px",
+                    cursor: "pointer", color: open ? "var(--accent-blue)" : "var(--text-secondary)",
+                    fontFamily: "var(--font-sans)", fontSize: "var(--text-chip)", fontWeight: "var(--weight-medium)",
+                    whiteSpace: "nowrap",
+                    ...buttonStyle,
+                } : {
                     width: buttonSize, height: buttonSize, borderRadius: "var(--radius-md)",
                     background: "var(--bg-card)", border: "1px solid var(--border)",
                     display: "flex", alignItems: "center", justifyContent: "center",
@@ -71,7 +79,14 @@ export default function FlyoutMenu({ icon, label, title, align = "right", direct
                     ...buttonStyle,
                 }}
             >
-                <Icon name={icon} size={16} />
+                {buttonText ? (
+                    <>
+                        <span>{buttonText}</span>
+                        <Icon name="chevronRight" size={12} style={{ transform: open ? "rotate(-90deg)" : "rotate(90deg)", transition: "transform 0.15s ease" }} />
+                    </>
+                ) : (
+                    <Icon name={icon} size={16} />
+                )}
             </button>
 
             {open && (

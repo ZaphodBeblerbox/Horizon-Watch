@@ -6,6 +6,19 @@ import FlyoutMenu from "../ui/FlyoutMenu.jsx"
 import { DESTINATIONS } from "../data/destinations.js"
 import { STATUS_COLOR_TOKEN, STATUS_WORD } from "../utils/systemHealth.js"
 
+// UI correction pass, Part 6.3 — the 4 real Canonical operational views.
+// "imageAnalysis" has no real build in this pass (Dashboard.jsx renders an
+// honest "coming soon" placeholder for it) — still listed here since the
+// dropdown itself is real and complete, only that one destination behind it
+// is deliberately a placeholder.
+export const CANONICAL_OPTIONS = [
+    { key: "maritime", label: "Maritime Operational View" },
+    { key: "aerial", label: "Aerial Operational View" },
+    { key: "infrastructure", label: "Infrastructure Operational View" },
+    { key: "imageAnalysis", label: "Image Analysis" },
+]
+export const CANONICAL_LABEL = Object.fromEntries(CANONICAL_OPTIONS.map(o => [o.key, o.label]))
+
 function ToolRow({ label, active, onClick }) {
     return (
         <button
@@ -57,6 +70,11 @@ export default function AppHeader({
     healthActive, onToggleHealth,
     tvActive, onToggleTV,
     soundMuted, onToggleSound,
+    // "Canonical" operational-view switcher (UI correction pass, Part 6.3) —
+    // pass a real string + onChange only while Dashboard's map is in
+    // fullscreen; omit both (leave null) the rest of the time so the
+    // dropdown simply doesn't render.
+    canonicalView = null, onCanonicalViewChange = null,
 }) {
     const [now, setNow] = useState(() => new Date())
     useEffect(() => {
@@ -75,21 +93,39 @@ export default function AppHeader({
             display: "flex", alignItems: "stretch", fontFamily: "var(--font-sans)",
         }}>
             {/* Left zone */}
-            <div
-                onClick={onGoHome}
-                title="Go to Globe / Maritime Operational View"
-                style={{
-                    display: "flex", alignItems: "center", gap: "var(--space-2)",
-                    padding: "0 var(--space-4)", cursor: "pointer", flexShrink: 0,
-                }}
-            >
-                <Logo size={20} />
-                <span style={{
-                    fontSize: "var(--text-wordmark)", fontWeight: "var(--weight-semibold)",
-                    letterSpacing: "0.4px", color: "var(--text-primary)", whiteSpace: "nowrap",
-                }}>
-                    HORIZON WATCH
-                </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "0 var(--space-4)", flexShrink: 0 }}>
+                <div
+                    onClick={onGoHome}
+                    title="Go to Globe / Maritime Operational View"
+                    style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", cursor: "pointer" }}
+                >
+                    <Logo size={20} />
+                    <span style={{
+                        fontSize: "var(--text-wordmark)", fontWeight: "var(--weight-semibold)",
+                        letterSpacing: "0.4px", color: "var(--text-primary)", whiteSpace: "nowrap",
+                    }}>
+                        HORIZON WATCH
+                    </span>
+                </div>
+                {/* UI correction pass, Part 6.3: the "Canonical" operational-
+                    view switcher, appearing immediately next to the wordmark
+                    ONLY while Dashboard's map is in fullscreen. */}
+                {canonicalView != null && onCanonicalViewChange && (
+                    <FlyoutMenu
+                        buttonText={`Canonical: ${CANONICAL_LABEL[canonicalView] || canonicalView}`}
+                        title="Canonical operational view"
+                        buttonSize={28} panelWidth={220}
+                    >
+                        {CANONICAL_OPTIONS.map((opt) => (
+                            <ToolRow
+                                key={opt.key}
+                                label={opt.label}
+                                active={canonicalView === opt.key}
+                                onClick={() => onCanonicalViewChange(opt.key)}
+                            />
+                        ))}
+                    </FlyoutMenu>
+                )}
                 <div style={{ width: 1, alignSelf: "stretch", margin: "12px 0", background: "var(--border)" }} />
                 <span style={{
                     fontSize: "var(--text-mode-subtitle)", fontWeight: "var(--weight-medium)",
