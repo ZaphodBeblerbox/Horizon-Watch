@@ -128,7 +128,7 @@ export default function AoiMiniMap({
         const viewer = viewerRef.current
         if (!viewer || viewer.isDestroyed()) return
 
-        import("cesium").then(({ Rectangle, Color, CallbackProperty }) => {
+        import("cesium").then(({ Rectangle, Color, CallbackProperty, ColorMaterialProperty }) => {
             if (!viewer || viewer.isDestroyed()) return
 
             const nextIds = new Set(zones.map(z => z.system_id))
@@ -139,12 +139,22 @@ export default function AoiMiniMap({
                 }
             }
 
+            // HOTFIX: a `.material` field's outer value must implement
+            // MaterialProperty's getType() — a bare CallbackProperty only
+            // implements getValue(), so assigning one directly to
+            // rectangle.material crashed Cesium's per-frame update loop with
+            // "TypeError: t.getType is not a function" the moment a real
+            // pulsing zone (zoneExceedsBaseline() true) reached the screen,
+            // stopping the whole viewer's rendering. Real ColorMaterialProperty
+            // outer wrapper, plain CallbackProperty inner color value — same
+            // pattern src/globe/GlobeDirectorLayer.jsx's
+            // _renderHighlightBorder() already uses correctly.
             const materialFor = (baseColor, isSelected, shouldPulse) => {
                 if (shouldPulse) {
-                    return new CallbackProperty(() => {
+                    return new ColorMaterialProperty(new CallbackProperty(() => {
                         const t = (Date.now() % 2000) / 2000
                         return baseColor.withAlpha(0.08 + 0.18 * Math.abs(Math.sin(t * Math.PI)))
-                    }, false)
+                    }, false))
                 }
                 return baseColor.withAlpha(isSelected ? 0.22 : 0.08)
             }

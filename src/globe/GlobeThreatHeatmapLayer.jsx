@@ -74,15 +74,34 @@ function alertColor(severity) {
 }
 
 // Pulse period: escalating = 1s, emerging = 2s
-function makePulseColor(score, minAlpha, maxAlpha, periodMs) {
-    // CallbackProperty for material must return a MaterialProperty, not a raw Color.
-    // Wrapping in ColorMaterialProperty satisfies Cesium's getType() requirement.
-    return new CallbackProperty(() => {
+//
+// HOTFIX: a `.material` field needs the OUTER object to implement
+// MaterialProperty's getType()/getValue() interface — CallbackProperty only
+// implements getValue(). The previous version wrapped the *return value* of
+// the callback in ColorMaterialProperty, but Cesium's per-frame visualizer
+// calls `.getType(time)` on the CallbackProperty itself (the value actually
+// assigned to `.material`), not on whatever it returns — so that never
+// satisfied the requirement; it just moved the missing getType() one level
+// deeper where nothing ever inspected it. Once a rectangle/ellipse with this
+// as its material entered its update cycle, Cesium's real per-frame call
+// crashed with "TypeError: t.getType is not a function" (confirmed via a
+// direct check: `new CallbackProperty(...).getType` is `undefined`, on any
+// Cesium version) and Cesium's global error handler then stops rendering
+// entirely ("Rendering has stopped") for the whole viewer.
+//
+// The correct order is the other way around: a real ColorMaterialProperty
+// as the OUTER object (real getType()), wrapping a plain CallbackProperty
+// for just the pulsing *color* sub-value (which only ever needs getValue())
+// — the exact pattern src/globe/GlobeDirectorLayer.jsx's
+// _renderHighlightBorder() already uses correctly for its own polyline pulse
+// (`material: new ColorMaterialProperty(pulseAlpha)`).
+export function makePulseColor(score, minAlpha, maxAlpha, periodMs) {
+    return new ColorMaterialProperty(new CallbackProperty(() => {
         const t   = (Date.now() % periodMs) / periodMs
         const sin = Math.sin(t * Math.PI * 2) * 0.5 + 0.5
         const a   = minAlpha + (maxAlpha - minAlpha) * sin
-        return new ColorMaterialProperty(scoreToRgba(score, a))
-    }, false)
+        return scoreToRgba(score, a)
+    }, false))
 }
 
 export default function GlobeThreatHeatmapLayer({ enabled }) {
