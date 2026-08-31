@@ -129,11 +129,27 @@ function buildOverpassQuery(lat, lon, radius) {
     return `[out:json][timeout:8];(way["power"](around:${radius},${lat},${lon});way["man_made"="pipeline"](around:${radius},${lat},${lon});node["power"~"substation|transformer"](around:${radius},${lat},${lon});way["telecom"](around:${radius},${lat},${lon}););out body 5;`
 }
 
-export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible = true }) {
+export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible = true, onInspectorOpenChange = null }) {
     const [popup,   setPopup]   = useState(null)
     const [tooltip, setTooltip] = useState(null)  // { title, subtitle, position, x, y }
     const hoveredIdRef = useRef(null)
     const handlerRef = useRef(null)
+
+    // Reports whether THIS GlobePopup instance's own real docked
+    // InspectorPanel is currently open — InspectorPanel is mounted here
+    // (fixed, right-docked, on top of everything), and a caller that
+    // renders its own right-side panel in that same screen region (e.g.
+    // Dashboard's Watch Queue) needs to know it's about to be covered so it
+    // can get out of the way. Deliberately a scoped callback prop, not a
+    // global window event: app.jsx keeps every visited destination mounted
+    // (display:none, not unmounted) for fast tab switching, and each one
+    // with its own embedded GlobeView has its own independent GlobePopup —
+    // a global event would have every hidden instance's state bleed into
+    // whichever destination is actually visible.
+    const inspectorOpen = !!(popup && INSPECTOR_TYPES.has(popup.type))
+    useEffect(() => {
+        onInspectorOpenChange?.(inspectorOpen)
+    }, [inspectorOpen, onInspectorOpenChange])
 
     // Full UI rebuild spec section 7's exclusivity rules: "Navigating to a
     // different top-level destination... automatically closes any open

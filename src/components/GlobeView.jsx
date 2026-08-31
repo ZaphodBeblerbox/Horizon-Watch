@@ -6,6 +6,7 @@ import "cesium/Build/Cesium/Widgets/widgets.css"
 import { esriLabelsProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
+import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
@@ -83,6 +84,12 @@ export default function GlobeView({
     // GlobePopup needs this to know when to close its own open inspector
     // per the full-UI-rebuild spec's docked-inspector exclusivity rules.
     isVisible        = true,
+    // Real callback, not a global event — see GlobePopup.jsx's own comment
+    // on why: every destination that embeds a GlobeView keeps its own
+    // persistently-mounted (display:none when inactive) instance, each
+    // with an independent GlobePopup/inspector, so this must be scoped to
+    // THIS GlobeView, not broadcast app-wide.
+    onInspectorOpenChange = null,
     // Layer toggles — mirror workspace layer keys
     infraEnabled     = false,
     nauticalEnabled  = false,
@@ -459,6 +466,7 @@ export default function GlobeView({
 
                 {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} />}
                 {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} />}
+                <GlobeTrackLayer aisEnabled={aisEnabled} adsbEnabled={adsbEnabled} />
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />
@@ -498,7 +506,7 @@ export default function GlobeView({
             </Viewer>
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
-            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} />
+            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} onInspectorOpenChange={onInspectorOpenChange} />
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
             {cesiumViewer && (

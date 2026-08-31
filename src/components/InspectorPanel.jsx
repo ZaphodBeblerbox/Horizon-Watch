@@ -129,8 +129,36 @@ export default function InspectorPanel({
     const [linksLoading, setLinksLoading] = useState(false)
     const [linksError, setLinksError] = useState(false)
 
-    const normalized = normalizeEntity(entityType, data)
-    const { identity, attributes, provenance, actions } = normalized
+    // Real airline/aircraft-type/registration (hexdb.io, via GET
+    // /api/aviation/route/{icao24}) and a real reference photo
+    // (Planespotters.net, via GET /api/aviation/photo/{icao24}) — both real
+    // lookups keyed by ICAO24, not AI/vision-derived (no such pipeline
+    // exists in this codebase). Reset to null on every entity change so a
+    // stale aircraft's enrichment never bleeds into the next one; left null
+    // (never a fake/placeholder value) when nothing real comes back.
+    const [aircraftInfo, setAircraftInfo] = useState(null)
+    useEffect(() => {
+        setAircraftInfo(null)
+        if (entityType !== "aircraft" || !entityId) return
+        let cancelled = false
+        Promise.all([
+            fetch(`${API_BASE}/api/aviation/route/${encodeURIComponent(entityId)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+            fetch(`${API_BASE}/api/aviation/photo/${encodeURIComponent(entityId)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+        ]).then(([route, photo]) => {
+            if (cancelled) return
+            const merged = { ...route, ...photo }
+            const hasReal = Object.values(merged).some(v => v != null)
+            setAircraftInfo(hasReal ? merged : null)
+        })
+        return () => { cancelled = true }
+    }, [entityType, entityId])
+
+    // aircraftInfo fills gaps only — spread first so any real field the raw
+    // ADS-B `data` already carries (e.g. a live-feed registration) always
+    // wins over the hexdb.io fallback lookup for the same key.
+    const enrichedData = (entityType === "aircraft" && aircraftInfo) ? { ...aircraftInfo, ...data } : data
+    const normalized = normalizeEntity(entityType, enrichedData)
+    const { identity, attributes, provenance, actions, media } = normalized
 
     useEffect(() => {
         if (!entityType || !entityId) { setLinks([]); setLinksError(false); return }
@@ -166,8 +194,20 @@ export default function InspectorPanel({
             as="div"
             elevation={2}
             padded={false}
+            className="inspector-panel-slide-in"
             style={{ ...DEFAULT_DOCK_STYLE, ...style }}
         >
+            {/* Slides in from the right on mount — same short, no-bounce
+                120-160ms ease-out timing used elsewhere in the app (e.g.
+                app.jsx's "opacity 150ms ease"), not the unrelated 400ms
+                Director-panel entrance. Mirrors Dashboard.jsx's own Watch
+                Queue slide-OUT transition so the two read as one motion:
+                the inspector takes the Watch Queue's place, it doesn't pop
+                in on top of it. */}
+            <style>{`
+                @keyframes inspector-panel-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+                .inspector-panel-slide-in { animation: inspector-panel-slide-in 150ms ease-out; }
+            `}</style>
             {/* Header */}
             <div style={{
                 display: "flex", alignItems: "flex-start", gap: "var(--space-2)",
@@ -207,6 +247,21 @@ export default function InspectorPanel({
 
             {/* Body */}
             <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-3) var(--space-4)" }}>
+                {/* Real reference photo (aircraft only, only when one really
+                    exists for this aircraft — see adaptAircraft's `media`) */}
+                {media?.photoUrl && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <img
+                            src={media.photoUrl}
+                            alt={identity.title}
+                            style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }}
+                        />
+                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
+                            {[media.photographer && `Photo: ${media.photographer}`, media.sourceLabel].filter(Boolean).join(" · ")}
+                        </div>
+                    </div>
+                )}
+
                 {/* Key attributes */}
                 {attributes.length > 0 && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
