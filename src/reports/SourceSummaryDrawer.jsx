@@ -7,8 +7,11 @@ import Icon from "../ui/Icon.jsx"
  * council-finding chain for every claim in the report (flattened across all
  * 11 sections, same source the confidence strip counts from), so an analyst
  * can audit exactly what was cited and what the council found without
- * hunting through 10 sections individually. Surface uses --bg-card per the
- * task's own instruction to reuse that token for drawer/panel surfaces.
+ * hunting through 10 sections individually. Surface uses --bg-card-translucent
+ * (UI correction pass, Part 4/10.4) — this drawer is transient/floating
+ * content over the reading document, the one narrow exception to "no
+ * glassmorphism": alpha transparency only (~88%), no blur filter, still a
+ * crisp hard 1px border.
  *
  * Props:
  *   open     — bool
@@ -32,7 +35,7 @@ export default function SourceSummaryDrawer({ open, onClose, sections }) {
             <div
                 onClick={(e) => e.stopPropagation()}
                 style={{
-                    width: "min(480px, 92%)", height: "100%", background: "var(--bg-card)",
+                    width: "min(480px, 92%)", height: "100%", background: "var(--bg-card-translucent)",
                     borderLeft: "1px solid var(--border-strong)", overflowY: "auto",
                     padding: "var(--space-4)", boxShadow: "var(--shadow-callout)",
                 }}
