@@ -22,6 +22,8 @@
  */
 import { useEffect, useRef, useState } from "react"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
+import ScaleBar from "../components/ScaleBar.jsx"
+import CoordinateReadout from "../components/CoordinateReadout.jsx"
 
 const PRIORITY_COLOR = {
     critical: "#EF4444", // --danger
@@ -312,6 +314,14 @@ export default function AoiMiniMap({
                     color: "var(--accent-cyan)", fontSize: 10, pointerEvents: "none",
                     fontFamily: "var(--font-sans)",
                 }}>Click two opposite corners to draw a watch area · right-click to cancel</div>
+            )}
+            {/* UI correction pass, Part 7.5: every real map instance needs the
+                bottom-left scale bar + coordinate readout. */}
+            {ready && viewerRef.current && (
+                <>
+                    <ScaleBar viewer={viewerRef.current} />
+                    <CoordinateReadout viewer={viewerRef.current} />
+                </>
             )}
         </div>
     )
