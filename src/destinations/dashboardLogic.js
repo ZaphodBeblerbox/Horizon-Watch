@@ -2,6 +2,14 @@
 // they're directly unit-testable (see dashboardLogic.test.js), following the
 // src/reports/taskDisplay.js / src/globe/markerRenderer.js precedent.
 //
+// severityRank()/sortRowsBySeverity() (UI correction pass, Part 7.2) reuse
+// the exact real severity-tier ordering already established for the
+// Watchlists console — see src/app.jsx's own
+// `["critical","significant","elevated","low"].indexOf(...)` comparator and
+// src/components/watchlistsGrouping.js's fusionSeverityToAlertTier(), rather
+// than inventing a second severity taxonomy just for this destination.
+import { fusionSeverityToAlertTier } from "../components/watchlistsGrouping.js"
+//
 // Dashboard's Watch Queue merges two genuinely different real item shapes via
 // notificationsNormalize.js's mergeNotificationItems(surfaceItems, fusions):
 //   - plain surface-pool / alert items (GET /api/surface -> .items, real
@@ -65,14 +73,43 @@ export function timeAgoLabel(iso, nowMs = Date.now()) {
     return `${Math.floor(diffH / 24)}d ago`
 }
 
+// Real severity-tier ordering (most urgent first) — the same 4-tier
+// vocabulary severityColorToken()/SEV_TOKEN above already resolve onto.
+// Fusion items' own 4-tier vocabulary (critical/high/medium/low) is mapped
+// onto this one via fusionSeverityToAlertTier() so both merged-item shapes
+// rank on one real, consistent scale rather than two independently-ordered
+// ones.
+const SEVERITY_TIER_ORDER = ["critical", "significant", "elevated", "low"]
+
+/**
+ * Resolve a merged Watch Queue item's real severity tier to a rank index —
+ * lower is more urgent. Unrecognized/missing values rank last (never assumed
+ * more urgent than a real recognized tier).
+ * @param {object} item
+ * @returns {number}
+ */
+export function severityRank(item = {}) {
+    const tier = item.kind === "fusion" ? fusionSeverityToAlertTier(item.severity) : item.severity_tier
+    const idx = SEVERITY_TIER_ORDER.indexOf(tier)
+    return idx === -1 ? SEVERITY_TIER_ORDER.length : idx
+}
+
 /**
  * Normalize one merged Watch Queue item (either shape — see module docblock)
  * into the row shape the Watch Queue list actually renders. Every field read
  * here is real on at least one of the two input shapes; absent fields render
  * as "" / null rather than a fabricated placeholder.
  *
+ * `lat`/`lon` are real on both input shapes (fusion: notificationsNormalize.js's
+ * normalizeFusionEvent(); plain items: backend/main.py's _build_surface_pool())
+ * — kept on the row (rather than only on `raw`) so a click handler can fly the
+ * map there without fabricating a position for an item that lacks one.
+ * `kind`/`raw` carry enough of the original item through for a click handler to
+ * open the real docked inspector (GlobePopup.jsx's `akili:open-inspector`)
+ * without a second lookup.
+ *
  * @param {object} item - one entry from mergeNotificationItems()'s output
- * @returns {{id, severityToken:string, title:string, description:string, aoi:string, publishedAt:?string, confidencePct:?number}}
+ * @returns {{id, severityToken:string, severityRank:number, title:string, description:string, aoi:string, publishedAt:?string, confidencePct:?number, lat:?number, lon:?number, kind:string, raw:object}}
  */
 export function buildWatchQueueRow(item = {}) {
     const isFusion = item.kind === "fusion"
@@ -80,11 +117,16 @@ export function buildWatchQueueRow(item = {}) {
     return {
         id:            item.id,
         severityToken: severityColorToken(isFusion ? item.severity : item.severity_tier),
+        severityRank:  severityRank(item),
         title:         (isFusion ? item.title : item.headline) || "(untitled)",
         description:   (isFusion ? (item.narrative || item.subtitle) : item.context) || "",
         aoi:           (isFusion ? item.location_name : item.location) || "",
         publishedAt,
         confidencePct: confidencePct(item.confidence),
+        lat:           item.lat ?? null,
+        lon:           item.lon ?? null,
+        kind:          isFusion ? "fusion" : "event",
+        raw:           isFusion ? (item.raw || item) : item,
     }
 }
 
@@ -95,6 +137,24 @@ export function buildWatchQueueRow(item = {}) {
 export function buildWatchQueueRows(items) {
     if (!Array.isArray(items)) return []
     return items.map(buildWatchQueueRow)
+}
+
+/**
+ * Sort Watch Queue rows with real severity as the PRIMARY signal (most
+ * urgent tier first, per SEVERITY_TIER_ORDER), breaking ties by real
+ * recency (most recent first) rather than leaving same-tier ordering
+ * arbitrary. Does not mutate the input array.
+ * @param {object[]} rows - buildWatchQueueRow()-shaped rows
+ * @returns {object[]}
+ */
+export function sortRowsBySeverity(rows) {
+    if (!Array.isArray(rows)) return []
+    return [...rows].sort((a, b) => {
+        if (a.severityRank !== b.severityRank) return a.severityRank - b.severityRank
+        const at = a.publishedAt ? new Date(a.publishedAt).getTime() : 0
+        const bt = b.publishedAt ? new Date(b.publishedAt).getTime() : 0
+        return bt - at
+    })
 }
 
 /**
