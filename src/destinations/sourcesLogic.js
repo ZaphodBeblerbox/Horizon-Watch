@@ -142,3 +142,68 @@ export function boundsToPolygon(bounds) {
         ]],
     }
 }
+
+/**
+ * Convert a real WatchZone's bbox ({min_lon,min_lat,max_lon,max_lat} — see
+ * GET /api/watch-zones' _zone_row_to_dict()) into the real {north,south,
+ * east,west} shape AoiLockDimming (src/globe/AoiLockDimming.jsx) expects.
+ *
+ * @param {?{min_lon:number,min_lat:number,max_lon:number,max_lat:number}} bbox
+ * @returns {?{north:number,south:number,east:number,west:number}}
+ */
+export function bboxToLockBounds(bbox) {
+    if (!bbox) return null
+    const { min_lon, min_lat, max_lon, max_lat } = bbox
+    if (![min_lon, min_lat, max_lon, max_lat].every(Number.isFinite)) return null
+    return { north: max_lat, south: min_lat, east: max_lon, west: min_lon }
+}
+
+/**
+ * Derive a reasonable real {lat, lon, altitude} camera target from a real
+ * WatchZone bbox, for the real `akili:fly-to` window event (see
+ * src/globe/GlobePopup.jsx / src/reports/ReadingWorkspace.jsx for the
+ * established real payload shape this app already dispatches everywhere
+ * else a "fly the map here" interaction exists). Altitude is derived from
+ * the AOI's own real angular span — never a fabricated constant — so a
+ * large watch area frames wider than a small one.
+ *
+ * @param {?{min_lon:number,min_lat:number,max_lon:number,max_lat:number}} bbox
+ * @returns {?{lat:number, lon:number, altitude:number}}
+ */
+export function zoneFlyTarget(bbox) {
+    if (!bbox) return null
+    const { min_lon, min_lat, max_lon, max_lat } = bbox
+    if (![min_lon, min_lat, max_lon, max_lat].every(Number.isFinite)) return null
+    const lat = (min_lat + max_lat) / 2
+    const lon = (min_lon + max_lon) / 2
+    const spanDeg = Math.max(max_lat - min_lat, max_lon - min_lon, 0.05)
+    // Rough degrees-of-span -> framing-altitude scale; floored/ceilinged to
+    // sane bounds so a pinpoint-small AOI doesn't fly in too close and a
+    // huge one doesn't fly out to orbit.
+    const altitude = Math.min(3_000_000, Math.max(50_000, spanDeg * 220_000))
+    return { lat, lon, altitude }
+}
+
+/**
+ * Find which of a bounded, recency-ordered list of full alert detail
+ * payloads (GET /api/alerts/{alert_id} shape — the only real endpoint that
+ * exposes raw_json, which is where a detector attaches rule_id/rule_name;
+ * see backend/detectors/ais_detector.py and detectors/correlation_engine.py)
+ * were actually fired by the given rule.
+ *
+ * Honest limitation (documented, not fabricated): GET /api/alerts (the list
+ * endpoint) has no rule_id filter and doesn't return raw_json, so there is
+ * no single real query for "alerts this rule fired." This checks only the
+ * alert detail payloads the caller already fetched (a bounded recent window)
+ * — never invents a match, and callers should render an honest "checked the
+ * N most recent active alerts" caveat alongside the result.
+ *
+ * @param {object[]} alertDetails - GET /api/alerts/{alert_id} response shapes
+ * @param {number|string} ruleId - the rule's real numeric id (RuleConfig.id)
+ * @returns {object[]} the subset whose raw_json.rule_id matches
+ */
+export function matchAlertsToRule(alertDetails, ruleId) {
+    if (!Array.isArray(alertDetails) || ruleId == null) return []
+    const target = String(ruleId)
+    return alertDetails.filter(a => String(a?.raw_json?.rule_id ?? "") === target)
+}

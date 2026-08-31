@@ -206,6 +206,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:5175",
+        "http://localhost:5180",
         "http://localhost:3000",
         "https://horizon-watch.vercel.app",
         "https://horizon-watch-production.up.railway.app",
