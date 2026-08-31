@@ -298,7 +298,7 @@ export default function App() {
         dashboard: "DASHBOARD",
         reports: "REPORTS",
         watchlists: "WATCHLISTS",
-        sources: "SOURCES",
+        sources: "INTEL", // UI correction pass Part 11.1: destination renamed "Intel" in nav; this mode-strip label follows
         aiCouncil: "AI COUNCIL",
         analytics: "ANALYTICS",
     }
@@ -680,7 +680,7 @@ export default function App() {
         const LABELS = {
             map: "Map", analytics: "Analytics",
             dashboard: "Dashboard", reports: "Reports", watchlists: "Watchlists",
-            sources: "Sources", aiCouncil: "AI Council",
+            sources: "Intel", aiCouncil: "AI Council",
         }
         const existing = tabs.find(t => t.type === type)
         if (existing) { switchTab(existing.id); return }
