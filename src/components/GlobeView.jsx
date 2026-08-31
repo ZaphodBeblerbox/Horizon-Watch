@@ -134,9 +134,25 @@ export default function GlobeView({
 
     // Expose the live Cesium.Viewer once Resium has mounted it, for the
     // bottom-left map-chrome overlays (ScaleBar/CoordinateReadout) which
-    // need a real viewer instance rather than the ref wrapper.
+    // need a real viewer instance rather than the ref wrapper. UI correction
+    // pass, Dashboard bug #3: this was a one-shot check with no retry, unlike
+    // every other "wait for viewerRef.current.cesiumElement" spot in this
+    // file (see the rendering-quality and viewport-bounds effects below,
+    // both of which retry on a timer) — confirmed live that Resium's actual
+    // Cesium.Viewer isn't always ready on the very first post-mount tick, so
+    // the one-shot version could leave cesiumViewer null forever and
+    // silently drop ScaleBar/CoordinateReadout. Now retries the same way.
     useEffect(() => {
-        setCesiumViewer(viewerRef.current?.cesiumElement || null)
+        let attempts = 0
+        let cancelled = false
+        const tryExpose = () => {
+            if (cancelled) return
+            const v = viewerRef.current?.cesiumElement || null
+            if (v) { setCesiumViewer(v); return }
+            if (attempts++ < 20) setTimeout(tryExpose, 250)
+        }
+        tryExpose()
+        return () => { cancelled = true }
     }, [])
 
     // AIS — use external prop if provided, otherwise fetch internally
