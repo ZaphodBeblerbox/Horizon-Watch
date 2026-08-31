@@ -276,7 +276,13 @@ def _fake_write_alert(alert_dict):
 
 _ORIGINAL_MAIN_CHECK = main.check_sanctions_for_vessel
 _ORIGINAL_MAIN_WRITE_ALERT = main.write_alert
+_ORIGINAL_MAIN_IS_RELEVANT = main._sanctions_hit_is_relevant
 main.write_alert = _fake_write_alert
+# These 3 scenarios are about the confirmed/possible corroboration branching,
+# not the relevance gate — pin relevance to True so they keep testing exactly
+# what they tested before the gate existed. The gate itself is covered in its
+# own section below.
+main._sanctions_hit_is_relevant = lambda lat, lon: True
 
 _spy_site1_calls = []
 
@@ -327,6 +333,246 @@ check("site 1 writes no alert when the shared function returns None", len(_writt
 # Restore.
 main.check_sanctions_for_vessel = _ORIGINAL_MAIN_CHECK
 main.write_alert = _ORIGINAL_MAIN_WRITE_ALERT
+main._sanctions_hit_is_relevant = _ORIGINAL_MAIN_IS_RELEVANT
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Part 1e: sanctions relevance gate — _sanctions_hit_is_relevant() itself,
+# plus its effect on _check_sanctions_on_update()'s severity/relevance_score
+# and on whether the hit gets a map marker (_forge_alerts.append).
+#
+# A hit inside/near an active Watch Area or mission-profile focus region
+# still fires prominently (critical/medium + a map marker), exactly as
+# before the gate existed. A hit outside every watched area is still
+# written for real via write_alert() (findable in Watchlists history,
+# nothing silently dropped) but is downgraded to "low" severity and does
+# NOT get appended to _forge_alerts, so it never paints a map marker or
+# competes for attention as an urgent item.
+#
+# Chosen relevance threshold (stated explicitly, not left implicit): inside
+# an enabled Watch Area's bbox, or within _SANCTIONS_RELEVANCE_BUFFER_DEG
+# (0.5 degrees) of it — bbox-plus-buffer rather than exact polygon
+# containment, matching the pre-existing news-relevance-boost precedent
+# that also uses rectangular REGION_BBOXES, not polygons.
+# ─────────────────────────────────────────────────────────────────────────
+print("\n-- sanctions relevance gate: _sanctions_hit_is_relevant() direct unit checks --")
+import database as _db_module
+
+
+class _FakeZone:
+    def __init__(self, s, n, w, e):
+        self.bbox_min_lat, self.bbox_max_lat = s, n
+        self.bbox_min_lon, self.bbox_max_lon = w, e
+        self.enabled = True
+
+
+class _FakeQuery:
+    def __init__(self, zones):
+        self._zones = zones
+
+    def filter(self, *a, **k):
+        return self
+
+    def all(self):
+        return self._zones
+
+
+class _FakeSession:
+    def __init__(self, zones):
+        self._zones = zones
+
+    def query(self, model):
+        return _FakeQuery(self._zones)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _fake_get_db_factory(zones):
+    return lambda: _FakeSession(zones)
+
+
+_ORIGINAL_GET_DB = _db_module.get_db
+_ORIGINAL_ACTIVE_PROFILE = main._ACTIVE_PROFILE
+
+# No enabled zones anywhere, no active mission profile -> not relevant.
+_db_module.get_db = _fake_get_db_factory([])
+main._ACTIVE_PROFILE = None
+check(
+    "no watch zones, no active profile -> not relevant",
+    main._sanctions_hit_is_relevant(10.0, 20.0) is False,
+)
+
+# Point falls exactly inside an enabled Watch Area's bbox -> relevant.
+_db_module.get_db = _fake_get_db_factory([_FakeZone(9.0, 11.0, 19.0, 21.0)])
+check(
+    "point inside an enabled Watch Area bbox -> relevant",
+    main._sanctions_hit_is_relevant(10.0, 20.0) is True,
+)
+
+# Point well outside any zone bbox and its buffer -> not relevant.
+_db_module.get_db = _fake_get_db_factory([_FakeZone(50.0, 52.0, 4.0, 5.0)])
+check(
+    "point far from the nearest Watch Area bbox -> not relevant",
+    main._sanctions_hit_is_relevant(10.0, 20.0) is False,
+)
+
+# Point just outside the literal bbox but inside the 0.5-degree buffer ->
+# still relevant (the buffer is a deliberate, documented design choice).
+_db_module.get_db = _fake_get_db_factory([_FakeZone(9.0, 9.6, 19.0, 19.6)])
+check(
+    "point just outside a Watch Area bbox but within the 0.5-degree buffer -> relevant",
+    main._sanctions_hit_is_relevant(10.0, 20.0) is True,
+)
+
+# No zones, but the active mission profile's focusRegions include a named
+# region (real REGION_BBOXES entry) whose bbox contains the point.
+_db_module.get_db = _fake_get_db_factory([])
+main._ACTIVE_PROFILE = {"focusRegions": ["Gulf States"]}  # (22.0, 30.0, 46.0, 60.0)
+check(
+    "no zones, but point inside active profile's focus-region bbox -> relevant",
+    main._sanctions_hit_is_relevant(25.0, 50.0) is True,
+)
+check(
+    "no zones, point outside active profile's focus-region bbox -> not relevant",
+    main._sanctions_hit_is_relevant(10.0, 20.0) is False,
+)
+
+# "Global" focus region (bbox=None in REGION_BBOXES) -> always relevant,
+# matching the existing news-relevance-boost precedent for the same value.
+main._ACTIVE_PROFILE = {"focusRegions": ["Global"]}
+check(
+    "active profile's focus region is 'Global' -> always relevant",
+    main._sanctions_hit_is_relevant(0.0, 0.0) is True,
+)
+
+# Missing/invalid lat/lon -> never raises, always False.
+check("lat=None -> not relevant, no exception", main._sanctions_hit_is_relevant(None, 20.0) is False)
+check("lon=None -> not relevant, no exception", main._sanctions_hit_is_relevant(10.0, None) is False)
+check("non-numeric lat -> not relevant, no exception", main._sanctions_hit_is_relevant("nope", 20.0) is False)
+
+_db_module.get_db = _ORIGINAL_GET_DB
+main._ACTIVE_PROFILE = _ORIGINAL_ACTIVE_PROFILE
+
+
+print("\n-- sanctions relevance gate: real DB smoke test (actual WatchZone row) --")
+# Not a fake DB this time — seeds one real WatchZone row into the actual
+# local dev database, confirms _sanctions_hit_is_relevant() finds it via the
+# real get_db()/query path, then removes the row again so this test leaves
+# no trace behind.
+from database import WatchZone as _RealWatchZone
+
+_TEST_ZONE_SYSTEM_ID = "TEST-RELEVANCE-GATE-ZONE"
+with _db_module.get_db() as _cleanup_db:
+    _cleanup_db.query(_RealWatchZone).filter(_RealWatchZone.system_id == _TEST_ZONE_SYSTEM_ID).delete()
+    _cleanup_db.commit()
+
+try:
+    with _db_module.get_db() as _seed_db:
+        _seed_db.add(_RealWatchZone(
+            system_id=_TEST_ZONE_SYSTEM_ID,
+            name="Test Relevance Gate Zone",
+            polygon_geojson="{}",
+            bbox_min_lon=19.0, bbox_min_lat=9.0,
+            bbox_max_lon=21.0, bbox_max_lat=11.0,
+            enabled=True,
+        ))
+        _seed_db.commit()
+
+    check(
+        "real WatchZone row in the actual DB -> point inside its bbox is relevant",
+        main._sanctions_hit_is_relevant(10.0, 20.0) is True,
+    )
+    check(
+        "real WatchZone row in the actual DB -> point far outside it is not relevant",
+        main._sanctions_hit_is_relevant(-70.0, 170.0) is False,
+    )
+
+    with _db_module.get_db() as _disable_db:
+        _disable_db.query(_RealWatchZone).filter(_RealWatchZone.system_id == _TEST_ZONE_SYSTEM_ID).update({"enabled": False})
+        _disable_db.commit()
+    check(
+        "disabling the real WatchZone row -> the same point is no longer relevant",
+        main._sanctions_hit_is_relevant(10.0, 20.0) is False,
+    )
+finally:
+    with _db_module.get_db() as _cleanup_db2:
+        _cleanup_db2.query(_RealWatchZone).filter(_RealWatchZone.system_id == _TEST_ZONE_SYSTEM_ID).delete()
+        _cleanup_db2.commit()
+
+
+print("\n-- sanctions relevance gate: effect on _check_sanctions_on_update() --")
+main.write_alert = _fake_write_alert
+main.check_sanctions_for_vessel = _spy_site1_confirmed
+
+# Scenario: hit INSIDE a real active Watch Area -> prominent (critical +
+# a map marker via _forge_alerts).
+main._sanctions_hit_is_relevant = lambda lat, lon: True
+_written_alerts.clear()
+main._forge_alerts.clear()
+asyncio.run(main._check_sanctions_on_update({"mmsi": "333000010", "name": "MV INSIDE AOI", "lat": 10.0, "lon": 20.0}))
+check("relevant hit -> alert is written", len(_written_alerts) == 1, _written_alerts)
+if _written_alerts:
+    check("relevant hit -> severity stays 'critical'", _written_alerts[0]["severity"] == "critical", _written_alerts[0])
+    check("relevant hit -> relevance_score stays 100", _written_alerts[0]["relevance_score"] == 100, _written_alerts[0])
+    check("relevant hit -> confidence unaffected by the gate (0.95)", _written_alerts[0]["confidence"] == 0.95, _written_alerts[0])
+check(
+    "relevant hit -> DOES get a map marker (_forge_alerts.append called)",
+    len(main._forge_alerts) == 1, main._forge_alerts,
+)
+
+# Scenario: hit far OUTSIDE every watched area -> still logged for real,
+# but downgraded and no map marker.
+main._sanctions_hit_is_relevant = lambda lat, lon: False
+_written_alerts.clear()
+main._forge_alerts.clear()
+asyncio.run(main._check_sanctions_on_update({"mmsi": "333000011", "name": "MV FAR AWAY", "lat": -70.0, "lon": 170.0}))
+check(
+    "non-relevant hit -> STILL written for real (nothing silently dropped)",
+    len(_written_alerts) == 1, _written_alerts,
+)
+if _written_alerts:
+    check("non-relevant hit -> severity downgraded to 'low'", _written_alerts[0]["severity"] == "low", _written_alerts[0])
+    check("non-relevant hit -> relevance_score downgraded", _written_alerts[0]["relevance_score"] < 100, _written_alerts[0])
+    check("non-relevant hit -> confidence still unaffected by the gate (0.95)", _written_alerts[0]["confidence"] == 0.95, _written_alerts[0])
+    check(
+        "non-relevant hit -> message honestly says it's outside watched areas",
+        "outside all currently active Watch Areas" in _written_alerts[0]["message"],
+        _written_alerts[0],
+    )
+    check(
+        "non-relevant hit -> payload carries relevant=False for downstream honesty",
+        _written_alerts[0]["payload"]["relevant"] is False,
+        _written_alerts[0],
+    )
+check(
+    "non-relevant hit -> does NOT get a map marker (no _forge_alerts.append)",
+    len(main._forge_alerts) == 0, main._forge_alerts,
+)
+
+# The "possible" (flag-mismatch) branch is downgraded the same way when
+# also outside every watched area.
+main.check_sanctions_for_vessel = _spy_site1_possible
+_written_alerts.clear()
+main._forge_alerts.clear()
+asyncio.run(main._check_sanctions_on_update({"mmsi": "333000012", "name": "MV FAR AWAY POSSIBLE", "lat": -70.0, "lon": 170.0}))
+if _written_alerts:
+    check(
+        "non-relevant + possible hit -> also downgraded to 'low' (not left at 'medium')",
+        _written_alerts[0]["severity"] == "low", _written_alerts[0],
+    )
+check(
+    "non-relevant + possible hit -> also gets no map marker",
+    len(main._forge_alerts) == 0, main._forge_alerts,
+)
+
+# Restore.
+main.check_sanctions_for_vessel = _ORIGINAL_MAIN_CHECK
+main.write_alert = _ORIGINAL_MAIN_WRITE_ALERT
+main._sanctions_hit_is_relevant = _ORIGINAL_MAIN_IS_RELEVANT
 
 
 # ─────────────────────────────────────────────────────────────────────────
