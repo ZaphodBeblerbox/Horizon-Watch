@@ -162,6 +162,7 @@ export function adaptAircraft(data = {}) {
 
     const attributes = compact([
         attr("Registration", registration),
+        attr("Airline", data.airline || null),
         attr("Callsign", callsign),
         attr("ICAO24", icao),
         attr("Type", data.aircraft_type || data.type_designator || null),
@@ -182,6 +183,15 @@ export function adaptAircraft(data = {}) {
             sanctionsStatus: null,
         },
         attributes,
+        // Real reference photo (Planespotters.net, via GET /api/aviation/photo/{icao24})
+        // — shown only when a real photo exists for this real aircraft; never a
+        // placeholder or stock image. Not AI-derived: this is a real photo lookup
+        // keyed by ICAO24, same as the route/registration lookup above.
+        media: data.photo_url ? {
+            photoUrl: data.photo_url,
+            photographer: data.photographer || null,
+            sourceLabel: "Planespotters.net",
+        } : null,
         provenance: extractProvenance(data),
         actions: {
             canJumpToLocation: !!point,

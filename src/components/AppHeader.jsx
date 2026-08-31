@@ -82,6 +82,24 @@ export default function AppHeader({
         return () => clearInterval(t)
     }, [])
 
+    // Global app fullscreen (real browser Fullscreen API on the whole
+    // document) — distinct from Dashboard's own per-map "expand map to
+    // fullscreen" control (handleFullscreenToggle/onFullscreen above), which
+    // only fullscreens the map region within the app chrome. Tracks
+    // document.fullscreenElement via the real fullscreenchange event so the
+    // icon/title stay correct even when fullscreen is exited via Esc or the
+    // browser's own UI, not just via this button.
+    const [appFullscreen, setAppFullscreen] = useState(() => !!document.fullscreenElement)
+    useEffect(() => {
+        const onChange = () => setAppFullscreen(!!document.fullscreenElement)
+        document.addEventListener("fullscreenchange", onChange)
+        return () => document.removeEventListener("fullscreenchange", onChange)
+    }, [])
+    const toggleAppFullscreen = () => {
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+        else document.documentElement.requestFullscreen().catch(() => {})
+    }
+
     const zulu = now.toUTCString().slice(17, 22) + "Z"
     const local = now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false })
 
@@ -208,6 +226,20 @@ export default function AppHeader({
                             {alertUnreadCount > 99 ? "99+" : alertUnreadCount}
                         </span>
                     )}
+                </button>
+
+                <button
+                    onClick={toggleAppFullscreen}
+                    title={appFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                    aria-label={appFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                    style={{
+                        width: 36, height: 36, display: "flex",
+                        alignItems: "center", justifyContent: "center",
+                        background: "none", border: "none", cursor: "pointer",
+                        color: appFullscreen ? "var(--accent-blue)" : "var(--text-secondary)",
+                    }}
+                >
+                    <Icon name="expand" size={18} />
                 </button>
 
                 <FlyoutMenu icon="filter" label="Tools" title="Tools" buttonSize={36} panelWidth={220}>

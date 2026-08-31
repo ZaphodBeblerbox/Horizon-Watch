@@ -78,6 +78,32 @@ describe("adaptAircraft", () => {
         expect(adaptAircraft({ military: true }).identity.subtype).toBe("military")
         expect(adaptAircraft({}).identity.subtype).toBe("general")
     })
+
+    it("surfaces a real airline/type/registration lookup (GET /api/aviation/route/{icao24}) once merged in, and no fake confidence field", () => {
+        const ac = { flight: "AFR816", icao: "394A0E", airline: "Air France", aircraft_type: "777", registration: "F-GSQO" }
+        const result = adaptAircraft(ac)
+        expect(findAttr(result.attributes, "Airline").value).toBe("Air France")
+        expect(findAttr(result.attributes, "Type").value).toBe("777")
+        expect(findAttr(result.attributes, "Registration").value).toBe("F-GSQO")
+        expect(result.attributes.find(a => /confidence/i.test(a.label))).toBeUndefined()
+    })
+
+    it("omits the Airline attribute entirely when no real lookup result exists, rather than a placeholder", () => {
+        const result = adaptAircraft({ flight: "UAL123" })
+        expect(result.attributes.find(a => a.label === "Airline")).toBeUndefined()
+    })
+
+    it("carries a real reference photo (GET /api/aviation/photo/{icao24}) as media when one exists", () => {
+        const ac = { flight: "AFR816", photo_url: "https://www.planespotters.net/photo/1903521/...", photographer: "Gerrit Griem" }
+        const result = adaptAircraft(ac)
+        expect(result.media).toEqual({
+            photoUrl: ac.photo_url, photographer: "Gerrit Griem", sourceLabel: "Planespotters.net",
+        })
+    })
+
+    it("media is null (not a placeholder) when no real photo exists for this aircraft", () => {
+        expect(adaptAircraft({ flight: "UAL123" }).media).toBeNull()
+    })
 })
 
 describe("adaptAlert", () => {

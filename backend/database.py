@@ -1012,6 +1012,12 @@ class ReportTask(Base):
     snapshot_id   = Column(String, nullable=True, index=True)   # set once collection freezes a ReportSnapshot
     report_id     = Column(String, nullable=True, index=True)   # set once drafting creates the underlying Report
 
+    # Set only for a "Generate Snapshot Report" task (real WatchZone.system_id
+    # it was scoped to) — real, loosely-coupled reference, same convention as
+    # snapshot_id/report_id above rather than a hard FK. None for both a
+    # normal region/"auto"-scoped task and a global-overview snapshot task.
+    watch_zone_id = Column(String, nullable=True, index=True)
+
     created_by    = Column(String, nullable=True)
     created_at    = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     updated_at    = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -1132,6 +1138,13 @@ def migrate_db():
             if col not in se_existing:
                 cur.execute(f'ALTER TABLE surge_events ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] surge_events: added column {col}')
+
+    # report_tasks new columns (Generate Snapshot Report — real WatchZone scope)
+    if 'report_tasks' in tables:
+        rt_existing = [row[1] for row in cur.execute('PRAGMA table_info(report_tasks)').fetchall()]
+        if 'watch_zone_id' not in rt_existing:
+            cur.execute('ALTER TABLE report_tasks ADD COLUMN watch_zone_id TEXT')
+            print('[db-migrate] report_tasks: added column watch_zone_id')
 
     # Sentinel detection instrument tagging (optical vs SAR)
     if 'sentinel_detections' in tables:

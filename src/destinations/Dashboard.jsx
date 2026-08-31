@@ -189,6 +189,18 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
     const [windowedLayers, setWindowedLayers] = useState(WINDOWED_DEFAULT_LAYERS)
     const [fullscreenLayers, setFullscreenLayers] = useState(() => CANONICAL_LAYER_DEFAULTS[canonicalView] || {})
 
+    // Selecting an entity opens the real docked InspectorPanel (mounted by
+    // this destination's own embedded GlobeView, fixed to the same
+    // right-side screen region the Watch Queue panel below occupies) —
+    // without this, the two stack on top of each other. GlobeView reports
+    // real open/close state via a scoped callback prop (not a global
+    // event: app.jsx keeps every visited destination's GlobeView mounted,
+    // display:none, for fast tab switching, so a global signal would pick
+    // up other hidden destinations' inspectors too). Sliding the Watch
+    // Queue out of the way, rather than leaving both visible, is what lets
+    // the inspector "take its place" instead of overlapping it.
+    const [inspectorOpen, setInspectorOpen] = useState(false)
+
     // Re-seed the fullscreen layer set whenever the caller's Canonical-view
     // selection changes (the header dropdown this destination doesn't render
     // itself), so switching Canonical views always starts from that view's
@@ -292,6 +304,7 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
             ) : (
                 <>
                     <GlobeView
+                        onInspectorOpenChange={setInspectorOpen}
                         aisEnabled={layerOn(activeLayers, "aisVessels")}
                         adsbEnabled={layerOn(activeLayers, "adsb")}
                         eventsEnabled={layerOn(activeLayers, "unifiedEvents")}
@@ -343,17 +356,22 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100%", fontFamily: "var(--font-sans)" }}>
-            <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+            <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
                 {/* Left ~66% — real embedded globe overview */}
                 <div style={{ flex: 2, minWidth: 0, borderRight: "1px solid var(--border)", position: "relative" }}>
                     {mapRegion}
                 </div>
 
                 {/* Right ~34% — Watch Queue (UI correction pass, Part 6/7.2:
-                    translucent panel + rows, no colored border stripe) */}
+                    translucent panel + rows, no colored border stripe).
+                    Slides fully out of view (rather than stacking under it)
+                    while the InspectorPanel is open in this same screen
+                    region — reversed the instant the inspector closes. */}
                 <div style={{
                     flex: 1, minWidth: 280, background: "var(--bg-panel-translucent)",
                     display: "flex", flexDirection: "column", minHeight: 0,
+                    transform: inspectorOpen ? "translateX(100%)" : "translateX(0)",
+                    transition: "transform 150ms ease-out",
                 }}>
                     <div style={{
                         padding: "var(--space-3) var(--space-3) var(--space-2)",
