@@ -73,3 +73,23 @@ export function runTaskAction(taskId, path, body) {
         body: JSON.stringify(body || {}),
     }).then(asJson)
 }
+
+/** "Generate Snapshot Report" — creates a real ReportTask that captures its
+ * scope's intelligence picture immediately instead of over a scheduled
+ * window; lands directly on ready_to_draft (see backend/main.py's
+ * create_snapshot_report_task()). `watchZoneId` (optional): a real, enabled
+ * WatchZone's system_id to scope to; omit for the global/all-active-regions
+ * fallback. */
+export function createSnapshotReportTask({ focus, watchZoneId } = {}) {
+    return apiFetch("/api/reports/tasks/snapshot", {
+        method: "POST",
+        body: JSON.stringify({ focus: focus || null, watch_zone_id: watchZoneId || null }),
+    }).then(asJson)
+}
+
+/** Real, enabled Watch Areas (WatchZone rows) an analyst can scope a
+ * Snapshot Report to — same GET /api/watch-zones the Intel destination's
+ * Watch Areas tab already lists from. */
+export function listWatchZones() {
+    return apiFetch("/api/watch-zones").then(asJson)
+}

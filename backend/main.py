@@ -17698,12 +17698,25 @@ def _snapshot_id() -> str:
 
 
 def _parse_snapshot_dt(v):
+    """Parse an ISO datetime string from the frontend into a naive UTC
+    datetime, matching the naive-UTC convention datetime.utcnow() already
+    establishes everywhere else in this file (69 call sites). The frontend
+    sends Date.toISOString(), which is "Z"-suffixed/timezone-aware — Python
+    3.11+'s fromisoformat() parses that as tz-aware, which then raises
+    "can't compare offset-naive and offset-aware datetimes" the moment it's
+    compared against a naive datetime.utcnow() (e.g. create_report_task's
+    `period_start > now`). Converting to UTC and stripping tzinfo here, once,
+    at the single real parse boundary, keeps every existing naive-UTC
+    comparison downstream correct without touching 69 call sites."""
     if not v:
         return None
     try:
-        return datetime.fromisoformat(v)
+        dt = datetime.fromisoformat(v)
     except Exception:
         return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 @app.post("/api/reports/snapshots")
@@ -17895,6 +17908,7 @@ def _task_to_dict(row, db) -> dict:
         "status":       _task_effective_status(row, db),
         "snapshot_id":  row.snapshot_id,
         "report_id":    row.report_id,
+        "watch_zone_id": row.watch_zone_id,
         "created_by":   row.created_by,
         "created_at":   row.created_at.isoformat() if row.created_at else None,
         "updated_at":   row.updated_at.isoformat() if row.updated_at else None,
@@ -18020,6 +18034,54 @@ async def get_report_task(task_id: str):
         return result
 
 
+async def _freeze_task_snapshot(row, db, region=None, bbox=None, period_start=None, period_end=None) -> dict:
+    """Shared freeze step: run prepare_intelligence_picture() (scoped by
+    whatever region/bbox/period the caller resolved), create the resulting
+    ReportSnapshot, and move `row` to ready_to_draft. Used by both
+    finish_report_task_collection() (a scheduled collection window ending)
+    and create_snapshot_report_task() (an instant Snapshot Report) — one real
+    freeze implementation, not two parallel ones."""
+    from database import ReportSnapshot
+    from briefing_prep import prepare_intelligence_picture as _prep_ip_fin
+    loop = asyncio.get_event_loop()
+    try:
+        pic = await asyncio.wait_for(
+            loop.run_in_executor(
+                _executor,
+                lambda: _prep_ip_fin(
+                    db=next(_db_gen()), forge_alerts=list(_forge_alerts),
+                    fusion_engine_instance=_fusion_engine,
+                    region=region, bbox=bbox, period_start=period_start, period_end=period_end,
+                ),
+            ),
+            # See the matching comment in get_report_task() above — same
+            # reasoning, same 60s bound.
+            timeout=60,
+        )
+    except Exception as _e:
+        raise HTTPException(500, f"collection failed: {_e}")
+
+    def _json_default(obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return str(obj)
+
+    snap_id = _snapshot_id()
+    snap = ReportSnapshot(
+        snapshot_id=snap_id, label=row.focus or f"Task {row.task_id}",
+        source="report_task", period_start=period_start, period_end=period_end,
+        stats_json=_json.dumps(pic.get("statistics", {}), default=_json_default),
+        content_json=_json.dumps(pic, ensure_ascii=False, default=_json_default),
+        created_by=row.created_by,
+    )
+    db.add(snap)
+    row.snapshot_id = snap_id
+    row.status = "ready_to_draft"
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return _task_to_dict(row, db)
+
+
 @app.post("/api/reports/tasks/{task_id}/finish-collection")
 async def finish_report_task_collection(task_id: str):
     """Explicit, consequential transition: freezes a real ReportSnapshot from
@@ -18028,7 +18090,7 @@ async def finish_report_task_collection(task_id: str):
     its own) and for closing a windowed task early — GET never does this
     automatically, since freezing a permanent artefact isn't something a read
     should trigger as a side effect."""
-    from database import ReportTask, ReportSnapshot, get_db as _gdb_tfin
+    from database import ReportTask, get_db as _gdb_tfin
     with _gdb_tfin() as db:
         row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
         if not row:
@@ -18039,44 +18101,63 @@ async def finish_report_task_collection(task_id: str):
         now = datetime.utcnow()
         region = _resolve_task_region(row)
         window_end = min(row.period_end, now) if row.period_end else now
-        from briefing_prep import prepare_intelligence_picture as _prep_ip_fin
-        loop = asyncio.get_event_loop()
-        try:
-            pic = await asyncio.wait_for(
-                loop.run_in_executor(
-                    _executor,
-                    lambda: _prep_ip_fin(
-                        db=next(_db_gen()), forge_alerts=list(_forge_alerts),
-                        fusion_engine_instance=_fusion_engine,
-                        region=region, period_start=row.period_start, period_end=window_end,
-                    ),
-                ),
-                # See the matching comment in get_report_task() above — same
-                # reasoning, same 60s bound.
-                timeout=60,
-            )
-        except Exception as _e:
-            raise HTTPException(500, f"collection failed: {_e}")
+        return await _freeze_task_snapshot(row, db, region=region, period_start=row.period_start, period_end=window_end)
 
-        def _json_default(obj):
-            if hasattr(obj, "isoformat"):
-                return obj.isoformat()
-            return str(obj)
 
-        snap_id = _snapshot_id()
-        snap = ReportSnapshot(
-            snapshot_id=snap_id, label=row.focus or f"Task {row.task_id}",
-            source="report_task", period_start=row.period_start, period_end=window_end,
-            stats_json=_json.dumps(pic.get("statistics", {}), default=_json_default),
-            content_json=_json.dumps(pic, ensure_ascii=False, default=_json_default),
-            created_by=row.created_by,
+@app.post("/api/reports/tasks/snapshot")
+async def create_snapshot_report_task(request: Request):
+    """"Generate Snapshot Report" — a real ReportTask like any other, except
+    instead of collecting over a scheduled window it assembles the
+    intelligence picture for its scope RIGHT NOW, synchronously, via the
+    exact same _freeze_task_snapshot() path finish_report_task_collection()
+    above already uses. The task lands directly on ready_to_draft — no
+    "collecting" wait — and then drafting/council_review/human_review/
+    published proceed exactly as they already do for any other task.
+
+    Scope (body.watch_zone_id, optional): a real, currently-enabled
+    WatchZone's system_id to scope to (its own real bbox, via the new
+    bbox= param on prepare_intelligence_picture() — WatchZone bboxes aren't
+    named REGION_BBOXES entries, so this isn't the existing region= list).
+    Omitting it (or an unknown/disabled id) falls back to the same
+    unscoped "everything active, right now" picture
+    POST /api/reports/snapshots has always produced — a real, honest
+    fallback, not an error, since "all active regions / global overview"
+    is an explicit, intended scope option here, not a missing-input case.
+    """
+    body = await request.json()
+    watch_zone_id = body.get("watch_zone_id")
+    focus = (body.get("focus") or "").strip() or None
+
+    from database import WatchZone, ReportTask, get_db as _gdb_snaptask
+    with _gdb_snaptask() as db:
+        bbox = None
+        zone_label = None
+        if watch_zone_id:
+            zone = db.query(WatchZone).filter(
+                WatchZone.system_id == watch_zone_id, WatchZone.enabled == True,
+            ).first()
+            if not zone:
+                raise HTTPException(404, f"watch zone {watch_zone_id} not found or not enabled")
+            bbox = (zone.bbox_min_lat, zone.bbox_max_lat, zone.bbox_min_lon, zone.bbox_max_lon)
+            zone_label = zone.name
+
+        row = ReportTask(
+            task_id=_task_id(),
+            focus=focus or (f"Snapshot — {zone_label}" if zone_label else "Snapshot — Global Overview"),
+            region_json=_json.dumps([zone_label]) if zone_label else None,
+            watch_zone_id=watch_zone_id,
+            period_start=None, period_end=None,
+            status="collecting",
+            created_by=body.get("created_by") or "operator",
         )
-        db.add(snap)
-        row.snapshot_id = snap_id
-        row.status = "ready_to_draft"
-        row.updated_at = now
+        db.add(row)
         db.commit()
-        return _task_to_dict(row, db)
+        # period_start/period_end intentionally both None here (not "now") —
+        # matches POST /api/reports/snapshots' existing precedent: no window
+        # was ever requested, so prepare_intelligence_picture() applies its
+        # own real "right now" lookback (the 24h/48h cutoffs), not an
+        # artificially narrow [None, now] slice.
+        return await _freeze_task_snapshot(row, db, region=None, bbox=bbox, period_start=None, period_end=None)
 
 
 @app.post("/api/reports/tasks/{task_id}/draft")

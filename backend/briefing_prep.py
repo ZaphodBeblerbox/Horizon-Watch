@@ -13,22 +13,25 @@ import datetime
 from datetime import timedelta
 
 
-def _region_ok(lat, lon, region: list[str] | None) -> bool:
+def _region_ok(lat, lon, region: list[str] | None, extra_bbox: tuple | None = None) -> bool:
     """True if (lat, lon) falls inside — or within 400km of the edge of — any of
     the named regions in `region` (same bbox+buffer convention already used by
     scoring.geo_gate_passes for the Mission Profile surface-pool filter, and the
-    same named-region vocabulary as Mission Profile's own focusRegions). No
-    region requested => everything passes, i.e. today's unscoped behavior."""
-    if not region:
+    same named-region vocabulary as Mission Profile's own focusRegions), or
+    inside/near `extra_bbox` (an explicit (south, north, west, east) tuple —
+    used for a real WatchZone's own bbox, which isn't one of the named
+    REGION_BBOXES entries). No region and no extra_bbox => everything passes,
+    i.e. today's unscoped behavior."""
+    if not region and not extra_bbox:
         return True
     if lat is None or lon is None:
         return False
     from scoring import REGION_BBOXES, _haversine_km
-    for rname in region:
-        bbox = REGION_BBOXES.get(rname)
-        if bbox is None:
-            continue  # unrecognised region name — ignore rather than silently exclude everything
-        s, n, w, e = bbox
+    boxes = [REGION_BBOXES.get(rname) for rname in (region or [])]
+    boxes = [b for b in boxes if b is not None]  # unrecognised region name — ignore, don't silently exclude everything
+    if extra_bbox is not None:
+        boxes.append(extra_bbox)
+    for s, n, w, e in boxes:
         if s <= lat <= n and w <= lon <= e:
             return True
         clamp_lat = max(s, min(n, lat))
@@ -59,31 +62,34 @@ def _period_ok(ts_value, period_start, period_end) -> bool:
     return True
 
 
-def _sql_region_filter(lat_col, lon_col, region: list[str] | None):
+def _sql_region_filter(lat_col, lon_col, region: list[str] | None, extra_bbox: tuple | None = None):
     """Build a SQLAlchemy filter expression that restricts a query to rows whose
     (lat_col, lon_col) fall inside a bounding box around any of the named
-    `region` entries — buffered by the same 400km margin `_region_ok()` uses,
-    so this is a deliberately over-inclusive SQL-level prefilter (a rectangle
-    with a generous buffer, not the exact haversine-buffered check). It exists
-    so the LIMIT applied afterwards bounds an already-region-scoped result set
-    instead of the unscoped table — `_region_ok()` still runs per-row
-    afterwards and remains the sole source of truth for exact inclusion.
+    `region` entries, or `extra_bbox` (an explicit (south, north, west, east)
+    tuple — a real WatchZone's own bbox) — buffered by the same 400km margin
+    `_region_ok()` uses, so this is a deliberately over-inclusive SQL-level
+    prefilter (a rectangle with a generous buffer, not the exact
+    haversine-buffered check). It exists so the LIMIT applied afterwards
+    bounds an already-region-scoped result set instead of the unscoped table
+    — `_region_ok()` still runs per-row afterwards and remains the sole
+    source of truth for exact inclusion.
 
     Returns None (no SQL-level restriction — caller should skip filtering and
-    rely on `_region_ok()` alone) when `region` is falsy, or when none of the
-    requested names resolve to a known bbox — same "unrecognised name is
-    ignored, never silently excludes everything" rule `_region_ok()` follows.
+    rely on `_region_ok()` alone) when `region` is falsy and `extra_bbox` is
+    None, or when none of the requested names resolve to a known bbox — same
+    "unrecognised name is ignored, never silently excludes everything" rule
+    `_region_ok()` follows.
     """
-    if not region:
+    if not region and not extra_bbox:
         return None
     from sqlalchemy import and_, or_
     from scoring import REGION_BBOXES
+    boxes = [REGION_BBOXES.get(rname) for rname in (region or [])]
+    boxes = [b for b in boxes if b is not None]  # unrecognised name (or "Global") — skip
+    if extra_bbox is not None:
+        boxes.append(extra_bbox)
     clauses = []
-    for rname in region:
-        bbox = REGION_BBOXES.get(rname)
-        if bbox is None:
-            continue  # unrecognised name (or "Global", which _region_ok also ignores) — skip
-        s, n, w, e = bbox
+    for s, n, w, e in boxes:
         lat_buf = 400.0 / 111.0
         # Longitude degrees-per-km shrinks with latitude; use the most extreme
         # (closest-to-pole) latitude in the buffered box so the buffer is never
@@ -107,6 +113,7 @@ def prepare_intelligence_picture(
     region: list[str] | None = None,
     period_start: "datetime.datetime | None" = None,
     period_end: "datetime.datetime | None" = None,
+    bbox: tuple | None = None,
 ) -> dict:
     """
     Collect and score all active intelligence signals, group by region/zone,
@@ -114,11 +121,15 @@ def prepare_intelligence_picture(
 
     `region` (optional): list of named Mission-Profile-style region strings
     (must match scoring.REGION_BBOXES keys, e.g. "Red Sea / Arabian Peninsula")
-    to scope every geolocated signal to. `period_start`/`period_end` (optional):
-    scope every signal to this time window instead of the fixed 24h/48h lookback
-    windows below. All three are additive — omitting them (the default) reproduces
-    today's exact unscoped, "right now, everywhere" behavior byte-for-byte; every
-    existing call site (Director briefings, the unscoped snapshot endpoint) keeps
+    to scope every geolocated signal to. `bbox` (optional): an explicit
+    (south, north, west, east) tuple to scope to instead of/in addition to
+    `region` — used for a real WatchZone's own bbox, which isn't one of the
+    named REGION_BBOXES entries (a Snapshot Report scoped to a specific Watch
+    Area). `period_start`/`period_end` (optional): scope every signal to this
+    time window instead of the fixed 24h/48h lookback windows below. All are
+    additive — omitting them (the default) reproduces today's exact
+    unscoped, "right now, everywhere" behavior byte-for-byte; every existing
+    call site (Director briefings, the unscoped snapshot endpoint) keeps
     working unchanged.
     """
     from database import (
@@ -127,10 +138,23 @@ def prepare_intelligence_picture(
     from intelligence_schema import IntelligenceAssessment
     import threat_matrix
     from relevance_scorer import relevance_scorer
+    import functools
 
     now      = datetime.datetime.utcnow()
     cutoff_24h = now - timedelta(hours=24)
     cutoff_48h = now - timedelta(hours=48)
+
+    # Bind `bbox` into every _region_ok()/_sql_region_filter() call below
+    # (14 call sites) without touching each one individually — every
+    # unqualified call in the rest of this function resolves to these local
+    # names, shadowing the module-level functions for the duration of this
+    # call only. globals()[...] (not the bare name) on the right-hand side
+    # is required here: once a name is assigned anywhere in a function body,
+    # Python treats every reference to it in that function as local, so
+    # `_region_ok = functools.partial(_region_ok, ...)` would raise
+    # UnboundLocalError on its own right-hand side.
+    _region_ok = functools.partial(globals()["_region_ok"], extra_bbox=bbox)
+    _sql_region_filter = functools.partial(globals()["_sql_region_filter"], extra_bbox=bbox)
 
     # A scoped call (region and/or period actually requested) needs a much
     # higher DB fetch ceiling than the default unscoped snapshot: today's real
@@ -143,7 +167,7 @@ def prepare_intelligence_picture(
     # the unscoped table first — the raised ceiling is extra headroom on top
     # of that, not a substitute for it. Omitting region/period (the default,
     # existing call sites) reproduces the exact prior limits unchanged.
-    scoped = bool(region) or bool(period_start) or bool(period_end)
+    scoped = bool(region) or bool(period_start) or bool(period_end) or bool(bbox)
 
     def _scoped_limit(base: int) -> int:
         return base * 10 if scoped else base

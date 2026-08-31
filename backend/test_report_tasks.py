@@ -245,6 +245,53 @@ with TestClient(main.app) as client:
     finally:
         main._ACTIVE_PROFILE = real_profile
 
+    # ── 10. Regression: "Z"-suffixed period_start/period_end (the real
+    # frontend's actual wire format, via JS Date.toISOString()) used to crash
+    # create_report_task() with "TypeError: can't compare offset-naive and
+    # offset-aware datetimes" — every test above sends naive
+    # datetime.utcnow().isoformat() strings (no "Z"), which never hit this,
+    # so the bug shipped silently past this whole file. Python 3.11+
+    # fromisoformat() parses a "Z" suffix as tz-aware UTC; comparing that
+    # against the naive datetime.utcnow() used throughout this codebase (69
+    # call sites in main.py) raised. _parse_snapshot_dt() now normalizes any
+    # tz-aware input to naive UTC at the parse boundary.
+    z_end = period_start + timedelta(hours=2)
+    r = client.post("/api/reports/tasks", json={
+        "focus": f"{PREFIX} Z-suffixed period task",
+        "region": ["Red Sea / Arabian Peninsula"],
+        "period_start": period_start.isoformat() + "Z",
+        "period_end":   z_end.isoformat() + "Z",
+    }, headers=HEADERS)
+    check("Z-suffixed (tz-aware) period_start/period_end does not crash create_report_task", r.status_code == 200, r.text)
+    if r.status_code == 200:
+        z_task = r.json()
+        created_task_ids.append(z_task["task_id"])
+        check(
+            "Z-suffixed period_start is stored as the same real instant (naive UTC, tzinfo stripped)",
+            z_task["period_start"] == period_start.isoformat(),
+            z_task,
+        )
+        check(
+            "Z-suffixed period_end is stored as the same real instant (naive UTC, tzinfo stripped)",
+            z_task["period_end"] == z_end.isoformat(),
+            z_task,
+        )
+
+    # A period_start in the future (still Z-suffixed) must correctly compare
+    # as "not yet passed" -> status "queued" (this is the exact comparison
+    # that used to raise).
+    future_start = datetime.utcnow() + timedelta(hours=3)
+    r = client.post("/api/reports/tasks", json={
+        "focus": f"{PREFIX} Z-suffixed future task",
+        "region": ["Red Sea / Arabian Peninsula"],
+        "period_start": future_start.isoformat() + "Z",
+    }, headers=HEADERS)
+    check("Z-suffixed future period_start does not crash create_report_task", r.status_code == 200, r.text)
+    if r.status_code == 200:
+        future_task = r.json()
+        created_task_ids.append(future_task["task_id"])
+        check("Z-suffixed future period_start correctly resolves to 'queued'", future_task["status"] == "queued", future_task)
+
     # ── Cleanup ──────────────────────────────────────────────────────────────────
     with get_db() as db:
         db.query(FusionEvent).filter(FusionEvent.fusion_id.in_(created_fusion_ids)).delete(synchronize_session=False)

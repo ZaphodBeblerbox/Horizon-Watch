@@ -3,6 +3,7 @@ import API_BASE from "../apiBase.js"
 import { FOCUS_REGIONS } from "../constants/profile.js"
 import { Button, Panel } from "../ui/index.js"
 import { formatTaskRegion, statusBadgeColor } from "./taskDisplay.js"
+import { createSnapshotReportTask, listWatchZones } from "./reportApi.js"
 
 const API = API_BASE
 
@@ -112,6 +113,61 @@ function TaskCreateForm({ onSaved, onCancel }) {
 }
 
 /**
+ * "Generate Snapshot Report" — creates a real ReportTask that captures its
+ * scope's intelligence picture right now instead of over a scheduled
+ * window (backend/main.py's create_snapshot_report_task()), and lands
+ * directly on ready_to_draft. Scope is deliberately simple, per the brief:
+ * a real, enabled Watch Area chosen from a list, or the "Global Overview"
+ * fallback (no zone) — there's no existing cross-destination "currently
+ * selected AOI on the map" state to read here (AOI lock today is local to
+ * the Intel destination's own Watch Areas detail view, not lifted to
+ * app-level), so that's not offered as a third option rather than faked.
+ */
+function SnapshotReportForm({ onSaved, onCancel }) {
+    const [zones, setZones] = useState([])
+    const [watchZoneId, setWatchZoneId] = useState("")
+    const [saving, setSaving] = useState(false)
+    const [err, setErr] = useState("")
+
+    useEffect(() => {
+        listWatchZones().then(d => setZones(Array.isArray(d) ? d.filter(z => z.enabled) : [])).catch(() => setZones([]))
+    }, [])
+
+    const submit = async () => {
+        setSaving(true); setErr("")
+        try {
+            const task = await createSnapshotReportTask({ watchZoneId: watchZoneId || null })
+            onSaved(task)
+        } catch (e) { setErr(e.message || "Failed to generate snapshot report") }
+        finally { setSaving(false) }
+    }
+
+    return (
+        <Panel elevated style={{ marginBottom: "var(--space-4)" }}>
+            <div style={{ color: "var(--text-primary)", fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "var(--space-2)" }}>Generate Snapshot Report</div>
+            <div style={{ color: "var(--text-dim)", fontSize: "var(--text-xs)", marginBottom: "var(--space-3)" }}>
+                Captures the current intelligence picture right now and takes it straight to drafting — no scheduled collection window.
+            </div>
+            <select
+                value={watchZoneId}
+                onChange={e => setWatchZoneId(e.target.value)}
+                style={{ ...inputStyle, width: "100%", boxSizing: "border-box", marginBottom: "var(--space-3)" }}
+            >
+                <option value="">Global Overview (all active regions)</option>
+                {zones.map(z => <option key={z.system_id} value={z.system_id}>{z.name}</option>)}
+            </select>
+            {err && <div style={{ color: "var(--danger)", fontSize: "var(--text-xs)", marginBottom: "var(--space-2)" }}>{err}</div>}
+            <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+                <Button variant="primary" onClick={submit} disabled={saving}>
+                    {saving ? "Generating…" : "Generate"}
+                </Button>
+            </div>
+        </Panel>
+    )
+}
+
+/**
  * Task row — restyled from ForgePanel.jsx's TasksPanel row (~line 1994) using
  * Round 1 tokens instead of inline hex colors.
  *
@@ -160,6 +216,7 @@ export default function TaskList({ onSelectTask }) {
     const [tasks, setTasks] = useState([])
     const [loaded, setLoaded] = useState(false)
     const [showForm, setShowForm] = useState(false)
+    const [showSnapshotForm, setShowSnapshotForm] = useState(false)
 
     const reload = () =>
         fetch(`${API}/api/reports/tasks`, { headers: forgeHeaders() })
@@ -174,12 +231,16 @@ export default function TaskList({ onSelectTask }) {
             <div style={{ color: "var(--text-dim)", fontSize: "var(--text-xs)", marginBottom: "var(--space-3)", maxWidth: 720 }}>
                 Task the system to watch a region — or let it infer one from Mission Profile — over a time window, with a given focus. Click a task to see its Original Data Package: everything actually collected so far, before anything is drafted.
             </div>
-            <div style={{ marginBottom: "var(--space-4)" }}>
-                <Button variant={showForm ? "ghost" : "primary"} size="sm" onClick={() => setShowForm(v => !v)}>
+            <div style={{ marginBottom: "var(--space-4)", display: "flex", gap: "var(--space-2)" }}>
+                <Button variant={showForm ? "ghost" : "primary"} size="sm" onClick={() => { setShowForm(v => !v); setShowSnapshotForm(false) }}>
                     {showForm ? "Cancel" : "+ New Task"}
+                </Button>
+                <Button variant={showSnapshotForm ? "ghost" : "primary"} size="sm" onClick={() => { setShowSnapshotForm(v => !v); setShowForm(false) }}>
+                    {showSnapshotForm ? "Cancel" : "Generate Snapshot Report"}
                 </Button>
             </div>
             {showForm && <TaskCreateForm onSaved={() => { setShowForm(false); reload() }} onCancel={() => setShowForm(false)} />}
+            {showSnapshotForm && <SnapshotReportForm onSaved={(task) => { setShowSnapshotForm(false); onSelectTask(task.task_id) }} onCancel={() => setShowSnapshotForm(false)} />}
             {!loaded && <div style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>Loading…</div>}
             {loaded && tasks.length === 0 && <div style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>No mission tasks yet.</div>}
             {tasks.map(t => <TaskRow key={t.task_id} task={t} onSelectTask={onSelectTask} />)}
