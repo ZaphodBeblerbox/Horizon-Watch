@@ -19,11 +19,23 @@
  * so the actual ScreenSpaceEventHandler logic is re-implemented here against
  * the raw viewer instance rather than imported, but it is the same real
  * two-click rectangle algorithm, not a new one.
+ *
+ * Two additive, opt-in-only features (UI correction pass Part 11.4, added
+ * for Sources.jsx/Intel's new "inspect" interaction — Dashboard.jsx's own
+ * usage of this file passes neither prop, so its behavior is byte-for-byte
+ * unchanged):
+ *   - `flyToZoneId` — when set (and changes), flies this map's own live
+ *     camera to frame that zone's real bbox. Real Cesium `camera.flyTo`,
+ *     not a fabricated animation.
+ *   - `lockActive`/`lockBounds` — forwarded directly to the real
+ *     AoiLockDimming (src/globe/AoiLockDimming.jsx), threading this map's
+ *     own live viewer instance through once it's ready.
  */
 import { useEffect, useRef, useState } from "react"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ScaleBar from "../components/ScaleBar.jsx"
 import CoordinateReadout from "../components/CoordinateReadout.jsx"
+import AoiLockDimming from "../globe/AoiLockDimming.jsx"
 
 const PRIORITY_COLOR = {
     critical: "#EF4444", // --danger
@@ -53,10 +65,15 @@ function zonesCenter(zones) {
  * @param {Set<string>} [pulsingIds] - system_ids whose real recent-activity trend exceeds baseline (see dashboardLogic.js's zoneExceedsBaseline)
  * @param {boolean} [drawActive] - when true, arms the rectangle-draw interaction
  * @param {(bounds:{north,south,east,west})=>void} [onDrawComplete]
+ * @param {?string} [flyToZoneId] - system_id to fly this map's own camera to
+ *   (real bbox-framing flyTo) whenever it changes; opt-in, default off
+ * @param {boolean} [lockActive] - forwarded to AoiLockDimming
+ * @param {?{north,south,east,west}} [lockBounds] - forwarded to AoiLockDimming
  */
 export default function AoiMiniMap({
     zones = [], selectedZoneId = null, onSelectZone,
     pulsingIds = null, drawActive = false, onDrawComplete,
+    flyToZoneId = null, lockActive = false, lockBounds = null,
 }) {
     const containerRef = useRef(null)
     const viewerRef     = useRef(null)
@@ -194,6 +211,27 @@ export default function AoiMiniMap({
         })
     }, [zones, selectedZoneId, pulsingIds, ready])
 
+    // ── Fly-to-zone (opt-in — see file header comment) ──────────────────
+    useEffect(() => {
+        if (!ready || !flyToZoneId) return
+        const viewer = viewerRef.current
+        if (!viewer || viewer.isDestroyed()) return
+        const zone = zones.find(z => z.system_id === flyToZoneId)
+        if (!zone?.bbox) return
+
+        let cancelled = false
+        import("cesium").then(({ Rectangle }) => {
+            if (cancelled || viewer.isDestroyed()) return
+            const { min_lon, min_lat, max_lon, max_lat } = zone.bbox
+            viewer.camera.flyTo({
+                destination: Rectangle.fromDegrees(min_lon, min_lat, max_lon, max_lat),
+                duration: 1.2,
+            })
+        })
+        return () => { cancelled = true }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [flyToZoneId, ready])
+
     // ── Rectangle draw mode ──────────────────────────────────────────────
     useEffect(() => {
         if (!ready) return
@@ -295,6 +333,7 @@ export default function AoiMiniMap({
     return (
         <div style={{ position: "relative", width: "100%", height: "100%", background: "#050b1a" }}>
             <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+            {ready && <AoiLockDimming viewer={viewerRef.current} bounds={lockBounds} active={lockActive} />}
             {err && (
                 <div style={{
                     position: "absolute", inset: 0, display: "flex", alignItems: "center",
