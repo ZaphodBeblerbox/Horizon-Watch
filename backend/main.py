@@ -9411,6 +9411,83 @@ def _ais_ship_type(type_code: int) -> str:
     return _AIS_SHIP_TYPE_MAP.get(type_code, "other")
 
 
+# ── Sanctions-hit relevance gate ─────────────────────────────────────────────
+# Real backend/policy fix: a sanctions hit anywhere on Earth used to fire as a
+# prominent, map-markered, critical alert regardless of whether it has
+# anything to do with what's actually being watched. Not every sanctioned
+# vessel in the world is operationally relevant to a given AOI or mission
+# profile — treating all of them as equally urgent is exactly the kind of
+# noise that makes real signals harder to see.
+#
+# This is a relevance gate ON TOP OF the existing corroboration/plausibility
+# check (check_sanctions_for_vessel() below still owns confirmed-vs-possible
+# entirely) — not a second, parallel filtering mechanism. It reuses the two
+# real, already-established "where we're watching" concepts in this codebase
+# rather than inventing a third:
+#   - Real, currently-enabled Watch Areas (WatchZone rows — Sources/Intel's
+#     Watch Areas feature).
+#   - The active mission profile's real focusRegions, resolved against the
+#     same REGION_BBOXES (scoring.py) the news-relevance boost above already
+#     uses for the identical "is this near a region we care about" check —
+#     not a re-guess at region boundaries.
+#
+# Buffer: a fixed 0.5° (~55km at the equator) around each AOI's/region's real
+# bbox. Chosen deliberately (the task explicitly allows "inside the polygon
+# or within some sensible buffer distance") over full polygon containment:
+# every other real zone-membership check already in this codebase (the news
+# boost above, _sentinel_zone_scheduler_loop's due-zone query) works off bbox,
+# not the stored polygon_geojson — a hard cliff exactly at a drawn
+# rectangle's edge would also be a worse, less realistic model of "nearby"
+# than a small buffer.
+_SANCTIONS_RELEVANCE_BUFFER_DEG = 0.5
+
+def _sanctions_hit_is_relevant(lat, lon) -> bool:
+    """True if (lat, lon) falls inside-or-near a real, currently-enabled
+    Watch Area, or inside-or-near the active mission profile's real
+    focusRegions. Never raises — a relevance-gate failure must not crash the
+    sanctions pipeline; on any error this returns False (fails toward "log
+    it, don't alarm on it", the same direction __check_sanctions_on_update's
+    own docstring already prefers for uncorroborated data)."""
+    if lat is None or lon is None:
+        return False
+    try:
+        lat_f, lon_f = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return False
+
+    b = _SANCTIONS_RELEVANCE_BUFFER_DEG
+
+    try:
+        from database import WatchZone, get_db as _gdb_rel
+        with _gdb_rel() as _db_rel:
+            zones = _db_rel.query(WatchZone).filter(WatchZone.enabled == True).all()
+            for z in zones:
+                if (z.bbox_min_lat - b) <= lat_f <= (z.bbox_max_lat + b) and \
+                   (z.bbox_min_lon - b) <= lon_f <= (z.bbox_max_lon + b):
+                    return True
+    except Exception:
+        pass
+
+    try:
+        if _ACTIVE_PROFILE and _ACTIVE_PROFILE.get("focusRegions"):
+            from scoring import REGION_BBOXES
+            for region in _ACTIVE_PROFILE["focusRegions"]:
+                bbox = REGION_BBOXES.get(region)
+                if bbox is None:
+                    # "Global" (or an unrecognized region name) — same real
+                    # precedent as the news-relevance boost above, which
+                    # treats a None bbox as universally relevant rather than
+                    # silently excluding it.
+                    return True
+                s, n, w, e = bbox
+                if (s - b) <= lat_f <= (n + b) and (w - b) <= lon_f <= (e + b):
+                    return True
+    except Exception:
+        pass
+
+    return False
+
+
 # ── Sanctions check (fired on every new AIS position, O(1) in-memory) ────────
 
 async def _check_sanctions_on_update(vessel: dict) -> None:
@@ -9438,25 +9515,51 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     confirmed   = result["status"] == "confirmed"
     explanation = sanctions_loader.get_sanction_explanation(hit)
 
+    # Relevance gate — additional to, not a replacement for, the
+    # confirmed/possible corroboration decision above. A hit outside every
+    # active Watch Area / mission-profile focus region still gets a real
+    # alert_dict below (still written via write_alert(), still real, still
+    # findable in Watchlists history) — it's just not treated as urgent, and
+    # never gets a map marker (the `is_relevant` gate on
+    # `_forge_alerts.append` further down).
+    is_relevant = _sanctions_hit_is_relevant(vessel.get("lat"), vessel.get("lon"))
+
     if confirmed:
-        alert_type      = "Sanctioned Vessel"
-        title           = f"⚠ SANCTIONED: {vessel_name} detected"
-        message         = (
-            f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected. "
-            f"Listed by: {', '.join(explanation['sanction_lists'][:2])}."
-        )
-        severity        = "critical"
-        confidence      = 0.95
-        relevance_score = 100
+        alert_type = "Sanctioned Vessel"
+        title      = f"⚠ SANCTIONED: {vessel_name} detected"
+        if is_relevant:
+            message         = (
+                f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected. "
+                f"Listed by: {', '.join(explanation['sanction_lists'][:2])}."
+            )
+            severity        = "critical"
+            relevance_score = 100
+        else:
+            # Real, honest downgrade — this vessel genuinely is a confirmed
+            # sanctions match (confidence below is untouched: that's about
+            # match certainty, a different axis from operational relevance),
+            # but it isn't currently near anything being watched, so it
+            # isn't prompting action the way an in-AOI hit would. Logged for
+            # real, just not urgent.
+            message         = (
+                f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected outside all "
+                f"currently active Watch Areas and mission-profile focus regions. "
+                f"Listed by: {', '.join(explanation['sanction_lists'][:2])}. "
+                f"Logged for the record — not flagged as urgent or shown on the map "
+                f"since it isn't near anything currently being watched."
+            )
+            severity        = "low"
+            relevance_score = 15
+        confidence = 0.95
     else:
         # Hard MMSI/IMO match, but the live vessel's reported flag clearly
         # contradicts the sanctions record's flag — MMSI/IMO reassignment
         # after scrapping/reflagging/sale means this could genuinely be a
         # different, innocent vessel. Downgrade instead of claiming a
         # confirmed sanctions match we can't actually stand behind.
-        alert_type      = "Sanctioned Vessel (Possible)"
-        title           = f"⚠ Possible sanctions match (needs review): {vessel_name}"
-        message         = (
+        alert_type = "Sanctioned Vessel (Possible)"
+        title      = f"⚠ Possible sanctions match (needs review): {vessel_name}"
+        base_message = (
             f"{vessel_name} (MMSI {mmsi}) — MMSI/IMO matches a sanctioned-vessel "
             f"record ({', '.join(explanation['sanction_lists'][:2])}), but the "
             f"live flag does not match the sanctions record's flag "
@@ -9464,9 +9567,19 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
             f"scrapped, reflagged, or sold, so this is an unconfirmed possible "
             f"match — needs human review, not an automatic critical alert."
         )
-        severity        = "medium"
-        confidence      = 0.5
-        relevance_score = 50
+        if is_relevant:
+            message         = base_message
+            severity        = "medium"
+            relevance_score = 50
+        else:
+            message         = base_message + (
+                " Also outside all currently active Watch Areas and mission-profile "
+                "focus regions — logged for the record, not flagged as urgent or "
+                "shown on the map."
+            )
+            severity        = "low"
+            relevance_score = 5
+        confidence = 0.5
 
     alert_dict = {
         "domain":         "AIS",
@@ -9500,15 +9613,23 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
             "heading":             vessel.get("heading"),
             "rule_name":           "Sanctioned Vessel",
             "sanctions_confirmed": confirmed,
+            "relevant":            is_relevant,
             "explanation":         explanation,
         },
     }
 
+    # Always write the alert — even a non-relevant hit is real and must stay
+    # findable in Watchlists history. Only a relevant hit gets a map marker
+    # (/api/forge/alerts is what GlobeAlertsLayer.jsx polls to paint markers);
+    # a hit outside every watched area is logged, not silently dropped, but
+    # must not compete for attention on the map.
     write_alert(alert_dict)
     global _forge_alerts
-    _forge_alerts.append(alert_dict)
+    if is_relevant:
+        _forge_alerts.append(alert_dict)
     print(f"[sanctions] {'CRITICAL' if confirmed else 'POSSIBLE (flag mismatch, needs review)'}: "
-          f"{vessel_name} (MMSI {mmsi}) at {vessel.get('lat')}, {vessel.get('lon')}")
+          f"{vessel_name} (MMSI {mmsi}) at {vessel.get('lat')}, {vessel.get('lon')} "
+          f"({'relevant — map marker' if is_relevant else 'outside watched areas — logged only, no marker'})")
 
 
 # ── Ship-to-Ship transfer detection ──────────────────────────────────────────
