@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import {
-    severityColorToken, confidencePct, timeAgoLabel,
+    severityColorToken, confidencePct, timeAgoLabel, severityRank, sortRowsBySeverity,
     buildWatchQueueRow, buildWatchQueueRows, filterWithinHours, zoneExceedsBaseline,
 } from "./dashboardLogic.js"
 
@@ -132,6 +132,65 @@ describe("buildWatchQueueRow", () => {
     it("buildWatchQueueRows maps a whole array and tolerates a non-array input", () => {
         expect(buildWatchQueueRows([ALERT_ITEM, FUSION_ITEM])).toHaveLength(2)
         expect(buildWatchQueueRows(null)).toEqual([])
+    })
+
+    it("carries real lat/lon/kind/raw through for the click-to-fly/inspect handler", () => {
+        const alertWithPos = { ...ALERT_ITEM, lat: 12.5, lon: 43.4 }
+        const fusionWithPos = { ...FUSION_ITEM, lat: 12.6, lon: 43.3 }
+        expect(buildWatchQueueRow(alertWithPos)).toMatchObject({ lat: 12.5, lon: 43.4, kind: "event", raw: alertWithPos })
+        expect(buildWatchQueueRow(fusionWithPos)).toMatchObject({ lat: 12.6, lon: 43.3, kind: "fusion", raw: fusionWithPos })
+    })
+
+    it("defaults lat/lon to null (never a fabricated position) when absent", () => {
+        expect(buildWatchQueueRow(ALERT_ITEM)).toMatchObject({ lat: null, lon: null })
+    })
+})
+
+describe("severityRank", () => {
+    it("ranks the real severity_tier vocabulary most-urgent-first", () => {
+        expect(severityRank({ severity_tier: "critical" })).toBe(0)
+        expect(severityRank({ severity_tier: "significant" })).toBe(1)
+        expect(severityRank({ severity_tier: "elevated" })).toBe(2)
+        expect(severityRank({ severity_tier: "low" })).toBe(3)
+    })
+
+    it("maps a fusion item's real severity onto the same real ordering", () => {
+        expect(severityRank({ kind: "fusion", severity: "critical" })).toBe(0)
+        expect(severityRank({ kind: "fusion", severity: "high" })).toBe(1)
+        expect(severityRank({ kind: "fusion", severity: "medium" })).toBe(2)
+        expect(severityRank({ kind: "fusion", severity: "low" })).toBe(3)
+    })
+
+    it("ranks an unrecognized/missing tier last, never ahead of a real one", () => {
+        expect(severityRank({})).toBe(4)
+        expect(severityRank({ severity_tier: "something_else" })).toBe(4)
+    })
+})
+
+describe("sortRowsBySeverity", () => {
+    it("orders rows by severity first, most urgent first", () => {
+        const rows = buildWatchQueueRows([
+            { id: "a", headline: "low item", severity_tier: "low", published_at: "2026-08-30T10:00:00.000Z" },
+            { id: "b", headline: "critical item", severity_tier: "critical", published_at: "2026-08-30T09:00:00.000Z" },
+            { id: "c", headline: "elevated item", severity_tier: "elevated", published_at: "2026-08-30T11:00:00.000Z" },
+        ])
+        expect(sortRowsBySeverity(rows).map(r => r.id)).toEqual(["b", "c", "a"])
+    })
+
+    it("breaks same-severity ties by most-recent-first", () => {
+        const rows = buildWatchQueueRows([
+            { id: "older", headline: "x", severity_tier: "critical", published_at: "2026-08-30T08:00:00.000Z" },
+            { id: "newer", headline: "y", severity_tier: "critical", published_at: "2026-08-30T10:00:00.000Z" },
+        ])
+        expect(sortRowsBySeverity(rows).map(r => r.id)).toEqual(["newer", "older"])
+    })
+
+    it("does not mutate the input array and tolerates a non-array input", () => {
+        const rows = buildWatchQueueRows([ALERT_ITEM, FUSION_ITEM])
+        const original = [...rows]
+        sortRowsBySeverity(rows)
+        expect(rows).toEqual(original)
+        expect(sortRowsBySeverity(null)).toEqual([])
     })
 })
 
