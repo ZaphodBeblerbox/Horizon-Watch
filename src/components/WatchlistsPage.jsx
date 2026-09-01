@@ -268,9 +268,12 @@ function DetailPanel({ item, onSelectEntity }) {
                 </div>
             </div>
 
-            {/* Real map — reuses NewsMiniMap.jsx's exact embedded-Cesium pattern */}
+            {/* Real map — reuses NewsMiniMap.jsx's exact embedded-Cesium pattern.
+                Height raised alongside the panel's own width increase (280px
+                wide previously) to keep a reasonable aspect ratio rather than
+                a wider-but-still-short strip. */}
             {hasCoords && (
-                <div style={{ height: 180, flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
+                <div style={{ height: 240, flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
                     <NewsMiniMap
                         markers={[{
                             id: item.id,
@@ -469,9 +472,13 @@ export default function WatchlistsPage({
                 </div>
             </div>
 
-            {/* Right — detail */}
+            {/* Right — detail. Widened from 320 (the minimap inside was
+                reading as too small) — reclaimed from the center alert
+                stream's own flexible width, which still gets whatever's
+                left rather than a fixed share, so it never gets crowded
+                out, just modestly narrower on typical viewport widths. */}
             <div style={{
-                width: 320, flexShrink: 0, background: "var(--bg-panel)",
+                width: 420, flexShrink: 0, background: "var(--bg-panel)",
                 borderLeft: "1px solid var(--border)", overflowY: "auto",
             }}>
                 <DetailPanel item={selectedItem} onSelectEntity={onSelectEntity} />

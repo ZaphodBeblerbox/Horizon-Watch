@@ -143,6 +143,13 @@ def prepare_intelligence_picture(
     now      = datetime.datetime.utcnow()
     cutoff_24h = now - timedelta(hours=24)
     cutoff_48h = now - timedelta(hours=48)
+    # Sentinel/Overwatch scans run per-WatchZone on that zone's own
+    # scan_interval_hours (real defaults of 24-120h, see database.py's
+    # WatchZone.scan_interval_hours) rather than continuously the way
+    # AIS/ADS-B stream — a 48h window would miss a real, recent scan on a
+    # zone with a longer real revisit cadence. 14 days is a more realistic
+    # "still current" window for imagery without becoming stale history.
+    cutoff_imagery = now - timedelta(days=14)
 
     # Bind `bbox` into every _region_ok()/_sql_region_filter() call below
     # (14 call sites) without touching each one individually — every
@@ -237,9 +244,22 @@ def prepare_intelligence_picture(
                     "timestamp": row.created_at.isoformat() if row.created_at else "",
                 })
 
-        # Top tier-1/2 news articles (last 24h, or the requested period)
+        # Top news articles (last 24h, or the requested period). Tier <= 3
+        # (everything but tier 4 = "irrelevant" per article_intelligence.py's
+        # own classification prompt), not the old hard tier IN (1,2) gate —
+        # that gate assumed most articles get a real per-article Haiku
+        # classification, which the "cost reduction" cap
+        # (MAX_LLM_CALLS_PER_CYCLE, main.py) had pushed down to 8/cycle,
+        # leaving the overwhelming majority of real articles at the cheap
+        # fallback classification (tier 3, article_type "other") rather than
+        # a genuine tier 1/2 result — an empty/near-empty top_articles was
+        # a direct, honest consequence, not a query bug on its own. Ranking
+        # by (tier ASC, relevance_score DESC) still prefers genuinely
+        # higher-tier real classifications when they exist, without
+        # excluding tier-3 "contextual" real articles entirely when nothing
+        # better is available — real content beats an empty section.
         _news_q = db.query(_NADB).filter(
-            _NADB.tier.in_([1, 2]), _NADB.ingested_at >= (period_start or cutoff_24h)
+            _NADB.tier <= 3, _NADB.ingested_at >= (period_start or cutoff_24h)
         )
         _news_region_clause = _sql_region_filter(_NADB.lat, _NADB.lon, region)
         if _news_region_clause is not None:
@@ -248,7 +268,7 @@ def prepare_intelligence_picture(
             _news_q = _news_q.filter(_NADB.ingested_at <= period_end)
         top_articles = (
             _news_q
-            .order_by(_NADB.relevance_score.desc())
+            .order_by(_NADB.tier.asc(), _NADB.relevance_score.desc())
             .limit(_scoped_limit(20))
             .all()
         )
@@ -288,6 +308,13 @@ def prepare_intelligence_picture(
     fusions = [
         f for f in fusions
         if _region_ok(f.lat, f.lon, region) and _period_ok(f.created_at, period_start, period_end)
+        # A real fusion event with no real resolvable location ("Unknown
+        # Location", lat/lon both None) isn't citable content for a report —
+        # there's nothing real to say about where it happened. Excluded
+        # from the curated content handed to drafting; the underlying
+        # correlation-engine issue that produces these is a separate,
+        # already-flagged concern, not something fixed here.
+        and not (f.lat is None and f.lon is None)
     ]
 
     fusion_items = []
@@ -421,11 +448,17 @@ def prepare_intelligence_picture(
     ais_signals    = [s for s in high_relevance if s.get("domain", "") == "AIS"]
     adsb_signals   = [s for s in high_relevance if s.get("domain", "") == "ADSB"]
 
-    # ── 5. Recent Sentinel detections (48h, immediate tier) ───────────────────
+    # ── 5. Recent Sentinel detections (14d, immediate + digest tier) ──────────
+    # Was alert_tier == "immediate" only, 48h — too narrow on both axes for a
+    # real imagery-analysis section: "digest" tier is still a real, confirmed
+    # detection (see sentinel_ml.py's own tiering — "immediate" vs "digest"
+    # is about alert urgency, not detection validity), and 48h is shorter
+    # than most real scan_interval_hours values, so this used to exclude
+    # genuinely current, real scans.
     try:
         _sent_q = db.query(SentinelDetection).filter(
-            SentinelDetection.alert_tier == "immediate",
-            SentinelDetection.created_at > (period_start or cutoff_48h),
+            SentinelDetection.alert_tier.in_(["immediate", "digest"]),
+            SentinelDetection.created_at > (period_start or cutoff_imagery),
         )
         _sent_region_clause = _sql_region_filter(
             SentinelDetection.centroid_lat, SentinelDetection.centroid_lon, region
@@ -559,7 +592,63 @@ def prepare_intelligence_picture(
 
     active_zones.sort(key=lambda x: x["highest_signal_score"], reverse=True)
 
-    # ── 8. Statistics ──────────────────────────────────────────────────────────
+    # ── 8. Traffic summary — real counts, not just the top-10 "notable
+    # anomaly" lists above. ais_signals/adsb_signals (relevance_score >= 60)
+    # answer "what's worth flagging"; this answers "how much real traffic is
+    # there at all" — a report citing "3 loitering vessels" with no sense of
+    # whether that's out of 30 or 30,000 real vessels isn't actually
+    # informative. Distinct mmsi/icao24 counts come from VesselHistory/
+    # AircraftHistory (the same real, already-live position-history tables
+    # GlobeTrackLayer.jsx reads) — real live traffic, not the alerts/signals
+    # pipeline. Anomaly-type counts are real Alert rows already collected
+    # above (`alerts`), matched against the real rule_name/alert_type values
+    # each detector actually writes (detectors/ais_detector.py,
+    # detectors/correlation_engine.py, main.py's sanctions relevance gate).
+    try:
+        from database import VesselHistory as _VH, AircraftHistory as _AH
+        _traffic_window_start = period_start or cutoff_24h
+        _vh_q = db.query(_VH.mmsi).filter(_VH.timestamp >= _traffic_window_start)
+        _vh_region = _sql_region_filter(_VH.lat, _VH.lon, region)
+        if _vh_region is not None:
+            _vh_q = _vh_q.filter(_vh_region)
+        if period_end:
+            _vh_q = _vh_q.filter(_VH.timestamp <= period_end)
+        active_vessel_count = _vh_q.distinct().count()
+
+        _ah_q = db.query(_AH.icao24).filter(_AH.timestamp >= _traffic_window_start)
+        _ah_region = _sql_region_filter(_AH.lat, _AH.lon, region)
+        if _ah_region is not None:
+            _ah_q = _ah_q.filter(_ah_region)
+        if period_end:
+            _ah_q = _ah_q.filter(_AH.timestamp <= period_end)
+        active_aircraft_count = _ah_q.distinct().count()
+    except Exception:
+        active_vessel_count = active_aircraft_count = 0
+
+    def _count_alerts_matching(rule_names: set[str] | None = None, alert_types: set[str] | None = None) -> int:
+        n = 0
+        for a in alerts:
+            if rule_names and (a.get("rule_name") or "") in rule_names:
+                n += 1
+            elif alert_types and (a.get("alert_type") or "") in alert_types:
+                n += 1
+        return n
+
+    traffic_summary = {
+        "active_vessel_count":   active_vessel_count,
+        "active_aircraft_count": active_aircraft_count,
+        "loitering_count": _count_alerts_matching(rule_names={
+            "AIS_LOITERING_NEAR_CABLE", "AIS_LOITERING_NEAR_INFRA", "ADSB_LOITERING_NEAR_AIRPORT",
+        }),
+        "dark_ship_count": _count_alerts_matching(rule_names={"AIS_DARK_SHIP"}),
+        "sanctioned_vessel_count": _count_alerts_matching(alert_types={
+            "Sanctioned Vessel", "Sanctioned Vessel (Possible)",
+        }),
+        "chokepoint_activity_count": _count_alerts_matching(rule_names={"AIS_CHOKEPOINT_ACTIVITY"}),
+        "window_hours": int((now - _traffic_window_start).total_seconds() // 3600) if _traffic_window_start else 24,
+    }
+
+    # ── 9. Statistics ──────────────────────────────────────────────────────────
     total_signals    = len(all_scored)
     critical_signals = len([s for s in all_scored if s.get("relevance_score", 0) >= 70])
 
@@ -578,6 +667,7 @@ def prepare_intelligence_picture(
             "elevated_regions": elevated_regions,
             "most_active_zone": active_zones[0]["name"] if active_zones else None,
         },
+        "traffic_summary":    traffic_summary,
         "fusion_events":      fusion_items,
         "surge_events":       surge_items,
         "ais_anomalies":      ais_signals[:10],
