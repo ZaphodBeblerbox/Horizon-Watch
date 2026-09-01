@@ -75,6 +75,60 @@ function CommentWell({ claimId, finding, resolved, onResolve }) {
     )
 }
 
+/**
+ * A manually-added claim, staged locally until Save Draft/autosave — every
+ * real claim needs a real citation (_validate_claims(), main.py), and a
+ * brand-new analyst-authored claim has no snapshot item to point at, so it
+ * takes a real "external" citation (a genuine, pre-existing citation type —
+ * see report_council.py) with a real source URL the analyst supplies,
+ * rather than a fake/placeholder citation. Left out of the saved claim list
+ * entirely if the analyst leaves either field blank, rather than sending a
+ * half-formed claim.
+ */
+function NewClaimRow({ sectionId, claim, onChange, onRemove, editable }) {
+    return (
+        <div style={{ marginBottom: "var(--space-3)", border: "1px dashed var(--border-strong)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)" }}>
+            <textarea
+                value={claim.text}
+                disabled={!editable}
+                onChange={(e) => onChange(sectionId, claim.tempId, { text: e.target.value })}
+                rows={2}
+                placeholder="New claim text"
+                style={{
+                    width: "100%", boxSizing: "border-box", resize: "vertical", background: "var(--bg-input)",
+                    border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)",
+                    fontSize: "var(--text-body)", fontFamily: "var(--font-sans)", padding: "var(--space-2)", lineHeight: "20px",
+                }}
+            />
+            <div style={{ display: "flex", gap: "var(--space-2)", marginTop: 4, alignItems: "center" }}>
+                <input
+                    type="text"
+                    value={claim.url}
+                    disabled={!editable}
+                    onChange={(e) => onChange(sectionId, claim.tempId, { url: e.target.value })}
+                    placeholder="Source URL (required to save this claim)"
+                    style={{
+                        flex: 1, boxSizing: "border-box", background: "var(--bg-input)", border: "1px solid var(--border)",
+                        borderRadius: "var(--radius-sm)", color: "var(--text-secondary)", fontSize: "var(--text-xs)",
+                        fontFamily: "var(--font-mono)", padding: "4px 6px",
+                    }}
+                />
+                {editable && (
+                    <span
+                        role="button" tabIndex={0}
+                        onClick={() => onRemove(sectionId, claim.tempId)}
+                        onKeyDown={(e) => { if (e.key === "Enter") onRemove(sectionId, claim.tempId) }}
+                        style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", cursor: "pointer", flexShrink: 0 }}
+                    >Remove</span>
+                )}
+            </div>
+            {!claim.url.trim() && (
+                <div style={{ color: "var(--text-muted)", fontSize: "10px", marginTop: 2 }}>Not saved until a source URL is added.</div>
+            )}
+        </div>
+    )
+}
+
 function EditableClaim({ claim, draftText, onTextChange, findings, resolvedIds, onResolve, activeFilter }) {
     const visibleFindings = (findings || []).filter((f) => matchesFilter(f.kind, activeFilter))
     return (
@@ -126,6 +180,10 @@ export default function EditingWorkspace({ report, sections, task, onReportChang
     const [draftClaimText, setDraftClaimText] = useState(() =>
         Object.fromEntries((report?.claims || []).map((c) => [c.claim_id, c.text]))
     )
+    // section_id -> array of {tempId, text, url} — manually-added claims
+    // staged locally until save (see NewClaimRow docstring for why they need
+    // a real source URL). Reset alongside the other draft state below.
+    const [newClaimsBySection, setNewClaimsBySection] = useState({})
     const [sectionWeights, setSectionWeights] = useState({}) // section_id -> "High"|"Medium"|"Low", local-only, see WeightControl docstring
     const [resolvedIds, setResolvedIds] = useState(() => new Set()) // commentId -> resolved, local-only, see CommentWell docstring
     const [activeFilter, setActiveFilter] = useState("All")
@@ -140,13 +198,26 @@ export default function EditingWorkspace({ report, sections, task, onReportChang
     useEffect(() => {
         setDraftKeyJudgments(report?.key_judgments || "")
         setDraftClaimText(Object.fromEntries((report?.claims || []).map((c) => [c.claim_id, c.text])))
+        setNewClaimsBySection({})
         setDirty(false)
     }, [report?.report_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    const buildPatchBody = () => ({
-        key_judgments: draftKeyJudgments,
-        claims: (report?.claims || []).map((c) => ({ ...c, text: draftClaimText[c.claim_id] ?? c.text })),
-    })
+    // Only a new claim with BOTH real text and a real source URL is actually
+    // saveable (_validate_claims(), main.py, requires a non-empty url on an
+    // "external" citation) — a half-filled row stays local/pending rather
+    // than being sent and rejected.
+    const buildPatchBody = () => {
+        const savedNewClaims = Object.values(newClaimsBySection).flat()
+            .filter((c) => c.text.trim() && c.url.trim())
+            .map((c) => ({ text: c.text.trim(), citation: { type: "external", url: c.url.trim() } }))
+        return {
+            key_judgments: draftKeyJudgments,
+            claims: [
+                ...(report?.claims || []).map((c) => ({ ...c, text: draftClaimText[c.claim_id] ?? c.text })),
+                ...savedNewClaims,
+            ],
+        }
+    }
 
     const save = async () => {
         if (!editable || saving) return
@@ -154,6 +225,18 @@ export default function EditingWorkspace({ report, sections, task, onReportChang
         try {
             const updated = await patchReport(report.report_id, buildPatchBody())
             onReportChange?.(updated)
+            // The saved report now carries any COMPLETE staged rows as real
+            // claims (with real claim_ids) via report.claims on the next
+            // render — drop only those so they aren't resubmitted as
+            // duplicates, but keep any still-incomplete row (blank text or
+            // url) so the analyst doesn't lose in-progress typing.
+            setNewClaimsBySection((prev) =>
+                Object.fromEntries(
+                    Object.entries(prev)
+                        .map(([sid, rows]) => [sid, rows.filter((c) => !(c.text.trim() && c.url.trim()))])
+                        .filter(([, rows]) => rows.length > 0)
+                )
+            )
             setDirty(false)
             setLastSavedAt(new Date())
         } catch (e) {
@@ -186,6 +269,25 @@ export default function EditingWorkspace({ report, sections, task, onReportChang
         return next
     })
     const handleWeightChange = (sectionId, weight) => setSectionWeights((prev) => ({ ...prev, [sectionId]: weight }))
+
+    let newClaimSeq = 0
+    const handleAddClaim = (sectionId) => {
+        newClaimSeq += 1
+        const tempId = `new-${sectionId}-${Date.now()}-${newClaimSeq}`
+        setNewClaimsBySection((prev) => ({ ...prev, [sectionId]: [...(prev[sectionId] || []), { tempId, text: "", url: "" }] }))
+        setDirty(true)
+    }
+    const handleNewClaimChange = (sectionId, tempId, patch) => {
+        setNewClaimsBySection((prev) => ({
+            ...prev,
+            [sectionId]: (prev[sectionId] || []).map((c) => (c.tempId === tempId ? { ...c, ...patch } : c)),
+        }))
+        setDirty(true)
+    }
+    const handleRemoveNewClaim = (sectionId, tempId) => {
+        setNewClaimsBySection((prev) => ({ ...prev, [sectionId]: (prev[sectionId] || []).filter((c) => c.tempId !== tempId) }))
+        setDirty(true)
+    }
 
     const submitForReview = async () => {
         if (submitting) return
@@ -289,6 +391,24 @@ export default function EditingWorkspace({ report, sections, task, onReportChang
                                         activeFilter={activeFilter}
                                     />
                                 ))}
+                                {(newClaimsBySection[section.section_id] || []).map((claim) => (
+                                    <NewClaimRow
+                                        key={claim.tempId}
+                                        sectionId={section.section_id}
+                                        claim={claim}
+                                        onChange={handleNewClaimChange}
+                                        onRemove={handleRemoveNewClaim}
+                                        editable={editable}
+                                    />
+                                ))}
+                                {editable && (
+                                    <span
+                                        role="button" tabIndex={0}
+                                        onClick={() => handleAddClaim(section.section_id)}
+                                        onKeyDown={(e) => { if (e.key === "Enter") handleAddClaim(section.section_id) }}
+                                        style={{ color: "var(--text-link)", fontSize: "var(--text-xs)", cursor: "pointer", display: "inline-block", marginTop: 4 }}
+                                    >+ Add claim</span>
+                                )}
                             </>
                         )}
                     </div>

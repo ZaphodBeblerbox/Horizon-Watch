@@ -202,6 +202,19 @@ def _extract_json(text: str):
         return None
 
 
+def _extract_text(resp) -> str:
+    """The real text content from a Claude response, regardless of position —
+    claude-sonnet-5 (unlike the older sonnet-4 models this codebase's other
+    Claude calls still use) returns a ThinkingBlock before the real
+    TextBlock when extended thinking is on, so content[0] is not reliably
+    the answer. Never assume position; find the block that actually has
+    .text."""
+    for block in resp.content or []:
+        if getattr(block, "type", None) == "text":
+            return block.text
+    return ""
+
+
 def _claims_context(claims: list, snapshot_content: dict) -> str:
     lines = []
     for c in claims:
@@ -239,10 +252,10 @@ def run_citation_fidelity_lens(claims: list, snapshot_content: dict, client, usa
     )
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-5-20251015", max_tokens=1500,
+            model="claude-sonnet-5", max_tokens=1500,
             system=system, messages=[{"role": "user", "content": user}],
         )
-        text = resp.content[0].text
+        text = _extract_text(resp)
         if usage_tracker_mod is not None:
             usage_tracker_mod.record_call(
                 getattr(resp.usage, "input_tokens", 0), getattr(resp.usage, "output_tokens", 0),
@@ -278,10 +291,10 @@ def run_completeness_lens(report_title: str, key_judgments: str, claims: list, c
     )
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-5-20251015", max_tokens=1200,
+            model="claude-sonnet-5", max_tokens=1200,
             system=system, messages=[{"role": "user", "content": user}],
         )
-        text = resp.content[0].text
+        text = _extract_text(resp)
         if usage_tracker_mod is not None:
             usage_tracker_mod.record_call(
                 getattr(resp.usage, "input_tokens", 0), getattr(resp.usage, "output_tokens", 0),

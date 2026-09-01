@@ -319,7 +319,15 @@ MAX_LLM_ARTICLE_CALLS_PER_DAY = int(  os.getenv("MAX_LLM_ARTICLE_CALLS_PER_DAY",
 # Module-level (was a local inside _run_news_conflict_extraction_sync) so
 # _classify_article_intel() — pulled out into its own testable function — can
 # reference it without needing the whole extraction loop's local scope.
-MAX_LLM_CALLS_PER_CYCLE       = 8     # cost reduction: was 50
+MAX_LLM_CALLS_PER_CYCLE       = 50    # restored (Reports follow-up round) — real Claude
+# credits are available again; the earlier 8/cycle cut left the overwhelming
+# majority of real articles at the cheap fallback classification (tier 3,
+# article_type "other") instead of a genuine per-article Haiku result, which
+# was the direct cause of "most important news points" reading empty in a
+# snapshot report (see briefing_prep.py's prepare_intelligence_picture()).
+# The real $10/day hard cap (_claude_budget_ok()) is the actual safety net
+# regardless of this per-cycle number, so this isn't removing cost control,
+# just no longer strangling it below what that cap would allow on its own.
 
 _COPERNICUS_CLIENT_ID = os.getenv("COPERNICUS_CLIENT_ID", "").strip()
 _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
@@ -3567,7 +3575,7 @@ async def director_generate(
     def _call_claude():
         raw = ""
         with client.messages.stream(
-            model="claude-sonnet-4-5-20251015",
+            model="claude-sonnet-5",
             max_tokens=1500,
             system=_BRIEFING_SYSTEM,
             messages=[{"role": "user", "content": _BRIEFING_USER}],
@@ -12107,7 +12115,7 @@ async def startup_event():
     print("=" * 60)
     print("COST REDUCTION MODE ACTIVE")
     print("News loop: 30min | Geocode: 30min | Feeds cap: 80/cycle")
-    print("Haiku cap: 8/cycle | Prescore gate: >=6 required")
+    print(f"Haiku cap: {MAX_LLM_CALLS_PER_CYCLE}/cycle | Prescore gate: >=6 required")
     print("Paused: trajectory, threat_snapshot, STS")
     print("History throttle: aircraft=5min, vessel=10min")
     print("Snapshots: cooldown 10min per key")
@@ -18165,7 +18173,16 @@ async def start_report_task_draft(task_id: str, request: Request):
     """Once ready_to_draft, create the underlying Report draft pre-filled from
     the task's frozen snapshot — reuses the exact same creation pattern
     POST /api/reports already uses (_report_id, _validate_claims, the same
-    Report(...) construction), not a parallel implementation."""
+    Report(...) construction), not a parallel implementation.
+
+    Real AI drafting (Reports follow-up round): when the caller doesn't pass
+    claims explicitly, this now calls report_draft.generate_draft() — a real
+    Claude call over the task's frozen snapshot content, organized per
+    category (news/imagery/traffic) — instead of creating an empty shell for
+    a human to fill in from scratch. Pass `claims` explicitly (even an empty
+    list) to keep the old manual-shell behavior; pass `ai_draft: false` to
+    force an empty shell even with real snapshot content available.
+    """
     try:
         body = await request.json()
     except Exception:
@@ -18177,15 +18194,39 @@ async def start_report_task_draft(task_id: str, request: Request):
             raise HTTPException(404, "Task not found")
         if row.status != "ready_to_draft":
             raise HTTPException(409, f"only ready_to_draft tasks can start drafting (this one is {row.status})")
-        if not row.snapshot_id or not db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first():
+        snap = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first()
+        if not row.snapshot_id or not snap:
             raise HTTPException(500, f"task's snapshot {row.snapshot_id} no longer exists")
 
         title = (body.get("title") or "").strip() or f"Report — {row.focus or row.task_id}"
-        claims = _validate_claims(body.get("claims") or [])
+        key_judgments = body.get("key_judgments")
+        ai_draft_result = None
+        if "claims" in body:
+            claims = _validate_claims(body.get("claims") or [])
+        elif body.get("ai_draft") is False:
+            claims = []
+        else:
+            import report_draft as _draft
+            snapshot_content = _json.loads(snap.content_json)
+            ai_draft_result = _draft.generate_draft(
+                snapshot_content=snapshot_content, focus=row.focus,
+                region_label=", ".join(_task_region_list(row)) if isinstance(_task_region_list(row), list) else None,
+                client=client, usage_tracker_mod=usage_tracker,
+            )
+            if ai_draft_result.get("status") == "ok":
+                claims = _validate_claims(ai_draft_result.get("claims") or [])
+                key_judgments = key_judgments or ai_draft_result.get("key_judgments")
+            else:
+                # Real, honest degradation — no client configured, or the
+                # call failed. An empty shell (today's pre-existing
+                # behavior) is still correct here: never fabricate claims
+                # when the real drafting call didn't actually succeed.
+                claims = []
+
         rpt = Report(
             report_id=_report_id(), title=title, snapshot_id=row.snapshot_id,
             classification=body.get("classification") or "UNCLASSIFIED // FOR ANALYTICAL USE ONLY",
-            key_judgments=body.get("key_judgments"),
+            key_judgments=key_judgments,
             claims_json=_json.dumps(claims), status="draft",
             created_by=row.created_by or "operator",
         )
@@ -18194,7 +18235,12 @@ async def start_report_task_draft(task_id: str, request: Request):
         row.status = "drafting"
         row.updated_at = datetime.utcnow()
         db.commit()
-        return _task_to_dict(row, db)
+        result = _task_to_dict(row, db)
+        if ai_draft_result is not None:
+            result["ai_draft_status"] = ai_draft_result.get("status")
+            if ai_draft_result.get("status") != "ok":
+                result["ai_draft_reason"] = ai_draft_result.get("reason")
+        return result
 
 
 @app.post("/api/reports/tasks/{task_id}/archive")
