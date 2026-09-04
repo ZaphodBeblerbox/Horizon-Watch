@@ -159,6 +159,30 @@ def write_alert(alert_dict: dict):
                 _el_lon,
                 alert_dict.get("title") or alert_dict.get("message", ""),
             )
+            # Real "alerting on" toggle (Dossiers page, EntityAlertPref) —
+            # if this alert just linked to a zone with alerting explicitly
+            # disabled, demote it out of the active surface rather than
+            # leaving the toggle purely decorative. Best-effort: a failure
+            # here must never affect the alert write itself.
+            from database import OntologyLink, EntityAlertPref, Alert, get_db as _gdb_alertpref
+            with _gdb_alertpref() as _apdb:
+                fresh_links = _apdb.query(OntologyLink).filter(
+                    OntologyLink.source_id == _el_id,
+                    OntologyLink.entity_type.in_(["watch_zone", "strategic_zone"]),
+                ).all()
+                disabled_hit = False
+                for fl in fresh_links:
+                    pref = _apdb.query(EntityAlertPref).filter(
+                        EntityAlertPref.entity_type == fl.entity_type, EntityAlertPref.entity_id == fl.entity_id,
+                    ).first()
+                    if pref and not pref.enabled:
+                        disabled_hit = True
+                        break
+                if disabled_hit:
+                    row = _apdb.query(Alert).filter(Alert.alert_id == _el_id).first()
+                    if row and row.status == "active":
+                        row.status = "suppressed"
+                        _apdb.commit()
     except Exception:
         pass
     return result
@@ -17371,6 +17395,134 @@ def api_watch_zone_analytics(system_id: str):
             "current_vessel_count":      float(current),
             "change_vs_baseline_pct":    round(change_pct, 1),
         }
+
+
+@app.get("/api/dossiers/entities")
+def api_dossiers_entities():
+    """Real trackable entities for the Dossiers watchlist — every enabled
+    WatchZone plus every enabled StrategicZone (per the spec's own "reuse
+    existing watch areas plus any other real trackable entity"), each with
+    its real exposure score/delta/band computed live."""
+    import exposure_index as _ei
+    from database import get_db as _gdb_doss
+    with _gdb_doss() as db:
+        out = []
+        for e in _ei.list_entities(db):
+            now_score = _ei.compute_score(e, db)
+            prior_score = _ei.compute_score(e, db, as_of=datetime.utcnow() - timedelta(days=14))
+            delta = round(now_score["score"] - prior_score["score"], 1)
+            out.append({
+                "entity_type": e["entity_type"], "code": e["code"], "name": e["name"],
+                "type_label": e["type_label"], "score": now_score["score"],
+                "band": _ei.band_for_score(now_score["score"]), "delta": delta,
+            })
+        out.sort(key=lambda r: -r["score"])
+        return out
+
+
+@app.get("/api/dossiers/{entity_type}/{code}")
+def api_dossiers_profile(entity_type: str, code: str):
+    """Full real profile for one entity: score/delta/band/state, 30-day real
+    score history, hydrated ring signals (Overview/Risk-drivers/History all
+    read from this one real set), nearby (1400km) signals, and 2-hop
+    co-occurrence-derived linked entities."""
+    import exposure_index as _ei
+    from database import get_db as _gdb_doss2
+    if entity_type not in ("watch_zone", "strategic_zone"):
+        raise HTTPException(404, "unknown entity type")
+    with _gdb_doss2() as db:
+        entity = _ei.get_entity(entity_type, code, db)
+        if not entity:
+            raise HTTPException(404, f"{entity_type} {code} not found")
+
+        # One real bulk hydration pass over the full 44-day span (30-day
+        # history + its own trailing 14-day windows), shared by the "now"
+        # score, the "14 days ago" score, the Overview window, and every
+        # point in the history chart — a data-rich zone (thousands of real
+        # OntologyLink rows) would otherwise pay for the same hydration
+        # dozens of times over.
+        now = datetime.utcnow()
+        cache = {}
+        span_start = now - timedelta(days=30 + _ei.PERSISTENCE_WINDOW_DAYS)
+        all_signals = _ei.ring_signals(entity, db, since=span_start, until=now, _cache=cache)
+
+        window_signals = [s for s in all_signals if s["created_at"] and now - timedelta(days=_ei.PERSISTENCE_WINDOW_DAYS) <= s["created_at"] < now]
+        now_score = _ei.score_from_signals(window_signals)
+        prior_at = now - timedelta(days=14)
+        prior_window = [s for s in all_signals if s["created_at"] and prior_at - timedelta(days=_ei.PERSISTENCE_WINDOW_DAYS) <= s["created_at"] < prior_at]
+        prior_score = _ei.score_from_signals(prior_window)
+        delta = round(now_score["score"] - prior_score["score"], 1)
+        state = "Deteriorating" if delta > 0 else "Improving" if delta < 0 else "Stable"
+
+        history = []
+        for i in range(30, -1, -1):
+            as_of = now - timedelta(days=i)
+            since = as_of - timedelta(days=_ei.PERSISTENCE_WINDOW_DAYS)
+            pts = [s for s in all_signals if s["created_at"] and since <= s["created_at"] < as_of]
+            history.append({"date": as_of.date().isoformat(), "score": _ei.score_from_signals(pts)["score"]})
+        distinct_days = len({p["date"] for p in history})
+        nearby, centroid = _ei.nearby_signals(entity, db)
+        linked = _ei.linked_entities(entity, db)
+        domain_mix = _ei.signal_mix_by_domain(window_signals)
+
+        judgement = _ei.analyst_judgement_fallback(
+            entity["name"], now_score["score"], delta, now_score["signal_count"], now_score["critical_count"],
+        )
+
+        pref = None
+        from database import EntityAlertPref
+        p = db.query(EntityAlertPref).filter(
+            EntityAlertPref.entity_type == entity_type, EntityAlertPref.entity_id == str(entity["id"]),
+        ).first()
+        alerting_enabled = p.enabled if p else True
+
+        return {
+            "entity_type": entity_type, "code": entity["code"], "name": entity["name"],
+            "centroid": {"lat": centroid[0], "lon": centroid[1]},
+            "score": now_score["score"], "delta": delta, "band": _ei.band_for_score(now_score["score"]),
+            "state": state, "description": entity.get("description"), "components": now_score["components"],
+            "reduced_formula": now_score["components"]["dependency"] is None,
+            "signal_count": now_score["signal_count"], "critical_count": now_score["critical_count"],
+            "history": history, "has_enough_history": distinct_days >= 5,
+            "domain_mix": domain_mix,
+            "ring_signals": [
+                {"id": s["source_id"], "title": s["title"], "severity": s["severity"], "domain": s["domain"],
+                 "confidence": s["confidence"], "lat": s["lat"], "lon": s["lon"],
+                 "created_at": s["created_at"].isoformat() if s["created_at"] else None, "link_type": s["link_type"]}
+                for s in window_signals
+            ],
+            "nearby_signals": [
+                {**s, "created_at": s["created_at"].isoformat() if s["created_at"] else None} for s in nearby
+            ],
+            "linked_entities": linked,
+            "analyst_judgement": judgement,
+            "alerting_enabled": alerting_enabled,
+        }
+
+
+@app.patch("/api/dossiers/{entity_type}/{code}/alerting")
+async def api_dossiers_set_alerting(entity_type: str, code: str, request: Request):
+    """The real "alerting on" toggle — persists to EntityAlertPref and is
+    genuinely consulted by write_alert() (see main.py's write_alert) for
+    every subsequent alert linked to this entity, not a decorative flag."""
+    body = await request.json()
+    import exposure_index as _ei
+    from database import get_db as _gdb_doss3, EntityAlertPref
+    if entity_type not in ("watch_zone", "strategic_zone"):
+        raise HTTPException(404, "unknown entity type")
+    with _gdb_doss3() as db:
+        entity = _ei.get_entity(entity_type, code, db)
+        if not entity:
+            raise HTTPException(404, f"{entity_type} {code} not found")
+        pref = db.query(EntityAlertPref).filter(
+            EntityAlertPref.entity_type == entity_type, EntityAlertPref.entity_id == str(entity["id"]),
+        ).first()
+        if not pref:
+            pref = EntityAlertPref(entity_type=entity_type, entity_id=str(entity["id"]), enabled=True)
+            db.add(pref)
+        pref.enabled = bool(body.get("enabled", True))
+        db.commit()
+        return {"entity_type": entity_type, "code": code, "alerting_enabled": pref.enabled}
 
 
 @app.post("/api/watch-zones/{system_id}/scan-now")

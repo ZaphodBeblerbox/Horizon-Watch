@@ -47,6 +47,7 @@ import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
 import { playAlert, resumeAudio } from "./soundSystem.js"
 import HealthPanel from "./components/HealthPanel.jsx"
 import Analytics from "./destinations/Analytics.jsx"
+import Dossiers from "./destinations/Dossiers.jsx"
 import API_BASE from "./apiBase.js"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import { loadSettings } from "./components/PreferencesPanel.jsx"
@@ -1558,7 +1559,7 @@ export default function App() {
 
                 {tabs.some(t => t.type === "dossiers") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "dossiers" ? "flex" : "none", flexDirection: "column" }}>
-                        <PlaceholderModule label="Dossiers" roundNote="it's a genuinely new module built in Round 3" />
+                        <Dossiers onOpenGenerate={() => openTab("generate")} />
                     </div>
                 )}
 

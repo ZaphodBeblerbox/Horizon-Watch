@@ -245,6 +245,27 @@ class RuleConnection(Base):
     created_at                 = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class EntityAlertPref(Base):
+    """A real, per-entity alerting on/off preference for the Dossiers page's
+    "alerting on" toggle — keyed by (entity_type, entity_id) so it works
+    identically for a WatchZone or a StrategicZone (or any future trackable
+    entity type) without adding a column to each entity table separately.
+    Consulted by write_alert() (backend/main.py) before an alert linked to
+    this entity is surfaced — see the real wiring there, not a decorative
+    UI-only flag."""
+    __tablename__ = "entity_alert_prefs"
+
+    id          = Column(Integer, primary_key=True)
+    entity_type = Column(String, nullable=False, index=True)   # "watch_zone" | "strategic_zone"
+    entity_id   = Column(String, nullable=False, index=True)   # the entity's internal .id, as a string
+    enabled     = Column(Boolean, nullable=False, default=True)
+    updated_at  = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_entity_alert_pref_key", "entity_type", "entity_id", unique=True),
+    )
+
+
 class WatchZone(Base):
     __tablename__ = "watch_zones"
 
