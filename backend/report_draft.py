@@ -125,14 +125,28 @@ _SYSTEM = (
 )
 
 
-def generate_draft(snapshot_content: dict, focus: str | None, region_label: str | None, client, usage_tracker_mod) -> dict:
+_EMPTY_NOTE = "No signals were selected for this cycle."
+
+
+def generate_draft(snapshot_content: dict, focus: str | None, region_label: str | None, client, usage_tracker_mod,
+                    force_empty: bool = False, standing_instruction: str | None = None) -> dict:
     """Draft key_judgments + claims from a real ReportSnapshot's content.
 
-    Returns {"status": "ok", "key_judgments": str, "claims": [{"text", "citation"}]}
+    Returns {"status": "ok", "key_judgments": str, "claims": [...], "narrative": {...}}
     on success, or {"status": "skipped"|"error", "reason": ...} — never fakes
     a draft when the model can't be reached; the caller falls back to an
     empty, honestly-labeled draft rather than fabricated claims.
+
+    force_empty=True is the deliberate "generate without evidence" run (§0):
+    skips the API call entirely rather than sending an empty evidence array
+    and letting the model invent content to fill the gap — every
+    evidence-dependent field gets the same honest empty-state note.
     """
+    if force_empty:
+        return {
+            "status": "ok", "key_judgments": _EMPTY_NOTE, "claims": [],
+            "narrative": {"second_para": _EMPTY_NOTE, "bottom_line": _EMPTY_NOTE, "warnings": [], "actions": []},
+        }
     if client is None:
         return {"status": "skipped", "reason": "no Claude client configured"}
 
@@ -180,6 +194,7 @@ REAL, PRE-RANKED CANDIDATE ITEMS PER SECTION (cite ONLY these item_ids):
 {_format_candidates(per_section_candidates['outlook_watch'])}
 
 Statistics: {json.dumps(stats)}
+{f"Standing instruction from the requesting analyst (apply it, but never let it override the no-fabrication rules above): {standing_instruction.strip()}" if standing_instruction and standing_instruction.strip() else ""}
 
 Write:
 1. key_judgments: 3-7 high-confidence bullet-point sentences, most important first,
@@ -191,13 +206,28 @@ Write:
    candidates, with an honest "no significant activity" text and citation omitted
    (see below).
 
+3. second_para: one supporting paragraph (2-4 sentences) giving real context behind
+   the key judgements above — quantify only what the evidence/statistics state.
+4. bottom_line: one single sentence, the single most important takeaway for a reader
+   who reads nothing else. If nothing here rises to that level, say so honestly
+   (e.g. "No single development in this window meets the bar for a bottom-line call.").
+5. warnings: a real list of short indicator/warning strings grounded in the evidence
+   above (empty list if genuinely none warrant flagging — never invent one to fill it).
+6. actions: a real list of [text, owner, by] triples — recommended actions, a
+   plausible real owner role (e.g. "Duty analyst", "Fleet security"), and a relative
+   deadline like "D+2" — grounded in the evidence above (empty list if none warrant it).
+
 Return ONLY this JSON shape:
 {{
   "key_judgments": "...",
   "claims": [
     {{"section": "maritime_activity", "text": "...", "cite_section": "ais_anomalies", "item_id": "..."}},
     {{"section": "imagery_detection", "text": "No significant imagery-detection activity identified in this window.", "cite_section": null, "item_id": null}}
-  ]
+  ],
+  "second_para": "...",
+  "bottom_line": "...",
+  "warnings": ["...", "..."],
+  "actions": [["...", "...", "D+2"], ["...", "...", "D+7"]]
 }}
 """
 
@@ -264,8 +294,52 @@ Return ONLY this JSON shape:
     if no_activity_notes:
         key_judgments = (key_judgments + "\n" + "\n".join(no_activity_notes)).strip()
 
+    narrative = _narrative_with_fallback(parsed, claims, stats, traffic)
+
     return {
         "status": "ok",
         "key_judgments": key_judgments,
         "claims": claims,
+        "narrative": narrative,
     }
+
+
+def _narrative_with_fallback(parsed: dict, claims: list[dict], stats: dict, traffic: dict) -> dict:
+    """second_para/bottom_line/warnings/actions, falling back field-by-field
+    to a deterministic, evidence-derived template when the model omits one —
+    never an empty section standing in for a field the model just forgot,
+    and never fabricated content when the model gave nothing usable."""
+    critical_claims = sum(1 for c in claims if "critical" in (c.get("citation") or {}).get("section", ""))
+    total = stats.get("total_active_signals")
+    regions = stats.get("elevated_regions")
+
+    second_para = (parsed.get("second_para") or "").strip()
+    if not second_para:
+        bits = []
+        if total is not None:
+            bits.append(f"{total} active signals")
+        if regions is not None:
+            bits.append(f"{regions} elevated regions")
+        second_para = (
+            f"This reflects {', '.join(bits)} in the current window."
+            if bits else "No further real context is available for this window."
+        )
+
+    bottom_line = (parsed.get("bottom_line") or "").strip()
+    if not bottom_line:
+        crit = stats.get("critical_signals") or 0
+        bottom_line = (
+            f"{crit} critical-severity signal{'s' if crit != 1 else ''} require immediate attention."
+            if crit else "No critical-severity signals were identified in this window."
+        )
+
+    warnings = [w.strip() for w in (parsed.get("warnings") or []) if isinstance(w, str) and w.strip()]
+    if not parsed.get("warnings"):
+        warnings = []  # honest empty state, not fabricated — no fallback text needed for an empty list
+
+    actions = [
+        a for a in (parsed.get("actions") or [])
+        if isinstance(a, list) and len(a) == 3 and all(isinstance(x, str) and x.strip() for x in a)
+    ]
+
+    return {"second_para": second_para, "bottom_line": bottom_line, "warnings": warnings, "actions": actions}

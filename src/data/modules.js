@@ -9,24 +9,26 @@
 //                 genuinely new, no prior equivalent)
 //   Analytics  -> rebuilt onto the real design system (src/destinations/
 //                 Analytics.jsx), backed by GET /api/analytics/overview
-//   Generate   -> Stage 5, not yet restyled — still the pre-redesign
-//                 ReportsPage (Tasks view)
+//   Generate   -> rebuilt (src/reports/Generate.jsx) — real 3-column run
+//                 screen with a live 7-step checklist, replacing ReportsPage
 //   Replay     -> Stage 7, placeholder — was the "Director Mode"
 //                 tools-flyout toggle, not yet rebuilt to lanes/playhead
 //   Ontology   -> Stage 8, placeholder — genuinely new, doesn't exist yet
 //   Imagery    -> Stage 9, placeholder — genuinely new, doesn't exist yet
-//   Briefings  -> Stage 6, not yet rebuilt — still the pre-redesign
-//                 ReportsPage (Briefings view)
+//   Briefings  -> rebuilt (src/reports/Briefings.jsx) — the real interactive
+//                 reader/editor, genuinely split from Generate; the print
+//                 layout (src/reports/PrintLayout.jsx) is the shared hidden
+//                 10th view both lead to
 export const MODULES = [
     { key: "situation", label: "Situation", icon: "i-globe",   built: true },
     { key: "inbox",     label: "Inbox",     icon: "i-inbox",   built: false },
     { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: false },
     { key: "analytics", label: "Analytics", icon: "i-chart",   built: false },
-    { key: "generate",  label: "Generate",  icon: "i-spark", built: false },
+    { key: "generate",  label: "Generate",  icon: "i-spark", built: true },
     { key: "replay",    label: "Replay",    icon: "i-clock",    built: false },
     { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: false },
     { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: false },
-    { key: "briefings", label: "Briefings", icon: "i-read",    built: false },
+    { key: "briefings", label: "Briefings", icon: "i-read",    built: true },
 ]
 
 export const MODULE_KEYS = MODULES.map((m) => m.key)
