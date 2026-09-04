@@ -284,8 +284,7 @@ export default function GlobeAlertsLayer({ enabled }) {
                             height:          Math.round(baseSize * finalScale),
                             color:           billColor,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.3, 12_000_000, 0.28),
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
+                                                        distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
                             eyeOffset: isAssessment ? new (Cartesian3)(0, 0, -60) : undefined,
                         }}
                         label={labelText ? {
@@ -324,8 +323,7 @@ export default function GlobeAlertsLayer({ enabled }) {
                             width:           sz,
                             height:          sz,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.4, 12_000_000, 0.30),
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 25_000_000),
+                                                        distanceDisplayCondition: new DistanceDisplayCondition(0, 25_000_000),
                             eyeOffset: new (Cartesian3)(0, 0, -80),
                         }}
                     />

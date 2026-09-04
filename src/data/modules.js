@@ -1,33 +1,32 @@
-// The 7 real top-level modules — redesign Round 2, replacing the old 5-item
-// DESTINATIONS model (data/destinations.js) entirely. Exactly this order,
-// exactly these 7. Each maps onto real, already-existing app surfaces (or a
-// later-round placeholder — see `built: false` below) rather than being
-// invented fresh:
-//   Situation  -> the globe home screen this round rebuilds (was the
-//                 "Globe / Maritime Operational View" default screen)
-//   Inbox      -> the alert/Watchlists console, rebuilt in Round 3
-//                 (was destinations.js's "watchlists")
-//   Dossiers   -> new AOI/entity exposure-profile module, built in Round 3
-//                 (genuinely new — no prior equivalent)
-//   Analytics  -> existing stats, rebuilt in Round 3
-//                 (was AnalyticsPanel.jsx's flyout panel)
-//   Generate   -> the snapshot/task report-creation flow already built,
-//                 restyled in Round 4 (was destinations.js's "reports",
-//                 the task-creation half of ReportsPage.jsx)
-//   Briefings  -> the report reading/document register, switching to a
-//                 white-paper look in Round 4 (was ReportsPage.jsx's
-//                 "Briefings" tab + the reading/editing workspaces)
-//   Replay     -> Director Mode, rebuilt in Round 4 to match the lanes/
-//                 playhead structure (was the "Director Mode" tools-flyout
-//                 toggle)
+// The 9 real top-level modules — page-by-page rebuild, Stage 0. Exactly this
+// order, exactly these 9 (the print layout is a real 10th view, reachable
+// only from Briefings/Generate, never from the rail itself, per the build
+// spec's own "hidden module" note).
+//   Situation  -> the globe home screen (built, Stage 1)
+//   Inbox      -> the alert/Watchlists console (Stage 2, not yet rebuilt —
+//                 still the pre-redesign WatchlistsPage)
+//   Dossiers   -> AOI/entity exposure-profile module (Stage 3, placeholder —
+//                 genuinely new, no prior equivalent)
+//   Analytics  -> Stage 4, not yet rebuilt — still the pre-redesign
+//                 AnalyticsPanel
+//   Generate   -> Stage 5, not yet restyled — still the pre-redesign
+//                 ReportsPage (Tasks view)
+//   Replay     -> Stage 7, placeholder — was the "Director Mode"
+//                 tools-flyout toggle, not yet rebuilt to lanes/playhead
+//   Ontology   -> Stage 8, placeholder — genuinely new, doesn't exist yet
+//   Imagery    -> Stage 9, placeholder — genuinely new, doesn't exist yet
+//   Briefings  -> Stage 6, not yet rebuilt — still the pre-redesign
+//                 ReportsPage (Briefings view)
 export const MODULES = [
-    { key: "situation", label: "Situation", icon: "icon-globe",     built: true },
-    { key: "inbox",     label: "Inbox",     icon: "icon-inbox",     built: false },
-    { key: "dossiers",  label: "Dossiers",  icon: "icon-dossier",   built: false },
-    { key: "analytics", label: "Analytics", icon: "icon-chart",     built: false },
-    { key: "generate",  label: "Generate",  icon: "icon-add-brief", built: false },
-    { key: "briefings", label: "Briefings", icon: "icon-doc",       built: false },
-    { key: "replay",    label: "Replay",    icon: "icon-play",      built: false },
+    { key: "situation", label: "Situation", icon: "i-globe",   built: true },
+    { key: "inbox",     label: "Inbox",     icon: "i-inbox",   built: false },
+    { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: false },
+    { key: "analytics", label: "Analytics", icon: "i-chart",   built: false },
+    { key: "generate",  label: "Generate",  icon: "i-add-brief", built: false },
+    { key: "replay",    label: "Replay",    icon: "i-play",    built: false },
+    { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: false },
+    { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: false },
+    { key: "briefings", label: "Briefings", icon: "i-read",    built: false },
 ]
 
 export const MODULE_KEYS = MODULES.map((m) => m.key)
