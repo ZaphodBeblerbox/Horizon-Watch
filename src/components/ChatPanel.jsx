@@ -17,7 +17,7 @@ const PANEL = {
     zIndex: 600,
     display: "flex",
     flexDirection: "column",
-    fontFamily: "'Inter','Segoe UI',sans-serif",
+    fontFamily: "var(--font)",
     color: "#e0e0e0",
 }
 
