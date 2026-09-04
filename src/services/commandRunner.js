@@ -2744,7 +2744,7 @@ export class CommandRunner {
           position: fixed;
           z-index: 9000;
           pointer-events: none;
-          font-family: 'Inter', 'SF Pro Display', sans-serif;
+          font-family: var(--font);
           animation: dirCalloutIn 400ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
         }
         @keyframes dirCalloutIn {

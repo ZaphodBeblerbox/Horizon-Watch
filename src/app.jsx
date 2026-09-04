@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
 import { REGION_COORDS } from "./data/regionCoords.js"
 const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
+import IconSprite from "./ui/IconSprite.jsx"
 import AppHeader from "./components/AppHeader.jsx"
 import AppFooter from "./components/AppFooter.jsx"
 import MapControlStack from "./components/MapControlStack.jsx"
@@ -1183,6 +1184,7 @@ export default function App() {
             overflow:      "hidden",
             fontFamily:    "system-ui, -apple-system, sans-serif",
         }}>
+        <IconSprite />
         <style>{`
           @keyframes db-spin { to { transform: rotate(360deg); } }
           @keyframes dir-panel-slide-in {

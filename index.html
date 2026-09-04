@@ -8,161 +8,204 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#060d1a" />
+    <meta name="theme-color" content="#171b20" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Horizon" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <style>
-        /* ── Horizon Watch design tokens ──────────────────────────────────
-           Full UI rebuild, exact specification (supersedes Round 1's token
-           system entirely — every value below is the literal, mandatory
-           value from that spec, not a starting point). No component may
-           hardcode a hex/font-size/spacing/radius value outside this file.
+        /* ── Horizon Watch design tokens — redesign Round 1 ───────────────
+           "The corporate risk console spec." Supersedes EVERY prior token
+           system entirely: the Inter + JetBrains Mono font tokens, the
+           dark-navy/cyan palette, the per-entity-type icon system, and the
+           translucent-floating-panel treatment are all gone. This block is
+           the literal spec verbatim — no component may hardcode a hex/
+           font-size/spacing/radius value outside this file.
 
-           Legacy `--bg-primary`/`--accent`/`--sev-*`/`--akili-*`/`--text-xs..xl`
-           names are kept defined (re-pointed at the new real values, not
-           their old ones) rather than deleted outright — hundreds of existing
-           call sites across the app reference them, and a mechanical
-           find-replace across every one of those files in the same pass as
-           the token rewrite is exactly the kind of large, error-prone,
-           unreviewable change this rebuild is trying to avoid. The literal
-           new token names the spec defines (--bg-app, --accent-blue,
-           --danger, etc.) are ALL present below with their exact mandated
-           values; new/rebuilt components should reference those directly.
-           This is a deliberate, documented choice, not an oversight. ────── */
+           Legacy names (`--bg-app`, `--text-primary`, `--border`, `--accent-
+           blue`, `--sev-*`, `--font-sans`, `--radius-*`, `--akili-*`, etc.)
+           are kept defined — hundreds of existing call sites across the app
+           reference them — but every one is RE-POINTED at the new tokens
+           below, not their old values, so the whole app renders in the new
+           system immediately without a mechanical find-replace across every
+           file (exactly the kind of large, unreviewable change this rebuild
+           avoids). Rewiring individual screens to the new component classes
+           directly is later-round work; this round is tokens, typography,
+           and the component library only. ────────────────────────────── */
         :root {
-            /* ── Surfaces ──────────────────────────────────────────────── */
-            --bg-app:      #070B14; /* application canvas behind everything */
-            --bg-header:   #0A101C; /* top chrome, 52px tall */
-            --bg-header-2: #0C1320; /* secondary toolbar / mode strip */
-            --bg-panel:    #0E1624; /* side rails, legends, editor columns */
-            --bg-card:     #121C2C; /* map callouts, comment cards, snapshot wells */
-            --bg-card-2:   #152033; /* inset cards */
-            --bg-input:    #0B1220; /* search fields, selects, slider tracks */
-            --border:        #1E2A3D; /* default hairline border */
-            --border-strong: #2A3B55; /* active tab underline, focused card border */
-            --overlay-map: rgba(7,11,20,0.55); /* legend/scale-bar plates over imagery */
+            /* ── Surfaces — 5 steps, neutral blue-grey, never pure black ── */
+            --bg-0: #171b20; /* app background, active tab, log/input wells */
+            --bg-1: #1c2127; /* pane background */
+            --bg-2: #22282f; /* pane headers, toolbars, cards, top bar */
+            --bg-3: #2a3138; /* hover, default button */
+            --bg-4: #333b43; /* pressed/selected, button hover, chart tracks */
 
-            /* ── Translucent surfaces — UI correction pass ────────────────────
-               Deliberate, narrow exception to "no glassmorphism": alpha
-               transparency only, never a blur filter. For anything that
-               "flies in" and isn't part of the persistent base shell (header,
-               footer, docked inspector, the layers flyout's own trigger
-               button) — flyout menus, floating/transient cards, drawers.
-               Borders stay crisp hard 1px edges regardless. */
-            --bg-panel-translucent: rgba(14,22,36,0.88);  /* --bg-panel  #0E1624 at ~88% */
-            --bg-card-translucent:  rgba(18,28,44,0.88);  /* --bg-card   #121C2C at ~88% */
+            /* ── Lines ─────────────────────────────────────────────────── */
+            --line:        #30373f;
+            --line-soft:   #262c33;
+            --line-strong: #3d454e;
 
-            /* No pure black anywhere, no gradients anywhere, no box-shadow for
-               elevation except the one map-callout exception below. */
-            --shadow-callout: 0 8px 16px rgba(0,0,0,0.2);
+            /* ── Text — 4 steps only ──────────────────────────────────── */
+            --txt:   #d5dae0;
+            --txt-2: #a4adb6;
+            --txt-3: #818c96;
+            --txt-4: #616b75;
 
-            /* ── Text and signal colors ────────────────────────────────── */
-            --text-primary:   #E8EEF7;
-            --text-secondary: #8B9BB4;
-            --text-muted:     #6B7A90;
-            --text-link:      #5BA8FF;
-            --accent-blue: #3D8BFF; /* primary buttons, active nav underline, AIS tracks */
-            --accent-cyan: #4CC9F0; /* AOI dashed boxes, selected-entity rings */
-            --live:   #22C55E; /* LIVE / OPERATIONAL status dots */
-            --warn:   #F5A524; /* warnings, medium-confidence, degraded status */
-            --danger: #EF4444; /* critical alerts, alert badge count */
-            --ai-comment:   #1E3A5F; /* AI Council comment well background */
-            --track-purple: #8B7CFF; /* secondary/support tracks */
-            --track-green:  #34D399; /* selected-facility connector lines */
-            --overlay-blue:   #3D8BFF; /* detection overlay: industrial/generic infra */
-            --overlay-green:  #3DDC97; /* detection overlay: port/terminal */
-            --overlay-yellow: #E8C547; /* detection overlay: shipyard/construction */
-            --overlay-purple: #C084FC; /* detection overlay: power/energy infrastructure */
+            /* ── Accent — selection and interaction, nothing else ────── */
+            --acc:      #3f6fa8;
+            --acc-hi:   #5f95d0;
+            --acc-dim:  rgba(63,111,168,.22);
+            --acc-line: rgba(95,149,208,.42);
 
-            /* ── Typography — Inter (UI/prose) + JetBrains Mono (coordinates,
-               MMSI/IMO/ICAO/tail numbers, timestamps, report/session IDs,
-               confidence scores) — never a third family. ─────────────────── */
-            --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-            --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+            /* ── Semantic ──────────────────────────────────────────────── */
+            --red: #c4453c; --amber: #b7822c; --steel: #4f7fa6; --green: #4c7d63; --grey: #77828c;
+            --sev-critical: #c4453c; --sev-high: #b7822c; --sev-moderate: #4f7fa6; --sev-low: #6d7883;
+
+            /* ── Derived ───────────────────────────────────────────────── */
+            --delta-worse:  #b0645c;
+            --delta-better: #6d9a83;
+            --tag-red:    #cf6259; --tag-red-border:   #5c3b38;
+            --tag-amber:  #c19446; --tag-amber-border: #5a4a2c;
+            --tag-green:  #699781; --tag-green-border: #3a5346;
+            --tag-blue:   #78a5d4; --tag-blue-border:  #39536e;
+            --chart-area-fill:   rgba(63,111,168,.13);
+            --chart-area-stroke: #7d97b3;
+            --chart-grid:        #262c33;
+            --chart-hist:        #4a545e;
+            --chart-hist-hot:    #8d5348;
+            --heatmap-lo: #232a30; --heatmap-hi: #5c6b78; --heatmap-empty: #1e242a;
+            /* Category ramp — greys only, for anything needing distinct
+               swatches (domains, sources, regions) that isn't severity. */
+            --cat-1: #9aa5ae; --cat-2: #8b96a0; --cat-3: #8d9aa4; --cat-4: #7c8792;
+            --cat-5: #7d8993; --cat-6: #6d7883; --cat-7: #6f7b85; --cat-8: #5f6a74;
+            --cat-9: #626e78; --cat-10: #515c66; --cat-11: #55616b; --cat-12: #444e58;
+            --cat-13: #4a555f; --cat-14: #404b54;
+
+            /* ── Typography — system font stack only, no @font-face, no
+               font CDN, anywhere. ────────────────────────────────────── */
+            --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+            --r: 2px; /* radius everywhere, never more */
+            --ease: cubic-bezier(.3,.7,.4,1);
+            --shadow: 0 10px 26px rgba(0,0,0,.42), 0 1px 3px rgba(0,0,0,.4); /* tooltip/palette/toast/report-page only */
+
+            --top: 40px;
+            --tabs: 32px;
+            --status: 24px;
+
+            /* ══════════════════════════════════════════════════════════
+               Legacy Round 1-3 names — kept resolving (hundreds of call
+               sites across the app reference these), RE-POINTED at the new
+               tokens above rather than their old dark-navy/cyan values.
+               New/rebuilt components should reference the real spec names
+               above directly, not these. ═══════════════════════════════ */
+            --bg-app:      var(--bg-0);
+            --bg-header:   var(--bg-2);
+            --bg-header-2: var(--bg-2);
+            --bg-panel:    var(--bg-1);
+            --bg-card:     var(--bg-2);
+            --bg-card-2:   var(--bg-3);
+            --bg-input:    var(--bg-0);
+            --border:        var(--line);
+            --border-strong: var(--line-strong);
+            --overlay-map: rgba(23,27,32,0.55);
+
+            /* Translucency is gone this round (§1: "every panel... is
+               opaque, using one of the five --bg steps") — these legacy
+               names are kept resolving for old call sites but now point at
+               solid, opaque surfaces, never alpha. */
+            --bg-panel-translucent: var(--bg-1);
+            --bg-card-translucent:  var(--bg-2);
+            --bg-glass:             var(--bg-1);
+
+            --shadow-callout: var(--shadow);
+
+            --text-primary:   var(--txt);
+            --text-secondary: var(--txt-2);
+            --text-muted:     var(--txt-3);
+            --text-dim:       var(--txt-4);
+            --text-link:      var(--acc-hi);
+            --accent-blue: var(--acc);
+            --accent-cyan: var(--acc-hi);
+            --live:   var(--green);
+            --warn:   var(--amber);
+            --danger: var(--red);
+            --ai-comment:   var(--bg-3);
+            --track-purple: var(--steel);
+            --track-green:  var(--green);
+            --overlay-blue:   var(--acc);
+            --overlay-green:  var(--green);
+            --overlay-yellow: var(--amber);
+            --overlay-purple: var(--steel);
+
+            --font-sans: var(--font);
+            --font-mono: var(--mono);
             --weight-normal:   400;
             --weight-medium:   500;
             --weight-semibold: 600;
-            --weight-bold:     700;
-            /* Named role sizes, exactly as spec'd */
-            --text-wordmark:       16px; /* Inter SemiBold, +0.4 tracking */
-            --text-mode-subtitle:  11px; /* Inter Medium, --text-secondary */
-            --text-page-title:     22px; /* Inter SemiBold, line-height 1.2 */
-            --text-section-head:   13px; /* Inter SemiBold, paired with circled index */
-            --text-body:            13px; /* Inter Regular, line-height 20px, max ~68ch */
-            --text-callout-title:  11px; /* Inter SemiBold */
-            --text-callout-meta:   10px; /* JetBrains Mono, --text-secondary */
-            --text-chip:            10px; /* Inter Medium */
-            --text-footer:          10px; /* Inter Regular, --text-muted */
-            /* Generic scale — kept for existing call sites (~many files from
-               prior rounds reference --text-xs..xl); re-pointed to the
-               closest new role size above, not the old values. */
-            --text-xs: 10px;
-            --text-sm: 11px;
-            --text-md: 13px;
+            --weight-bold:     600; /* spec's heaviest weight anywhere is 600 — no 700 */
+
+            --text-wordmark:       16px;
+            --text-mode-subtitle:  11px;
+            --text-page-title:     22px;
+            --text-section-head:   12px;
+            --text-body:           12.5px;
+            --text-callout-title:  11.5px;
+            --text-callout-meta:   11px;
+            --text-chip:           10px;
+            --text-footer:         11px;
+            --text-xs: 11px;
+            --text-sm: 11.5px;
+            --text-md: 12.5px;
             --text-lg: 15px;
             --text-xl: 22px;
 
-            /* ── Spacing — base unit 4px ──────────────────────────────── */
             --space-1: 4px;
             --space-2: 8px;
             --space-3: 12px;
             --space-4: 16px;
             --space-5: 20px;
             --header-height: 52px;
-            --footer-height: 30px; /* 28-32px spec range, midpoint */
+            --footer-height: 30px;
 
-            /* ── Radius ────────────────────────────────────────────────── */
-            --radius-sm:   6px;  /* controls/buttons */
-            --radius-md:   8px;  /* cards/callouts */
-            --radius-lg:   10px; /* large panel wells */
-            --radius-pill: 999px; /* pills/badges */
+            /* Radius 2px everywhere, never more (§1) — every legacy radius
+               name collapses to the one real value. */
+            --radius-sm:   var(--r);
+            --radius-md:   var(--r);
+            --radius-lg:   var(--r);
+            --radius-pill: var(--r); /* no pill shapes in this system — see .tag/.chip, both 2px */
 
-            /* ── Elevation — border, not shadow (the one shadow exception
-               lives in --shadow-callout above, used only by map callouts). */
-            --elevation-1: 1px solid var(--border);
-            --elevation-2: 1px solid var(--border-strong);
+            --elevation-1: 1px solid var(--line);
+            --elevation-2: 1px solid var(--line-strong);
 
-            /* ── Legacy Round 1 names — re-pointed to the new palette above,
-               not deleted, per this block's header note. ─────────────────── */
             --bg-primary:    var(--bg-app);
             --bg-secondary:  var(--bg-panel);
             --bg-elevated:   var(--bg-card);
-            --bg-glass:      rgba(7,11,20,0.88);
             --border-subtle: var(--border);
-            --border-dim:    rgba(255,255,255,0.05);
-            --text-dim:      var(--text-muted);
+            --border-dim:    var(--line-soft);
             --accent:        var(--accent-blue);
             --accent-bright: var(--accent-cyan);
-            --accent-faint:  rgba(61,139,255,0.12);
-            --accent-border: rgba(61,139,255,0.35);
-            --accent-glow:   rgba(61,139,255,0.3);
-            --sev-critical: var(--danger);
-            --sev-high:     var(--warn);
-            --sev-medium:   var(--warn); /* new palette has no 4th stop — collapsed, see PR notes */
-            --sev-low:      var(--live);
+            --accent-faint:  var(--acc-dim);
+            --accent-border: var(--acc-line);
+            --accent-glow:   var(--acc-dim);
+            --sev-medium:   var(--sev-moderate);
             --severity-critical:    var(--sev-critical);
             --severity-significant: var(--sev-high);
             --severity-elevated:    var(--sev-medium);
             --severity-low:         var(--sev-low);
-            --radius: var(--radius-sm);
+            --radius: var(--r);
 
-            /* Legacy --akili-* aliases — kept resolving, re-pointed at the
-               new values above. Hundreds of existing call sites depend on these. */
             --akili-surface:        var(--bg-app);
-            --akili-panel:          var(--bg-glass);
-            --akili-panel-blur:     var(--bg-glass);
+            --akili-panel:          var(--bg-panel);
+            --akili-panel-blur:     var(--bg-panel);
             --akili-panel-solid:    var(--bg-panel);
             --akili-surface-raised: var(--bg-card);
-            --akili-hover:          rgba(255,255,255,0.05);
-            --akili-hover-strong:   rgba(255,255,255,0.08);
+            --akili-hover:          var(--bg-3);
+            --akili-hover-strong:   var(--bg-4);
             --akili-border:         var(--border);
-            --akili-border-subtle:  rgba(255,255,255,0.04);
+            --akili-border-subtle:  var(--line-soft);
             --akili-text-primary:   var(--text-primary);
             --akili-text-secondary: var(--text-secondary);
             --akili-text-muted:     var(--text-muted);
@@ -171,7 +214,7 @@
             --akili-accent:         var(--accent-blue);
             --akili-accent-bg:      var(--accent-faint);
             --akili-accent-border:  var(--accent-border);
-            --akili-overlay:        rgba(7,11,20,0.95);
+            --akili-overlay:        var(--bg-0);
         }
 /* ── User location pulse animation ──────────────────────────────── */
         @keyframes akiliUserLocPulse {

@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './app.jsx'
 import './index.css'
+import './styles/designSystem.css'
 import { initPushNotifications } from './utils/pushNotifications.js'
 
 // Register service worker and listen for notification-click messages

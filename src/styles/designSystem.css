@@ -1,0 +1,273 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Horizon Watch redesign — Round 1: component library
+   ("the corporate risk console spec")
+
+   Real, ready-to-use CSS for the component catalogue this round defines.
+   Every value here reads from index.html's :root tokens — nothing in this
+   file hardcodes a hex/size/radius outside those. This round builds the
+   library only; wiring individual screens to these classes (instead of
+   their current inline-style/legacy-token markup) is later-round work,
+   per this round's own explicit scope note ("do not build any actual
+   screen/module content in this round").
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Motion + accessibility baseline (§5) ─────────────────────────────── */
+:focus-visible {
+    outline: 1px solid var(--acc-hi);
+    outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn, .seg > button, .chip, .tag, .dia, .toast, .tooltip, .palette,
+    .grid tbody tr, .evrow, .entrow {
+        transition: none !important;
+        animation: none !important;
+    }
+}
+
+/* ── Icon sprite usage (§4) — <svg class="icon"><use href="#icon-x" /></svg> */
+.icon { width: 16px; height: 16px; fill: none; stroke: currentColor; flex-shrink: 0; }
+.icon.lg { width: 24px; height: 24px; }
+.icon.sm { width: 12px; height: 12px; }
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+.btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 9px;
+    font: 400 12px var(--font); color: var(--txt);
+    background: var(--bg-3); border: 1px solid var(--line-strong); border-radius: var(--r);
+    cursor: pointer; transition: background 100ms linear;
+}
+.btn:hover { background: var(--bg-4); }
+.btn svg, .btn img { width: 12px; height: 12px; opacity: 0.8; }
+.btn.primary { background: var(--acc); border-color: #4a7cb5; color: #f2f6fa; }
+.btn.primary:hover { background: #487cba; }
+.btn.danger { background: var(--bg-3); color: #cf6259; border-color: var(--line-strong); }
+.btn.danger:hover { background: #3a2c2b; border-color: #5c3b38; }
+.btn.ghost { background: transparent; color: var(--txt-3); border-color: transparent; }
+.btn.ghost:hover { background: var(--bg-3); }
+.btn.sm { height: 21px; padding: 0 7px; font-size: 11.5px; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+.btn:disabled:hover, .btn[aria-disabled="true"]:hover { background: var(--bg-3); }
+
+/* ── Segmented control ─────────────────────────────────────────────────── */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.seg > button {
+    height: 22px; padding: 0 10px; font: 400 11.5px var(--font); color: var(--txt-3);
+    background: transparent; border: none; border-right: 1px solid var(--line-soft);
+    cursor: pointer; transition: background 100ms linear, color 100ms linear;
+}
+.seg > button:last-child { border-right: none; }
+.seg > button:hover { background: var(--bg-3); }
+.seg > button[aria-pressed="true"] { background: var(--bg-4); color: var(--txt); }
+
+/* ── Chips ─────────────────────────────────────────────────────────────── */
+.chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 20px; padding: 0 8px; font: 400 11.5px var(--font); color: var(--txt-2);
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r);
+    cursor: pointer; transition: background 100ms linear, border-color 100ms linear, color 100ms linear;
+}
+.chip .swatch { width: 7px; height: 7px; transform: rotate(45deg); flex-shrink: 0; }
+.chip[aria-pressed="true"] { background: var(--bg-4); border-color: var(--line-strong); color: var(--txt); }
+
+/* ── Tags ──────────────────────────────────────────────────────────────── */
+.tag {
+    display: inline-flex; align-items: center;
+    height: 16px; padding: 0 6px; font: 400 10px var(--font); letter-spacing: 0.03em;
+    background: transparent; border: 1px solid var(--line-strong); border-radius: var(--r);
+    color: var(--txt-3);
+}
+.tag.red   { color: var(--tag-red);   border-color: var(--tag-red-border); }
+.tag.amber { color: var(--tag-amber); border-color: var(--tag-amber-border); }
+.tag.green { color: var(--tag-green); border-color: var(--tag-green-border); }
+.tag.blue  { color: var(--tag-blue);  border-color: var(--tag-blue-border); }
+
+/* ── Form controls ─────────────────────────────────────────────────────── */
+.input {
+    height: 26px; padding: 0 8px; font: 400 12.5px var(--font); color: var(--txt);
+    background: var(--bg-0); border: 1px solid var(--line); border-radius: var(--r);
+    transition: border-color 100ms linear;
+}
+.input:hover { border-color: var(--line-strong); }
+.input:focus { outline: none; border-color: var(--acc-hi); box-shadow: none; }
+select.input {
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a4adb6' stroke-width='1.4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+    padding-right: 22px;
+}
+textarea.input { height: auto; padding: 6px 8px; line-height: 1.5; resize: vertical; }
+.check {
+    appearance: none; -webkit-appearance: none;
+    width: 12px; height: 12px; border: 1px solid var(--line-strong); background: var(--bg-0);
+    border-radius: var(--r); position: relative; cursor: pointer; flex-shrink: 0;
+}
+.check:checked { background: var(--acc); border-color: var(--acc); }
+.check:checked::after {
+    content: ""; position: absolute; left: 3px; top: 1px; width: 5px; height: 8px;
+    border: solid #eef3f8; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+}
+input[type="range"] {
+    -webkit-appearance: none; appearance: none; height: 3px; background: var(--bg-4);
+    border-radius: var(--r); outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%;
+    background: var(--txt-2); cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+    width: 11px; height: 11px; border: none; border-radius: 50%; background: var(--txt-2); cursor: pointer;
+}
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field > label { font: 400 11px var(--font); color: var(--txt-3); }
+
+/* ── Data atoms ────────────────────────────────────────────────────────── */
+.dia {
+    display: inline-block; width: 7px; height: 7px; flex-shrink: 0;
+    transform: rotate(45deg); background: var(--sev-moderate);
+}
+.dia.critical { background: var(--sev-critical); }
+.dia.high     { background: var(--sev-high); }
+.dia.moderate { background: var(--sev-moderate); }
+.dia.low      { background: var(--sev-low); }
+
+.sev { display: inline-flex; align-items: center; gap: 6px; font: 400 11.5px var(--font); }
+.sev.critical { color: var(--sev-critical); }
+.sev.high     { color: var(--sev-high); }
+.sev.moderate { color: var(--sev-moderate); }
+.sev.low      { color: var(--sev-low); }
+
+.bar { height: 3px; max-height: 3px; background: var(--bg-4); border-radius: var(--r); overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--grey); }
+
+.conf { display: inline-flex; align-items: center; gap: 6px; }
+.conf > .value { font: 400 10.5px var(--mono); color: var(--txt-2); }
+.conf > .bar { width: 62px; }
+
+.kv { display: grid; grid-template-columns: 96px 1fr; row-gap: 4px; column-gap: 8px; }
+.kv > dt { font: 400 11px var(--font); color: var(--txt-3); }
+.kv > dd { font: 400 12.5px var(--font); color: var(--txt); }
+
+.card { background: var(--bg-2); border: 1px solid var(--line); padding: 10px 11px; margin-bottom: 9px; border-radius: var(--r); }
+.card .lbl { font: 600 11px var(--font); color: var(--txt-2); margin-bottom: 6px; display: block; }
+.card .card { margin: 0; border: none; padding: 0; background: transparent; } /* cards never nest visually */
+
+.statgrid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft);
+}
+.stat { background: var(--bg-1); padding: 10px 11px; display: flex; flex-direction: column; gap: 4px; }
+.stat .value { font: 400 19px var(--mono); color: var(--txt); }
+.stat .delta { font: 400 10.5px var(--font); }
+.stat .delta.worse  { color: var(--delta-worse); }
+.stat .delta.better { color: var(--delta-better); }
+.stat .label { font: 400 11px var(--font); color: var(--txt-3); }
+
+.panelbox { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r); }
+.panelbox > .head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 11px; border-bottom: 1px solid var(--line);
+}
+.panelbox > .head > .caption { font: 600 11px var(--font); color: var(--txt); }
+.panelbox > .body { padding: 11px; }
+
+.empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
+.empty > svg, .empty > img { width: 30px; height: 30px; opacity: 0.45; }
+.empty > p { font: 400 12px var(--font); color: var(--txt-4); max-width: 32ch; }
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+.grid { border-collapse: separate; border-spacing: 0; width: 100%; font: 400 12.5px var(--font); }
+.grid thead th {
+    position: sticky; top: 0; background: var(--bg-2); height: 25px; padding: 0 9px;
+    text-align: left; font: 600 11px var(--font); color: var(--txt-3);
+    border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap;
+}
+.grid thead th .sort-arrow { margin-left: 4px; opacity: 0.7; }
+.grid tbody td { padding: 5px 9px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; color: var(--txt); }
+.grid tbody td.title { white-space: normal; }
+.grid tbody td.title > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid tbody tr { transition: background 100ms linear; }
+.grid tbody tr:hover { background: var(--bg-2); }
+.grid tbody tr.selected { background: var(--bg-3); }
+.grid tbody tr.ack td { opacity: 0.55; }
+.grid tbody tr.ack td.keep { opacity: 1; }
+
+/* ── Lists ─────────────────────────────────────────────────────────────── */
+.evrow {
+    display: grid; grid-template-columns: 7px 1fr auto; align-items: start; gap: 8px;
+    padding: 7px 0; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+    transition: background 100ms linear;
+}
+.evrow:hover { background: var(--bg-2); }
+.evrow > .dia { margin-top: 4px; }
+.evrow .title { font: 400 12.5px var(--font); color: var(--txt); }
+.evrow .meta { display: flex; gap: 8px; font: 400 11px var(--font); color: var(--txt-3); margin-top: 2px; }
+.evrow .time { font: 400 11px var(--font); color: var(--txt-4); white-space: nowrap; }
+
+.entrow {
+    display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 10px;
+    padding: 7px 0; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+    transition: background 100ms linear;
+}
+.entrow:hover { background: var(--bg-2); }
+.entrow .code { font: 400 11.5px var(--mono); color: var(--txt-3); }
+.entrow .name { font: 400 12.5px var(--font); color: var(--txt); }
+.entrow .type { font: 400 11px var(--font); color: var(--txt-3); }
+.entrow .score { font: 400 12.5px var(--mono); }
+.entrow .score.critical { color: var(--sev-critical); }
+.entrow .score.high     { color: var(--sev-high); }
+.entrow .score.moderate { color: var(--sev-moderate); }
+.entrow .score.low      { color: var(--sev-low); }
+.entrow .delta { font: 400 10.5px var(--font); }
+.entrow .delta.worse  { color: var(--delta-worse); }
+.entrow .delta.better { color: var(--delta-better); }
+
+.doctoc { display: flex; flex-direction: column; }
+.doctoc > .item {
+    padding: 7px 11px; font: 400 12px var(--font); color: var(--txt-2);
+    border-bottom: 1px solid var(--line-soft); cursor: pointer; transition: background 100ms linear;
+}
+.doctoc > .item:hover { background: var(--bg-2); }
+.doctoc > .item.selected { background: var(--bg-3); color: var(--txt); }
+
+/* ── Floating layers — the ONLY things allowed --shadow ──────────────── */
+.tooltip {
+    position: fixed; z-index: 10000; max-width: 246px;
+    background: #20262c; border: 1px solid var(--line-strong); border-radius: var(--r);
+    padding: 6px 8px; box-shadow: var(--shadow);
+    opacity: 0; transition: opacity 100ms linear; pointer-events: none;
+}
+.tooltip.visible { opacity: 1; }
+.tooltip .line1 { font: 600 12px var(--font); color: var(--txt); }
+.tooltip .line2 { font: 400 10px var(--mono); color: var(--txt-3); margin-top: 2px; }
+
+.palette {
+    position: fixed; top: 12vh; left: 50%; transform: translateX(-50%); z-index: 10001;
+    width: 600px; max-width: calc(100vw - 32px);
+    background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: var(--r);
+    box-shadow: var(--shadow); opacity: 0; transition: opacity 120ms linear;
+}
+.palette.open { opacity: 1; }
+.palette > input {
+    width: 100%; height: 40px; padding: 0 14px; border: none; border-bottom: 1px solid var(--line);
+    background: transparent; color: var(--txt); font: 400 14px var(--font); outline: none;
+}
+.palette > .results { max-height: 52vh; overflow-y: auto; }
+.palette .row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 14px; cursor: pointer;
+}
+.palette .row.selected { background: var(--bg-4); }
+.palette .row .label { font: 400 12.5px var(--font); color: var(--txt); }
+.palette .row .sub { font: 400 11px var(--font); color: var(--txt-3); margin-left: 6px; }
+.palette .row .kind { margin-left: auto; }
+
+.toast-stack { position: fixed; bottom: 16px; right: 16px; z-index: 10002; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    background: var(--bg-3); border: 1px solid var(--line-strong); border-radius: var(--r);
+    box-shadow: var(--shadow); font: 400 12.5px var(--font); color: var(--txt);
+    opacity: 1; transition: opacity 300ms linear;
+}
+.toast svg, .toast img { width: 14px; height: 14px; }
+.toast.leaving { opacity: 0; }
