@@ -18200,6 +18200,7 @@ async def start_report_task_draft(task_id: str, request: Request):
 
         title = (body.get("title") or "").strip() or f"Report — {row.focus or row.task_id}"
         key_judgments = body.get("key_judgments")
+        narrative = body.get("narrative")
         ai_draft_result = None
         if "claims" in body:
             claims = _validate_claims(body.get("claims") or [])
@@ -18208,14 +18209,35 @@ async def start_report_task_draft(task_id: str, request: Request):
         else:
             import report_draft as _draft
             snapshot_content = _json.loads(snap.content_json)
+            # Real per-item corpus selection from Generate's checkbox grid —
+            # {section: [item_id, ...]} — filters candidates down to exactly
+            # what the analyst kept checked, rather than the checkboxes just
+            # being decorative over an unfiltered draft.
+            included = body.get("included_item_ids")
+            if isinstance(included, dict):
+                id_field = {
+                    "ais_anomalies": "signal_id", "adsb_anomalies": "signal_id",
+                    "fusion_events": "fusion_id", "surge_events": "surge_id",
+                    "sentinel_detections": "detection_id", "news_assessments": "assessment_id",
+                    "strategic_zones": "zone_id", "top_articles": "url", "foresight_risks": "zone",
+                }
+                for section, keep_ids in included.items():
+                    if section in snapshot_content and section in id_field:
+                        keep = {str(x) for x in keep_ids}
+                        snapshot_content[section] = [
+                            it for it in snapshot_content[section] if str(it.get(id_field[section])) in keep
+                        ]
             ai_draft_result = _draft.generate_draft(
                 snapshot_content=snapshot_content, focus=row.focus,
                 region_label=", ".join(_task_region_list(row)) if isinstance(_task_region_list(row), list) else None,
                 client=client, usage_tracker_mod=usage_tracker,
+                force_empty=bool(body.get("force_empty")),
+                standing_instruction=body.get("standing_instruction"),
             )
             if ai_draft_result.get("status") == "ok":
                 claims = _validate_claims(ai_draft_result.get("claims") or [])
                 key_judgments = key_judgments or ai_draft_result.get("key_judgments")
+                narrative = narrative or ai_draft_result.get("narrative")
             else:
                 # Real, honest degradation — no client configured, or the
                 # call failed. An empty shell (today's pre-existing
@@ -18223,11 +18245,19 @@ async def start_report_task_draft(task_id: str, request: Request):
                 # when the real drafting call didn't actually succeed.
                 claims = []
 
+        # Real asset-register exposure, if the caller already ran the
+        # dedicated /exposure step for this task and is passing its result
+        # through — never computed silently here, since that step's own
+        # elapsed time needs to be real and separately observable.
+        exposure = body.get("exposure")
+
         rpt = Report(
             report_id=_report_id(), title=title, snapshot_id=row.snapshot_id,
             classification=body.get("classification") or "UNCLASSIFIED // FOR ANALYTICAL USE ONLY",
             key_judgments=key_judgments,
             claims_json=_json.dumps(claims), status="draft",
+            narrative_json=_json.dumps(narrative) if narrative is not None else None,
+            exposure_json=_json.dumps(exposure) if exposure is not None else None,
             created_by=row.created_by or "operator",
         )
         db.add(rpt)
@@ -18241,6 +18271,28 @@ async def start_report_task_draft(task_id: str, request: Request):
             if ai_draft_result.get("status") != "ok":
                 result["ai_draft_reason"] = ai_draft_result.get("reason")
         return result
+
+
+@app.post("/api/reports/tasks/{task_id}/exposure")
+def score_task_exposure(task_id: str):
+    """Real haversine proximity match between the task's frozen evidence set
+    and the real Asset register (backend/asset_exposure.py) — a genuinely
+    separate, separately-timeable stage ahead of drafting, not folded
+    silently into it. An empty/unpopulated Asset register produces a real,
+    honest empty result, never a fabricated match."""
+    from database import ReportTask, ReportSnapshot, get_db as _gdb_texp
+    import asset_exposure
+    with _gdb_texp() as db:
+        row = db.query(ReportTask).filter(ReportTask.task_id == task_id).first()
+        if not row:
+            raise HTTPException(404, "Task not found")
+        if not row.snapshot_id:
+            raise HTTPException(409, "task has no frozen snapshot yet — finish collection first")
+        snap = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first()
+        if not snap:
+            raise HTTPException(500, f"task's snapshot {row.snapshot_id} no longer exists")
+        snapshot_content = _json.loads(snap.content_json)
+        return asset_exposure.compute_exposure(snapshot_content, db)
 
 
 @app.post("/api/reports/tasks/{task_id}/archive")
@@ -18316,6 +18368,8 @@ def _report_to_dict(row) -> dict:
         "classification": row.classification,
         "key_judgments": row.key_judgments,
         "claims":        _json.loads(row.claims_json or "[]"),
+        "narrative":     _json.loads(row.narrative_json) if row.narrative_json else None,
+        "exposure":      _json.loads(row.exposure_json) if row.exposure_json else None,
         "status":        row.status,
         "council_findings": _json.loads(row.council_findings_json) if row.council_findings_json else None,
         "council_run_at":  row.council_run_at.isoformat() if row.council_run_at else None,
@@ -18400,6 +18454,8 @@ async def update_report(report_id: str, request: Request):
             row.key_judgments = body["key_judgments"]
         if "claims" in body:
             row.claims_json = _json.dumps(_validate_claims(body["claims"]))
+        if "narrative" in body:
+            row.narrative_json = _json.dumps(body["narrative"]) if body["narrative"] is not None else None
         row.updated_at = datetime.utcnow()
         db.commit()
         return _report_to_dict(row)

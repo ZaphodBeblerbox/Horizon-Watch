@@ -20,16 +20,12 @@ import { MODULES } from "./data/modules.js"
 // destinations under a second type string.
 const MODULE_TO_TAB_TYPE = {
     situation: "situation", inbox: "watchlists", dossiers: "dossiers",
-    analytics: "analytics", generate: "reports", briefings: "reports", replay: "replay",
+    analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
     ontology: "ontology", imagery: "imagery",
 }
-// Reverse direction is lossy ("reports" serves both generate and briefings,
-// which really are the same not-yet-split ReportsPage component right now —
-// see ReportsPage.jsx's own Tasks/Briefings internal toggle) — defaults to
-// "generate" for TopBar highlighting purposes.
 const TAB_TYPE_TO_MODULE = {
     situation: "situation", watchlists: "inbox", dossiers: "dossiers",
-    analytics: "analytics", reports: "generate", replay: "replay",
+    analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
     ontology: "ontology", imagery: "imagery",
 }
 import MapControlStack from "./components/MapControlStack.jsx"
@@ -39,7 +35,9 @@ import WatchlistsPage from "./components/WatchlistsPage.jsx"
 import Dashboard from "./destinations/Dashboard.jsx"
 import Sources from "./destinations/Sources.jsx"
 import AICouncil from "./destinations/AICouncil.jsx"
-import ReportsPage from "./reports/ReportsPage.jsx"
+import Generate from "./reports/Generate.jsx"
+import Briefings from "./reports/Briefings.jsx"
+import PrintLayout from "./reports/PrintLayout.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
 import ChatPanel from "./components/ChatPanel.jsx"
@@ -50,7 +48,6 @@ import { playAlert, resumeAudio } from "./soundSystem.js"
 import HealthPanel from "./components/HealthPanel.jsx"
 import Analytics from "./destinations/Analytics.jsx"
 import API_BASE from "./apiBase.js"
-import LoadingScreen from "./components/LoadingScreen.jsx"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import { loadSettings } from "./components/PreferencesPanel.jsx"
 import NewsReels from "./components/NewsReels.jsx"
@@ -161,7 +158,6 @@ const PANEL_STYLE = {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
-    const [loading,      setLoading]      = useState(true)
     const [showTV,       setShowTV]       = useState(false)
     const [overwatchActive,     setOverwatchActive]     = useState(false)
     const [overwatchDrawActive, setOverwatchDrawActive] = useState(false)
@@ -352,6 +348,14 @@ export default function App() {
     // ── Right panel slot — mutually exclusive ─────────────────────────────────
     // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts"
     const [rightPanel, setRightPanel] = useState(null)
+
+    // Generate/Briefings/print-layout wiring — Generate's completed run (or
+    // its "printable briefing" button) opens the Briefings tab pre-loaded
+    // with that report; printReportId, when set, swaps the Briefings tab's
+    // content for the print layout (#view-doc is a hidden view, reachable
+    // only from here or the reader's own print action, never the rail).
+    const [briefingsInitialId, setBriefingsInitialId] = useState(null)
+    const [printReportId, setPrintReportId] = useState(null)
 
     const openRightPanel = useCallback((id) => {
         setRightPanel(prev => prev === id ? null : id)
@@ -1322,7 +1326,6 @@ export default function App() {
           .demo-runner-rich-tooltip::before { display: none !important; }
           .demo-runner-rich-tooltip img { display: block !important; }
         `}</style>
-            {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
             {/* ── Top bar + tab strip — redesign Round 2, §1/§2/§3 ───────────── */}
             {!showAutoMode && (
                 <>
@@ -1359,7 +1362,7 @@ export default function App() {
                         window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: s.lat, lon: s.lon, altitude: 250000 } }))
                     }
                 }}
-                onOpenReport={() => openTab("reports")}
+                onOpenReport={() => openTab("briefings")}
             />
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
@@ -1577,9 +1580,23 @@ export default function App() {
                     </div>
                 )}
 
-                {tabs.some(t => t.type === "reports") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "reports" ? "flex" : "none", flexDirection: "column" }}>
-                        <ReportsPage />
+                {tabs.some(t => t.type === "generate") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "generate" ? "flex" : "none", flexDirection: "column" }}>
+                        <Generate onOpenTab={(reportId, title, kind) => {
+                            setBriefingsInitialId(reportId)
+                            setPrintReportId(kind === "print" ? reportId : null)
+                            openTab("briefings")
+                        }} />
+                    </div>
+                )}
+
+                {tabs.some(t => t.type === "briefings") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "briefings" ? "flex" : "none", flexDirection: "column" }}>
+                        {printReportId ? (
+                            <PrintLayout reportId={printReportId} onBack={() => setPrintReportId(null)} />
+                        ) : (
+                            <Briefings initialReportId={briefingsInitialId} onPrint={(id) => setPrintReportId(id)} />
+                        )}
                     </div>
                 )}
 
@@ -1602,7 +1619,7 @@ export default function App() {
 
                 {tabs.some(t => t.type === "aiCouncil") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "aiCouncil" ? "flex" : "none", flexDirection: "column" }}>
-                        <AICouncil onOpenReport={(reportId) => openTab("reports")} />
+                        <AICouncil onOpenReport={(reportId) => { setBriefingsInitialId(reportId); openTab("briefings") }} />
                     </div>
                 )}
 

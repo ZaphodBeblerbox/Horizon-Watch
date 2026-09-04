@@ -109,13 +109,29 @@ def _findings_for_claim(claim_id: str, council_findings: Optional[dict]) -> list
     return out
 
 
+def _claim_region(lat, lon) -> Optional[str]:
+    if lat is None or lon is None:
+        return None
+    import threat_matrix
+    for name, info in threat_matrix.REGIONS.items():
+        if threat_matrix._in_bbox(lat, lon, info["bbox"]):
+            return name
+    return "Other"
+
+
 def _claim_view(claim: dict, council_findings: Optional[dict]) -> dict:
+    lat, lon = claim.get("lat"), claim.get("lon")
     return {
         "claim_id": claim.get("claim_id"),
         "text": claim.get("text"),
         "citation": claim.get("citation"),
         "source_evaluation": claim.get("source_evaluation"),
         "findings": _findings_for_claim(claim.get("claim_id"), council_findings),
+        # Real lat/lon (when the claim carried one — see main.py's
+        # _validate_claims) plus a region computed the same way Analytics'
+        # region breakdown is: on the fly against threat_matrix's bboxes,
+        # since no ingest path stores a region on a claim/alert/signal today.
+        "lat": lat, "lon": lon, "region": _claim_region(lat, lon),
     }
 
 

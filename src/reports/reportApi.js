@@ -93,3 +93,15 @@ export function createSnapshotReportTask({ focus, watchZoneId } = {}) {
 export function listWatchZones() {
     return apiFetch("/api/watch-zones").then(asJson)
 }
+
+/** Real asset-register proximity scoring for a task's frozen evidence set —
+ * backend/asset_exposure.py. A genuinely separate, separately-timed stage
+ * ahead of drafting (Generate rebuild's "Score exposure" checklist step). */
+export function scoreTaskExposure(taskId) {
+    return apiFetch(`/api/reports/tasks/${taskId}/exposure`, { method: "POST" }).then(asJson)
+}
+
+export function listReports(status) {
+    const qs = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : ""
+    return apiFetch(`/api/reports${qs}`).then(asJson)
+}

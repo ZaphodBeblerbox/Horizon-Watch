@@ -939,6 +939,16 @@ class Report(Base):
     key_judgments  = Column(Text, nullable=True)                 # free-text summary, analyst-written
     claims_json    = Column(Text, nullable=False, default="[]")
 
+    # The Generate/Briefings rebuild's extra drafted narrative — a second
+    # supporting paragraph, a one-line "Bottom line." callout, indicators/
+    # warnings, and owner/by-date recommended actions. Unlike claims_json,
+    # these are trusted free-text narrative (same trust model already given
+    # to key_judgments) rather than individually citation-checked.
+    narrative_json = Column(Text, nullable=True)
+    # Real asset-register proximity matches for this report's evidence set —
+    # see backend/asset_exposure.py. Null until the exposure stage has run.
+    exposure_json  = Column(Text, nullable=True)
+
     status        = Column(String, nullable=False, default="draft", index=True)
     # draft -> in_review -> approved -> published  (or draft/in_review -> rejected)
 
@@ -1183,6 +1193,19 @@ def migrate_db():
             if col not in oc_existing:
                 cur.execute(f'ALTER TABLE ontology_claims ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] ontology_claims: added column {col}')
+
+    # reports.narrative_json — the new Generate/Briefings rebuild's extra
+    # drafted narrative fields (second_para, bottom_line, warnings, actions)
+    # beyond the existing key_judgments/claims, plus the real asset-register
+    # exposure matches computed for the report's evidence set.
+    if 'reports' in tables:
+        rp_existing = [row[1] for row in cur.execute('PRAGMA table_info(reports)').fetchall()]
+        if 'narrative_json' not in rp_existing:
+            cur.execute('ALTER TABLE reports ADD COLUMN narrative_json TEXT')
+            print('[db-migrate] reports: added column narrative_json')
+        if 'exposure_json' not in rp_existing:
+            cur.execute('ALTER TABLE reports ADD COLUMN exposure_json TEXT')
+            print('[db-migrate] reports: added column exposure_json')
 
     conn.commit()
     conn.close()
