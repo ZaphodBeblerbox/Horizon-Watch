@@ -9,6 +9,7 @@ import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
+import GlobeGraticuleLayer      from "../globe/GlobeGraticuleLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
@@ -101,6 +102,11 @@ export default function GlobeView({
     strategicZonesEnabled = false,
     eventsEnabled    = true,
     cityLabelsEnabled = false,
+    // Fidelity pass, build spec v2 §4 — a real 10° graticule overlay
+    // (GlobeGraticuleLayer.jsx — genuine polylines at exact 10-degree
+    // increments), the one Layers-pane "context layer" that had no prior
+    // GlobeView equivalent at all.
+    graticuleEnabled = false,
     aisHeatmapEnabled  = false,
     adsbHeatmapEnabled = false,
     heatmapHours     = 24,
@@ -134,6 +140,8 @@ export default function GlobeView({
 }) {
     const viewerRef = useRef(null)
     const [vessels,  setVessels]  = useState([])
+    const [sanctionedMmsis, setSanctionedMmsis] = useState({ confirmed: new Set(), possible: new Set() })
+    const [watchlistedIcaos, setWatchlistedIcaos] = useState(new Set())
     const [aircraft, setAircraft] = useState([])
     const [viewBounds, setViewBounds] = useState(null)
     const [webglLost, setWebglLost] = useState(false)
@@ -176,6 +184,39 @@ export default function GlobeView({
         return () => clearInterval(t)
     }, [aisEnabled, externalAIS])
 
+    // Fidelity pass, build spec v2 §7 — real sanctioned-vessel status for
+    // GlobeAISLayer's marker color, reusing the REAL existing screening
+    // output rather than reimplementing it: backend/main.py's
+    // _check_sanctions_on_update() writes a real alert (alert_type
+    // "Sanctioned Vessel"/"Sanctioned Vessel (Possible)", a real `mmsi`
+    // field) per hit — it does not set a field on the vessel/position
+    // record itself, so this is the one real place to read that status
+    // from. Only fetched while AIS rendering is actually on.
+    useEffect(() => {
+        if (!aisEnabled) return
+        const load = () =>
+            fetch(`${API}/api/forge/alerts?domain=AIS`)
+                .then(r => r.ok ? r.json() : null)
+                .then(d => {
+                    const items = Array.isArray(d) ? d : (d?.alerts || d?.items || [])
+                    const confirmed = new Set()
+                    const possible = new Set()
+                    for (const a of items) {
+                        const mmsi = a?.mmsi != null ? String(a.mmsi) : null
+                        if (!mmsi) continue
+                        const type = String(a.alert_type || a.rule_name || "").toLowerCase()
+                        if (!type.includes("sanction")) continue
+                        if (type.includes("possible")) possible.add(mmsi)
+                        else confirmed.add(mmsi)
+                    }
+                    setSanctionedMmsis({ confirmed, possible })
+                })
+                .catch(() => {})
+        load()
+        const t = setInterval(load, 60_000)
+        return () => clearInterval(t)
+    }, [aisEnabled])
+
     // ADSB — use external prop if provided, otherwise fetch internally
     useEffect(() => {
         if (!adsbEnabled) return
@@ -191,6 +232,30 @@ export default function GlobeView({
         const t = setInterval(load, 10_000)
         return () => clearInterval(t)
     }, [adsbEnabled, externalADSB]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Fidelity pass, build spec v2 §7 — real "watchlisted" aircraft status,
+    // reusing the real existing Military Aircraft alert rule (rule_004)
+    // rather than inventing a separate watchlist join.
+    useEffect(() => {
+        if (!adsbEnabled) return
+        const load = () =>
+            fetch(`${API}/api/forge/alerts?domain=ADSB`)
+                .then(r => r.ok ? r.json() : null)
+                .then(d => {
+                    const items = Array.isArray(d) ? d : (d?.alerts || d?.items || [])
+                    const icaos = new Set()
+                    for (const a of items) {
+                        const type = String(a.alert_type || a.rule_name || "").toLowerCase()
+                        const icao = a.icao != null ? String(a.icao).toUpperCase() : null
+                        if (icao && type.includes("military aircraft")) icaos.add(icao)
+                    }
+                    setWatchlistedIcaos(icaos)
+                })
+                .catch(() => {})
+        load()
+        const t = setInterval(load, 60_000)
+        return () => clearInterval(t)
+    }, [adsbEnabled])
 
     // akili:fly-to — triggered by GlobalSearch and other search components
     useEffect(() => {
@@ -450,6 +515,7 @@ export default function GlobeView({
                 {/* ── GeoJSON line layers ─────────────────────────────────────── */}
                 <GlobeEEZLayer            enabled={eezEnabled} />
                 <GlobeCablesLayer         enabled={cablesEnabled} />
+                <GlobeGraticuleLayer      enabled={graticuleEnabled} />
 
                 {/* ── Point / entity layers ───────────────────────────────────── */}
                 <GlobeStrategicZonesLayer enabled={strategicZonesEnabled} />
@@ -464,8 +530,8 @@ export default function GlobeView({
                 <GlobeHeatmapLayer enabled={aisHeatmapEnabled}  domain="ais"  hours={heatmapHours} bounds={viewBounds} />
                 <GlobeHeatmapLayer enabled={adsbHeatmapEnabled} domain="adsb" hours={heatmapHours} bounds={viewBounds} />
 
-                {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} />}
-                {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} />}
+                {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} sanctionedMmsis={sanctionedMmsis} />}
+                {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} watchlistedIcaos={watchlistedIcaos} />}
                 <GlobeTrackLayer aisEnabled={aisEnabled} adsbEnabled={adsbEnabled} />
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
