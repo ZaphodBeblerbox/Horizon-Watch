@@ -48,7 +48,7 @@ import { loadProfile, saveProfileToStorage } from "./components/MissionProfilePa
 import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
 import { playAlert, resumeAudio } from "./soundSystem.js"
 import HealthPanel from "./components/HealthPanel.jsx"
-import AnalyticsPanel from "./components/AnalyticsPanel.jsx"
+import Analytics from "./destinations/Analytics.jsx"
 import API_BASE from "./apiBase.js"
 import LoadingScreen from "./components/LoadingScreen.jsx"
 import ProfilePanel from "./components/ProfilePanel.jsx"
@@ -1606,18 +1606,15 @@ export default function App() {
                     </div>
                 )}
 
-                {/* Analytics — full-width tab */}
+                {/* Analytics — full-width tab, the one module with no side
+                    panes at all per the Exact Replication Manual. */}
                 {tabs.some(t => t.type === "analytics") && (
                     <div style={{
                         flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
                         display: activeTabType === "analytics" ? "flex" : "none",
                         flexDirection: "column",
-                        background: "#080f1e",
                     }}>
-                        <AnalyticsPanel
-                            isTabMode={true}
-                            onClose={() => closeTab(tabs.find(t => t.type === "analytics")?.id)}
-                        />
+                        <Analytics />
                     </div>
                 )}
 
@@ -1661,15 +1658,6 @@ export default function App() {
                 {rightPanel === "health" && (
                     <div style={panelStyle}>
                         <HealthPanel onClose={() => setRightPanel(null)} />
-                    </div>
-                )}
-
-                {rightPanel === "analytics" && (
-                    <div style={panelStyle}>
-                        <AnalyticsPanel
-                            onClose={() => setRightPanel(null)}
-                            onExpand={() => { setRightPanel(null); openTab("analytics") }}
-                        />
                     </div>
                 )}
 

@@ -7,8 +7,8 @@
 //                 still the pre-redesign WatchlistsPage)
 //   Dossiers   -> AOI/entity exposure-profile module (Stage 3, placeholder —
 //                 genuinely new, no prior equivalent)
-//   Analytics  -> Stage 4, not yet rebuilt — still the pre-redesign
-//                 AnalyticsPanel
+//   Analytics  -> rebuilt onto the real design system (src/destinations/
+//                 Analytics.jsx), backed by GET /api/analytics/overview
 //   Generate   -> Stage 5, not yet restyled — still the pre-redesign
 //                 ReportsPage (Tasks view)
 //   Replay     -> Stage 7, placeholder — was the "Director Mode"
