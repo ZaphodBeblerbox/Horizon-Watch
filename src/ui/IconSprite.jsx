@@ -153,6 +153,14 @@ export default function IconSprite() {
                 <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.5 1.5" {...STROKE} />
                 <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.5-1.5" {...STROKE} />
             </symbol>
+
+            {/* Build spec v2 — panel minimize/restore chevrons. */}
+            <symbol id="icon-collapse-l" viewBox="0 0 24 24">
+                <path d="M15 5l-7 7 7 7" {...STROKE} />
+            </symbol>
+            <symbol id="icon-collapse-r" viewBox="0 0 24 24">
+                <path d="M9 5l7 7-7 7" {...STROKE} />
+            </symbol>
         </svg>
     )
 }

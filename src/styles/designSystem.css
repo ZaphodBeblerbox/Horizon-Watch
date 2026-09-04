@@ -25,6 +25,38 @@
     }
 }
 
+/* ── Glass side panels (build spec v2, §4.6) — the ONE exception to the
+   flat/opaque rule. Corrects an earlier round's reversal of this: side
+   panels ARE deliberately frosted glass; everything INSIDE them (.card,
+   .chip, .tag, .btn, .grid, etc.) stays flat/opaque per the normal rules —
+   only the panel's own background is glass.
+
+   Slide behavior: ONE real transition drives both directions
+   (translateX + opacity) — never a keyframe animation with
+   animation-fill-mode here. A keyframe's final frame holds forever and
+   always beats a transition on the same property, so a panel that slides
+   in via keyframes will refuse to slide back out no matter what a
+   minimize toggle does. `.pane-glass` therefore only ever has `animation:
+   none` and a transition; callers drive the slide by toggling the
+   `transform`/`opacity` inline style (see Situation.jsx), never by adding/
+   removing a class that carries its own animation. */
+.pane-glass {
+    background: rgba(26, 31, 37, .72);
+    -webkit-backdrop-filter: blur(16px) saturate(115%);
+    backdrop-filter: blur(16px) saturate(115%);
+    animation: none;
+    transition: transform .24s var(--ease), opacity .18s linear, width .24s var(--ease);
+}
+
+/* Minimized-panel restore rail — a slim labeled strip replacing a fully
+   slid-out panel, per §4.6's .panetab. */
+.panetab {
+    width: 30px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    background: var(--bg-2); border: 1px solid var(--line); cursor: pointer;
+    writing-mode: vertical-rl; font: 400 11px var(--font); color: var(--txt-3); letter-spacing: .02em;
+}
+.panetab:hover { background: var(--bg-3); color: var(--txt); }
+
 /* ── Icon sprite usage (§4) — <svg class="icon"><use href="#icon-x" /></svg> */
 .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; flex-shrink: 0; }
 .icon.lg { width: 24px; height: 24px; }
