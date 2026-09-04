@@ -83,7 +83,10 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                             rotation:        CesiumMath.toRadians(-hdg),
                             alignedAxis:     Cartesian3.ZERO,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.0, 3_000_000, 0.35),
+                            // Stage 1 fidelity — no scaleByDistance on the
+                            // glyph itself: marker size must stay constant
+                            // regardless of camera distance (was shrinking
+                            // to 35% at 3,000km out).
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
                         }}
                         label={isMobile ? undefined : {

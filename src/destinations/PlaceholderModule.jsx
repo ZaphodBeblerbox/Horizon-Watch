@@ -12,7 +12,7 @@ export default function PlaceholderModule({ label, roundNote }) {
             background: "var(--bg-0)",
         }}>
             <div className="empty">
-                <svg className="icon lg" style={{ opacity: 0.45 }}><use href="#icon-layers" /></svg>
+                <svg className="icon lg" style={{ opacity: 0.45 }}><use href="#i-layers" /></svg>
                 <p>{label} hasn't been rebuilt for the new design system yet — {roundNote}.</p>
             </div>
         </div>

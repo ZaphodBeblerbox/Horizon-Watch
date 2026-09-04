@@ -48,7 +48,7 @@ export default function TopBar({
                 padding: "0 12px", borderRight: "1px solid var(--line)",
             }}>
                 <svg className="icon" style={{ width: 17, height: 17, color: "var(--txt-2)", flexShrink: 0 }}>
-                    <use href="#icon-globe" />
+                    <use href="#i-globe" />
                 </svg>
                 <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                     <span style={{ font: "600 12.5px var(--font)", color: "var(--txt)", whiteSpace: "nowrap" }}>
@@ -114,7 +114,7 @@ export default function TopBar({
                         background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
                     }}
                 >
-                    <svg className="icon sm"><use href="#icon-plus" /></svg>
+                    <svg className="icon sm"><use href="#i-plus" /></svg>
                 </button>
                 <button
                     onClick={() => onSelectModule("inbox")}
@@ -124,7 +124,7 @@ export default function TopBar({
                         background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
                     }}
                 >
-                    <svg className="icon sm"><use href="#icon-bell" /></svg>
+                    <svg className="icon sm"><use href="#i-bell" /></svg>
                 </button>
 
                 <button
@@ -136,7 +136,7 @@ export default function TopBar({
                         borderRadius: "var(--r)", color: "var(--txt-4)", cursor: "pointer", font: "400 12px var(--font)",
                     }}
                 >
-                    <svg className="icon sm"><use href="#icon-search" /></svg>
+                    <svg className="icon sm"><use href="#i-search" /></svg>
                     <span style={{ flex: 1, textAlign: "left" }}>Search signals, entities, reports</span>
                     <span style={{
                         font: "400 10px var(--mono)", color: "var(--txt-3)", border: "1px solid var(--line-strong)",

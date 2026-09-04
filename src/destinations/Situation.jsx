@@ -52,6 +52,18 @@ const SEV_LEGEND = [
 ]
 const SEV_CLASS_BY_RANK = { 0: "critical", 1: "high", 2: "moderate", 3: "low" }
 
+// Real Cesium camera presets, build spec v2 §8 — "implemented as camera
+// presets rather than a projection change." Center/altitude computed from
+// the reference spec's own real regional bounding boxes (world
+// [[-170,78],[178,-58]], emea [[-22,62],[62,-12]], apac [[62,46],[150,-12]],
+// amer [[-128,52],[-32,-46]]), not guessed.
+const CAMERA_PRESETS = [
+    { key: "world", label: "World", lat: 10, lon: 4, altitude: 18_000_000 },
+    { key: "emea", label: "EMEA", lat: 25, lon: 20, altitude: 7_000_000 },
+    { key: "apac", label: "APAC", lat: 17, lon: 106, altitude: 7_500_000 },
+    { key: "amer", label: "AMER", lat: 3, lon: -80, altitude: 10_000_000 },
+]
+
 function DomainRow({ group, count, on, onToggle }) {
     return (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
@@ -63,7 +75,7 @@ function DomainRow({ group, count, on, onToggle }) {
                 title={on ? "Hide layer" : "Show layer"}
                 style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: on ? "var(--txt-2)" : "var(--txt-4)" }}
             >
-                <svg className="icon sm"><use href={on ? "#icon-eye" : "#icon-eye-off"} /></svg>
+                <svg className="icon sm"><use href={on ? "#i-eye" : "#i-eye-off"} /></svg>
             </button>
         </div>
     )
@@ -294,7 +306,7 @@ export default function Situation({ onOpenDossier }) {
                             setTracksOn({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
                         <button onClick={() => setLeftMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
-                            <svg className="icon sm"><use href="#icon-collapse-l" /></svg>
+                            <svg className="icon sm"><use href="#i-collapse-l" /></svg>
                         </button>
                     </div>
                 </div>
@@ -325,7 +337,7 @@ export default function Situation({ onOpenDossier }) {
                                 title={contextOn[key] ? "Hide layer" : "Show layer"}
                                 style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: contextOn[key] ? "var(--txt-2)" : "var(--txt-4)" }}
                             >
-                                <svg className="icon sm"><use href={contextOn[key] ? "#icon-eye" : "#icon-eye-off"} /></svg>
+                                <svg className="icon sm"><use href={contextOn[key] ? "#i-eye" : "#i-eye-off"} /></svg>
                             </button>
                         </div>
                     ))}
@@ -335,7 +347,7 @@ export default function Situation({ onOpenDossier }) {
                         style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px", cursor: "pointer", opacity: 0.55 }}
                     >
                         <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-3)" }}>Satellite tasking (none)</span>
-                        <svg className="icon sm" style={{ color: "var(--txt-4)" }}><use href="#icon-eye-off" /></svg>
+                        <svg className="icon sm" style={{ color: "var(--txt-4)" }}><use href="#i-eye-off" /></svg>
                     </div>
                 </div>
 
@@ -375,7 +387,7 @@ export default function Situation({ onOpenDossier }) {
                                 title={tracksOn[key] ? "Hide layer" : "Show layer"}
                                 style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: tracksOn[key] ? "var(--txt-2)" : "var(--txt-4)" }}
                             >
-                                <svg className="icon sm"><use href={tracksOn[key] ? "#icon-eye" : "#icon-eye-off"} /></svg>
+                                <svg className="icon sm"><use href={tracksOn[key] ? "#i-eye" : "#i-eye-off"} /></svg>
                             </button>
                         </div>
                     ))}
@@ -385,6 +397,32 @@ export default function Situation({ onOpenDossier }) {
 
             {/* Center — globe + density strip */}
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                {/* Header band — build spec v2 §8's map header (live count +
+                    view segment as real Cesium camera presets, never a
+                    projection change). Scoped to the centre column rather
+                    than spanning full-width above the glass panes (the
+                    spec's own §4.6 treatment) — this app's Situation layout
+                    is a flat flex row of siblings, not the spec's CSS grid
+                    with the centre pane spanning grid-column:1/-1, so a
+                    true full-width spanning header would need a larger
+                    layout restructure than this pass attempts; the real
+                    functional pieces (count, camera presets) work correctly
+                    scoped to this column. */}
+                <div style={{
+                    height: 28, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)",
+                    display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", zIndex: 4, position: "relative",
+                }}>
+                    <span style={{ font: "400 11.5px var(--font)", color: "var(--txt-2)" }}>{visibleRows.length} signals · {timeWindow} window</span>
+                    <div className="seg">
+                        {CAMERA_PRESETS.map((p) => (
+                            <button
+                                key={p.key}
+                                onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: p.lat, lon: p.lon, altitude: p.altitude } }))}
+                                title={`Fly to ${p.label}`}
+                            >{p.label}</button>
+                        ))}
+                    </div>
+                </div>
                 <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
                     {/* Event domains — real signal/alert visualization, per group.
                         Fixed a real bug here: precisionEventsEnabled defaults to
@@ -450,7 +488,7 @@ export default function Situation({ onOpenDossier }) {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Inspector</span>
                     <button onClick={() => setRightMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
-                        <svg className="icon sm"><use href="#icon-collapse-r" /></svg>
+                        <svg className="icon sm"><use href="#i-collapse-r" /></svg>
                     </button>
                 </div>
                 {!selected ? (

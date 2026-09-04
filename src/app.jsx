@@ -21,6 +21,7 @@ import { MODULES } from "./data/modules.js"
 const MODULE_TO_TAB_TYPE = {
     situation: "situation", inbox: "watchlists", dossiers: "dossiers",
     analytics: "analytics", generate: "reports", briefings: "reports", replay: "replay",
+    ontology: "ontology", imagery: "imagery",
 }
 // Reverse direction is lossy ("reports" serves both generate and briefings,
 // which really are the same not-yet-split ReportsPage component right now —
@@ -29,6 +30,7 @@ const MODULE_TO_TAB_TYPE = {
 const TAB_TYPE_TO_MODULE = {
     situation: "situation", watchlists: "inbox", dossiers: "dossiers",
     analytics: "analytics", reports: "generate", replay: "replay",
+    ontology: "ontology", imagery: "imagery",
 }
 import MapControlStack from "./components/MapControlStack.jsx"
 import { DESTINATION_KEYS } from "./data/destinations.js"
@@ -734,6 +736,7 @@ export default function App() {
         const LABELS = {
             situation: "Situation", inbox: "Inbox", dossiers: "Dossiers",
             analytics: "Analytics", generate: "Generate", briefings: "Briefings", replay: "Replay",
+            ontology: "Ontology", imagery: "Imagery",
             map: "Map", dashboard: "Dashboard", reports: "Reports", watchlists: "Watchlists",
             sources: "Intel", aiCouncil: "AI Council",
         }
@@ -764,7 +767,7 @@ export default function App() {
             if (e.key === "Escape" && paletteOpen) { setPaletteOpen(false); return }
             if (inTextInput) return
             const n = Number(e.key)
-            if (n >= 1 && n <= 7 && MODULES[n - 1]) {
+            if (n >= 1 && n <= 9 && MODULES[n - 1]) {
                 openTab(MODULE_TO_TAB_TYPE[MODULES[n - 1].key])
             }
         }
@@ -1558,7 +1561,19 @@ export default function App() {
 
                 {tabs.some(t => t.type === "replay") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "replay" ? "flex" : "none", flexDirection: "column" }}>
-                        <PlaceholderModule label="Replay" roundNote="Director Mode is rebuilt into this module in Round 4" />
+                        <PlaceholderModule label="Replay" roundNote="Director Mode is rebuilt into this module in Stage 7" />
+                    </div>
+                )}
+
+                {tabs.some(t => t.type === "ontology") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "ontology" ? "flex" : "none", flexDirection: "column" }}>
+                        <PlaceholderModule label="Ontology" roundNote="it's a genuinely new module built in Stage 8" />
+                    </div>
+                )}
+
+                {tabs.some(t => t.type === "imagery") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "imagery" ? "flex" : "none", flexDirection: "column" }}>
+                        <PlaceholderModule label="Imagery" roundNote="it's a genuinely new module built in Stage 9, mapping onto the real Sentinel/Overwatch pipeline" />
                     </div>
                 )}
 

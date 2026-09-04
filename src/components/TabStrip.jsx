@@ -74,7 +74,7 @@ export default function TabStrip({ tabs, activeTabId, onSelect, onClose, onOpenP
                         background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
                     }}
                 >
-                    <svg className="icon sm"><use href="#icon-plus" /></svg>
+                    <svg className="icon sm"><use href="#i-plus" /></svg>
                 </button>
             </div>
 

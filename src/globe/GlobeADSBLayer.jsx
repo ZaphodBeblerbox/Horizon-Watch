@@ -133,7 +133,9 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                             height:          BILLBOARD_SIZE,
                             rotation:        CesiumMath.toRadians(-track),
                             alignedAxis:     Cartesian3.ZERO,
-                            scaleByDistance: new NearFarScalar(1000, 1.0, 4_000_000, 0.35),
+                            // Stage 1 fidelity — no scaleByDistance on the
+                            // glyph itself; constant size regardless of
+                            // camera distance.
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
                         }}
                         label={isMobile ? undefined : {

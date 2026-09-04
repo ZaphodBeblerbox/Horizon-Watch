@@ -293,8 +293,7 @@ export default function GlobeEventsLayer({
                             height:     iconSize,
                             color:      cesiumColor,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance:          new NearFarScalar(1000, 1.0, 8_000_000, 0.25),
-                            distanceDisplayCondition: ddc,
+                                                        distanceDisplayCondition: ddc,
                             eyeOffset:  new Cartesian3(0, 0, -50),
                         }}
                     />
