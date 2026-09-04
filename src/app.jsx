@@ -2,8 +2,34 @@ import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } fro
 import { REGION_COORDS } from "./data/regionCoords.js"
 const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
 import IconSprite from "./ui/IconSprite.jsx"
-import AppHeader from "./components/AppHeader.jsx"
-import AppFooter from "./components/AppFooter.jsx"
+import TopBar from "./components/TopBar.jsx"
+import TabStrip from "./components/TabStrip.jsx"
+import StatusBar from "./components/StatusBar.jsx"
+import CommandPalette from "./components/CommandPalette.jsx"
+import ToastHost from "./ui/ToastHost.jsx"
+import Situation from "./destinations/Situation.jsx"
+import PlaceholderModule from "./destinations/PlaceholderModule.jsx"
+import { MODULES } from "./data/modules.js"
+
+// Redesign Round 2 — real module-key <-> legacy tab-type translation. The
+// underlying tab `type` strings from the old 5-destination model are left
+// unchanged internally (many render blocks/handlers key off them, audited
+// only far enough to confirm they still work, not rewritten wholesale) —
+// this is the one small seam that lets the new 7-module TopBar reuse them
+// where a real 1:1 mapping exists, rather than duplicating working
+// destinations under a second type string.
+const MODULE_TO_TAB_TYPE = {
+    situation: "situation", inbox: "watchlists", dossiers: "dossiers",
+    analytics: "analytics", generate: "reports", briefings: "reports", replay: "replay",
+}
+// Reverse direction is lossy ("reports" serves both generate and briefings,
+// which really are the same not-yet-split ReportsPage component right now —
+// see ReportsPage.jsx's own Tasks/Briefings internal toggle) — defaults to
+// "generate" for TopBar highlighting purposes.
+const TAB_TYPE_TO_MODULE = {
+    situation: "situation", watchlists: "inbox", dossiers: "dossiers",
+    analytics: "analytics", reports: "generate", replay: "replay",
+}
 import MapControlStack from "./components/MapControlStack.jsx"
 import { DESTINATION_KEYS } from "./data/destinations.js"
 import { summarizeHealth } from "./utils/systemHealth.js"
@@ -43,10 +69,16 @@ import WorldClocksBar from "./components/WorldClocksBar.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
-const TAB_STORAGE_KEY = "akili_tabs"
+// Redesign Round 2 — bumped from "akili_tabs": the old storage held tab
+// `type` values from the 5-destination model ("map" as the permanent home
+// tab); this round's real module rail renames that permanent tab to
+// "situation" and adds "dossiers"/"replay" as real new types, so old stored
+// tabs are simply superseded rather than migrated — a fresh, valid default
+// is safer than reverse-engineering old localStorage shapes.
+const TAB_STORAGE_KEY = "akili_tabs_v2"
 
 function defaultTabs() {
-    return [{ id: "map", type: "map", label: "Map" }]
+    return [{ id: "situation", type: "situation", label: "Situation" }]
 }
 
 function loadTabsFromStorage() {
@@ -55,8 +87,8 @@ function loadTabsFromStorage() {
         if (raw) {
             const parsed = JSON.parse(raw)
             if (Array.isArray(parsed) && parsed.length > 0) {
-                if (!parsed.find(t => t.type === "map")) {
-                    return [{ id: "map", type: "map", label: "Map" }, ...parsed]
+                if (!parsed.find(t => t.type === "situation")) {
+                    return [{ id: "situation", type: "situation", label: "Situation" }, ...parsed]
                 }
                 return parsed
             }
@@ -282,13 +314,13 @@ export default function App() {
             const s = localStorage.getItem(TAB_STORAGE_KEY + "-active")
             if (s && saved.find(t => t.id === s)) return s
         } catch { /* ignore */ }
-        return saved[0]?.id || "map"
+        return saved[0]?.id || "situation"
     })
     const tabHistoryRef = useRef([])
 
     // Derived — used throughout instead of `page`
     const activeTab     = tabs.find(t => t.id === activeTabId) || tabs[0]
-    const activeTabType = activeTab?.type || "map"
+    const activeTabType = activeTab?.type || "situation"
 
     // Full UI rebuild: which of the 5 fixed destinations (if any) is active —
     // null when on the Globe/Maritime home screen ("map") or a real
@@ -367,7 +399,7 @@ export default function App() {
     // "open the map, then show the entity" pattern NewsPage.jsx's own
     // onOpenInspector already establishes.
     const handleWatchlistSelectEntity = (entityType, entityId) => {
-        openTab("map")
+        openTab("situation")
         setTimeout(() => {
             window.dispatchEvent(new CustomEvent("akili:show-entity", { detail: { entityType, entityId } }))
         }, 50)
@@ -386,6 +418,23 @@ export default function App() {
         return () => { cancelled = true; clearInterval(t) }
     }, [])
     const systemHealth = useMemo(() => summarizeHealth(healthData), [healthData])
+
+    // Redesign Round 2 — StatusBar's real task/queue count.
+    const [taskCount, setTaskCount] = useState(null)
+    useEffect(() => {
+        let cancelled = false
+        const load = () => fetch(`${API}/api/reports/tasks`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && Array.isArray(d)) setTaskCount(d.length) })
+            .catch(() => {})
+        load()
+        const t = setInterval(load, 60000)
+        return () => { cancelled = true; clearInterval(t) }
+    }, [])
+
+    // Redesign Round 2 — command palette open state (the global ⌘K/1-7
+    // keyboard handler lives further down, after openTab is declared).
+    const [paletteOpen, setPaletteOpen] = useState(false)
 
     useEffect(() => {
         if (!profile) return
@@ -672,15 +721,20 @@ export default function App() {
     }, [])
 
     const openTab = useCallback((type) => {
-        // Full UI rebuild: the 5 fixed destinations (src/data/destinations.js)
-        // plus "map" (the Globe/Maritime home screen) and "analytics" (still
-        // real, reachable from the header's system-status pill — see below —
-        // not one of the 5 primary destinations). "briefing"/"news"/"forge"
-        // are retired from this LABELS map along with their tab-mount blocks
-        // further down — see this round's PR notes for what replaced each.
+        // Redesign Round 2 — real tab types for the new 7-module rail
+        // (data/modules.js) plus the pre-existing "dashboard"/"sources"/
+        // "aiCouncil" types, which are no longer reachable from the new
+        // TopBar's module rail (the new module list has no equivalent slot
+        // for them — see the redesign prompt's own module mapping) but are
+        // left as real, working dead-reachable-only-by-code tab types rather
+        // than deleted, since deleting real working destinations wasn't
+        // asked for. "situation" replaces "map" as the permanent home tab
+        // type; "dossiers"/"replay" are genuinely new placeholder-content
+        // types (real modules, no real screen behind them yet — Round 3/4).
         const LABELS = {
-            map: "Map", analytics: "Analytics",
-            dashboard: "Dashboard", reports: "Reports", watchlists: "Watchlists",
+            situation: "Situation", inbox: "Inbox", dossiers: "Dossiers",
+            analytics: "Analytics", generate: "Generate", briefings: "Briefings", replay: "Replay",
+            map: "Map", dashboard: "Dashboard", reports: "Reports", watchlists: "Watchlists",
             sources: "Intel", aiCouncil: "AI Council",
         }
         const existing = tabs.find(t => t.type === type)
@@ -692,6 +746,31 @@ export default function App() {
         })
         switchTab(newId)
     }, [tabs, switchTab])
+
+    // Redesign Round 2, §6 — global ⌘K/Ctrl+K (palette) and 1-7 (module
+    // switch) shortcuts, guarded against active text input so typing is
+    // never interrupted. Declared here (after openTab) rather than earlier
+    // near paletteOpen's own state, since openTab is a `const` — referencing
+    // it in an effect declared before its own initializer is a real
+    // temporal-dead-zone crash, not just a style preference.
+    useEffect(() => {
+        const handler = (e) => {
+            const inTextInput = e.target?.matches?.("input,textarea,[contenteditable]")
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+                e.preventDefault()
+                setPaletteOpen(v => !v)
+                return
+            }
+            if (e.key === "Escape" && paletteOpen) { setPaletteOpen(false); return }
+            if (inTextInput) return
+            const n = Number(e.key)
+            if (n >= 1 && n <= 7 && MODULES[n - 1]) {
+                openTab(MODULE_TO_TAB_TYPE[MODULES[n - 1].key])
+            }
+        }
+        window.addEventListener("keydown", handler)
+        return () => window.removeEventListener("keydown", handler)
+    }, [paletteOpen, openTab])
 
     // Real, destination-neutral navigation event (see
     // src/globe/GlobeStrategicZoneTooltip.jsx's "Manage in Sources" action) —
@@ -708,18 +787,27 @@ export default function App() {
     // tab open before the akili:fly-to / akili:show-entity events they fire
     // right after this can find a mounted GlobeView to act on.
     useEffect(() => {
-        const h = () => openTab("map")
+        const h = () => openTab("situation")
         window.addEventListener("akili:open-map", h)
         return () => window.removeEventListener("akili:open-map", h)
     }, [openTab])
 
     const closeTab = useCallback((id) => {
         const tab = tabs.find(t => t.id === id)
-        if (!tab || tab.type === "map") return
-        const remaining = tabs.filter(t => t.id !== id)
+        // Any tab, including "situation", can now be closed — closing the
+        // last remaining tab reopens Situation (below) rather than refusing
+        // to close a specific hardcoded tab.
+        if (!tab) return
+        let remaining = tabs.filter(t => t.id !== id)
+        // The console is never empty — closing the last tab reopens Situation
+        // as a genuinely fresh tab, not a dangling reference to one that no
+        // longer exists.
+        if (remaining.length === 0) {
+            remaining = [{ id: "situation", type: "situation", label: "Situation" }]
+        }
         setTabs(remaining)
         if (activeTabId === id) {
-            let target = "map"
+            let target = remaining[remaining.length - 1].id
             const hist = tabHistoryRef.current
             for (let i = hist.length - 1; i >= 0; i--) {
                 if (remaining.find(t => t.id === hist[i])) {
@@ -732,6 +820,16 @@ export default function App() {
         }
         tabHistoryRef.current = tabHistoryRef.current.filter(x => x !== id)
     }, [tabs, activeTabId])
+
+    // Redesign Round 2, §3 — real contextual tab retitling (e.g. opening a
+    // specific Dossier or generated report retitles its own tab, distinct
+    // from the module's own display name). No consumer wires a specific
+    // Dossier/report into this yet this round (Dossiers/Generate/Briefings
+    // aren't rebuilt until Rounds 3/4), but the real mechanism exists now
+    // rather than being faked later.
+    const retitleTab = useCallback((id, label) => {
+        setTabs(prev => prev.map(t => (t.id === id ? { ...t, label } : t)))
+    }, [])
 
     // Persist tabs to localStorage
     useEffect(() => {
@@ -1222,42 +1320,44 @@ export default function App() {
           .demo-runner-rich-tooltip img { display: block !important; }
         `}</style>
             {loading && <LoadingScreen onComplete={() => setLoading(false)} />}
-            {/* ── Header — 52px, full width, never scrolls away (full UI rebuild spec 3.1) ── */}
+            {/* ── Top bar + tab strip — redesign Round 2, §1/§2/§3 ───────────── */}
             {!showAutoMode && (
-                <AppHeader
-                    activeDestination={activeDestination}
-                    onNavigate={(key) => openTab(key)}
-                    onGoHome={() => openTab("map")}
-                    modeLabel={modeLabel}
-                    canonicalView={dashboardFullscreen ? canonicalView : null}
-                    onCanonicalViewChange={dashboardFullscreen ? setCanonicalView : null}
-                    systemHealth={systemHealth}
-                    alertUnreadCount={unreadCount}
-                    onOpenWatchlists={() => openTab("watchlists")}
-                    onSearchResult={(r) => {
-                        openTab("map")
-                        setSearchTarget({ lat: r.lat, lon: r.lon, zoom: 7, key: Date.now() })
-                    }}
-                    profile={profile}
-                    overwatchActive={overwatchActive}
-                    onToggleOverwatch={() => setOverwatchActive(v => !v)}
-                    directorActive={directorVisible}
-                    onToggleDirector={() => {
-                        if (directorVisible) handleDirectorClose()
-                        else setDirectorModalOpen(true)
-                    }}
-                    analyticsActive={rightPanel === "analytics"}
-                    onToggleAnalytics={() => openRightPanel("analytics")}
-                    threatsActive={rightPanel === "threats"}
-                    onToggleThreats={() => openRightPanel("threats")}
-                    healthActive={rightPanel === "health"}
-                    onToggleHealth={() => openRightPanel("health")}
-                    tvActive={showTV}
-                    onToggleTV={() => setShowTV(v => !v)}
-                    soundMuted={soundMuted}
-                    onToggleSound={onToggleSound}
-                />
+                <>
+                    <TopBar
+                        activeModule={TAB_TYPE_TO_MODULE[activeTabType] || "situation"}
+                        onSelectModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
+                        unreadCount={unreadCount}
+                        systemHealth={systemHealth}
+                        onOpenPalette={() => setPaletteOpen(true)}
+                    />
+                    <TabStrip
+                        tabs={tabs}
+                        activeTabId={activeTabId}
+                        onSelect={switchTab}
+                        onClose={closeTab}
+                        onOpenPalette={() => setPaletteOpen(true)}
+                        liveFeedCount={Array.isArray(healthData?.data_sources) ? healthData.data_sources.filter(s => s.status === "ok").length : null}
+                    />
+                </>
             )}
+            <ToastHost />
+            <CommandPalette
+                open={paletteOpen}
+                onClose={() => setPaletteOpen(false)}
+                signals={notifItems}
+                onOpenModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
+                onOpenEntity={(r) => {
+                    openTab("situation")
+                    if (r.lat != null && r.lon != null) setSearchTarget({ lat: r.lat, lon: r.lon, zoom: 7, key: Date.now() })
+                }}
+                onOpenSignal={(s) => {
+                    openTab("situation")
+                    if (s.lat != null && s.lon != null) {
+                        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: s.lat, lon: s.lon, altitude: 250000 } }))
+                    }
+                }}
+                onOpenReport={() => openTab("reports")}
+            />
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
             <div style={{ flex: 1, display: "flex", minHeight: 0, paddingBottom: (isMobile && !showAutoMode) ? 56 : 0 }}>
@@ -1431,9 +1531,34 @@ export default function App() {
                     "news"/"forge" tab anymore. Flagged explicitly in this
                     round's PR notes as a deliberate scope decision, not an
                     oversight. */}
+                {/* Situation — redesign Round 2's new home screen, replacing
+                    Dashboard.jsx as the default view. Dashboard.jsx itself
+                    is left in place below (unreached from the new module
+                    rail — see MODULE_TO_TAB_TYPE) rather than deleted, since
+                    it isn't one of the header/nav/footer/bell components
+                    this round's ground rule calls out for deletion, and no
+                    later round has explicitly claimed it yet. */}
+                {tabs.some(t => t.type === "situation") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "situation" ? "flex" : "none", flexDirection: "column" }}>
+                        <Situation onOpenDossier={() => openTab("dossiers")} />
+                    </div>
+                )}
+
                 {tabs.some(t => t.type === "dashboard") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "dashboard" ? "flex" : "none", flexDirection: "column" }}>
                         <Dashboard canonicalView={canonicalView} onFullscreenChange={setDashboardFullscreen} />
+                    </div>
+                )}
+
+                {tabs.some(t => t.type === "dossiers") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "dossiers" ? "flex" : "none", flexDirection: "column" }}>
+                        <PlaceholderModule label="Dossiers" roundNote="it's a genuinely new module built in Round 3" />
+                    </div>
+                )}
+
+                {tabs.some(t => t.type === "replay") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "replay" ? "flex" : "none", flexDirection: "column" }}>
+                        <PlaceholderModule label="Replay" roundNote="Director Mode is rebuilt into this module in Round 4" />
                     </div>
                 )}
 
@@ -1841,7 +1966,7 @@ export default function App() {
                 retired along with the rest of the old mobile chrome; the
                 real isMobile detection elsewhere in this file (unrelated
                 layout adaptations) is untouched. */}
-            {!showAutoMode && <AppFooter modeLabel={modeLabel} systemHealth={systemHealth} />}
+            {!showAutoMode && <StatusBar health={healthData} taskCount={taskCount} />}
         </div>
     )
 }
