@@ -5,8 +5,7 @@ import {
     Math as CesiumMath,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { acClassify } from "./iconUtils.js"
-import { getEntityMarkerDataUri } from "./entityIcons.js"
+import { getAircraftMarkerDataUri } from "./vesselAircraftGlyphs.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 
@@ -25,7 +24,7 @@ function drCalc(lat, lon, track, gs, dt) {
 
 const DESKTOP_ADSB_CAP = 150
 
-export default function GlobeADSBLayer({ aircraft, viewBounds }) {
+export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos }) {
     const drBaseRef = useRef({})
     const rawRef    = useRef([])
     const [smooth, setSmooth] = useState([])
@@ -112,11 +111,13 @@ export default function GlobeADSBLayer({ aircraft, viewBounds }) {
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                // Base ADSB tracks have no affiliation/sanctions signal at
-                // this layer (see GlobeAISLayer.jsx's identical reasoning) —
-                // real aircraft-class sub-type only, no status ring.
-                const acClass = acClassify(ac)
-                const icon = getEntityMarkerDataUri({ entityType: "aircraft", subtype: acClass, size: BILLBOARD_SIZE })
+                // Fidelity pass, build spec v2 §7 — real airframe-outline
+                // glyph, amber when this real icao matches a real "Military
+                // Aircraft" watchlist alert (backend/main.py's rule_004,
+                // the closest real existing "flagged for review" aircraft
+                // signal — reused, not reinvented).
+                const watchlisted = !!(icao && watchlistedIcaos?.has(String(icao).toUpperCase()))
+                const icon = getAircraftMarkerDataUri({ watchlisted, size: BILLBOARD_SIZE })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
                 const position = Cartesian3.fromDegrees(lon, lat, altM)

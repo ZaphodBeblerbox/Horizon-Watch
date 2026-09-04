@@ -6,7 +6,7 @@ import {
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType } from "./iconUtils.js"
-import { getEntityMarkerDataUri } from "./entityIcons.js"
+import { getVesselMarkerDataUri } from "./vesselAircraftGlyphs.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
 
@@ -14,7 +14,7 @@ const BILLBOARD_SIZE = 26
 
 const DESKTOP_AIS_CAP = 200
 
-export default function GlobeAISLayer({ vessels, viewBounds }) {
+export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) {
     const filtered = useMemo(() => {
         if (!vessels?.length) return []
         if (isMobile) {
@@ -55,13 +55,15 @@ export default function GlobeAISLayer({ vessels, viewBounds }) {
             {filtered.map(v => {
                 if (v.lat == null || v.lon == null || !isFinite(v.lat) || !isFinite(v.lon)) return null
 
-                // Base AIS tracks have no sanctions/affiliation signal at
-                // this layer (that only exists on the alert overlay — see
-                // GlobeAlertsLayer.jsx) — real ship-type sub-type only, no
-                // status ring. See src/globe/entityIcons.js's own header for
-                // why a plain vessel track never fabricates a status here.
-                const shipType = vesselShipType(v)
-                const icon = getEntityMarkerDataUri({ entityType: "vessel", subtype: shipType, size: BILLBOARD_SIZE })
+                // Fidelity pass, build spec v2 §7 — real hull-outline glyph
+                // (not a generic entity icon), colored red when the vessel's
+                // real mmsi matches a real confirmed sanctions hit from
+                // GlobeView's own screening-alert fetch (never reimplementing
+                // the actual screening logic, which lives entirely server-
+                // side in backend/main.py's _check_sanctions_on_update()).
+                const mmsiStr = v.mmsi != null ? String(v.mmsi) : null
+                const sanctioned = !!(mmsiStr && sanctionedMmsis?.confirmed?.has(mmsiStr))
+                const icon = getVesselMarkerDataUri({ sanctioned, size: BILLBOARD_SIZE })
 
                 const hdg = isFinite(Number(v.heading)) && Number(v.heading) !== 511
                     ? Number(v.heading)

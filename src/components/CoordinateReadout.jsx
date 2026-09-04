@@ -69,14 +69,12 @@ export default function CoordinateReadout({ viewer, style }) {
         }
     }, [viewer])
 
+    // Fidelity pass, build spec v2 §3/§4.7 — .mapmeta has NO background,
+    // border, or blur, ever: bare mono text with only a real text-shadow.
     return (
         <div
             style={{
                 display: "inline-block",
-                padding: "6px 10px",
-                background: "var(--bg-elevated)",
-                border: "var(--elevation-2)",
-                borderRadius: "var(--radius)",
                 fontFamily: "var(--font-mono)",
                 fontSize: "var(--text-xs)",
                 color: "var(--text-secondary)",
@@ -85,6 +83,7 @@ export default function CoordinateReadout({ viewer, style }) {
                 pointerEvents: "none",
                 userSelect: "none",
                 minWidth: 168,
+                textShadow: "0 1px 2px rgba(12,15,18,.9)",
                 ...style,
             }}
         >

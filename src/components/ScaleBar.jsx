@@ -86,6 +86,13 @@ export default function ScaleBar({ viewer, style, targetPixelWidth = 100 }) {
 
     if (!scale) return null
 
+    // Fidelity pass, build spec v2 §3/§4.7 — .mapmeta has NO background,
+    // border, or blur, ever: bare mono text directly over the map, legible
+    // only via a real text-shadow. The tick/bar lines are solid color fills
+    // (not text), left as-is — already visible as thin lines regardless of
+    // what's under them; only the removed card treatment applies to the
+    // text and its former container chrome.
+    const TEXT_SHADOW = "0 1px 2px rgba(12,15,18,.9)"
     return (
         <div
             style={{
@@ -93,16 +100,12 @@ export default function ScaleBar({ viewer, style, targetPixelWidth = 100 }) {
                 flexDirection: "column",
                 alignItems: "flex-start",
                 gap: 4,
-                padding: "6px 10px",
-                background: "var(--bg-elevated)",
-                border: "var(--elevation-2)",
-                borderRadius: "var(--radius)",
                 pointerEvents: "none",
                 userSelect: "none",
                 ...style,
             }}
         >
-            <div style={{ position: "relative", width: Math.round(scale.widthPx), height: 7 }}>
+            <div style={{ position: "relative", width: Math.round(scale.widthPx), height: 7, filter: `drop-shadow(${TEXT_SHADOW})` }}>
                 <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 2, background: "var(--text-primary)" }} />
                 <div style={{ position: "absolute", left: 0, bottom: 0, width: 1, height: 7, background: "var(--text-primary)" }} />
                 <div style={{ position: "absolute", right: 0, bottom: 0, width: 1, height: 7, background: "var(--text-primary)" }} />
@@ -113,6 +116,7 @@ export default function ScaleBar({ viewer, style, targetPixelWidth = 100 }) {
                     fontSize: "var(--text-xs)",
                     color: "var(--text-secondary)",
                     letterSpacing: "0.02em",
+                    textShadow: TEXT_SHADOW,
                 }}
             >
                 {scale.km.toLocaleString()} km

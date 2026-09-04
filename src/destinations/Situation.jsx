@@ -75,9 +75,45 @@ export default function Situation({ onOpenDossier }) {
     const [health, setHealth] = useState(null)
     const [selected, setSelected] = useState(null)
     const [severityFloor, setSeverityFloor] = useState("low")
-    const [timeWindow, setTimeWindow] = useState("24h")
-    const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))
+    const [timeWindow, setTimeWindow] = useState("72h")
+    // Fidelity pass §1 — the app's base/default state is ALL LAYERS OFF (a
+    // bare map until the analyst turns something on). Was defaulting every
+    // group to true; severity floor/time window are filter settings, not
+    // layer toggles, and keep their own sensible defaults since they don't
+    // clutter an empty map on their own.
+    const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
+    const [contextOn, setContextOn] = useState({ risk: false, graticule: false, flows: false, aois: false, labels: false })
+    const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
     const globeApiRef = useRef(null)
+
+    // Real Live-tracks counts for the Layers pane rows — fetched only while
+    // the corresponding track is actually on, independent of GlobeView's own
+    // internal fetch (GlobeView doesn't expose its fetched counts upward, so
+    // this is a second real fetch of the same real endpoints rather than a
+    // fabricated or reused-stale number).
+    const [trackCounts, setTrackCounts] = useState({ vessels: null, aircraft: null, sanctioned: null })
+    useEffect(() => {
+        let cancelled = false
+        if (!tracksOn.vessels) { setTrackCounts((p) => ({ ...p, vessels: null })); return }
+        const load = () => fetch(`${API}/api/ais/vessels`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+            if (cancelled || !d?.vessels) return
+            setTrackCounts((p) => ({ ...p, vessels: d.vessels.length }))
+        }).catch(() => {})
+        load()
+        const t = setInterval(load, 60000)
+        return () => { cancelled = true; clearInterval(t) }
+    }, [tracksOn.vessels])
+    useEffect(() => {
+        let cancelled = false
+        if (!tracksOn.aircraft) { setTrackCounts((p) => ({ ...p, aircraft: null })); return }
+        const load = () => fetch(`${API}/adsb?lat=20.0000&lon=10.0000&dist=2000`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+            if (cancelled || !d) return
+            setTrackCounts((p) => ({ ...p, aircraft: (d.aircraft || d.states || []).length }))
+        }).catch(() => {})
+        load()
+        const t = setInterval(load, 10000)
+        return () => { cancelled = true; clearInterval(t) }
+    }, [tracksOn.aircraft])
 
     // Build spec v2, §4.6 — real panel slide-in on mount, and a real
     // minimize/restore toggle. `entered` starts false so the panels render
@@ -109,10 +145,14 @@ export default function Situation({ onOpenDossier }) {
     const windowHours = TIME_WINDOWS.find((w) => w.key === timeWindow)?.hours ?? 24
     const nowMs = Date.now()
 
-    // The ONE real filtered/merged list every count on this screen derives
-    // from — layer-row counts, legend counts, and the inspector's stat grid
-    // all read from `visibleRows`, never a separately recomputed count.
-    const visibleRows = useMemo(() => {
+    // windowRows: severity-floor + time-window filtered only — the real
+    // basis for the Layers pane's own per-domain row counts, which the
+    // build spec explicitly wants to "reflect the window, not the current
+    // filter, so toggling a layer off doesn't hide the fact that it has
+    // data" (§4.6.1). NOT gated on groupsOn — a row count must stay real
+    // and visible even while its own layer is off, precisely so an analyst
+    // can see there's something to turn on.
+    const windowRows = useMemo(() => {
         const merged = mergeNotificationItems(surfaceItems, fusionEvents)
         const rows = sortRowsBySeverity(buildWatchQueueRows(merged))
         return rows.filter((r) => {
@@ -122,6 +162,30 @@ export default function Situation({ onOpenDossier }) {
             return ageHours <= windowHours
         })
     }, [surfaceItems, fusionEvents, maxRank, windowHours, nowMs])
+
+    // visibleRows: fidelity pass §1 — the base/default state is all layers
+    // off, and every OTHER count on this screen (legend, inspector stat
+    // grid, density strip, "newest critical") must correctly show zero
+    // until a layer is actually switched on — distinct from windowRows
+    // above. A row counts as visible only if a domain group it can
+    // genuinely be attributed to is on (fusion events carry a real
+    // domains[] array; anything else is treated as a News-domain item,
+    // the pool it actually comes from — never guessed as some other
+    // domain it can't be verified against).
+    const anyDomainOn = groupsOn.maritime || groupsOn.air || groupsOn.news || groupsOn.imagery || groupsOn.zones || groupsOn.alerts
+    const visibleRows = useMemo(() => {
+        if (!anyDomainOn) return []
+        return windowRows.filter((r) => {
+            if (r.kind === "fusion") {
+                if (groupsOn.alerts) return true
+                const domains = (r.raw?.domains || []).map((d) => String(d).toUpperCase())
+                if (domains.includes("AIS") && groupsOn.maritime) return true
+                if (domains.includes("ADSB") && groupsOn.air) return true
+                return false
+            }
+            return groupsOn.news
+        })
+    }, [windowRows, anyDomainOn, groupsOn.maritime, groupsOn.air, groupsOn.news, groupsOn.alerts])
 
     const healthSummary = useMemo(() => summarizeHealth(health), [health])
 
@@ -135,19 +199,22 @@ export default function Situation({ onOpenDossier }) {
     // (fusion events carry a real `domains` array); News/Imagery/Zones
     // groups show "—" rather than a fabricated split, since the merged
     // list doesn't carry a clean per-item domain field for plain surface
-    // items today.
+    // items today. Deliberately derived from windowRows, NOT visibleRows —
+    // per the build spec's own §4.6.1, a domain row's count must "reflect
+    // the window, not the current filter, so toggling a layer off doesn't
+    // hide the fact that it has data."
     const domainCounts = useMemo(() => {
         const out = {}
         for (const g of LAYER_GROUPS) out[g.key] = null
-        for (const r of visibleRows) {
+        for (const r of windowRows) {
             const domains = r.kind === "fusion" ? (r.raw?.domains || []) : []
             if (domains.some((d) => String(d).toUpperCase() === "AIS")) out.maritime = (out.maritime || 0) + 1
             if (domains.some((d) => String(d).toUpperCase() === "ADSB")) out.air = (out.air || 0) + 1
         }
-        out.news = visibleRows.filter((r) => r.kind !== "fusion").length
-        out.alerts = visibleRows.length
+        out.news = windowRows.filter((r) => r.kind !== "fusion").length
+        out.alerts = windowRows.length
         return out
-    }, [visibleRows])
+    }, [windowRows])
 
     // 12-bucket density histogram over the current window — real counts,
     // real time axis.
@@ -216,8 +283,16 @@ export default function Situation({ onOpenDossier }) {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Layers</span>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span role="button" tabIndex={0} onClick={() => setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))} style={{ font: "400 11px var(--font)", color: "var(--txt-link, var(--acc-hi))", cursor: "pointer" }}>all</span>
-                        <span role="button" tabIndex={0} onClick={() => setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
+                        <span role="button" tabIndex={0} onClick={() => {
+                            setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))
+                            setContextOn({ risk: true, graticule: true, flows: true, aois: true, labels: true })
+                            setTracksOn({ vessels: true, aircraft: true, sanctionedOnly: false, ports: true })
+                        }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>all</span>
+                        <span role="button" tabIndex={0} onClick={() => {
+                            setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
+                            setContextOn({ risk: false, graticule: false, flows: false, aois: false, labels: false })
+                            setTracksOn({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
+                        }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
                         <button onClick={() => setLeftMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
                             <svg className="icon sm"><use href="#icon-collapse-l" /></svg>
                         </button>
@@ -231,6 +306,39 @@ export default function Situation({ onOpenDossier }) {
                     ))}
                 </div>
 
+                {/* Context layers — build spec v2 §4.2. "Satellite tasking
+                    (none)" is deliberately unavailable — a real, honest
+                    unavailable capability, not a silently-broken toggle. */}
+                <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
+                    <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Context layers</div>
+                    {[
+                        ["risk", "Country risk index"],
+                        ["graticule", "Graticule 10°"],
+                        ["flows", "Trade & energy flows"],
+                        ["aois", "Areas of interest"],
+                        ["labels", "Marker labels"],
+                    ].map(([key, label]) => (
+                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                            <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>{label}</span>
+                            <button
+                                onClick={() => setContextOn((p) => ({ ...p, [key]: !p[key] }))}
+                                title={contextOn[key] ? "Hide layer" : "Show layer"}
+                                style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: contextOn[key] ? "var(--txt-2)" : "var(--txt-4)" }}
+                            >
+                                <svg className="icon sm"><use href={contextOn[key] ? "#icon-eye" : "#icon-eye-off"} /></svg>
+                            </button>
+                        </div>
+                    ))}
+                    <div
+                        role="button" tabIndex={0}
+                        onClick={() => toast("Satellite tasking is not a real capability in this build yet", { icon: "icon-eye-off" })}
+                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px", cursor: "pointer", opacity: 0.55 }}
+                    >
+                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-3)" }}>Satellite tasking (none)</span>
+                        <svg className="icon sm" style={{ color: "var(--txt-4)" }}><use href="#icon-eye-off" /></svg>
+                    </div>
+                </div>
+
                 <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 8 }}>Severity floor</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -240,7 +348,7 @@ export default function Situation({ onOpenDossier }) {
                     </div>
                 </div>
 
-                <div style={{ padding: "8px 12px" }}>
+                <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 8 }}>Time window</div>
                     <div className="seg">
                         {TIME_WINDOWS.map((w) => (
@@ -248,19 +356,57 @@ export default function Situation({ onOpenDossier }) {
                         ))}
                     </div>
                 </div>
+
+                {/* Live tracks — real AIS/ADS-B position rendering, build
+                    spec v2 §4.2/§6. All off by default per §1. */}
+                <div style={{ padding: "8px 0" }}>
+                    <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Live tracks</div>
+                    {[
+                        ["vessels", "Vessels (AIS)", trackCounts.vessels],
+                        ["aircraft", "Aircraft (ADS-B)", trackCounts.aircraft],
+                        ["sanctionedOnly", "Sanctioned/watchlisted only", trackCounts.sanctioned],
+                        ["ports", "Ports & airports", null],
+                    ].map(([key, label, count]) => (
+                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                            <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>{label}</span>
+                            <span style={{ font: "400 11px var(--mono)", color: "var(--txt-4)" }}>{count == null ? "—" : count}</span>
+                            <button
+                                onClick={() => setTracksOn((p) => ({ ...p, [key]: !p[key] }))}
+                                title={tracksOn[key] ? "Hide layer" : "Show layer"}
+                                style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: tracksOn[key] ? "var(--txt-2)" : "var(--txt-4)" }}
+                            >
+                                <svg className="icon sm"><use href={tracksOn[key] ? "#icon-eye" : "#icon-eye-off"} /></svg>
+                            </button>
+                        </div>
+                    ))}
+                </div>
             </div>
             )}
 
             {/* Center — globe + density strip */}
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
                 <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                    {/* Event domains — real signal/alert visualization, per group.
+                        Fixed a real bug here: precisionEventsEnabled defaults to
+                        true INSIDE GlobeView itself when omitted, so News being
+                        "off" didn't actually turn off precision event markers —
+                        it's now explicitly wired to the same real toggle. */}
                     <GlobeView
-                        aisEnabled={groupsOn.maritime} adsbEnabled={groupsOn.air}
-                        eventsEnabled={groupsOn.news} alertsEnabled={groupsOn.alerts}
-                        portsEnabled={groupsOn.maritime} cablesEnabled={groupsOn.maritime} chokepointsEnabled={groupsOn.maritime}
-                        airportsEnabled={groupsOn.air} satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}
-                        strategicZonesEnabled={groupsOn.zones} threatHeatmapEnabled={groupsOn.zones} cityLabelsEnabled={groupsOn.zones}
-                        eezEnabled={groupsOn.zones}
+                        eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
+                        alertsEnabled={groupsOn.alerts}
+                        cablesEnabled={groupsOn.maritime} chokepointsEnabled={groupsOn.maritime}
+                        satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}
+                        strategicZonesEnabled={groupsOn.zones} eezEnabled={groupsOn.zones}
+                        /* Context layers — separate from event domains, per build spec v2 §4.2 */
+                        threatHeatmapEnabled={contextOn.risk}
+                        graticuleEnabled={contextOn.graticule}
+                        cityLabelsEnabled={contextOn.labels}
+                        /* Live tracks — real raw position rendering, independent of the
+                           event-domain toggles above (a vessel's SIGNAL can be shown
+                           without its live position, and vice versa). All off by
+                           default per §1. */
+                        aisEnabled={tracksOn.vessels} adsbEnabled={tracksOn.aircraft}
+                        portsEnabled={tracksOn.ports} airportsEnabled={tracksOn.ports}
                     />
                     <MapControlStack onFullscreen={() => {}} />
                     {/* Legend, bottom-right — real live counts within the current filter.
