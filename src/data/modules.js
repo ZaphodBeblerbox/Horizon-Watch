@@ -5,8 +5,9 @@
 //   Situation  -> the globe home screen (built, Stage 1)
 //   Inbox      -> the alert/Watchlists console (Stage 2, not yet rebuilt —
 //                 still the pre-redesign WatchlistsPage)
-//   Dossiers   -> AOI/entity exposure-profile module (Stage 3, placeholder —
-//                 genuinely new, no prior equivalent)
+//   Dossiers   -> rebuilt (src/destinations/Dossiers.jsx) — real entity
+//                 exposure-profile module (WatchZone + StrategicZone),
+//                 backed by GET /api/dossiers/*
 //   Analytics  -> rebuilt onto the real design system (src/destinations/
 //                 Analytics.jsx), backed by GET /api/analytics/overview
 //   Generate   -> rebuilt (src/reports/Generate.jsx) — real 3-column run
@@ -22,8 +23,8 @@
 export const MODULES = [
     { key: "situation", label: "Situation", icon: "i-globe",   built: true },
     { key: "inbox",     label: "Inbox",     icon: "i-inbox",   built: false },
-    { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: false },
-    { key: "analytics", label: "Analytics", icon: "i-chart",   built: false },
+    { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: true },
+    { key: "analytics", label: "Analytics", icon: "i-chart",   built: true },
     { key: "generate",  label: "Generate",  icon: "i-spark", built: true },
     { key: "replay",    label: "Replay",    icon: "i-clock",    built: false },
     { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: false },
