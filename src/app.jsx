@@ -48,6 +48,7 @@ import { playAlert, resumeAudio } from "./soundSystem.js"
 import HealthPanel from "./components/HealthPanel.jsx"
 import Analytics from "./destinations/Analytics.jsx"
 import Dossiers from "./destinations/Dossiers.jsx"
+import Ontology from "./destinations/Ontology.jsx"
 import API_BASE from "./apiBase.js"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import { loadSettings } from "./components/PreferencesPanel.jsx"
@@ -1571,7 +1572,7 @@ export default function App() {
 
                 {tabs.some(t => t.type === "ontology") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "ontology" ? "flex" : "none", flexDirection: "column" }}>
-                        <PlaceholderModule label="Ontology" roundNote="it's a genuinely new module built in Stage 8" />
+                        <Ontology onOpenGenerate={() => openTab("generate")} />
                     </div>
                 )}
 
