@@ -95,6 +95,12 @@
             --tabs: 32px;
             --status: 24px;
 
+            /* Situation glass panel widths (build spec v2, §3/§4.6/§4.7) —
+               the map fit AND every map overlay inset derive from these two
+               tokens, so they can never drift apart. */
+            --pane-l: 250px;
+            --pane-r: 312px;
+
             /* ══════════════════════════════════════════════════════════
                Legacy Round 1-3 names — kept resolving (hundreds of call
                sites across the app reference these), RE-POINTED at the new

@@ -79,6 +79,21 @@ export default function Situation({ onOpenDossier }) {
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))
     const globeApiRef = useRef(null)
 
+    // Build spec v2, §4.6 — real panel slide-in on mount, and a real
+    // minimize/restore toggle. `entered` starts false so the panels render
+    // in their slid-out position for one frame, then a single real
+    // transition (never a keyframe — see designSystem.css's .pane-glass
+    // comment on the animation-fill-mode trap) carries them to rest. Uses
+    // setTimeout rather than requestAnimationFrame per the build spec's own
+    // §2.1 guidance against relying on rAF for anything layout-adjacent.
+    const [entered, setEntered] = useState(false)
+    const [leftMin, setLeftMin] = useState(false)
+    const [rightMin, setRightMin] = useState(false)
+    useEffect(() => {
+        const t = setTimeout(() => setEntered(true), 20)
+        return () => clearTimeout(t)
+    }, [])
+
     useEffect(() => {
         let cancelled = false
         const loadSurface = () => fetch(`${API}/api/surface`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && d) setSurfaceItems(d.items || []) }).catch(() => {})
@@ -169,15 +184,43 @@ export default function Situation({ onOpenDossier }) {
         toast(`Added "${row.title.slice(0, 40)}" to briefing basket`)
     }
 
+    // Build spec v2, §4.6 — one real transition drives the slide, whatever
+    // triggers it (mount, or the minimize toggle): translateX + opacity,
+    // never a keyframe. Minimizing swaps the full pane for a 30px .panetab
+    // restore rail (a real, simpler equivalent of the spec's grid-var-
+    // override approach — this app's Situation layout is flexbox, so
+    // shrinking the flex sibling's width already reflows the map
+    // automatically, without needing a separate CSS-var indirection layer).
+    const leftPaneStyle = {
+        width: 250, flexShrink: 0, borderRight: "1px solid var(--line)",
+        display: "flex", flexDirection: "column", overflowY: "auto",
+        transform: entered ? "translateX(0)" : "translateX(-14px)",
+        opacity: entered ? 1 : 0,
+    }
+    const rightPaneStyle = {
+        width: 312, flexShrink: 0, borderLeft: "1px solid var(--line)", overflowY: "auto",
+        transform: entered ? "translateX(0)" : "translateX(14px)",
+        opacity: entered ? 1 : 0,
+    }
+
     return (
         <div style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
-            {/* Left — Layers */}
-            <div style={{ width: 250, flexShrink: 0, background: "var(--bg-1)", borderRight: "1px solid var(--line)", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+            {/* Left — Layers (real frosted glass per build spec v2 §4.6 —
+                corrects an earlier round's "no translucency anywhere"
+                reversal of this; only the panel's own background is glass,
+                everything inside — .chip/.card/.seg etc — stays flat/opaque) */}
+            {leftMin ? (
+                <div className="panetab" role="button" tabIndex={0} onClick={() => setLeftMin(false)} title="Restore Layers">Layers</div>
+            ) : (
+            <div className="pane-glass" style={leftPaneStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Layers</span>
-                    <div style={{ display: "flex", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span role="button" tabIndex={0} onClick={() => setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))} style={{ font: "400 11px var(--font)", color: "var(--txt-link, var(--acc-hi))", cursor: "pointer" }}>all</span>
                         <span role="button" tabIndex={0} onClick={() => setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
+                        <button onClick={() => setLeftMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
+                            <svg className="icon sm"><use href="#icon-collapse-l" /></svg>
+                        </button>
                     </div>
                 </div>
 
@@ -206,6 +249,7 @@ export default function Situation({ onOpenDossier }) {
                     </div>
                 </div>
             </div>
+            )}
 
             {/* Center — globe + density strip */}
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -252,8 +296,17 @@ export default function Situation({ onOpenDossier }) {
                 </div>
             </div>
 
-            {/* Right — Inspector */}
-            <div style={{ width: 312, flexShrink: 0, background: "var(--bg-1)", borderLeft: "1px solid var(--line)", overflowY: "auto" }}>
+            {/* Right — Inspector (real frosted glass, see Layers pane comment above) */}
+            {rightMin ? (
+                <div className="panetab" role="button" tabIndex={0} onClick={() => setRightMin(false)} title="Restore Inspector">Inspector</div>
+            ) : (
+            <div className="pane-glass" style={rightPaneStyle}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
+                    <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Inspector</span>
+                    <button onClick={() => setRightMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
+                        <svg className="icon sm"><use href="#icon-collapse-r" /></svg>
+                    </button>
+                </div>
                 {!selected ? (
                     <div style={{ padding: 12 }}>
                         <div className="statgrid" style={{ marginBottom: 12 }}>
@@ -323,6 +376,7 @@ export default function Situation({ onOpenDossier }) {
                     </div>
                 )}
             </div>
+            )}
         </div>
     )
 }
