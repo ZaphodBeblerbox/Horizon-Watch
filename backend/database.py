@@ -288,6 +288,15 @@ class WatchZone(Base):
     ml_tasks            = Column(Text, nullable=False, default="[]")
     alert_threshold     = Column(String, nullable=False, default="both")
     zone_metadata       = Column(Text, nullable=True)
+    # Real AOI class + proposal lifecycle for the Imagery page (§B3/B6).
+    # 'proposed' rows are real, derived-from-real-infrastructure suggestions
+    # (backend/imagery_pipeline.py's propose_coverage) an analyst hasn't
+    # accepted yet — they never scan (the schedule loop's own enabled=False
+    # check already skips them) until accept_proposal() flips both
+    # status='active' and enabled=True.
+    aoi_class           = Column(String, nullable=False, default="custom")
+    status              = Column(String, nullable=False, default="active")  # active|paused|proposed
+    owner               = Column(String, nullable=True)
 
 
 class SentinelScan(Base):
@@ -308,6 +317,14 @@ class SentinelScan(Base):
     raw_result_json       = Column(Text, nullable=True)
     alert_fired           = Column(Boolean, default=False)
     error_message         = Column(String, nullable=True)
+    # The real fetched true-colour crop for this scan, base64-encoded — the
+    # Imagery page's comparison view needs a real image to render; previously
+    # nothing persisted the fetched bytes at all (image_crop_url/overlay_url
+    # on SentinelDetection were always null). Stored inline as base64 rather
+    # than a new static-file mount, matching this codebase's existing
+    # precedent (GlobeOverwatchLayer.jsx already consumes a base64 image
+    # string for the same real Sentinel imagery elsewhere).
+    image_b64             = Column(Text, nullable=True)
 
 
 class SentinelDetection(Base):
@@ -342,6 +359,12 @@ class SentinelDetection(Base):
     nearest_infrastructure   = Column(String, nullable=True)
     nearest_chokepoint       = Column(String, nullable=True)
     created_at               = Column(DateTime, default=datetime.datetime.utcnow)
+    # Real analyst feedback (Imagery page §B5) — 'pending'|'confirmed'|
+    # 'rejected'. Genuinely consulted (not cosmetic): a rejected detection is
+    # excluded from subsequent reference-count comparisons for its zone, so
+    # confirming/rejecting actually changes what a later scan's delta is
+    # computed against. See backend/imagery_pipeline.py.
+    reviewed_status          = Column(String, nullable=False, default="pending")
 
 
 class OverwatchScanRecord(Base):
@@ -1227,6 +1250,30 @@ def migrate_db():
         if 'exposure_json' not in rp_existing:
             cur.execute('ALTER TABLE reports ADD COLUMN exposure_json TEXT')
             print('[db-migrate] reports: added column exposure_json')
+
+    # Imagery page — real image persistence, real AOI proposal lifecycle,
+    # real detection review status.
+    if 'sentinel_scans' in tables:
+        ss_existing = [row[1] for row in cur.execute('PRAGMA table_info(sentinel_scans)').fetchall()]
+        if 'image_b64' not in ss_existing:
+            cur.execute('ALTER TABLE sentinel_scans ADD COLUMN image_b64 TEXT')
+            print('[db-migrate] sentinel_scans: added column image_b64')
+    if 'sentinel_detections' in tables:
+        sd2_existing = [row[1] for row in cur.execute('PRAGMA table_info(sentinel_detections)').fetchall()]
+        if 'reviewed_status' not in sd2_existing:
+            cur.execute("ALTER TABLE sentinel_detections ADD COLUMN reviewed_status TEXT DEFAULT 'pending'")
+            print('[db-migrate] sentinel_detections: added column reviewed_status')
+    if 'watch_zones' in tables:
+        wz2_existing = [row[1] for row in cur.execute('PRAGMA table_info(watch_zones)').fetchall()]
+        if 'aoi_class' not in wz2_existing:
+            cur.execute("ALTER TABLE watch_zones ADD COLUMN aoi_class TEXT DEFAULT 'custom'")
+            print('[db-migrate] watch_zones: added column aoi_class')
+        if 'status' not in wz2_existing:
+            cur.execute("ALTER TABLE watch_zones ADD COLUMN status TEXT DEFAULT 'active'")
+            print('[db-migrate] watch_zones: added column status')
+        if 'owner' not in wz2_existing:
+            cur.execute('ALTER TABLE watch_zones ADD COLUMN owner TEXT')
+            print('[db-migrate] watch_zones: added column owner')
 
     conn.commit()
     conn.close()

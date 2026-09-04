@@ -1,0 +1,394 @@
+import { useState, useEffect, useRef, useCallback } from "react"
+import API_BASE from "../apiBase.js"
+import { addToBriefing } from "../state/briefingBasket.js"
+import { toast } from "../ui/toast.js"
+
+// Imagery — page-by-page rebuild, Part B. A UI over the real, already-
+// existing Sentinel scanner pipeline (backend/sentinel_scanner.py, real
+// YOLO-OBB/DOTA optical detector) — never a second/parallel/demo pipeline.
+// No glass panes (not called for in this part of the spec, unlike
+// Situation/Dossiers) — plain docked panes matching Generate.jsx.
+//
+// Honest scope disclosure: the real pipeline in this codebase is single-
+// scene vessel detection, not the full task/pair/co-register/... pipeline
+// the spec describes. This page bridges that real output into a real
+// two-scene comparison (backend/imagery_pipeline.py: real reference-scan
+// lookup, real spatial new/existing/removed matching, real persistent-
+// false-positive suppression) rather than fabricating the missing stages.
+// SAR is real code in this repo but genuinely unwired to any live loop —
+// this page only ever shows OPTICAL detections, honestly.
+
+const AOI_CLASS_ICON = { airport: "i-plane", port: "i-anchor", military: "i-target", energy: "i-grid", urban: "i-pin", border: "i-poly", custom: "i-pin" }
+const AOI_CLASSES = ["airport", "port", "military", "energy", "urban", "border", "custom"]
+const CADENCES = ["daily", "3-day", "weekly", "monthly", "on demand"]
+
+function fmtDate(iso) { return iso ? iso.slice(0, 10) : "—" }
+
+export default function Imagery({ onOpenGenerate }) {
+    const [aois, setAois] = useState([])
+    const [selectedAoi, setSelectedAoi] = useState(null)
+    const [scenes, setScenes] = useState([])
+    const [selectedScanId, setSelectedScanId] = useState(null)
+    const [scene, setScene] = useState(null)
+    const [view, setView] = useState("split")
+    const [showBoxes, setShowBoxes] = useState(true)
+    const [confFloor, setConfFloor] = useState(0)
+    const [kinds, setKinds] = useState({ new: true, expanded: true, removed: true })
+    const [swipePos, setSwipePos] = useState(50)
+    const [fadeOn, setFadeOn] = useState(false)
+    const [fadeOpacity, setFadeOpacity] = useState(55)
+    const [scopeCountry, setScopeCountry] = useState("")
+    const [running, setRunning] = useState(false)
+    const [selectedDet, setSelectedDet] = useState(null)
+    const clipRef = useRef(null)
+    const fadeRef = useRef(null)
+
+    useEffect(() => { loadAois() }, [])
+    function loadAois() {
+        fetch(`${API_BASE}/api/imagery/aois`).then((r) => r.json()).then((rows) => {
+            setAois(rows)
+            if (!selectedAoi && rows.length) setSelectedAoi(rows.find((r) => r.status === "active") || rows[0])
+        })
+    }
+
+    useEffect(() => {
+        if (!selectedAoi) return
+        fetch(`${API_BASE}/api/watch-zones/${selectedAoi.system_id}/scans`).then((r) => r.json()).then((rows) => {
+            setScenes(rows)
+            const firstCompleted = rows.find((s) => s.status === "completed")
+            setSelectedScanId(firstCompleted ? firstCompleted.scan_id : null)
+        })
+    }, [selectedAoi])
+
+    useEffect(() => {
+        if (!selectedScanId) { setScene(null); return }
+        fetch(`${API_BASE}/api/imagery/scenes/${selectedScanId}`).then((r) => r.json()).then(setScene)
+    }, [selectedScanId])
+
+    async function reRunDetection() {
+        if (!selectedAoi || running) return
+        setRunning(true)
+        await fetch(`${API_BASE}/api/watch-zones/${selectedAoi.system_id}/scan-now`, { method: "POST" })
+        toast("Real detection run started", {})
+        // Poll for a new completed scan (real backend call, real elapsed time — no fixed schedule).
+        const before = new Set(scenes.map((s) => s.scan_id))
+        for (let i = 0; i < 40; i++) {
+            await new Promise((r) => setTimeout(r, 3000))
+            const rows = await fetch(`${API_BASE}/api/watch-zones/${selectedAoi.system_id}/scans`).then((r) => r.json())
+            const fresh = rows.find((s) => !before.has(s.scan_id) && (s.status === "completed" || s.status === "error"))
+            if (fresh) {
+                setScenes(rows)
+                setSelectedScanId(fresh.scan_id)
+                toast(fresh.status === "completed" ? "Detection run complete" : `Run failed: ${fresh.error_message || "unknown error"}`, {})
+                break
+            }
+        }
+        setRunning(false)
+    }
+
+    function proposeCoverage() {
+        if (!scopeCountry.trim()) { toast("Enter a country code first", {}); return }
+        fetch(`${API_BASE}/api/imagery/propose-coverage`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ country_code: scopeCountry.trim() }),
+        }).then((r) => r.json()).then((res) => {
+            toast(`${res.created} proposed AOI(s) added — ${res.note}`, {})
+            loadAois()
+        })
+    }
+
+    function acceptAoi(aoi) {
+        fetch(`${API_BASE}/api/imagery/aois/${aoi.system_id}/accept`, { method: "POST" }).then(() => { toast("AOI accepted — real scan loop started", { icon: "i-check" }); loadAois() })
+    }
+
+    function locate(aoi) {
+        const lat = (aoi.bbox.min_lat + aoi.bbox.max_lat) / 2, lon = (aoi.bbox.min_lon + aoi.bbox.max_lon) / 2
+        window.dispatchEvent(new CustomEvent("akili:open-map"))
+        setTimeout(() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat, lon, altitude: 200000 } })), 50)
+    }
+
+    function confirmDet(id) {
+        fetch(`${API_BASE}/api/imagery/detections/${id}/confirm`, { method: "POST" }).then(() => {
+            fetch(`${API_BASE}/api/imagery/scenes/${selectedScanId}`).then((r) => r.json()).then(setScene)
+        })
+    }
+    function rejectDet(id) {
+        fetch(`${API_BASE}/api/imagery/detections/${id}/reject`, { method: "POST" }).then(() => {
+            fetch(`${API_BASE}/api/imagery/scenes/${selectedScanId}`).then((r) => r.json()).then(setScene)
+        })
+    }
+
+    function addToBriefingScene() {
+        if (!scene) return
+        addToBriefing(scene.scan.scan_id, `Sentinel scan — ${scene.zone.name}`)
+        toast("Added to briefing basket", { icon: "i-check" })
+    }
+    function raiseSignal() {
+        if (!scene || !selectedDet) { toast("Select a detection first", {}); return }
+        confirmDet(selectedDet.id)
+        toast(`Raised: ${selectedDet.label} confirmed as a real finding`, { icon: "i-check" })
+    }
+
+    // Fade-under: writes opacity directly on the clip element ref, no
+    // re-render, so dragging stays smooth (§B4's literal requirement).
+    function onFadeSlider(e) {
+        const v = Number(e.target.value)
+        setFadeOpacity(v)
+        if (fadeRef.current) fadeRef.current.style.opacity = fadeOn ? v / 100 : 1
+    }
+    function onSwipeDrag(e) {
+        const rect = e.currentTarget.getBoundingClientRect()
+        function onMove(ev) {
+            const pct = Math.max(0, Math.min(100, ((ev.clientX - rect.x) / rect.width) * 100))
+            setSwipePos(pct)
+        }
+        function onUp() { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp) }
+        window.addEventListener("pointermove", onMove)
+        window.addEventListener("pointerup", onUp)
+    }
+
+    const changes = (scene?.changes || []).filter((c) => c.conf >= confFloor && kinds[c.type] !== false && !(c.type === "removed" && !kinds.removed))
+    const visibleChanges = changes.filter((c) => !(c.suppressed && c.reviewed_status === "pending"))
+
+    return (
+        <div style={{ display: "grid", gridTemplateColumns: "250px 1fr 330px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
+            {/* Left — observation areas */}
+            <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div className="field"><label>Scope (country code)</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        <input className="input" style={{ flex: 1 }} value={scopeCountry} onChange={(e) => setScopeCountry(e.target.value)} placeholder="e.g. US" />
+                        <button className="btn sm" onClick={proposeCoverage}>propose</button>
+                    </div>
+                </div>
+                <div>
+                    <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Areas</div>
+                    {aois.map((a) => (
+                        <div key={a.system_id} role="button" onClick={() => setSelectedAoi(a)}
+                            style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: selectedAoi?.system_id === a.system_id ? "var(--bg-2)" : "transparent", opacity: a.status === "proposed" ? 0.55 : 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <svg className="icon sm"><use href={`#${AOI_CLASS_ICON[a.aoi_class] || "i-pin"}`} /></svg>
+                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>{a.name}</span>
+                            </div>
+                            <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}>{a.system_id} · {a.aoi_class} · {(a.bbox.max_lon - a.bbox.min_lon).toFixed(1)}°</div>
+                            <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-3)" }}>{a.status === "proposed" ? "proposed" : `every ${a.scan_interval_hours}h`}</div>
+                        </div>
+                    ))}
+                </div>
+                {selectedAoi && (
+                    <div>
+                        <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Scenes</div>
+                        {scenes.length === 0 ? <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>No real scenes ingested yet.</div> : scenes.map((s) => (
+                            <div key={s.scan_id} role="button" onClick={() => setSelectedScanId(s.scan_id)}
+                                style={{ padding: "3px 0", font: "400 11px var(--font)", color: selectedScanId === s.scan_id ? "var(--txt)" : "var(--txt-3)", cursor: "pointer" }}>
+                                {fmtDate(s.image_timestamp_utc)} · {s.status}{s.status === "completed" ? ` · ${s.result_summary?.total_detections ?? 0} det` : ""}
+                            </div>
+                        ))}
+                        <div className="field" style={{ marginTop: 10 }}><label>Confidence floor — {confFloor.toFixed(2)}</label>
+                            <input type="range" min={0} max={1} step={0.05} value={confFloor} onChange={(e) => setConfFloor(Number(e.target.value))} />
+                        </div>
+                        <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+                            {["new", "expanded", "removed"].map((k) => (
+                                <label key={k} style={{ display: "flex", alignItems: "center", gap: 5, font: "400 11px var(--font)", color: "var(--txt-2)" }}>
+                                    <input type="checkbox" className="check" checked={kinds[k]} onChange={(e) => setKinds((p) => ({ ...p, [k]: e.target.checked }))} />{k}
+                                </label>
+                            ))}
+                        </div>
+                        <button className="btn primary sm" style={{ marginTop: 10, width: "100%" }} disabled={running} onClick={reRunDetection}>
+                            {running ? "running…" : "re-run detection"}
+                        </button>
+                        {running && <div style={{ height: 2, background: "var(--bg-3)", marginTop: 6 }}><div style={{ height: "100%", width: "60%", background: "var(--acc-hi)", animation: "imgpulse 1.2s ease-in-out infinite" }} /></div>}
+                    </div>
+                )}
+            </div>
+
+            {/* Centre — comparison */}
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <div style={{ height: 32, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 10, padding: "0 10px" }}>
+                    <span style={{ font: "400 11px var(--mono)", color: "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {scene ? `${scene.scan.scan_id.slice(0, 8)} · ${scene.zone.name} · ${fmtDate(scene.reference_date)} → ${fmtDate(scene.scan.image_timestamp_utc)} · Sentinel-2 optical` : "No scene selected"}
+                    </span>
+                    <div style={{ flex: 1 }} />
+                    <div className="seg">{["split", "swipe", "after"].map((v) => <button key={v} aria-pressed={view === v} onClick={() => setView(v)}>{v}</button>)}</div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 5, font: "400 11px var(--font)", color: "var(--txt-2)" }}>
+                        <input type="checkbox" className="check" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} />boxes
+                    </label>
+                    {view === "swipe" && (
+                        <>
+                            <label style={{ display: "flex", alignItems: "center", gap: 5, font: "400 11px var(--font)", color: "var(--txt-2)" }}>
+                                <input type="checkbox" className="check" checked={fadeOn} onChange={(e) => { setFadeOn(e.target.checked); if (fadeRef.current) fadeRef.current.style.opacity = e.target.checked ? fadeOpacity / 100 : 1 }} />fade under
+                            </label>
+                            <input type="range" min={0} max={100} value={fadeOpacity} onChange={onFadeSlider} style={{ width: 70, opacity: fadeOn ? 1 : 0.4, pointerEvents: fadeOn ? "auto" : "none" }} />
+                        </>
+                    )}
+                    <button className="btn sm" onClick={raiseSignal}>raise signal</button>
+                    <button className="btn sm" onClick={addToBriefingScene}>add to briefing</button>
+                </div>
+
+                <div style={{ flex: 1, overflow: "auto", padding: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {!scene ? (
+                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Select an area with a real completed scene.</div>
+                    ) : scene.scan.status !== "completed" ? (
+                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Not yet detected for this scene — run "re-run detection" to call the real detector.</div>
+                    ) : (
+                        <Comparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
+                            swipePos={swipePos} onSwipeDrag={onSwipeDrag} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
+                            clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet} />
+                    )}
+                </div>
+            </div>
+
+            {/* Right — AOI editor + detections */}
+            <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto", padding: 12 }}>
+                {selectedAoi && <AoiEditor aoi={selectedAoi} onSaved={loadAois} onAccept={() => acceptAoi(selectedAoi)} onLocate={() => locate(selectedAoi)} onDeleted={loadAois} />}
+                <div style={{ marginTop: 16 }}>
+                    <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Detections</div>
+                    {!scene || visibleChanges.length === 0 ? (
+                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>{scene?.scan?.status === "completed" ? "No detections in this scene." : "Not yet detected."}</div>
+                    ) : visibleChanges.map((c) => (
+                        <div key={c.id} role="button" onClick={() => setSelectedDet(c)}
+                            style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: selectedDet?.id === c.id ? "var(--bg-2)" : "transparent" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>{c.label} · {c.type}</span>
+                                <span style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{Math.round(c.conf * 100)}%</span>
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
+                                <span style={{ font: "400 10px var(--font)", color: c.reviewed_status === "confirmed" ? "var(--delta-better)" : c.reviewed_status === "rejected" ? "var(--delta-worse)" : "var(--txt-4)" }}>{c.reviewed_status}</span>
+                                <div style={{ display: "flex", gap: 4 }}>
+                                    <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); confirmDet(c.id) }}>confirm</button>
+                                    <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); rejectDet(c.id) }}>reject</button>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                {scene && (
+                    <div style={{ marginTop: 16 }}>
+                        <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Object counts — reference → current</div>
+                        <div className="statgrid">
+                            {scene.counts.length === 0 ? (
+                                <div className="stat"><span className="value">—</span><span className="label">no reference scan yet</span></div>
+                            ) : scene.counts.map(([label, current, delta]) => (
+                                <div className="stat" key={label}>
+                                    <span className="value">{current}</span>
+                                    <span className={`delta ${delta > 0 ? "worse" : delta < 0 ? "better" : ""}`} style={{ fontFamily: "var(--mono)" }}>{delta > 0 ? "+" : ""}{delta}</span>
+                                    <span className="label">{label}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+            <style>{"@keyframes imgpulse{0%,100%{opacity:.5}50%{opacity:1}}"}</style>
+        </div>
+    )
+}
+
+function Comparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet }) {
+    const refSrc = scene.reference_image_b64 ? `data:image/jpeg;base64,${scene.reference_image_b64}` : null
+    const curSrc = scene.image_b64 ? `data:image/jpeg;base64,${scene.image_b64}` : null
+
+    function Boxes({ onCurrentOnly }) {
+        if (!showBoxes) return null
+        return changes.map((c) => (
+            <div key={c.id} role="button" onClick={(e) => { e.stopPropagation(); onSelectDet(c) }}
+                title={`${c.label} · ${Math.round(c.conf * 100)}%`}
+                style={{
+                    position: "absolute", left: `${c.bbox[0] * 100}%`, top: `${c.bbox[1] * 100}%`,
+                    width: `${c.bbox[2] * 100}%`, height: `${c.bbox[3] * 100}%`, minWidth: 10, minHeight: 10,
+                    outline: `1.2px ${c.type === "removed" ? "dashed" : "solid"} ${c.type === "new" ? "var(--sev-high)" : c.type === "removed" ? "var(--sev-critical)" : "var(--acc-hi)"}`,
+                    background: selectedDet?.id === c.id ? "rgba(95,149,208,0.12)" : "transparent", cursor: "pointer",
+                }}
+            >
+                <span style={{ position: "absolute", top: -14, left: 0, font: "400 9px var(--mono)", color: "var(--txt)", background: "var(--bg-0)", padding: "0 2px", whiteSpace: "nowrap" }}>
+                    {c.id.slice(0, 8)} · {Math.round(c.conf * 100)}%
+                </span>
+            </div>
+        ))
+    }
+
+    if (view === "after") {
+        return (
+            <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%" }}>
+                {curSrc ? <img src={curSrc} alt="current scene" style={{ display: "block", maxWidth: "100%", maxHeight: "70vh" }} /> : <EmptyFrame />}
+                <Boxes />
+            </div>
+        )
+    }
+    if (view === "swipe") {
+        return (
+            <div style={{ position: "relative", maxWidth: "100%", cursor: "ew-resize" }} onPointerDown={onSwipeDrag}>
+                {refSrc ? <img src={refSrc} alt="reference" style={{ display: "block", maxWidth: "100%", maxHeight: "70vh", filter: fadeOn ? "grayscale(.35)" : "none" }} /> : <EmptyFrame />}
+                <div ref={clipRef} style={{ position: "absolute", inset: 0, clipPath: `inset(0 ${100 - swipePos}% 0 0)` }}>
+                    <div ref={fadeRef} style={{ opacity: fadeOn ? fadeOpacity / 100 : 1 }}>
+                        {curSrc ? <img src={curSrc} alt="current" style={{ display: "block", maxWidth: "100%", maxHeight: "70vh" }} /> : <EmptyFrame />}
+                        <Boxes />
+                    </div>
+                </div>
+                <div style={{ position: "absolute", top: 0, bottom: 0, left: `${swipePos}%`, width: 2, background: "var(--acc-hi)" }} />
+            </div>
+        )
+    }
+    return (
+        <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ position: "relative" }}>
+                <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginBottom: 3 }}>Reference · {fmtDate(scene.reference_date)}</div>
+                {refSrc ? <img src={refSrc} alt="reference" style={{ display: "block", maxWidth: 420, maxHeight: "60vh" }} /> : <EmptyFrame />}
+            </div>
+            <div style={{ position: "relative" }}>
+                <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginBottom: 3 }}>Current · {fmtDate(scene.scan.image_timestamp_utc)}</div>
+                {curSrc ? <img src={curSrc} alt="current" style={{ display: "block", maxWidth: 420, maxHeight: "60vh" }} /> : <EmptyFrame />}
+                <div style={{ position: "absolute", top: 18, left: 0, right: 0, bottom: 0 }}><Boxes /></div>
+            </div>
+        </div>
+    )
+}
+
+function EmptyFrame() {
+    return <div style={{ width: 400, height: 300, background: "var(--bg-2)", display: "flex", alignItems: "center", justifyContent: "center", font: "400 11px var(--font)", color: "var(--txt-4)" }}>No real image persisted for this scene</div>
+}
+
+function AoiEditor({ aoi, onSaved, onAccept, onLocate, onDeleted }) {
+    const [name, setName] = useState(aoi.name)
+    const [cls, setCls] = useState(aoi.aoi_class)
+    const [cadenceH, setCadenceH] = useState(aoi.scan_interval_hours)
+    const [notes, setNotes] = useState(aoi.description || "")
+    const [owner, setOwner] = useState(aoi.owner || "")
+    useEffect(() => { setName(aoi.name); setCls(aoi.aoi_class); setCadenceH(aoi.scan_interval_hours); setNotes(aoi.description || ""); setOwner(aoi.owner || "") }, [aoi.system_id])
+
+    function save() {
+        fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, {
+            method: "PUT", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, aoi_class: cls, scan_interval_hours: cadenceH, description: notes, owner }),
+        }).then(() => { toast("Area saved", { icon: "i-check" }); onSaved() })
+    }
+    function togglePause() {
+        fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, {
+            method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: aoi.status !== "active", status: aoi.status === "active" ? "paused" : "active" }),
+        }).then(() => onSaved())
+    }
+    function del() {
+        fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, { method: "DELETE" }).then(() => onDeleted())
+    }
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="field"><label>Name</label><input className="input" value={name} onChange={(e) => setName(e.target.value)} /></div>
+            <div className="field"><label>Class</label>
+                <select className="input" value={cls} onChange={(e) => setCls(e.target.value)}>{AOI_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+            </div>
+            <div className="field"><label>Cadence (hours)</label><input className="input" type="number" value={cadenceH} onChange={(e) => setCadenceH(Number(e.target.value))} /></div>
+            <div className="field"><label>Owner</label><input className="input" value={owner} onChange={(e) => setOwner(e.target.value)} /></div>
+            <div className="field"><label>Standing note</label><textarea className="input" style={{ minHeight: 50 }} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+            <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>Status: {aoi.status}</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button className="btn primary sm" onClick={save}>save area</button>
+                {aoi.status === "proposed" ? (
+                    <button className="btn sm" onClick={onAccept}>accept</button>
+                ) : (
+                    <button className="btn sm" onClick={togglePause}>{aoi.status === "active" ? "pause" : "resume"}</button>
+                )}
+                <button className="btn sm" onClick={onLocate}>locate</button>
+                <button className="btn danger sm" onClick={del}>delete</button>
+            </div>
+        </div>
+    )
+}

@@ -87,6 +87,7 @@ class SentinelScanner:
                     raw_result_json=json.dumps(result["raw_result"]) if result.get("raw_result") is not None else None,
                     alert_fired=bool(result.get("alert_fired", False)),
                     error_message=result.get("error_message"),
+                    image_b64=result.get("image_b64"),
                 )
                 db.add(scan_row)
 
@@ -128,6 +129,27 @@ class SentinelScanner:
             print(f"[sentinel-scanner] scan {scan_id} zone={system_id} triggered_by={triggered_by} "
                   f"status={result['status']} detections={len(detections)}"
                   + (f" error={result.get('error_message')}" if result["status"] == "error" else ""))
+
+            # Real route-to-Inbox (§B7 step 7) — a qualifying finding (any
+            # critical/high-severity real detection, or one this scan's own
+            # detector flagged "immediate") becomes a real Alert, source
+            # 'SAT-TASK', through the same write_alert() funnel every other
+            # real alert path uses — not a parallel/fake notification.
+            try:
+                qualifying = [d for d in detections if d.get("severity") in ("critical", "high") or d.get("alert_tier") == "immediate"]
+                if qualifying:
+                    import main as _m
+                    for d in qualifying[:5]:  # cap — one scan shouldn't flood the Inbox
+                        _m.write_alert({
+                            "source": "SAT-TASK", "alert_type": f"Sentinel {d.get('object_type', 'detection')}",
+                            "title": f"⚠ Sentinel scan: {d.get('object_type', 'object')} detected in {system_id}",
+                            "severity": d.get("severity", "medium"),
+                            "lat": d.get("centroid_lat"), "lon": d.get("centroid_lon"),
+                            "entity_type": d.get("object_type"), "region": None,
+                            "raw_json": {"scan_id": scan_id, "zone_id": system_id, "detection": d},
+                        })
+            except Exception as e:
+                print(f"[sentinel-scanner] SAT-TASK routing failed for scan {scan_id}: {e}")
         except Exception as e:
             print(f"[sentinel-scanner] failed to persist scan {scan_id} for zone={system_id}: {e}")
 
@@ -211,6 +233,14 @@ class SentinelScanner:
             return {"status": "error", "error_message": f"could not decode fetched image: {e}", **base_meta}
 
         images = {"true_colour": tc_image}
+
+        # Persist the real fetched crop (base64) — the Imagery page's
+        # comparison view needs an actual image to render; nothing
+        # previously stored the fetched bytes anywhere.
+        import base64
+        jpeg_buf = io.BytesIO()
+        tc_image.save(jpeg_buf, format="JPEG", quality=87)
+        base_meta["image_b64"] = base64.b64encode(jpeg_buf.getvalue()).decode("ascii")
 
         # -- 3. Run real detection tasks --
         by_type: dict = {}

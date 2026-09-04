@@ -17026,6 +17026,9 @@ def _zone_row_to_dict(row) -> dict:
         "ml_tasks":             _json_wz.loads(row.ml_tasks) if isinstance(row.ml_tasks, str) else (row.ml_tasks or []),
         "alert_threshold":      row.alert_threshold,
         "metadata":             _json_wz.loads(row.zone_metadata) if row.zone_metadata else {},
+        "aoi_class":            getattr(row, "aoi_class", None) or "custom",
+        "status":               getattr(row, "status", None) or ("active" if row.enabled else "paused"),
+        "owner":                getattr(row, "owner", None),
     }
 
 
@@ -17071,6 +17074,7 @@ def _scan_row_to_dict(row) -> dict:
         "result_summary":       summary,
         "alert_fired":          row.alert_fired,
         "error_message":        row.error_message,
+        "has_image":            bool(getattr(row, "image_b64", None)),
     }
 
 
@@ -17107,6 +17111,7 @@ def _detection_row_to_dict(row) -> dict:
         "nearest_port":            row.nearest_port,
         "nearest_infrastructure":  row.nearest_infrastructure,
         "nearest_chokepoint":      row.nearest_chokepoint,
+        "reviewed_status":         getattr(row, "reviewed_status", None) or "pending",
         "created_at":              row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -17228,6 +17233,12 @@ def api_watch_zone_update(system_id: str, body: dict):
             zone.ml_tasks = _json_wz.dumps(body["ml_tasks"])
         if "alert_threshold" in body:
             zone.alert_threshold = body["alert_threshold"]
+        if "aoi_class" in body:
+            zone.aoi_class = body["aoi_class"]
+        if "status" in body:
+            zone.status = body["status"]
+        if "owner" in body:
+            zone.owner = body["owner"]
         if "metadata" in body:
             zone.zone_metadata = _json_wz.dumps(body["metadata"])
 
@@ -17523,6 +17534,112 @@ async def api_dossiers_set_alerting(entity_type: str, code: str, request: Reques
         pref.enabled = bool(body.get("enabled", True))
         db.commit()
         return {"entity_type": entity_type, "code": code, "alerting_enabled": pref.enabled}
+
+
+@app.get("/api/imagery/aois")
+def api_imagery_aois(status: str = None):
+    """Real AOIs — WatchZone rows, optionally filtered by real status
+    (active|paused|proposed). Maps onto the existing real WatchZone model
+    (see backend/database.py) rather than a second parallel AOI table."""
+    from database import WatchZone, get_db as _gdb_im1
+    with _gdb_im1() as db:
+        q = db.query(WatchZone)
+        if status:
+            q = q.filter(WatchZone.status == status)
+        return [_zone_row_to_dict(z) for z in q.order_by(WatchZone.created_at.desc()).all()]
+
+
+@app.post("/api/imagery/propose-coverage")
+async def api_imagery_propose_coverage(request: Request):
+    """§B3 — real proposed AOIs derived from the real Airport register for
+    a given country (backend/imagery_pipeline.py). Ports/military/energy
+    are honestly disclosed as unavailable rather than proposed from
+    invented data."""
+    body = await request.json()
+    country_code = (body.get("country_code") or "").strip()
+    if not country_code:
+        raise HTTPException(400, "country_code is required")
+    import imagery_pipeline
+    from database import get_db as _gdb_im2
+    with _gdb_im2() as db:
+        return imagery_pipeline.propose_coverage(db, country_code, created_by=body.get("created_by") or "operator")
+
+
+@app.post("/api/imagery/aois/{system_id}/accept")
+def api_imagery_accept_aoi(system_id: str):
+    """Promotes a real proposed AOI to active and starts its real scan
+    loop (the existing scheduler already only scans enabled=True zones —
+    no separate 'loop' to start beyond flipping these two real fields)."""
+    from database import WatchZone, get_db as _gdb_im3
+    with _gdb_im3() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not zone:
+            raise HTTPException(404, f"AOI {system_id} not found")
+        zone.status = "active"
+        zone.enabled = True
+        zone.next_scan_at = datetime.utcnow()
+        db.commit()
+        return _zone_row_to_dict(zone)
+
+
+@app.get("/api/imagery/scenes/{scan_id}")
+def api_imagery_scene(scan_id: str):
+    """Real scene detail for the Imagery comparison view: the real persisted
+    image, real scene metadata, and the real comparison against its real
+    reference scan (backend/imagery_pipeline.compare_scans) — percent-of-
+    frame boxes, per-class count deltas, new/existing/removed
+    classification, persistent-false-positive flags. Never fabricated when
+    no detection has run yet — this path only exists after a real
+    completed scan, and the frontend shows an honest empty state otherwise."""
+    from database import SentinelScan, WatchZone, get_db as _gdb_im4
+    import imagery_pipeline
+    with _gdb_im4() as db:
+        scan = db.query(SentinelScan).filter(SentinelScan.scan_id == scan_id).first()
+        if not scan:
+            raise HTTPException(404, f"scene {scan_id} not found")
+        zone = db.query(WatchZone).filter(WatchZone.id == scan.zone_id).first()
+        if not zone:
+            raise HTTPException(500, f"scene {scan_id}'s zone no longer exists")
+        comparison = imagery_pipeline.compare_scans(db, zone, scan) if scan.status == "completed" else {
+            "reference_scan_id": None, "reference_date": None, "counts": [], "changes": [],
+        }
+        ref_image_b64 = None
+        if comparison.get("reference_scan_id"):
+            ref_row = db.query(SentinelScan).filter(SentinelScan.scan_id == comparison["reference_scan_id"]).first()
+            ref_image_b64 = ref_row.image_b64 if ref_row else None
+        return {
+            "scan": _scan_row_to_dict(scan), "image_b64": scan.image_b64,
+            "reference_image_b64": ref_image_b64,
+            "zone": _zone_row_to_dict(zone),
+            **comparison,
+        }
+
+
+@app.post("/api/imagery/detections/{detection_id}/confirm")
+def api_imagery_confirm_detection(detection_id: str):
+    """Real analyst feedback — genuinely persisted (not a cosmetic UI
+    toggle): reviewed_status is read by imagery_pipeline.compare_scans'
+    reference-count comparison for every later scan of this zone."""
+    from database import SentinelDetection, get_db as _gdb_im5
+    with _gdb_im5() as db:
+        d = db.query(SentinelDetection).filter(SentinelDetection.detection_id == detection_id).first()
+        if not d:
+            raise HTTPException(404, f"detection {detection_id} not found")
+        d.reviewed_status = "confirmed"
+        db.commit()
+        return _detection_row_to_dict(d)
+
+
+@app.post("/api/imagery/detections/{detection_id}/reject")
+def api_imagery_reject_detection(detection_id: str):
+    from database import SentinelDetection, get_db as _gdb_im6
+    with _gdb_im6() as db:
+        d = db.query(SentinelDetection).filter(SentinelDetection.detection_id == detection_id).first()
+        if not d:
+            raise HTTPException(404, f"detection {detection_id} not found")
+        d.reviewed_status = "rejected"
+        db.commit()
+        return _detection_row_to_dict(d)
 
 
 @app.post("/api/watch-zones/{system_id}/scan-now")

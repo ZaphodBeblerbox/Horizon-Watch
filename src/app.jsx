@@ -49,6 +49,7 @@ import HealthPanel from "./components/HealthPanel.jsx"
 import Analytics from "./destinations/Analytics.jsx"
 import Dossiers from "./destinations/Dossiers.jsx"
 import Ontology from "./destinations/Ontology.jsx"
+import Imagery from "./destinations/Imagery.jsx"
 import API_BASE from "./apiBase.js"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import { loadSettings } from "./components/PreferencesPanel.jsx"
@@ -1578,7 +1579,7 @@ export default function App() {
 
                 {tabs.some(t => t.type === "imagery") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "imagery" ? "flex" : "none", flexDirection: "column" }}>
-                        <PlaceholderModule label="Imagery" roundNote="it's a genuinely new module built in Stage 9, mapping onto the real Sentinel/Overwatch pipeline" />
+                        <Imagery onOpenGenerate={() => openTab("generate")} />
                     </div>
                 )}
 
