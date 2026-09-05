@@ -17,7 +17,7 @@ import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
 import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import GlobeAnnotationLayer     from "../globe/GlobeAnnotationLayer.jsx"
-import GlobeDirectorLayer       from "../globe/GlobeDirectorLayer.jsx"
+import GlobeReplayLayer         from "../globe/GlobeReplayLayer.jsx"
 import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
 import GlobeThreatHeatmapLayer  from "../globe/GlobeThreatHeatmapLayer.jsx"
 import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
@@ -133,8 +133,6 @@ export default function GlobeView({
     eventsMinRelevance = 4,
     precisionEventsEnabled = true,
     autoModeEnabled = false,
-    // Director Mode scene (null when inactive)
-    directorScene = null,
     // Data props (optional — GlobeView fetches internally when null)
     aisVessels:   externalAIS  = null,
     adsbAircraft: externalADSB = null,
@@ -564,9 +562,6 @@ export default function GlobeView({
                 {/* ── Passive auto mode ────────────────────────────────────────── */}
                 <GlobeAutoMode enabled={autoModeEnabled} isMobile={isMobile} />
 
-                {/* ── Director Mode 3D rendering ──────────────────────────────── */}
-                <GlobeDirectorLayer scene={directorScene} />
-
                 <CameraFlyTo
                     destination={initialDestination}
                     duration={0}
@@ -580,6 +575,10 @@ export default function GlobeView({
             {/* Real annotation drawing (select/marker/route/area/measure) —
                 same real viewerRef pattern as GlobePopup above. */}
             <GlobeAnnotationLayer viewerRef={viewerRef} tool={annotationTool} isVisible={isVisible} />
+
+            {/* "Replay on map" flagship animation — see src/services/
+                replayOnMap.js. Same real viewerRef pattern as above. */}
+            <GlobeReplayLayer viewerRef={viewerRef} isVisible={isVisible} />
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
             {cesiumViewer && (

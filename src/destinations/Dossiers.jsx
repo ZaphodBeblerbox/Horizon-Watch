@@ -4,6 +4,7 @@ import { area as d3area, curveMonotoneX } from "d3-shape"
 import API_BASE from "../apiBase.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
+import { replayOnMap } from "../services/replayOnMap.js"
 
 // Dossiers — page-by-page rebuild, §8.4. Genuinely new module (no prior
 // implementation existed — only a PlaceholderModule). Layout 238px/1fr/292px,
@@ -174,6 +175,11 @@ function HistoryTab({ profile }) {
                     <div className="evrow" key={s.id}>
                         <span className={`dia ${s.severity === "medium" ? "moderate" : s.severity === "info" ? "low" : s.severity}`} />
                         <div><div className="title">{s.title}</div><div className="meta"><span>{s.domain}</span></div></div>
+                        {s.lat != null && s.lon != null && (
+                            <button className="btn ghost sm" title="Replay on map" onClick={(e) => { e.stopPropagation(); replayOnMap({ lat: s.lat, lon: s.lon, publishedAt: s.created_at, title: s.title, severity: s.severity }) }} style={{ padding: 2 }}>
+                                <svg className="icon sm"><use href="#i-clock" /></svg>
+                            </button>
+                        )}
                         <span className="time">{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
                     </div>
                 ))}
@@ -390,6 +396,11 @@ export default function Dossiers({ onOpenGenerate }) {
                             <div className="evrow" key={s.id}>
                                 <span className={`dia ${s.severity === "medium" ? "moderate" : s.severity === "info" ? "low" : s.severity}`} />
                                 <div><div className="title">{s.title}</div><div className="meta"><span>{s.domain} · {s.distance_km}km</span></div></div>
+                                {s.lat != null && s.lon != null && (
+                                    <button className="btn ghost sm" title="Replay on map" onClick={(e) => { e.stopPropagation(); replayOnMap({ lat: s.lat, lon: s.lon, publishedAt: s.created_at, title: s.title, severity: s.severity }) }} style={{ padding: 2 }}>
+                                        <svg className="icon sm"><use href="#i-clock" /></svg>
+                                    </button>
+                                )}
                                 <span className="time">{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
                             </div>
                         ))}

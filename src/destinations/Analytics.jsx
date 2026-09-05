@@ -5,6 +5,7 @@ import API_BASE from "../apiBase.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { applyTransition } from "../utils/rafTransition.js"
+import { replayOnMap } from "../services/replayOnMap.js"
 
 // Analytics — page-by-page rebuild. Full-width, single-column module (no
 // side panes), rebuilt onto the real design system per the Exact Replication
@@ -420,7 +421,16 @@ function SignalsTable({ rows, onBriefAll }) {
                                             {row.severity}
                                         </span>
                                     </td>
-                                    <td className="title"><div>{row.title}</div></td>
+                                    <td className="title">
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                            <span>{row.title}</span>
+                                            {row.lat != null && row.lon != null && (
+                                                <button className="btn ghost sm" title="Replay on map" onClick={(e) => { e.stopPropagation(); replayOnMap({ lat: row.lat, lon: row.lon, publishedAt: row.created_at, title: row.title, severity: row.severity }) }} style={{ padding: 2, flexShrink: 0 }}>
+                                                    <svg className="icon sm"><use href="#i-clock" /></svg>
+                                                </button>
+                                            )}
+                                        </div>
+                                    </td>
                                     <td>{DOMAIN_LABELS[row.domain] || row.domain}</td>
                                     <td>{row.region}</td>
                                     <td style={{ fontFamily: "var(--mono)" }}>{formatTime(row.created_at)}</td>

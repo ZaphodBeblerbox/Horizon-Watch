@@ -12,10 +12,14 @@
 //                 Analytics.jsx), backed by GET /api/analytics/overview
 //   Generate   -> rebuilt (src/reports/Generate.jsx) — real 3-column run
 //                 screen with a live 7-step checklist, replacing ReportsPage
-//   Replay     -> Stage 7, placeholder — was the "Director Mode"
-//                 tools-flyout toggle, not yet rebuilt to lanes/playhead
-//   Ontology   -> Stage 8, placeholder — genuinely new, doesn't exist yet
-//   Imagery    -> Stage 9, placeholder — genuinely new, doesn't exist yet
+//   Replay     -> rebuilt (src/destinations/Replay.jsx) — real timeline
+//                 ruler/lanes/playhead/transport over GET /api/analytics/
+//                 timeline, replacing the old "Director Mode" tools-flyout
+//                 (deleted in full, see src/services/replayOnMap.js)
+//   Ontology   -> rebuilt (src/destinations/Ontology.jsx) — fixed four-tier
+//                 diagram backed by GET /api/ontology/diagram
+//   Imagery    -> rebuilt (src/destinations/Imagery.jsx) — real satellite
+//                 change-detection UI wired to the Sentinel/YOLO-OBB pipeline
 //   Briefings  -> rebuilt (src/reports/Briefings.jsx) — the real interactive
 //                 reader/editor, genuinely split from Generate; the print
 //                 layout (src/reports/PrintLayout.jsx) is the shared hidden
@@ -26,9 +30,9 @@ export const MODULES = [
     { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: true },
     { key: "analytics", label: "Analytics", icon: "i-chart",   built: true },
     { key: "generate",  label: "Generate",  icon: "i-spark", built: true },
-    { key: "replay",    label: "Replay",    icon: "i-clock",    built: false },
-    { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: false },
-    { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: false },
+    { key: "replay",    label: "Replay",    icon: "i-clock",    built: true },
+    { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: true },
+    { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: true },
     { key: "briefings", label: "Briefings", icon: "i-read",    built: true },
 ]
 

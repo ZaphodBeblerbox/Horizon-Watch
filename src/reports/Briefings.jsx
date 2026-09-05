@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react"
 import { getReport, getReportSections, patchReport, listReports } from "./reportApi.js"
 import DocumentRenderer, { allEvidenceClaims } from "./DocumentRenderer.jsx"
 import MiniMap from "./MiniMap.jsx"
+import { replayOnMap } from "../services/replayOnMap.js"
 
 const WALKTHROUGH_INTERVAL_MS = 3600
 
@@ -27,12 +28,20 @@ function ReferenceActions({ claim, kind }) {
     }
     function openInInbox() { window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "inbox" } })) }
 
+    // Replay's shared "Replay on map" animation (src/services/replayOnMap.js)
+    // — same function Replay.jsx's own row selection and any other signal
+    // row in the app calls, never a second implementation. A report claim
+    // carries no real timestamp (see backend/report_sections.py's claim
+    // shape), so this plays an honest fly-to + single ping with no real
+    // lead-up walk rather than fabricating one relative to a fake "now".
+    function animateLeadUp() { replayOnMap({ lat: claim.lat, lon: claim.lon, title: claim.text }) }
+
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {hasCoord && <button className="btn sm" onClick={openOnMap}>open on map</button>}
             {kind === "signal" && <button className="btn sm" onClick={openInInbox}>open in inbox</button>}
-            {kind === "signal" && (
-                <button className="btn sm" disabled title="Not built yet — no lead-up track replay exists for this signal type">animate lead-up</button>
+            {kind === "signal" && hasCoord && (
+                <button className="btn sm" onClick={animateLeadUp} title="No real prior-signal timestamp on this claim, so this flies in and pings without a lead-up walk">animate lead-up</button>
             )}
             {kind === "scene" && (
                 <button className="btn sm" disabled title="Change-detection viewer not built yet — see the Imagery module">open change detection</button>
