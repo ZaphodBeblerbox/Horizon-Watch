@@ -9412,6 +9412,88 @@ async def pin_alert(alert_id: str, user=None):
     return JSONResponse({"error": "Alert not found"}, status_code=404)
 
 
+# Real human-workflow state for the mobile companion's Alerts tab (and any
+# future console use) — unlike classify_alert()/pin_alert() above (in-memory
+# only, lost on restart), these persist to the real Alert DB row's own
+# status/acknowledged_at/acknowledged_by columns (database.py's Alert model
+# already had them, unused by any endpoint until now) as well as updating
+# the in-memory _forge_alerts copy every GET already reads from, so the
+# change is both durable and immediately visible without a restart.
+@app.post("/api/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: str, request: Request):
+    from database import Alert as _AlertRow, get_db as _gdb_ack
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    by = (body or {}).get("by") or "operator"
+    now = datetime.utcnow()
+    # Real finding, live: _forge_alerts (the in-memory list every GET reads)
+    # is the authoritative "does this alert exist right now" — confirmed
+    # live that a real, currently-active alert can have no backing Alert DB
+    # row at all (not every detection path persists one). Requiring a DB row
+    # first would 404 on real, valid alerts, so the in-memory list is
+    # checked first; the DB row is updated too when one exists, best-effort,
+    # never blocking on its absence.
+    in_memory_hit = None
+    for alert in _forge_alerts:
+        if alert.get("id") == alert_id:
+            alert["status"] = "acknowledged"
+            alert["acknowledged_at"] = now.isoformat()
+            alert["acknowledged_by"] = by
+            in_memory_hit = alert
+            break
+    with _gdb_ack() as db:
+        row = db.query(_AlertRow).filter(_AlertRow.alert_id == alert_id).first()
+        if row:
+            row.status = "acknowledged"
+            row.acknowledged_at = now
+            row.acknowledged_by = by
+            db.commit()
+    if not in_memory_hit and not row:
+        return JSONResponse({"error": "Alert not found"}, status_code=404)
+    return {"status": "ok", "acknowledged_at": now.isoformat(), "acknowledged_by": by}
+
+
+@app.post("/api/alerts/{alert_id}/escalate")
+async def escalate_alert(alert_id: str, request: Request):
+    """Real escalation flag — reuses the Alert row's own real `tags` JSON
+    column (already there for exactly this kind of analyst-set label)
+    rather than a new schema column for a single boolean."""
+    from database import Alert as _AlertRow, get_db as _gdb_esc
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    by = (body or {}).get("by") or "operator"
+    # Same real fix as acknowledge_alert() above — _forge_alerts is checked
+    # first since not every real, currently-active alert has a backing
+    # Alert DB row.
+    in_memory_hit = None
+    for alert in _forge_alerts:
+        if alert.get("id") == alert_id:
+            tags = alert.get("tags") or []
+            if "escalated" not in tags:
+                tags.append("escalated")
+            alert["tags"] = tags
+            alert["escalated_by"] = by
+            in_memory_hit = alert
+            break
+    with _gdb_esc() as db:
+        row = db.query(_AlertRow).filter(_AlertRow.alert_id == alert_id).first()
+        if row:
+            tags = json.loads(row.tags or "[]")
+            if "escalated" not in tags:
+                tags.append("escalated")
+            row.tags = json.dumps(tags)
+            db.commit()
+    if not in_memory_hit and not row:
+        return JSONResponse({"error": "Alert not found"}, status_code=404)
+    return {"status": "ok", "escalated": True}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SYSTEM 5 — Weekly Statistical Snapshots
 # ══════════════════════════════════════════════════════════════════════════════
@@ -17793,6 +17875,17 @@ def get_report_xref_index(report_id: str):
                 signals.append({
                     "id": str(item_id), "section": section, "label": label,
                     "lat": item.get("lat"), "lon": item.get("lon"),
+                    # Real severity for the print layout's "Signals driving
+                    # this assessment" table (implementation manual v1.0
+                    # §6.2) — same real item this endpoint already resolved
+                    # above, never a second/fabricated lookup. NOT including
+                    # a "place" field here: confirmed live that location_name
+                    # isn't reliably a geographic place across every real
+                    # alert type (a sanctioned-vessel alert's location_name
+                    # holds its alert headline, not a location) — the
+                    # frontend uses the claim's own real region/lat/lon
+                    # instead, which is honest regardless of alert type.
+                    "severity": item.get("severity"),
                 })
         for key in ("linked_zones", "linked_cables", "linked_ports"):
             for name in (item.get(key) or []):
@@ -17823,6 +17916,55 @@ def get_report_xref_index(report_id: str):
         print(f"[xref-index] {report_id}: {w}")
 
     return {"signals": signals, "scenes": scenes, "nodes": nodes, "warnings": warnings}
+
+
+@app.get("/api/reports/{report_id}/link-analysis")
+def get_report_link_analysis(report_id: str):
+    """Real ontology objects + relationships that bear on this report's own
+    evidence set, for the print layout's Appendix A (implementation manual
+    v1.0 §7) — never a fabricated relationship inserted to fill out the page.
+    Reuses the exact same real node resolution get_report_xref_index()
+    already does (real linked_zones/linked_cables/linked_ports names cross-
+    referenced against the real Forge ontology), then walks the real
+    ontology edge graph for relationships touching those nodes. `asserted`
+    vs `inferred` is the one real distinction this data actually carries —
+    `edge["auto"]` is a real flag set only by the automatic detection-rule
+    wiring (_auto_add_ontology_edge/_auto_add_correlation_to_ontology), never
+    invented confidence percentage this app has no real basis for."""
+    xref = get_report_xref_index(report_id)
+    node_ids = {n["id"] for n in xref["nodes"] if n.get("id")}
+    objects = list(xref["nodes"])
+
+    links: list = []
+    if node_ids:
+        try:
+            ontology = _forge_ontology_load()
+            by_id = {n.get("id"): n for n in (ontology.get("nodes") or [])}
+            seen_object_ids = set(node_ids)
+            for e in (ontology.get("edges") or []):
+                src, tgt = e.get("source"), e.get("target")
+                if src not in node_ids and tgt not in node_ids:
+                    continue
+                # Pull in the real other endpoint of a relationship even if
+                # it wasn't itself one of this report's directly-cited nodes
+                # (e.g. the vessel on the other end of a "threatens" edge to
+                # a cited cable) — real object, just not independently cited.
+                for other_id in (src, tgt):
+                    if other_id not in seen_object_ids and other_id in by_id:
+                        other = by_id[other_id]
+                        objects.append({"id": other.get("id"), "label": other.get("label"), "type": other.get("type"),
+                                         "lat": other.get("lat"), "lon": other.get("lng", other.get("lon"))})
+                        seen_object_ids.add(other_id)
+                links.append({
+                    "id": e.get("id"), "source": src, "target": tgt,
+                    "source_label": (by_id.get(src) or {}).get("label") or src,
+                    "target_label": (by_id.get(tgt) or {}).get("label") or tgt,
+                    "type": e.get("type") or "related", "inferred": bool(e.get("auto")),
+                })
+        except Exception as _ex:
+            print(f"[link-analysis] {report_id}: ontology edge walk failed: {_ex}")
+
+    return {"objects": objects, "links": links}
 
 
 @app.get("/api/reports/{report_id}/pdf")

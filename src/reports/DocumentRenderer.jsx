@@ -26,14 +26,16 @@ import { buildXrefCandidates, wrapXrefsHtml, checkForUnwrappedReferences } from 
 const THEME_SECTION_IDS = ["maritime_activity", "aerial_activity", "imagery_detection", "alerts_events", "open_source_context"]
 const EVIDENCE_SECTION_IDS = [...THEME_SECTION_IDS, "area_overview", "outlook_watch"]
 
-function EmptyNote({ children }) {
+export function EmptyNote({ children }) {
     return <div style={{ font: "italic 12.5px var(--font)", color: "var(--txt-3)" }}>{children}</div>
 }
 
 /** Renders `text` with real .xref spans wrapped in — click handling is
  * delegated at the document-container level (Briefings.jsx), not per-span,
- * since these are raw HTML strings, not React elements. */
-function XrefText({ text, candidates, as: Tag = "p", style }) {
+ * since these are raw HTML strings, not React elements. Exported so
+ * PrintLayout.jsx's own paginated pages render the exact same real xref
+ * markup rather than a second wrapping implementation. */
+export function XrefText({ text, candidates, as: Tag = "p", style }) {
     const html = useMemo(() => wrapXrefsHtml(text, candidates), [text, candidates])
     // eslint-disable-next-line react/no-danger
     return <Tag style={style} dangerouslySetInnerHTML={{ __html: html }} />
@@ -151,6 +153,27 @@ export function allEvidenceClaims(sections) {
     return out
 }
 
+// Real claim-strength scoring for "Network and attribution"'s strongest/
+// weakest sentence — reuses the exact same real signal report_pdf.py's own
+// _finding_lines() already treats as a flag-worthy negative (a failed
+// citation_exists/geo_sanity check, or a citation_fidelity verdict of
+// "overstated"/"unsupported"), never an invented confidence number. A claim
+// with no findings at all wasn't reviewed, not "flawless" — never counted as
+// the strongest.
+function claimFlagCount(claim) {
+    let flags = 0, reviewed = false
+    for (const f of claim.findings || []) {
+        if (f.kind === "citation_exists" || f.kind === "geo_sanity") {
+            reviewed = true
+            if (f.passed === false) flags += 1
+        } else if (f.kind === "citation_fidelity") {
+            reviewed = true
+            if (f.verdict === "overstated" || f.verdict === "unsupported") flags += 1
+        }
+    }
+    return { flags, reviewed }
+}
+
 /**
  * Props:
  *   report, sections — real data (see backend/report_sections.py, main.py's
@@ -255,39 +278,93 @@ export default function DocumentRenderer({ report, sections, mode = "read", xref
                 </section>
             ))}
 
-            {/* Regional distribution */}
-            <section style={{ marginBottom: 26 }}>
-                <div style={{ font: "700 12px var(--font)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--txt-2)", borderBottom: "1px solid var(--line)", paddingBottom: 5, marginBottom: 10 }}>
-                    Regional distribution
-                </div>
-                {regionDist.length === 0 ? (
-                    <EmptyNote>No geolocated signals to distribute by region in this window.</EmptyNote>
-                ) : (
-                    <table className="grid" style={{ width: "100%" }}>
-                        <thead><tr><th>Region</th><th>Signals</th></tr></thead>
-                        <tbody>{regionDist.map((r) => (<tr key={r.region}><td>{r.region}</td><td style={{ fontFamily: "var(--mono)" }}>{r.count}</td></tr>))}</tbody>
-                    </table>
-                )}
-            </section>
+            {/* Regional distribution + Exposure and continuity impact — print-only
+                (implementation manual v1.0 §5/§6.2: these live on the print
+                layout's Themes/Consequence pages as tables; the reader gets
+                Network and attribution instead, below). Same shared
+                regionDist/exposure data either way — never a second,
+                independently-recomputed rollup for print. */}
+            {mode === "print" && (
+                <>
+                    <section style={{ marginBottom: 26 }}>
+                        <div style={{ font: "700 12px var(--font)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--txt-2)", borderBottom: "1px solid var(--line)", paddingBottom: 5, marginBottom: 10 }}>
+                            Regional distribution
+                        </div>
+                        {regionDist.length === 0 ? (
+                            <EmptyNote>No geolocated signals to distribute by region in this window.</EmptyNote>
+                        ) : (
+                            <table className="grid" style={{ width: "100%" }}>
+                                <thead><tr><th>Region</th><th>Signals</th></tr></thead>
+                                <tbody>{regionDist.map((r) => (<tr key={r.region}><td>{r.region}</td><td style={{ fontFamily: "var(--mono)" }}>{r.count}</td></tr>))}</tbody>
+                            </table>
+                        )}
+                    </section>
 
-            {/* Exposure and continuity impact */}
-            <section style={{ marginBottom: 26 }}>
-                <div style={{ font: "700 12px var(--font)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--txt-2)", borderBottom: "1px solid var(--line)", paddingBottom: 5, marginBottom: 10 }}>
-                    Exposure and continuity impact
-                </div>
-                {!exposure || exposure.asset_count === 0 ? (
-                    <EmptyNote>{exposure ? "The real asset register is currently empty — no exposure could be scored." : "No exposure scoring was run for this report."}</EmptyNote>
-                ) : exposure.matches.length === 0 ? (
-                    <EmptyNote>{exposure.checked_items} geolocated signal(s) checked against {exposure.asset_count} registered asset(s) — no real-world assets within {exposure.matches.length ? "" : "25km"} of this window's evidence.</EmptyNote>
-                ) : (
-                    <table className="grid" style={{ width: "100%" }}>
-                        <thead><tr><th>Asset</th><th>Type</th><th>Distance</th></tr></thead>
-                        <tbody>{exposure.matches.map((m, i) => (
-                            <tr key={i}><td>{m.asset_name}</td><td>{m.asset_type}</td><td style={{ fontFamily: "var(--mono)" }}>{m.distance_km} km</td></tr>
-                        ))}</tbody>
-                    </table>
-                )}
-            </section>
+                    <section style={{ marginBottom: 26 }}>
+                        <div style={{ font: "700 12px var(--font)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--txt-2)", borderBottom: "1px solid var(--line)", paddingBottom: 5, marginBottom: 10 }}>
+                            Exposure and continuity impact
+                        </div>
+                        {!exposure || exposure.asset_count === 0 ? (
+                            <EmptyNote>{exposure ? "The real asset register is currently empty — no exposure could be scored." : "No exposure scoring was run for this report."}</EmptyNote>
+                        ) : exposure.matches.length === 0 ? (
+                            <EmptyNote>{exposure.checked_items} geolocated signal(s) checked against {exposure.asset_count} registered asset(s) — no real-world assets within {exposure.matches.length ? "" : "25km"} of this window's evidence.</EmptyNote>
+                        ) : (
+                            <table className="grid" style={{ width: "100%" }}>
+                                <thead><tr><th>Asset</th><th>Type</th><th>Distance</th></tr></thead>
+                                <tbody>{exposure.matches.map((m, i) => (
+                                    <tr key={i}><td>{m.asset_name}</td><td>{m.asset_type}</td><td style={{ fontFamily: "var(--mono)" }}>{m.distance_km} km</td></tr>
+                                ))}</tbody>
+                            </table>
+                        )}
+                    </section>
+                </>
+            )}
+
+            {/* Network and attribution — reader-only (implementation manual
+                v1.0 §5.4): print gets the full Appendix A instead, never
+                this section duplicated onto paper. Real ontology object
+                references (xrefIndex.nodes, already the same real
+                cross-reference candidates every other .xref in this
+                document draws from) plus an honest strongest/weakest
+                assertion sentence — reusing the exact real signal
+                report_pdf.py's own _finding_lines() already treats as
+                flag-worthy (a failed citation_exists/geo_sanity check, or a
+                citation_fidelity verdict of overstated/unsupported), never a
+                fabricated confidence number. */}
+            {mode !== "print" && (() => {
+                const nodeRefs = (xrefIndex?.nodes || []).slice(0, 3)
+                const reviewed = evidenceClaims.map((c) => ({ claim: c, ...claimFlagCount(c) })).filter((x) => x.reviewed)
+                let strongest = null, weakest = null
+                if (reviewed.length) {
+                    strongest = reviewed.reduce((a, b) => (b.flags < a.flags ? b : a))
+                    weakest = reviewed.reduce((a, b) => (b.flags > a.flags ? b : a))
+                }
+                return (
+                    <section style={{ marginBottom: 26 }}>
+                        <div style={{ font: "700 12px var(--font)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--txt-2)", borderBottom: "1px solid var(--line)", paddingBottom: 5, marginBottom: 10 }}>
+                            Network and attribution
+                        </div>
+                        {nodeRefs.length === 0 ? (
+                            <EmptyNote>No ontology objects are linked to this document's evidence set.</EmptyNote>
+                        ) : (
+                            <XrefText
+                                text={`This assessment's evidence set connects to ${nodeRefs.length} ontology object${nodeRefs.length === 1 ? "" : "s"}: ${nodeRefs.map((n) => n.label).join(", ")}.`}
+                                candidates={candidates} style={{ margin: "0 0 9px" }}
+                            />
+                        )}
+                        {reviewed.length === 0 ? (
+                            <EmptyNote>No AI Council review has been run on this report yet, so the relative strength of individual assertions cannot be assessed.</EmptyNote>
+                        ) : strongest.claim.claim_id === weakest.claim.claim_id ? (
+                            <p style={{ margin: 0 }}>Every AI Council-reviewed claim in this set carries the same flag count ({strongest.flags}) — no single assertion stands out as stronger or weaker on that basis.</p>
+                        ) : (
+                            <p style={{ margin: 0 }}>
+                                The strongest-supported assertion in this set is <XrefText as="span" text={strongest.claim.text} candidates={candidates} /> — {strongest.flags === 0 ? "no AI Council findings were raised against it" : `only ${strongest.flags} AI Council finding${strongest.flags === 1 ? "" : "s"} raised against it`}.
+                                {" "}The weakest is <XrefText as="span" text={weakest.claim.text} candidates={candidates} /> — flagged by {weakest.flags} AI Council finding{weakest.flags === 1 ? "" : "s"}.
+                            </p>
+                        )}
+                    </section>
+                )
+            })()}
 
             {/* Indicators and warnings */}
             <section style={{ marginBottom: 26 }}>

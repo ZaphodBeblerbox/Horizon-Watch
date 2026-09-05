@@ -14,8 +14,12 @@
 
 import { useUserLocation } from "./useUserLocation.js"
 
-const REFRAME_DEG = 18
-const CONTEXT_KM = 1600
+const DEFAULT_REFRAME_DEG = 18
+// The ratio CONTEXT_KM(1600) : REFRAME_DEG(18) this component originally
+// shipped with — kept constant so a wider/tighter per-kind span (below)
+// scales its real-surrounding-signal search radius proportionally instead
+// of showing either far too few or far too many context points.
+const CONTEXT_KM_PER_DEGREE = 1600 / 18
 
 function haversineKm(a, b) {
     const R = 6371
@@ -28,10 +32,14 @@ function haversineKm(a, b) {
 /**
  * @param {?{lat:number, lon:number}} focus - real center point, or null/no-lat to fall back to the
  *   viewer's own real geolocation (zoomed in), or the honest empty state if that's unavailable too
- * @param {Array<{lat:?number, lon:?number}>} context - real candidate context points, filtered to within CONTEXT_KM of focus
+ * @param {Array<{lat:?number, lon:?number}>} context - real candidate context points, filtered to within a
+ *   span-proportional radius of focus
  * @param {number} height
+ * @param {number} [span] - real per-kind framing width in degrees (implementation manual v1.0 §4.4:
+ *   signal 16° · scene 10° · node 20° · region 46°) — callers with no particular kind (e.g. Replay.jsx's
+ *   own timeline scrubbing) keep the original 18° default.
  */
-export default function LocatorMiniMap({ focus, context = [], height = 196 }) {
+export default function LocatorMiniMap({ focus, context = [], height = 196, span = DEFAULT_REFRAME_DEG }) {
     const userLoc = useUserLocation()
     // Real fallback only — never a fabricated coordinate. `usingUserLocation`
     // just suppresses the context-point ping (those are siblings of a real
@@ -42,11 +50,12 @@ export default function LocatorMiniMap({ focus, context = [], height = 196 }) {
     const centerLat = effectiveFocus?.lat ?? 0
     const centerLon = effectiveFocus?.lon ?? 0
     const project = (lat, lon) => [
-        ((lon - centerLon + REFRAME_DEG) / (REFRAME_DEG * 2)) * w,
-        ((REFRAME_DEG - (lat - centerLat)) / (REFRAME_DEG * 2)) * height,
+        ((lon - centerLon + span) / (span * 2)) * w,
+        ((span - (lat - centerLat)) / (span * 2)) * height,
     ]
+    const contextKm = span * CONTEXT_KM_PER_DEGREE
     const contextPts = effectiveFocus?.lat != null && !usingUserLocation
-        ? context.filter((c) => c.lat != null && c.lon != null && haversineKm(effectiveFocus, c) <= CONTEXT_KM)
+        ? context.filter((c) => c.lat != null && c.lon != null && haversineKm(effectiveFocus, c) <= contextKm)
         : []
     return (
         <svg width="100%" height={height} viewBox={`0 0 ${w} ${height}`} style={{ background: "var(--bg-0)", display: "block" }}>

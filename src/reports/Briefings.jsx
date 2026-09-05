@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from "react"
-import { getReport, getReportSections, getXrefIndex, patchReport, listReports } from "./reportApi.js"
+import { getReportBundle, patchReport, listReports } from "./reportApi.js"
 import DocumentRenderer, { allEvidenceClaims, buildRegionDistribution } from "./DocumentRenderer.jsx"
 import LocatorMiniMap from "../globe/LocatorMiniMap.jsx"
 import { replayOnMap } from "../services/replayOnMap.js"
 
 const WALKTHROUGH_INTERVAL_MS = 3600
+
+// Real per-kind minimap framing span (implementation manual v1.0 §4.4) — a
+// region needs the wide frame to show distribution, a scene the tight one
+// to show a single site.
+const MINIMAP_SPAN = { signal: 16, scene: 10, node: 20, region: 46 }
 
 function StatusDot({ status }) {
     const color = status === "published" ? "var(--delta-better)" : status === "in_review" ? "var(--sev-high)" : status === "rejected" ? "var(--sev-critical)" : "var(--txt-4)"
@@ -131,7 +136,7 @@ function buildRecordLookup(xrefIndex, evidenceClaims, regionNames) {
     return map
 }
 
-export default function Briefings({ initialReportId, onPrint }) {
+export default function Briefings({ initialReportId, onPrint, isVisible = true }) {
     const [reports, setReports] = useState([])
     const [reportId, setReportId] = useState(initialReportId || null)
     const [report, setReport] = useState(null)
@@ -141,6 +146,7 @@ export default function Briefings({ initialReportId, onPrint }) {
     const [activeRef, setActiveRef] = useState(null) // {kind, id}
     const [docXrefs, setDocXrefs] = useState([])     // [{k,id,label}] in real document order
     const [walking, setWalking] = useState(false)
+    const [refsCollapsed, setRefsCollapsed] = useState(false)
     const [dirty, setDirty] = useState(false)
     const [draftKJ, setDraftKJ] = useState("")
     const [draftClaims, setDraftClaims] = useState(null)
@@ -155,7 +161,7 @@ export default function Briefings({ initialReportId, onPrint }) {
     useEffect(() => {
         if (!reportId) return
         setActiveRef(null)
-        Promise.all([getReport(reportId), getReportSections(reportId), getXrefIndex(reportId).catch(() => null)]).then(([r, s, x]) => {
+        getReportBundle(reportId).then(({ report: r, sections: s, xrefIndex: x }) => {
             setReport(r); setSections(s); setXrefIndex(x); setDraftKJ(r.key_judgments || ""); setDraftClaims(r.claims); setDirty(false)
             dirtyRef.current = false
         })
@@ -192,6 +198,17 @@ export default function Briefings({ initialReportId, onPrint }) {
     function handleDocClick(e) {
         const el = e.target.closest?.(".xref")
         if (!el) return
+        activateReference(el.dataset.k, el.dataset.id)
+    }
+
+    // A span isn't natively activatable — real keyboard support (Enter/Space)
+    // for the same delegated .xref targets, since a <button> here is a real
+    // bug (it won't wrap across lines at the reader's 720px measure).
+    function handleDocKeyDown(e) {
+        if (e.key !== "Enter" && e.key !== " ") return
+        const el = e.target.closest?.(".xref")
+        if (!el) return
+        e.preventDefault()
         activateReference(el.dataset.k, el.dataset.id)
     }
 
@@ -238,6 +255,15 @@ export default function Briefings({ initialReportId, onPrint }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [walking])
 
+    // Real bug fix (implementation manual v1.0 §4.5/§10.6): this app keeps
+    // every tab mounted (display:none, not unmounted) while another tab is
+    // active — so leaving Briefings for another tab mid-walkthrough would
+    // otherwise leave the interval running invisibly against a hidden view.
+    // Never let an interval keep firing against a view the analyst can't see.
+    useEffect(() => {
+        if (!isVisible && walking) setWalking(false)
+    }, [isVisible, walking])
+
     // Autosave — every 8s if dirty, mirroring the previous EditingWorkspace's
     // real, working pattern (server-side PATCH already gates on draft-only).
     useEffect(() => {
@@ -283,15 +309,20 @@ export default function Briefings({ initialReportId, onPrint }) {
                 ))}
                 {reportId && (
                     <>
-                        <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.04em", margin: "14px 0 6px" }}>References</div>
-                        {docXrefs.length === 0 ? (
+                        <div role="button" onClick={() => setRefsCollapsed((c) => !c)}
+                            style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.04em", margin: "14px 0 6px" }}>
+                            <span style={{ display: "inline-block", transition: "transform 120ms", transform: refsCollapsed ? "rotate(-90deg)" : "none" }}>▾</span>
+                            References in this briefing
+                            <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", textTransform: "none", letterSpacing: 0 }}>({docXrefs.length})</span>
+                        </div>
+                        {!refsCollapsed && (docXrefs.length === 0 ? (
                             <div style={{ font: "400 11.5px var(--font)", color: "var(--txt-4)" }}>No cross-references in this document.</div>
                         ) : docXrefs.map((ref, i) => (
                             <div key={`${ref.k}-${ref.id}-${i}`} role="button" onClick={() => activateReference(ref.k, ref.id)}
                                 style={{ padding: "4px 4px", font: "400 11.5px var(--font)", color: activeRef?.kind === ref.k && activeRef?.id === ref.id ? "var(--txt)" : "var(--txt-3)", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {i + 1}. <span style={{ textTransform: "capitalize" }}>{ref.k}</span> · {ref.label}
                             </div>
-                        ))}
+                        )))}
                         <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setWalking((w) => !w)} disabled={docXrefs.length === 0}>
                             {walking ? "stop walkthrough" : "guided walkthrough"}
                         </button>
@@ -304,7 +335,7 @@ export default function Briefings({ initialReportId, onPrint }) {
                 {!report ? (
                     <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Select a briefing from the register.</div>
                 ) : (
-                    <div ref={docRef} onClickCapture={handleDocClick}>
+                    <div ref={docRef} onClickCapture={handleDocClick} onKeyDownCapture={handleDocKeyDown}>
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 14 }}>
                             <div className="seg">
                                 <button aria-pressed={mode === "read"} onClick={() => setMode("read")}>read</button>
@@ -326,7 +357,10 @@ export default function Briefings({ initialReportId, onPrint }) {
 
             {/* Right — minimap + reference detail */}
             <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto" }}>
-                <LocatorMiniMap focus={activeRecord?.lat != null ? activeRecord : null} context={evidenceClaims} height={196} />
+                <LocatorMiniMap
+                    focus={activeRecord?.lat != null ? activeRecord : null} context={evidenceClaims} height={196}
+                    span={MINIMAP_SPAN[activeRecord?.kind] || undefined}
+                />
                 <div style={{ padding: 12 }}>
                     <ReferencePane record={activeRecord} documentClaims={evidenceClaims} onSelectRef={activateReference} />
                 </div>

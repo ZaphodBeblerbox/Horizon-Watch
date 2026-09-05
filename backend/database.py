@@ -43,6 +43,33 @@ class User(Base):
     location_consent    = Column(Boolean, default=False)
 
 
+class DeskNote(Base):
+    """A real note routed from the mobile companion's Note tab to a desk
+    (duty desk / group security / regional lead / logistics) — a route/desk
+    is not a person, so this is deliberately its own small table rather than
+    forcing it through DirectMessage's person-to-person sender/recipient
+    shape (that table already exists in this schema but has zero real
+    endpoints anywhere). `status` genuinely transitions queued -> sent (or
+    failed) based on a real delivery attempt (see backend/routers/mobile.py's
+    real _broadcast_push() call) — never a client-side timer standing in for
+    a real confirmation."""
+    __tablename__ = "desk_notes"
+    id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    route           = Column(String, nullable=False, index=True)   # duty_desk|group_security|regional_lead|logistics
+    kind            = Column(String, nullable=False, default="text")  # text | voice
+    text_content    = Column(Text, nullable=True)
+    audio_path      = Column(String, nullable=True)     # real file under backend/data/desk_notes/, voice notes only
+    audio_seconds   = Column(Float, nullable=True)
+    reference_kind  = Column(String, nullable=True)     # signal|scene|node|region — the attached reference, if any
+    reference_id    = Column(String, nullable=True)
+    reference_label = Column(String, nullable=True)
+    status          = Column(String, nullable=False, default="queued")  # queued | sent | failed
+    created_by      = Column(String, nullable=True)
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    delivered_at    = Column(DateTime, nullable=True)
+    recipients_notified = Column(Integer, default=0)    # real count of push subscriptions actually notified
+
+
 class DirectMessage(Base):
     __tablename__ = "direct_messages"
     id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
