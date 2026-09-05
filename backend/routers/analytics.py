@@ -48,78 +48,35 @@ def _classify_region(lat, lon):
     return "Other"
 
 
-def _window(range_key: str):
-    days = _RANGE_DAYS.get(range_key, 30)
-    now = datetime.datetime.utcnow()
-    cur_start = now - datetime.timedelta(days=days)
-    prior_start = cur_start - datetime.timedelta(days=days)
-    return now, cur_start, prior_start, days
+def _fetch_and_normalize_signals(db, since):
+    """Real Alert/NewsArticle/SentinelDetection rows since `since`, normalized
+    onto one unified signal shape (domain/severity/region already classified).
+    Factored out of get_overview() so a second real consumer (the Replay
+    timeline) can read the exact same live signals without a parallel
+    fetch/classification path — see _classify_region()'s own module docblock
+    for why this must never be reimplemented client-side."""
+    alerts = (
+        db.query(Alert.id, Alert.severity, Alert.source, Alert.lat, Alert.lon,
+                 Alert.zone_ids, Alert.created_at, Alert.status, Alert.title,
+                 Alert.entity_id, Alert.entity_type, Alert.alert_id, Alert.analyst_note)
+        .filter(Alert.created_at >= since)
+        .all()
+    )
+    articles = (
+        db.query(NewsArticle.url, NewsArticle.tier, NewsArticle.lat, NewsArticle.lon,
+                 NewsArticle.ingested_at, NewsArticle.source_name, NewsArticle.title,
+                 NewsArticle.llm_extracted)
+        .filter(NewsArticle.ingested_at >= since)
+        .all()
+    )
+    detections = (
+        db.query(SentinelDetection.detection_id, SentinelDetection.severity,
+                 SentinelDetection.centroid_lat, SentinelDetection.centroid_lon,
+                 SentinelDetection.created_at, SentinelDetection.object_type)
+        .filter(SentinelDetection.created_at >= since)
+        .all()
+    )
 
-
-def _pct_delta(cur: int, prior: int):
-    if prior <= 0:
-        return None
-    return round(((cur - prior) / prior) * 100, 1)
-
-
-@router.get("/overview")
-async def get_overview(
-    range: str = Query("30d", pattern="^(7d|30d|90d)$"),
-    region: str = Query("all"),
-    domain: str = Query("all", pattern="^(all|maritime|air|news|imagery|zones)$"),
-):
-    """Real, live-computed aggregates for the Analytics page — KPIs, a daily
-    volume series, severity/domain/region/source breakdowns, a region x
-    domain heatmap, index movers, and the highest-severity signals table.
-    Every figure is derived from Alert/NewsArticle/SentinelDetection/
-    WatchZone/Report rows for the selected window — nothing here is
-    randomized, and an empty real result renders as a real zero/None rather
-    than a fabricated placeholder number.
-    """
-    now, cur_start, prior_start, days = _window(range)
-    region_names = list(threat_matrix.REGIONS.keys()) + ["Other"]
-    if region != "all" and region not in region_names:
-        region = "all"
-
-    with get_db() as db:
-        # ── Fetch the three raw signal sources for the full cur+prior span ──
-        alerts = (
-            db.query(Alert.id, Alert.severity, Alert.source, Alert.lat, Alert.lon,
-                     Alert.zone_ids, Alert.created_at, Alert.status, Alert.title,
-                     Alert.entity_id, Alert.entity_type, Alert.alert_id, Alert.analyst_note)
-            .filter(Alert.created_at >= prior_start)
-            .all()
-        )
-        articles = (
-            db.query(NewsArticle.url, NewsArticle.tier, NewsArticle.lat, NewsArticle.lon,
-                     NewsArticle.ingested_at, NewsArticle.source_name, NewsArticle.title,
-                     NewsArticle.llm_extracted)
-            .filter(NewsArticle.ingested_at >= prior_start)
-            .all()
-        )
-        detections = (
-            db.query(SentinelDetection.detection_id, SentinelDetection.severity,
-                     SentinelDetection.centroid_lat, SentinelDetection.centroid_lon,
-                     SentinelDetection.created_at, SentinelDetection.object_type)
-            .filter(SentinelDetection.created_at >= prior_start)
-            .all()
-        )
-
-        watch_zones_enabled = db.query(WatchZone).filter(WatchZone.enabled == True).all()  # noqa: E712
-
-        reports_published_cur = (
-            db.query(Report)
-            .filter(Report.status == "published", Report.published_at >= cur_start)
-            .all()
-        )
-        escalations_cur = (
-            db.query(func.count(Alert.id))
-            .filter(Alert.created_at >= cur_start,
-                    or_(*[Alert.raw_json.like(f"%{m}%") for m in _ESCALATION_MARKERS]))
-            .scalar()
-        ) or 0
-
-    # ── Normalize into one unified signal list ──
     signals = []
     for row in alerts:
         (aid, sev, source, lat, lon, zone_ids, created_at, status, title,
@@ -166,6 +123,58 @@ async def get_overview(
             "source": "sentinel", "status": "active",
             "entity_id": None, "entity_type": "detection", "assessed": False,
         })
+    return signals
+
+
+def _window(range_key: str):
+    days = _RANGE_DAYS.get(range_key, 30)
+    now = datetime.datetime.utcnow()
+    cur_start = now - datetime.timedelta(days=days)
+    prior_start = cur_start - datetime.timedelta(days=days)
+    return now, cur_start, prior_start, days
+
+
+def _pct_delta(cur: int, prior: int):
+    if prior <= 0:
+        return None
+    return round(((cur - prior) / prior) * 100, 1)
+
+
+@router.get("/overview")
+async def get_overview(
+    range: str = Query("30d", pattern="^(7d|30d|90d)$"),
+    region: str = Query("all"),
+    domain: str = Query("all", pattern="^(all|maritime|air|news|imagery|zones)$"),
+):
+    """Real, live-computed aggregates for the Analytics page — KPIs, a daily
+    volume series, severity/domain/region/source breakdowns, a region x
+    domain heatmap, index movers, and the highest-severity signals table.
+    Every figure is derived from Alert/NewsArticle/SentinelDetection/
+    WatchZone/Report rows for the selected window — nothing here is
+    randomized, and an empty real result renders as a real zero/None rather
+    than a fabricated placeholder number.
+    """
+    now, cur_start, prior_start, days = _window(range)
+    region_names = list(threat_matrix.REGIONS.keys()) + ["Other"]
+    if region != "all" and region not in region_names:
+        region = "all"
+
+    with get_db() as db:
+        signals = _fetch_and_normalize_signals(db, prior_start)
+
+        watch_zones_enabled = db.query(WatchZone).filter(WatchZone.enabled == True).all()  # noqa: E712
+
+        reports_published_cur = (
+            db.query(Report)
+            .filter(Report.status == "published", Report.published_at >= cur_start)
+            .all()
+        )
+        escalations_cur = (
+            db.query(func.count(Alert.id))
+            .filter(Alert.created_at >= cur_start,
+                    or_(*[Alert.raw_json.like(f"%{m}%") for m in _ESCALATION_MARKERS]))
+            .scalar()
+        ) or 0
 
     if region != "all":
         signals = [s for s in signals if s["region"] == region]
@@ -308,6 +317,44 @@ async def get_overview(
         "movers": movers,
         "top_signals": top_signals_out,
         "region_options": region_names,
+    }
+
+
+@router.get("/timeline")
+async def get_timeline(hours: int = Query(168, ge=1, le=24 * 90)):
+    """Real, bounded-window signal feed for the Replay page's ruler/lanes —
+    every real Alert/NewsArticle/SentinelDetection row from the last `hours`
+    hours that has a real lat/lon (Replay's minimap/replay-on-map need a real
+    position; rows without one are honestly excluded, never given a
+    fabricated one), sorted chronologically. Reuses the exact same
+    normalization _fetch_and_normalize_signals() already established for
+    Analytics' /overview — same real domain/severity/region classification,
+    no second parallel logic. Deterministic for a given `hours`/data state —
+    no randomization, so a reload with the same window reproduces the same
+    lane contents."""
+    now = datetime.datetime.utcnow()
+    since = now - datetime.timedelta(hours=hours)
+    with get_db() as db:
+        signals = _fetch_and_normalize_signals(db, since)
+
+    signals = [s for s in signals if s["lat"] is not None and s["lon"] is not None and s["created_at"]]
+    signals.sort(key=lambda s: s["created_at"])
+
+    out = [
+        {
+            "id": s["id"], "kind": s["kind"], "domain": s["domain"], "severity": s["severity"],
+            "region": s["region"], "lat": s["lat"], "lon": s["lon"],
+            "created_at": s["created_at"].isoformat(), "title": s["title"], "source": s["source"],
+            "entity_id": s["entity_id"], "entity_type": s["entity_type"],
+        }
+        for s in signals
+    ]
+    return {
+        "hours": hours,
+        "since": since.isoformat(),
+        "generated_at": now.isoformat(),
+        "signals": out,
+        "count": len(out),
     }
 
 

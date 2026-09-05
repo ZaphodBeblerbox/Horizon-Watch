@@ -28,6 +28,7 @@ import { buildWatchQueueRows, sortRowsBySeverity, timeAgoLabel } from "./dashboa
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useAnnotations, renameAnnotation, removeAnnotation } from "../state/annotationStore.js"
+import { replayOnMap } from "../services/replayOnMap.js"
 
 const API = API_BASE
 const REFRESH_MS = 60000
@@ -633,6 +634,11 @@ export default function Situation({ onOpenDossier }) {
                                         <div className="title">{r.title}</div>
                                         <div className="meta"><span>{r.aoi || "Unknown location"}</span></div>
                                     </div>
+                                    {r.lat != null && r.lon != null && (
+                                        <button className="btn ghost sm" title="Replay on map" onClick={(e) => { e.stopPropagation(); replayOnMap({ lat: r.lat, lon: r.lon, publishedAt: r.publishedAt, title: r.title }) }} style={{ padding: 2 }}>
+                                            <svg className="icon sm"><use href="#i-clock" /></svg>
+                                        </button>
+                                    )}
                                     <span className="time">{timeAgoLabel(r.publishedAt, nowMs)}</span>
                                 </div>
                             ))}
@@ -668,6 +674,9 @@ export default function Situation({ onOpenDossier }) {
                             <button className="btn primary sm" onClick={() => handleAddToBriefing(selected)}>Add to briefing</button>
                             {selected.lat != null && selected.lon != null && (
                                 <button className="btn sm" onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: selected.lat, lon: selected.lon, altitude: 250000 } }))}>Centre map</button>
+                            )}
+                            {selected.lat != null && selected.lon != null && (
+                                <button className="btn sm" onClick={() => replayOnMap({ lat: selected.lat, lon: selected.lon, publishedAt: selected.publishedAt, title: selected.title })}>Replay on map</button>
                             )}
                             <button className="btn sm" onClick={() => onOpenDossier?.(selected)}>Open dossier</button>
                         </div>
