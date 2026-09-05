@@ -37,6 +37,7 @@ import AICouncil from "./destinations/AICouncil.jsx"
 import Generate from "./reports/Generate.jsx"
 import Briefings from "./reports/Briefings.jsx"
 import PrintLayout from "./reports/PrintLayout.jsx"
+import MobileApp from "./mobile/MobileApp.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
 import ChatPanel from "./components/ChatPanel.jsx"
@@ -172,6 +173,19 @@ export default function App() {
     const [owPolygon,          setOwPolygon]          = useState(null)
 
     const [isMobile,     setIsMobile]     = useState(() => typeof window !== "undefined" && window.innerWidth < 768)
+    // Real phone-mode breakpoint — a genuine structural shell swap (the
+    // four-tab mobile companion in place of the desktop console), distinct
+    // from the gentler `isMobile` reflow tweak above (768px, minor layout
+    // adjustments only). ~600px matches the phone frame this was designed
+    // against. Re-evaluated live on resize/orientation change, never decided
+    // once at load. Real bug caught live: gating on innerWidth alone would
+    // kick a real phone in landscape (e.g. 844x390) OUT of phone mode the
+    // moment it rotates, since its width alone exceeds 600 even though it's
+    // still genuinely a phone — the smaller of the two dimensions is the
+    // real "is this a phone-sized viewport" question, regardless of
+    // orientation.
+    const phoneModeQuery = () => typeof window !== "undefined" && Math.min(window.innerWidth, window.innerHeight) < 600
+    const [phoneMode, setPhoneMode] = useState(phoneModeQuery)
     const [showReels, setShowReels] = useState(false)
     const [showAutoMode, setShowAutoMode] = useState(false)
     const [heatmapHours, setHeatmapHours] = useState(24)
@@ -181,6 +195,16 @@ export default function App() {
         const handler = () => setIsMobile(window.innerWidth < 768)
         window.addEventListener("resize", handler)
         return () => window.removeEventListener("resize", handler)
+    }, [])
+
+    useEffect(() => {
+        const handler = () => setPhoneMode(phoneModeQuery())
+        window.addEventListener("resize", handler)
+        window.addEventListener("orientationchange", handler)
+        return () => {
+            window.removeEventListener("resize", handler)
+            window.removeEventListener("orientationchange", handler)
+        }
     }, [])
 
     // ── Mission profile ───────────────────────────────────────────────────────
@@ -841,6 +865,17 @@ export default function App() {
 
     // ── Render ────────────────────────────────────────────────────────────────
 
+    // Real structural swap (not a fluid reflow) — below the phone breakpoint,
+    // the four-tab mobile shell renders in place of the entire ten-module
+    // desktop console. Both share this same component's state underneath
+    // (one router/session, per the correction prompt): the one concrete case
+    // named there — a specific briefing already open — carries over via
+    // briefingsInitialId, a real prop this component already threads into
+    // the desktop Briefings destination a few hundred lines below.
+    if (phoneMode) {
+        return <MobileApp initialBriefingReportId={briefingsInitialId} />
+    }
+
     const panelStyle = isMobile ? {
         position:    "fixed",
         top:         0,
@@ -989,7 +1024,7 @@ export default function App() {
                         {printReportId ? (
                             <PrintLayout reportId={printReportId} onBack={() => setPrintReportId(null)} />
                         ) : (
-                            <Briefings initialReportId={briefingsInitialId} onPrint={(id) => setPrintReportId(id)} />
+                            <Briefings initialReportId={briefingsInitialId} onPrint={(id) => setPrintReportId(id)} isVisible={activeTabType === "briefings"} />
                         )}
                     </div>
                 )}

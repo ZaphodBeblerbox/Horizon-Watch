@@ -96,6 +96,26 @@ def _candidate_items(snapshot_content: dict, cite_sections: list[str], limit: in
     return out
 
 
+def _ontology_context_names(snapshot_content: dict, cite_sections: list[str], limit: int = 12) -> list[str]:
+    """Real ontology-linked entity names (the same real linked_zones/
+    linked_cables/linked_ports fields backend/main.py's get_report_xref_index
+    already reads off these same items) touching this draft's candidate
+    items — informational context only, never a new citable category (the
+    model would have no real item_id to cite for one), so a claim can still
+    only ever cite a real snapshot item_id already validated below. Lets
+    generated prose naturally mention a real cable/port/zone name rather
+    than the Network-and-attribution reader section being the only place
+    this real data ever surfaces."""
+    names: set[str] = set()
+    for section in cite_sections:
+        for item in (snapshot_content.get(section) or [])[:limit]:
+            for key in ("linked_zones", "linked_cables", "linked_ports"):
+                for name in (item.get(key) or []):
+                    if name:
+                        names.add(str(name).strip())
+    return sorted(names)
+
+
 def _format_candidates(candidates: list[dict]) -> str:
     if not candidates:
         return "(none — genuinely nothing real available for this category right now)"
@@ -157,6 +177,8 @@ def generate_draft(snapshot_content: dict, focus: str | None, region_label: str 
         section: _candidate_items(snapshot_content, cfg["cite"])
         for section, cfg in _DRAFTABLE_SECTIONS.items()
     }
+    all_cite_sections = [s for cfg in _DRAFTABLE_SECTIONS.values() for s in cfg["cite"]]
+    ontology_names = _ontology_context_names(snapshot_content, all_cite_sections)
 
     user = f"""Scope: {focus or region_label or 'Global overview'}
 Generated at: {snapshot_content.get('generated_at')}
@@ -194,6 +216,7 @@ REAL, PRE-RANKED CANDIDATE ITEMS PER SECTION (cite ONLY these item_ids):
 {_format_candidates(per_section_candidates['outlook_watch'])}
 
 Statistics: {json.dumps(stats)}
+{f"REAL ONTOLOGY CONTEXT (real cable/port/strategic-zone names already linked to the items above — mention naturally in prose where relevant; this is context, not a new citable category, so still cite only the real item_ids above): {', '.join(ontology_names)}" if ontology_names else ""}
 {f"Standing instruction from the requesting analyst (apply it, but never let it override the no-fabrication rules above): {standing_instruction.strip()}" if standing_instruction and standing_instruction.strip() else ""}
 
 Write:

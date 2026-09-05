@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react"
 import { apiFetch } from "../auth.js"
-import { createSnapshotReportTask, listWatchZones, runTaskAction, scoreTaskExposure } from "./reportApi.js"
+import { createSnapshotReportTask, listWatchZones, runTaskAction, scoreTaskExposure, prefetchReportBundle } from "./reportApi.js"
 import { getBriefingItems, useBriefingCount } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 
@@ -209,6 +209,13 @@ export default function Generate({ onOpenTab }) {
             setStepStatus(6, "done", nowMs() - t6)
             appendLog(logLine(`document compiled · ${sections.length} sections`))
             appendLog(logLine(`ready — opening in the reader`))
+
+            // Build the print pages eagerly, now, in the background —
+            // implementation manual v1.0 §2: "printable briefing" and a real
+            // print shortcut must be instant, never a first-visit loading
+            // flash. Same real report data the reader is about to show,
+            // fetched once and shared (reportApi.js's prefetchReportBundle).
+            prefetchReportBundle(draftRes.report_id)
 
             setCompletedReport(report)
             toast(`${report.report_id} generated`, { icon: "i-check" })

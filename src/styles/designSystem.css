@@ -246,9 +246,12 @@ input[type="range"]::-moz-range-thumb {
 .xref {
     text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer;
     background: transparent; border-radius: 2px; transition: background 120ms linear;
+    color: var(--acc-hi);
 }
 .xref:hover { background: var(--bg-2); }
 .xref.xref-active { background: var(--acc-dim); text-decoration-style: solid; }
+.xref .rt { font-family: var(--mono); font-size: 11px; }
+.xref:focus-visible { outline: 2px solid var(--acc-hi); outline-offset: 2px; }
 
 .entrow {
     display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 10px;

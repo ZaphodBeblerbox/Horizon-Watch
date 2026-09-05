@@ -29,6 +29,41 @@ export function getXrefIndex(reportId) {
     return apiFetch(`/api/reports/${reportId}/xref-index`).then(asJson)
 }
 
+/** Real ontology objects + relationships behind this report's evidence set —
+ * the print layout's Appendix A (backend/main.py's get_report_link_analysis,
+ * implementation manual v1.0 §7). */
+export function getLinkAnalysis(reportId) {
+    return apiFetch(`/api/reports/${reportId}/link-analysis`).then(asJson)
+}
+
+// Real, in-memory prefetch cache — one shared promise per reportId across
+// every caller (Generate.jsx, Briefings.jsx, PrintLayout.jsx), so "build the
+// print pages eagerly, at generation time" (implementation manual v1.0 §2)
+// means what it says: the same real fetch Generate.jsx kicks off the moment
+// drafting completes is still in flight (or already resolved) by the time
+// the reader's "printable briefing" button — or Generate's own — opens
+// PrintLayout, instead of a second, independent fetch with a visible loading
+// flash. Never a separately-recomputed document; just the same real
+// GET calls, deduplicated.
+const _reportBundleCache = new Map()
+
+export function prefetchReportBundle(reportId) {
+    if (!reportId || _reportBundleCache.has(reportId)) return
+    _reportBundleCache.set(reportId, Promise.all([
+        getReport(reportId), getReportSections(reportId),
+        getXrefIndex(reportId).catch(() => null),
+        getLinkAnalysis(reportId).catch(() => null),
+    ]).then(([report, sections, xrefIndex, linkAnalysis]) => ({ report, sections, xrefIndex, linkAnalysis })))
+}
+
+/** Same real bundle prefetchReportBundle() populates — call this from any
+ * view that needs the data; it starts the real fetch itself if nothing
+ * already kicked it off. */
+export function getReportBundle(reportId) {
+    prefetchReportBundle(reportId)
+    return _reportBundleCache.get(reportId)
+}
+
 export function patchReport(reportId, patch) {
     return apiFetch(`/api/reports/${reportId}`, { method: "PATCH", body: JSON.stringify(patch) }).then(asJson)
 }

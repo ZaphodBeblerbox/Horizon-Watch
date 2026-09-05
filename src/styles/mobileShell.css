@@ -1,0 +1,101 @@
+/* mobileShell.css — the phone-mode shell's own layout + touch-scale rules.
+   Correction from the earlier standalone-page version of this file: this is
+   now a real responsive MODE inside the one app (app.jsx), rendered in the
+   same document as the desktop console — so it already inherits every real
+   :root token (--bg-0.. --sev-critical etc) from index.html's own <style>
+   block for free. No copied/duplicated token block here anymore; that
+   duplication point is gone along with the separate mobile.html entry.
+
+   Every rule below is scoped under .phone-shell — never a bare `button{}`,
+   `*{}` or `html,body{}` reset, since this stylesheet now loads into the
+   SAME page as the desktop console and a global reset here would corrupt
+   its buttons/chips/kv rows too. Reuses the real .btn/.chip/.dia/.kv/.seg
+   classes at phone touch-scale (via a .phone-shell override) rather than a
+   parallel .m-* component set — same visual language, not a second one.
+
+   No decorative device bezel (notch/home-bar/rounded corners) — the earlier
+   standalone-page version rendered a phone MOCKUP floating in a desktop
+   browser; a real responsive mode instead fills whatever real viewport it's
+   actually running in (a resized desktop window or a real phone), the same
+   way the desktop shell already fills its own viewport. */
+
+.phone-shell {
+    position: fixed; inset: 0; display: grid;
+    grid-template-rows: env(safe-area-inset-top, 0px) 52px 1fr 78px; /* safe-area inset · header · content · tab bar */
+    background: var(--bg-0); color: var(--txt);
+    font-family: var(--font);
+}
+.phone-shell, .phone-shell * { box-sizing: border-box; }
+
+/* Mobile deltas (15px body, 46px minimum tap target, :active not :hover —
+   there's no hover on touch). */
+.phone-shell .m-body { font: 400 15px/1.5 var(--font); }
+.phone-shell .m-tap { min-height: 46px; min-width: 46px; -webkit-tap-highlight-color: transparent; }
+.phone-shell button.m-tap:active, .phone-shell .m-tap[role="button"]:active { background: var(--bg-3); }
+
+/* Real .btn/.chip/.seg at phone touch-scale — same classes the desktop
+   console uses, not a parallel set, per the design-system-reuse correction. */
+.phone-shell .btn { height: 46px; padding: 0 16px; font-size: 15px; border-radius: 10px; gap: 8px; }
+.phone-shell .chip {
+    height: 34px; padding: 0 14px; border-radius: 17px; font-size: 13px;
+    flex: none; white-space: nowrap;
+}
+.phone-shell .chip .swatch { width: 8px; height: 8px; }
+.phone-shell .seg > button { height: 34px; padding: 0 12px; font-size: 13px; }
+
+.phone-shell .m-chiprow { display: flex; gap: 8px; overflow-x: auto; padding: 8px 14px; -webkit-overflow-scrolling: touch; }
+
+/* Real .dia/.kv at phone scale */
+.phone-shell .dia { width: 8px; height: 8px; }
+.phone-shell .kv { grid-template-columns: 110px 1fr; row-gap: 6px; }
+.phone-shell .kv > dt { font-size: 12.5px; }
+.phone-shell .kv > dd { font-size: 14px; }
+
+/* Bottom sheet */
+.phone-shell .m-sheet-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.5); z-index: 60; }
+.phone-shell .m-sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 61; max-height: 82%;
+    background: var(--bg-1); border-radius: 20px 20px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.4);
+    display: flex; flex-direction: column; overflow: hidden;
+}
+.phone-shell .m-sheet-handle { width: 36px; height: 4px; border-radius: 100px; background: var(--line-strong); margin: 10px auto; flex: none; }
+.phone-shell .m-sheet-body { overflow-y: auto; padding: 4px 18px 24px; }
+
+/* Real .xref spans (never buttons) — same real class src/reports/
+   xrefEngine.js's wrapXrefsHtml() already emits for the console reader;
+   BriefTab.jsx reuses that exact function, so this reuses its exact class
+   name and (via designSystem.css) its exact color, not a parallel style. */
+.phone-shell .xref .rt { font-size: 13px; }
+
+.phone-shell .m-tab-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    flex: 1; height: 56px; padding: 4px 0; color: var(--txt-3); font: 500 10px var(--font);
+    background: none; border: none; cursor: pointer;
+}
+.phone-shell .m-tab-btn[aria-current="true"] { color: var(--acc-hi); }
+
+/* Header — reads as an obvious sibling of the desktop TopBar/status bar:
+   same solid --bg-2 surface, same hairline divider, no separate look. */
+.phone-shell .m-header {
+    display: flex; align-items: center; padding: 0 16px; background: var(--bg-2);
+    border-bottom: 1px solid var(--line); font: 700 15px var(--font); color: var(--txt);
+}
+.phone-shell .m-tabbar { display: flex; background: var(--bg-1); border-top: 1px solid var(--line); }
+
+/* Map tab full-bleed exception (Part B correction §3): the real Cesium
+   globe fills the entire phone viewport edge to edge, and the header/tab
+   bar become translucent glass overlays on top of it — reusing the exact
+   same glass treatment the desktop console's own side panes already use
+   (never a second, invented mobile glass style). This is scoped to the
+   Map tab specifically via .phone-shell.map-active — every other tab keeps
+   the opaque header/tab bar above. */
+.phone-shell.map-active { grid-template-rows: 0px 0px 1fr 0px; }
+.phone-shell.map-active .m-header,
+.phone-shell.map-active .m-tabbar {
+    position: absolute; left: 0; right: 0; z-index: 70; height: auto;
+    background: rgba(26,31,37,.72); backdrop-filter: blur(16px) saturate(115%); -webkit-backdrop-filter: blur(16px) saturate(115%);
+    border-color: rgba(255,255,255,.08);
+}
+.phone-shell.map-active .m-header { top: 0; padding-top: env(safe-area-inset-top, 0px); height: calc(52px + env(safe-area-inset-top, 0px)); }
+.phone-shell.map-active .m-tabbar { bottom: 0; }
+.phone-shell.map-active .m-map-content { position: absolute; inset: 0; }

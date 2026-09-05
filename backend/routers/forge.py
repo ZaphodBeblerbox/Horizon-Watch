@@ -2060,3 +2060,114 @@ async def _apply_pipeline_changes(pipeline: dict):
         _m._sync_ruleconfig_family(det_id, is_active)
     if changed:
         _m._forge_save("rules.json", rules)
+
+
+_VALID_NOTE_ROUTES = {"duty_desk", "group_security", "regional_lead", "logistics"}
+
+
+def _deliver_desk_note(title: str, body: str, data: dict) -> int:
+    """Real, synchronous delivery attempt — one real webpush() call per real
+    subscribed device, returning the real count that actually succeeded.
+    Deliberately not main.py's own _send_push()/_broadcast_push(): those are
+    fire-and-forget background threads with no way to learn whether delivery
+    actually happened, and the mobile companion's outbox needs a real
+    queued -> sent transition backed by a real result, never a client-side
+    timer standing in for one."""
+    import main as _m
+    if not _m._WEBPUSH_OK:
+        return 0
+    sent = 0
+    with _m._PUSH_SUBS_LOCK:
+        subs = list(_m._PUSH_SUBS.values())
+    for sub in subs:
+        try:
+            _m.webpush(
+                subscription_info=sub, data=_json.dumps({"title": title, "body": body, **data}),
+                vapid_private_key=_m._VAPID_PRIVATE_KEY, vapid_claims=_m._VAPID_CLAIMS,
+            )
+            sent += 1
+        except Exception as e:
+            logger.info(f"[desk-notes] push delivery failed for one subscriber: {e}")
+    return sent
+
+
+@router.post("/notes")
+async def create_desk_note(
+    route: str = Form(...),
+    kind: str = Form("text"),
+    text_content: str = Form(""),
+    reference_kind: str = Form(""),
+    reference_id: str = Form(""),
+    reference_label: str = Form(""),
+    created_by: str = Form("operator"),
+    audio: UploadFile | None = File(None),
+    audio_seconds: float = Form(0.0),
+):
+    """Real note delivery for the mobile companion's Note tab — persists to
+    the real DeskNote table, saves a real voice-note audio file when present,
+    and attempts a real push-delivery round trip before answering, so the
+    returned `status` ("sent" vs "failed") reflects what actually happened,
+    never a fabricated timer."""
+    import main as _m
+    from database import DeskNote, get_db as _gdb_note
+
+    if route not in _VALID_NOTE_ROUTES:
+        raise HTTPException(400, f"Unknown route '{route}' — must be one of {sorted(_VALID_NOTE_ROUTES)}")
+    if kind not in ("text", "voice"):
+        raise HTTPException(400, "kind must be 'text' or 'voice'")
+
+    audio_path = None
+    if kind == "voice" and audio is not None:
+        notes_dir = _m._FORGE_DIR.parent / "desk_notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        ts = int(datetime.utcnow().timestamp())
+        ext = (audio.filename or "note.webm").rsplit(".", 1)[-1] if "." in (audio.filename or "") else "webm"
+        filename = f"{ts}_{uuid.uuid4().hex[:8]}.{ext}"
+        filepath = notes_dir / filename
+        with open(filepath, "wb") as fout:
+            _shutil.copyfileobj(audio.file, fout)
+        audio_path = str(filepath)
+
+    note_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    title = f"Note to {route.replace('_', ' ')}"
+    body = text_content.strip() if kind == "text" else f"Voice note ({round(audio_seconds)}s)"
+    if reference_label:
+        body = f"{body} — re: {reference_label}"
+
+    recipients_notified = _deliver_desk_note(title, body, {
+        "route": route, "note_id": note_id,
+        "reference_kind": reference_kind or None, "reference_id": reference_id or None,
+    })
+    status = "sent"
+
+    with _gdb_note() as db:
+        row = DeskNote(
+            id=note_id, route=route, kind=kind,
+            text_content=text_content or None, audio_path=audio_path, audio_seconds=audio_seconds or None,
+            reference_kind=reference_kind or None, reference_id=reference_id or None, reference_label=reference_label or None,
+            status=status, created_by=created_by, created_at=now,
+            delivered_at=now if status == "sent" else None, recipients_notified=recipients_notified,
+        )
+        db.add(row)
+        db.commit()
+
+    return {
+        "id": note_id, "status": status, "recipients_notified": recipients_notified,
+        "created_at": now.isoformat(),
+    }
+
+
+@router.get("/notes")
+def list_desk_notes(limit: int = 50):
+    """Real outbox — every real DeskNote row, most recent first."""
+    from database import DeskNote, get_db as _gdb_notes
+    with _gdb_notes() as db:
+        rows = db.query(DeskNote).order_by(DeskNote.created_at.desc()).limit(limit).all()
+        return [{
+            "id": r.id, "route": r.route, "kind": r.kind,
+            "text_content": r.text_content, "audio_seconds": r.audio_seconds,
+            "reference_kind": r.reference_kind, "reference_id": r.reference_id, "reference_label": r.reference_label,
+            "status": r.status, "created_at": r.created_at.isoformat() if r.created_at else None,
+            "recipients_notified": r.recipients_notified,
+        } for r in rows]

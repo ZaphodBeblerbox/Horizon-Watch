@@ -76,7 +76,12 @@ export function wrapXrefsHtml(text, candidates) {
         const cand = byLabelLower.get(matchedText.toLowerCase())
         if (cand) {
             out += escapeHtml(raw.slice(lastIndex, match.index))
-            out += `<span class="xref" data-k="${escapeHtml(cand.k)}" data-id="${escapeHtml(cand.id)}">${escapeHtml(matchedText)}</span>`
+            // role="link" + tabindex so a span (never a button — a button
+            // won't break across lines in Blink/WebKit and clips instead of
+            // wrapping at the reader's 720px measure) is still keyboard-
+            // activatable; the real click delegate (Briefings.jsx) also
+            // listens for Enter/Space via a keydown capture handler.
+            out += `<span class="xref" role="link" tabindex="0" data-k="${escapeHtml(cand.k)}" data-id="${escapeHtml(cand.id)}">${escapeHtml(matchedText)}<span class="rt"> ▸</span></span>`
             lastIndex = match.index + matchedText.length
         }
         if (re.lastIndex === match.index) re.lastIndex += 1 // guard against zero-length-match infinite loop
