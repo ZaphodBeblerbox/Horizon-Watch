@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 import { claimMetaLine } from "./citationLine.js"
 import { bucketForKind } from "./findingBucket.js"
+import { buildXrefCandidates, wrapXrefsHtml, checkForUnwrappedReferences } from "./xrefEngine.js"
 
 // DocumentRenderer.jsx — the one shared renderer for a Report's content,
 // used identically by the reader, the editor, and the print layout (§3 of
@@ -13,45 +14,32 @@ import { bucketForKind } from "./findingBucket.js"
 // mode: "read" (plain, xrefs clickable) | "edit" (claims/key_judgments
 // editable, AI Council comment wells shown) | "print" (identical to read,
 // but never renders comment wells, per the "never in the printed PDF" rule).
+//
+// Reader rework: .xref spans are no longer "wrap the whole claim paragraph
+// in one clickable span" — see xrefEngine.js's own docblock. Real
+// identifiers/labels (GET /api/reports/{id}/sections's xrefIndex prop, real
+// region names) are scanned for and wrapped, deterministically, in every
+// real text field of the document (claim text, key judgments, narrative
+// prose, warnings, actions) — never relying on the drafting model to have
+// marked up its own citations.
 
 const THEME_SECTION_IDS = ["maritime_activity", "aerial_activity", "imagery_detection", "alerts_events", "open_source_context"]
 const EVIDENCE_SECTION_IDS = [...THEME_SECTION_IDS, "area_overview", "outlook_watch"]
-
-function xrefKindFor(citation) {
-    if (!citation || citation.type !== "snapshot_ref") return "external"
-    const s = citation.section
-    if (s === "ais_anomalies" || s === "adsb_anomalies") return "signal"
-    if (s === "sentinel_detections") return "scene"
-    if (s === "strategic_zones") return "region"
-    return "signal"
-}
-
-export function XrefSpan({ claim, active, onSelect, children }) {
-    const kind = xrefKindFor(claim.citation)
-    if (claim.citation?.type !== "snapshot_ref" && claim.citation?.type !== "external") {
-        return <span>{children}</span>
-    }
-    return (
-        <span
-            role="button" tabIndex={0}
-            onClick={() => onSelect?.(claim, kind)}
-            onKeyDown={(e) => { if (e.key === "Enter") onSelect?.(claim, kind) }}
-            className="xref"
-            style={{
-                textDecoration: "underline dotted", textUnderlineOffset: 3, cursor: "pointer",
-                background: active ? "var(--acc-dim)" : "transparent",
-            }}
-        >
-            {children}
-        </span>
-    )
-}
 
 function EmptyNote({ children }) {
     return <div style={{ font: "italic 12.5px var(--font)", color: "var(--txt-3)" }}>{children}</div>
 }
 
-function ClaimList({ claims, mode, activeClaimId, onSelectXref, onEditClaim, resolvedComments, onToggleResolve }) {
+/** Renders `text` with real .xref spans wrapped in — click handling is
+ * delegated at the document-container level (Briefings.jsx), not per-span,
+ * since these are raw HTML strings, not React elements. */
+function XrefText({ text, candidates, as: Tag = "p", style }) {
+    const html = useMemo(() => wrapXrefsHtml(text, candidates), [text, candidates])
+    // eslint-disable-next-line react/no-danger
+    return <Tag style={style} dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function ClaimList({ claims, mode, candidates, onEditClaim, resolvedComments, onToggleResolve }) {
     if (!claims.length) return <EmptyNote>No claims cite this section's data in this report.</EmptyNote>
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -64,11 +52,7 @@ function ClaimList({ claims, mode, activeClaimId, onSelectXref, onEditClaim, res
                             onChange={(e) => onEditClaim?.(claim.claim_id, e.target.value)}
                         />
                     ) : (
-                        <p style={{ margin: 0 }}>
-                            <XrefSpan claim={claim} active={activeClaimId === claim.claim_id} onSelect={onSelectXref}>
-                                {claim.text}
-                            </XrefSpan>
-                        </p>
+                        <XrefText text={claim.text} candidates={candidates} style={{ margin: 0 }} />
                     )}
                     <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginTop: 2 }}>
                         {claimMetaLine(claim)}
@@ -100,7 +84,7 @@ function ClaimList({ claims, mode, activeClaimId, onSelectXref, onEditClaim, res
     )
 }
 
-function SectionBlock({ section, mode, keyJudgments, onEditKeyJudgments, ...claimProps }) {
+function SectionBlock({ section, mode, keyJudgments, onEditKeyJudgments, candidates, ...claimProps }) {
     return (
         <section style={{ marginBottom: 26 }} data-section-id={section.section_id}>
             <div style={{
@@ -115,15 +99,15 @@ function SectionBlock({ section, mode, keyJudgments, onEditKeyJudgments, ...clai
                         className="input" style={{ width: "100%", minHeight: 90, font: "400 13.5px/1.6 var(--serif, georgia)", resize: "vertical" }}
                         value={keyJudgments || ""} onChange={(e) => onEditKeyJudgments?.(e.target.value)}
                     />
+                ) : keyJudgments ? (
+                    <XrefText text={keyJudgments} candidates={candidates} style={{ whiteSpace: "pre-wrap", lineHeight: 1.68, fontSize: 13.5, margin: 0 }} />
                 ) : (
-                    <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.68, fontSize: 13.5 }}>
-                        {keyJudgments || <EmptyNote>No key judgements drafted for this report.</EmptyNote>}
-                    </div>
+                    <EmptyNote>No key judgements drafted for this report.</EmptyNote>
                 )
             )}
             {section.note && <EmptyNote>{section.note}</EmptyNote>}
             {section.section_id !== "key_judgments" && (
-                <ClaimList claims={section.claims} mode={mode} {...claimProps} />
+                <ClaimList claims={section.claims} mode={mode} candidates={candidates} {...claimProps} />
             )}
         </section>
     )
@@ -170,12 +154,15 @@ export function allEvidenceClaims(sections) {
 /**
  * Props:
  *   report, sections — real data (see backend/report_sections.py, main.py's
- *     _report_to_dict). mode — "read"|"edit"|"print". activeClaimId,
- *     onSelectXref(claim, kind) — xref click-through. Edit-mode callbacks:
- *     onEditKeyJudgments(text), onEditClaimText(claimId, text),
- *     resolvedComments (Set), onToggleResolve(id).
+ *     _report_to_dict). mode — "read"|"edit"|"print". xrefIndex — real
+ *     GET /api/reports/{id}/xref-index response ({signals,scenes,nodes}),
+ *     used to build the real .xref candidate list (see xrefEngine.js) —
+ *     click handling on the resulting spans is delegated at the container
+ *     level (Briefings.jsx), not a prop here, since spans are raw HTML.
+ *     Edit-mode callbacks: onEditKeyJudgments(text), onEditClaimText(claimId,
+ *     text), resolvedComments (Set), onToggleResolve(id).
  */
-export default function DocumentRenderer({ report, sections, mode = "read", activeClaimId, onSelectXref,
+export default function DocumentRenderer({ report, sections, mode = "read", xrefIndex,
     onEditKeyJudgments, onEditClaimText, resolvedComments, onToggleResolve }) {
     const narrative = report?.narrative || {}
     const themes = useMemo(() => buildThemes(sections || []), [sections])
@@ -185,7 +172,26 @@ export default function DocumentRenderer({ report, sections, mode = "read", acti
     const collectionGaps = (sections || []).find((s) => s.section_id === "collection_gaps")
     const exposure = report?.exposure
 
-    const claimProps = { activeClaimId, onSelectXref, onEditClaim: onEditClaimText, resolvedComments, onToggleResolve }
+    const regionNames = useMemo(() => regionDist.map((r) => r.region), [regionDist])
+    const candidates = useMemo(() => buildXrefCandidates(xrefIndex, regionNames), [xrefIndex, regionNames])
+
+    // Real content-validation pass — logs (never silently drops, never
+    // throws) if the drafted text mentions what looks like a real signal/
+    // scene id that isn't actually part of this document's real evidence
+    // set. Runs once per document load, over every real free-text field.
+    useMemo(() => {
+        if (mode === "edit" || !xrefIndex) return
+        const label = report?.report_id ? `report ${report.report_id}` : ""
+        checkForUnwrappedReferences(report?.key_judgments, candidates, label)
+        checkForUnwrappedReferences(narrative.second_para, candidates, label)
+        checkForUnwrappedReferences(narrative.bottom_line, candidates, label)
+        for (const w of narrative.warnings || []) checkForUnwrappedReferences(w, candidates, label)
+        for (const a of narrative.actions || []) checkForUnwrappedReferences(a?.[0], candidates, label)
+        for (const c of evidenceClaims) checkForUnwrappedReferences(c.text, candidates, label)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [report?.report_id, xrefIndex, candidates])
+
+    const claimProps = { onEditClaim: onEditClaimText, resolvedComments, onToggleResolve }
 
     return (
         <article className="docbody" style={{
@@ -211,12 +217,12 @@ export default function DocumentRenderer({ report, sections, mode = "read", acti
             {/* Executive judgement */}
             <SectionBlock
                 section={(sections || []).find((s) => s.section_id === "key_judgments") || { number: "1", section_id: "key_judgments", title: "Executive Judgement", claims: [], note: null }}
-                mode={mode} keyJudgments={report?.key_judgments} onEditKeyJudgments={onEditKeyJudgments}
+                mode={mode} keyJudgments={report?.key_judgments} onEditKeyJudgments={onEditKeyJudgments} candidates={candidates}
             />
-            {narrative.second_para && <p style={{ marginTop: -14 }}>{narrative.second_para}</p>}
+            {narrative.second_para && <XrefText text={narrative.second_para} candidates={candidates} style={{ marginTop: -14 }} />}
             {narrative.bottom_line && (
                 <div style={{ background: "var(--bg-2)", borderLeft: "3px solid var(--acc-hi)", padding: "8px 12px", margin: "10px 0 20px", fontWeight: 600 }}>
-                    Bottom line. {narrative.bottom_line}
+                    Bottom line. <XrefText as="span" text={narrative.bottom_line} candidates={candidates} />
                 </div>
             )}
 
@@ -230,7 +236,7 @@ export default function DocumentRenderer({ report, sections, mode = "read", acti
                 <div style={{ font: "700 12px var(--font)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--txt-2)", borderBottom: "1px solid var(--line)", paddingBottom: 5, marginBottom: 10 }}>
                     Signals driving this assessment
                 </div>
-                <ClaimList claims={evidenceClaims} mode={mode} {...claimProps} />
+                <ClaimList claims={evidenceClaims} mode={mode} candidates={candidates} {...claimProps} />
             </section>
 
             {/* Assessment by theme */}
@@ -241,7 +247,9 @@ export default function DocumentRenderer({ report, sections, mode = "read", acti
                     <p style={{ margin: "0 0 6px" }}>{t.paragraph}</p>
                     <ul style={{ margin: 0, paddingLeft: 18 }}>
                         {t.claims.slice(0, 3).map((c) => (
-                            <li key={c.claim_id}><XrefSpan claim={c} active={activeClaimId === c.claim_id} onSelect={onSelectXref}>{c.text}</XrefSpan></li>
+                            <li key={c.claim_id} data-claim-id={c.claim_id}>
+                                <XrefText as="span" text={c.text} candidates={candidates} />
+                            </li>
                         ))}
                     </ul>
                 </section>
@@ -289,7 +297,9 @@ export default function DocumentRenderer({ report, sections, mode = "read", acti
                 {(!narrative.warnings || narrative.warnings.length === 0) ? (
                     <EmptyNote>No warnings identified from current evidence.</EmptyNote>
                 ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>{narrative.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                        {narrative.warnings.map((w, i) => <li key={i}><XrefText as="span" text={w} candidates={candidates} /></li>)}
+                    </ul>
                 )}
             </section>
 
@@ -302,7 +312,12 @@ export default function DocumentRenderer({ report, sections, mode = "read", acti
                     <EmptyNote>No recommended actions generated for this cycle.</EmptyNote>
                 ) : (
                     <ol style={{ margin: 0, paddingLeft: 18 }}>
-                        {narrative.actions.map((a, i) => (<li key={i}>{a[0]} <span style={{ color: "var(--txt-3)" }}>— {a[1]}, by {a[2]}</span></li>))}
+                        {narrative.actions.map((a, i) => (
+                            <li key={i}>
+                                <XrefText as="span" text={a[0]} candidates={candidates} />
+                                {" "}<span style={{ color: "var(--txt-3)" }}>— {a[1]}, by {a[2]}</span>
+                            </li>
+                        ))}
                     </ol>
                 )}
             </section>

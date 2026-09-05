@@ -93,6 +93,18 @@ def _real_detections(db, scan_id, exclude_rejected=True):
     return q.all()
 
 
+def _detection_interpretation(d) -> str:
+    """Real, deterministic interpretation text (sentinel_ml.py's
+    interpret_vessel_detection(), computed at detection time and stored in
+    this row's own attributes JSON) — honest "" if this detection predates
+    that field rather than fabricating one after the fact."""
+    try:
+        attrs = json.loads(d.attributes) if d.attributes else {}
+    except (TypeError, ValueError):
+        return ""
+    return attrs.get("interpretation") or ""
+
+
 def compare_scans(db, zone, current_scan):
     """Real comparison of `current_scan` against its real reference scan (if
     any). Returns per-class [label,current,delta] counts, per-detection
@@ -129,6 +141,7 @@ def compare_scans(db, zone, current_scan):
             "conf": round(d.confidence, 3), "bbox": bbox_percent(d.centroid_lat, d.centroid_lon, zone_bbox),
             "note": "", "severity": d.severity, "reviewed_status": d.reviewed_status,
             "lat": d.centroid_lat, "lon": d.centroid_lon,
+            "interpretation": _detection_interpretation(d),
         })
     for r in ref_dets:
         if id(r) not in matched_ref_ids:

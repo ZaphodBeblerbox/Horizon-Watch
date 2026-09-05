@@ -51,8 +51,15 @@ class SanctionsLoader:
         self._sanctions_by_name: dict = {}
         self._last_loaded: datetime = None
         self._total_vessels: int = 0
+        # Real guard against overlapping network refreshes — e.g. a dev
+        # process restarting repeatedly in a short window (each restart's
+        # startup call sees self._last_loaded as None again) could otherwise
+        # pile up multiple concurrent live downloads + full DB delete/re-
+        # insert of tens of thousands of rows against the same SQLite file,
+        # serializing into a real, long stall. Only one refresh in flight.
+        self._refresh_in_progress: bool = False
 
-    async def load_or_refresh(self, db=None) -> dict:
+    async def load_or_refresh(self, db=None, allow_background_refresh: bool = True) -> dict:
         """Load sanctions list. Refresh if older than 24h. Returns stats dict.
 
         This is the single choke point both the startup call and the 24h
@@ -61,11 +68,50 @@ class SanctionsLoader:
         last_loaded/vessel_count/failures=0/error=None; on any failure path:
         last_attempt, failures incremented, error set to the already-computed
         error string.
+
+        Real instant-startup fix: on a fresh process (self._last_loaded is
+        None, in-memory index still empty), this used to unconditionally run
+        the full live network download first — a real HTTP call with no
+        outer timeout beyond its own two sequential 45s/60s client timeouts,
+        so a cold start could block on this alone for up to ~105s, on top of
+        every other synchronous startup step ahead of it. There is a real,
+        already-downloaded DB cache (`_load_from_db`) that was previously
+        only ever used as a last-resort fallback when the live download
+        failed outright. Now: if a real DB cache exists, serve it
+        immediately (fast, local, no network) so the in-memory index the AIS
+        sanctions join depends on is populated right away, and refresh from
+        the network in the background rather than blocking the caller.
         """
         if (self._last_loaded and
                 datetime.utcnow() - self._last_loaded < timedelta(hours=24)):
             return {"cached": True, "vessels": self._total_vessels}
 
+        if self._last_loaded is None and db is not None and not self._sanctions_by_mmsi:
+            self._load_from_db(db)
+            if self._total_vessels and allow_background_refresh:
+                print(f"[sanctions] Startup: serving {self._total_vessels} real cached "
+                      f"vessel(s) from DB immediately; live refresh continues in background")
+                if not self._refresh_in_progress:
+                    import asyncio as _bg_asyncio
+                    _bg_asyncio.create_task(self._background_network_refresh())
+                return {"cached": True, "vessels": self._total_vessels, "source": "db_cache_startup"}
+
+        return await self._refresh_from_network(db)
+
+    async def _background_network_refresh(self) -> None:
+        if self._refresh_in_progress:
+            return
+        self._refresh_in_progress = True
+        try:
+            from database import SessionLocal as _SL
+            with _SL() as _db:
+                await self._refresh_from_network(_db)
+        except Exception as e:
+            print(f"[sanctions] background network refresh failed: {e}")
+        finally:
+            self._refresh_in_progress = False
+
+    async def _refresh_from_network(self, db=None) -> dict:
         # Imported lazily (not at module top) because main.py imports this
         # module eagerly at its own top level (`from sanctions_loader import
         # sanctions_loader, ...`) — a top-level import back here would be

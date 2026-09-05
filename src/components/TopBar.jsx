@@ -37,6 +37,23 @@ export default function TopBar({
     const zulu = now.toUTCString().slice(17, 22) + "Z"
     const dateStr = now.toISOString().slice(0, 10)
 
+    // Real Fullscreen API — state tracked via a real fullscreenchange
+    // listener (not just toggled on click) so the icon stays correct if the
+    // analyst exits fullscreen with Esc directly rather than the button.
+    const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement)
+    useEffect(() => {
+        const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+        document.addEventListener("fullscreenchange", onChange)
+        return () => document.removeEventListener("fullscreenchange", onChange)
+    }, [])
+    const toggleFullscreen = () => {
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {})
+        } else {
+            document.documentElement.requestFullscreen().catch(() => {})
+        }
+    }
+
     return (
         <div style={{
             height: "var(--top)", flexShrink: 0, background: "var(--bg-2)",
@@ -125,6 +142,16 @@ export default function TopBar({
                     }}
                 >
                     <svg className="icon sm"><use href="#i-bell" /></svg>
+                </button>
+                <button
+                    onClick={toggleFullscreen}
+                    title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                    style={{
+                        width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                        background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
+                    }}
+                >
+                    <svg className="icon sm"><use href={isFullscreen ? "#i-fullscreen-exit" : "#i-fullscreen-enter"} /></svg>
                 </button>
 
                 <button

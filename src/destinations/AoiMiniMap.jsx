@@ -36,6 +36,12 @@ import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ScaleBar from "../components/ScaleBar.jsx"
 import CoordinateReadout from "../components/CoordinateReadout.jsx"
 import AoiLockDimming from "../globe/AoiLockDimming.jsx"
+import { useUserLocation } from "../globe/useUserLocation.js"
+
+// Real "zoomed in" altitude for the no-real-data default view (vs.
+// zonesCenter()'s 15,000km world-ish fallback) — a genuine device location
+// deserves a real close-in view, not the same generic full-world framing.
+const USER_LOCATION_ZOOM_HEIGHT = 300_000
 
 const PRIORITY_COLOR = {
     critical: "#EF4444", // --danger
@@ -83,6 +89,7 @@ export default function AoiMiniMap({
     const onDrawRef     = useRef(onDrawComplete)
     const [ready, setReady] = useState(false)
     const [err, setErr]     = useState(null)
+    const userLoc = useUserLocation()
 
     useEffect(() => { onSelectRef.current = onSelectZone }, [onSelectZone])
     useEffect(() => { onDrawRef.current = onDrawComplete }, [onDrawComplete])
@@ -231,6 +238,30 @@ export default function AoiMiniMap({
         return () => { cancelled = true }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [flyToZoneId, ready])
+
+    // ── Default view: zoomed to the real user location ──────────────────
+    // zonesCenter()'s fallback (no real zone bbox to frame) is a generic
+    // 15,000km world view — once the real device location resolves, and
+    // there's still no real zone data to frame instead, fly there zoomed in
+    // rather than leaving the generic world default. Never fabricated: no
+    // real location resolved (denied/unavailable) means this simply never
+    // fires and the existing honest fallback view stands.
+    useEffect(() => {
+        if (!ready || !userLoc) return
+        if (zones.some(z => z.bbox)) return // real zone data takes priority
+        const viewer = viewerRef.current
+        if (!viewer || viewer.isDestroyed()) return
+        let cancelled = false
+        import("cesium").then(({ Cartesian3 }) => {
+            if (cancelled || viewer.isDestroyed()) return
+            viewer.camera.flyTo({
+                destination: Cartesian3.fromDegrees(userLoc.lon, userLoc.lat, USER_LOCATION_ZOOM_HEIGHT),
+                duration: 1,
+            })
+        })
+        return () => { cancelled = true }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ready, userLoc])
 
     // ── Rectangle draw mode ──────────────────────────────────────────────
     useEffect(() => {

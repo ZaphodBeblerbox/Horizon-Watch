@@ -344,7 +344,6 @@ def prepare_intelligence_picture(
         surges = (
             db.query(SurgeEvent)
             .filter(SurgeEvent.status == "active", SurgeEvent.expires_at > now)
-            .order_by(SurgeEvent.severity.desc())
             .all()
         )
     except Exception:
@@ -354,6 +353,13 @@ def prepare_intelligence_picture(
         s for s in surges
         if _region_ok(s.lat, s.lon, region) and _period_ok(s.created_at, period_start, period_end)
     ]
+    # SurgeEvent.severity is a free-text String column ("critical"/"high"/
+    # "medium"/"low"), not an ordered type — a SQL .desc() on it sorts
+    # alphabetically ("critical" < "high" < "low" < "medium"), which put the
+    # least severe surges first and genuinely critical ones last. Real rank
+    # sort instead, same convention as main.py's own SEV_ORDER.
+    _SURGE_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    surges.sort(key=lambda s: _SURGE_SEV_RANK.get((s.severity or "").lower(), 4))
 
     surge_items = []
     for s in surges:
@@ -445,6 +451,11 @@ def prepare_intelligence_picture(
     all_scored = relevance_scorer.score_all_active_signals(signals_raw, db)
 
     high_relevance = [s for s in all_scored if s.get("relevance_score", 0) >= 60]
+    # Real relevance-rank sort before the top-10 cap below — score_all_active_
+    # signals() only scores/mutates in place, it never sorts, so without this
+    # the "top 10" kept was whichever 10 entered signals_raw first (arrival
+    # order), not the 10 highest-relevance ones.
+    high_relevance.sort(key=lambda s: -(s.get("relevance_score") or 0))
     ais_signals    = [s for s in high_relevance if s.get("domain", "") == "AIS"]
     adsb_signals   = [s for s in high_relevance if s.get("domain", "") == "ADSB"]
 

@@ -1,9 +1,9 @@
 import "../cesiumConfig.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
-import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference } from "cesium"
+import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, EllipsoidTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference } from "cesium"
 import "cesium/Build/Cesium/Widgets/widgets.css"
-import { esriLabelsProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
+import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
@@ -133,6 +133,10 @@ export default function GlobeView({
     eventsMinRelevance = 4,
     precisionEventsEnabled = true,
     autoModeEnabled = false,
+    // Basemap preset — "dark" (default) | "satellite" | "terrain". Swaps the
+    // one base ImageryLayer + terrainProvider on the existing viewer
+    // instance (see the dedicated effect below) — never a teardown/remount.
+    basemap = "dark",
     // Data props (optional — GlobeView fetches internally when null)
     aisVessels:   externalAIS  = null,
     adsbAircraft: externalADSB = null,
@@ -140,6 +144,7 @@ export default function GlobeView({
     annotationTool = "select",
 }) {
     const viewerRef = useRef(null)
+    const baseLayerRef = useRef(null) // the one ImageryLayer this component manages imperatively for basemap swaps
     const [vessels,  setVessels]  = useState([])
     const [sanctionedMmsis, setSanctionedMmsis] = useState({ confirmed: new Set(), possible: new Set() })
     const [watchlistedIcaos, setWatchlistedIcaos] = useState(new Set())
@@ -374,7 +379,6 @@ export default function GlobeView({
             viewer.targetFrameRate = 60
             viewer.scene.requestRenderMode = true
             viewer.scene.maximumRenderTimeChange = 0.05
-            CesiumTerrainProvider.fromIonAssetId(1).then(tp => { viewer.terrainProvider = tp }).catch(() => {})
             // Listen for WebGL context loss on the Cesium canvas
             canvas = viewer.canvas
             canvas.addEventListener("webglcontextlost",     onLost)
@@ -386,6 +390,58 @@ export default function GlobeView({
             canvas?.removeEventListener("webglcontextrestored", onRestored)
         }
     }, [])
+
+    // Basemap preset — swaps only the one base ImageryLayer this component
+    // owns (tracked in baseLayerRef) and the terrainProvider, on the SAME
+    // existing viewer instance. Never viewer.imageryLayers.removeAll() —
+    // that would also wipe the resium-managed overlay ImageryLayers below
+    // (sentinel/openSeaMap/openInfra/esriLabels), which have no way to know
+    // their underlying Cesium layer vanished out from under them.
+    useEffect(() => {
+        let attempts = 0
+        let cancelled = false
+        let restoreId = null
+        const tryApply = () => {
+            if (cancelled) return
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer || viewer.isDestroyed?.()) {
+                if (attempts++ < 15) setTimeout(tryApply, 250)
+                return
+            }
+            if (baseLayerRef.current && viewer.imageryLayers.contains(baseLayerRef.current)) {
+                viewer.imageryLayers.remove(baseLayerRef.current, true)
+            }
+            const provider = basemap === "dark" ? esriDarkProvider : esriSatelliteProvider
+            baseLayerRef.current = viewer.imageryLayers.addImageryProvider(provider, 0)
+
+            if (basemap === "terrain") {
+                CesiumTerrainProvider.fromIonAssetId(1).then(tp => {
+                    if (!cancelled) viewer.terrainProvider = tp
+                }).catch(() => {})
+            } else {
+                viewer.terrainProvider = new EllipsoidTerrainProvider()
+            }
+            // requestRenderMode (set in the effect above) means Cesium only
+            // renders on a tracked property change or an explicit
+            // requestRender() — and a single requestRender() call only
+            // covers the FIRST frame (the one that runs tile *selection* and
+            // fires the new requests); the newly-requested tiles still need
+            // several more frames to actually arrive and get painted once
+            // loaded. Confirmed live: a single requestRender() left the globe
+            // frozen fully black even though the new layer/provider was
+            // correctly configured — only a manual, repeated render() during
+            // the load window actually painted the real tiles. Dropping to
+            // continuous rendering for a few seconds after a basemap swap,
+            // then restoring on-demand mode, is the real fix rather than
+            // guessing at a single magic requestRender() call.
+            viewer.scene.requestRenderMode = false
+            restoreId = setTimeout(() => {
+                if (!cancelled && !viewer.isDestroyed()) viewer.scene.requestRenderMode = true
+            }, 3000)
+        }
+        tryApply()
+        return () => { cancelled = true; if (restoreId != null) clearTimeout(restoreId) }
+    }, [basemap])
 
     // Track camera viewport bounds for event layer scoping
     useEffect(() => {
@@ -462,7 +518,7 @@ export default function GlobeView({
 
     return (
         <GlobeErrorBoundary>
-        <div style={{ position: "absolute", inset: 0 }}>
+        <div data-basemap={basemap} style={{ position: "absolute", inset: 0 }}>
             <style>{`
                 /* Minimise Cesium branding — required by Ion ToS but can be shrunk */
                 .cesium-viewer .cesium-widget-credits {
@@ -486,6 +542,20 @@ export default function GlobeView({
                 .cesium-viewer-bottom { bottom: 0 !important; }
                 /* Suppress the default selection indicator green ring */
                 .cesium-selection-wrapper { display: none !important; }
+                /* Esri's usage terms require VISIBLE attribution — the
+                   minimised/near-invisible credit styling above (real for
+                   Cesium's own Ion ToS) does not apply while Esri World
+                   Imagery is the active base layer (Satellite/Terrain). */
+                [data-basemap="satellite"] .cesium-viewer .cesium-widget-credits,
+                [data-basemap="terrain"] .cesium-viewer .cesium-widget-credits {
+                    opacity: 0.85 !important;
+                    transform: scale(1);
+                }
+                [data-basemap="satellite"] .cesium-viewer .cesium-credit-textContainer,
+                [data-basemap="terrain"] .cesium-viewer .cesium-credit-textContainer {
+                    font-size: 10px !important;
+                    opacity: 0.85 !important;
+                }
             `}</style>
             <Viewer
                 ref={viewerRef}
@@ -501,6 +571,7 @@ export default function GlobeView({
                 selectionIndicator={false}
                 infoBox={false}
                 scene3DOnly={true}
+                baseLayer={false}
             >
                 {/* Raster overlays — rendered on top of ESRI base when active */}
                 {satelliteEnabled && sentinelProvider && (

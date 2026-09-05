@@ -619,8 +619,25 @@ class DarkShipDetector:
                                       signal
     """
 
+    # Real per-vessel-class expected-gap floor, in minutes — replaces the
+    # single fixed 60-minute constant every vessel used to share regardless
+    # of type. Ordering (tighter for tankers/passenger, looser for military)
+    # reflects real, disclosed judgment about which classes warrant faster
+    # scrutiny of a gap, not an empirically-measured reporting cadence per
+    # class — same "real, disclosed default, not a fabricated precision"
+    # standard the rest of this codebase holds itself to. "other" keeps the
+    # prior global constant as its floor so behavior for unclassified/small
+    # craft is unchanged.
+    _TYPE_GAP_MINUTES = {
+        "tanker":    30.0,
+        "passenger": 30.0,
+        "cargo":     45.0,
+        "military":  90.0,
+        "other":     60.0,
+    }
+
     def __init__(self):
-        # mmsi (str) → {timestamp, lat, lon, speed, name, region_id, alerted_at}
+        # mmsi (str) → {timestamp, lat, lon, speed, name, ship_type, region_id, alerted_at}
         self._last_seen: dict = {}
 
     def update(self, vessels: dict, now: datetime, region_fn=None) -> None:
@@ -646,6 +663,7 @@ class DarkShipDetector:
                 "lon":        lon,
                 "speed":      float(v.get("speed") or 0),
                 "name":       v.get("name") or str(mmsi),
+                "ship_type":  v.get("ship_type") or "other",
                 "region_id":  region_id,
                 "alerted_at": None,  # cleared — this vessel is live this cycle
             }
@@ -676,8 +694,18 @@ class DarkShipDetector:
                     if not rule.get("enabled", True):
                         continue
                     params = rule.get("params") or {}
+                    target = str(params.get("target", "ALL") or "ALL").upper()
 
-                    min_gap = float(params.get("min_gap_minutes", 60))
+                    if target.startswith("MMSI:"):
+                        # A specific per-vessel rule is an explicit analyst
+                        # override — respect its configured value as-is.
+                        min_gap = float(params.get("min_gap_minutes", 60))
+                    else:
+                        # The global "ALL" rule: real per-vessel-class floor
+                        # instead of one fixed constant for every vessel type.
+                        min_gap = self._TYPE_GAP_MINUTES.get(
+                            state.get("ship_type", "other"), self._TYPE_GAP_MINUTES["other"],
+                        )
                     if elapsed_min < min_gap:
                         continue
 
@@ -685,7 +713,6 @@ class DarkShipDetector:
                     if state["speed"] < min_speed:
                         continue  # already slow/anchored before going quiet
 
-                    target = str(params.get("target", "ALL") or "ALL").upper()
                     if target.startswith("MMSI:") and target.split(":", 1)[1] != str(mmsi):
                         continue
 

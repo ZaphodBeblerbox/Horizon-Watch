@@ -25,6 +25,10 @@ export function getReportSections(reportId) {
     return apiFetch(`/api/reports/${reportId}/sections`).then(asJson)
 }
 
+export function getXrefIndex(reportId) {
+    return apiFetch(`/api/reports/${reportId}/xref-index`).then(asJson)
+}
+
 export function patchReport(reportId, patch) {
     return apiFetch(`/api/reports/${reportId}`, { method: "PATCH", body: JSON.stringify(patch) }).then(asJson)
 }

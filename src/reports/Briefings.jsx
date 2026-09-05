@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react"
-import { getReport, getReportSections, patchReport, listReports } from "./reportApi.js"
-import DocumentRenderer, { allEvidenceClaims } from "./DocumentRenderer.jsx"
-import MiniMap from "./MiniMap.jsx"
+import { getReport, getReportSections, getXrefIndex, patchReport, listReports } from "./reportApi.js"
+import DocumentRenderer, { allEvidenceClaims, buildRegionDistribution } from "./DocumentRenderer.jsx"
+import LocatorMiniMap from "../globe/LocatorMiniMap.jsx"
 import { replayOnMap } from "../services/replayOnMap.js"
 
 const WALKTHROUGH_INTERVAL_MS = 3600
@@ -11,48 +11,124 @@ function StatusDot({ status }) {
     return <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, display: "inline-block", marginRight: 5 }} />
 }
 
-/** Kind-specific real actions for the reference pane. Only ever offers an
- * action that leads somewhere real — an unbuilt destination (Ontology,
- * Imagery's change-detection viewer) shows an honest disabled note instead
- * of a button that goes nowhere. */
-function ReferenceActions({ claim, kind }) {
-    const hasCoord = claim.lat != null && claim.lon != null
-    const entityPrefix = claim.citation?.section === "adsb_anomalies" ? "adsb" : claim.citation?.section === "ais_anomalies" ? "ais" : null
+/** Real per-kind reference-pane content + onward actions. Every action
+ * calls the exact real shared function the target module itself exposes
+ * (map fly-to/select, replayOnMap, Imagery's scene loader, Ontology's
+ * locate/select) — never a reader-specific re-implementation, so clicking
+ * through lands in the identical state a direct visit would. */
+function ReferencePane({ record, documentClaims, onSelectRef }) {
+    if (!record) {
+        return <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Click a reference in the document to inspect it here.</div>
+    }
+    const { kind } = record
+    const hasCoord = record.lat != null && record.lon != null
 
     function openOnMap() {
         window.dispatchEvent(new CustomEvent("akili:open-map"))
-        setTimeout(() => { if (hasCoord) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: claim.lat, lon: claim.lon, altitude: 60000 } })) }, 50)
-        if (entityPrefix && claim.citation?.item_id) {
-            setTimeout(() => window.dispatchEvent(new CustomEvent("akili:show-entity", { detail: { id: `${entityPrefix}-${claim.citation.item_id}` } })), 400)
-        }
+        setTimeout(() => { if (hasCoord) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: record.lat, lon: record.lon, altitude: 60000 } })) }, 50)
     }
     function openInInbox() { window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "inbox" } })) }
-
-    // Replay's shared "Replay on map" animation (src/services/replayOnMap.js)
-    // — same function Replay.jsx's own row selection and any other signal
-    // row in the app calls, never a second implementation. A report claim
-    // carries no real timestamp (see backend/report_sections.py's claim
-    // shape), so this plays an honest fly-to + single ping with no real
-    // lead-up walk rather than fabricating one relative to a fake "now".
-    function animateLeadUp() { replayOnMap({ lat: claim.lat, lon: claim.lon, title: claim.text }) }
+    // Real, single shared "Replay on map" animation (src/services/
+    // replayOnMap.js) — same function Replay.jsx's own row selection and
+    // every other signal row in the app calls, never a second copy.
+    function animateLeadUp() { replayOnMap({ lat: record.lat, lon: record.lon, publishedAt: record.created_at, title: record.text || record.label }) }
+    function openChangeDetection() {
+        window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "imagery" } }))
+        window.dispatchEvent(new CustomEvent("akili:imagery-open-scene", { detail: { detectionId: record.id } }))
+    }
+    function openInOntology() {
+        window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "ontology" } }))
+        window.dispatchEvent(new CustomEvent("akili:ontology-select-node", { detail: { id: record.id } }))
+    }
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {hasCoord && <button className="btn sm" onClick={openOnMap}>open on map</button>}
-            {kind === "signal" && <button className="btn sm" onClick={openInInbox}>open in inbox</button>}
-            {kind === "signal" && hasCoord && (
-                <button className="btn sm" onClick={animateLeadUp} title="No real prior-signal timestamp on this claim, so this flies in and pings without a lead-up walk">animate lead-up</button>
+        <>
+            <div style={{ font: "600 12px var(--font)", color: "var(--txt)", marginBottom: 4, textTransform: "capitalize" }}>{kind}</div>
+
+            {kind === "signal" && (
+                <>
+                    <div style={{ font: "400 12.5px var(--font)", color: "var(--txt-2)", marginBottom: 10 }}>{record.text || record.label}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {hasCoord && <button className="btn sm" onClick={openOnMap}>open on map</button>}
+                        {hasCoord && <button className="btn sm" onClick={animateLeadUp}>animate lead-up</button>}
+                        <button className="btn sm" onClick={openInInbox}>open in inbox</button>
+                    </div>
+                </>
             )}
+
             {kind === "scene" && (
-                <button className="btn sm" disabled title="Change-detection viewer not built yet — see the Imagery module">open change detection</button>
+                <>
+                    <div style={{ font: "400 12.5px var(--font)", color: "var(--txt-2)", marginBottom: 4 }}>{record.label}</div>
+                    <dl className="kv" style={{ marginBottom: 10 }}>
+                        <dt>Object</dt><dd style={{ textTransform: "capitalize" }}>{record.object_type || "—"}</dd>
+                        <dt>Place</dt><dd>{record.nearest_port || record.nearest_chokepoint || "—"}</dd>
+                        <dt>Scan date</dt><dd style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{(record.scan_timestamp || "").slice(0, 16).replace("T", " ") || "—"}</dd>
+                        <dt>Sensor</dt><dd>{record.instrument || "—"}</dd>
+                    </dl>
+                    <button className="btn sm" onClick={openChangeDetection}>open change detection</button>
+                </>
             )}
-            {kind === "region" && (
-                <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>
-                    Region: {claim.region || "unclassified"}
-                </div>
+
+            {kind === "node" && (
+                <>
+                    <div style={{ font: "400 12.5px var(--font)", color: "var(--txt-2)", marginBottom: 4 }}>{record.label}</div>
+                    <dl className="kv" style={{ marginBottom: 10 }}>
+                        <dt>Type</dt><dd style={{ textTransform: "capitalize" }}>{record.type || "—"}</dd>
+                    </dl>
+                    <button className="btn sm" onClick={openInOntology}>open in ontology</button>
+                </>
             )}
-        </div>
+
+            {kind === "region" && (() => {
+                // Scoped to THIS document's own evidence set — never every
+                // signal in that region globally.
+                const matches = documentClaims.filter((c) => c.region === record.id)
+                return (
+                    <>
+                        <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", marginBottom: 8 }}>
+                            {matches.length} signal{matches.length === 1 ? "" : "s"} from this document in {record.label}
+                        </div>
+                        {matches.length === 0 ? (
+                            <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>No claims in this document fall in this region.</div>
+                        ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                {matches.map((c) => (
+                                    <div key={c.claim_id} role="button" onClick={() => onSelectRef("signal", String(c.citation?.item_id ?? c.claim_id))}
+                                        style={{ font: "400 12px var(--font)", color: "var(--txt-2)", cursor: "pointer", paddingBottom: 6, borderBottom: "1px solid var(--line-soft)" }}>
+                                        {c.text}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )
+            })()}
+        </>
     )
+}
+
+/** Real merged record lookup — every reference kind's full real data in one
+ * map, keyed "kind:id", so a click on ANY .xref span (wherever its text
+ * happens to appear in the document) resolves to the same real record. */
+function buildRecordLookup(xrefIndex, evidenceClaims, regionNames) {
+    const map = new Map()
+    for (const s of xrefIndex?.signals || []) map.set(`signal:${s.id}`, { kind: "signal", ...s })
+    for (const s of xrefIndex?.scenes || []) map.set(`scene:${s.id}`, { kind: "scene", ...s })
+    for (const n of xrefIndex?.nodes || []) map.set(`node:${n.id}`, { kind: "node", ...n })
+    for (const r of regionNames) map.set(`region:${r}`, { kind: "region", id: r, label: r })
+    // Claims enrich whichever real record their own citation resolves to
+    // (real text, lat/lon) — a claim's own citation.section decides which
+    // real kind it belongs to, same mapping report_sections.py/xref-index use.
+    for (const c of evidenceClaims) {
+        const sec = c.citation?.section
+        const itemId = c.citation?.item_id
+        if (!sec || itemId == null) continue
+        const k = sec === "sentinel_detections" ? "scene" : sec === "strategic_zones" ? "region" : "signal"
+        const key = `${k}:${itemId}`
+        const existing = map.get(key) || { kind: k, id: String(itemId) }
+        map.set(key, { ...existing, text: c.text, lat: c.lat ?? existing.lat, lon: c.lon ?? existing.lon, created_at: c.created_at, claim_id: c.claim_id })
+    }
+    return map
 }
 
 export default function Briefings({ initialReportId, onPrint }) {
@@ -60,8 +136,10 @@ export default function Briefings({ initialReportId, onPrint }) {
     const [reportId, setReportId] = useState(initialReportId || null)
     const [report, setReport] = useState(null)
     const [sections, setSections] = useState([])
+    const [xrefIndex, setXrefIndex] = useState(null)
     const [mode, setMode] = useState("read")
-    const [activeRef, setActiveRef] = useState(null) // {claim, kind}
+    const [activeRef, setActiveRef] = useState(null) // {kind, id}
+    const [docXrefs, setDocXrefs] = useState([])     // [{k,id,label}] in real document order
     const [walking, setWalking] = useState(false)
     const [dirty, setDirty] = useState(false)
     const [draftKJ, setDraftKJ] = useState("")
@@ -76,37 +154,84 @@ export default function Briefings({ initialReportId, onPrint }) {
 
     useEffect(() => {
         if (!reportId) return
-        Promise.all([getReport(reportId), getReportSections(reportId)]).then(([r, s]) => {
-            setReport(r); setSections(s); setDraftKJ(r.key_judgments || ""); setDraftClaims(r.claims); setDirty(false)
+        setActiveRef(null)
+        Promise.all([getReport(reportId), getReportSections(reportId), getXrefIndex(reportId).catch(() => null)]).then(([r, s, x]) => {
+            setReport(r); setSections(s); setXrefIndex(x); setDraftKJ(r.key_judgments || ""); setDraftClaims(r.claims); setDirty(false)
             dirtyRef.current = false
         })
     }, [reportId])
 
-    const references = useMemo(() => allEvidenceClaims(sections), [sections])
+    const evidenceClaims = useMemo(() => allEvidenceClaims(sections), [sections])
+    const regionNames = useMemo(() => buildRegionDistribution(sections).map((r) => r.region), [sections])
+    const recordLookup = useMemo(() => buildRecordLookup(xrefIndex, evidenceClaims, regionNames), [xrefIndex, evidenceClaims, regionNames])
 
     const editable = report?.status === "draft"
 
-    function selectRef(claim, kind) { setActiveRef({ claim, kind }) }
+    // The one real "activate a reference" function — the click delegate
+    // below, the left-pane reference index, and the guided walkthrough all
+    // call this exact function, never a parallel implementation of what
+    // happens when a reference is activated.
+    function selectRef(kind, id) {
+        setActiveRef({ kind, id: String(id) })
+    }
 
-    function scrollToClaim(claimId) {
-        const el = document.querySelector(`[data-claim-id="${claimId}"]`)
+    function scrollToXrefOccurrence(kind, id) {
+        if (!docRef.current) return
+        const el = Array.from(docRef.current.querySelectorAll(".xref")).find((e) => e.dataset.k === kind && e.dataset.id === String(id))
         el?.scrollIntoView({ behavior: "smooth", block: "center" })
     }
 
-    // Guided walkthrough — exactly 3.6s per reference, not an approximation.
+    function activateReference(kind, id) {
+        selectRef(kind, id)
+        scrollToXrefOccurrence(kind, id)
+    }
+
+    // Real click delegation — .xref spans are raw HTML (wrapped by
+    // xrefEngine.js), not React elements, so their click handling lives here
+    // rather than per-span.
+    function handleDocClick(e) {
+        const el = e.target.closest?.(".xref")
+        if (!el) return
+        activateReference(el.dataset.k, el.dataset.id)
+    }
+
+    // Real enumerated index of every .xref actually present, in true
+    // document order — rebuilt after each real render of the compiled text
+    // (DOM query order === document order regardless of which field a given
+    // reference happens to live in: a claim, key judgments, narrative prose,
+    // a warning, an action).
     useEffect(() => {
-        if (!walking || references.length === 0) return
+        if (!docRef.current) { setDocXrefs([]); return }
+        const els = Array.from(docRef.current.querySelectorAll(".xref"))
+        setDocXrefs(els.map((el) => ({ k: el.dataset.k, id: el.dataset.id, label: el.textContent })))
+    }, [sections, xrefIndex, mode, draftClaims])
+
+    // Imperative active-highlight — toggles .xref-active on every span
+    // matching the active reference (a label can appear more than once).
+    useEffect(() => {
+        if (!docRef.current) return
+        const all = docRef.current.querySelectorAll(".xref")
+        all.forEach((el) => el.classList.remove("xref-active"))
+        if (!activeRef) return
+        docRef.current.querySelectorAll(`.xref[data-k="${activeRef.kind}"][data-id="${CSS.escape(activeRef.id)}"]`)
+            .forEach((el) => el.classList.add("xref-active"))
+    }, [activeRef, docXrefs])
+
+    // Guided walkthrough — exactly 3.6s per reference, invoking the same
+    // activateReference() a manual click calls, never a second parallel
+    // "what happens when a reference activates" implementation.
+    useEffect(() => {
+        if (!walking || docXrefs.length === 0) return
         walkIdxRef.current = 0
         const step = () => {
-            const claim = references[walkIdxRef.current]
-            selectRef(claim, "signal")
-            scrollToClaim(claim.claim_id)
+            const ref = docXrefs[walkIdxRef.current]
+            if (ref) activateReference(ref.k, ref.id)
             walkIdxRef.current += 1
-            if (walkIdxRef.current >= references.length) setWalking(false)
+            if (walkIdxRef.current >= docXrefs.length) setWalking(false)
         }
         step()
         const id = setInterval(() => {
-            if (walkIdxRef.current >= references.length) { clearInterval(id); return }
+            if (walkIdxRef.current >= docXrefs.length) { clearInterval(id); return }
             step()
         }, WALKTHROUGH_INTERVAL_MS)
         return () => clearInterval(id)
@@ -142,6 +267,8 @@ export default function Briefings({ initialReportId, onPrint }) {
     const renderReport = mode === "edit" ? { ...report, key_judgments: draftKJ } : report
     const renderSections = mode === "edit" && draftClaims ? mergeDraftClaims(sections, draftClaims) : sections
 
+    const activeRecord = activeRef ? recordLookup.get(`${activeRef.kind}:${activeRef.id}`) || { kind: activeRef.kind, id: activeRef.id, label: activeRef.id } : null
+
     return (
         <div style={{ display: "grid", gridTemplateColumns: "236px 1fr 336px", height: "100%", overflow: "hidden" }}>
             {/* Left — register + reference index */}
@@ -157,13 +284,15 @@ export default function Briefings({ initialReportId, onPrint }) {
                 {reportId && (
                     <>
                         <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.04em", margin: "14px 0 6px" }}>References</div>
-                        {references.map((c, i) => (
-                            <div key={c.claim_id} role="button" onClick={() => { selectRef(c, "signal"); scrollToClaim(c.claim_id) }}
-                                style={{ padding: "4px 4px", font: "400 11.5px var(--font)", color: activeRef?.claim?.claim_id === c.claim_id ? "var(--txt)" : "var(--txt-3)", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {i + 1}. {c.text}
+                        {docXrefs.length === 0 ? (
+                            <div style={{ font: "400 11.5px var(--font)", color: "var(--txt-4)" }}>No cross-references in this document.</div>
+                        ) : docXrefs.map((ref, i) => (
+                            <div key={`${ref.k}-${ref.id}-${i}`} role="button" onClick={() => activateReference(ref.k, ref.id)}
+                                style={{ padding: "4px 4px", font: "400 11.5px var(--font)", color: activeRef?.kind === ref.k && activeRef?.id === ref.id ? "var(--txt)" : "var(--txt-3)", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {i + 1}. <span style={{ textTransform: "capitalize" }}>{ref.k}</span> · {ref.label}
                             </div>
                         ))}
-                        <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setWalking((w) => !w)}>
+                        <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setWalking((w) => !w)} disabled={docXrefs.length === 0}>
                             {walking ? "stop walkthrough" : "guided walkthrough"}
                         </button>
                     </>
@@ -175,10 +304,7 @@ export default function Briefings({ initialReportId, onPrint }) {
                 {!report ? (
                     <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Select a briefing from the register.</div>
                 ) : (
-                    <div ref={docRef} onClickCapture={(e) => {
-                        const el = e.target.closest?.("[data-claim-id]")
-                        if (el) scrollToClaim(el.getAttribute("data-claim-id"))
-                    }}>
+                    <div ref={docRef} onClickCapture={handleDocClick}>
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 14 }}>
                             <div className="seg">
                                 <button aria-pressed={mode === "read"} onClick={() => setMode("read")}>read</button>
@@ -187,46 +313,26 @@ export default function Briefings({ initialReportId, onPrint }) {
                             {mode === "edit" && <button className="btn sm" onClick={saveNow}>{dirty ? "save draft*" : "save draft"}</button>}
                             <button className="btn sm" onClick={() => onPrint?.(reportId)}>print / pdf</button>
                         </div>
-                        <DocWithClaimAnchors sections={renderSections}>
-                            <DocumentRenderer
-                                report={renderReport} sections={renderSections} mode={mode}
-                                activeClaimId={activeRef?.claim?.claim_id} onSelectXref={selectRef}
-                                onEditKeyJudgments={onEditKeyJudgments} onEditClaimText={onEditClaimText}
-                                resolvedComments={resolved} onToggleResolve={(id) => setResolved((prev) => {
-                                    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
-                                })}
-                            />
-                        </DocWithClaimAnchors>
+                        <DocumentRenderer
+                            report={renderReport} sections={renderSections} mode={mode} xrefIndex={xrefIndex}
+                            onEditKeyJudgments={onEditKeyJudgments} onEditClaimText={onEditClaimText}
+                            resolvedComments={resolved} onToggleResolve={(id) => setResolved((prev) => {
+                                const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+                            })}
+                        />
                     </div>
                 )}
             </div>
 
             {/* Right — minimap + reference detail */}
             <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto" }}>
-                <MiniMap focus={activeRef?.claim} context={references} height={196} />
+                <LocatorMiniMap focus={activeRecord?.lat != null ? activeRecord : null} context={evidenceClaims} height={196} />
                 <div style={{ padding: 12 }}>
-                    {!activeRef ? (
-                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Click a reference in the document to inspect it here.</div>
-                    ) : (
-                        <>
-                            <div style={{ font: "600 12px var(--font)", color: "var(--txt)", marginBottom: 4 }}>{activeRef.kind}</div>
-                            <div style={{ font: "400 12.5px var(--font)", color: "var(--txt-2)", marginBottom: 10 }}>{activeRef.claim.text}</div>
-                            <ReferenceActions claim={activeRef.claim} kind={activeRef.kind} />
-                        </>
-                    )}
+                    <ReferencePane record={activeRecord} documentClaims={evidenceClaims} onSelectRef={activateReference} />
                 </div>
             </div>
         </div>
     )
-}
-
-/** Wraps each rendered claim paragraph with a data-claim-id anchor so
- * scroll-into-view (guided walkthrough, reference-index clicks) can target
- * it — done via a DOM query rather than threading refs through
- * DocumentRenderer, since it's shared with the print layout which has no
- * need for this. */
-function DocWithClaimAnchors({ children }) {
-    return <div data-claim-anchors="true">{children}</div>
 }
 
 function mergeDraftClaims(sections, draftClaims) {

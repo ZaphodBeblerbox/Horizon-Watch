@@ -19,17 +19,18 @@ import LayersFlyout from "./LayersFlyout.jsx"
  * already-collected dataset view) to render the stack without a layers
  * button at all, rather than a dead/no-op one.
  */
-function ControlButton({ name, title, onClick }) {
+function ControlButton({ name, title, onClick, active = false }) {
     return (
         <button
             onClick={onClick}
             title={title}
             aria-label={title}
+            aria-pressed={active}
             style={{
                 width: 32, height: 32, borderRadius: "var(--radius-md)",
                 background: "var(--bg-card)", border: "1px solid var(--border)",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                cursor: "pointer", color: "var(--text-secondary)",
+                cursor: "pointer", color: active ? "var(--accent-blue)" : "var(--text-secondary)",
             }}
         >
             <Icon name={name} size={16} />
@@ -37,7 +38,20 @@ function ControlButton({ name, title, onClick }) {
     )
 }
 
-export default function MapControlStack({ layers = null, onLocate, onZoomIn, onZoomOut, onFullscreen, isFullscreen = false }) {
+const BASEMAP_PRESETS = [
+    { key: "dark",      icon: "basemapDark",     title: "Dark basemap" },
+    { key: "satellite", icon: "satellite",       title: "Satellite basemap (Esri World Imagery)" },
+    { key: "terrain",   icon: "basemapTerrain",  title: "Terrain basemap (3D elevation)" },
+]
+
+/**
+ * `basemap` (optional): {value: "dark"|"satellite"|"terrain", onChange(key)}
+ * — omit to render the stack without the basemap group at all. Grouped
+ * directly under the existing nav buttons (same 32px/--bg-card/--border
+ * ControlButton, a thin divider instead of a second floating box) so it
+ * reads as one continuous control cluster rather than a disconnected one.
+ */
+export default function MapControlStack({ layers = null, onLocate, onZoomIn, onZoomOut, onFullscreen, isFullscreen = false, basemap = null }) {
     return (
         <div style={{
             position: "absolute", right: 16, bottom: 16, zIndex: 40,
@@ -54,6 +68,18 @@ export default function MapControlStack({ layers = null, onLocate, onZoomIn, onZ
             <ControlButton name="zoomIn" title="Zoom In" onClick={onZoomIn} />
             <ControlButton name="zoomOut" title="Zoom Out" onClick={onZoomOut} />
             <ControlButton name="expand" title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"} onClick={onFullscreen} />
+            {basemap && (
+                <>
+                    <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
+                    {BASEMAP_PRESETS.map((p) => (
+                        <ControlButton
+                            key={p.key} name={p.icon} title={p.title}
+                            active={basemap.value === p.key}
+                            onClick={() => basemap.onChange(p.key)}
+                        />
+                    ))}
+                </>
+            )}
         </div>
     )
 }

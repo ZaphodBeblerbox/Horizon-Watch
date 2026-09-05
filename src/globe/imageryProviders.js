@@ -9,6 +9,16 @@ export const esriSatelliteProvider = new UrlTemplateImageryProvider({
     credit:       new Credit("Esri, Maxar, Earthstar Geographics", false),
 })
 
+// ESRI World Dark Gray Canvas — real, free, no-key basemap (verified live:
+// services.arcgisonline.com/.../Canvas/World_Dark_Gray_Base) used as the
+// Situation globe's "Dark" basemap preset. Not a bespoke/invented style —
+// this is the actual stock dark map Esri/Cesium examples reuse.
+export const esriDarkProvider = new UrlTemplateImageryProvider({
+    url:          "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    maximumLevel: 19,
+    credit:       new Credit("Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community", false),
+})
+
 // OpenSeaMap nautical seamarks
 export const openSeaMapProvider = new UrlTemplateImageryProvider({
     url:          "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",

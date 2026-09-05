@@ -43,10 +43,18 @@ export default function Imagery({ onOpenGenerate }) {
     const clipRef = useRef(null)
     const fadeRef = useRef(null)
 
+    const pendingLocateRef = useRef(null) // {systemId, scanId} awaiting AOI load
+
     useEffect(() => { loadAois() }, [])
     function loadAois() {
         fetch(`${API_BASE}/api/imagery/aois`).then((r) => r.json()).then((rows) => {
             setAois(rows)
+            if (pendingLocateRef.current) {
+                const { systemId, scanId } = pendingLocateRef.current
+                pendingLocateRef.current = null
+                const match = rows.find((r) => r.system_id === systemId)
+                if (match) { setSelectedAoi(match); setSelectedScanId(scanId); return }
+            }
             if (!selectedAoi && rows.length) setSelectedAoi(rows.find((r) => r.status === "active") || rows[0])
         })
     }
@@ -64,6 +72,27 @@ export default function Imagery({ onOpenGenerate }) {
         if (!selectedScanId) { setScene(null); return }
         fetch(`${API_BASE}/api/imagery/scenes/${selectedScanId}`).then((r) => r.json()).then(setScene)
     }, [selectedScanId])
+
+    // Real deep-link entry point — the Briefings reader's "open change
+    // detection" xref action jumps here with a real detection_id; resolve
+    // its real (system_id, scan_id) and select both, the same state a
+    // direct click through aois/scenes would land on.
+    useEffect(() => {
+        const handler = (e) => {
+            const detectionId = e.detail?.detectionId
+            if (!detectionId) return
+            fetch(`${API_BASE}/api/imagery/detections/${detectionId}/locate`).then((r) => (r.ok ? r.json() : null)).then((loc) => {
+                if (!loc) return
+                if (!aois.length) { pendingLocateRef.current = { systemId: loc.system_id, scanId: loc.scan_id }; return }
+                const match = aois.find((r) => r.system_id === loc.system_id)
+                if (match) setSelectedAoi(match)
+                setSelectedScanId(loc.scan_id)
+            }).catch(() => {})
+        }
+        window.addEventListener("akili:imagery-open-scene", handler)
+        return () => window.removeEventListener("akili:imagery-open-scene", handler)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [aois])
 
     async function reRunDetection() {
         if (!selectedAoi || running) return
@@ -257,6 +286,9 @@ export default function Imagery({ onOpenGenerate }) {
                                     <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); rejectDet(c.id) }}>reject</button>
                                 </div>
                             </div>
+                            {selectedDet?.id === c.id && c.interpretation && (
+                                <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", marginTop: 4, lineHeight: 1.4 }}>{c.interpretation}</div>
+                            )}
                         </div>
                     ))}
                 </div>
