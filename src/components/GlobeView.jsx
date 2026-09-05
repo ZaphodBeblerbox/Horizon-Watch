@@ -16,6 +16,7 @@ import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
 import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
+import GlobeAnnotationLayer     from "../globe/GlobeAnnotationLayer.jsx"
 import GlobeDirectorLayer       from "../globe/GlobeDirectorLayer.jsx"
 import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
 import GlobeThreatHeatmapLayer  from "../globe/GlobeThreatHeatmapLayer.jsx"
@@ -137,6 +138,8 @@ export default function GlobeView({
     // Data props (optional — GlobeView fetches internally when null)
     aisVessels:   externalAIS  = null,
     adsbAircraft: externalADSB = null,
+    // Real annotation drawing tool — "select"|"marker"|"route"|"area"|"measure"
+    annotationTool = "select",
 }) {
     const viewerRef = useRef(null)
     const [vessels,  setVessels]  = useState([])
@@ -573,6 +576,10 @@ export default function GlobeView({
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} onInspectorOpenChange={onInspectorOpenChange} />
+
+            {/* Real annotation drawing (select/marker/route/area/measure) —
+                same real viewerRef pattern as GlobePopup above. */}
+            <GlobeAnnotationLayer viewerRef={viewerRef} tool={annotationTool} isVisible={isVisible} />
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
             {cesiumViewer && (

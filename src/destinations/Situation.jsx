@@ -27,6 +27,7 @@ import { summarizeHealth } from "../utils/systemHealth.js"
 import { buildWatchQueueRows, sortRowsBySeverity, timeAgoLabel } from "./dashboardLogic.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
+import { useAnnotations, renameAnnotation, removeAnnotation } from "../state/annotationStore.js"
 
 const API = API_BASE
 const REFRESH_MS = 60000
@@ -51,6 +52,25 @@ const SEV_LEGEND = [
     { rank: 3, tier: "low",         label: "Low",      cls: "low" },
 ]
 const SEV_CLASS_BY_RANK = { 0: "critical", 1: "high", 2: "moderate", 3: "low" }
+
+// §3 — the five annotation tools, in this exact order.
+const ANNOTATION_TOOLS = [
+    { key: "select", label: "Select", icon: "i-cursor" },
+    { key: "marker", label: "Marker", icon: "i-pin" },
+    { key: "route", label: "Route", icon: "i-path" },
+    { key: "area", label: "Area", icon: "i-poly" },
+    { key: "measure", label: "Measure", icon: "i-measure" },
+]
+// Quick-layer buttons — the same real groupsOn state the Layers pane's own
+// domain rows use (one shared toggle, never a second independent list).
+const QUICK_LAYERS = [
+    { key: "maritime", label: "Maritime", icon: "i-ship" },
+    { key: "air", label: "Air", icon: "i-plane" },
+    { key: "news", label: "News", icon: "i-read" },
+    { key: "imagery", label: "Imagery", icon: "i-sat" },
+    { key: "zones", label: "Zones", icon: "i-target" },
+    { key: "alerts", label: "Alerts", icon: "i-flag" },
+]
 
 // Real Cesium camera presets, build spec v2 §8 — "implemented as camera
 // presets rather than a projection change." Center/altitude computed from
@@ -81,6 +101,31 @@ function DomainRow({ group, count, on, onToggle }) {
     )
 }
 
+// §4 — the severity legend, now a real Inspector section (never a map
+// overlay). Content/behavior unchanged from the old floating version: four
+// rows, real live counts from the same `legendCounts` (derived from
+// visibleRows) every other real count on this screen shares — the map,
+// the density strip, and the Layers pane's domain rows can never disagree
+// with this because none of them recompute their own separate figure.
+function SeverityLegend({ legendCounts }) {
+    return (
+        <div className="card">
+            <span className="lbl">Severity legend</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                {SEV_LEGEND.map((s) => (
+                    <div key={s.tier} className={`sev ${s.cls}`} style={{ justifyContent: "space-between", gap: 14 }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <span className={`dia ${s.cls}`} />
+                            <span style={{ color: "var(--txt-2)" }}>{s.label}</span>
+                        </span>
+                        <span style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{legendCounts[s.rank]}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
+
 export default function Situation({ onOpenDossier }) {
     const [surfaceItems, setSurfaceItems] = useState([])
     const [fusionEvents, setFusionEvents] = useState([])
@@ -96,6 +141,8 @@ export default function Situation({ onOpenDossier }) {
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
     const [contextOn, setContextOn] = useState({ risk: false, graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
+    const [annotationTool, setAnnotationTool] = useState("select")
+    const annotations = useAnnotations()
     const globeApiRef = useRef(null)
 
     // Real Live-tracks counts for the Layers pane rows — fetched only while
@@ -256,7 +303,7 @@ export default function Situation({ onOpenDossier }) {
         return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6)
     }, [visibleRows])
 
-    const newestCritical = useMemo(() => visibleRows.filter((r) => r.severityRank <= 1).slice(0, 5), [visibleRows])
+    const newestCritical = useMemo(() => visibleRows.filter((r) => r.severityRank <= 1).slice(0, 6), [visibleRows])
 
     const handleAddToBriefing = (row) => {
         addToBriefing(row.id, row.title)
@@ -392,33 +439,109 @@ export default function Situation({ onOpenDossier }) {
                         </div>
                     ))}
                 </div>
+
+                {/* Annotations — the management surface for the same real
+                    shared list the map header's annotation toolbar creates
+                    into (§3). Inline rename, fly-to, delete per row. */}
+                <div style={{ padding: "8px 0", borderTop: "1px solid var(--line-soft)" }}>
+                    <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Annotations</div>
+                    {annotations.length === 0 ? (
+                        <div style={{ padding: "3px 12px", font: "400 11.5px var(--font)", color: "var(--txt-4)" }}>No annotations yet — draw one from the map header toolbar.</div>
+                    ) : annotations.map((a) => (
+                        <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 12px" }}>
+                            <span style={{ width: 7, height: 7, borderRadius: 1, background: "#c8a04a", flexShrink: 0 }} />
+                            <input
+                                className="input" defaultValue={a.name}
+                                onBlur={(e) => { if (e.target.value.trim() && e.target.value !== a.name) renameAnnotation(a.id, e.target.value.trim()) }}
+                                onKeyDown={(e) => { if (e.key === "Enter") e.target.blur() }}
+                                style={{ flex: 1, height: 20, padding: "0 4px", font: "400 11.5px var(--font)" }}
+                            />
+                            <button
+                                onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: a.points[0].lat, lon: a.points[0].lon, altitude: 250000 } }))}
+                                title="Fly to" style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: "var(--txt-3)" }}
+                            ><svg className="icon sm"><use href="#i-recentre" /></svg></button>
+                            <button
+                                onClick={() => removeAnnotation(a.id)}
+                                title="Delete" style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: "var(--txt-3)" }}
+                            ><svg className="icon sm"><use href="#i-trash" /></svg></button>
+                        </div>
+                    ))}
+                </div>
             </div>
             )}
 
             {/* Center — globe + density strip */}
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-                {/* Header band — build spec v2 §8's map header (live count +
-                    view segment as real Cesium camera presets, never a
-                    projection change). Scoped to the centre column rather
-                    than spanning full-width above the glass panes (the
-                    spec's own §4.6 treatment) — this app's Situation layout
-                    is a flat flex row of siblings, not the spec's CSS grid
-                    with the centre pane spanning grid-column:1/-1, so a
-                    true full-width spanning header would need a larger
-                    layout restructure than this pass attempts; the real
-                    functional pieces (count, camera presets) work correctly
-                    scoped to this column. */}
+                {/* Header band — the map-overlay-geometry table's authority on
+                    placement: annotation toolbar + quick-layer buttons live
+                    HERE, in this band, never floating on the map surface.
+                    position:relative + z-index:4 + solid --bg-2 so this band
+                    sits above the glass side panes rather than underneath
+                    them (the asides' own slide transform never overlaps this
+                    row). Overflow defense: min-width:0 + overflow-x:auto on
+                    the row, flex:none + white-space:nowrap on every control,
+                    so a long live-count string can push controls into a
+                    scroll region instead of rendering them underneath a
+                    glass pane where they'd be unclickable and invisible. */}
                 <div style={{
                     height: 28, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)",
-                    display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", zIndex: 4, position: "relative",
+                    display: "flex", alignItems: "center", gap: 10, padding: "0 12px", zIndex: 4, position: "relative",
+                    minWidth: 0, overflowX: "auto",
                 }}>
-                    <span style={{ font: "400 11.5px var(--font)", color: "var(--txt-2)" }}>{visibleRows.length} signals · {timeWindow} window</span>
-                    <div className="seg">
+                    <span style={{ flex: "none", whiteSpace: "nowrap", font: "400 11.5px var(--font)", color: "var(--txt-2)" }}>{visibleRows.length} signals · {timeWindow} window</span>
+
+                    {/* Annotation toolbar — §3. select/marker/route/area/measure,
+                        in that order, sharing this row's flat-icon-button
+                        treatment (no separately-boxed group). */}
+                    <div style={{ display: "flex", alignItems: "center", flex: "none" }}>
+                        {ANNOTATION_TOOLS.map((t, i) => (
+                            <button
+                                key={t.key}
+                                onClick={() => setAnnotationTool(t.key)}
+                                title={t.label}
+                                aria-pressed={annotationTool === t.key}
+                                style={{
+                                    flex: "none", whiteSpace: "nowrap", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                                    background: annotationTool === t.key ? "var(--bg-4)" : "none", border: "none",
+                                    borderRight: i < ANNOTATION_TOOLS.length - 1 ? "1px solid var(--line-soft)" : "none",
+                                    cursor: "pointer", color: annotationTool === t.key ? "var(--txt)" : "var(--txt-3)",
+                                }}
+                            >
+                                <svg className="icon sm"><use href={`#${t.icon}`} /></svg>
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Quick-layer buttons — immediately next to the annotation
+                        toolbar, same shared groupsOn state the Layers pane's
+                        domain rows use (one real toggle, never a duplicate). */}
+                    <div style={{ display: "flex", alignItems: "center", flex: "none" }}>
+                        {QUICK_LAYERS.map((l, i) => (
+                            <button
+                                key={l.key}
+                                onClick={() => setGroupsOn((p) => ({ ...p, [l.key]: !p[l.key] }))}
+                                title={l.label}
+                                aria-pressed={groupsOn[l.key]}
+                                style={{
+                                    flex: "none", whiteSpace: "nowrap", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                                    background: groupsOn[l.key] ? "var(--bg-4)" : "none", border: "none",
+                                    borderRight: i < QUICK_LAYERS.length - 1 ? "1px solid var(--line-soft)" : "none",
+                                    cursor: "pointer", color: groupsOn[l.key] ? "var(--txt)" : "var(--txt-3)",
+                                }}
+                            >
+                                <svg className="icon sm"><use href={`#${l.icon}`} /></svg>
+                            </button>
+                        ))}
+                    </div>
+
+                    <div style={{ flex: 1 }} />
+                    <div className="seg" style={{ flex: "none" }}>
                         {CAMERA_PRESETS.map((p) => (
                             <button
                                 key={p.key}
                                 onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: p.lat, lon: p.lon, altitude: p.altitude } }))}
                                 title={`Fly to ${p.label}`}
+                                style={{ flex: "none", whiteSpace: "nowrap" }}
                             >{p.label}</button>
                         ))}
                     </div>
@@ -445,25 +568,13 @@ export default function Situation({ onOpenDossier }) {
                            default per §1. */
                         aisEnabled={tracksOn.vessels} adsbEnabled={tracksOn.aircraft}
                         portsEnabled={tracksOn.ports} airportsEnabled={tracksOn.ports}
+                        annotationTool={annotationTool}
                     />
                     <MapControlStack onFullscreen={() => {}} />
-                    {/* Legend, bottom-right — real live counts within the current filter.
-                        Sits above MapControlStack's own fixed bottom-right vertical
-                        stack (5 buttons, ~200px tall) rather than overlapping it. */}
-                    <div style={{
-                        position: "absolute", right: 16, bottom: 212, background: "var(--bg-2)", border: "1px solid var(--line)",
-                        borderRadius: "var(--r)", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 5, zIndex: 30,
-                    }}>
-                        {SEV_LEGEND.map((s) => (
-                            <div key={s.tier} className={`sev ${s.cls}`} style={{ justifyContent: "space-between", gap: 14 }}>
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                    <span className={`dia ${s.cls}`} />
-                                    <span style={{ color: "var(--txt-2)" }}>{s.label}</span>
-                                </span>
-                                <span style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{legendCounts[s.rank]}</span>
-                            </div>
-                        ))}
-                    </div>
+                    {/* The severity legend used to float here, bottom-right —
+                        per the map-overlay-geometry table it does not belong
+                        on the map surface at all; it now lives inside the
+                        Inspector pane only (both its states, below). */}
                 </div>
 
                 {/* Density strip */}
@@ -507,6 +618,9 @@ export default function Situation({ onOpenDossier }) {
                                     <span>{name}</span><span style={{ font: "400 11.5px var(--mono)", color: "var(--txt-3)" }}>{count}</span>
                                 </div>
                             ))}
+                        </div>
+                        <div style={{ marginTop: 12 }}>
+                            <SeverityLegend legendCounts={legendCounts} />
                         </div>
                         <div style={{ marginTop: 12 }}>
                             <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Newest critical</div>
@@ -556,6 +670,9 @@ export default function Situation({ onOpenDossier }) {
                                 <button className="btn sm" onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: selected.lat, lon: selected.lon, altitude: 250000 } }))}>Centre map</button>
                             )}
                             <button className="btn sm" onClick={() => onOpenDossier?.(selected)}>Open dossier</button>
+                        </div>
+                        <div style={{ marginTop: 12 }}>
+                            <SeverityLegend legendCounts={legendCounts} />
                         </div>
                     </div>
                 )}
