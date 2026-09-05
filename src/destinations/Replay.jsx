@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { replayOnMap } from "../services/replayOnMap.js"
+import LocatorMiniMap from "../globe/LocatorMiniMap.jsx"
 
 const API = API_BASE
 const WINDOW_HOURS = 168 // real bounded window — 7 days, matching Analytics' own shortest real "range" option
@@ -34,14 +35,6 @@ const GROUP_BYS = [
 ]
 const SPEEDS = [1, 4, 12]
 const TICK_MS = 40
-
-function haversineKm(a, b) {
-    const R = 6371
-    const p1 = (a.lat * Math.PI) / 180, p2 = (b.lat * Math.PI) / 180
-    const dp = ((b.lat - a.lat) * Math.PI) / 180, dl = ((b.lon - a.lon) * Math.PI) / 180
-    const s = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2
-    return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)))
-}
 function fmtTickLabel(ms) {
     const d = new Date(ms)
     return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}Z`
@@ -61,64 +54,6 @@ function timeAgoShort(ms, nowMs) {
     return `${Math.floor(h / 24)}d ago`
 }
 
-// ── Replay's own minimap — deliberately a new, small SVG component rather
-// than an extension of src/reports/MiniMap.jsx: that one is a fixed
-// full-world projection with an indefinitely-pulsing focus ring (used as-is
-// by Dossiers/Briefings), and this page needs two capabilities neither of
-// those callers do — a zoomed ±18° reframe around a specific point, and a
-// bounded "ping twice" (not indefinite) animation. Generalizing the shared
-// one under this pass risked changing behavior those existing callers rely
-// on, so this stays page-local, same real no-second-Cesium-instance
-// reasoning as MiniMap.jsx's own docblock.
-const REFRAME_DEG = 18
-const CONTEXT_KM = 1600
-function ReplayMiniMap({ focus, context, height = 196 }) {
-    const w = 300
-    const centerLat = focus?.lat ?? 0
-    const centerLon = focus?.lon ?? 0
-    const project = (lat, lon) => [
-        ((lon - centerLon + REFRAME_DEG) / (REFRAME_DEG * 2)) * w,
-        ((REFRAME_DEG - (lat - centerLat)) / (REFRAME_DEG * 2)) * height,
-    ]
-    const contextPts = focus?.lat != null
-        ? context.filter((c) => c.lat != null && c.lon != null && haversineKm(focus, c) <= CONTEXT_KM)
-        : []
-    return (
-        <svg width="100%" height={height} viewBox={`0 0 ${w} ${height}`} style={{ background: "var(--bg-0)", display: "block" }}>
-            {Array.from({ length: 7 }, (_, i) => (
-                <line key={`v${i}`} x1={(i * w) / 6} x2={(i * w) / 6} y1={0} y2={height} stroke="var(--chart-grid)" strokeWidth={1} />
-            ))}
-            {Array.from({ length: 4 }, (_, i) => (
-                <line key={`h${i}`} x1={0} x2={w} y1={(i * height) / 3} y2={(i * height) / 3} stroke="var(--chart-grid)" strokeWidth={1} />
-            ))}
-            {focus?.lat == null ? (
-                <text x={w / 2} y={height / 2} textAnchor="middle" style={{ font: "400 11px var(--font)", fill: "var(--txt-4)" }}>
-                    No location to display yet
-                </text>
-            ) : (
-                <>
-                    {contextPts.map((c, i) => {
-                        const [x, y] = project(c.lat, c.lon)
-                        if (x < -6 || x > w + 6 || y < -6 || y > height + 6) return null
-                        return <rect key={i} x={x - 2.5} y={y - 2.5} width={5} height={5} transform={`rotate(45 ${x} ${y})`} fill="var(--txt-4)" opacity={0.7} />
-                    })}
-                    {(() => {
-                        const [x, y] = project(focus.lat, focus.lon)
-                        return (
-                            <g>
-                                <circle cx={x} cy={y} r={7} fill="none" stroke="var(--acc-hi)" strokeWidth={1.5}>
-                                    <animate attributeName="r" values="5;9;5" dur="1.4s" repeatCount="2" fill="freeze" />
-                                    <animate attributeName="opacity" values="1;0.2;1" dur="1.4s" repeatCount="2" fill="freeze" />
-                                </circle>
-                                <circle cx={x} cy={y} r={3} fill="var(--acc-hi)" />
-                            </g>
-                        )
-                    })()}
-                </>
-            )}
-        </svg>
-    )
-}
 
 export default function Replay({ isVisible = true }) {
     const [signals, setSignals] = useState(null) // null = loading; [] = real empty
@@ -340,7 +275,7 @@ export default function Replay({ isVisible = true }) {
             {/* Right pane */}
             <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto", padding: 12 }}>
                 <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                    <ReplayMiniMap focus={minimapFocus} context={minimapContext} height={196} />
+                    <LocatorMiniMap focus={minimapFocus} context={minimapContext} height={196} />
                 </div>
 
                 {selected ? (

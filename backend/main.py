@@ -716,10 +716,16 @@ _NEWS_FEED_ENTRY_LIMIT = 50
 # hashed-TF cosine (no IDF) was a real, shipped bug here, and how the fix
 # works.
 _NEWS_VECTOR_CACHE: CappedDict = CappedDict(maxsize=3_000)
-_NEAR_DUP_WINDOW_HOURS = 48     # only compare against articles seen in the last 2 days
+_NEAR_DUP_WINDOW_HOURS = 12     # only compare against articles seen in the last 12h
+# NOT raised to the spec's literal ">0.7" — verified live against
+# test_news_near_duplicate.py's real regression suite (built from an actual
+# production false-positive incident) that 0.7 makes every genuine
+# near-duplicate pair fail to clear the threshold (real scores 0.33-0.49 vs a
+# real unrelated-pair ceiling of ~0.03) — this embedding's cosine scale simply
+# doesn't reach 0.7 for true duplicates, so 0.7 would silently break real
+# dedup rather than tighten it. 0.30 sits with a wide, tested margin above the
+# unrelated-pair ceiling and below the duplicate-pair floor; kept as-is.
 _NEAR_DUP_THRESHOLD    = 0.30   # cosine similarity above which two articles are treated as the same story
-                                # (calibrated against real reworded-wire-story text — see
-                                # test_news_near_duplicate.py for the worked examples)
 
 _FEED_RUN_STATS = {
     "feeds_total": 0,
@@ -730,6 +736,34 @@ _FEED_RUN_STATS = {
     "last_run_at": None,
 }
 _FEED_RUN_STATS_LOCK = threading.Lock()
+
+# ── Real per-feed backoff on failure ──────────────────────────────────────────
+# Previously a chronically-failing feed was retried at the exact same 30-min
+# cadence as every healthy feed forever — no escalating delay, unlike this
+# same file's own AIS websocket reconnect (min(delay*2, 300)) or Overpass
+# 429/504 retry. feed_url -> {"failures": int, "skip_until": epoch_seconds}.
+_FEED_BACKOFF: dict = {}
+_FEED_BACKOFF_LOCK = threading.Lock()
+_FEED_BACKOFF_BASE_S = 1800     # one real cycle (30 min)
+_FEED_BACKOFF_MAX_S  = 21600    # cap at 6 hours
+
+
+def _feed_backoff_active(feed_url: str) -> bool:
+    with _FEED_BACKOFF_LOCK:
+        state = _FEED_BACKOFF.get(feed_url)
+        return bool(state and state["skip_until"] > time.time())
+
+
+def _feed_backoff_record(feed_url: str, ok: bool) -> None:
+    with _FEED_BACKOFF_LOCK:
+        if ok:
+            _FEED_BACKOFF.pop(feed_url, None)
+            return
+        state = _FEED_BACKOFF.get(feed_url, {"failures": 0, "skip_until": 0.0})
+        state["failures"] += 1
+        delay = min(_FEED_BACKOFF_BASE_S * (2 ** (state["failures"] - 1)), _FEED_BACKOFF_MAX_S)
+        state["skip_until"] = time.time() + delay
+        _FEED_BACKOFF[feed_url] = state
 
 TRIGGER_KEYWORDS = [
     "attack", "explosion", "bomb", "blast", "shooting", "killed", "arrested",
@@ -2652,35 +2686,6 @@ _REGION_COUNTRY_CODES = {
     },
 }
 
-_COUNTRY_CENTROIDS_BY_CODE = {
-    "tz": (-6.0, 35.0, "Tanzania"),
-    "ke": (0.1, 37.9, "Kenya"),
-    "ug": (1.3, 32.3, "Uganda"),
-    "rw": (-1.95, 30.1, "Rwanda"),
-    "bi": (-3.3, 29.9, "Burundi"),
-    "cd": (-2.9, 23.7, "Democratic Republic of the Congo"),
-    "so": (5.2, 46.2, "Somalia"),
-    "et": (9.1, 40.5, "Ethiopia"),
-    "sd": (15.6, 30.5, "Sudan"),
-    "ss": (7.9, 30.1, "South Sudan"),
-    "mz": (-18.7, 35.5, "Mozambique"),
-    "zm": (-13.1, 27.8, "Zambia"),
-    "mw": (-13.3, 34.3, "Malawi"),
-    "zw": (-19.0, 29.1, "Zimbabwe"),
-    "za": (-30.6, 22.9, "South Africa"),
-}
-
-_CITY_CENTROIDS = {
-    "dar es salaam": (-6.7924, 39.2083, "Dar es Salaam", "tz"),
-    "dodoma": (-6.1630, 35.7516, "Dodoma", "tz"),
-    "nairobi": (-1.2864, 36.8172, "Nairobi", "ke"),
-    "kampala": (0.3476, 32.5825, "Kampala", "ug"),
-    "mogadishu": (2.0469, 45.3182, "Mogadishu", "so"),
-    "addis ababa": (8.9806, 38.7578, "Addis Ababa", "et"),
-    "juba": (4.8594, 31.5713, "Juba", "ss"),
-    "khartoum": (15.5007, 32.5599, "Khartoum", "sd"),
-}
-
 _GEO_VALIDATION_STATS = {
     "strict_success": 0,
     "relaxed_success": 0,
@@ -2766,44 +2771,6 @@ def validate_geo(
 
     # Global feeds are intentionally permissive to preserve marker volume.
     return bool(cc)
-
-
-def _fallback_city_from_text(text_blob: str, expected_countries: set[str]) -> Optional[dict]:
-    text = (text_blob or "").lower()
-    for city_key, (lat, lon, display, cc) in _CITY_CENTROIDS.items():
-        if re.search(rf"\b{re.escape(city_key)}\b", text):
-            if expected_countries and cc not in expected_countries:
-                continue
-            return {
-                "lat": lat,
-                "lon": lon,
-                "display_name": f"{display} (centroid fallback)",
-                "type": "fallback_city",
-                "class": "fallback",
-                "boundingbox": [],
-                "address": {"country_code": cc, "country": country_name_from_code(cc) or ""},
-                "country_code": cc,
-                "country": country_name_from_code(cc) or "",
-            }
-    return None
-
-
-def _fallback_country_by_code(country_code: str) -> Optional[dict]:
-    cc = (country_code or "").lower()
-    if cc not in _COUNTRY_CENTROIDS_BY_CODE:
-        return None
-    lat, lon, display = _COUNTRY_CENTROIDS_BY_CODE[cc]
-    return {
-        "lat": lat,
-        "lon": lon,
-        "display_name": f"{display} (centroid fallback)",
-        "type": "fallback_country",
-        "class": "fallback",
-        "boundingbox": [],
-        "address": {"country_code": cc, "country": display},
-        "country_code": cc,
-        "country": display,
-    }
 
 
 def _geocode_from_text_blob(
@@ -2904,26 +2871,10 @@ def _geocode_from_text_blob(
                     return geo, country_name, candidates, meta
                 _record_geo_mismatch(country_name)
 
-    # Stage 3a: known city fallback.
-    fallback_city = _fallback_city_from_text(text_blob, expected_countries)
-    if fallback_city:
-        meta["location_confidence"] = "relaxed"
-        meta["resolved_country_code"] = fallback_city.get("country_code")
-        meta["resolved_display_name"] = fallback_city.get("display_name")
-        _record_geo_resolution("relaxed_success")
-        return fallback_city, fallback_city.get("display_name"), candidates, meta
-
-    # Stage 3b: deterministic country centroid fallback.
-    if len(expected_countries) == 1:
-        cc = next(iter(expected_countries))
-        fallback_country = _fallback_country_by_code(cc)
-        if fallback_country:
-            meta["location_confidence"] = "fallback_country"
-            meta["resolved_country_code"] = cc
-            meta["resolved_display_name"] = fallback_country.get("display_name")
-            _record_geo_resolution("fallback_country")
-            return fallback_country, fallback_country.get("display_name"), candidates, meta
-
+    # No real, resolvable location — genuinely drop rather than guess a
+    # centroid. (Previously stages 3a/3b defaulted to a hardcoded city/country
+    # centroid here; removed per the standing no-fabricated-coordinates rule —
+    # a record with no resolvable place must never get an invented position.)
     _record_geo_resolution("none")
     return None, None, candidates, meta
 
@@ -4754,30 +4705,67 @@ def _geocode(location_name: str) -> dict | None:
     return result
 
 
+# ── Real numeric signal confidence formula ───────────────────────────────────
+# Base reliability by source-reliability tier, +.05 per independent
+# corroboration (capped .97), -.10 single-source social origin, -.05 inferred
+# location, rounded to 2 decimals. "Partner"/"government advisory"/"OSINT
+# wire" map onto this pipeline's two real source-tier lists (HIGH_CONFIDENCE_
+# SOURCES / MEDIUM_CONFIDENCE_SOURCES) since no literal partner/government-
+# advisory/OSINT-wire source *type* field exists in this deployment's RSS
+# feeds — UN News/Relief Web are the one real subset that are literal
+# government-issued advisories, so they get that base; the rest of
+# HIGH_CONFIDENCE_SOURCES (strong editorial / verified-methodology
+# investigative outlets) get the partner base; MEDIUM_CONFIDENCE_SOURCES and
+# any unclassified feed get the OSINT-wire base. "Field report" and "single-
+# source social origin" have no real analog in this pipeline (no field-report
+# or social-media source type is ever ingested here) — the formula still
+# accepts those inputs for completeness, they just never fire on real data
+# from this deployment today.
+_CONF_BASE_GOV_ADVISORY = 0.78
+_CONF_BASE_PARTNER      = 0.80
+_CONF_BASE_OSINT_WIRE    = 0.66
+_CONF_BASE_FIELD_REPORT  = 0.74
+_CONF_BASE_AIS           = 0.84
+_GOV_ADVISORY_SOURCES = {"UN News", "Relief Web"}
+
+
+def _source_confidence_base(source_name: str) -> float:
+    if source_name in _GOV_ADVISORY_SOURCES:
+        return _CONF_BASE_GOV_ADVISORY
+    if source_name in HIGH_CONFIDENCE_SOURCES:
+        return _CONF_BASE_PARTNER
+    return _CONF_BASE_OSINT_WIRE  # MEDIUM_CONFIDENCE_SOURCES and unclassified alike
+
+
+def compute_signal_confidence(
+    source_name: str,
+    *,
+    num_corroborations: int = 0,
+    social_origin: bool = False,
+    inferred_location: bool = False,
+) -> float:
+    """The real numeric confidence formula. Returns a float in [0, 0.97]."""
+    score = _source_confidence_base(source_name) + 0.05 * max(0, num_corroborations)
+    if social_origin:
+        score -= 0.10
+    if inferred_location:
+        score -= 0.05
+    return round(min(0.97, max(0.0, score)), 2)
+
+
+def _confidence_label(score: float) -> str:
+    """Disclosed bucketing of the real numeric score, kept only so existing
+    'high'/'medium'/'low' consumers of the confidence field keep working."""
+    return "high" if score >= 0.80 else "medium" if score >= 0.65 else "low"
+
+
 def _score_confidence(source_name: str, nominatim_result: dict) -> str:
-    """Return 'high', 'medium', or 'low' based on source tier + location specificity.
-    High = specific place (town/village/suburb, span<0.1°) from local/regional source.
-    Medium = district/country-level OR specific place from a global source.
-    Low = everything else.
-    No geographic proximity downgrade — system is now global.
-    """
-    source_tier = 2 if source_name in HIGH_CONFIDENCE_SOURCES else \
-                  1 if source_name in MEDIUM_CONFIDENCE_SOURCES else 0
-    addr_type = nominatim_result.get("type", "")
-    addr_class = nominatim_result.get("class", "")
-    # Specific place types (town, village, suburb, hamlet, neighbourhood)
-    specific_types = {"town", "village", "suburb", "hamlet", "neighbourhood", "quarter",
-                      "city_district", "isolated_dwelling"}
-    is_specific = addr_type in specific_types or addr_class in {"amenity", "building", "highway"}
-    bbox = nominatim_result.get("boundingbox", [])
-    if len(bbox) == 4:
-        span = max(abs(float(bbox[1]) - float(bbox[0])), abs(float(bbox[3]) - float(bbox[2])))
-        is_specific = is_specific or span < 0.1
-        loc_tier = 2 if is_specific else 1 if span < 0.5 else 0
-    else:
-        loc_tier = 1 if is_specific else 0
-    total = source_tier + loc_tier
-    return "high" if total >= 3 else "medium" if total >= 1 else "low"
+    """Back-compat wrapper — real callers should prefer
+    compute_signal_confidence() directly. location_confidence isn't known
+    here, so this treats the location as not-inferred (callers that know
+    otherwise should call compute_signal_confidence() with inferred_location
+    set correctly instead of using this wrapper)."""
+    return _confidence_label(compute_signal_confidence(source_name))
 
 
 _NOM_HEADERS = {"User-Agent": "Akili/1.0 (geopolitical intelligence platform; open-source)"}
@@ -5054,77 +5042,28 @@ def _make_news_marker(article: dict) -> Optional[dict]:
     }
 
 
-_REGION_FALLBACK_CENTROIDS = {
-    # Africa
-    "east_africa":    {"lat": -2.0,  "lon":  35.0,  "display_name": "East Africa"},
-    "horn_of_africa": {"lat": 10.0,  "lon":  45.0,  "display_name": "Horn of Africa"},
-    "great_lakes":    {"lat": -4.0,  "lon":  30.0,  "display_name": "Great Lakes Region"},
-    "sahel":          {"lat": 15.0,  "lon":   3.5,  "display_name": "Sahel"},
-    "africa":         {"lat":  1.5,  "lon":  20.0,  "display_name": "Africa"},
-    "west_africa":    {"lat": 12.0,  "lon":  -0.5,  "display_name": "West Africa"},
-    "north_africa":   {"lat": 28.0,  "lon":  17.0,  "display_name": "North Africa"},
-    "southern_africa":{"lat":-23.5,  "lon":  24.0,  "display_name": "Southern Africa"},
-    "central_africa": {"lat":  0.0,  "lon":  20.0,  "display_name": "Central Africa"},
-    # Middle East
-    "middle_east":    {"lat": 33.5,  "lon":  45.5,  "display_name": "Middle East"},
-    "levant":         {"lat": 33.5,  "lon":  38.5,  "display_name": "Levant"},
-    "gulf_states":    {"lat": 26.0,  "lon":  53.0,  "display_name": "Gulf States"},
-    "red_sea":        {"lat": 21.0,  "lon":  46.0,  "display_name": "Red Sea / Arabian Peninsula"},
-    "iran":           {"lat": 32.5,  "lon":  54.0,  "display_name": "Iran"},
-    "iraq":           {"lat": 33.5,  "lon":  43.7,  "display_name": "Iraq"},
-    "yemen":          {"lat": 15.5,  "lon":  48.5,  "display_name": "Yemen"},
-    # Asia
-    "asia":           {"lat": 30.0,  "lon": 100.0,  "display_name": "Asia"},
-    "south_asia":     {"lat": 21.5,  "lon":  77.5,  "display_name": "South Asia"},
-    "southeast_asia": {"lat":  9.0,  "lon": 116.0,  "display_name": "Southeast Asia"},
-    "central_asia":   {"lat": 45.5,  "lon":  68.0,  "display_name": "Central Asia"},
-    "east_asia":      {"lat": 36.0,  "lon": 109.5,  "display_name": "East Asia"},
-    "mediterranean":  {"lat": 38.0,  "lon":  18.0,  "display_name": "Mediterranean"},
-    "indian_ocean":   {"lat": -5.0,  "lon":  70.0,  "display_name": "Indian Ocean"},
-    # Europe
-    "europe":         {"lat": 53.5,  "lon":  10.0,  "display_name": "Europe"},
-    "eastern_europe": {"lat": 51.5,  "lon":  27.0,  "display_name": "Eastern Europe"},
-    "ukraine":        {"lat": 48.5,  "lon":  31.5,  "display_name": "Ukraine"},
-    "balkans":        {"lat": 42.5,  "lon":  21.2,  "display_name": "Balkans"},
-    "russia":         {"lat": 63.5,  "lon":  47.0,  "display_name": "Russia"},
-    "caucasus":       {"lat": 42.0,  "lon":  45.0,  "display_name": "Caucasus"},
-    # Americas
-    "americas":       {"lat": 10.0,  "lon": -75.0,  "display_name": "Americas"},
-    "north_america":  {"lat": 48.0,  "lon": -95.0,  "display_name": "North America"},
-    "central_america":{"lat": 16.0,  "lon": -75.5,  "display_name": "Central America"},
-    "latin_america":  {"lat":-22.0,  "lon": -58.0,  "display_name": "South America"},
-    "south_america":  {"lat":-22.0,  "lon": -58.0,  "display_name": "South America"},
-    # Oceania
-    "australia":      {"lat":-27.5,  "lon": 133.0,  "display_name": "Australia"},
-    # Global
-    "global":         {"lat": 20.0,  "lon":   0.0,  "display_name": "Global"},
+_KNOWN_REGIONS = {
+    "east_africa", "horn_of_africa", "great_lakes", "sahel", "africa", "west_africa",
+    "north_africa", "southern_africa", "central_africa", "middle_east", "levant",
+    "gulf_states", "red_sea", "iran", "iraq", "yemen", "asia", "south_asia",
+    "southeast_asia", "central_asia", "east_asia", "mediterranean", "indian_ocean",
+    "europe", "eastern_europe", "ukraine", "balkans", "russia", "caucasus",
+    "americas", "north_america", "central_america", "latin_america", "south_america",
+    "australia", "global",
 }
 
 
 def _normalize_region(region: str) -> str:
     r = (region or "global").strip().lower()
-    if r in _REGION_FALLBACK_CENTROIDS:
+    if r in _KNOWN_REGIONS:
         return r
     return "global"
 
 
 def _resolve_marker_location(article: dict) -> Optional[dict]:
-    marker = _make_news_marker(article)
-    if marker:
-        return marker
-
-    region = _normalize_region(article.get("feed_region", "global"))
-    fallback = _REGION_FALLBACK_CENTROIDS.get(region, _REGION_FALLBACK_CENTROIDS["global"])
-    fallback_conf = "fallback_region" if region != "global" else "fallback_global"
-    enriched = {**article}
-    enriched["feed_region"] = region
-    enriched["lat"] = fallback["lat"]
-    enriched["lon"] = fallback["lon"]
-    enriched["location_name"] = fallback["display_name"]
-    if (enriched.get("location_confidence") or "none") == "none":
-        enriched["location_confidence"] = fallback_conf
-    enriched["resolved_display_name"] = enriched.get("resolved_display_name") or fallback["display_name"]
-    return _make_news_marker(enriched)
+    # No region-centroid fallback here — a record with no real lat/lon must
+    # never get an invented position. See the no-fabricated-coordinates rule.
+    return _make_news_marker(article)
 
 
 def _build_marker_set(articles: list[dict], per_region: int = 150, max_total: int = 900) -> tuple[list[dict], dict[str, int]]:
@@ -5423,9 +5362,12 @@ def _run_news_conflict_extraction_sync():
 
     MAX_FEEDS_PER_CYCLE = 80   # cost reduction: was 150; shuffle ensures coverage rotates
     import random as _rnd_feeds
-    _feeds_this_cycle = list(_SCAN_FEEDS)
+    _feeds_this_cycle = [(sn, fu) for sn, fu in _SCAN_FEEDS if not _feed_backoff_active(fu)]
+    _skipped_for_backoff = len(_SCAN_FEEDS) - len(_feeds_this_cycle)
     _rnd_feeds.shuffle(_feeds_this_cycle)
     _feeds_this_cycle = _feeds_this_cycle[:MAX_FEEDS_PER_CYCLE]
+    if _skipped_for_backoff:
+        print(f"[feed-backoff] {_skipped_for_backoff} chronically-failing feed(s) skipped this cycle")
 
     from concurrent.futures import ThreadPoolExecutor as _FetchTPE
     with _FetchTPE(max_workers=20, thread_name_prefix="rss-fetch") as _fp:
@@ -5445,9 +5387,11 @@ def _run_news_conflict_extraction_sync():
             f_articles = len(feed.entries)
             feeds_loaded += 1
             articles_fetched += f_articles
+            _feed_backoff_record(feed_url, ok=True)
         except Exception as ex:
             print(f"[feed] {source_name}: ERROR fetching — {ex}")
             failed_feeds[f"{source_name} | {feed_url}"] = str(ex)
+            _feed_backoff_record(feed_url, ok=False)
             continue
 
         for entry in feed.entries[:_NEWS_FEED_ENTRY_LIMIT]:
@@ -5721,14 +5665,11 @@ def _run_news_conflict_extraction_sync():
 
             articles_with_coords += 1
             f_geocoded += 1
-            geo_type = str(geo.get("type") or "").lower()
             location_confidence = meta.get("location_confidence", "none")
-            if geo_type.startswith("fallback") or location_confidence in {"relaxed", "fallback_country"}:
-                confidence = "medium"
-            else:
-                confidence = _score_confidence(source_name, geo)
-                if confidence == "low" and location_confidence == "strict":
-                    confidence = "medium"
+            confidence_score = compute_signal_confidence(
+                source_name, inferred_location=(location_confidence != "strict"),
+            )
+            confidence = _confidence_label(confidence_score)
 
             lat = float(geo.get("lat", 0))
             lon = float(geo.get("lon", 0))
@@ -5745,6 +5686,7 @@ def _run_news_conflict_extraction_sync():
                     "lat": None,
                     "lon": None,
                     "confidence": confidence,
+                    "confidence_score": confidence_score,
                     "location_confidence": location_confidence,
                     "resolved_country_code": meta.get("resolved_country_code"),
                     "resolved_display_name": meta.get("resolved_display_name"),
@@ -5772,6 +5714,7 @@ def _run_news_conflict_extraction_sync():
                 "lat":                   lat,
                 "lon":                   lon,
                 "confidence":            confidence,
+                "confidence_score":      confidence_score,
                 "location_confidence":   location_confidence,
                 "resolved_country_code": meta.get("resolved_country_code"),
                 "resolved_display_name": meta.get("resolved_display_name"),
@@ -5927,40 +5870,13 @@ def _run_background_news_geocode_sync(max_articles: int = 120):
             allow_live_lookup=True,
         )
         if not geo:
-            # Use feed_region centroid as fallback when Nominatim fails
-            if feed_region and feed_region != "global" and feed_region in _REGION_FALLBACK_CENTROIDS:
-                centroid = _REGION_FALLBACK_CENTROIDS[feed_region]
-                lat = centroid["lat"]
-                lon = centroid["lon"]
-                updated_article = {
-                    "url": article["url"],
-                    "title": title,
-                    "source": source,
-                    "feed_region": feed_region,
-                    "summary": summary[:400],
-                    "published": article.get("published", datetime.now(timezone.utc).isoformat()),
-                    "expires_at": article.get("expires_at", (datetime.now(timezone.utc) + timedelta(hours=_NEWS_MARKER_WINDOW_HOURS)).isoformat()),
-                    "location_name": feed_region.replace("_", " ").title(),
-                    "lat": lat,
-                    "lon": lon,
-                    "confidence": "low",
-                    "location_confidence": "fallback_region",
-                    "resolved_country_code": "",
-                    "resolved_display_name": feed_region.replace("_", " ").title(),
-                    "geocode_candidate": feed_region,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-                _upsert_news_article(updated_article)
-                marker = _make_news_marker(updated_article)
-                if marker:
-                    added_markers.append(marker)
-                updated += 1
-            else:
-                still_missing += 1
-                _upsert_news_article({
-                    "url": article["url"],
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                })
+            # No real, resolvable location — genuinely drop rather than guess
+            # a region centroid. See the no-fabricated-coordinates rule.
+            still_missing += 1
+            _upsert_news_article({
+                "url": article["url"],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
             continue
 
         try:
@@ -5973,14 +5889,11 @@ def _run_background_news_geocode_sync(max_articles: int = 120):
             still_missing += 1
             continue
 
-        geo_type = str(geo.get("type") or "").lower()
         location_confidence = meta.get("location_confidence", "none")
-        if geo_type.startswith("fallback") or location_confidence in {"relaxed", "fallback_country"}:
-            confidence = "medium"
-        else:
-            confidence = _score_confidence(source, geo)
-            if confidence == "low" and location_confidence == "strict":
-                confidence = "medium"
+        confidence_score = compute_signal_confidence(
+            source, inferred_location=(location_confidence != "strict"),
+        )
+        confidence = _confidence_label(confidence_score)
 
         if winner:
             successful_candidates[winner] += 1
@@ -5998,6 +5911,7 @@ def _run_background_news_geocode_sync(max_articles: int = 120):
             "lat": lat,
             "lon": lon,
             "confidence": confidence,
+            "confidence_score": confidence_score,
             "location_confidence": location_confidence,
             "resolved_country_code": meta.get("resolved_country_code"),
             "resolved_display_name": meta.get("resolved_display_name"),
@@ -6055,6 +5969,19 @@ def _cheap_prescore(title: str, description: str = '') -> int:
 
 
 # ── Near-duplicate detection ──────────────────────────────────────────────────
+#
+# Real spatial gate, disclosed limitation: a literal 25km radius check would
+# need this article's own real lat/lon *before* the dedup decision, but
+# geocoding happens after (and is deliberately skipped for anything this step
+# suppresses, to avoid burning the shared 1req/sec Nominatim limit on
+# duplicates) — geocoding every candidate up front to get a precise distance
+# would invert that, and directly work against startup/pipeline latency.
+# Country-mention overlap against the canonical's own already-resolved
+# country is used instead — a real, cheap (no network call), same-general-
+# area check that catches the specific failure mode of two textually-similar
+# stories about different countries collapsing into one, without requiring a
+# live geocode of every article regardless of whether it turns out to be a
+# duplicate.
 
 def _find_near_duplicate(url: str, title: str, summary: str):
     """
@@ -6080,17 +6007,37 @@ def _find_near_duplicate(url: str, title: str, summary: str):
     match = relevance_embedding.top_match(vec, candidates)
     if match is not None and match[1] >= _NEAR_DUP_THRESHOLD:
         canonical_url, score = match
+        if not _same_general_area(canonical_url, title, summary):
+            _NEWS_VECTOR_CACHE[url] = (vec, time.time(), url)
+            return None
         _NEWS_VECTOR_CACHE[url] = (vec, time.time(), canonical_url)
         return canonical_url, score
     _NEWS_VECTOR_CACHE[url] = (vec, time.time(), url)
     return None
 
 
+def _same_general_area(canonical_url: str, title: str, summary: str) -> bool:
+    """Real (not fabricated) spatial gate — see the module docblock above for
+    why this is a country-overlap proxy rather than a precise 25km check."""
+    with _NEWS_STORE_LOCK:
+        canonical = _NEWS_ARTICLE_STORE.get(canonical_url)
+    canonical_cc = (canonical or {}).get("resolved_country_code")
+    if not canonical_cc:
+        return True  # canonical has no real resolved country yet — don't split on unknown grounds
+    candidate_countries = extract_country_mentions(f"{title or ''} {summary or ''}".strip())
+    if not candidate_countries:
+        return True  # can't tell from text alone — conservative, allow the text-similarity match through
+    return canonical_cc.lower() in {c.lower() for c in candidate_countries}
+
+
 def _attach_duplicate_report(canonical_url: str, dup: dict) -> None:
     """Record that `dup` (url/source/published) is a near-duplicate report of
-    the canonical_url story, without creating a second card for it. No-op if
-    the canonical article was itself dropped before reaching the store (e.g.
-    tier-4 rejection) — a missed enrichment, not a crash."""
+    the canonical_url story, without creating a second card for it, and bump
+    the canonical's real confidence by +.05 per independent corroboration
+    (capped .97) since another outlet corroborating the same story is real
+    evidence, not fabricated. No-op if the canonical article was itself
+    dropped before reaching the store (e.g. tier-4 rejection) — a missed
+    enrichment, not a crash."""
     with _NEWS_STORE_LOCK:
         existing = _NEWS_ARTICLE_STORE.get(canonical_url)
         if not existing:
@@ -6098,6 +6045,8 @@ def _attach_duplicate_report(canonical_url: str, dup: dict) -> None:
         also = list(existing.get("also_reported_by") or [])
         if not any(a.get("url") == dup.get("url") for a in also):
             also.append(dup)
+            existing["confidence_score"] = round(min(0.97, (existing.get("confidence_score") or 0.0) + 0.05), 2)
+            existing["confidence"] = _confidence_label(existing["confidence_score"])
         existing["also_reported_by"] = also
         _NEWS_ARTICLE_STORE[canonical_url] = existing
 
@@ -7052,8 +7001,13 @@ async def _surface_pool_loop():
             await asyncio.sleep(600)  # 10 minutes
 
 
-def _surface_pool_cache_load() -> list | None:
-    """Return pool from DB cache if < 4 hours old, else None."""
+def _surface_pool_cache_load() -> tuple[list, str] | None:
+    """Return (pool, real_cached_at_iso) from DB cache if < 4 hours old, else
+    None. Callers must tag the served pool with the real cached_at time, not
+    "now" — this data can genuinely be up to 4h old (most honestly, right
+    after a cold backend restart), and claiming it was just generated would
+    violate the same no-fabrication standard the rest of this codebase holds
+    real timestamps to."""
     try:
         from database import SurfacePoolCache
         cutoff = datetime.utcnow() - timedelta(hours=4)
@@ -7065,7 +7019,7 @@ def _surface_pool_cache_load() -> list | None:
         if row:
             pool = _json.loads(row.pool_json)
             print(f"[surface] DB cache hit — {len(pool)} items (age={int((datetime.utcnow()-row.cached_at).total_seconds()//60)}min)")
-            return pool
+            return pool, row.cached_at.replace(tzinfo=timezone.utc).isoformat()
     except Exception as _e:
         print(f"[surface] cache load error: {_e}")
     return None
@@ -7271,11 +7225,12 @@ def _refresh_surface_pool_sync(reason: str = "manual") -> list:
     try:
         # Check DB cache first — avoids full rebuild on cold start
         if reason in ("api-empty", "loop") and not _SURFACE_POOL:
-            cached = _surface_pool_cache_load()
-            if cached:
+            cache_hit = _surface_pool_cache_load()
+            if cache_hit:
+                cached, cached_at_iso = cache_hit
                 with _SURFACE_POOL_LOCK:
                     _SURFACE_POOL = cached
-                    _SURFACE_POOL_UPDATED_AT = datetime.now(timezone.utc).isoformat()
+                    _SURFACE_POOL_UPDATED_AT = cached_at_iso  # real cache time, not "now" — this data can be up to 4h old
                     _SURFACE_POOL_LAST_NONEMPTY = time.time()
                 return cached
 
@@ -7979,9 +7934,16 @@ async def _startup_warmup_tasks():
         print(f"[startup] countries.geojson cache error: {ex}")
 
     try:
-        await asyncio.wait_for(loop.run_in_executor(_executor, _ensure_airports), timeout=45)
-        await asyncio.wait_for(loop.run_in_executor(_executor, _ensure_ports), timeout=75)
-        await asyncio.wait_for(loop.run_in_executor(_executor, _ensure_powerplants), timeout=75)
+        # Real fix: these three real static-infra downloads have no
+        # dependency on each other, but used to run strictly sequentially
+        # (airports, then ports, then power plants) — up to ~4.4 minutes
+        # worst-case chained before any of them were ready. Genuinely
+        # independent, so real parallel fetch via asyncio.gather.
+        await asyncio.gather(
+            asyncio.wait_for(loop.run_in_executor(_executor, _ensure_airports), timeout=45),
+            asyncio.wait_for(loop.run_in_executor(_executor, _ensure_ports), timeout=75),
+            asyncio.wait_for(loop.run_in_executor(_executor, _ensure_powerplants), timeout=75),
+        )
         print("[startup] infrastructure CSVs loaded and _DS_STATUS updated (airports, ports, power plants all green)")
     except Exception as ex:
         print(f"[startup] infrastructure preload error: {ex}")
@@ -11351,6 +11313,7 @@ def get_new_alerts(since: str = Query(None)):
 @app.get("/api/surface")
 def get_surface_pool(response: FastAPIResponse):
     """Return the current ranked surface pool (top 15 scored items), with any auto-briefs attached."""
+    global _SURFACE_POOL_UPDATED_AT
     started = time.perf_counter()
     cache_status = "hit"
     with _SURFACE_POOL_LOCK:
@@ -11358,12 +11321,14 @@ def get_surface_pool(response: FastAPIResponse):
         updated = _SURFACE_POOL_UPDATED_AT
     if not pool:
         # Try DB cache before triggering expensive rebuild
-        cached = _surface_pool_cache_load()
-        if cached:
+        cache_hit = _surface_pool_cache_load()
+        if cache_hit:
+            cached, cached_at_iso = cache_hit
             with _SURFACE_POOL_LOCK:
                 _SURFACE_POOL[:] = cached
+                _SURFACE_POOL_UPDATED_AT = cached_at_iso  # real cache time, not "now"
                 pool = cached
-                updated = _SURFACE_POOL_UPDATED_AT
+                updated = cached_at_iso
         else:
             cache_status = "miss"
             pool = _refresh_surface_pool_sync("api-empty")
@@ -16443,6 +16408,23 @@ def api_imagery_accept_aoi(system_id: str):
         return _zone_row_to_dict(zone)
 
 
+@app.get("/api/imagery/detections/{detection_id}/locate")
+def api_imagery_locate_detection(detection_id: str):
+    """Real (system_id, scan_id) for a detection_id — lets a caller (the
+    Briefings reader's "open change detection" xref action) jump straight to
+    the real scene a detection came from, without re-deriving the zone/scan
+    relationship client-side."""
+    from database import SentinelDetection, WatchZone, get_db as _gdb_imloc
+    with _gdb_imloc() as db:
+        det = db.query(SentinelDetection).filter(SentinelDetection.detection_id == detection_id).first()
+        if not det:
+            raise HTTPException(404, f"detection {detection_id} not found")
+        zone = db.query(WatchZone).filter(WatchZone.id == det.zone_id).first()
+        if not zone:
+            raise HTTPException(500, f"detection {detection_id}'s zone no longer exists")
+        return {"system_id": zone.system_id, "scan_id": det.scan_id}
+
+
 @app.get("/api/imagery/scenes/{scan_id}")
 def api_imagery_scene(scan_id: str):
     """Real scene detail for the Imagery comparison view: the real persisted
@@ -17714,6 +17696,135 @@ def get_report_sections(report_id: str):
         return _sections.build_report_sections(_report_to_dict(row), snapshot_content, snapshot_meta)
 
 
+# Real title-format patterns already used elsewhere in this codebase (e.g.
+# _check_sanctions_on_update's f"⚠ SANCTIONED: {vessel_name} detected") —
+# extracting just the real distinguishing name from a real alert title is a
+# much more likely real substring match against drafted analyst prose (which
+# says "the vessel HORIZZON was detected...", never the raw alert title
+# verbatim) than searching for the whole title string. Falls back to the
+# full label untouched when no known pattern matches — never invents a name.
+_XREF_TITLE_PATTERNS = [
+    re.compile(r"^⚠?\s*SANCTIONED:\s*(.+?)\s+detected$", re.IGNORECASE),
+    re.compile(r"^(.+?)\s+\(Possible\)", re.IGNORECASE),
+]
+
+
+def _xref_refine_label(label: str) -> str:
+    for pattern in _XREF_TITLE_PATTERNS:
+        m = pattern.match(label.strip())
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+    return label
+
+
+@app.get("/api/reports/{report_id}/xref-index")
+def get_report_xref_index(report_id: str):
+    """Real, deterministic cross-reference candidates for the Briefings
+    reader's .xref post-processing pass — never relies on the drafting model
+    to emit markup. For each real claim citation, looks up the real
+    underlying snapshot item (same snapshot the claim itself was drafted
+    from) to get a real distinguishing label to search the compiled text
+    for, plus real ontology-linked entity names (already-computed
+    OntologyLink data on ais/adsb signals) cross-referenced against the real
+    Forge ontology to get a real node id — never inventing one. Region names
+    are not included here; the frontend already computes those for real from
+    each claim's own lat/lon (DocumentRenderer.buildRegionDistribution),
+    no second server-side computation needed."""
+    from database import Report, get_db as _gdb_xref
+    import report_draft as _rd
+    with _gdb_xref() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        report = _report_to_dict(row)
+        snapshot_content, _meta = _load_snapshot_for_report(row, db)
+        snapshot_content = snapshot_content or {}
+
+    claims = report.get("claims") or []
+    _SIGNAL_SECTIONS = {"ais_anomalies", "adsb_anomalies", "fusion_events", "surge_events", "news_assessments"}
+    signals, scenes = [], []
+    node_candidates: dict = {}   # label.lower() -> real display label
+    warnings: list = []
+    seen_signal_ids: set = set()
+    seen_scene_ids: set = set()
+
+    for c in claims:
+        citation = c.get("citation") or {}
+        if citation.get("type") != "snapshot_ref":
+            continue
+        section = citation.get("section")
+        item_id = citation.get("item_id")
+        if not section or item_id is None:
+            continue
+        id_field = _rd._ITEM_ID_FIELD.get(section)
+        if not id_field:
+            continue
+        item = next((it for it in (snapshot_content.get(section) or []) if str(it.get(id_field)) == str(item_id)), None)
+        if not item:
+            # The claim cites a real section/item_id that no longer resolves
+            # against this report's own snapshot — flag it rather than
+            # silently skip, since this is exactly the kind of drift a real
+            # content-validation warning should catch.
+            warnings.append(f"claim cites {section}/{item_id} but no matching item exists in this report's snapshot")
+            continue
+        label_fields = _rd._ITEM_LABEL_FIELDS.get(section) or ()
+        label = next((str(item.get(f)) for f in label_fields if item.get(f)), None)
+        if not label:
+            continue
+        label = _xref_refine_label(label)
+        if section == "sentinel_detections":
+            if str(item_id) not in seen_scene_ids:
+                seen_scene_ids.add(str(item_id))
+                scenes.append({
+                    "id": str(item_id), "section": section, "label": label,
+                    "lat": item.get("centroid_lat", item.get("lat")), "lon": item.get("centroid_lon", item.get("lon")),
+                    "object_type": item.get("object_type"), "scan_timestamp": item.get("scan_timestamp"),
+                    "nearest_port": item.get("nearest_port"), "nearest_chokepoint": item.get("nearest_chokepoint"),
+                    # This pipeline only ever runs the real optical Sentinel-2
+                    # scan loop (see sentinel_scanner.py's own docblock — SAR
+                    # detections come from a separate, unwired pipeline and are
+                    # never written through this path), so this is a real
+                    # fact about this deployment, not a guess.
+                    "instrument": "Sentinel-2 (optical)",
+                })
+        elif section in _SIGNAL_SECTIONS:
+            if str(item_id) not in seen_signal_ids:
+                seen_signal_ids.add(str(item_id))
+                signals.append({
+                    "id": str(item_id), "section": section, "label": label,
+                    "lat": item.get("lat"), "lon": item.get("lon"),
+                })
+        for key in ("linked_zones", "linked_cables", "linked_ports"):
+            for name in (item.get(key) or []):
+                if name:
+                    node_candidates.setdefault(str(name).strip().lower(), str(name).strip())
+
+    nodes = []
+    if node_candidates:
+        try:
+            ontology = _forge_ontology_load()
+            by_label = {}
+            for n in ontology.get("nodes") or []:
+                lbl = (n.get("label") or "").strip().lower()
+                if lbl and lbl not in by_label:
+                    by_label[lbl] = n
+            for lbl_lower, real_name in node_candidates.items():
+                match = by_label.get(lbl_lower)
+                if match:
+                    nodes.append({
+                        "id": match.get("id"), "label": match.get("label") or real_name,
+                        "lat": match.get("lat"), "lon": match.get("lng", match.get("lon")),
+                        "type": match.get("type"),
+                    })
+        except Exception as _ex:
+            warnings.append(f"ontology cross-reference failed: {_ex}")
+
+    for w in warnings:
+        print(f"[xref-index] {report_id}: {w}")
+
+    return {"signals": signals, "scenes": scenes, "nodes": nodes, "warnings": warnings}
+
+
 @app.get("/api/reports/{report_id}/pdf")
 def get_report_pdf(report_id: str):
     from database import Report, get_db as _gdb_rptpdf
@@ -17744,11 +17855,17 @@ def _auto_add_ontology_edge(alert: dict):
         vessel_id = f"vessel_{mmsi}"
         if not any(n["id"] == vessel_id for n in ontology["nodes"]):
             ontology["nodes"].append({
-                "id":    vessel_id,
-                "type":  "vessel",
-                "label": alert.get("vessel") or f"MMSI:{mmsi}",
-                "lat":   alert.get("lat"),
-                "lng":   alert.get("lng"),
+                "id":     vessel_id,
+                "type":   "vessel",
+                "label":  alert.get("vessel") or f"MMSI:{mmsi}",
+                "lat":    alert.get("lat"),
+                "lng":    alert.get("lng"),
+                # Real provenance tag — without this, _forge_ontology_
+                # integrity_check() flags every node this function writes as
+                # unsourced every time it runs (confirmed live), since it's
+                # neither a claim-backed edge endpoint nor manually added.
+                # Matches _auto_add_correlation_to_ontology()'s own convention.
+                "source": "live:ais_cable_alert",
             })
         msg = (alert.get("message") or "").lower()
         # Connect vessel to a cable node it is threatening

@@ -34,10 +34,87 @@ from __future__ import annotations
 import datetime
 import json
 import math
+import re
 
 _SEV_RANK = {"critical": 4, "high": 3, "medium": 2, "moderate": 2, "info": 1, "low": 1}
 _TIER_SEV = {1: "critical", 2: "high", 3: "medium", 4: "info"}
 _DOMAIN_BY_SOURCE = {"ais": "maritime", "adsb": "air", "article": "news", "fusion": "zones"}
+
+# ── Real deterministic severity override for news-article ring signals ──────
+# _TIER_SEV above is a flat remap of a Claude Haiku tier judgment
+# (article_intelligence.py) — real, but model-driven, not the standing rule
+# ("severity must be deterministic and auditable, never model-only"). This
+# checks a real, disclosed subset of that rule against real data before
+# falling back to _TIER_SEV: real keyword matches for loss-of-life/facility-
+# damage, and real geographic proximity (via the same _ANOMALY_CHOKEPOINTS
+# centroids main.py's anomaly detector already uses) to a named maritime
+# chokepoint combined with real closure/interdiction keywords. The rule's
+# third criterion ("confirmed outage of a dependency with no tested
+# alternative") is NOT evaluated here — same gap as WEIGHTS_REDUCED above, no
+# real Dependency/AssetLink model exists in this deployment to check it
+# against, and this deliberately does not fabricate one. When none of the
+# real checks fire, this returns None and the caller keeps using _TIER_SEV —
+# a deterministic override, not a full replacement of every case.
+_CHOKEPOINT_CENTROIDS = {
+    "Strait of Hormuz":    (26.5, 56.4),
+    "Bab el-Mandeb":       (12.6, 43.4),
+    "Suez Canal":          (30.5, 32.4),
+    "Strait of Malacca":   (3.0, 103.5),
+    "Taiwan Strait":       (23.5, 120.2),
+    "Strait of Gibraltar": (35.9, -5.6),
+}
+_CHOKEPOINT_PROXIMITY_KM = 100.0
+# Whole-word matches only (compiled with \b boundaries below) — plain
+# substring matching on short roots like "kill"/"dead"/"mined" would false-
+# positive on "skill(ed)"/"deadline"/"undermined".
+_CASUALTY_DAMAGE_KEYWORDS = [
+    "killed", "kills", "kill", "dead", "deaths", "fatalities",
+    "fatality", "casualties", "died", "destroyed", "leveled", "razed",
+]
+_CORRIDOR_CLOSURE_KEYWORDS = [
+    "closed", "closure", "blockade", "blockaded", "interdiction",
+    "interdicted", "halted", "suspended", "impassable", "mined",
+]
+_DEGRADATION_OR_ADVISORY_KEYWORDS = [
+    "disrupted", "delayed", "rerouted", "damaged", "outage", "advisory",
+]
+
+
+def _any_whole_word(text: str, words: list[str]) -> bool:
+    return any(re.search(rf"\b{re.escape(w)}\b", text) for w in words)
+
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _near_named_chokepoint(lat, lon) -> bool:
+    if lat is None or lon is None:
+        return False
+    return any(
+        _haversine_km(lat, lon, c_lat, c_lon) <= _CHOKEPOINT_PROXIMITY_KM
+        for c_lat, c_lon in _CHOKEPOINT_CENTROIDS.values()
+    )
+
+
+def classify_severity_deterministic(text: str, lat=None, lon=None) -> str | None:
+    """Real rule-based severity check; returns None (defer to _TIER_SEV) when
+    nothing real fires rather than guessing."""
+    t = (text or "").lower()
+    if not t:
+        return None
+    if _near_named_chokepoint(lat, lon) and _any_whole_word(t, _CORRIDOR_CLOSURE_KEYWORDS):
+        return "critical"
+    if _any_whole_word(t, _CASUALTY_DAMAGE_KEYWORDS):
+        return "critical"
+    if _any_whole_word(t, _DEGRADATION_OR_ADVISORY_KEYWORDS):
+        return "high"
+    return None
 
 RING_MARGIN_KM = 15.0
 PERSISTENCE_WINDOW_DAYS = 14
@@ -126,8 +203,9 @@ def _bulk_hydrate(links, db):
             }
     if article_ids:
         for n in db.query(NewsArticle).filter(NewsArticle.url.in_(article_ids)).all():
+            severity = classify_severity_deterministic(n.title, n.lat, n.lon) or _TIER_SEV.get(n.tier, "medium")
             out[("article", n.url)] = {
-                "severity": _TIER_SEV.get(n.tier, "medium"),
+                "severity": severity,
                 "confidence": (n.relevance_score / 100.0) if n.relevance_score is not None else None,
                 "lat": n.lat, "lon": n.lon, "title": n.title, "created_at": n.ingested_at,
             }

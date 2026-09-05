@@ -8,6 +8,10 @@ import {
 import { getAircraftMarkerDataUri } from "./vesselAircraftGlyphs.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
+import { clusterTracks } from "./trackClustering.js"
+
+const adsbLat = (ac) => ac.lat ?? ac.latitude
+const adsbLon = (ac) => ac.lon ?? ac.longitude
 
 const BILLBOARD_SIZE = 26
 
@@ -61,25 +65,33 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
         return () => clearInterval(iv)
     }, [])
 
-    const filtered = useMemo(() => {
-        if (!smooth?.length) return []
+    const { filtered, clusters } = useMemo(() => {
+        if (!smooth?.length) return { filtered: [], clusters: [] }
         if (isMobile) {
-            return [...smooth]
-                .filter(ac => (ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0) > 5000)
-                .sort((a, b) => (b.alt_baro ?? b.altitude ?? 0) - (a.alt_baro ?? a.altitude ?? 0))
-                .slice(0, ADSB_CAP)
+            return {
+                filtered: [...smooth]
+                    .filter(ac => (ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0) > 5000)
+                    .sort((a, b) => (b.alt_baro ?? b.altitude ?? 0) - (a.alt_baro ?? a.altitude ?? 0))
+                    .slice(0, ADSB_CAP),
+                clusters: [],
+            }
         }
         const valid = smooth.filter(ac => ac.lat != null && (ac.lon ?? ac.longitude) != null)
-        if (valid.length <= DESKTOP_ADSB_CAP) return valid
+        if (valid.length <= DESKTOP_ADSB_CAP) return { filtered: valid, clusters: [] }
         const centerLat = viewBounds ? (viewBounds.south + viewBounds.north) / 2 : 0
         const centerLng = viewBounds ? (viewBounds.west  + viewBounds.east)  / 2 : 0
-        return [...valid]
-            .sort((a, b) => {
-                const da = Math.abs(a.lat - centerLat) + Math.abs((a.lon ?? a.longitude ?? 0) - centerLng)
-                const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.longitude ?? 0) - centerLng)
-                return da - db
-            })
-            .slice(0, DESKTOP_ADSB_CAP)
+        const sorted = [...valid].sort((a, b) => {
+            const da = Math.abs(a.lat - centerLat) + Math.abs((a.lon ?? a.longitude ?? 0) - centerLng)
+            const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.longitude ?? 0) - centerLng)
+            return da - db
+        })
+        // Real clustering above the cap — see trackClustering.js. Dense
+        // cells become one real cluster marker with a real count instead of
+        // the excess aircraft silently vanishing past DESKTOP_ADSB_CAP.
+        const { individual, clusters: dense } = clusterTracks(sorted, {
+            getLat: adsbLat, getLon: adsbLon, viewBounds, maxIndividual: DESKTOP_ADSB_CAP,
+        })
+        return { filtered: individual.slice(0, DESKTOP_ADSB_CAP), clusters: dense }
     }, [smooth, viewBounds])
 
     useEffect(() => {
@@ -95,9 +107,22 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
         return () => ids.forEach(deleteEntity)
     }, [filtered])
 
-    if (!filtered.length) return null
+    if (!filtered.length && !clusters.length) return null
     return (
         <>
+            {clusters.map((c, i) => (
+                <Entity
+                    key={`adsb-cluster-${i}`}
+                    position={Cartesian3.fromDegrees(c.lon, c.lat, 0)}
+                    point={{ pixelSize: 16, color: Color.fromCssColorString("#a78bfa").withAlpha(0.55), outlineColor: Color.WHITE, outlineWidth: 1 }}
+                    label={{
+                        text: String(c.count),
+                        font: "11px Arial", fillColor: Color.WHITE,
+                        outlineColor: Color.fromCssColorString("#0F1721"), outlineWidth: 2, style: 2,
+                        distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
+                    }}
+                />
+            ))}
             {filtered.map(ac => {
                 const lon = ac.lon ?? ac.longitude
                 const lat = ac.lat ?? ac.latitude

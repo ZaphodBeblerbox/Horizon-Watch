@@ -148,6 +148,8 @@ export default function Ontology({ onOpenGenerate }) {
     const svgRef = useRef(null)
     const containerRef = useRef(null)
 
+    const pendingSelectNodeRef = useRef(null)
+
     useEffect(() => {
         fetch(`${API_BASE}/api/ontology/diagram`).then((r) => r.json()).then((d) => {
             setData(d)
@@ -157,9 +159,36 @@ export default function Ontology({ onOpenGenerate }) {
                 layoutKeyRef.current = key
             }
             requestAutoFit(d.nodes)
+            if (pendingSelectNodeRef.current) {
+                const id = pendingSelectNodeRef.current
+                pendingSelectNodeRef.current = null
+                const node = d.nodes.find((n) => n.id === id)
+                if (node) {
+                    setSelected({ kind: "node", item: node })
+                    setTimeout(() => requestAutoFit([node]), 30)
+                }
+            }
         })
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
+
+    // Real deep-link entry point — the Briefings reader's "open in ontology"
+    // xref action (and any other future caller) selects and locates a real
+    // node by its real Forge id, the same way a direct click on it would.
+    useEffect(() => {
+        const handler = (e) => {
+            const id = e.detail?.id
+            if (!id) return
+            if (!data) { pendingSelectNodeRef.current = id; return }
+            const node = data.nodes.find((n) => n.id === id)
+            if (node) {
+                setSelected({ kind: "node", item: node })
+                requestAutoFit([node])
+            }
+        }
+        window.addEventListener("akili:ontology-select-node", handler)
+        return () => window.removeEventListener("akili:ontology-select-node", handler)
+    }, [data])
 
     function requestAutoFit(nodes) {
         if (!nodes.length || !containerRef.current) return

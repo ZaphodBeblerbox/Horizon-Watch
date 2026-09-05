@@ -273,6 +273,20 @@ export default function IconSprite() {
                 <path d="M10.5 7.5v6M7.5 10.5h6" {...STROKE} />
             </symbol>
 
+            <symbol id="i-fullscreen-enter" viewBox="0 0 24 24">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3" {...STROKE} />
+                <path d="M21 8V5a2 2 0 0 0-2-2h-3" {...STROKE} />
+                <path d="M3 16v3a2 2 0 0 0 2 2h3" {...STROKE} />
+                <path d="M16 21h3a2 2 0 0 0 2-2v-3" {...STROKE} />
+            </symbol>
+
+            <symbol id="i-fullscreen-exit" viewBox="0 0 24 24">
+                <path d="M8 3v3a2 2 0 0 1-2 2H3" {...STROKE} />
+                <path d="M21 8h-3a2 2 0 0 1-2-2V3" {...STROKE} />
+                <path d="M3 16h3a2 2 0 0 1 2 2v3" {...STROKE} />
+                <path d="M16 21v-3a2 2 0 0 1 2-2h3" {...STROKE} />
+            </symbol>
+
             <symbol id="i-zoom-out" viewBox="0 0 24 24">
                 <circle cx="10.5" cy="10.5" r="6.5" {...STROKE} />
                 <path d="M20 20l-5-5" {...STROKE} />

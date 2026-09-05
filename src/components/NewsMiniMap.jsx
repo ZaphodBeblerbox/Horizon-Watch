@@ -20,6 +20,12 @@ import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import { getEntityMarkerDataUri } from "../globe/entityIcons.js"
 import ScaleBar from "./ScaleBar.jsx"
 import CoordinateReadout from "./CoordinateReadout.jsx"
+import { useUserLocation } from "../globe/useUserLocation.js"
+
+// Real "zoomed in" altitude for the no-real-markers default view (vs. the
+// generic 18,000km world-ish fallback below) — a genuine device location
+// deserves a real close-in view, not the same generic full-world framing.
+const USER_LOCATION_ZOOM_HEIGHT = 300_000
 
 // Mirrors NewsPage.jsx's TIER_COLOR — duplicated here (not exported/shared)
 // because NewsPage.jsx already duplicates these same literal hexes in more
@@ -41,6 +47,7 @@ export default function NewsMiniMap({ markers = [], selectedId = null, onSelectM
     const onSelectRef   = useRef(onSelectMarker)
     const [ready, setReady] = useState(false)
     const [err,   setErr]   = useState(null)
+    const userLoc = useUserLocation()
 
     useEffect(() => { onSelectRef.current = onSelectMarker }, [onSelectMarker])
 
@@ -94,6 +101,28 @@ export default function NewsMiniMap({ markers = [], selectedId = null, onSelectM
             }
         }
     }, [])
+
+    // ── Default view: zoomed to the real user location ──────────────────
+    // The one-time init view above is a generic 18,000km world-ish
+    // fallback — once the real device location resolves, and there are
+    // still no real markers to frame instead, fly there zoomed in rather
+    // than leaving the generic world default. Never fabricated: no real
+    // location resolved (denied/unavailable) means this simply never fires.
+    useEffect(() => {
+        if (!ready || !userLoc || markers.length > 0) return
+        const viewer = viewerRef.current
+        if (!viewer || viewer.isDestroyed()) return
+        let cancelled = false
+        import("cesium").then(({ Cartesian3 }) => {
+            if (cancelled || viewer.isDestroyed()) return
+            viewer.camera.flyTo({
+                destination: Cartesian3.fromDegrees(userLoc.lon, userLoc.lat, USER_LOCATION_ZOOM_HEIGHT),
+                duration: 1,
+            })
+        })
+        return () => { cancelled = true }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ready, userLoc])
 
     // ── Sync marker entities whenever the plottable set or selection changes ─
     useEffect(() => {

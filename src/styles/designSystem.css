@@ -237,6 +237,19 @@ input[type="range"]::-moz-range-thumb {
 .evrow .meta { display: flex; gap: 8px; font: 400 11px var(--font); color: var(--txt-3); margin-top: 2px; }
 .evrow .time { font: 400 11px var(--font); color: var(--txt-4); white-space: nowrap; }
 
+/* ── Briefings reader — real .xref cross-reference spans ──────────────────
+   A real match wrapped by src/reports/xrefEngine.js's wrapXrefsHtml(), never
+   the whole claim paragraph — the underline marks it as a live reference
+   distinct from the surrounding serif body text; .xref-active is toggled
+   imperatively (Briefings.jsx) when a reference is the currently-selected
+   one, matching a real clear highlight state per the build spec. */
+.xref {
+    text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer;
+    background: transparent; border-radius: 2px; transition: background 120ms linear;
+}
+.xref:hover { background: var(--bg-2); }
+.xref.xref-active { background: var(--acc-dim); text-decoration-style: solid; }
+
 .entrow {
     display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 10px;
     padding: 7px 0; border-bottom: 1px solid var(--line-soft); cursor: pointer;

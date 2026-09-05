@@ -108,6 +108,24 @@ def _vessel_tier(count_in_zone: int, baseline: float) -> tuple:
     return "silent", "info"
 
 
+def interpret_vessel_detection(confidence: float, est_len, est_wid, severity: str, alert_tier: str, baseline: float) -> str:
+    """Real, deterministic (non-LLM) plain-English interpretation of one
+    detection — same rule_based_summary() convention usage_tracker.py already
+    uses elsewhere, not a generated/model-written narrative. Previously
+    there was no interpretation step in this pipeline at all; detections
+    only ever carried structured fields."""
+    size = f"~{est_len:.0f}m x {est_wid:.0f}m" if est_len and est_wid else "size unresolved"
+    parts = [f"Vessel detected ({size}), {confidence * 100:.0f}% model confidence."]
+    if alert_tier == "immediate":
+        parts.append(f"Flagged immediate — count exceeds this zone's real {baseline:.1f}-vessel historical baseline by >3x.")
+    elif baseline > 0:
+        parts.append(f"Within this zone's real historical baseline (~{baseline:.1f} vessels/scan).")
+    else:
+        parts.append("No real historical baseline yet for this zone (fewer than 2 prior completed scans).")
+    parts.append(f"Severity: {severity}.")
+    return " ".join(parts)
+
+
 def _cluster_tier(vessel_count: int) -> tuple:
     if vessel_count > 20:
         return "immediate", "high"
@@ -276,6 +294,9 @@ def run_ship_detection(images: dict, bbox: dict, zone_baseline: float = 0.0) -> 
                 "yolo_class":         r.get("class", "ship"),
                 "obb_angle_deg":      angle_deg,
                 "model":              "yolov8n-obb (DOTA)",
+                "interpretation":     interpret_vessel_detection(
+                    r.get("confidence", 0.0), est_len, est_wid, severity, alert_tier, zone_baseline,
+                ),
             }),
         })
     return detections

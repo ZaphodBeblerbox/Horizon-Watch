@@ -129,6 +129,12 @@ function SeverityLegend({ legendCounts }) {
 
 export default function Situation({ onOpenDossier }) {
     const [surfaceItems, setSurfaceItems] = useState([])
+    // Real "as of" honesty indicator — GET /api/surface can genuinely serve
+    // a real persisted snapshot (its own DB cache, up to 4h old) rather than
+    // a freshly-built pool, especially right after a cold backend start.
+    // updated_at was already in the real response but never surfaced to the
+    // analyst; now shown so a snapshot is never silently presented as live.
+    const [surfaceUpdatedAt, setSurfaceUpdatedAt] = useState(null)
     const [fusionEvents, setFusionEvents] = useState([])
     const [health, setHealth] = useState(null)
     const [selected, setSelected] = useState(null)
@@ -143,6 +149,7 @@ export default function Situation({ onOpenDossier }) {
     const [contextOn, setContextOn] = useState({ risk: false, graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
     const [annotationTool, setAnnotationTool] = useState("select")
+    const [basemap, setBasemap] = useState("dark")
     const annotations = useAnnotations()
     const globeApiRef = useRef(null)
 
@@ -192,7 +199,7 @@ export default function Situation({ onOpenDossier }) {
 
     useEffect(() => {
         let cancelled = false
-        const loadSurface = () => fetch(`${API}/api/surface`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && d) setSurfaceItems(d.items || []) }).catch(() => {})
+        const loadSurface = () => fetch(`${API}/api/surface`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && d) { setSurfaceItems(d.items || []); setSurfaceUpdatedAt(d.updated_at || null) } }).catch(() => {})
         const loadFusions = () => fetch(`${API}/api/fusions?status=active&limit=50`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && Array.isArray(d)) setFusionEvents(d) }).catch(() => {})
         const loadHealth = () => fetch(`${API}/api/health/detailed`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled) setHealth(d) }).catch(() => {})
         const loadAll = () => { loadSurface(); loadFusions(); loadHealth() }
@@ -490,6 +497,11 @@ export default function Situation({ onOpenDossier }) {
                     minWidth: 0, overflowX: "auto",
                 }}>
                     <span style={{ flex: "none", whiteSpace: "nowrap", font: "400 11.5px var(--font)", color: "var(--txt-2)" }}>{visibleRows.length} signals · {timeWindow} window</span>
+                    {surfaceUpdatedAt && (
+                        <span title="Real GET /api/surface updated_at — may be a persisted snapshot rather than a freshly-built pool (e.g. right after a cold backend start)" style={{ flex: "none", whiteSpace: "nowrap", font: "400 11px var(--mono)", color: "var(--txt-4)" }}>
+                            as of {timeAgoLabel(surfaceUpdatedAt, nowMs)}
+                        </span>
+                    )}
 
                     {/* Annotation toolbar — §3. select/marker/route/area/measure,
                         in that order, sharing this row's flat-icon-button
@@ -570,8 +582,9 @@ export default function Situation({ onOpenDossier }) {
                         aisEnabled={tracksOn.vessels} adsbEnabled={tracksOn.aircraft}
                         portsEnabled={tracksOn.ports} airportsEnabled={tracksOn.ports}
                         annotationTool={annotationTool}
+                        basemap={basemap}
                     />
-                    <MapControlStack onFullscreen={() => {}} />
+                    <MapControlStack onFullscreen={() => {}} basemap={{ value: basemap, onChange: setBasemap }} />
                     {/* The severity legend used to float here, bottom-right —
                         per the map-overlay-geometry table it does not belong
                         on the map surface at all; it now lives inside the

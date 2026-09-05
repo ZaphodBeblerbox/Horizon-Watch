@@ -63,8 +63,42 @@ class SentinelScanner:
 
         from database import SentinelScan, SentinelDetection, WatchZone, get_db
 
+        # Real per-zone historical baseline — average vessel-detection count
+        # across this zone's own last 5 completed scans. Previously this was
+        # never computed at all: run_ship_detection() was called with its
+        # zone_baseline default of 0.0 unconditionally, which makes
+        # _vessel_tier()'s `baseline > 0` check always False — every real
+        # vessel detection was silently tagged severity="info"/alert_tier=
+        # "silent" regardless of how anomalous the count was, so the SAT-TASK
+        # alert-routing filter below could never fire for individual vessel
+        # detections (only >20-vessel clusters). A zone with fewer than 2
+        # prior completed scans has no real baseline yet, so it honestly
+        # stays 0.0 rather than guessing one.
+        zone_baseline = 0.0
         try:
-            result = asyncio.run(self._run_scan_async(zone_dict))
+            with get_db() as _bdb:
+                _recent_scans = (
+                    _bdb.query(SentinelScan)
+                    .filter(SentinelScan.zone_id == zone_id, SentinelScan.status == "completed")
+                    .order_by(SentinelScan.created_at.desc())
+                    .limit(5)
+                    .all()
+                )
+                if len(_recent_scans) >= 2:
+                    _counts = []
+                    for _s in _recent_scans:
+                        _n = (
+                            _bdb.query(SentinelDetection)
+                            .filter(SentinelDetection.scan_id == _s.scan_id, SentinelDetection.object_type == "vessel")
+                            .count()
+                        )
+                        _counts.append(_n)
+                    zone_baseline = sum(_counts) / len(_counts)
+        except Exception as _be:
+            print(f"[sentinel-scanner] zone_baseline computation failed for zone={system_id}: {_be}")
+
+        try:
+            result = asyncio.run(self._run_scan_async(zone_dict, zone_baseline=zone_baseline))
         except Exception as e:
             result = {"status": "error", "error_message": f"scan crashed: {type(e).__name__}: {e}"}
 
@@ -155,7 +189,7 @@ class SentinelScanner:
 
         return {"scan_id": scan_id, "status": result.get("status", "error")}
 
-    async def _run_scan_async(self, zone_dict: dict) -> dict:
+    async def _run_scan_async(self, zone_dict: dict, zone_baseline: float = 0.0) -> dict:
         from main import _satellite_search_impl, _fetch_sentinel_image_bytes
         import sentinel_ml
 
@@ -180,14 +214,14 @@ class SentinelScanner:
         skipped_tasks = [t for t in requested_tasks if t not in _IMPLEMENTED_TASKS]
 
         # -- 1. Find the most recent real scene, for honest freshness metadata --
-        search = await _satellite_search_impl(stac_bbox, max_cloud=40, days_back=30)
+        search = await _satellite_search_impl(stac_bbox, max_cloud=20, days_back=30)
         if search.get("error"):
             return {"status": "error", "error_message": f"scene search failed: {search['error']}"}
         items = search.get("items") or []
         if not items:
             return {"status": "error",
                     "error_message": "no Sentinel-2 scenes found for this zone in the last 30 days "
-                                      "(max_cloud<=40) - cannot report a genuine detection result "
+                                      "(max_cloud<=20) - cannot report a genuine detection result "
                                       "without a real image"}
         scene = items[0]  # _satellite_search_impl sorts most-recent-first
         scene_dt_str = scene.get("datetime")
@@ -222,7 +256,7 @@ class SentinelScanner:
 
         # -- 2. Fetch the real true-colour image for the exact zone bbox --
         img_result = await _fetch_sentinel_image_bytes(bounds_wsen, image_type="true-colour",
-                                                         max_cloud=40, days_back=30)
+                                                         max_cloud=20, days_back=30)
         if img_result.get("error"):
             return {"status": "error", "error_message": f"image fetch failed: {img_result['error']}", **base_meta}
 
@@ -258,7 +292,7 @@ class SentinelScanner:
                     "error_message": "ONNX model (yolov8n-obb.onnx) failed to load - cannot run ship_detection",
                     **base_meta,
                 }
-            ships = sentinel_ml.run_ship_detection(images, ml_bbox)
+            ships = sentinel_ml.run_ship_detection(images, ml_bbox, zone_baseline)
             all_detections.extend(ships)
             by_type["vessel"] = len(ships)
             if any(d.get("alert_tier") == "immediate" for d in ships):
