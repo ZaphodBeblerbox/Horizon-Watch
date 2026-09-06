@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest"
+import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import { parseRef, resolve, label, REF_KINDS } from "./ref.js"
 
 // Real end-to-end test against the live backend (http://localhost:8000) —
@@ -14,6 +14,12 @@ const API = "http://localhost:8000"
 
 async function getJSON(path) {
     const r = await fetch(`${API}${path}`)
+    if (!r.ok) return null
+    return r.json()
+}
+
+async function postJSON(path, body) {
+    const r = await fetch(`${API}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
     if (!r.ok) return null
     return r.json()
 }
@@ -43,7 +49,27 @@ beforeAll(async () => {
     }
     const cables = await getJSON("/api/infrastructure/cables")
     realIds.loc = cables?.cables?.[0]?.id
+
+    // Workstation round (§7.2/§7.6/§7.7) — a real, disposable test Case and
+    // real RFI against it, created fresh for this test run (never a
+    // hardcoded id — this suite's own established discipline).
+    const users = await getJSON("/api/users")
+    const uid = Array.isArray(users) && users[0] ? users[0].id : null
+    const testCase = await postJSON("/api/cases", { title: "ref.test.js — disposable test case", owner_user_id: uid, priority: "low" })
+    realIds.case = testCase?.case_id
+    if (realIds.case && uid) {
+        const testRfi = await postJSON("/api/rfis", { case_id: realIds.case, from_user_id: uid, to_user_id: uid, question: "ref.test.js — disposable test question" })
+        realIds.rfi = testRfi?.rfi_id
+    }
 }, 30000)
+
+// Real cleanup — this disposable test case (and its cascade-deleted RFI)
+// shouldn't accumulate forever in the real dev database on every test run.
+afterAll(async () => {
+    if (realIds.case) {
+        await fetch(`${API}/api/cases/${realIds.case}`, { method: "DELETE" }).catch(() => {})
+    }
+})
 
 describe("ref.js — parseRef (pure, no network)", () => {
     it("splits kind:id on the first colon only, so an id containing colons still parses", () => {
@@ -59,7 +85,7 @@ describe("ref.js — parseRef (pure, no network)", () => {
 
 describe("ref.js — resolve() against the real live backend, one per kind", () => {
     it("declares real resolvers for every kind this app already has records of", () => {
-        expect(REF_KINDS.sort()).toEqual(["aoi", "brf", "ent", "loc", "onto", "scn", "sig", "trk"].sort())
+        expect(REF_KINDS.sort()).toEqual(["aoi", "brf", "case", "ent", "loc", "mail", "onto", "rfi", "scn", "sig", "trk"].sort())
     })
 
     it("sig: resolves a real Alert, not a stub", async () => {
@@ -113,6 +139,24 @@ describe("ref.js — resolve() against the real live backend, one per kind", () 
         const r = await resolve(`loc:${realIds.loc}`)
         expect(r).toBeTruthy()
         expect(r._locType).toBe("cable")
+    })
+
+    it("case: resolves a real Case, not a stub", async () => {
+        if (!realIds.case) { console.warn("no real case available — skipping"); return }
+        const r = await resolve(`case:${realIds.case}`)
+        expect(r).toBeTruthy()
+        expect(r.case_id).toBe(realIds.case)
+    })
+
+    it("rfi: resolves a real RFI, not a stub", async () => {
+        if (!realIds.rfi) { console.warn("no real RFI available — skipping"); return }
+        const r = await resolve(`rfi:${realIds.rfi}`)
+        expect(r).toBeTruthy()
+        expect(r.rfi_id).toBe(realIds.rfi)
+    })
+
+    it("mail: returns a clean null right now (real Mail model lands in a separate pass) — never throws", async () => {
+        await expect(resolve("mail:M-0001")).resolves.toBeNull()
     })
 
     it("an unresolvable ref returns null honestly, never a fabricated placeholder", async () => {

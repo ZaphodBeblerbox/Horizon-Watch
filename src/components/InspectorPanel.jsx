@@ -132,6 +132,7 @@ export default function InspectorPanel({
     onJumpToLocation = noop,
     onTrackEntity = null,
     style,
+    slideOut = false,
 }) {
     const [links, setLinks] = useState([])
     const [linksLoading, setLinksLoading] = useState(false)
@@ -213,8 +214,8 @@ export default function InspectorPanel({
             as="div"
             elevation={2}
             padded={false}
-            className="inspector-panel-slide-in"
-            style={{ ...DEFAULT_DOCK_STYLE, ...style }}
+            className={slideOut ? "inspector-panel-slide-out" : "inspector-panel-slide-in"}
+            style={{ ...DEFAULT_DOCK_STYLE, ...style, pointerEvents: slideOut ? "none" : undefined }}
         >
             {/* Slides in from the right on mount — same short, no-bounce
                 120-160ms ease-out timing used elsewhere in the app (e.g.
@@ -222,10 +223,20 @@ export default function InspectorPanel({
                 Director-panel entrance. Mirrors Dashboard.jsx's own Watch
                 Queue slide-OUT transition so the two read as one motion:
                 the inspector takes the Watch Queue's place, it doesn't pop
-                in on top of it. */}
+                in on top of it.
+
+                slideOut (GlobePopup.jsx) briefly renders the OUTGOING
+                entity's panel with the reverse animation while the new one
+                slides in on top, for the case where the docked panel is
+                already open and a different entity is clicked — previously
+                that just swapped content in the same mounted instance with
+                no transition at all, since only first-mount ever played
+                the slide-in keyframe. */}
             <style>{`
                 @keyframes inspector-panel-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+                @keyframes inspector-panel-slide-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
                 .inspector-panel-slide-in { animation: inspector-panel-slide-in 150ms ease-out; }
+                .inspector-panel-slide-out { animation: inspector-panel-slide-out 150ms ease-out forwards; }
             `}</style>
             {/* Header */}
             <div style={{

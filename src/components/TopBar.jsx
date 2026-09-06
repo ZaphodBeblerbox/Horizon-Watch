@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { MODULES } from "../data/modules.js"
+import { WATCH_MODULES, WORK_MODULES } from "../data/modules.js"
 import { STATUS_COLOR_TOKEN, STATUS_WORD } from "../utils/systemHealth.js"
 
 /**
@@ -20,7 +20,13 @@ export default function TopBar({
     unreadCount = 0,
     systemHealth = { status: "operational", detail: "ALL FEEDS LIVE" },
     onOpenPalette,
+    mode = "watch",
+    onToggleMode = null,
 }) {
+    // Mode, not modules (§7.1) — the rendered rail set is filtered off one
+    // real registry field (data/modules.js's `set`), re-derived fresh every
+    // render from current `mode` — never patched/re-applied after the fact.
+    const railModules = mode === "work" ? WORK_MODULES : WATCH_MODULES
     // Tools cluster, per §2, is deliberately narrower than the spec's literal
     // "new-tab, create-AOI, export, alerts" list — investigation found no
     // real generic "export the current view" or "create AOI" flow this
@@ -77,9 +83,10 @@ export default function TopBar({
                 </div>
             </div>
 
-            {/* Module rail — 7 fixed modules */}
+            {/* Module rail — real set filtered by mode (§7.1): exactly 9 in
+                Watch, exactly 4 in Workstation. */}
             <div style={{ display: "flex", alignItems: "stretch" }}>
-                {MODULES.map((m) => {
+                {railModules.map((m) => {
                     const active = activeModule === m.key
                     return (
                         <button
@@ -123,6 +130,19 @@ export default function TopBar({
                 flex: 1, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10,
                 padding: "0 12px", borderLeft: "1px solid var(--line)",
             }}>
+                {onToggleMode && (
+                    <button
+                        onClick={onToggleMode}
+                        title={`Switch to ${mode === "work" ? "Watch" : "Workstation"} mode (W)`}
+                        style={{
+                            font: "700 10px var(--mono)", padding: "3px 8px", borderRadius: "var(--r)",
+                            background: "var(--bg-3)", color: "var(--txt-2)", border: "1px solid var(--line)",
+                            cursor: "pointer", letterSpacing: "0.04em",
+                        }}
+                    >
+                        {mode === "work" ? "WORK" : "WATCH"}
+                    </button>
+                )}
                 <button
                     onClick={onOpenPalette}
                     title="New tab"

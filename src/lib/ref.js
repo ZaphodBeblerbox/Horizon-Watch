@@ -97,6 +97,17 @@ const RESOLVERS = {
         if (port) return { ...port, _locType: "port" }
         return null
     },
+
+    // Real Case/RFI records (Workstation round, §7.2/§7.6/§7.7).
+    case: (id) => fetchJSON(`/api/cases/${encodeURIComponent(id)}`),
+    rfi:  (id) => fetchJSON(`/api/rfis/${encodeURIComponent(id)}`),
+
+    // mail: is added structurally now (real kind, real parse/resolve entry)
+    // even though the real Mail model doesn't exist until the separate
+    // Mail/Gmail prompt — resolves to a clean null today, never a thrown
+    // error, and will start resolving correctly the moment that model
+    // lands with no change needed to this layer.
+    mail: async () => null,
 }
 
 // ── Per-kind real labelers ──────────────────────────────────────────────
@@ -110,6 +121,9 @@ const LABELERS = {
     brf: (r) => r?.title || "Briefing",
     trk: (r) => r?.name || r?.callsign || r?.flight || (r?._trkType === "vessel" ? "Vessel" : "Aircraft"),
     loc: (r) => r?.name || r?.airport_name || r?.cable_name || "Place",
+    case: (r) => r?.title ? `${r.case_id} · ${r.title}` : "Case",
+    rfi:  (r) => r?.question || "RFI",
+    mail: () => "Mail",
 }
 
 // ── Per-kind real navigation ─────────────────────────────────────────────
@@ -134,8 +148,15 @@ const OPENERS = {
     scn:  (id, r, lbl) => navigate("imagery", `scn:${id}`, lbl),
     aoi:  (id, r, lbl) => navigate("imagery", `aoi:${id}`, lbl),
     brf:  (id, r, lbl) => navigate("briefings", `brf:${id}`, lbl),
-    trk:  (id, r, lbl) => { navigate("situation"); if (r?.lat != null) flyTo(r.lat, r.lon ?? r.lng) },
+    trk:  (id, r, lbl) => { navigate("situation"); if (r?.lat != null) flyTo(r.lat, r.lon) },
     loc:  (id, r, lbl) => { navigate("situation"); if (r?.lat != null) flyTo(r.lat, r.lon) },
+    // Real Workstation-module records (§7.2) — navigate("cases"/"mywork")
+    // routes through app.jsx's real openTab(), whose own mode-routing
+    // correction (§7.1) switches Watch -> Workstation automatically when
+    // one of these opens from anywhere in Watch mode.
+    case: (id, r, lbl) => navigate("cases", `case:${id}`, lbl),
+    rfi:  (id, r, lbl) => navigate("mywork", `rfi:${id}`, lbl),
+    mail: (id, r, lbl) => navigate("mail", `mail:${id}`, lbl),
 }
 
 // ── The three real functions ─────────────────────────────────────────────

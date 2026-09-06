@@ -1,29 +1,22 @@
 // capabilities.js — the real five-role capability model (Horizon Watch V3
-// Phase 1, §7.3). Confirmed via audit before writing this: real auth/login
-// was deliberately deleted from this codebase (commit 189d706 — "delete
-// backend login/role/permission system entirely"); `User.role` still exists
-// as a DB column but nothing reads it; the ONE real "who is using this app"
-// concept left is the single shared profile (localStorage `akili-profile-v1`
-// on the client, `backend/profile.json` on the server) — not per-user, not
-// authenticated, cannot represent more than one identity at a time.
+// Phase 1, §7.3). Real per-request authentication now exists (real
+// authentication round, backend/main.py's /api/auth/* + a real bcrypt-
+// hashed users table) — see src/state/authStore.js for the real session
+// state this file now reads identity from.
 //
-// Given that reality, this does NOT rebuild real multi-user authentication
-// (a far bigger, separate project) and does NOT seed fake demo users. It
-// adds one real, minimal thing to the one real identity record that exists:
-// an `accessRole` field, editable in MissionProfilePanel.jsx exactly like
-// the existing `role` (mission-focus) field already is. "Switching role"
-// today means "changing what your own single profile is currently allowed
-// to do," not "logging in as someone else" — that limitation is real and
-// stays disclosed, not hidden behind seeded identities that would pretend
-// otherwise.
-//
-// Capability enforcement here is real but client-side only: there is no
-// live per-request server auth to check against (the backend endpoints
-// this gates — report approve/reject/publish, ontology claim approve/
-// reject — currently accept any caller, a direct, disclosed consequence of
-// the same auth removal). Real server-side enforcement is a follow-up that
-// depends on real auth existing again, not something this phase can
-// honestly claim to deliver.
+// currentAccessRole()/currentUserId() prefer the real authenticated
+// session's real capability_role/id; the old self-reported profile
+// (accessRole/userId in MissionProfilePanel.jsx) is now only a pre-login
+// fallback, kept so report approve/reject/publish and ontology claim
+// approve/reject (not yet migrated to server-side enforcement in this
+// round — real auth existing doesn't retroactively protect routes nobody
+// has wired to it yet) keep working exactly as before. Case-approval
+// advance and RFI answer ARE now enforced server-side against the real
+// session (backend/main.py's _require_capability_real()/
+// _require_current_user()) — `can()`/`requireCapability()` here still
+// gate the UI (so an unauthorized user gets a real, explained refusal
+// without ever making the doomed request), but the server no longer
+// trusts the client's word for those two routes.
 
 export const ACCESS_ROLES = {
     security_lead:    { label: "Security lead",    capabilities: ["approve", "issue", "assign", "brief", "admin"] },
@@ -63,17 +56,36 @@ export function capabilityLabel(capability) {
 }
 
 // ── The real gate ──────────────────────────────────────────────────────
-// Reads the live profile fresh on every call (a plain localStorage read,
-// not a cached/stale copy) so `can()` always reflects whatever role the
-// analyst most recently set in MissionProfilePanel — no separate store to
-// fall out of sync with the one real profile record.
+// Real authentication round: identity now comes from the real
+// authenticated session (src/state/authStore.js — a real backend user row,
+// resolved server-side from a verified JWT cookie) when one exists, since
+// that's real per-request-verifiable identity rather than a self-reported
+// client value. Falls back to the old self-reported profile ONLY when
+// nothing is logged in — this keeps report approve/reject/publish and
+// ontology claim approve/reject (still real-but-client-side-only; server-
+// side enforcement for those is a real follow-up, not done in this round)
+// working exactly as before for now, without silently breaking them.
 
 import { loadProfile } from "../constants/profile.js"
+import { getCurrentUser } from "../state/authStore.js"
 import { toast } from "../ui/toast.js"
 
 export function currentAccessRole() {
+    const u = getCurrentUser()
+    if (u && ACCESS_ROLES[u.capability_role]) return u.capability_role
     const p = loadProfile()
     return (p && ACCESS_ROLES[p.accessRole]) ? p.accessRole : DEFAULT_ACCESS_ROLE
+}
+
+// Real link to a real backend users.id — the authenticated session's own
+// real id when logged in (the case the Cases/RFI gating this feeds
+// actually depends on being real), the old self-reported profile.userId
+// only as a pre-login fallback.
+export function currentUserId() {
+    const u = getCurrentUser()
+    if (u?.id) return u.id
+    const p = loadProfile()
+    return p?.userId || null
 }
 
 export function can(capability) {

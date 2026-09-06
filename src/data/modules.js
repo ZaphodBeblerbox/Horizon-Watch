@@ -24,17 +24,39 @@
 //                 reader/editor, genuinely split from Generate; the print
 //                 layout (src/reports/PrintLayout.jsx) is the shared hidden
 //                 10th view both lead to
+// Mode, not modules (V3 Workstation round, §7.1) — every module now
+// carries a real `set` ("watch" | "work") so the rail can be filtered by a
+// single, correct-by-construction data field rather than any imperative
+// re-application after render. This app's rail is already real React
+// (MODULES.map() in TopBar.jsx, re-evaluated fresh every render from
+// current props) — the reference document's own "Bug A" (an innerHTML
+// rebuild silently discarding a previously-applied inline style.display)
+// is a vanilla-DOM failure mode that cannot occur here structurally, since
+// React always re-derives the rendered set from real current data on every
+// render. The underlying PRINCIPLE the doc's fix embodies — filter off one
+// real registry field, never re-derive/patch after the fact — is what's
+// applied below regardless.
 export const MODULES = [
-    { key: "situation", label: "Situation", icon: "i-globe",   built: true },
-    { key: "inbox",     label: "Inbox",     icon: "i-inbox",   built: false },
-    { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: true },
-    { key: "analytics", label: "Analytics", icon: "i-chart",   built: true },
-    { key: "generate",  label: "Generate",  icon: "i-spark", built: true },
-    { key: "replay",    label: "Replay",    icon: "i-clock",    built: true },
-    { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: true },
-    { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: true },
-    { key: "briefings", label: "Briefings", icon: "i-read",    built: true },
+    { key: "situation", label: "Situation", icon: "i-globe",   built: true, set: "watch" },
+    { key: "inbox",     label: "Inbox",     icon: "i-inbox",   built: false, set: "watch" },
+    { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: true, set: "watch" },
+    { key: "analytics", label: "Analytics", icon: "i-chart",   built: true, set: "watch" },
+    { key: "generate",  label: "Generate",  icon: "i-spark", built: true, set: "watch" },
+    { key: "replay",    label: "Replay",    icon: "i-clock",    built: true, set: "watch" },
+    { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: true, set: "watch" },
+    { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: true, set: "watch" },
+    { key: "briefings", label: "Briefings", icon: "i-read",    built: true, set: "watch" },
+    // Workstation modules — §7.1. "My work" reuses the bell/inbox-style
+    // icon family already established; Mail/Cases/Team get their own real
+    // icons (added to IconSprite.jsx alongside this).
+    { key: "mywork",    label: "My work",   icon: "i-mywork",  built: true, set: "work" },
+    { key: "mail",      label: "Mail",      icon: "i-mail",    built: true, set: "work" },
+    { key: "cases",     label: "Cases",     icon: "i-case",    built: true, set: "work" },
+    { key: "team",      label: "Team",      icon: "i-team",    built: true, set: "work" },
 ]
+
+export const WATCH_MODULES = MODULES.filter((m) => m.set === "watch")
+export const WORK_MODULES = MODULES.filter((m) => m.set === "work")
 
 export const MODULE_KEYS = MODULES.map((m) => m.key)
 export const MODULE_BY_KEY = Object.fromEntries(MODULES.map((m) => [m.key, m]))

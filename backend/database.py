@@ -18,6 +18,17 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+class Team(Base):
+    """Real auth round — a real organization a user belongs to. Exactly one
+    real team exists today (Trifecta Technologies); this is a real table,
+    not a hardcoded string, so a second real org can be added later without
+    a schema change."""
+    __tablename__ = "teams"
+    id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name       = Column(String, unique=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
     id                  = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -41,6 +52,23 @@ class User(Base):
     location_city       = Column(String, nullable=True)
     location_updated    = Column(DateTime, nullable=True)
     location_consent    = Column(Boolean, default=False)
+    # Workstation round (§7.4/§7.11) — real per-user display fields. All
+    # nullable: initials/colour are derived deterministically from the real
+    # user id when unset (see main.py's _user_initials/_user_color), never
+    # randomized; timezone/shift are real settings a user sets for
+    # themselves, defaulted honestly rather than invented.
+    initials            = Column(String, nullable=True)
+    color               = Column(String, nullable=True)
+    timezone            = Column(String, nullable=True)
+    shift                = Column(String, nullable=True)
+    # Real auth round — real team membership + real company title (display
+    # only — "CTO"/"CEO" are not app capability roles) + the real 5-tier
+    # capability role (src/lib/capabilities.js's ACCESS_ROLE_IDS) that
+    # actually gates privileged actions, now resolved server-side from a
+    # verified session instead of a self-reported client value.
+    team_id             = Column(String, nullable=True, index=True)  # Team.id
+    title               = Column(String, nullable=True)              # e.g. "CTO" — display only
+    capability_role     = Column(String, nullable=True)              # one of ACCESS_ROLE_IDS
 
 
 class DeskSession(Base):
@@ -132,6 +160,56 @@ class DeskNote(Base):
     created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     delivered_at    = Column(DateTime, nullable=True)
     recipients_notified = Column(Integer, default=0)    # real count of push subscriptions actually notified
+
+
+class Case(Base):
+    """Workstation round, §7.6 — "a case is what turns sixteen modules into
+    one job." Attached records are stored as real reference-grammar strings
+    (src/lib/ref.js's `kind:id` form, e.g. "sig:ALT-1") so Case.refs_json is
+    never a second, parallel record-shape — every attached record resolves
+    through the exact same real resolve()/label()/open() every other
+    reference in this app already uses. The four-step approval chain
+    (draft -> review -> approved -> issued) is real history, not just a
+    current-value column: approval_history_json is an append-only real log
+    of {stage, user_id, at}, so the Briefing tab's four-step strip can show
+    real stamped initials/timestamps for every step actually taken, not
+    just the current one."""
+    __tablename__ = "cases"
+    id                    = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id               = Column(String, unique=True, index=True, nullable=False)  # CS-####
+    title                 = Column(String, nullable=False)
+    owner_user_id         = Column(String, nullable=True, index=True)
+    status                = Column(String, nullable=False, default="active")    # active | review | closed
+    priority              = Column(String, nullable=False, default="moderate")  # critical | high | moderate | low
+    summary               = Column(Text, nullable=True)
+    watchers_json         = Column(Text, nullable=False, default="[]")  # [user_id, ...]
+    refs_json             = Column(Text, nullable=False, default="[]")  # ["sig:ALT-1", "mail:M-2", ...]
+    notes_json            = Column(Text, nullable=False, default="[]")  # [{id, author_user_id, text, created_at}] — minimal real discussion for this pass
+    approval_stage        = Column(String, nullable=False, default="draft")     # draft | review | approved | issued
+    approval_history_json = Column(Text, nullable=False, default="[]")  # [{stage, user_id, at}]
+    opened_at             = Column(DateTime, default=datetime.datetime.utcnow)
+    due_at                = Column(DateTime, nullable=True)
+    created_at            = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at            = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class RFI(Base):
+    """Workstation round, §7.7 — a real Request For Information raised
+    against a case, answerable only by its real named recipient
+    (to_user_id) — never any user with a role capability, per the doc's own
+    "answerable only by the recipient" rule enforced in main.py's
+    api_rfi_answer()."""
+    __tablename__ = "rfis"
+    id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    rfi_id         = Column(String, unique=True, index=True, nullable=False)  # RFI-###
+    case_id        = Column(String, nullable=False, index=True)  # Case.case_id
+    from_user_id   = Column(String, nullable=True)
+    to_user_id     = Column(String, nullable=False, index=True)
+    question       = Column(Text, nullable=False)
+    status         = Column(String, nullable=False, default="open")  # open | answered | closed
+    answers_json   = Column(Text, nullable=False, default="[]")  # [{user_id, text, at}]
+    due_at         = Column(DateTime, nullable=True)
+    created_at     = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 class DirectMessage(Base):
@@ -1221,6 +1299,13 @@ def migrate_db():
         ('location_city', 'TEXT'),
         ('location_updated', 'DATETIME'),
         ('location_consent', 'BOOLEAN DEFAULT 0'),
+        ('initials', 'TEXT'),
+        ('color', 'TEXT'),
+        ('timezone', 'TEXT'),
+        ('shift', 'TEXT'),
+        ('team_id', 'TEXT'),
+        ('title', 'TEXT'),
+        ('capability_role', 'TEXT'),
     ]
     existing = [row[1] for row in cur.execute('PRAGMA table_info(users)').fetchall()]
     for col, typ in cols:
@@ -1435,5 +1520,51 @@ def init_db():
                     approved       = True,
                 ))
         db.commit()
+
+        # Real auth round — Trifecta Technologies, the one real team, and
+        # its three real named users. The shared temporary password is read
+        # from SEED_TEMP_PASSWORD (never hardcoded here, never logged) — if
+        # unset, this block honestly skips seeding these three accounts
+        # rather than falling back to any committed plaintext value.
+        team = db.query(Team).filter(Team.name == "Trifecta Technologies").first()
+        if not team:
+            team = Team(name="Trifecta Technologies")
+            db.add(team)
+            db.commit()
+            db.refresh(team)
+
+        seed_pw = os.getenv("SEED_TEMP_PASSWORD")
+        if seed_pw:
+            trifecta_users = [
+                {"email": "marc.lunau@trifecta-technologies.com",     "name": "Marc Lunau",       "title": "CTO"},
+                {"email": "hannes.kohnen@trifecta-technologies.com",  "name": "Hannes Kohnen",    "title": "CEO"},
+                {"email": "jakob.hentschel@trifecta-technologies.com","name": "Jakob Hentschel",  "title": "Chief Strategy Officer"},
+            ]
+            for tu in trifecta_users:
+                existing = db.query(User).filter(User.email == tu["email"]).first()
+                if existing:
+                    existing.team_id = team.id
+                    existing.title = tu["title"]
+                    if not existing.capability_role:
+                        existing.capability_role = "security_lead"
+                    if not existing.approved:
+                        existing.approved = True
+                else:
+                    db.add(User(
+                        email=tu["email"], name=tu["name"], title=tu["title"],
+                        password_hash=pwd.hash(seed_pw),
+                        team_id=team.id, capability_role="security_lead",
+                        role="analyst", is_super_admin=False, approved=True,
+                        # timezone/shift left honestly unset — this org's
+                        # real primary timezone isn't something I have real
+                        # evidence for; _user_to_dict() already falls back
+                        # to "UTC" for DISPLAY only, same as the 2 pre-
+                        # existing users, rather than writing a guessed
+                        # value into the real stored record.
+                    ))
+            db.commit()
+            print("[db-seed] Trifecta Technologies team + 3 real users ensured (password from SEED_TEMP_PASSWORD, not logged)")
+        else:
+            print("[db-seed] SEED_TEMP_PASSWORD not set — skipping Trifecta user seed (no plaintext fallback)")
     finally:
         db.close()
