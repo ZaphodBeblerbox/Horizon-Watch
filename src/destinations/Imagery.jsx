@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
+import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 
 // Imagery — page-by-page rebuild, Part B. A UI over the real, already-
 // existing Sentinel scanner pipeline (backend/sentinel_scanner.py, real
@@ -27,6 +28,9 @@ function fmtDate(iso) { return iso ? iso.slice(0, 10) : "—" }
 export default function Imagery({ onOpenGenerate }) {
     const [aois, setAois] = useState([])
     const [selectedAoi, setSelectedAoi] = useState(null)
+    // V3 Phase 1, §2.2 — real hook-based extension point, owned and called
+    // by this component itself (never reassigned from outside).
+    const inspectorExtensions = useInspectorExtensions()
     const [scenes, setScenes] = useState([])
     const [selectedScanId, setSelectedScanId] = useState(null)
     const [scene, setScene] = useState(null)
@@ -308,6 +312,9 @@ export default function Imagery({ onOpenGenerate }) {
                         </div>
                     </div>
                 )}
+                {inspectorExtensions.map((Ext, i) => (
+                    <Ext key={i} recordRef={selectedAoi ? `aoi:${selectedAoi.system_id}` : null} record={selectedAoi} />
+                ))}
             </div>
             <style>{"@keyframes imgpulse{0%,100%{opacity:.5}50%{opacity:1}}"}</style>
         </div>

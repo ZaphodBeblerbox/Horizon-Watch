@@ -452,14 +452,26 @@ export default function Analytics() {
     const [data, setData] = useState(null)
     const [error, setError] = useState(null)
 
+    // Real fix (data-pipeline-communication audit): this effect used to
+    // re-fetch only when a filter changed, with no live-update path at all
+    // — confirmed live that new signals arriving server-side never reached
+    // this view without a manual filter toggle or a hard reload. Every
+    // other live-data destination in this app polls on a real interval
+    // (Dashboard.jsx's own REFRESH_MS = 60000 is the established
+    // convention); this now does the same, on top of the existing
+    // real refetch-on-filter-change behavior, which stays unchanged.
     useEffect(() => {
         let cancelled = false
-        const params = new URLSearchParams({ range, region, domain })
-        fetch(`${API_BASE}/api/analytics/overview?${params}`)
-            .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-            .then((json) => { if (!cancelled) { setData(json); setError(null) } })
-            .catch((e) => { if (!cancelled) setError(e.message) })
-        return () => { cancelled = true }
+        function load() {
+            const params = new URLSearchParams({ range, region, domain })
+            fetch(`${API_BASE}/api/analytics/overview?${params}`)
+                .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+                .then((json) => { if (!cancelled) { setData(json); setError(null) } })
+                .catch((e) => { if (!cancelled) setError(e.message) })
+        }
+        load()
+        const t = setInterval(load, 60000)
+        return () => { cancelled = true; clearInterval(t) }
     }, [range, region, domain])
 
     function handleBriefAll(rows) {

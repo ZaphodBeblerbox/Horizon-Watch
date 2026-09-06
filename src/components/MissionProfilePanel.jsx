@@ -6,6 +6,7 @@ import {
     FOCUS_REGIONS, INFRA_DOMAINS, CHOKEPOINTS, ROLES,
     emptyProfile, loadProfile, saveProfileToStorage,
 } from "../constants/profile.js"
+import { ACCESS_ROLE_IDS, ACCESS_ROLES } from "../lib/capabilities.js"
 
 // Re-export so existing callers (app.jsx) don't need updating.
 export { loadProfile, saveProfileToStorage, emptyProfile,
@@ -493,6 +494,34 @@ function SettingsPanel({ profile, onSave, onClose }) {
                                     }}
                                 >
                                     {r}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <SectionLabel>Access role</SectionLabel>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.22)", marginBottom: 8 }}>
+                            Governs which actions you can perform (approve, issue, assign, review…) — separate from Role above
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {ACCESS_ROLE_IDS.map(id => (
+                                <button
+                                    key={id}
+                                    onClick={() => upd("accessRole", id)}
+                                    title={`Can: ${ACCESS_ROLES[id].capabilities.join(", ")}`}
+                                    style={{
+                                        flex: "1 0 30%", padding: "6px 4px", fontSize: 9,
+                                        fontWeight: draft.accessRole === id ? 700 : 400,
+                                        letterSpacing: "0.03em",
+                                        border: `1px solid ${draft.accessRole === id ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.10)"}`,
+                                        borderRadius: 4,
+                                        background: draft.accessRole === id ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.03)",
+                                        color: draft.accessRole === id ? "#fff" : "rgba(255,255,255,0.38)",
+                                        cursor: "pointer", userSelect: "none",
+                                    }}
+                                >
+                                    {ACCESS_ROLES[id].label}
                                 </button>
                             ))}
                         </div>

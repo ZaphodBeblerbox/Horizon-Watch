@@ -43,6 +43,70 @@ class User(Base):
     location_consent    = Column(Boolean, default=False)
 
 
+class DeskSession(Base):
+    """V3 Phase 1, §5.1 — a real, server-persisted "whole desk": time
+    window, severity floor, active layers/domains, the real Cesium camera
+    position, open tabs, the briefing basket, all restored atomically on
+    switch. A real, disclosed design call (see the Phase 1 report): this
+    persists server-side rather than in localStorage — reusing the real DB
+    this app already uses for everything else rather than the narrower
+    client-only "Workspace" concept it supersedes — but real per-request
+    user authentication does not exist in this codebase today (deliberately
+    removed, commit 189d706). `owner_user_id` is real (a real users.id, when
+    set) but not yet enforced by any live auth check — every session is
+    currently readable/writable by anyone, exactly like every other
+    endpoint in this app post-removal. True multi-user isolation is a real
+    follow-up once auth is rebuilt, not something this table can honestly
+    claim to deliver alone."""
+    __tablename__ = "desk_sessions"
+
+    id                 = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id         = Column(String, unique=True, index=True, nullable=False)  # SESN-<uuid8>
+    name               = Column(String, nullable=False)
+    owner_user_id      = Column(String, nullable=True, index=True)
+
+    time_window        = Column(String, nullable=False, default="72h")
+    severity_floor     = Column(String, nullable=False, default="low")
+    domains_json       = Column(Text, nullable=False, default="[]")
+    context_layers_json = Column(Text, nullable=False, default="{}")
+    track_layers_json  = Column(Text, nullable=False, default="{}")
+    projection         = Column(String, nullable=False, default="world")
+
+    # Real Cesium camera state — position + orientation, not just lat/lon/
+    # zoom (the old client-only Workspace's much narrower shape).
+    camera_json        = Column(Text, nullable=True)  # {lon, lat, height, heading, pitch, roll}
+
+    tabs_json          = Column(Text, nullable=False, default="[]")
+    basket_json        = Column(Text, nullable=False, default="[]")
+
+    created_at         = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at         = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class DeskView(Base):
+    """V3 Phase 1, §5.2 — a named filter preset LIVING INSIDE a session,
+    deliberately a separate real table (not a session with a "view mode"
+    flag): merging the two loses the ability to look at the same desk two
+    ways, per the reference spec's own stated reasoning. A view only ever
+    carries filter-level state (window/floor/domains/context layers/
+    projection) — never camera, tabs, or basket, which are real session-
+    level (whole-desk) concerns."""
+    __tablename__ = "desk_views"
+
+    id                  = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    view_id             = Column(String, unique=True, index=True, nullable=False)  # VIEW-<uuid8>
+    session_id          = Column(String, nullable=False, index=True)  # DeskSession.session_id
+    name                = Column(String, nullable=False)
+
+    time_window         = Column(String, nullable=False, default="72h")
+    severity_floor      = Column(String, nullable=False, default="low")
+    domains_json        = Column(Text, nullable=False, default="[]")
+    context_layers_json = Column(Text, nullable=False, default="{}")
+    projection          = Column(String, nullable=False, default="world")
+
+    created_at          = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class DeskNote(Base):
     """A real note routed from the mobile companion's Note tab to a desk
     (duty desk / group security / regional lead / logistics) — a route/desk
@@ -543,10 +607,17 @@ class FusionEvent(Base):
 
     # Classification
     severity                = Column(String, nullable=False, default="medium", index=True)
-    confidence              = Column(Float, default=0.5)
+    confidence              = Column(Float, default=0.5)             # == correlation_strength / 100, kept for existing consumers
     domain_count            = Column(Integer, default=1)
     domains                 = Column(Text, default="[]")            # JSON array
     fusion_type             = Column(String, default="MULTI_DOMAIN") # MULTI_DOMAIN / ESCALATION_CHAIN / PATTERN_SURGE
+
+    # Real correlation-strength breakdown (correlation_scoring.py) — the
+    # single real, auditable 0-100 formula plus its full component
+    # breakdown, so the strength shown to an analyst is never one opaque
+    # blended number (see fusion_engine.py's _score_cluster()).
+    correlation_strength     = Column(Float, nullable=True)          # 0-100, correlation_scoring.combined_strength()
+    correlation_components   = Column(Text, nullable=True)           # JSON: {geo_temporal, graph, domain_diversity, statistical, weights_used, graph_available, ...}
 
     # Geography
     location_name           = Column(String, nullable=True)
@@ -1010,6 +1081,16 @@ class Report(Base):
     key_judgments  = Column(Text, nullable=True)                 # free-text summary, analyst-written
     claims_json    = Column(Text, nullable=False, default="[]")
 
+    # V3 Phase 2 (deck cover slide, §6.6) — real fields Generate.jsx already
+    # collects (scope/audience/horizon inputs) but never persisted anywhere
+    # before this: confirmed live that /draft's body only stored title/
+    # classification/key_judgments/claims/narrative/exposure. Rather than
+    # fabricate these on the deck's cover slide, they're now real Report
+    # columns, wired through from the same real generation-time values.
+    scope         = Column(String, nullable=True)
+    audience      = Column(String, nullable=True)
+    horizon       = Column(String, nullable=True)
+
     # The Generate/Briefings rebuild's extra drafted narrative — a second
     # supporting paragraph, a one-line "Bottom line." callout, indicators/
     # warnings, and owner/by-date recommended actions. Unlike claims_json,
@@ -1277,6 +1358,11 @@ def migrate_db():
         if 'exposure_json' not in rp_existing:
             cur.execute('ALTER TABLE reports ADD COLUMN exposure_json TEXT')
             print('[db-migrate] reports: added column exposure_json')
+        # V3 Phase 2 — real scope/audience/horizon, see Report's own docstring.
+        for _col in ('scope', 'audience', 'horizon'):
+            if _col not in rp_existing:
+                cur.execute(f'ALTER TABLE reports ADD COLUMN {_col} TEXT')
+                print(f'[db-migrate] reports: added column {_col}')
 
     # Imagery page — real image persistence, real AOI proposal lifecycle,
     # real detection review status.
@@ -1301,6 +1387,17 @@ def migrate_db():
         if 'owner' not in wz2_existing:
             cur.execute('ALTER TABLE watch_zones ADD COLUMN owner TEXT')
             print('[db-migrate] watch_zones: added column owner')
+
+    # Real correlation-strength breakdown (correlation_scoring.py) — see
+    # FusionEvent.correlation_strength/correlation_components above.
+    if 'fusion_events' in tables:
+        fe_existing = [row[1] for row in cur.execute('PRAGMA table_info(fusion_events)').fetchall()]
+        if 'correlation_strength' not in fe_existing:
+            cur.execute('ALTER TABLE fusion_events ADD COLUMN correlation_strength FLOAT')
+            print('[db-migrate] fusion_events: added column correlation_strength')
+        if 'correlation_components' not in fe_existing:
+            cur.execute('ALTER TABLE fusion_events ADD COLUMN correlation_components TEXT')
+            print('[db-migrate] fusion_events: added column correlation_components')
 
     conn.commit()
     conn.close()

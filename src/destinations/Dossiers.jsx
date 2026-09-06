@@ -5,6 +5,7 @@ import API_BASE from "../apiBase.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { replayOnMap } from "../services/replayOnMap.js"
+import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 
 // Dossiers — page-by-page rebuild, §8.4. Genuinely new module (no prior
 // implementation existed — only a PlaceholderModule). Layout 238px/1fr/292px,
@@ -216,6 +217,9 @@ function LinkedEntitiesTab({ profile, onOpenEntity }) {
 export default function Dossiers({ onOpenGenerate }) {
     const [entities, setEntities] = useState([])
     const [selected, setSelected] = useState(null) // {entity_type, code}
+    // V3 Phase 1, §2.2 — real hook-based extension point, owned and called
+    // by this component itself (never reassigned from outside).
+    const inspectorExtensions = useInspectorExtensions()
     const [profile, setProfile] = useState(null)
     const [tab, setTab] = useState("Overview")
     const [note, setNote] = useState("")
@@ -312,7 +316,15 @@ export default function Dossiers({ onOpenGenerate }) {
                             const active = selected && selected.entity_type === e.entity_type && selected.code === e.code
                             return (
                                 <div key={`${e.entity_type}-${e.code}`} role="button"
-                                    onClick={() => setSelected({ entity_type: e.entity_type, code: e.code })}
+                                    onClick={() => {
+                                        setSelected({ entity_type: e.entity_type, code: e.code })
+                                        // V3 Phase 1, §3.4 — opening a specific record creates/
+                                        // reuses a tab named after it, distinct from the
+                                        // Dossiers module's own base tab.
+                                        window.dispatchEvent(new CustomEvent("akili:navigate", {
+                                            detail: { destination: "dossiers", recordRef: `ent:${e.code}`, label: `Dossier · ${e.name}` },
+                                        }))
+                                    }}
                                     style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: active ? "var(--bg-2)" : "transparent" }}>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                         <span style={{ font: "400 12px var(--font)", color: "var(--txt)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</span>
@@ -375,6 +387,9 @@ export default function Dossiers({ onOpenGenerate }) {
                             const match = entities.find((e) => e.entity_type === et && String(e.code) === String(id))
                             if (match) setSelected({ entity_type: et, code: match.code })
                         }} />}
+                        {inspectorExtensions.map((Ext, i) => (
+                            <Ext key={i} recordRef={selected ? `ent:${selected.code}` : null} record={profile} />
+                        ))}
                     </>
                 )}
             </div>
