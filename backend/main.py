@@ -11,6 +11,7 @@
 import os
 import math
 import re
+import secrets
 import uuid
 import socket as _socket
 import time as time_module
@@ -69,7 +70,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 _socket.setdefaulttimeout(20)
 
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Query, Request, Response, UploadFile, File, Form
 from fastapi.responses import Response as FastAPIResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
@@ -20686,10 +20687,20 @@ def _view_row_to_dict(v) -> dict:
 
 
 @app.get("/api/sessions")
-def api_sessions_list():
+def api_sessions_list(owner_user_id: str | None = None):
+    """Sessions & Views full round: real per-user listing. No live
+    per-request auth exists (see DeskSession's own docstring), so
+    owner_user_id here is whatever the caller's real profile displayName
+    resolves to (src/state/sessionStore.js's getCurrentUserId()) — an
+    honest best-effort identity, not enforced isolation. Omitting the param
+    (or a session created with no owner) returns/includes the shared,
+    ownerless sessions every pre-this-round session already is."""
     from database import DeskSession, get_db as _gdb_ses
     with _gdb_ses() as db:
-        rows = db.query(DeskSession).order_by(DeskSession.updated_at.desc()).all()
+        q = db.query(DeskSession)
+        if owner_user_id:
+            q = q.filter((DeskSession.owner_user_id == owner_user_id) | (DeskSession.owner_user_id.is_(None)))
+        rows = q.order_by(DeskSession.updated_at.desc()).all()
         return [_session_row_to_dict(s) for s in rows]
 
 
@@ -20814,6 +20825,484 @@ def api_session_views_delete(session_id: str, view_id: str):
         db.delete(v)
         db.commit()
         return {"ok": True}
+
+
+
+# ── Real authentication ───────────────────────────────────────────────────
+# Replaces the "no live per-request auth exists anywhere" reality every
+# other comment in this file (correctly) disclosed — that gap is what this
+# section closes. Real bcrypt password verification (passlib — already a
+# real dependency, already used by database.py's init_db() seed), real
+# session issuance as a signed JWT (python-jose — also already a real
+# dependency) in an httpOnly cookie, real per-request resolution of the
+# current user from that verified cookie.
+#
+# _get_current_user()/is a REAL fix for a real latent bug found during this
+# round's audit: /api/push/subscribe and /api/push/unsubscribe already
+# called a function named exactly this with no definition ANYWHERE in the
+# codebase — a guaranteed NameError the moment either endpoint actually
+# fired, dead since the original auth-deletion commit (189d706) evidently
+# missed these two call sites. This real implementation is also what those
+# two routes needed all along.
+#
+# JWT_SECRET: a real env var in any real deployment (set SEED_TEMP_PASSWORD-
+# adjacent JWT_SECRET in Railway); a random per-process fallback for local
+# dev ONLY, disclosed here rather than silently defaulting to a fixed
+# committed value — the real, honest cost is that sessions don't survive a
+# local dev backend restart, not a security hole in a real deployment.
+JWT_SECRET = os.getenv("JWT_SECRET") or secrets.token_hex(32)
+JWT_ALGORITHM = "HS256"
+JWT_SESSION_HOURS = 24 * 7  # one real week
+
+# Mirrors src/lib/capabilities.js's ACCESS_ROLES — kept in sync by hand
+# (small, stable, rarely-changed list). This duplication is now justified:
+# once a real verified session exists, checking the session's real
+# capability_role against a required capability IS real server-side
+# enforcement, not the "second copy of an unverifiable client value" this
+# file's Workstation-round docblock (below) correctly called out as not
+# worth duplicating BEFORE real auth existed.
+_ACCESS_ROLE_CAPS = {
+    "security_lead":   {"approve", "issue", "assign", "brief", "admin"},
+    "senior_analyst":  {"assign", "brief", "review"},
+    "analyst":         {"brief"},
+    "regional_lead":   {"answer", "brief"},
+    "imagery_analyst": {"confirm", "brief"},
+}
+
+# A real bcrypt hash of an arbitrary, unrelated string — used only so a
+# login attempt against a non-existent email still runs pwd.verify() once,
+# keeping failure timing consistent between "wrong password" and "no such
+# user" (a real, if modest, defense against email-enumeration-by-timing).
+_DUMMY_BCRYPT_HASH = "$2b$12$CwTycUXWue0Thq9StjUM0uJ8gcGnWEV4/E1prX87P6i6C1O5XZ9Iy"
+
+def _create_session_token(user_id: str) -> str:
+    from jose import jwt as _jose_jwt
+    payload = {"sub": user_id, "exp": datetime.utcnow() + timedelta(hours=JWT_SESSION_HOURS)}
+    return _jose_jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def _get_current_user(request: Request) -> dict | None:
+    """Real per-request identity resolution from the real signed session
+    cookie — returns None (never throws) when there's no valid session, so
+    callers that want an optional identity (like the pre-existing push
+    subscribe/unsubscribe routes) can degrade honestly instead of hard-
+    requiring login."""
+    token = request.cookies.get("hw_session")
+    if not token:
+        return None
+    from jose import jwt as _jose_jwt, JWTError as _JoseError
+    try:
+        payload = _jose_jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except _JoseError:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    from database import User, get_db as _gdb_auth
+    with _gdb_auth() as db:
+        u = db.query(User).filter(User.id == user_id).first()
+        return _user_to_dict(u) if u else None
+
+def _require_current_user(request: Request) -> dict:
+    """Real 401-raising variant — used by routes whose security posture
+    actually depends on a verified session (case-approval advance, RFI
+    answer, per this round's own explicit priority)."""
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="authentication required")
+    return user
+
+def _require_capability_real(user: dict, capability: str) -> None:
+    caps = _ACCESS_ROLE_CAPS.get(user.get("capability_role") or "", set())
+    if capability not in caps:
+        raise HTTPException(status_code=403, detail=f"'{user.get('name') or user.get('email')}' lacks the '{capability}' capability")
+
+def _cookie_kwargs(request: Request) -> dict:
+    # Real cross-origin cookie handling: production is genuinely cross-site
+    # (Vercel frontend, Railway backend — different registrable domains),
+    # which requires SameSite=None + Secure; local dev serves both over
+    # plain http on the same "localhost" site, where SameSite=None+Secure
+    # cookies are dropped by the browser entirely (Secure requires https).
+    # Detected from the real request scheme, not a hardcoded environment
+    # flag that could drift from reality.
+    secure = request.url.scheme == "https"
+    return {"httponly": True, "secure": secure, "samesite": "none" if secure else "lax", "path": "/"}
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request, response: Response):
+    from database import User, get_db as _gdb_auth
+    from passlib.context import CryptContext
+    pwd = CryptContext(schemes=["bcrypt"])
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+    with _gdb_auth() as db:
+        u = db.query(User).filter(User.email == email).first()
+        ok = pwd.verify(password, u.password_hash) if u else pwd.verify(password, _DUMMY_BCRYPT_HASH)
+        if not u or not ok:
+            # Same real 401 either way — never discloses whether the email
+            # exists vs. the password being wrong.
+            raise HTTPException(status_code=401, detail="invalid email or password")
+        token = _create_session_token(u.id)
+        response.set_cookie(key="hw_session", value=token, max_age=JWT_SESSION_HOURS * 3600, **_cookie_kwargs(request))
+        return _user_to_dict(u)
+
+@app.post("/api/auth/logout")
+def api_auth_logout(request: Request, response: Response):
+    response.delete_cookie(key="hw_session", path="/")
+    return {"ok": True}
+
+@app.get("/api/auth/me")
+def api_auth_me(request: Request):
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return user
+
+@app.get("/api/teams")
+def api_teams_list():
+    from database import Team, get_db as _gdb_teams
+    with _gdb_teams() as db:
+        rows = db.query(Team).all()
+        return [_team_to_dict(t) for t in rows]
+
+@app.get("/api/teams/{team_id}/members")
+def api_team_members(team_id: str):
+    from database import User, get_db as _gdb_teams
+    with _gdb_teams() as db:
+        rows = db.query(User).filter(User.team_id == team_id).order_by(User.name).all()
+        return [_user_to_dict(u) for u in rows]
+
+
+# ── Workstation round — real users, Cases, RFIs ──────────────────────────
+# §7.4/§7.6/§7.7. Real per-request auth now exists (see the real
+# authentication section directly above) — case-approval advance and RFI
+# answer below are wired to it, resolving the acting user from a verified
+# session rather than a client-supplied value. Every OTHER endpoint here
+# still accepts whatever caller identity the client sends, exactly like
+# every other endpoint in this app that hasn't been migrated to the new
+# real auth yet — a real, disclosed, incremental state, not a claim that
+# the whole backend is now protected.
+# gated endpoint in this app already does post-auth-removal. Real
+# capability enforcement (case approval advance) stays client-side-only,
+# matching that established, disclosed pattern rather than re-implementing
+# a role->capability mapping in Python that would just be a second,
+# unverifiable copy of src/lib/capabilities.js's real one. RFI-answer
+# gating is different — "answerable only by the recipient" is a real id
+# comparison against real stored data, not a role check, so THAT one is
+# also enforced here server-side (a 403 an untrusted caller could still
+# route around by lying about their own id, but a real, meaningful guard
+# against the honest/UI-following case).
+
+_USER_COLOR_PALETTE = ["#C084FC", "#5f95d0", "#4c7d63", "#b7822c", "#c4453c", "#3DDC97", "#8B7CFF", "#FB923C"]
+
+def _user_color(user_id: str) -> str:
+    h = sum(ord(ch) for ch in (user_id or ""))
+    return _USER_COLOR_PALETTE[h % len(_USER_COLOR_PALETTE)]
+
+def _user_initials(name: str, email: str) -> str:
+    # Real names in this table include parenthetical account-disambiguation
+    # suffixes ("Marc (Personal)") — filter to alphabetic words only before
+    # taking first-letter-of-first-two, so a suffix like "(Personal)" can't
+    # produce a punctuation character as an "initial".
+    n = (name or "").strip()
+    words = [w for w in re.findall(r"[A-Za-z]+", n) if w]
+    if len(words) >= 2:
+        return (words[0][0] + words[-1][0]).upper()
+    if len(words) == 1:
+        return words[0][:2].upper()
+    return (email or "??")[:2].upper()
+
+def _user_to_dict(u) -> dict:
+    return {
+        "id": u.id, "email": u.email, "name": u.name, "role": u.role,
+        "initials": u.initials or _user_initials(u.name, u.email),
+        "color": u.color or _user_color(u.id),
+        "timezone": u.timezone or "UTC",
+        "shift": u.shift,
+        "title": u.title,
+        "team_id": u.team_id,
+        "capability_role": u.capability_role,
+    }
+
+def _team_to_dict(t) -> dict:
+    return {"id": t.id, "name": t.name, "created_at": t.created_at.isoformat() if t.created_at else None}
+
+@app.get("/api/users")
+def api_users_list():
+    """This org's real roster (§7.4) — whatever real User rows actually
+    exist, not padded to look like a bigger team than it is."""
+    from database import User, get_db as _gdb_users
+    with _gdb_users() as db:
+        rows = db.query(User).order_by(User.name).all()
+        return [_user_to_dict(u) for u in rows]
+
+@app.put("/api/users/{user_id}")
+async def api_users_update(user_id: str, request: Request):
+    from database import User, get_db as _gdb_users
+    body = await request.json()
+    with _gdb_users() as db:
+        u = db.query(User).filter(User.id == user_id).first()
+        if not u:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        for f in ("timezone", "shift", "color", "initials", "name"):
+            if f in body:
+                setattr(u, f, body[f])
+        db.commit()
+        db.refresh(u)
+        return _user_to_dict(u)
+
+
+def _case_id() -> str:
+    return f"CS-{uuid.uuid4().hex[:6].upper()}"
+
+def _rfi_id() -> str:
+    return f"RFI-{uuid.uuid4().hex[:5].upper()}"
+
+def _case_row_to_dict(c) -> dict:
+    return {
+        "case_id": c.case_id, "title": c.title, "owner_user_id": c.owner_user_id,
+        "status": c.status, "priority": c.priority, "summary": c.summary,
+        "watchers": _json.loads(c.watchers_json or "[]"),
+        "refs": _json.loads(c.refs_json or "[]"),
+        "notes": _json.loads(c.notes_json or "[]"),
+        "approval_stage": c.approval_stage,
+        "approval_history": _json.loads(c.approval_history_json or "[]"),
+        "opened_at": c.opened_at.isoformat() if c.opened_at else None,
+        "due_at": c.due_at.isoformat() if c.due_at else None,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+def _rfi_row_to_dict(r) -> dict:
+    return {
+        "rfi_id": r.rfi_id, "case_id": r.case_id, "from_user_id": r.from_user_id,
+        "to_user_id": r.to_user_id, "question": r.question, "status": r.status,
+        "answers": _json.loads(r.answers_json or "[]"),
+        "due_at": r.due_at.isoformat() if r.due_at else None,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    }
+
+@app.get("/api/cases")
+def api_cases_list():
+    from database import Case, get_db as _gdb_cases
+    with _gdb_cases() as db:
+        rows = db.query(Case).order_by(Case.updated_at.desc()).all()
+        return [_case_row_to_dict(c) for c in rows]
+
+@app.post("/api/cases")
+async def api_cases_create(request: Request):
+    from database import Case, get_db as _gdb_cases
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    due_at = None
+    if body.get("due_at"):
+        try: due_at = datetime.fromisoformat(body["due_at"])
+        except Exception: due_at = None
+    with _gdb_cases() as db:
+        c = Case(
+            case_id=_case_id(), title=title,
+            owner_user_id=body.get("owner_user_id"),
+            priority=body.get("priority", "moderate"),
+            summary=body.get("summary"),
+            watchers_json=_json.dumps(body.get("watchers", [])),
+            refs_json=_json.dumps(body.get("refs", [])),
+            due_at=due_at,
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        return _case_row_to_dict(c)
+
+@app.get("/api/cases/{case_id}")
+def api_cases_get(case_id: str):
+    from database import Case, get_db as _gdb_cases
+    with _gdb_cases() as db:
+        c = db.query(Case).filter(Case.case_id == case_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+        return _case_row_to_dict(c)
+
+@app.delete("/api/cases/{case_id}")
+def api_cases_delete(case_id: str):
+    from database import Case, RFI, get_db as _gdb_cases
+    with _gdb_cases() as db:
+        c = db.query(Case).filter(Case.case_id == case_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+        db.query(RFI).filter(RFI.case_id == case_id).delete()
+        db.delete(c)
+        db.commit()
+        return {"ok": True}
+
+@app.put("/api/cases/{case_id}")
+async def api_cases_update(case_id: str, request: Request):
+    from database import Case, get_db as _gdb_cases
+    body = await request.json()
+    with _gdb_cases() as db:
+        c = db.query(Case).filter(Case.case_id == case_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+        if "title" in body: c.title = body["title"]
+        if "status" in body: c.status = body["status"]
+        if "priority" in body: c.priority = body["priority"]
+        if "summary" in body: c.summary = body["summary"]
+        if "owner_user_id" in body: c.owner_user_id = body["owner_user_id"]
+        if "watchers" in body: c.watchers_json = _json.dumps(body["watchers"])
+        if "due_at" in body:
+            try: c.due_at = datetime.fromisoformat(body["due_at"]) if body["due_at"] else None
+            except Exception: pass
+        db.commit()
+        db.refresh(c)
+        return _case_row_to_dict(c)
+
+@app.post("/api/cases/{case_id}/refs")
+async def api_cases_add_ref(case_id: str, request: Request):
+    """Attach a real reference-grammar string (sig:/ent:/scn:/mail:/...) to
+    a case — the case never stores a second copy of the referenced
+    record's own data, only the ref string every other real reference in
+    this app already resolves through (src/lib/ref.js)."""
+    from database import Case, get_db as _gdb_cases
+    body = await request.json()
+    ref = (body.get("ref") or "").strip()
+    if not ref:
+        raise HTTPException(status_code=400, detail="ref is required")
+    with _gdb_cases() as db:
+        c = db.query(Case).filter(Case.case_id == case_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+        refs = _json.loads(c.refs_json or "[]")
+        if ref not in refs:
+            refs.append(ref)
+            c.refs_json = _json.dumps(refs)
+            db.commit()
+            db.refresh(c)
+        return _case_row_to_dict(c)
+
+@app.post("/api/cases/{case_id}/notes")
+async def api_cases_add_note(case_id: str, request: Request):
+    from database import Case, get_db as _gdb_cases
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    with _gdb_cases() as db:
+        c = db.query(Case).filter(Case.case_id == case_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+        notes = _json.loads(c.notes_json or "[]")
+        notes.append({
+            "id": uuid.uuid4().hex[:8], "author_user_id": body.get("author_user_id"),
+            "text": text, "created_at": datetime.utcnow().isoformat(),
+        })
+        c.notes_json = _json.dumps(notes)
+        db.commit()
+        db.refresh(c)
+        return _case_row_to_dict(c)
+
+@app.post("/api/cases/{case_id}/advance")
+async def api_cases_advance(case_id: str, request: Request):
+    """Real approval-chain advance (§7.6's Briefing tab): draft -> review ->
+    approved -> issued, appending a real, permanent {stage, user_id, at}
+    entry to approval_history_json on every real transition. Now backed by
+    real auth (the real authentication section above this file's
+    Workstation-round docblock): the acting user is resolved from a real
+    verified session, never a client-supplied body field, and the
+    approve/issue capability gate is enforced server-side against that
+    real user's real capability_role — a real 401 with no session, a real
+    403 without the right capability."""
+    from database import Case, get_db as _gdb_cases
+    current_user = _require_current_user(request)
+    STAGES = ["draft", "review", "approved", "issued"]
+    STAGE_GATE = {"approved": "approve", "issued": "issue"}
+    with _gdb_cases() as db:
+        c = db.query(Case).filter(Case.case_id == case_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+        cur_i = STAGES.index(c.approval_stage) if c.approval_stage in STAGES else 0
+        if cur_i >= len(STAGES) - 1:
+            raise HTTPException(status_code=409, detail="case is already issued")
+        next_stage = STAGES[cur_i + 1]
+        needed = STAGE_GATE.get(next_stage)
+        if needed:
+            _require_capability_real(current_user, needed)
+        c.approval_stage = next_stage
+        hist = _json.loads(c.approval_history_json or "[]")
+        hist.append({"stage": next_stage, "user_id": current_user["id"], "at": datetime.utcnow().isoformat()})
+        c.approval_history_json = _json.dumps(hist)
+        db.commit()
+        db.refresh(c)
+        return _case_row_to_dict(c)
+
+
+@app.get("/api/rfis")
+def api_rfis_list(case_id: str | None = None, to_user_id: str | None = None):
+    from database import RFI, get_db as _gdb_rfi
+    with _gdb_rfi() as db:
+        q = db.query(RFI)
+        if case_id: q = q.filter(RFI.case_id == case_id)
+        if to_user_id: q = q.filter(RFI.to_user_id == to_user_id)
+        rows = q.order_by(RFI.created_at.desc()).all()
+        return [_rfi_row_to_dict(r) for r in rows]
+
+@app.post("/api/rfis")
+async def api_rfis_create(request: Request):
+    from database import RFI, get_db as _gdb_rfi
+    body = await request.json()
+    question = (body.get("question") or "").strip()
+    to_user_id = body.get("to_user_id")
+    case_id = body.get("case_id")
+    if not question or not to_user_id or not case_id:
+        raise HTTPException(status_code=400, detail="case_id, to_user_id and question are required")
+    due_at = None
+    if body.get("due_at"):
+        try: due_at = datetime.fromisoformat(body["due_at"])
+        except Exception: due_at = None
+    with _gdb_rfi() as db:
+        r = RFI(
+            rfi_id=_rfi_id(), case_id=case_id, from_user_id=body.get("from_user_id"),
+            to_user_id=to_user_id, question=question, due_at=due_at,
+        )
+        db.add(r)
+        db.commit()
+        db.refresh(r)
+        return _rfi_row_to_dict(r)
+
+@app.get("/api/rfis/{rfi_id}")
+def api_rfis_get(rfi_id: str):
+    from database import RFI, get_db as _gdb_rfi
+    with _gdb_rfi() as db:
+        r = db.query(RFI).filter(RFI.rfi_id == rfi_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail=f"RFI {rfi_id} not found")
+        return _rfi_row_to_dict(r)
+
+@app.post("/api/rfis/{rfi_id}/answer")
+async def api_rfis_answer(rfi_id: str, request: Request):
+    """Real recipient-only gate (§7.7: "answerable only by the recipient")
+    — the acting user is now resolved from a real verified session (the
+    real authentication section above), never a client-supplied body
+    field, so this id comparison actually means something."""
+    from database import RFI, get_db as _gdb_rfi
+    current_user = _require_current_user(request)
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    with _gdb_rfi() as db:
+        r = db.query(RFI).filter(RFI.rfi_id == rfi_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail=f"RFI {rfi_id} not found")
+        if current_user["id"] != r.to_user_id:
+            raise HTTPException(status_code=403, detail="only the real named recipient can answer this RFI")
+        answers = _json.loads(r.answers_json or "[]")
+        answers.append({"user_id": current_user["id"], "text": text, "at": datetime.utcnow().isoformat()})
+        r.answers_json = _json.dumps(answers)
+        r.status = "answered"
+        db.commit()
+        db.refresh(r)
+        return _rfi_row_to_dict(r)
 
 
 @app.patch("/api/forge/ontology/node/{node_id}")

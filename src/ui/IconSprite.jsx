@@ -38,6 +38,28 @@ export default function IconSprite() {
                 <path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" {...STROKE} />
             </symbol>
 
+            {/* Workstation module icons — §7.1 */}
+            <symbol id="i-mywork" viewBox="0 0 24 24">
+                <rect x="3" y="5" width="18" height="14" rx="1" {...STROKE} />
+                <path d="M3 10h18" {...STROKE} />
+                <path d="M8 3v4M16 3v4" {...STROKE} />
+            </symbol>
+            <symbol id="i-mail" viewBox="0 0 24 24">
+                <rect x="3" y="5" width="18" height="14" rx="1" {...STROKE} />
+                <path d="M3 6l9 7 9-7" {...STROKE} />
+            </symbol>
+            <symbol id="i-case" viewBox="0 0 24 24">
+                <rect x="3" y="8" width="18" height="12" rx="1" {...STROKE} />
+                <path d="M8 8V6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" {...STROKE} />
+                <path d="M3 13h18" {...STROKE} />
+            </symbol>
+            <symbol id="i-team" viewBox="0 0 24 24">
+                <circle cx="9" cy="8" r="3" {...STROKE} />
+                <path d="M3 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1" {...STROKE} />
+                <circle cx="17" cy="9" r="2.4" {...STROKE} />
+                <path d="M20.5 20v-.8a4 4 0 0 0-2.7-3.8" {...STROKE} />
+            </symbol>
+
             <symbol id="i-chart" viewBox="0 0 24 24">
                 <path d="M4 20V4" {...STROKE} />
                 <path d="M4 20h16" {...STROKE} />

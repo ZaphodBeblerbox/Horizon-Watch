@@ -84,6 +84,15 @@ export function emptyProfile() {
         chokepoints:        [],
         threshold:          1,
         activeSituations:   "",
+        // Workstation round (§7.4/§7.7) — real, disclosed identity link:
+        // which real backend User row (GET /api/users) this browser's
+        // shared profile is currently acting as. Needed for RFI-recipient
+        // gating, assignment "assign to me", roster presence — anything
+        // that has to compare against a real users.id, not just a display
+        // name string. Null until the analyst picks one in Settings; there
+        // is still no live per-request auth behind this, same disclosed
+        // limitation as accessRole above.
+        userId:             null,
     }
 }
 

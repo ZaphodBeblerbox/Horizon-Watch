@@ -151,6 +151,27 @@ export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible 
         onInspectorOpenChange?.(inspectorOpen)
     }, [inspectorOpen, onInspectorOpenChange])
 
+    // Real slide-out choreography when the docked InspectorPanel is already
+    // open and a DIFFERENT entity gets clicked (vessel -> news marker, etc.)
+    // — previously this just swapped content inside the same mounted
+    // instance with zero animation, since React only ever played the
+    // slide-in keyframe on first mount. Briefly keeps rendering the
+    // outgoing entity's own panel (with the reverse animation) underneath
+    // the new one while it slides in, then drops it.
+    const [outgoingPopup, setOutgoingPopup] = useState(null)
+    const prevInspectablePopupRef = useRef(null)
+    useEffect(() => {
+        const prev = prevInspectablePopupRef.current
+        const prevInspectable = prev && INSPECTOR_TYPES.has(prev.type)
+        const nowInspectable = popup && INSPECTOR_TYPES.has(popup.type)
+        prevInspectablePopupRef.current = popup
+        if (prevInspectable && nowInspectable && prev.entityId !== popup.entityId) {
+            setOutgoingPopup(prev)
+            const t = setTimeout(() => setOutgoingPopup(null), 150)
+            return () => clearTimeout(t)
+        }
+    }, [popup])
+
     // Full UI rebuild spec section 7's exclusivity rules: "Navigating to a
     // different top-level destination... automatically closes any open
     // inspector first." GlobeView (this component's parent) stays mounted
@@ -446,9 +467,23 @@ export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible 
                 </div>
             )}
 
-            {/* Unified inspector — fixed docked panel, positions itself */}
+            {/* Unified inspector — fixed docked panel, positions itself.
+                Keyed by entityId so switching to a genuinely different
+                entity remounts it (playing the real slide-in keyframe)
+                instead of silently reusing the same instance. */}
+            {outgoingPopup && (
+                <InspectorPanel
+                    key={`out-${outgoingPopup.entityId}`}
+                    entityType={outgoingPopup.type}
+                    entityId={outgoingPopup.entityId}
+                    data={outgoingPopup.data}
+                    onClose={() => {}}
+                    slideOut
+                />
+            )}
             {popup && INSPECTOR_TYPES.has(popup.type) && (
                 <InspectorPanel
+                    key={popup.entityId}
                     entityType={popup.type}
                     entityId={popup.entityId}
                     data={popup.data}

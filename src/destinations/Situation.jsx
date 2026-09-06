@@ -28,6 +28,7 @@ import { buildWatchQueueRows, sortRowsBySeverity, timeAgoLabel } from "./dashboa
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useAnnotations, renameAnnotation, removeAnnotation } from "../state/annotationStore.js"
+import { getActiveViews, subscribeActiveSession, saveCurrentAsView, applyView, deleteActiveSessionView } from "../state/sessionStore.js"
 import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
@@ -104,6 +105,58 @@ function DomainRow({ group, count, on, onToggle }) {
     )
 }
 
+// Views group (§5.2, Sessions & Views full round) — a real filter preset
+// living INSIDE the active session, deliberately the literal first group
+// in the Layers panel, above Event domains. Applying a view changes ONLY
+// filter-level state (severity/window/domains/context) via
+// sessionStore.js's applyView() — never camera, tabs, or basket, which stay
+// whole-session concerns. No native prompt() for naming a new view — an
+// inline field, same no-native-dialogs rule as SessionControl.jsx.
+function ViewsGroup({ views, onApply, onDelete, onSaveCurrent }) {
+    const [naming, setNaming] = useState(false)
+    const [name, setName] = useState("")
+
+    function commit() {
+        const trimmed = name.trim()
+        setNaming(false)
+        setName("")
+        if (trimmed) onSaveCurrent(trimmed)
+    }
+
+    return (
+        <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
+            <div style={{ padding: "2px 12px 4px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ font: "600 11px var(--font)", color: "var(--txt-3)" }}>Views</span>
+                {naming ? (
+                    <input
+                        autoFocus className="input" value={name} placeholder="View name"
+                        onChange={(e) => setName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setNaming(false); setName("") } }}
+                        onBlur={commit}
+                        style={{ font: "400 11px var(--font)", width: 110, padding: "1px 6px" }}
+                    />
+                ) : (
+                    <span role="button" tabIndex={0} onClick={() => setNaming(true)}
+                        style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>save current view</span>
+                )}
+            </div>
+            {views.length === 0 ? (
+                <div style={{ padding: "2px 12px 4px", font: "400 11px var(--font)", color: "var(--txt-4)" }}>
+                    No saved views in this session yet.
+                </div>
+            ) : views.map((v) => (
+                <div key={v.view_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                    <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</span>
+                    <span role="button" tabIndex={0} onClick={() => onApply(v)} title="Apply view"
+                        style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>apply</span>
+                    <span role="button" tabIndex={0} onClick={() => onDelete(v.view_id)} title="Delete view"
+                        style={{ color: "var(--txt-4)", cursor: "pointer", padding: "0 2px" }}>✕</span>
+                </div>
+            ))}
+        </div>
+    )
+}
+
 // §4 — the severity legend, now a real Inspector section (never a map
 // overlay). Content/behavior unchanged from the old floating version: four
 // rows, real live counts from the same `legendCounts` (derived from
@@ -166,6 +219,17 @@ export default function Situation({ onOpenDossier }) {
     useEffect(() => {
         publishFilterState({ severityFloor, timeWindow, groupsOn, contextOn, tracksOn })
     }, [severityFloor, timeWindow, groupsOn, contextOn, tracksOn])
+
+    // Sessions & Views full round (§5.2) — this pane's own real mirror of
+    // the ACTIVE session's real views (SessionControl.jsx owns switching
+    // sessions; this just reflects whichever one is currently active).
+    const [views, setViews] = useState(getActiveViews())
+    useEffect(() => subscribeActiveSession((_session, v) => setViews(v)), [])
+    // applyView() writes through situationFilterState.js's restore channel
+    // (akili:apply-session-filters), which this component already listens
+    // for below (real whole-session restore) — reused as-is, no second
+    // mirroring pass needed.
+    const applyViewToFilters = (v) => applyView(v)
 
     // Real session restore — applies every filter field atomically in one
     // pass, matching how it was captured.
@@ -398,6 +462,15 @@ export default function Situation({ onOpenDossier }) {
                         </button>
                     </div>
                 </div>
+
+                {/* Views — §5.2, literal first group in this panel (a
+                    genuinely separate structure from the session itself). */}
+                <ViewsGroup
+                    views={views}
+                    onApply={applyViewToFilters}
+                    onDelete={(viewId) => { deleteActiveSessionView(viewId).catch(() => toast("Could not delete view", { icon: "i-alert" })) }}
+                    onSaveCurrent={(name) => { saveCurrentAsView(name).catch(() => toast("Could not save view", { icon: "i-alert" })) }}
+                />
 
                 <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Event domains</div>

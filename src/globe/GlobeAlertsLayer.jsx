@@ -287,7 +287,9 @@ export default function GlobeAlertsLayer({ enabled, viewBounds }) {
                 const baseSize = isAssessment ? NEWS_MARKER_SIZE : 38
                 const hierScale   = getMarkerScale(a)
                 const finalScale  = isAssessment ? 1.0 : hierScale
-                const opacity     = getMarkerOpacity(a)
+                // News assessments are also full opacity always — no
+                // severity-based dimming, matching the fixed size/shape.
+                const opacity     = isAssessment ? 1.0 : getMarkerOpacity(a)
                 const billColor   = opacity < 1.0 ? Color.WHITE.withAlpha(opacity) : undefined
 
                 const sanctioned = isSanctioned(a)

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
-import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
+import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { getNewsMarkerDataUri, NEWS_MARKER_SIZE } from "./entityIcons.js"
@@ -53,20 +53,6 @@ function hexForEvent(ev) {
 // size (design update: every news marker is the same fixed-size diamond).
 function getIcon(hex) {
     return getNewsMarkerDataUri({ color: hex })
-}
-
-// Muted hex for low-relevance events (desaturate toward grey)
-function mutedHex(hex) {
-    try {
-        const r = parseInt(hex.slice(1, 3), 16)
-        const g = parseInt(hex.slice(3, 5), 16)
-        const b = parseInt(hex.slice(5, 7), 16)
-        const grey = Math.round(r * 0.3 + g * 0.59 + b * 0.11)
-        const mr = Math.round(r * 0.5 + grey * 0.5)
-        const mg = Math.round(g * 0.5 + grey * 0.5)
-        const mb = Math.round(b * 0.5 + grey * 0.5)
-        return `#${mr.toString(16).padStart(2, "0")}${mg.toString(16).padStart(2, "0")}${mb.toString(16).padStart(2, "0")}`
-    } catch (_) { return hex }
 }
 
 // Precision criteria: event_type or article_type matches conflict/maritime/aviation,
@@ -156,28 +142,15 @@ export default function GlobeEventsLayer({
                 const numTier = typeof ev.tier === "number" ? ev.tier
                     : ev.relevance_tier === "high" ? 1
                     : ev.relevance_tier === "medium" ? 2 : 3
-                const prec    = isPrecision(ev)
-                const baseHex = hexForEvent(ev)
-                const hex     = (!prec && numTier >= 3) ? mutedHex(baseHex) : baseHex
-                const icon    = getIcon(hex)
+                const prec = isPrecision(ev)
+                const hex  = hexForEvent(ev)
+                const icon = getIcon(hex)
                 if (!icon) return null
 
-                // Every news marker is now the same fixed size regardless of
-                // tier/location-confidence — shape (diamond) and size are
-                // uniform; only colour still varies by real article type.
-                // Lower tiers keep a real, size-neutral opacity de-emphasis.
+                // Every news marker is the same fixed size, the same full
+                // opacity, and coloured only by real sector/article type —
+                // no tier- or location-confidence-based dimming or muting.
                 const iconSize = NEWS_MARKER_SIZE
-                let alpha = 1.0
-                if (!prec) {
-                    if (numTier === 2) alpha = 0.85
-                    if (numTier >= 3)  alpha = 0.50
-                }
-                const approxConf = ev.location_confidence || ""
-                const isApprox = approxConf === "fallback_region" || approxConf === "relaxed" || approxConf === "fallback_country"
-
-                const cesiumColor = (isApprox || (numTier >= 2 && !prec))
-                    ? Color.fromAlpha(Color.WHITE, Math.min(alpha, isApprox ? 0.6 : 1.0) * alpha)
-                    : undefined
 
                 // Tier 2 events hidden below 200km camera altitude (reduces clutter at street level)
                 const ddc = numTier >= 2
@@ -193,7 +166,6 @@ export default function GlobeEventsLayer({
                             image:      icon,
                             width:      iconSize,
                             height:     iconSize,
-                            color:      cesiumColor,
                             heightReference:          HeightReference.CLAMP_TO_GROUND,
                                                         distanceDisplayCondition: ddc,
                             eyeOffset:  new Cartesian3(0, 0, -50),

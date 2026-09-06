@@ -14,12 +14,13 @@
  * metric exists anywhere in this backend, so that element from the spec is
  * deliberately omitted here rather than invented.
  */
-export default function TabStrip({ tabs, activeTabId, onSelect, onClose, onOpenPalette, liveFeedCount = null }) {
+export default function TabStrip({ tabs, activeTabId, onSelect, onClose, onOpenPalette, liveFeedCount = null, sessionControl = null }) {
     return (
         <div style={{
             height: "var(--tabs)", flexShrink: 0, background: "var(--bg-1)",
             borderBottom: "1px solid var(--line)", display: "flex", alignItems: "stretch",
         }}>
+            {sessionControl}
             <div style={{ flex: 1, display: "flex", overflowX: "auto" }}>
                 {tabs.map((t) => {
                     const active = t.id === activeTabId

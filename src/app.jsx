@@ -4,6 +4,10 @@ const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
 import IconSprite from "./ui/IconSprite.jsx"
 import TopBar from "./components/TopBar.jsx"
 import TabStrip from "./components/TabStrip.jsx"
+import SessionControl from "./components/SessionControl.jsx"
+import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
+import LoginScreen from "./components/LoginScreen.jsx"
+import { checkSession, subscribeAuth } from "./state/authStore.js"
 import StatusBar from "./components/StatusBar.jsx"
 import CommandPalette from "./components/CommandPalette.jsx"
 import ToastHost from "./ui/ToastHost.jsx"
@@ -21,12 +25,22 @@ const MODULE_TO_TAB_TYPE = {
     situation: "situation", inbox: "watchlists", dossiers: "dossiers",
     analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
     ontology: "ontology", imagery: "imagery",
+    mywork: "mywork", mail: "mail", cases: "cases", team: "team",
 }
 const TAB_TYPE_TO_MODULE = {
     situation: "situation", watchlists: "inbox", dossiers: "dossiers",
     analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
     ontology: "ontology", imagery: "imagery",
+    mywork: "mywork", mail: "mail", cases: "cases", team: "team",
 }
+// Mode, not modules (§7.1) — which real module keys a tab type routes to
+// belongs to which mode's rail. Opening a tab whose module is work-mode
+// (e.g. a case: ref resolved from Watch mode) switches the mode itself,
+// exactly like the doc's own HWX.onModule-equivalent correction — guarded
+// by MODE_SWITCH_GUARD_MS below so the mode-setter and any other effect
+// reacting to the same tab change can't fight each other.
+const WORK_MODULE_KEYS = new Set(["mywork", "mail", "cases", "team"])
+const MODE_STORAGE_KEY = "akili-mode-v1"
 import MapControlStack from "./components/MapControlStack.jsx"
 import { DESTINATION_KEYS } from "./data/destinations.js"
 import { summarizeHealth } from "./utils/systemHealth.js"
@@ -52,6 +66,10 @@ import Dossiers from "./destinations/Dossiers.jsx"
 import Ontology from "./destinations/Ontology.jsx"
 import Replay from "./destinations/Replay.jsx"
 import Imagery from "./destinations/Imagery.jsx"
+import MyWork from "./destinations/MyWork.jsx"
+import Mail from "./destinations/Mail.jsx"
+import Cases from "./destinations/Cases.jsx"
+import Team from "./destinations/Team.jsx"
 import API_BASE from "./apiBase.js"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import { loadSettings } from "./components/PreferencesPanel.jsx"
@@ -155,6 +173,17 @@ const PANEL_STYLE = {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
+    // Real authentication round — gates the entire real app shell (see the
+    // Render section below) behind a real verified session. checkSession()
+    // asks the real backend whether an existing cookie is still valid
+    // (real 401 if not — never assumed).
+    const [authUser, setAuthUser] = useState(null)
+    const [authChecked, setAuthChecked] = useState(false)
+    useEffect(() => {
+        checkSession().then((u) => { setAuthUser(u); setAuthChecked(true) })
+        return subscribeAuth(setAuthUser)
+    }, [])
+
     const [showTV,       setShowTV]       = useState(false)
     const [overwatchActive,     setOverwatchActive]     = useState(false)
     const [overwatchDrawActive, setOverwatchDrawActive] = useState(false)
@@ -204,6 +233,47 @@ export default function App() {
         window.addEventListener("akili:present-mode", h)
         return () => window.removeEventListener("akili:present-mode", h)
     }, [])
+    // Sessions & Views full round (§3.4) — real app-boot restore of this
+    // user's last-active real session (or a seeded honest default if none
+    // exist yet), plus the real belt-and-suspenders 60s/beforeunload
+    // persistence. Runs once; startSessionAutoPersist()'s own teardown
+    // unregisters both real listeners on unmount.
+    useEffect(() => {
+        ensureActiveSession().catch(() => { /* real network hiccup — SessionControl's own popover open will retry via listSessions() */ })
+        return startSessionAutoPersist()
+    }, [])
+    // Mode, not modules (§7.1) — Watch vs Workstation. Synchronous init from
+    // localStorage (read in the useState initializer, not an effect) so the
+    // very first render already reflects the right mode — no flash of the
+    // wrong rail set on load, per the doc's own explicit warning about
+    // async/setTimeout-applied mode classes. Sessions/filters/basket are
+    // untouched by a mode switch (they're not part of this state at all).
+    const [mode, setModeRaw] = useState(() => {
+        try { return localStorage.getItem(MODE_STORAGE_KEY) === "work" ? "work" : "watch" } catch { return "watch" }
+    })
+    // Guards the mode-setter against a tab-type-driven effect (below) firing
+    // right back — real "switching" flag, not a hopeful timing assumption.
+    const modeSwitchGuardRef = useRef(false)
+    const setMode = useCallback((next) => {
+        modeSwitchGuardRef.current = true
+        setModeRaw(next)
+        try { localStorage.setItem(MODE_STORAGE_KEY, next) } catch { /* ignore */ }
+        setTimeout(() => { modeSwitchGuardRef.current = false }, 0)
+    }, [])
+
+    // W / G keybindings (§7.1) — both guarded against firing while typing.
+    useEffect(() => {
+        const handler = (e) => {
+            if (e.target?.matches?.("input,textarea,select")) return
+            if (e.metaKey || e.ctrlKey || e.altKey) return
+            if (e.key === "w" || e.key === "W") { e.preventDefault(); setMode(mode === "work" ? "watch" : "work") }
+            else if (e.key === "g" || e.key === "G") { e.preventDefault(); setMode("work"); openTab(MODULE_TO_TAB_TYPE.mywork) }
+        }
+        window.addEventListener("keydown", handler)
+        return () => window.removeEventListener("keydown", handler)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [mode])
+
     const [heatmapHours, setHeatmapHours] = useState(24)
     const [overwatchDetections, setOverwatchDetections] = useState([])
 
@@ -710,6 +780,16 @@ export default function App() {
         // tested resolveTabAction() (src/lib/tabModel.js) — kept out of this
         // component so the record-scoped-tab logic (V3 Phase 1, §3.4) can
         // be tested without mounting the whole app shell.
+        // Mode-routing correction (§7.1) — opening a ref/tab whose module
+        // lives in the other mode's rail switches the mode itself (e.g. a
+        // case: ref opened from Watch mode), guarded by modeSwitchGuardRef
+        // so this and the W/G keybinding effect can't fight each other.
+        const targetModule = TAB_TYPE_TO_MODULE[type]
+        if (targetModule) {
+            const targetIsWork = WORK_MODULE_KEYS.has(targetModule)
+            if (targetIsWork && mode !== "work") setMode("work")
+            else if (!targetIsWork && mode === "work") setMode("watch")
+        }
         const decision = resolveTabAction(tabs, type, opts, crypto.randomUUID())
         if (decision.action === "switch") { switchTab(decision.id); return }
         if (decision.action === "retitle-and-switch") { retitleTab(decision.id, decision.label); switchTab(decision.id); return }
@@ -722,7 +802,7 @@ export default function App() {
             return [...prev, decision.tab]
         })
         switchTab(decision.tab.id)
-    }, [tabs, switchTab, retitleTab])
+    }, [tabs, switchTab, retitleTab, mode, setMode])
 
     // Redesign Round 2, §6 — global ⌘K/Ctrl+K (palette) and 1-7 (module
     // switch) shortcuts, guarded against active text input so typing is
@@ -918,6 +998,14 @@ export default function App() {
 
     // ── Render ────────────────────────────────────────────────────────────────
 
+    // Real authentication gate — nothing below renders (desktop or mobile
+    // shell) until a real session is confirmed. A blank frame while
+    // checkSession()'s one real request is in flight is honest (genuinely
+    // nothing to show yet); a real login screen once we know there's no
+    // valid session.
+    if (!authChecked) return null
+    if (!authUser) return <LoginScreen onLoggedIn={setAuthUser} />
+
     // Real structural swap (not a fluid reflow) — below the phone breakpoint,
     // the four-tab mobile shell renders in place of the entire ten-module
     // desktop console. Both share this same component's state underneath
@@ -964,6 +1052,8 @@ export default function App() {
                         unreadCount={unreadCount}
                         systemHealth={systemHealth}
                         onOpenPalette={() => setPaletteOpen(true)}
+                        mode={mode}
+                        onToggleMode={() => setMode(mode === "work" ? "watch" : "work")}
                     />
                     <TabStrip
                         tabs={tabs}
@@ -972,6 +1062,7 @@ export default function App() {
                         onClose={closeTab}
                         onOpenPalette={() => setPaletteOpen(true)}
                         liveFeedCount={Array.isArray(healthData?.data_sources) ? healthData.data_sources.filter(s => s.status === "ok").length : null}
+                        sessionControl={<SessionControl />}
                     />
                 </>
             )}
@@ -1122,6 +1213,30 @@ export default function App() {
                         flexDirection: "column",
                     }}>
                         <Analytics />
+                    </div>
+                )}
+
+                {/* Workstation modules (§7.1) — same kept-mounted,
+                    display:none-when-inactive pattern as every other tab
+                    type above. */}
+                {tabs.some(t => t.type === "mywork") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "mywork" ? "flex" : "none", flexDirection: "column" }}>
+                        <MyWork />
+                    </div>
+                )}
+                {tabs.some(t => t.type === "mail") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "mail" ? "flex" : "none", flexDirection: "column" }}>
+                        <Mail />
+                    </div>
+                )}
+                {tabs.some(t => t.type === "cases") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "cases" ? "flex" : "none", flexDirection: "column" }}>
+                        <Cases />
+                    </div>
+                )}
+                {tabs.some(t => t.type === "team") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "team" ? "flex" : "none", flexDirection: "column" }}>
+                        <Team />
                     </div>
                 )}
 
