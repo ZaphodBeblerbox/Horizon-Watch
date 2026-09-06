@@ -29,6 +29,8 @@ import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useAnnotations, renameAnnotation, removeAnnotation } from "../state/annotationStore.js"
 import { replayOnMap } from "../services/replayOnMap.js"
+import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+import { publishFilterState } from "../state/situationFilterState.js"
 
 const API = API_BASE
 const REFRESH_MS = 60000
@@ -138,6 +140,15 @@ export default function Situation({ onOpenDossier }) {
     const [fusionEvents, setFusionEvents] = useState([])
     const [health, setHealth] = useState(null)
     const [selected, setSelected] = useState(null)
+    // V3 Phase 1, §2.2 — real hook-based extension point. This component
+    // owns this Inspector pane (a separate real surface from the map's
+    // own InspectorPanel/GlobePopup) and calls every registered extension
+    // itself, from inside its own render, below — never reassigned from
+    // outside. Fires for both the "nothing selected" and "selected"
+    // branches, matching the reference pattern (an interrupt-style
+    // extension needs to render regardless of selection).
+    const inspectorExtensions = useInspectorExtensions()
+    const selectedRef = selected && selected.kind !== "fusion" ? `sig:${selected.id}` : null
     const [severityFloor, setSeverityFloor] = useState("low")
     const [timeWindow, setTimeWindow] = useState("72h")
     // Fidelity pass §1 — the app's base/default state is ALL LAYERS OFF (a
@@ -148,6 +159,28 @@ export default function Situation({ onOpenDossier }) {
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
     const [contextOn, setContextOn] = useState({ risk: false, graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
+
+    // V3 Phase 1, §5.1 — real live mirror of this filter state, published
+    // on every change so a session-save action can read the current
+    // desk's actual filters (see src/state/situationFilterState.js).
+    useEffect(() => {
+        publishFilterState({ severityFloor, timeWindow, groupsOn, contextOn, tracksOn })
+    }, [severityFloor, timeWindow, groupsOn, contextOn, tracksOn])
+
+    // Real session restore — applies every filter field atomically in one
+    // pass, matching how it was captured.
+    useEffect(() => {
+        const h = (e) => {
+            const s = e.detail || {}
+            if (s.severityFloor) setSeverityFloor(s.severityFloor)
+            if (s.timeWindow) setTimeWindow(s.timeWindow)
+            if (s.groupsOn) setGroupsOn(s.groupsOn)
+            if (s.contextOn) setContextOn(s.contextOn)
+            if (s.tracksOn) setTracksOn(s.tracksOn)
+        }
+        window.addEventListener("akili:apply-session-filters", h)
+        return () => window.removeEventListener("akili:apply-session-filters", h)
+    }, [])
     const [annotationTool, setAnnotationTool] = useState("select")
     const [basemap, setBasemap] = useState("dark")
     const annotations = useAnnotations()
@@ -656,6 +689,9 @@ export default function Situation({ onOpenDossier }) {
                                 </div>
                             ))}
                         </div>
+                        {inspectorExtensions.map((Ext, i) => (
+                            <Ext key={i} recordRef={null} record={null} />
+                        ))}
                     </div>
                 ) : (
                     <div style={{ padding: 12 }}>
@@ -696,6 +732,9 @@ export default function Situation({ onOpenDossier }) {
                         <div style={{ marginTop: 12 }}>
                             <SeverityLegend legendCounts={legendCounts} />
                         </div>
+                        {inspectorExtensions.map((Ext, i) => (
+                            <Ext key={i} recordRef={selectedRef} record={selected} />
+                        ))}
                     </div>
                 )}
             </div>

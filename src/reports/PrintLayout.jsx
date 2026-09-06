@@ -78,7 +78,7 @@ function Grid({ head, rows, empty }) {
 
 const TD = { padding: "4px 8px 4px 0", borderBottom: "1px solid #d7d2c9", verticalAlign: "top", color: "#22272d" }
 
-export default function PrintLayout({ reportId, onBack }) {
+export default function PrintLayout({ reportId, onBack, onOpenDeck }) {
     const [bundle, setBundle] = useState(null)
     const [zoom, setZoom] = useState(100)
     const deskRef = useRef(null)
@@ -135,6 +135,7 @@ export default function PrintLayout({ reportId, onBack }) {
                     <div className="seg" style={{ marginTop: 4 }}>{[75, 100, 125].map((z) => <button key={z} aria-pressed={zoom === z} onClick={() => setZoom(z)}>{z}%</button>)}</div>
                 </div>
                 <button className="btn primary" onClick={() => window.print()}>print / pdf</button>
+                {report && <button className="btn" onClick={() => onOpenDeck?.(reportId)}>deck</button>}
                 {/* distribute — omitted: no real distribution-list feature
                     exists in the backend (checked main.py/database.py) — a
                     button here would confirm something that doesn't happen. */}

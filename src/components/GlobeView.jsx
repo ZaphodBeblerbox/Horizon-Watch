@@ -2,6 +2,7 @@ import "../cesiumConfig.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
 import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, EllipsoidTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference } from "cesium"
+import { publishCameraState } from "../globe/cameraState.js"
 import "cesium/Build/Cesium/Widgets/widgets.css"
 import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
@@ -263,19 +264,65 @@ export default function GlobeView({
         return () => clearInterval(t)
     }, [adsbEnabled])
 
-    // akili:fly-to — triggered by GlobalSearch and other search components
+    // akili:fly-to — triggered by GlobalSearch and other search components.
+    //
+    // Real bug found and fixed while wiring V3 Phase 1 §5.1 (session camera
+    // capture/restore): this viewer runs Cesium's on-demand render mode
+    // (viewer.scene.requestRenderMode, set true elsewhere in this file, with
+    // an existing forced-continuous-rendering workaround for basemap swaps
+    // just above). flyTo()'s animation is tick-driven — with no render loop
+    // actually advancing frames, the flight never progresses: its own
+    // `complete` callback never fires, camera.moveEnd never fires, and the
+    // camera visually never moves at all. Confirmed live via a temporary
+    // diagnostic log (removed) — the handler ran, flyTo() was called, but
+    // `complete` never logged even 3s after a 1.5s-duration flight. This
+    // predates this round's session work (akili:fly-to is used elsewhere,
+    // e.g. GlobalSearch) — it just had nothing forcing a moveEnd-dependent
+    // read of the result before now. Same real fix as the basemap-swap case:
+    // force continuous rendering for the flight's duration, then restore
+    // on-demand mode.
     useEffect(() => {
         const handler = (e) => {
             const { lat, lon, altitude = 100_000 } = e.detail || {}
             const viewer = viewerRef.current?.cesiumElement
             if (!viewer || lat == null || lon == null) return
+            const wasRequestRenderMode = viewer.scene.requestRenderMode
+            viewer.scene.requestRenderMode = false
+            const restore = () => { if (!viewer.isDestroyed()) viewer.scene.requestRenderMode = wasRequestRenderMode }
             viewer.camera.flyTo({
                 destination: Cartesian3.fromDegrees(lon, lat, altitude),
                 duration: 1.5,
+                complete: restore,
+                cancel: restore,
             })
         }
         window.addEventListener("akili:fly-to", handler)
         return () => window.removeEventListener("akili:fly-to", handler)
+    }, [])
+
+    // akili:set-camera — V3 Phase 1, §5.1 real session restore. Instant
+    // (setView, not flyTo): switching sessions resumes a desk, it doesn't
+    // tour the globe to it. Real position + orientation, not just a
+    // destination point. Cesium camera angles are always radians, never
+    // degrees — the pitch default below is -Math.PI/2 (straight down), not
+    // the literal -90 that would be nonsensical as radians.
+    useEffect(() => {
+        const handler = (e) => {
+            const { lon, lat, height, heading = 0, pitch = -Math.PI / 2, roll = 0 } = e.detail || {}
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer || lon == null || lat == null || height == null) return
+            viewer.camera.setView({
+                destination: Cartesian3.fromDegrees(lon, lat, height),
+                orientation: { heading, pitch, roll },
+            })
+            // setView is synchronous, but this viewer runs on-demand
+            // rendering (requestRenderMode) — request a frame explicitly so
+            // the change actually paints immediately rather than waiting for
+            // some unrelated later trigger.
+            viewer.scene.requestRender()
+        }
+        window.addEventListener("akili:set-camera", handler)
+        return () => window.removeEventListener("akili:set-camera", handler)
     }, [])
 
     // Real map control stack (full UI rebuild spec section 4) — zoom in/out
@@ -466,6 +513,18 @@ export default function GlobeView({
                 } else {
                     setViewBounds({ south: s, north: n, west: w, east: e })
                 }
+                // V3 Phase 1, §5.1 — real Cesium camera position + orientation,
+                // published on every real move so a session-save action can
+                // read the current desk's actual camera state.
+                const carto = viewer.camera.positionCartographic
+                publishCameraState({
+                    lon: CesiumMath.toDegrees(carto.longitude),
+                    lat: CesiumMath.toDegrees(carto.latitude),
+                    height: carto.height,
+                    heading: viewer.camera.heading,
+                    pitch: viewer.camera.pitch,
+                    roll: viewer.camera.roll,
+                })
             }
             update()
             viewer.camera.moveEnd.addEventListener(update)
@@ -622,7 +681,7 @@ export default function GlobeView({
                 <GlobePortLayer    enabled={portsEnabled}    viewBounds={viewBounds} />
 
                 {/* ── Forge alerts layer ──────────────────────────────────────── */}
-                <GlobeAlertsLayer enabled={alertsEnabled} />
+                <GlobeAlertsLayer enabled={alertsEnabled} viewBounds={viewBounds} />
 
                 {/* ── Threat heatmap layer ─────────────────────────────────────── */}
                 <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />

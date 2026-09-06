@@ -3,6 +3,14 @@ import API_BASE from "../apiBase.js"
 import { entityMarkerSvg } from "../globe/entityIcons.js"
 import { normalizeEntity } from "../inspector/adapters.js"
 import { Panel, Button, EmptyState } from "../ui/index.js"
+import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+
+// Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
+// only to give registered extensions a real recordRef to key off of.
+// Types with no clean 1:1 mapping (news/event/infra/eez/cable/fusion/
+// airport/port/sentinel_detection/chokepoint) get recordRef=null — real,
+// honest "no reference for this yet," not a guessed/fabricated one.
+const ENTITY_TYPE_TO_REF_KIND = { vessel: "trk", aircraft: "trk", alert: "sig", zone: "aoi" }
 
 /**
  * InspectorPanel — the single, unified entity detail panel that replaces the
@@ -128,6 +136,17 @@ export default function InspectorPanel({
     const [links, setLinks] = useState([])
     const [linksLoading, setLinksLoading] = useState(false)
     const [linksError, setLinksError] = useState(false)
+
+    // V3 Phase 1, §2.2 — the real hook-based extension point. This
+    // component (the owner) calls every registered extension itself, from
+    // inside its own render, below. Nothing external ever reassigns or
+    // wraps this function — that was the reference document's whole
+    // point: a wrapped export stops firing the moment the owner's
+    // internal call sites (unaffected by an outside reassignment) render
+    // again. Zero real extensions are registered as of Phase 1.
+    const inspectorExtensions = useInspectorExtensions()
+    const refKind = ENTITY_TYPE_TO_REF_KIND[entityType]
+    const recordRef = refKind && entityId ? `${refKind}:${entityId}` : null
 
     // Real airline/aircraft-type/registration (hexdb.io, via GET
     // /api/aviation/route/{icao24}) and a real reference photo
@@ -296,6 +315,12 @@ export default function InspectorPanel({
                         />
                     )}
                 </div>
+
+                {/* V3 Phase 1, §2.2 — real extensions render here, called by
+                    the owner (this component), never injected from outside. */}
+                {inspectorExtensions.map((Ext, i) => (
+                    <Ext key={i} recordRef={recordRef} record={data} />
+                ))}
             </div>
 
             {/* Actions */}

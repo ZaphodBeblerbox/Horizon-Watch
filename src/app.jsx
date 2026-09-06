@@ -37,6 +37,7 @@ import AICouncil from "./destinations/AICouncil.jsx"
 import Generate from "./reports/Generate.jsx"
 import Briefings from "./reports/Briefings.jsx"
 import PrintLayout from "./reports/PrintLayout.jsx"
+import Deck from "./reports/Deck.jsx"
 import MobileApp from "./mobile/MobileApp.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
@@ -60,6 +61,7 @@ import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, p
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
 import NewsTicker from "./components/NewsTicker.jsx"
 import WorldClocksBar from "./components/WorldClocksBar.jsx"
+import { resolveTabAction } from "./lib/tabModel.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -188,6 +190,20 @@ export default function App() {
     const [phoneMode, setPhoneMode] = useState(phoneModeQuery)
     const [showReels, setShowReels] = useState(false)
     const [showAutoMode, setShowAutoMode] = useState(false)
+    // V3 Phase 2, §6.6 Part 3 — deck present mode strips the app's own
+    // chrome (topbar/tab strip/status bar). Deck.jsx lives deep inside this
+    // component's own render tree (the "briefings" tab slot), so it
+    // dispatches a real event rather than needing presenting threaded down
+    // as a prop through every intermediate layer — the same destination-
+    // neutral CustomEvent pattern already established for akili:navigate
+    // etc. Reuses the exact same `!showAutoMode`-style chrome-hiding
+    // condition already in place below, rather than inventing a second one.
+    const [presenting, setPresenting] = useState(false)
+    useEffect(() => {
+        const h = (e) => setPresenting(!!e.detail?.active)
+        window.addEventListener("akili:present-mode", h)
+        return () => window.removeEventListener("akili:present-mode", h)
+    }, [])
     const [heatmapHours, setHeatmapHours] = useState(24)
     const [overwatchDetections, setOverwatchDetections] = useState([])
 
@@ -307,6 +323,12 @@ export default function App() {
     // only from here or the reader's own print action, never the rail).
     const [briefingsInitialId, setBriefingsInitialId] = useState(null)
     const [printReportId, setPrintReportId] = useState(null)
+    // V3 Phase 2, §6.1/§6.6 — the deck is a third rendering of the same
+    // real document object, reachable the exact same way print is: never
+    // its own rail destination, only from the reader toolbar, the print
+    // toolbar, or Generate's footer. deckReportId swaps the Briefings tab's
+    // content for the deck, same pattern as printReportId.
+    const [deckReportId, setDeckReportId] = useState(null)
 
     const openRightPanel = useCallback((id) => {
         setRightPanel(prev => prev === id ? null : id)
@@ -652,7 +674,27 @@ export default function App() {
         })
     }, [])
 
-    const openTab = useCallback((type) => {
+    // V3 Phase 1, §3.4 — record-scoped tabs. A plain module switch
+    // (`openTab("dossiers")`, no opts) keeps its exact existing behaviour:
+    // one base tab per module type, reused, never duplicated. Opening a
+    // SPECIFIC record (`openTab("dossiers", {recordRef:"ent:AOI-14",
+    // label:"Dossier · Red Sea corridor"})`) creates or reuses a tab keyed
+    // on (type, recordRef) instead — a real, separate tab per record,
+    // distinct from that module's own base tab. This is the real
+    // implementation the pre-existing (audited, unused) retitleTab stub
+    // was left for.
+    // Redesign Round 2, §3 — real contextual tab retitling (e.g. opening a
+    // specific Dossier or generated report retitles its own tab, distinct
+    // from the module's own display name). Declared before openTab (which
+    // now references it in its own dependency array) rather than after —
+    // useCallback's dependency array is evaluated eagerly at this line, so
+    // referencing a same-scope `const` declared later would be a real
+    // temporal-dead-zone crash, not just a style preference.
+    const retitleTab = useCallback((id, label) => {
+        setTabs(prev => prev.map(t => (t.id === id ? { ...t, label } : t)))
+    }, [])
+
+    const openTab = useCallback((type, opts) => {
         // Redesign Round 2 — real tab types for the new 7-module rail
         // (data/modules.js) plus the pre-existing "dashboard"/"sources"/
         // "aiCouncil" types, which are no longer reachable from the new
@@ -663,22 +705,24 @@ export default function App() {
         // asked for. "situation" replaces "map" as the permanent home tab
         // type; "dossiers"/"replay" are genuinely new placeholder-content
         // types (real modules, no real screen behind them yet — Round 3/4).
-        const LABELS = {
-            situation: "Situation", inbox: "Inbox", dossiers: "Dossiers",
-            analytics: "Analytics", generate: "Generate", briefings: "Briefings", replay: "Replay",
-            ontology: "Ontology", imagery: "Imagery",
-            map: "Map", dashboard: "Dashboard", reports: "Reports", watchlists: "Watchlists",
-            sources: "Intel", aiCouncil: "AI Council",
-        }
-        const existing = tabs.find(t => t.type === type)
-        if (existing) { switchTab(existing.id); return }
-        const newId = crypto.randomUUID()
+        //
+        // The actual switch-vs-create decision lives in the pure, unit-
+        // tested resolveTabAction() (src/lib/tabModel.js) — kept out of this
+        // component so the record-scoped-tab logic (V3 Phase 1, §3.4) can
+        // be tested without mounting the whole app shell.
+        const decision = resolveTabAction(tabs, type, opts, crypto.randomUUID())
+        if (decision.action === "switch") { switchTab(decision.id); return }
+        if (decision.action === "retitle-and-switch") { retitleTab(decision.id, decision.label); switchTab(decision.id); return }
         setTabs(prev => {
-            if (prev.find(t => t.type === type)) return prev
-            return [...prev, { id: newId, type, label: LABELS[type] || type }]
+            // Re-check against the latest tabs (not the `tabs` this closure
+            // captured) in case of a rapid double-fire — mirrors the
+            // dedup guard the pre-existing base-tab path already had.
+            const reDecision = resolveTabAction(prev, type, opts, decision.tab.id)
+            if (reDecision.action !== "create") return prev
+            return [...prev, decision.tab]
         })
-        switchTab(newId)
-    }, [tabs, switchTab])
+        switchTab(decision.tab.id)
+    }, [tabs, switchTab, retitleTab])
 
     // Redesign Round 2, §6 — global ⌘K/Ctrl+K (palette) and 1-7 (module
     // switch) shortcuts, guarded against active text input so typing is
@@ -710,7 +754,11 @@ export default function App() {
     // replaces the old akili:open-forge/akili:forge-nav pair now that Forge
     // is no longer a primary-nav destination.
     useEffect(() => {
-        const h = (e) => { if (e.detail?.destination) openTab(e.detail.destination) }
+        const h = (e) => {
+            if (!e.detail?.destination) return
+            const { destination, recordRef, label } = e.detail
+            openTab(destination, recordRef ? { recordRef, label } : undefined)
+        }
         window.addEventListener("akili:navigate", h)
         return () => window.removeEventListener("akili:navigate", h)
     }, [openTab])
@@ -754,16 +802,6 @@ export default function App() {
         tabHistoryRef.current = tabHistoryRef.current.filter(x => x !== id)
     }, [tabs, activeTabId])
 
-    // Redesign Round 2, §3 — real contextual tab retitling (e.g. opening a
-    // specific Dossier or generated report retitles its own tab, distinct
-    // from the module's own display name). No consumer wires a specific
-    // Dossier/report into this yet this round (Dossiers/Generate/Briefings
-    // aren't rebuilt until Rounds 3/4), but the real mechanism exists now
-    // rather than being faked later.
-    const retitleTab = useCallback((id, label) => {
-        setTabs(prev => prev.map(t => (t.id === id ? { ...t, label } : t)))
-    }, [])
-
     // Persist tabs to localStorage
     useEffect(() => {
         try {
@@ -771,6 +809,21 @@ export default function App() {
             localStorage.setItem(TAB_STORAGE_KEY + "-active", activeTabId)
         } catch { /* ignore */ }
     }, [tabs, activeTabId])
+
+    // V3 Phase 1, §5.1 — real session restore of open tabs. A session
+    // CAPTURES the current tabs by reading the same TAB_STORAGE_KEY this
+    // effect already writes (no second store needed); restoring a session
+    // dispatches this event with the real saved {tabs, activeTabId}.
+    useEffect(() => {
+        const h = (e) => {
+            const { tabs: restoredTabs, activeTabId: restoredActive } = e.detail || {}
+            if (!Array.isArray(restoredTabs) || !restoredTabs.length) return
+            setTabs(restoredTabs)
+            setActiveTabId(restoredTabs.find(t => t.id === restoredActive) ? restoredActive : restoredTabs[restoredTabs.length - 1].id)
+        }
+        window.addEventListener("akili:restore-tabs", h)
+        return () => window.removeEventListener("akili:restore-tabs", h)
+    }, [])
 
     // ── Situations (state kept for ChatPanel context; no panel UI) ──────────
     const [situations,        setSituations]        = useState([])
@@ -903,7 +956,7 @@ export default function App() {
         }}>
         <IconSprite />
             {/* ── Top bar + tab strip — redesign Round 2, §1/§2/§3 ───────────── */}
-            {!showAutoMode && (
+            {!showAutoMode && !presenting && (
                 <>
                     <TopBar
                         activeModule={TAB_TYPE_TO_MODULE[activeTabType] || "situation"}
@@ -1014,17 +1067,22 @@ export default function App() {
                         <Generate onOpenTab={(reportId, title, kind) => {
                             setBriefingsInitialId(reportId)
                             setPrintReportId(kind === "print" ? reportId : null)
-                            openTab("briefings")
+                            setDeckReportId(kind === "deck" ? reportId : null)
+                            // V3 Phase 1, §3.4 — a specific generated briefing gets its
+                            // own named tab (brf:<id>), distinct from Briefings' base tab.
+                            openTab("briefings", { recordRef: `brf:${reportId}`, label: `Briefing · ${title || reportId}` })
                         }} />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "briefings") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "briefings" ? "flex" : "none", flexDirection: "column" }}>
-                        {printReportId ? (
-                            <PrintLayout reportId={printReportId} onBack={() => setPrintReportId(null)} />
+                        {deckReportId ? (
+                            <Deck reportId={deckReportId} onBack={() => setDeckReportId(null)} />
+                        ) : printReportId ? (
+                            <PrintLayout reportId={printReportId} onBack={() => setPrintReportId(null)} onOpenDeck={(id) => { setPrintReportId(null); setDeckReportId(id) }} />
                         ) : (
-                            <Briefings initialReportId={briefingsInitialId} onPrint={(id) => setPrintReportId(id)} isVisible={activeTabType === "briefings"} />
+                            <Briefings initialReportId={briefingsInitialId} onPrint={(id) => setPrintReportId(id)} onOpenDeck={(id) => setDeckReportId(id)} isVisible={activeTabType === "briefings"} />
                         )}
                     </div>
                 )}
@@ -1048,7 +1106,10 @@ export default function App() {
 
                 {tabs.some(t => t.type === "aiCouncil") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "aiCouncil" ? "flex" : "none", flexDirection: "column" }}>
-                        <AICouncil onOpenReport={(reportId) => { setBriefingsInitialId(reportId); openTab("briefings") }} />
+                        <AICouncil onOpenReport={(reportId) => {
+                            setBriefingsInitialId(reportId)
+                            openTab("briefings", { recordRef: `brf:${reportId}`, label: `Briefing · ${reportId}` })
+                        }} />
                     </div>
                 )}
 
@@ -1213,7 +1274,7 @@ export default function App() {
                 retired along with the rest of the old mobile chrome; the
                 real isMobile detection elsewhere in this file (unrelated
                 layout adaptations) is untouched. */}
-            {!showAutoMode && <StatusBar health={healthData} taskCount={taskCount} />}
+            {!showAutoMode && !presenting && <StatusBar health={healthData} taskCount={taskCount} />}
         </div>
     )
 }

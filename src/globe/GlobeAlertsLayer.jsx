@@ -7,6 +7,19 @@ import { getEntityMarkerDataUri, resolveSanctionsStatus } from "./entityIcons.js
 import { alertEntityTypeAndSubtype } from "../inspector/adapters.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
+import { clusterTracks } from "./trackClustering.js"
+
+// Same real per-viewport render cap GlobeAISLayer/GlobeADSBLayer already use.
+// Forge's alert feed is a running history (hundreds of sanctioned-vessel
+// hits alone), not a live-only snapshot — with no cap, every alert ever
+// returned by /api/forge/alerts got its own always-on billboard + text
+// label, which is what produced the unreadable stacked-label mess over
+// dense shipping lanes. Above the cap, dense grid cells collapse into one
+// real count-cluster via the same clusterTracks() utility, instead of
+// flooding the globe with overlapping individual labels.
+const DESKTOP_ALERTS_CAP = 200
+const alertLat = (a) => Number(a.lat)
+const alertLon = (a) => Number(a.lng ?? a.lon)
 
 function forgeHeaders() {
     return {
@@ -132,7 +145,7 @@ function fusionIcon(severity) {
     })
 }
 
-export default function GlobeAlertsLayer({ enabled }) {
+export default function GlobeAlertsLayer({ enabled, viewBounds }) {
     const [alerts,           setAlerts]           = useState([])
     const [fusions,          setFusions]          = useState([])
     const [sanctionedMmsiSet, setSanctionedMmsiSet] = useState(new Set())
@@ -234,17 +247,37 @@ export default function GlobeAlertsLayer({ enabled }) {
 
     // enabled controls visibility only — fetch cycle runs regardless
     const _seenIds = new Set()
-    const visibleAlerts = (enabled ? alerts : []).filter(a => {
+    const filteredAlerts = (enabled ? alerts : []).filter(a => {
         if (a.lat == null || (a.lng ?? a.lon) == null || !isFinite(Number(a.lat))) return false
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
         return filterAlert(a, sanctionedMmsiSet)
     })
+    const { individual: visibleAlerts, clusters: alertClusters } = clusterTracks(filteredAlerts, {
+        getLat: alertLat, getLon: alertLon, viewBounds, maxIndividual: DESKTOP_ALERTS_CAP,
+        // Lower than AIS/ADS-B's default (4) — alert labels are always-on,
+        // backgrounded text boxes (heavier than a plain vessel/aircraft
+        // label), so even 2-3 close together still visually stack.
+        clusterMinSize: 2,
+    })
     const visibleFusions = (enabled ? fusions : []).filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
 
     return (
         <>
+            {alertClusters.map((c, i) => (
+                <Entity
+                    key={`alert-cluster-${i}`}
+                    position={Cartesian3.fromDegrees(c.lon, c.lat, 0)}
+                    point={{ pixelSize: 16, color: Color.fromCssColorString("#FF3B30").withAlpha(0.55), outlineColor: Color.WHITE, outlineWidth: 1, heightReference: HeightReference.CLAMP_TO_GROUND }}
+                    label={{
+                        text: String(c.count),
+                        font: "11px Arial", fillColor: Color.WHITE,
+                        outlineColor: Color.fromCssColorString("#0F1721"), outlineWidth: 2, style: 2,
+                        distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
+                    }}
+                />
+            ))}
             {visibleAlerts.map((a, i) => {
                 const lat = Number(a.lat)
                 const lon = Number(a.lng ?? a.lon)

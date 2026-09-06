@@ -136,7 +136,7 @@ function buildRecordLookup(xrefIndex, evidenceClaims, regionNames) {
     return map
 }
 
-export default function Briefings({ initialReportId, onPrint, isVisible = true }) {
+export default function Briefings({ initialReportId, onPrint, onOpenDeck, isVisible = true }) {
     const [reports, setReports] = useState([])
     const [reportId, setReportId] = useState(initialReportId || null)
     const [report, setReport] = useState(null)
@@ -343,6 +343,7 @@ export default function Briefings({ initialReportId, onPrint, isVisible = true }
                             </div>
                             {mode === "edit" && <button className="btn sm" onClick={saveNow}>{dirty ? "save draft*" : "save draft"}</button>}
                             <button className="btn sm" onClick={() => onPrint?.(reportId)}>print / pdf</button>
+                            <button className="btn sm" onClick={() => onOpenDeck?.(reportId)}>deck</button>
                         </div>
                         <DocumentRenderer
                             report={renderReport} sections={renderSections} mode={mode} xrefIndex={xrefIndex}

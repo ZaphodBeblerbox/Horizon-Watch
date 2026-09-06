@@ -12,10 +12,13 @@ Module-level singleton: fusion_engine = FusionEngine()
 """
 
 import json
+import re
 import uuid
 import math
 import datetime
 from datetime import timedelta
+
+import correlation_scoring as _cs
 
 
 FUSION_WINDOW_HOURS   = 2
@@ -216,7 +219,15 @@ class FusionEngine:
         if signal.get("country"):
             return f"CTY:{signal['country'].lower()}"
         if lat is not None and lon is not None:
-            return f"GEO:{round(lat, 1)},{round(lon, 1)}"
+            # Real radius-based lookup (correlation_scoring.py Part 1),
+            # replacing the old round(lat,1)/round(lon,1) grid — that
+            # rounding created a real false-negative: two signals a few km
+            # apart but on opposite sides of a ~0.1-degree cell boundary
+            # never shared a geo_key and so could never fuse. Only reached
+            # when a signal has no region_id, no matching strategic zone,
+            # and no country — the tiers above are real named geographic
+            # entities, unaffected by this change.
+            return _cs.find_or_create_radius_geo_key(lat, lon, datetime.datetime.utcnow(), self.active_signals)
         return "GEO:unknown"
 
     def _add_signal(self, geo_key: str, signal: dict):
@@ -239,11 +250,26 @@ class FusionEngine:
         candidate_pool = high_relevance if len(high_relevance) >= self.min_signals else signals
 
         domains = set(s["domain"] for s in candidate_pool)
+        domain_score, domain_breakdown = _cs.domain_diversity_score(candidate_pool)
         print(f"[FUSION] Evaluating {geo_key}: {len(signals)} signals ({len(high_relevance)} high-relevance), "
-              f"{len(domains)} domains={domains}")
-        if len(domains) < self.min_domains:
-            print(f"[FUSION] Not enough domains ({len(domains)} < {self.min_domains}), skipping")
+              f"{len(domains)} domains={domains} domain_diversity_score={domain_score:.3f} "
+              f"(floor={_cs.DOMAIN_DIVERSITY_FLOOR})")
+        # Real, graduated, reliability-weighted domain-diversity floor
+        # (correlation_scoring.py Part 3) replaces the old hard "exactly
+        # 2+ domains" gate — a genuinely single-domain cluster (regardless
+        # of how many signals pile up within that one domain) can never
+        # clear this floor by construction (see domain_diversity_score's
+        # docstring), so the real cross-domain-corroboration requirement
+        # is preserved, just graduated by source reliability rather than a
+        # blunt count. self.min_domains is kept only for the existing
+        # operator settings API's backward compatibility — it no longer
+        # independently gates fusion.
+        if domain_score < _cs.DOMAIN_DIVERSITY_FLOOR:
+            print(f"[FUSION] Domain diversity {domain_score:.3f} below floor {_cs.DOMAIN_DIVERSITY_FLOOR}, skipping")
             return
+        # Real raw-volume floor — orthogonal to domain diversity: even a
+        # perfectly-diverse pair of signals shouldn't fire off a near-empty
+        # candidate pool. Still real and operator-configurable.
         if len(candidate_pool) < self.min_signals:
             print(f"[FUSION] Not enough signals ({len(candidate_pool)} < {self.min_signals}), skipping")
             return
@@ -286,13 +312,106 @@ class FusionEngine:
             return None, None
         return sum(c[0] for c in coords) / len(coords), sum(c[1] for c in coords) / len(coords)
 
-    def _calc_confidence(self, domains: set, signals: list) -> float:
-        return min(0.98, 0.5 + (len(domains) - 1) * 0.15 + max(0, len(signals) - 2) * 0.05)
-
     # ── Haiku assessment generation ───────────────────────────────────────────
+    #
+    # Part 6 of the correlation-engine deepening pass: every judgment about
+    # WHETHER/HOW STRONGLY signals correlate is decided entirely by
+    # correlation_scoring.py before this method is ever called (see
+    # _create_fusion/_update_fusion, which compute the real `score` bundle
+    # and pass it in). This method's only job is turning that already-
+    # decided bundle into readable prose — the prompt below explicitly
+    # forbids introducing any fact not present in the bundle, and forbids
+    # the model stating its own confidence/strength number. A real
+    # deterministic validator (_validate_narrative) checks every candidate
+    # named entity the model's prose mentions against the real bundle
+    # vocabulary, reusing the same normalized-token-set discipline
+    # report_council.py's citation/zone-name checks already use — not a
+    # new one-off approach. A violation triggers one regeneration with the
+    # violation named back to the model; a second violation falls back to
+    # a plain, deterministic template narrative built only from the
+    # bundle's own fields (no LLM), and logs which path fired.
 
-    def _generate_haiku_assessment(self, signals: list, domains: set, severity: str, location_name: str) -> tuple:
-        """Returns (title, subtitle, narrative, key_signals, threat_indicators)."""
+    @staticmethod
+    def _bundle_vocabulary_text(signals: list, domains: set, location_name: str, shared_entity_names: list) -> str:
+        parts = [location_name or ""]
+        for s in signals:
+            parts.append(str(s.get("rule_name") or ""))
+            parts.append(str(s.get("summary") or ""))
+            parts.append(str(s.get("location_name") or ""))
+            parts.append(str(s.get("domain") or ""))
+        parts.extend(domains or [])
+        parts.extend(shared_entity_names or [])
+        return " ".join(parts)
+
+    _NARRATIVE_STOPWORDS = {
+        "the", "a", "an", "of", "in", "at", "to", "and", "or", "is", "was",
+        "are", "were", "this", "that", "possible", "detected", "signal",
+        "signals", "event", "activity", "near", "multiple", "real",
+    }
+
+    @staticmethod
+    def _normalize_narrative_tokens(text: str) -> set:
+        s = (text or "").lower()
+        s = re.sub(r"[^\w\s]", " ", s)
+        return {w for w in s.split() if w and w not in FusionEngine._NARRATIVE_STOPWORDS}
+
+    @staticmethod
+    def _candidate_named_entities(text: str) -> list:
+        """Real, simple heuristic: runs of 2+ consecutive capitalized words
+        are candidate named entities/places a narrative might introduce —
+        the kind of thing worth checking against the bundle. A single
+        capitalized word is too weak a signal on its own (sentence-initial
+        capitalization, domain names like 'AIS') to check without a real
+        risk of false positives, so this deliberately only flags multi-word
+        proper-noun-shaped phrases."""
+        return re.findall(r"\b[A-Z][a-zA-Z0-9\-]+(?:\s+[A-Z][a-zA-Z0-9\-]+)+\b", text or "")
+
+    @classmethod
+    def _validate_narrative(cls, narrative: str, key_signals: list, threat_indicators: list,
+                             signals: list, domains: set, location_name: str,
+                             shared_entity_names: list) -> tuple:
+        """Returns (ok: bool, violations: list[str]). A violation is a
+        candidate named entity/place mentioned in the model's prose whose
+        significant words are not a subset of the real bundle vocabulary —
+        i.e. the model introduced something not actually in its input."""
+        vocab = cls._normalize_narrative_tokens(
+            cls._bundle_vocabulary_text(signals, domains, location_name, shared_entity_names)
+        )
+        violations = []
+        for text in [narrative] + list(key_signals or []) + list(threat_indicators or []):
+            for phrase in cls._candidate_named_entities(str(text)):
+                phrase_tokens = cls._normalize_narrative_tokens(phrase)
+                if len(phrase_tokens) < 2:
+                    continue
+                if not phrase_tokens.issubset(vocab):
+                    violations.append(phrase)
+        return (len(violations) == 0, violations)
+
+    @staticmethod
+    def _template_narrative(signals: list, domains: set, location_name: str) -> tuple:
+        """Real deterministic fallback — plain sentences built only from
+        the bundle's own fields, no LLM. Used whenever no real API client
+        is configured, the API call itself fails, or the model's narrative
+        fails validation twice (see _generate_haiku_assessment)."""
+        dom_str = " + ".join(sorted(domains))
+        return (
+            f"{location_name} Intelligence Event",
+            f"{dom_str} convergence",
+            f"Multi-domain intelligence signals detected at {location_name}. {len(signals)} signals across {len(domains)} domains indicate elevated activity requiring analyst review.",
+            [f"{s.get('rule_name','Signal')}: {str(s.get('summary',''))[:80]}" for s in signals[:4]],
+            ["Multi-domain signal convergence detected"],
+        )
+
+    def _generate_haiku_assessment(self, signals: list, domains: set, severity: str, location_name: str,
+                                    score: dict = None) -> tuple:
+        """Returns (title, subtitle, narrative, key_signals, threat_indicators).
+        `score` is the real, already-computed correlation_scoring.score_cluster()
+        bundle for this cluster (may be None for callers not yet passing one,
+        e.g. before Part 5 wiring) — when present, its real components and
+        final strength are given to the model as decided facts, never asked
+        for."""
+        score = score or {}
+        shared_entity_names = score.get("shared_entities") or []
         try:
             import anthropic, json as _j
             signal_summaries = "\n".join(
@@ -300,75 +419,121 @@ class FusionEngine:
                 for s in signals[:10]
             )
             domain_str = ", ".join(sorted(domains))
+            components = score.get("components") or {}
+            strength = score.get("strength")
+            facts_block = f"Severity: {severity}"
+            if strength is not None:
+                facts_block += (
+                    f"\nCorrelation strength (already computed, 0-100, DO NOT restate or alter this number "
+                    f"in your own words — just narrate around it): {strength}"
+                    f"\nComponent evidence (already computed): geo-temporal={components.get('geo_temporal')}, "
+                    f"graph={components.get('graph')}, domain_diversity={components.get('domain_diversity')}, "
+                    f"statistical={components.get('statistical')}"
+                )
+            if shared_entity_names:
+                facts_block += f"\nShared linked infrastructure entities (already computed, real): {', '.join(shared_entity_names)}"
+
             prompt = f"""You are an intelligence analyst. Multiple surveillance systems have detected correlated activity at {location_name}.
 
 Contributing signals ({len(signals)} total across {len(domains)} domains — {domain_str}):
 {signal_summaries}
 
-Severity: {severity}
+{facts_block}
+
+IMPORTANT — you are narrating a correlation that has ALREADY been fully decided by
+real code. Do not introduce any fact, entity, place, or figure that is not present
+above. Do not assign, restate, or re-derive a confidence/strength number in your own
+words — one is already given; refer to it qualitatively (e.g. "strong", "moderate")
+if you wish, never with a different number of your own.
 
 Generate a structured intelligence assessment. Return ONLY valid JSON with no markdown:
 {{
   "title": "3-5 word intelligence event name, specific and geographically descriptive, e.g. 'Hormuz Maritime Escalation' or 'Baltic Cable Threat Cluster'",
   "subtitle": "one concise line describing domain convergence, e.g. 'AIS anomaly + news pattern + Sentinel detection'",
-  "narrative": "3-4 sentences. What is happening, where, why it matters operationally, and what the convergence of signals suggests. Written for a senior intelligence analyst. Be specific.",
+  "narrative": "3-4 sentences. What is happening, where, and what the convergence of the GIVEN signals suggests — using only facts given above. Written for a senior intelligence analyst. Be specific.",
   "key_signals": [
-    "most significant signal bullet point",
+    "most significant signal bullet point, drawn only from the signals given above",
     "second most significant",
     "third if relevant",
     "fourth if relevant"
   ],
   "threat_indicators": [
-    "specific named threat 1, e.g. 'Possible cable sabotage preparation'",
-    "specific named threat 2"
+    "a threat theme directly evidenced by the given signals/rule names — describe what the given signals indicate, do not invent a scenario not evidenced above",
+    "second if relevant"
   ]
 }}"""
             client = anthropic.Anthropic()
-            msg = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=400,
-                temperature=0,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = msg.content[0].text.strip()
-            if raw.startswith("```"):
-                parts = raw.split("```")
-                raw = parts[1] if len(parts) > 1 else raw
-                if raw.startswith("json"):
-                    raw = raw[4:].lstrip()
-            parsed = _j.loads(raw)
-            return (
-                parsed.get("title", f"{location_name} Intelligence Event"),
-                parsed.get("subtitle", f"{domain_str} convergence"),
-                parsed.get("narrative", "Multi-domain signals detected."),
-                parsed.get("key_signals", []),
-                parsed.get("threat_indicators", []),
-            )
+
+            def _call_and_parse():
+                msg = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=400,
+                    temperature=0,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = msg.content[0].text.strip()
+                if raw.startswith("```"):
+                    parts = raw.split("```")
+                    raw = parts[1] if len(parts) > 1 else raw
+                    if raw.startswith("json"):
+                        raw = raw[4:].lstrip()
+                parsed = _j.loads(raw)
+                return (
+                    parsed.get("title", f"{location_name} Intelligence Event"),
+                    parsed.get("subtitle", f"{domain_str} convergence"),
+                    parsed.get("narrative", "Multi-domain signals detected."),
+                    parsed.get("key_signals", []),
+                    parsed.get("threat_indicators", []),
+                )
+
+            title, subtitle, narrative, key_signals, threat_indicators = _call_and_parse()
+            ok, violations = self._validate_narrative(
+                narrative, key_signals, threat_indicators, signals, domains, location_name, shared_entity_names)
+            if not ok:
+                print(f"[fusion] narrative validator caught unsupported claim(s) {violations} — regenerating once")
+                prompt += (
+                    f"\n\nYour previous attempt mentioned the following, which are NOT present in the "
+                    f"signals/facts given above: {violations}. Regenerate using ONLY the facts given above — "
+                    f"do not name any entity, place, or figure not listed there."
+                )
+                client = anthropic.Anthropic()
+                title, subtitle, narrative, key_signals, threat_indicators = _call_and_parse()
+                ok2, violations2 = self._validate_narrative(
+                    narrative, key_signals, threat_indicators, signals, domains, location_name, shared_entity_names)
+                if not ok2:
+                    print(f"[fusion] narrative validator caught unsupported claim(s) again {violations2} — "
+                          f"falling back to deterministic template narrative")
+                    return self._template_narrative(signals, domains, location_name)
+                print("[fusion] regenerated narrative passed validation")
+            return (title, subtitle, narrative, key_signals, threat_indicators)
         except Exception as e:
             print(f"[fusion] Haiku assessment error: {e}")
-            dom_str = " + ".join(sorted(domains))
-            return (
-                f"{location_name} Intelligence Event",
-                f"{dom_str} convergence",
-                f"Multi-domain intelligence signals detected at {location_name}. {len(signals)} signals across {len(domains)} domains indicate elevated activity requiring analyst review.",
-                [f"{s.get('rule_name','Signal')}: {str(s.get('summary',''))[:80]}" for s in signals[:4]],
-                ["Multi-domain signal convergence detected"],
-            )
+            return self._template_narrative(signals, domains, location_name)
 
     # ── Fusion lifecycle ──────────────────────────────────────────────────────
 
     def _create_fusion(self, signals: list, geo_key: str, domains: set):
         from database import get_db, FusionEvent
         severity   = self._composite_severity(signals, domains)
-        confidence = self._calc_confidence(domains, signals)
         lat, lon   = self._centroid(signals)
         location_name = self._best_location_name(signals)
         region_id  = next((s.get("region_id") for s in signals if s.get("region_id")), None)
         country    = next((s.get("country") for s in signals if s.get("country")), None)
         fusion_id  = _new_fusion_id()
 
+        # Real correlation-strength scoring (correlation_scoring.py, Parts
+        # 1-5) — computed BEFORE the model is ever called, so the model
+        # only narrates a bundle that is already fully decided.
+        try:
+            with get_db() as _score_db:
+                score = _cs.score_cluster(signals, _score_db)
+        except Exception as _score_e:
+            print(f"[fusion] correlation scoring error: {_score_e}")
+            score = {}
+        confidence = (score.get("strength") or 0.0) / 100.0
+
         title, subtitle, narrative, key_signals, threat_indicators = \
-            self._generate_haiku_assessment(signals, domains, severity, location_name)
+            self._generate_haiku_assessment(signals, domains, severity, location_name, score=score)
 
         try:
             with get_db() as db:
@@ -379,6 +544,8 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                     narrative               = narrative,
                     severity                = severity,
                     confidence              = round(confidence, 3),
+                    correlation_strength    = score.get("strength"),
+                    correlation_components  = json.dumps(score, default=str) if score else None,
                     domain_count            = len(domains),
                     domains                 = json.dumps(sorted(domains)),
                     fusion_type             = "MULTI_DOMAIN",
@@ -464,6 +631,8 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
             "narrative":     narrative,
             "severity":      severity,
             "confidence":    round(confidence, 3),
+            "correlation_strength":   score.get("strength"),
+            "correlation_components": score,
             "domains":       sorted(domains),
             "domain_count":  len(domains),
             "location_name": location_name,
@@ -492,12 +661,19 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
         old_domains = set(existing.get("domains", []))
         all_domains = domains | old_domains
         severity    = self._composite_severity(signals, all_domains)
-        confidence  = self._calc_confidence(all_domains, signals)
 
         location_name = existing.get("location_name") or self._best_location_name(signals)
 
+        try:
+            with get_db() as _score_db:
+                score = _cs.score_cluster(signals, _score_db)
+        except Exception as _score_e:
+            print(f"[fusion] correlation scoring error: {_score_e}")
+            score = {}
+        confidence = (score.get("strength") or 0.0) / 100.0
+
         title, subtitle, narrative, key_signals, threat_indicators = \
-            self._generate_haiku_assessment(signals, all_domains, severity, location_name)
+            self._generate_haiku_assessment(signals, all_domains, severity, location_name, score=score)
 
         try:
             with get_db() as db:
@@ -508,6 +684,8 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                     fe.narrative          = narrative
                     fe.severity           = severity
                     fe.confidence         = round(confidence, 3)
+                    fe.correlation_strength   = score.get("strength")
+                    fe.correlation_components = json.dumps(score, default=str) if score else None
                     fe.domain_count       = len(all_domains)
                     fe.domains            = json.dumps(sorted(all_domains))
                     fe.signal_count       = len(signals)
@@ -530,6 +708,8 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
             "narrative":     narrative,
             "severity":      severity,
             "confidence":    round(confidence, 3),
+            "correlation_strength":   score.get("strength"),
+            "correlation_components": score,
             "domains":       sorted(all_domains),
             "domain_count":  len(all_domains),
             "signal_count":  len(signals),

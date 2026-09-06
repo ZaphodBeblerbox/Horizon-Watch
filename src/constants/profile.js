@@ -68,10 +68,17 @@ export const CHOKEPOINTS = [
 
 export const ROLES = ["Analyst", "Operator", "Advisor", "Researcher"]
 
+// `accessRole` (V3 Phase 1, §7.3) is deliberately a separate field from
+// `role` above — `role` is a mission-focus label (used for relevance
+// framing), `accessRole` is the real capability/access model (see
+// src/lib/capabilities.js — literal "analyst" here, not imported, to avoid
+// a circular import: capabilities.js already imports loadProfile from this
+// file; keep the two DEFAULT_ACCESS_ROLE literals in sync if either changes).
 export function emptyProfile() {
     return {
         displayName:        "",
         role:               "Analyst",
+        accessRole:         "analyst",
         focusRegions:       [],
         infraDomains:       [],
         chokepoints:        [],

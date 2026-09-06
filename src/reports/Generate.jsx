@@ -183,6 +183,10 @@ export default function Generate({ onOpenTab }) {
                 classification, exposure, force_empty: isEmpty,
                 standing_instruction: standingInstruction || undefined,
                 included_item_ids: isEmpty ? undefined : includedItemIds,
+                // V3 Phase 2 — real scope/audience/horizon, now persisted on
+                // the Report row itself (backend/database.py's Report model)
+                // instead of being lost after generation.
+                scope: scope || undefined, audience, horizon,
             }
             const draftRes = await runTaskAction(task.task_id, "/draft", draftBody)
             setStepStatus(4, "done", nowMs() - t4)
@@ -341,6 +345,7 @@ export default function Generate({ onOpenTab }) {
                     <button className="btn primary" disabled={running || !corpus || (evCount === 0 && !emptyOverride)} onClick={runGenerate}>generate</button>
                     <button className="btn" disabled={!running} onClick={stop}>stop</button>
                     <button className="btn" disabled={!completedReport} onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "print")}>printable briefing</button>
+                    <button className="btn" disabled={!completedReport} onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "deck")}>deck</button>
                 </div>
             </div>
             <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>

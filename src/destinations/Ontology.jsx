@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
+import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 
 // Ontology — page-by-page rebuild, Part A. A fixed four-tier diagram, never
 // a force simulation. Built on the real Forge ontology (forge_ontology.json,
@@ -134,6 +135,9 @@ export default function Ontology({ onOpenGenerate }) {
     const [data, setData] = useState(null)
     const [positions, setPositions] = useState({})
     const [selected, setSelected] = useState(null) // {kind:"node"|"link", item}
+    // V3 Phase 1, §2.2 — real hook-based extension point, owned and called
+    // by this component itself (never reassigned from outside).
+    const inspectorExtensions = useInspectorExtensions()
     const [typeFilter, setTypeFilter] = useState(null)
     const [confFloor, setConfFloor] = useState(0)
     const [showInferred, setShowInferred] = useState(true)
@@ -403,6 +407,9 @@ export default function Ontology({ onOpenGenerate }) {
                 ) : (
                     <LinkEditor link={selected.item} onChanged={reload} />
                 )}
+                {inspectorExtensions.map((Ext, i) => (
+                    <Ext key={i} recordRef={selected?.kind === "node" ? `onto:${selected.item.id}` : null} record={selected?.item} />
+                ))}
             </div>
         </div>
     )

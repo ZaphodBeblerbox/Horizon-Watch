@@ -8,6 +8,7 @@ import ForceGraph from "./forge/ForceGraph.jsx"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts"
 import { locateReportClaim } from "../services/reportDeepLink.js"
 import { FOCUS_REGIONS } from "../constants/profile.js"
+import { requireCapability } from "../lib/capabilities.js"
 
 const API = API_BASE
 
@@ -1214,10 +1215,61 @@ function CorrelationEngineWorkspace() {
                                 </div>
                             </div>
 
-                            {/* Narrative */}
+                            {/* Correlation breakdown — the real, auditable component
+                                scores behind the confidence bar above, shown honestly
+                                and never blended into that one number (same transparency
+                                principle as the AI Council's un-blended findings). */}
+                            {detail.correlation_components?.components && (
+                                <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(191,90,242,0.06)", border: "1px solid rgba(191,90,242,0.18)", borderRadius: 4 }}>
+                                    <div style={{ fontSize: 8, color: "#BF5AF2", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 6 }}>
+                                        CORRELATION BREAKDOWN — REAL COMPONENT SCORES
+                                    </div>
+                                    {[
+                                        ["geo_temporal", "Geo-temporal (distance/time)"],
+                                        ["graph", "Ontology graph (shared entity)"],
+                                        ["domain_diversity", "Domain diversity (reliability-weighted)"],
+                                        ["statistical", "Statistical anomaly (dark-ship / volume)"],
+                                    ].map(([key, label]) => {
+                                        const v = detail.correlation_components.components[key]
+                                        return (
+                                            <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                                                <span style={{ fontSize: 9, color: "#64748b", width: 150, flexShrink: 0 }}>{label}</span>
+                                                {v === null || v === undefined ? (
+                                                    <span style={{ fontSize: 8.5, color: "#334155", fontStyle: "italic" }}>not available</span>
+                                                ) : (
+                                                    <>
+                                                        <div style={{ flex: 1, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                                                            <div style={{ width: `${Math.round(v * 100)}%`, height: "100%", background: "#BF5AF2", borderRadius: 2 }} />
+                                                        </div>
+                                                        <span style={{ fontSize: 8.5, color: "#94a3b8", width: 30, textAlign: "right" }}>{Math.round(v * 100)}%</span>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                    {detail.correlation_components.shared_entities?.length > 0 && (
+                                        <div style={{ fontSize: 8.5, color: "#475569", marginTop: 4 }}>
+                                            Shared entities: {detail.correlation_components.shared_entities.join(", ")}
+                                        </div>
+                                    )}
+                                    {detail.correlation_components.volume_anomaly?.status === "ok" && detail.correlation_components.volume_anomaly.z != null && (
+                                        <div style={{ fontSize: 8.5, color: "#475569", marginTop: 2 }}>
+                                            Volume z-score: {detail.correlation_components.volume_anomaly.z.toFixed(2)}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Narrative — a labeled model summary alongside the real
+                                structured data above, never replacing it. */}
                             {detail.narrative && (
-                                <div style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.55, marginBottom: 10 }}>
-                                    {detail.narrative}
+                                <div style={{ marginBottom: 10 }}>
+                                    <div style={{ fontSize: 8, color: "#334155", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>
+                                        AI SUMMARY — narrates the real scores above, does not decide them
+                                    </div>
+                                    <div style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.55 }}>
+                                        {detail.narrative}
+                                    </div>
                                 </div>
                             )}
 
@@ -1652,6 +1704,31 @@ function CouncilFindings({ findings }) {
     const det = findings.deterministic || []
     return (
         <div>
+            {/* Unmissable, distinct from a normal "skipped, no API key" lens
+                status below (LensResult's own quiet italic gray line) — a
+                bypass means run_council() itself raised a real exception, a
+                different and more urgent thing for a reviewer to know before
+                approving than a deliberately-unconfigured lens. */}
+            {findings.council_bypassed && (
+                <div style={{
+                    background: "rgba(248,113,113,0.14)", border: "1px solid rgba(248,113,113,0.5)",
+                    borderRadius: 4, padding: "8px 10px", marginBottom: 12,
+                }}>
+                    <div style={{ color: "#f87171", fontSize: 12, fontWeight: 700 }}>
+                        ⚠ Automated review did not run
+                    </div>
+                    <div style={{ color: "#fca5a5", fontSize: 10.5, marginTop: 3 }}>
+                        The AI Council check failed with a real error and was bypassed so this report could still
+                        reach review — nothing below reflects an actual citation/completeness check. Verify claims
+                        manually before approving.
+                    </div>
+                    {findings.council_bypass_error && (
+                        <div style={{ color: "#fca5a5", fontSize: 10, marginTop: 4, fontFamily: "monospace" }}>
+                            {findings.council_bypass_error.type}: {findings.council_bypass_error.message}
+                        </div>
+                    )}
+                </div>
+            )}
             <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Deterministic Checks</div>
             {det.length === 0
                 ? <div style={{ color: "#334155", fontSize: 10, marginBottom: 10 }}>No deterministic checks applied.</div>
@@ -1708,7 +1785,16 @@ function ReportCard({ report, snapshots, onChanged }) {
         loadFull()
     }
 
+    // Real capability gate (V3 Phase 1, §7.3) — approve/reject are the real
+    // review-stage decision (draft -> review -> approved -> issued), publish
+    // is the real issue-stage decision. submit-for-review is an author
+    // acting on their own draft, not a privileged action over someone
+    // else's work, so it stays ungated (every access role can "brief").
+    const ACTION_CAPABILITY = { approve: "review", reject: "review", publish: "issue" }
+
     const doAction = async (action, body) => {
+        const capability = ACTION_CAPABILITY[action]
+        if (capability && !requireCapability(capability)) return
         setBusy(true)
         try {
             const res = await fetch(`${API}/api/reports/${report.report_id}/${action}`, {
@@ -2968,6 +3054,11 @@ function OntologyClaimsReview() {
     useEffect(() => { reload() }, [statusFilter])
 
     const act = async (claimId, action) => {
+        // Real capability gate (V3 Phase 1, §7.3) — approving/rejecting an
+        // ontology claim is the same real "review" decision as a report's
+        // approve/reject stage (OntologyClaim's own docstring: "the review
+        // gate for the entity-relationship ingestion pipeline").
+        if (!requireCapability("review")) return
         setBusyId(claimId)
         try {
             const res = await fetch(`${API}/api/forge/ontology/claims/${claimId}/${action}`, {

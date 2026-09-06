@@ -8777,6 +8777,20 @@ async def api_ais_vessels(bbox: str = Query(None, description="south,west,north,
     }
 
 
+@app.get("/api/ais/vessels/{mmsi}")
+async def api_ais_vessel_get(mmsi: str):
+    """Real single-vessel lookup against the live in-memory AIS cache — the
+    only real store this data lives in (there is no per-vessel DB row).
+    Used by the reference grammar's trk: kind (V3 Phase 1, §7.2). Honestly
+    404s if this vessel hasn't transmitted recently enough to be cached,
+    rather than fabricating a stale/empty record."""
+    with _AIS_LOCK:
+        vessel = _AIS_VESSELS.get(mmsi) or _AIS_VESSELS.get(str(mmsi))
+    if not vessel:
+        raise HTTPException(status_code=404, detail=f"Vessel {mmsi} not currently in the live AIS cache")
+    return vessel
+
+
 @app.get("/api/ais/status")
 async def api_ais_status():
     """Return AIS WebSocket connection status."""
@@ -8985,6 +8999,18 @@ def get_aircraft_identity(icao_hex: str):
     """ICAO hex → military/service identity (lightweight, no DB query)."""
     from icao_lookup import lookup_icao_hex
     return {"icao_hex": icao_hex, "identity": lookup_icao_hex(icao_hex)}
+
+
+@app.get("/api/adsb/aircraft/{icao_hex}")
+def api_adsb_aircraft_get(icao_hex: str):
+    """Real single-aircraft lookup against the live global ADS-B cache — the
+    only real store this data lives in (no per-aircraft DB row). Used by
+    the reference grammar's trk: kind (V3 Phase 1, §7.2). Honestly 404s if
+    this aircraft hasn't been seen recently enough to be cached."""
+    ac = _GLOBAL_ADSB_CACHE.get(icao_hex.upper()) or _GLOBAL_ADSB_CACHE.get(icao_hex)
+    if not ac:
+        raise HTTPException(status_code=404, detail=f"Aircraft {icao_hex} not currently in the live ADS-B cache")
+    return ac
 
 
 # Rolling 20-position track buffer per military ICAO hex (populated by ADSB processing)
@@ -16201,6 +16227,20 @@ def api_watch_zone_scans(system_id: str):
         return [_scan_row_to_dict(s) for s in scans]
 
 
+@app.get("/api/scans/{scan_id}")
+def api_scan_get(scan_id: str):
+    """Real single-scan lookup by scan_id, independent of which zone it
+    belongs to — SentinelScan.scan_id is already globally unique; the
+    existing /api/watch-zones/{system_id}/scans list requires knowing the
+    zone first. Used by the reference grammar's scn: kind (V3 Phase 1, §7.2)."""
+    from database import SentinelScan, get_db
+    with get_db() as db:
+        scan = db.query(SentinelScan).filter(SentinelScan.scan_id == scan_id).first()
+        if not scan:
+            raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
+        return _scan_row_to_dict(scan)
+
+
 @app.get("/api/watch-zones/{system_id}/detections")
 def api_watch_zone_detections(
     system_id: str,
@@ -17447,6 +17487,15 @@ async def start_report_task_draft(task_id: str, request: Request):
         rpt = Report(
             report_id=_report_id(), title=title, snapshot_id=row.snapshot_id,
             classification=body.get("classification") or "UNCLASSIFIED // FOR ANALYTICAL USE ONLY",
+            # V3 Phase 2 (deck cover slide) — real values from Generate.jsx's
+            # own scope/audience/horizon fields; scope falls back to the
+            # real task's own focus (the same value already used above for
+            # generate_draft's real region_label) when the caller doesn't
+            # pass one explicitly, rather than leaving it null when a real
+            # value was available all along.
+            scope=body.get("scope") or row.focus,
+            audience=body.get("audience"),
+            horizon=body.get("horizon"),
             key_judgments=key_judgments,
             claims_json=_json.dumps(claims), status="draft",
             narrative_json=_json.dumps(narrative) if narrative is not None else None,
@@ -17559,6 +17608,9 @@ def _report_to_dict(row) -> dict:
         "title":         row.title,
         "snapshot_id":   row.snapshot_id,
         "classification": row.classification,
+        "scope":         row.scope,
+        "audience":      row.audience,
+        "horizon":       row.horizon,
         "key_judgments": row.key_judgments,
         "claims":        _json.loads(row.claims_json or "[]"),
         "narrative":     _json.loads(row.narrative_json) if row.narrative_json else None,
@@ -17672,10 +17724,30 @@ def submit_report_for_review(report_id: str):
             raise HTTPException(500, f"report's snapshot {row.snapshot_id} no longer exists")
         snapshot_content = _json.loads(snap.content_json)
 
-        findings = _council.run_council(
-            report_title=row.title, key_judgments=row.key_judgments, claims=claims,
-            snapshot_content=snapshot_content, client=client, usage_tracker_mod=usage_tracker, db=db,
-        )
+        # Real bypass, only for a genuine run_council() exception — never
+        # for its normal, honest "skipped" lens status (no API key), which
+        # is an expected outcome run_council() already returns cleanly and
+        # is untouched here. A report must never get stuck in draft/
+        # in_review limbo because of a real bug/timeout/outage in the
+        # council call itself; it advances to in_review either way, but a
+        # bypass carries a real, visible flag + the real error (never a
+        # vague or fabricated message) so a reviewer sees plainly that
+        # automated review did not actually run before approving.
+        try:
+            findings = _council.run_council(
+                report_title=row.title, key_judgments=row.key_judgments, claims=claims,
+                snapshot_content=snapshot_content, client=client, usage_tracker_mod=usage_tracker, db=db,
+            )
+        except Exception as council_exc:
+            logger.exception(f"[submit_for_review] run_council() raised for {report_id} — bypassing council, report still advances to in_review")
+            bypass_reason = f"council_bypassed: {type(council_exc).__name__}: {council_exc}"
+            findings = {
+                "deterministic": [],
+                "citation_fidelity": {"status": "error", "reason": bypass_reason, "findings": []},
+                "completeness": {"status": "error", "reason": bypass_reason, "findings": []},
+                "council_bypassed": True,
+                "council_bypass_error": {"type": type(council_exc).__name__, "message": str(council_exc)},
+            }
         row.council_findings_json = _json.dumps(findings, default=str)
         row.council_run_at = datetime.utcnow()
         row.status = "in_review"
@@ -19192,6 +19264,8 @@ def api_fusions_list(
                 "narrative": r.narrative,
                 "severity": r.severity,
                 "confidence": r.confidence,
+                "correlation_strength": r.correlation_strength,
+                "correlation_components": _json.loads(r.correlation_components) if r.correlation_components else None,
                 "domain_count": r.domain_count,
                 "domains": _json.loads(r.domains or "[]"),
                 "fusion_type": r.fusion_type,
@@ -19278,6 +19352,8 @@ def api_fusions_get(fusion_id: str):
             "narrative": r.narrative,
             "severity": r.severity,
             "confidence": r.confidence,
+            "correlation_strength": r.correlation_strength,
+            "correlation_components": _json.loads(r.correlation_components) if r.correlation_components else None,
             "domain_count": r.domain_count,
             "domains": _json.loads(r.domains or "[]"),
             "fusion_type": r.fusion_type,
@@ -19610,6 +19686,14 @@ def api_fusion_settings_get():
 
 @app.put("/api/fusion-settings")
 async def api_fusion_settings_put(request: Request):
+    """NOTE (correlation-engine deepening pass): min_domains is stored and
+    still accepted here for API backward compatibility, but
+    FusionEngine._evaluate_fusion() no longer gates on a raw domain count —
+    it uses correlation_scoring.py's real, graduated, reliability-weighted
+    domain-diversity floor instead (see that method's own comment). Setting
+    min_domains via this endpoint is therefore currently a no-op on real
+    fusion behavior. min_signals remains a real, live raw-volume floor,
+    independent of domain diversity."""
     body = await request.json()
     allowed = {"fusion_window_hours", "min_domains", "min_signals"}
     for key in allowed:
@@ -20544,6 +20628,192 @@ def api_ontology_diagram(tier_cap: int = 40):
         "type_counts": {t: sum(1 for n in nodes_out if n["type"] == t) for t in set(n["type"] for n in nodes_out)},
         "total_real_nodes": len(raw_nodes), "total_real_links": len(raw_edges),
     }
+
+
+@app.get("/api/ontology/node/{node_id}")
+def api_ontology_node_get(node_id: str):
+    """Real single-node lookup against the FULL forge_ontology.json — not the
+    tier_cap-curated subset /api/ontology/diagram returns, so this can find
+    a real node even when it didn't make that diagram's top-N cut. Used by
+    the reference grammar's onto: kind (V3 Phase 1, §7.2)."""
+    ontology = _forge_ontology_load()
+    node = next((n for n in ontology.get("nodes", []) if n.get("id") == node_id), None)
+    if not node:
+        raise HTTPException(status_code=404, detail=f"ontology node {node_id} not found")
+    degree = 0
+    for e in ontology.get("edges", []):
+        if e.get("source") == node_id or e.get("target") == node_id:
+            degree += 1
+    node_type = _REAL_TYPE_TO_NODE_TYPE.get(node.get("type"))
+    return {
+        "id": node["id"], "type": node_type or node.get("type"),
+        "label": node.get("label") or node["id"],
+        "risk": _ontology_node_risk(node, degree) if node_type else None,
+        "lat": node.get("lat"), "lon": node.get("lng"), "source": node.get("source"),
+    }
+
+
+# ── Sessions & Views (V3 Phase 1, §5.1/§5.2) ──────────────────────────────
+# Real, server-persisted "whole desk" state — see DeskSession/DeskView's
+# own docstrings in database.py for the real disclosed limitation (no live
+# per-request auth to enforce owner_user_id against yet).
+
+def _session_row_to_dict(s) -> dict:
+    return {
+        "session_id":  s.session_id, "name": s.name, "owner_user_id": s.owner_user_id,
+        "time_window": s.time_window, "severity_floor": s.severity_floor,
+        "domains":     _json.loads(s.domains_json or "[]"),
+        "context_layers": _json.loads(s.context_layers_json or "{}"),
+        "track_layers":   _json.loads(s.track_layers_json or "{}"),
+        "projection":  s.projection,
+        "camera":      _json.loads(s.camera_json) if s.camera_json else None,
+        "tabs":        _json.loads(s.tabs_json or "[]"),
+        "basket":      _json.loads(s.basket_json or "[]"),
+        "created_at":  s.created_at.isoformat() if s.created_at else None,
+        "updated_at":  s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+def _view_row_to_dict(v) -> dict:
+    return {
+        "view_id": v.view_id, "session_id": v.session_id, "name": v.name,
+        "time_window": v.time_window, "severity_floor": v.severity_floor,
+        "domains": _json.loads(v.domains_json or "[]"),
+        "context_layers": _json.loads(v.context_layers_json or "{}"),
+        "projection": v.projection,
+        "created_at": v.created_at.isoformat() if v.created_at else None,
+    }
+
+
+@app.get("/api/sessions")
+def api_sessions_list():
+    from database import DeskSession, get_db as _gdb_ses
+    with _gdb_ses() as db:
+        rows = db.query(DeskSession).order_by(DeskSession.updated_at.desc()).all()
+        return [_session_row_to_dict(s) for s in rows]
+
+
+@app.post("/api/sessions")
+async def api_sessions_create(request: Request):
+    from database import DeskSession, get_db as _gdb_ses
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    with _gdb_ses() as db:
+        s = DeskSession(
+            session_id=f"SESN-{uuid.uuid4().hex[:8]}", name=name,
+            owner_user_id=body.get("owner_user_id"),
+            time_window=body.get("time_window", "72h"),
+            severity_floor=body.get("severity_floor", "low"),
+            domains_json=_json.dumps(body.get("domains", [])),
+            context_layers_json=_json.dumps(body.get("context_layers", {})),
+            track_layers_json=_json.dumps(body.get("track_layers", {})),
+            projection=body.get("projection", "world"),
+            camera_json=_json.dumps(body["camera"]) if body.get("camera") else None,
+            tabs_json=_json.dumps(body.get("tabs", [])),
+            basket_json=_json.dumps(body.get("basket", [])),
+        )
+        db.add(s)
+        db.commit()
+        db.refresh(s)
+        return _session_row_to_dict(s)
+
+
+@app.get("/api/sessions/{session_id}")
+def api_sessions_get(session_id: str):
+    from database import DeskSession, get_db as _gdb_ses
+    with _gdb_ses() as db:
+        s = db.query(DeskSession).filter(DeskSession.session_id == session_id).first()
+        if not s:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        return _session_row_to_dict(s)
+
+
+@app.put("/api/sessions/{session_id}")
+async def api_sessions_update(session_id: str, request: Request):
+    """Atomic whole-desk save — every real field a session covers (window,
+    floor, layers, projection, camera, tabs, basket) is written together in
+    one commit, so a captured session can never be left half-written."""
+    from database import DeskSession, get_db as _gdb_ses
+    body = await request.json()
+    with _gdb_ses() as db:
+        s = db.query(DeskSession).filter(DeskSession.session_id == session_id).first()
+        if not s:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        if "name" in body: s.name = body["name"]
+        if "time_window" in body: s.time_window = body["time_window"]
+        if "severity_floor" in body: s.severity_floor = body["severity_floor"]
+        if "domains" in body: s.domains_json = _json.dumps(body["domains"])
+        if "context_layers" in body: s.context_layers_json = _json.dumps(body["context_layers"])
+        if "track_layers" in body: s.track_layers_json = _json.dumps(body["track_layers"])
+        if "projection" in body: s.projection = body["projection"]
+        if "camera" in body: s.camera_json = _json.dumps(body["camera"]) if body["camera"] else None
+        if "tabs" in body: s.tabs_json = _json.dumps(body["tabs"])
+        if "basket" in body: s.basket_json = _json.dumps(body["basket"])
+        db.commit()
+        db.refresh(s)
+        return _session_row_to_dict(s)
+
+
+@app.delete("/api/sessions/{session_id}")
+def api_sessions_delete(session_id: str):
+    from database import DeskSession, DeskView, get_db as _gdb_ses
+    with _gdb_ses() as db:
+        s = db.query(DeskSession).filter(DeskSession.session_id == session_id).first()
+        if not s:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        db.query(DeskView).filter(DeskView.session_id == session_id).delete()
+        db.delete(s)
+        db.commit()
+        return {"ok": True}
+
+
+@app.get("/api/sessions/{session_id}/views")
+def api_session_views_list(session_id: str):
+    from database import DeskView, get_db as _gdb_ses
+    with _gdb_ses() as db:
+        rows = db.query(DeskView).filter(DeskView.session_id == session_id).order_by(DeskView.created_at.desc()).all()
+        return [_view_row_to_dict(v) for v in rows]
+
+
+@app.post("/api/sessions/{session_id}/views")
+async def api_session_views_create(session_id: str, request: Request):
+    """A view is real, separate, filter-level-only state — window/floor/
+    domains/context layers/projection — deliberately never camera, tabs or
+    basket, which stay session-level (V3 Phase 1, §5.2)."""
+    from database import DeskSession, DeskView, get_db as _gdb_ses
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    with _gdb_ses() as db:
+        if not db.query(DeskSession).filter(DeskSession.session_id == session_id).first():
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        v = DeskView(
+            view_id=f"VIEW-{uuid.uuid4().hex[:8]}", session_id=session_id, name=name,
+            time_window=body.get("time_window", "72h"),
+            severity_floor=body.get("severity_floor", "low"),
+            domains_json=_json.dumps(body.get("domains", [])),
+            context_layers_json=_json.dumps(body.get("context_layers", {})),
+            projection=body.get("projection", "world"),
+        )
+        db.add(v)
+        db.commit()
+        db.refresh(v)
+        return _view_row_to_dict(v)
+
+
+@app.delete("/api/sessions/{session_id}/views/{view_id}")
+def api_session_views_delete(session_id: str, view_id: str):
+    from database import DeskView, get_db as _gdb_ses
+    with _gdb_ses() as db:
+        v = db.query(DeskView).filter(DeskView.view_id == view_id, DeskView.session_id == session_id).first()
+        if not v:
+            raise HTTPException(status_code=404, detail=f"View {view_id} not found in session {session_id}")
+        db.delete(v)
+        db.commit()
+        return {"ok": True}
 
 
 @app.patch("/api/forge/ontology/node/{node_id}")

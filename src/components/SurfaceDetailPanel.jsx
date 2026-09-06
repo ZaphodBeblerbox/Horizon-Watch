@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
+import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 
 const API = API_BASE
 
@@ -79,6 +80,13 @@ export default function SurfaceDetailPanel({
     const [enrichmentLoading, setEnrichmentLoading] = useState(false)
     const [analysing, setAnalysing] = useState(false)
     const [error, setError] = useState(null)
+    // V3 Phase 1, §2.2 — real hook-based extension point, owned and called
+    // by this component itself (never reassigned from outside). This
+    // surface's "event" concept has no clean reference-grammar kind yet
+    // (it's GDELT/news-derived, not one of §7.2's real record kinds), so
+    // recordRef is honestly null rather than a guessed one — the hook
+    // still fires, matching the "always call it" principle.
+    const inspectorExtensions = useInspectorExtensions()
 
     const eventType = item?.type || "general"
     const eventColor = colorValue(item?.color)
@@ -267,6 +275,9 @@ export default function SurfaceDetailPanel({
                     {error && <span style={{ fontSize: 11, color: "#ef4444" }}>{error}</span>}
                 </div>
             )}
+            {inspectorExtensions.map((Ext, i) => (
+                <Ext key={i} recordRef={null} record={item} />
+            ))}
         </div>
     )
 }

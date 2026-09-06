@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { replayOnMap } from "../services/replayOnMap.js"
 import LocatorMiniMap from "../globe/LocatorMiniMap.jsx"
+import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 
 const API = API_BASE
 const WINDOW_HOURS = 168 // real bounded window — 7 days, matching Analytics' own shortest real "range" option
@@ -59,6 +60,9 @@ export default function Replay({ isVisible = true }) {
     const [signals, setSignals] = useState(null) // null = loading; [] = real empty
     const [groupBy, setGroupBy] = useState("domain")
     const [selected, setSelected] = useState(null)
+    // V3 Phase 1, §2.2 — real hook-based extension point, owned and called
+    // by this component itself (never reassigned from outside).
+    const inspectorExtensions = useInspectorExtensions()
     const [t, setT] = useState(0) // 0..1 fraction of the real bounded window
     const [playing, setPlaying] = useState(false)
     const [speed, setSpeed] = useState(4)
@@ -299,6 +303,9 @@ export default function Replay({ isVisible = true }) {
                         <button className="btn sm primary" style={{ width: "100%" }} onClick={() => replayOnMap({ ...selected, publishedAt: selected.created_at })}>
                             Replay on map
                         </button>
+                        {inspectorExtensions.map((Ext, i) => (
+                            <Ext key={i} recordRef={selected.id ? `sig:${selected.id}` : null} record={selected} />
+                        ))}
                     </div>
                 ) : (
                     <div style={{ marginTop: 12 }}>
