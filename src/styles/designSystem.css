@@ -246,10 +246,10 @@ input[type="range"]::-moz-range-thumb {
 .xref {
     text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer;
     background: transparent; border-radius: 2px; transition: background 120ms linear;
-    color: var(--acc-hi);
+    color: #82aede;
 }
-.xref:hover { background: var(--bg-2); }
-.xref.xref-active { background: var(--acc-dim); text-decoration-style: solid; }
+.xref:hover { color: #a8c8ee; background: rgba(63,111,168,.16); }
+.xref.xref-active { background: rgba(63,111,168,.28); color: #cfe0f4; text-decoration-style: solid; }
 .xref .rt { font-family: var(--mono); font-size: 11px; }
 .xref:focus-visible { outline: 2px solid var(--acc-hi); outline-offset: 2px; }
 

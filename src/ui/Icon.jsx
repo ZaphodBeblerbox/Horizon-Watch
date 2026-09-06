@@ -4,7 +4,7 @@ import {
     Save, Send, Upload, Download, Clipboard, LayoutDashboard, FileText, Radio,
     Sparkles, Search, Settings, User, ChevronRight, X, Menu, Home, Locate,
     RotateCcw, ExternalLink, Check, ArrowUpRight, PlaneTakeoff, Anchor, Cable,
-    Moon, Mountain,
+    Moon, Mountain, Printer, Presentation,
 } from "lucide-react"
 
 /**
@@ -70,6 +70,8 @@ const ICONS = {
     jumpTo: ArrowUpRight,
     basemapDark: Moon,
     basemapTerrain: Mountain,
+    print: Printer,
+    present: Presentation,
 }
 
 export const ICON_NAMES = Object.keys(ICONS)

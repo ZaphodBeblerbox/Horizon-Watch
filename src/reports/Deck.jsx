@@ -37,9 +37,15 @@ const TYPE = {
 // rendered subtree — this is the one surface in the app allowed a light
 // theme (§14: "the deck has a light theme; the console does not"). Never
 // touches the console's own :root CSS variables.
+//
+// DECK_CHROME is the fixed #0d1013 the reference's own .deckdesk rule
+// hardcodes regardless of theme (hw.css:1054) — the room around the
+// slide always stays dark; only the slide SURFACE itself (`panel` below)
+// toggles with the light/dark switch (hw.css:1067-1068's .slide/.slide.light).
+const DECK_CHROME = "#0d1013"
 const PALETTES = {
     dark:  { bg: "#0d1013", ink: "#e7ebef", dim: "#8b95a1", panel: "#171b20", line: "#2a3138", accent: "#5f95d0" },
-    light: { bg: "#f4f2ee", ink: "#1b1f24", dim: "#5a6270", panel: "#ffffff", line: "#d7d2c9", accent: "#3f6fa8" },
+    light: { bg: "#f4f2ee", ink: "#1b1f24", dim: "#5a6270", panel: "#f4f2ee", line: "#d7d2c9", accent: "#3f6fa8" },
 }
 
 function SlideLabel({ children, pal }) {
@@ -387,12 +393,14 @@ export default function Deck({ reportId, onBack }) {
     const Renderer = active ? SLIDE_RENDERERS[active.kind] : null
 
     return (
-        <div id="view-deck" className="view" style={{ display: "flex", flexDirection: "column", height: "100%", background: pal.bg }}>
+        <div id="view-deck" className="view" style={{ display: "flex", flexDirection: "column", height: "100%", background: DECK_CHROME }}>
             <style>{PRESENT_PRINT_CSS}</style>
 
+            {/* Toolbar field order matches the reference's #dk-id / spacer /
+                theme seg / back / print / present exactly (HorizonWatch.html:645-650) —
+                the id/classification/slide-count label leads, not the back button. */}
             {!presenting && (
                 <div className="deck-toolbar" style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px", borderBottom: `1px solid ${pal.line}`, flexShrink: 0 }}>
-                    <button className="btn sm" onClick={onBack}>← back to reader</button>
                     <div style={{ font: "600 12px var(--font)", color: pal.ink }}>
                         {meta ? `${meta.title} · ${meta.classification} · ${slides.length} slides` : "Loading…"}
                     </div>
@@ -401,6 +409,7 @@ export default function Deck({ reportId, onBack }) {
                         <button aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}>dark</button>
                         <button aria-pressed={theme === "light"} onClick={() => setTheme("light")}>light</button>
                     </div>
+                    <button className="btn sm" onClick={onBack}>← back to reader</button>
                     <button className="btn sm" onClick={exportPdf} disabled={!slides.length}>pdf</button>
                     <button className="btn sm primary" onClick={() => setPresenting(true)} disabled={!slides.length}>present</button>
                 </div>
@@ -422,25 +431,43 @@ export default function Deck({ reportId, onBack }) {
                     </div>
                 )}
 
-                {/* Fixed-size-child fix (§2.3) — the 1920x1080 slide is taken
-                    OUT of flex/grid flow entirely (position:absolute) before
-                    being scaled, so it can never let an implicit auto track
-                    size to its own oversized max-content and get centred
-                    off-stage. The whole transform is written in ONE
-                    assignment below — a scale-only write would silently
-                    drop the centring translate. */}
-                <div ref={stageRef} className="deck-stage" style={{ flex: 1, minHeight: 0, position: "relative", padding: 18, overflow: "hidden", background: pal.bg }}>
-                    {Renderer ? (
-                        <div className="slidewrap" style={{ position: "absolute", top: "50%", left: "50%", width: 1920, height: 1080, transform: `translate(-50%,-50%) scale(${scale})`, transformOrigin: "center center", background: pal.bg }}>
-                            <Renderer s={active} pal={pal} />
-                        </div>
-                    ) : (
-                        <div style={{ font: "400 12px var(--font)", color: pal.dim, padding: 20 }}>Loading…</div>
-                    )}
+                {/* .deckdesk (hw.css:1054) — flex column wrapping .stage +
+                    .deckbar, fixed #0d1013 background regardless of theme. */}
+                <div className="deck-desk" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", background: DECK_CHROME, overflow: "hidden" }}>
+                    {/* Fixed-size-child fix (§2.3) — the 1920x1080 slide is taken
+                        OUT of flex/grid flow entirely (position:absolute) before
+                        being scaled, so it can never let an implicit auto track
+                        size to its own oversized max-content and get centred
+                        off-stage. The whole transform is written in ONE
+                        assignment below — a scale-only write would silently
+                        drop the centring translate. */}
+                    <div ref={stageRef} className="deck-stage" style={{ flex: 1, minHeight: 0, position: "relative", padding: 18, overflow: "hidden" }}>
+                        {Renderer ? (
+                            <div className="slidewrap" style={{ position: "absolute", top: "50%", left: "50%", width: 1920, height: 1080, transform: `translate(-50%,-50%) scale(${scale})`, transformOrigin: "center center", background: pal.panel }}>
+                                <Renderer s={active} pal={pal} />
+                            </div>
+                        ) : (
+                            <div style={{ font: "400 12px var(--font)", color: pal.dim, padding: 20 }}>Loading…</div>
+                        )}
 
-                    {presenting && (
-                        <button className="btn sm" onClick={() => setPresenting(false)}
-                            style={{ position: "absolute", top: 12, right: 12, opacity: 0.5 }}>Esc · exit</button>
+                        {presenting && (
+                            <button className="btn sm" onClick={() => setPresenting(false)}
+                                style={{ position: "absolute", top: 12, right: 12, opacity: 0.5 }}>Esc · exit</button>
+                        )}
+                    </div>
+
+                    {/* .deckbar (hw.css:1060) — the transport strip, hidden
+                        while presenting (matches body.presenting .deckbar). */}
+                    {!presenting && (
+                        <div className="deck-bar" style={{ flex: "none", display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: "var(--bg-2)", borderTop: `1px solid ${pal.line}` }}>
+                            <button className="pbtn" onClick={() => setActiveIndex((i) => Math.max(0, i - 1))} disabled={activeIndex === 0}
+                                style={{ width: 30, height: 26, display: "grid", placeItems: "center", border: "1px solid var(--line)", borderRadius: 2, color: "var(--txt-2)", background: "transparent" }}>‹</button>
+                            <span className="lbl mono" style={{ font: "400 11px var(--mono)", color: pal.dim }}>{slides.length ? `${activeIndex + 1} / ${slides.length}` : "0 / 0"}</span>
+                            <input type="range" min={0} max={Math.max(0, slides.length - 1)} value={activeIndex}
+                                onChange={(e) => setActiveIndex(+e.target.value)} style={{ flex: 1 }} />
+                            <button className="pbtn" onClick={() => setActiveIndex((i) => Math.min(slides.length - 1, i + 1))} disabled={activeIndex >= slides.length - 1}
+                                style={{ width: 30, height: 26, display: "grid", placeItems: "center", border: "1px solid var(--line)", borderRadius: 2, color: "var(--txt-2)", background: "transparent" }}>›</button>
+                        </div>
                     )}
                 </div>
 
@@ -468,7 +495,7 @@ export default function Deck({ reportId, onBack }) {
                     const R = SLIDE_RENDERERS[s.kind]
                     return (
                         <div key={s.id} className="deck-print-slide">
-                            <div style={{ position: "absolute", top: "50%", left: "50%", width: 1920, height: 1080, transform: `translate(-50%,-50%) scale(${PRINT_PAGE_SCALE})`, transformOrigin: "center center", background: pal.bg }}>
+                            <div style={{ position: "absolute", top: "50%", left: "50%", width: 1920, height: 1080, transform: `translate(-50%,-50%) scale(${PRINT_PAGE_SCALE})`, transformOrigin: "center center", background: pal.panel }}>
                                 {R && <R s={s} pal={pal} />}
                             </div>
                         </div>
