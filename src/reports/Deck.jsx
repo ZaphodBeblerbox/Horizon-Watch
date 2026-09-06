@@ -11,7 +11,7 @@ import { buildDeckSlides } from "./buildDeckSlides.js"
 // Briefings.jsx/PrintLayout.jsx already use — no second drafting or
 // data-shaping pass.
 
-const SEV_COLOR = { critical: "#c4453c", high: "#c98a2c", moderate: "#3f6fa8", low: "#6b7280" }
+const SEV_COLOR = { critical: "#c4453c", high: "#b7822c", moderate: "#4f7fa6", low: "#6d7883" }
 
 // Real, fixed US-Letter-landscape page size at 96dpi (1056x816px — the
 // same 792x612pt @72dpi confirmed live against this environment's actual

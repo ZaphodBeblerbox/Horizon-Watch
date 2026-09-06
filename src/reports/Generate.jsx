@@ -20,8 +20,8 @@ import { toast } from "../ui/toast.js"
 // report zero matches today since the real Asset register is empty in this
 // deployment.
 
-const HORIZONS = [{ key: "24h", label: "24h" }, { key: "72h", label: "72h" }, { key: "7d", label: "7d" }, { key: "30d", label: "30d" }]
-const HORIZON_HOURS = { "24h": 24, "72h": 72, "7d": 168, "30d": 720 }
+const HORIZONS = [{ key: "7d", label: "7d" }, { key: "30d", label: "30d" }, { key: "90d", label: "90d" }]
+const HORIZON_HOURS = { "7d": 168, "30d": 720, "90d": 2160 }
 
 const SECTION_TOGGLES = [
     { key: "maritime_activity", label: "Maritime activity" },
@@ -57,7 +57,7 @@ export default function Generate({ onOpenTab }) {
     const [title, setTitle] = useState("")
     const [scope, setScope] = useState("")
     const [audience, setAudience] = useState("Duty analyst")
-    const [horizon, setHorizon] = useState("24h")
+    const [horizon, setHorizon] = useState("7d")
     const [classification, setClassification] = useState("UNCLASSIFIED // FOR ANALYTICAL USE ONLY")
     const [standingInstruction, setStandingInstruction] = useState("")
     const [sectionsOn, setSectionsOn] = useState(() => Object.fromEntries(SECTION_TOGGLES.map((s) => [s.key, true])))
@@ -321,11 +321,12 @@ export default function Generate({ onOpenTab }) {
                         <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{
                                 width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
-                                border: `1.5px solid ${s.status === "done" ? "var(--delta-better)" : s.status === "running" ? "var(--acc-hi)" : "var(--line-strong)"}`,
+                                border: `1.5px solid ${s.status === "done" ? "var(--tag-green)" : s.status === "running" ? "var(--acc-hi)" : "var(--line-strong)"}`,
                                 display: "flex", alignItems: "center", justifyContent: "center",
                                 animation: s.status === "running" ? "spin 900ms linear infinite" : "none",
                             }}>
-                                {s.status === "done" && <span style={{ color: "var(--delta-better)", fontSize: 9 }}>✓</span>}
+                                {s.status === "done" && <span style={{ color: "var(--tag-green)", fontSize: 9 }}>✓</span>}
+                                {s.status === "pending" && <span style={{ color: "var(--line-strong)", fontSize: 8, fontFamily: "var(--mono)" }}>{i + 1}</span>}
                             </span>
                             <span style={{ flex: 1, font: "400 12px var(--font)", color: s.status === "pending" ? "var(--txt-3)" : "var(--txt)" }}>{s.label}</span>
                             {s.ms != null && <span style={{ font: "400 10.5px var(--mono)", color: "var(--txt-3)" }}>{s.ms}ms</span>}
@@ -336,7 +337,7 @@ export default function Generate({ onOpenTab }) {
                     {log.map((l) => (
                         <div key={l.id} dangerouslySetInnerHTML={{
                             __html: l.html
-                                .replace(/<b>/g, '<b style="color:var(--txt);font-weight:600">').replace(/<i>/g, '<i style="color:var(--delta-better);font-style:normal">')
+                                .replace(/<b>/g, '<b style="color:var(--txt);font-weight:600">').replace(/<i>/g, '<i style="color:var(--tag-green);font-style:normal">')
                                 .replace(/<u>/g, '<u style="color:var(--sev-high);text-decoration:none">'),
                         }} />
                     ))}
