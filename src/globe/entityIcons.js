@@ -190,6 +190,35 @@ export function getEntityMarkerDataUri(opts = {}) {
     return uri
 }
 
+// ── News markers — solid diamond, one fixed size ──────────────────────────────
+// Design update: every news-derived marker (raw news/events in
+// GlobeEventsLayer.jsx, and Forge NEWS-domain assessment alerts in
+// GlobeAlertsLayer.jsx) now renders as one solid diamond at one fixed size,
+// replacing the previous mix of a Newspaper lucide icon (events) and the
+// generic TriangleAlert glyph (assessments) at several different tier/
+// severity-scaled sizes. Colour still varies by real article/assessment
+// type (unchanged); only shape and size are now uniform. A hand-drawn shape
+// rather than a lucide icon, same precedent as vesselAircraftGlyphs.js's
+// purpose-drawn hull/airframe silhouettes.
+export const NEWS_MARKER_SIZE = 30
+
+function newsDiamondSvg(color, size) {
+    const cx = size / 2, cy = size / 2, r = size * 0.42
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
+        + `<path d="M ${cx} ${cy - r} L ${cx + r} ${cy} L ${cx} ${cy + r} L ${cx - r} ${cy} Z" `
+        + `fill="${color}" stroke="#070B14" stroke-width="1"/>`
+        + `</svg>`
+}
+
+const _newsCache = new Map()
+export function getNewsMarkerDataUri({ color = TEXT_MUTED } = {}) {
+    const key = `news:${color}`
+    if (_newsCache.has(key)) return _newsCache.get(key)
+    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(newsDiamondSvg(color, NEWS_MARKER_SIZE))}`
+    _newsCache.set(key, uri)
+    return uri
+}
+
 // ── ForceGraph (forge entity graph) support ───────────────────────────────────
 // Maps a canonical graph node type (ForceGraph.jsx's canonType()) to this
 // module's real {entityType} identity — replaces markerRenderer.js's
