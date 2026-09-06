@@ -49,7 +49,7 @@ function ClaimList({ claims, mode, candidates, onEditClaim, resolvedComments, on
                 <div key={claim.claim_id} data-claim-id={claim.claim_id}>
                     {mode === "edit" ? (
                         <textarea
-                            className="input" style={{ width: "100%", minHeight: 44, font: "400 13.5px/1.5 var(--serif, georgia)", resize: "vertical" }}
+                            className="input" style={{ width: "100%", minHeight: 44, font: "400 13.5px/1.68 var(--font)", color: "var(--txt-2)", resize: "vertical" }}
                             value={claim.text}
                             onChange={(e) => onEditClaim?.(claim.claim_id, e.target.value)}
                         />
@@ -98,7 +98,7 @@ function SectionBlock({ section, mode, keyJudgments, onEditKeyJudgments, candida
             {section.section_id === "key_judgments" && (
                 mode === "edit" ? (
                     <textarea
-                        className="input" style={{ width: "100%", minHeight: 90, font: "400 13.5px/1.6 var(--serif, georgia)", resize: "vertical" }}
+                        className="input" style={{ width: "100%", minHeight: 90, font: "400 13.5px/1.68 var(--font)", color: "var(--txt-2)", resize: "vertical" }}
                         value={keyJudgments || ""} onChange={(e) => onEditKeyJudgments?.(e.target.value)}
                     />
                 ) : keyJudgments ? (
@@ -218,14 +218,15 @@ export default function DocumentRenderer({ report, sections, mode = "read", xref
 
     return (
         <article className="docbody" style={{
-            maxWidth: 720, margin: "0 auto", fontFamily: "var(--serif, Georgia, 'Times New Roman', serif)",
-            fontSize: 13.5, lineHeight: 1.68, color: "var(--ink, var(--txt))",
+            maxWidth: 720, margin: "0 auto",
+            fontFamily: mode === "print" ? "var(--serif, Georgia, 'Times New Roman', serif)" : "var(--font)",
+            fontSize: 13.5, lineHeight: 1.68, color: mode === "print" ? "var(--ink, var(--txt))" : "var(--txt-2)",
         }}>
             {/* Kicker + H1 + rule + metadata */}
             <div style={{ font: "600 10.5px var(--font)", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--txt-3)" }}>
                 {report?.classification}
             </div>
-            <h1 style={{ font: "700 22px var(--serif, Georgia, serif)", margin: "6px 0 10px" }}>{report?.title}</h1>
+            <h1 style={{ font: `700 22px ${mode === "print" ? "var(--serif, Georgia, serif)" : "var(--font)"}`, margin: "6px 0 10px" }}>{report?.title}</h1>
             <div style={{ borderBottom: "2px solid var(--line-strong)", marginBottom: 14 }} />
             <table style={{ width: "100%", fontSize: 12, color: "var(--txt-2)", marginBottom: 22, borderCollapse: "collapse" }}>
                 <tbody>
