@@ -282,7 +282,13 @@ export default function Generate({ onOpenTab }) {
                     <button className="btn ghost sm" onClick={() => setSelected(Object.fromEntries(items.map((i) => [i.key, false])))}>clear</button>
                 </div>
                 {!corpus ? (
-                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Click generate to assemble the real, current evidence set for this scope.</div>
+                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                            width: 11, height: 11, borderRadius: "50%", flexShrink: 0,
+                            border: "1.5px solid var(--acc-hi)", animation: "spin 900ms linear infinite",
+                        }} />
+                        Assembling the real, current evidence set for this scope — this runs automatically and can take up to a minute under real load, not stuck.
+                    </div>
                 ) : items.length === 0 ? (
                     <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>
                         No real signals available for the selected sections/scope right now.

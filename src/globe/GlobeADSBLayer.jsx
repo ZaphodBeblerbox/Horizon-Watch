@@ -6,6 +6,7 @@ import {
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { getAircraftMarkerDataUri } from "./vesselAircraftGlyphs.js"
+import { acClassify } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { clusterTracks } from "./trackClustering.js"
@@ -136,13 +137,18 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                // Fidelity pass, build spec v2 §7 — real airframe-outline
-                // glyph, amber when this real icao matches a real "Military
+                // Fidelity pass, build spec v2 §7 — real triangle glyph,
+                // amber when this real icao matches a real "Military
                 // Aircraft" watchlist alert (backend/main.py's rule_004,
                 // the closest real existing "flagged for review" aircraft
-                // signal — reused, not reinvented).
+                // signal — reused, not reinvented), otherwise colour-coded
+                // by real classification (iconUtils.js's acClassify() — the
+                // same real military/helicopter/commercial/general logic
+                // the inspector panel already uses for its subtype badge,
+                // now also wired into the globe billboard itself).
                 const watchlisted = !!(icao && watchlistedIcaos?.has(String(icao).toUpperCase()))
-                const icon = getAircraftMarkerDataUri({ watchlisted, size: BILLBOARD_SIZE })
+                const classification = acClassify(ac)
+                const icon = getAircraftMarkerDataUri({ watchlisted, classification, size: BILLBOARD_SIZE })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
                 const position = Cartesian3.fromDegrees(lon, lat, altM)

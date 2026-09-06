@@ -12,8 +12,20 @@
 // generic severity/entity palette:
 export const VESSEL_COLOR = "#7fa8c9"
 export const VESSEL_SANCTIONED_COLOR = "#c4453c"
-export const AIRCRAFT_COLOR = "#a8b6c2"
 export const AIRCRAFT_WATCHLISTED_COLOR = "#b7822c"
+
+// Design update: aircraft are colour-coded by real classification
+// (iconUtils.js's acClassify()) instead of one flat grey — deliberately
+// excluding blue (already heavily used elsewhere on the globe for vessels/
+// water features, so aircraft need their own distinct family). Watchlisted
+// status still overrides type colour entirely (a real "flagged for review"
+// signal takes priority over routine classification).
+export const AIRCRAFT_TYPE_COLOR = {
+    military: "#C084FC",   // purple
+    helicopter: "#FB923C", // orange
+    commercial: "#3DDC97", // green
+    general: "#9AA5B1",    // muted grey
+}
 
 const _cache = new Map()
 
@@ -36,17 +48,17 @@ function hullSvg(color, size) {
         + `</svg>`
 }
 
-/** A simple real airframe outline (fuselage + swept wings + tail), nose forward. */
-function airframeSvg(color, size) {
+/** A solid triangle, nose (apex) forward — the billboard's own `rotation`
+ * (set from real heading/track) carries it to the aircraft's true course,
+ * same convention the previous airframe outline used. */
+function aircraftTriangleSvg(color, size) {
     const w = size, h = size
     const cx = w / 2
-    const noseY = h * 0.06, tailY = h * 0.9
-    const wingY = h * 0.42, wingHalf = w * 0.42
-    const tailWingY = h * 0.82, tailHalf = w * 0.16
+    const noseY = h * 0.08, tailY = h * 0.88
+    const halfW = w * 0.34
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
-        + `<line x1="${cx}" y1="${noseY}" x2="${cx}" y2="${tailY}" stroke="${color}" stroke-width="1.6"/>`
-        + `<line x1="${cx - wingHalf}" y1="${wingY + w * 0.08}" x2="${cx + wingHalf}" y2="${wingY - w * 0.08}" stroke="${color}" stroke-width="1.6"/>`
-        + `<line x1="${cx - tailHalf}" y1="${tailWingY}" x2="${cx + tailHalf}" y2="${tailWingY}" stroke="${color}" stroke-width="1.4"/>`
+        + `<path d="M ${cx} ${noseY} L ${cx + halfW} ${tailY} L ${cx - halfW} ${tailY} Z" `
+        + `fill="${color}" stroke="#070B14" stroke-width="1" stroke-linejoin="round"/>`
         + `</svg>`
 }
 
@@ -61,9 +73,9 @@ export function getVesselMarkerDataUri({ sanctioned = false, size = 26 } = {}) {
     return _cache.get(key)
 }
 
-export function getAircraftMarkerDataUri({ watchlisted = false, size = 26 } = {}) {
-    const color = watchlisted ? AIRCRAFT_WATCHLISTED_COLOR : AIRCRAFT_COLOR
+export function getAircraftMarkerDataUri({ watchlisted = false, classification = "general", size = 26 } = {}) {
+    const color = watchlisted ? AIRCRAFT_WATCHLISTED_COLOR : (AIRCRAFT_TYPE_COLOR[classification] || AIRCRAFT_TYPE_COLOR.general)
     const key = `a:${color}:${size}`
-    if (!_cache.has(key)) _cache.set(key, dataUri(airframeSvg(color, size)))
+    if (!_cache.has(key)) _cache.set(key, dataUri(aircraftTriangleSvg(color, size)))
     return _cache.get(key)
 }

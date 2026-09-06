@@ -3,7 +3,7 @@ import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getEntityMarkerDataUri, resolveSanctionsStatus } from "./entityIcons.js"
+import { getEntityMarkerDataUri, getNewsMarkerDataUri, NEWS_MARKER_SIZE, resolveSanctionsStatus } from "./entityIcons.js"
 import { alertEntityTypeAndSubtype } from "../inspector/adapters.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
@@ -40,11 +40,16 @@ function alertIcon(a) {
 
     // News assessment — pattern-specific accent colour carried over from
     // ALERT_ICONS (real, still-used table — see src/constants/alertIcons.js).
+    // Design update: every news marker (here and in GlobeEventsLayer.jsx) is
+    // now the same solid diamond at NEWS_MARKER_SIZE, replacing the generic
+    // alert triangle at a severity-scaled size.
     const isAssessment = a.domain === "NEWS" && !!(iconType && ALERT_ICONS[iconType])
-    const color = isAssessment ? (ALERT_ICONS[iconType]?.color || "#FF6B35") : undefined
-    const size = isAssessment ? 40 : 38
+    if (isAssessment) {
+        const color = ALERT_ICONS[iconType]?.color || "#FF6B35"
+        return getNewsMarkerDataUri({ color })
+    }
 
-    return getEntityMarkerDataUri({ entityType, subtype, sanctionsStatus, size, color })
+    return getEntityMarkerDataUri({ entityType, subtype, sanctionsStatus, size: 38 })
 }
 
 function isSanctioned(a) {
@@ -72,14 +77,6 @@ function getMarkerOpacity(a) {
     if (sev === "critical" || sev === "high") return 1.0
     if (sev === "medium")                     return 0.85
     return 0.5
-}
-
-// Scale billboard by severity for assessment markers
-function severityScale(severity) {
-    if (severity === "critical") return 1.4
-    if (severity === "high")     return 1.2
-    if (severity === "medium")   return 1.0
-    return 0.85
 }
 
 const FUSION_SCALE = { critical: 1.8, high: 1.5, medium: 1.2 }
@@ -285,10 +282,11 @@ export default function GlobeAlertsLayer({ enabled, viewBounds }) {
                 const icon  = alertIcon(a)
                 if (!icon) return null
                 const isAssessment = a.domain === "NEWS" && !!(a.icon_type && ALERT_ICONS[a.icon_type])
-                const baseSize = isAssessment ? 40 : 38
-                const assessScale = isAssessment ? severityScale(a.severity) : 1.0
+                // News assessments are now the same fixed-size diamond
+                // regardless of severity — no more severityScale variance.
+                const baseSize = isAssessment ? NEWS_MARKER_SIZE : 38
                 const hierScale   = getMarkerScale(a)
-                const finalScale  = isAssessment ? assessScale : hierScale
+                const finalScale  = isAssessment ? 1.0 : hierScale
                 const opacity     = getMarkerOpacity(a)
                 const billColor   = opacity < 1.0 ? Color.WHITE.withAlpha(opacity) : undefined
 

@@ -3,7 +3,7 @@ import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getEntityMarkerDataUri } from "./entityIcons.js"
+import { getNewsMarkerDataUri, NEWS_MARKER_SIZE } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, EVENTS_CAP } from "./isMobile.js"
 
@@ -47,105 +47,12 @@ function hexForEvent(ev) {
     return TYPE_HEX[t] || DEFAULT_HEX
 }
 
-const ICON_CACHE = {}
-
-function _hexToRgbArr(hex) {
-    const n = parseInt(hex.replace("#", ""), 16)
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-}
-
-// entityIcons.js only hands back an SVG string/data URI (no synchronously-
-// available pixels), unlike the old markerRenderer.js's getMarkerCanvas()
-// which returned an already-drawn <canvas>. Decorating a tier-1 (breaking)
-// icon with a glow ring + badge needs real pixels to compositie onto, so the
-// base glyph has to be decoded through a real <img> first — that decode is
-// inherently async. _loadedImage() caches the <img> per data URI so this
-// only ever decodes once per (hex, tier, breaking) combination.
-const _decodedImageCache = new Map()
-function _loadedImage(dataUri) {
-    let img = _decodedImageCache.get(dataUri)
-    if (!img) {
-        img = new Image()
-        img.decoding = "async"
-        img.src = dataUri
-        _decodedImageCache.set(dataUri, img)
-    }
-    return img
-}
-
-function decorateTier1Icon(baseImg, hex, isBreaking) {
-    const dpr  = Math.max(window.devicePixelRatio || 2, 2)
-    const ring = isBreaking ? 14 : 10
-    const bw   = baseImg.naturalWidth  || baseImg.width
-    const bh   = baseImg.naturalHeight || baseImg.height
-    const w    = bw + ring * 2
-    const h    = bh + ring * 2 + (isBreaking ? 14 : 0)
-    const canvas = document.createElement("canvas")
-    canvas.width  = w * dpr
-    canvas.height = h * dpr
-    const ctx = canvas.getContext("2d")
-    ctx.scale(dpr, dpr)
-    const cx = w / 2
-    const cy = (bh + ring * 2) / 2
-    const [r, g, b] = _hexToRgbArr(hex)
-    // Outer glow ring
-    ctx.beginPath()
-    ctx.arc(cx, cy, cx - 2, 0, Math.PI * 2)
-    ctx.strokeStyle = `rgba(${r},${g},${b},0.5)`
-    ctx.lineWidth = 2
-    ctx.stroke()
-    // Inner pulse ring
-    ctx.beginPath()
-    ctx.arc(cx, cy, cx - 6, 0, Math.PI * 2)
-    ctx.strokeStyle = `rgba(${r},${g},${b},0.25)`
-    ctx.lineWidth = 1
-    ctx.stroke()
-    // Base icon
-    ctx.drawImage(baseImg, ring, ring, bw, bh)
-    // BREAKING badge
-    if (isBreaking) {
-        const by = bh + ring * 2 + 1
-        ctx.fillStyle = "#FF3B30"
-        ctx.beginPath()
-        ctx.roundRect(cx - 18, by, 36, 12, 3)
-        ctx.fill()
-        ctx.fillStyle = "#fff"
-        ctx.font = "bold 8px system-ui"
-        ctx.textAlign = "center"
-        ctx.textBaseline = "middle"
-        ctx.fillText("BREAKING", cx, by + 6)
-    }
-    return canvas
-}
-
-// News/event entity type is one glyph regardless of article sub-type (this
-// product's real data doesn't distinguish sub-types finely enough to
-// justify more than one glyph); sub-type is still conveyed via the accent
-// colour (hexForEvent) exactly as before.
-function getIcon(hex, tier, isBreaking) {
-    const key = `${hex}-t${tier}-b${isBreaking ? 1 : 0}`
-    if (ICON_CACHE[key]) return ICON_CACHE[key]
-
-    const baseUri = getEntityMarkerDataUri({ entityType: "news_event", color: hex, size: 32 })
-    if (tier !== 1) {
-        ICON_CACHE[key] = baseUri
-        return baseUri
-    }
-
-    // Tier-1 decoration needs the base glyph decoded to real pixels first
-    // (see _loadedImage() above) — that's async, so the very first render
-    // for a given (hex, tier, breaking) combination falls back to the plain
-    // undecorated glyph for a frame or two; the decorated ring+badge version
-    // gets cached and used automatically as soon as the image finishes
-    // decoding and this component's next poll-driven re-render calls
-    // getIcon() again (same fetch-then-swap pattern GlobeDirectorLayer's
-    // async Wikipedia image already uses elsewhere in this codebase).
-    const img = _loadedImage(baseUri)
-    if (img.complete && img.naturalWidth > 0) {
-        ICON_CACHE[key] = decorateTier1Icon(img, hex, !!isBreaking)
-        return ICON_CACHE[key]
-    }
-    return baseUri
+// News/event entity type is one glyph (a solid diamond) regardless of
+// article sub-type or tier — sub-type is still conveyed via the accent
+// colour (hexForEvent), tier/breaking status no longer changes shape or
+// size (design update: every news marker is the same fixed-size diamond).
+function getIcon(hex) {
+    return getNewsMarkerDataUri({ color: hex })
 }
 
 // Muted hex for low-relevance events (desaturate toward grey)
@@ -252,26 +159,21 @@ export default function GlobeEventsLayer({
                 const prec    = isPrecision(ev)
                 const baseHex = hexForEvent(ev)
                 const hex     = (!prec && numTier >= 3) ? mutedHex(baseHex) : baseHex
-                const icon    = getIcon(hex, numTier, !!ev.is_breaking)
-                if (!icon || icon.width === 0 || icon.height === 0) return null
+                const icon    = getIcon(hex)
+                if (!icon) return null
 
-                // Base icon size from location confidence
+                // Every news marker is now the same fixed size regardless of
+                // tier/location-confidence — shape (diamond) and size are
+                // uniform; only colour still varies by real article type.
+                // Lower tiers keep a real, size-neutral opacity de-emphasis.
+                const iconSize = NEWS_MARKER_SIZE
+                let alpha = 1.0
+                if (!prec) {
+                    if (numTier === 2) alpha = 0.85
+                    if (numTier >= 3)  alpha = 0.50
+                }
                 const approxConf = ev.location_confidence || ""
                 const isApprox = approxConf === "fallback_region" || approxConf === "relaxed" || approxConf === "fallback_country"
-                const baseSize = isApprox ? 32 : 44
-
-                // Tier-based scale and opacity
-                let iconSize = baseSize
-                let alpha    = 1.0
-                if (!prec) {
-                    if (numTier === 2) { iconSize = Math.round(baseSize * 0.8);  alpha = 0.85 }
-                    if (numTier >= 3)  { iconSize = Math.round(baseSize * 0.55); alpha = 0.50 }
-                }
-                // Tier 1 icons get extra canvas space for the ring — account for it
-                if (numTier === 1) {
-                    const ring = ev.is_breaking ? 14 : 10
-                    iconSize = baseSize + ring * 2
-                }
 
                 const cesiumColor = (isApprox || (numTier >= 2 && !prec))
                     ? Color.fromAlpha(Color.WHITE, Math.min(alpha, isApprox ? 0.6 : 1.0) * alpha)
