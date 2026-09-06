@@ -20922,9 +20922,20 @@ def _cookie_kwargs(request: Request) -> dict:
     # which requires SameSite=None + Secure; local dev serves both over
     # plain http on the same "localhost" site, where SameSite=None+Secure
     # cookies are dropped by the browser entirely (Secure requires https).
-    # Detected from the real request scheme, not a hardcoded environment
-    # flag that could drift from reality.
-    secure = request.url.scheme == "https"
+    #
+    # Real bug fix: Railway terminates TLS at its edge and forwards plain
+    # HTTP to this process, so request.url.scheme alone always reports
+    # "http" here even for a real https request — Procfile's uvicorn
+    # invocation isn't told to trust proxy headers. That silently produced
+    # SameSite=Lax (no Secure) cookies in production, which the browser
+    # then refuses to attach to the actual cross-site Vercel→Railway
+    # fetch(credentials:"include") calls — a login could report success
+    # while the session never actually persists. X-Forwarded-Proto (set by
+    # every real request that reaches this app through Railway's edge) is
+    # checked first; request.url.scheme is only the local-dev fallback,
+    # where no proxy sits in front and no such header is ever sent.
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    secure = scheme == "https"
     return {"httponly": True, "secure": secure, "samesite": "none" if secure else "lax", "path": "/"}
 
 @app.post("/api/auth/login")
