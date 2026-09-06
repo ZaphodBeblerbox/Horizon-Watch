@@ -3,6 +3,7 @@ import { apiFetch } from "../auth.js"
 import { createSnapshotReportTask, listWatchZones, runTaskAction, scoreTaskExposure, prefetchReportBundle } from "./reportApi.js"
 import { getBriefingItems, useBriefingCount } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
+import Icon from "../ui/Icon.jsx"
 
 // Generate — page-by-page rebuild. Layout 290px / 1fr / 322px. A single-shot
 // "configure, run, watch it happen" screen — not a persistent task browser
@@ -69,6 +70,7 @@ export default function Generate({ onOpenTab }) {
     const [emptyOverride, setEmptyOverride] = useState(false)
 
     const [running, setRunning] = useState(false)
+    const [cancelled, setCancelled] = useState(false)
     const [steps, setSteps] = useState(STEP_LABELS.map((label) => ({ label, status: "pending", ms: null })))
     const [log, setLog] = useState([])
     const [progress, setProgress] = useState(0)
@@ -146,6 +148,7 @@ export default function Generate({ onOpenTab }) {
         runIdRef.current += 1
         const myRun = runIdRef.current
         setRunning(true)
+        setCancelled(false)
         setCompletedReport(null)
         setSteps((prev) => prev.map((s, i) => (i < 2 ? s : { label: STEP_LABELS[i], status: "pending", ms: null })))
         setProgress(2 / STEP_LABELS.length)
@@ -232,14 +235,18 @@ export default function Generate({ onOpenTab }) {
         }
     }
 
-    function stop() { runIdRef.current += 1; setRunning(false) }
+    function stop() { runIdRef.current += 1; setRunning(false); setCancelled(true); appendLog(logLine("<u>cancelled by operator</u>")) }
 
     const evCount = evCountLive
+    const genState = running ? "running" : cancelled ? "cancelled" : completedReport ? "complete" : "idle"
 
     return (
         <div style={{ display: "grid", gridTemplateColumns: "290px 1fr 322px", height: "100%", overflow: "hidden" }}>
-            {/* Left — parameters */}
-            <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* Left — parameters. Panehead matches the reference's "Briefing
+                parameters" header (HorizonWatch.html:318). */}
+            <div style={{ borderRight: "1px solid var(--line)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--line)", font: "600 12px var(--font)", color: "var(--txt)", flexShrink: 0 }}>Briefing parameters</div>
+                <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
                 <div className="field"><label>Title</label><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="(auto from scope)" /></div>
                 <div className="field"><label>Scope</label><input className="input" value={scope} onChange={(e) => setScope(e.target.value)} placeholder="e.g. Red Sea / Bab el-Mandeb" /></div>
                 <div className="field"><label>Watch area (optional)</label>
@@ -265,6 +272,7 @@ export default function Generate({ onOpenTab }) {
                 <div className="field"><label>Classification</label><input className="input" value={classification} onChange={(e) => setClassification(e.target.value)} /></div>
                 <div className="field"><label>Standing instruction</label>
                     <textarea className="input" style={{ minHeight: 60, resize: "vertical" }} value={standingInstruction} onChange={(e) => setStandingInstruction(e.target.value)} placeholder="Optional analyst instruction for the drafting pass" />
+                </div>
                 </div>
             </div>
 
@@ -320,8 +328,13 @@ export default function Generate({ onOpenTab }) {
                 </div>
             </div>
 
-            {/* Right — checklist + log */}
+            {/* Right — checklist + log. Panehead matches the reference's
+                "Generation" title + live #gen-state label (HorizonWatch.html:329). */}
             <div style={{ borderLeft: "1px solid var(--line)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+                    <span style={{ font: "600 12px var(--font)", color: "var(--txt)" }}>Generation</span>
+                    <span style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>{genState}</span>
+                </div>
                 <div style={{ padding: 12, borderBottom: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
                     {steps.map((s, i) => (
                         <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -339,6 +352,7 @@ export default function Generate({ onOpenTab }) {
                         </div>
                     ))}
                 </div>
+                <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", padding: "10px 10px 0" }}>Agent log</div>
                 <div style={{ flex: 1, overflow: "auto", padding: 10, fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "pre-wrap", background: "var(--bg-0)" }}>
                     {log.map((l) => (
                         <div key={l.id} dangerouslySetInnerHTML={{
@@ -348,11 +362,17 @@ export default function Generate({ onOpenTab }) {
                         }} />
                     ))}
                 </div>
+                {/* Footer button order matches the reference exactly: generate
+                    (primary, flex:1) · open printable briefing (icon-only) ·
+                    deck (icon-only) · distribute by mail (icon-only, always
+                    disabled — no Mail/Gmail integration exists yet, see
+                    src/lib/ref.js's mail: resolver) · stop (HorizonWatch.html:337-341). */}
                 <div style={{ padding: 10, borderTop: "1px solid var(--line)", display: "flex", gap: 8 }}>
-                    <button className="btn primary" disabled={running || !corpus || (evCount === 0 && !emptyOverride)} onClick={runGenerate}>generate</button>
+                    <button className="btn primary" style={{ flex: 1 }} disabled={running || !corpus || (evCount === 0 && !emptyOverride)} onClick={runGenerate}>generate briefing</button>
+                    <button className="btn" disabled={!completedReport} title="Open the printable briefing" onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "print")}><Icon name="print" size={14} /></button>
+                    <button className="btn" disabled={!completedReport} title="Build a presentation" onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "deck")}><Icon name="present" size={14} /></button>
+                    <button className="btn" disabled title="Distribute by mail — not yet built"><Icon name="submit" size={14} /></button>
                     <button className="btn" disabled={!running} onClick={stop}>stop</button>
-                    <button className="btn" disabled={!completedReport} onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "print")}>printable briefing</button>
-                    <button className="btn" disabled={!completedReport} onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "deck")}>deck</button>
                 </div>
             </div>
             <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
