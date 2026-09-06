@@ -123,6 +123,15 @@ export function createSnapshotReportTask({ focus, watchZoneId } = {}) {
     return apiFetch("/api/reports/tasks/snapshot", {
         method: "POST",
         body: JSON.stringify({ focus: focus || null, watch_zone_id: watchZoneId || null }),
+        // This one endpoint does a real, synchronous, full intelligence-
+        // picture aggregation in the request/response cycle (not a fast
+        // lookup like most apiFetch() callers) — measured live against
+        // production at 17.6s in one direct call, but the browser-observed
+        // failure that motivated this override was the client's default
+        // 30s apiFetch() timeout aborting a call that was still genuinely
+        // in flight under real load, not a hung/broken request. 90s gives
+        // real margin above the observed range instead of guessing.
+        _timeout: 90000,
     }).then(asJson)
 }
 
