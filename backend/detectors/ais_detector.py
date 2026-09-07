@@ -9,56 +9,27 @@ except ImportError:
 
 
 class AISAnomalyDetector:
-    """Rule-based AIS vessel anomaly detection."""
+    """Rule-based AIS vessel anomaly detection.
+
+    2026-09 alert/detector audit: the old rules.json-driven check_vessel()
+    (and its load_rules()/self.rules state) was removed here — confirmed
+    dead by main.py's own _forge_detection_cycle comment ("check_vessel()
+    itself is left intact in ais_detector.py; nothing else calls it; it is
+    simply no longer invoked from this cycle"). It fired instantly on a
+    single AIS snapshot the moment any ping showed speed <=0.5kn within
+    10km of a cable, with no duration/cooldown tracking — so it could
+    double-fire alongside this class's own real check_loitering() for the
+    same physically-loitering vessel. Retired in favor of check_loitering()
+    below, which has real per-(mmsi,cable,rule) state and a genuine
+    min_duration_minutes gate (see test_no_duplicate_loitering_alert.py for
+    the regression proof this was fixed). Its other two trigger branches,
+    "transponder_gap" and "route_deviation", were never implemented at all
+    (both were a literal no-op `pass`) — real gap detection now lives in
+    DarkShipDetector (detectors/correlation_engine.py)."""
 
     def __init__(self):
-        self.rules = []
         # Loiter state: (mmsi, cable_system_id) -> {first_within, last_within, alerted}
         self._loiter: dict = {}
-
-    def load_rules(self, rules):
-        self.rules = rules
-
-    def check_vessel(self, vessel, cables=None, chokepoints=None, all_vessels=None):
-        if not vessel.get("lat") or not vessel.get("lng"):
-            return []
-        alerts = []
-        for rule in self.rules:
-            if rule.get("status") != "active":
-                continue
-            if rule.get("source") not in ("AIS", "ais"):
-                continue
-            trigger = rule.get("trigger_type", "")
-            params  = rule.get("params", {})
-
-            if trigger == "stationary_near_infrastructure":
-                # A missing speed reading is unknown, not "definitely fast
-                # and therefore not stationary" — don't let it slip through
-                # as if it satisfied the stationary gate. `.get(..., 99)`
-                # only supplies the default when the key is absent, not
-                # when it's explicitly None, so guard for None here too.
-                speed = vessel.get("speed")
-                if speed is None:
-                    speed = 99
-                if speed <= params.get("max_speed_knots", 0.5) and cables:
-                    for cable in cables:
-                        hit = self._nearest_cable_point(
-                            vessel["lat"], vessel["lng"],
-                            cable.get("coordinates", []),
-                            params.get("proximity_km", 10),
-                        )
-                        if hit is not None:
-                            alerts.append(self._make_alert(rule, vessel,
-                                f"Vessel stationary {hit:.1f}km from {cable.get('name','submarine cable')}"))
-                            break
-
-            elif trigger == "transponder_gap":
-                pass   # requires history tracking
-
-            elif trigger == "route_deviation":
-                pass   # requires route DB
-
-        return alerts
 
     # ── Loitering near cable ──────────────────────────────────────────────────
 
@@ -380,45 +351,6 @@ class AISAnomalyDetector:
                 except (TypeError, ValueError):
                     continue
         return best_m
-
-    def _nearest_cable_point(self, lat, lng, coords, max_km):
-        best = None
-        for coord in coords:
-            try:
-                d = self._haversine(lat, lng, coord[1], coord[0])
-            except (IndexError, TypeError):
-                continue
-            if d <= max_km:
-                if best is None or d < best:
-                    best = d
-        return best
-
-    def _make_alert(self, rule, vessel, message):
-        return {
-            "id":           f"alert_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
-            "rule_id":      rule.get("id"),
-            "rule_name":    rule.get("name"),
-            "rule_trigger": rule.get("trigger_type"),
-            "source":       "AIS",
-            "severity":     rule.get("severity", "medium"),
-            "vessel":       vessel.get("name") or str(vessel.get("mmsi", "Unknown")),
-            "mmsi":         vessel.get("mmsi"),
-            "lat":          vessel.get("lat"),
-            "lng":          vessel.get("lng"),
-            "speed":        vessel.get("speed"),
-            "heading":      vessel.get("heading"),
-            "flag":         vessel.get("flag"),
-            "destination":  vessel.get("destination"),
-            "message":      message,
-            "timestamp":    datetime.now(timezone.utc).isoformat(),
-            "provenance": {
-                "source_type":       "AIS",
-                "source_entity":     vessel.get("mmsi"),
-                "detection_rule":    rule.get("name"),
-                "trigger_reason":    rule.get("trigger_type"),
-                "params_at_trigger": rule.get("params", {}),
-            },
-        }
 
     @staticmethod
     def _haversine(lat1, lon1, lat2, lon2):

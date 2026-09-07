@@ -529,11 +529,13 @@ sanctions_loader = SanctionsLoader()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SHARED SANCTIONS-HIT CHECK — single source of truth for all 3 call sites that
-# can each independently decide "is this vessel a sanctioned vessel":
+# SHARED SANCTIONS-HIT CHECK — single source of truth for the 2 real call sites
+# that can each independently decide "is this vessel a sanctioned vessel":
 #   - main.py's _check_sanctions_on_update()   (fires per AIS position update)
 #   - main.py's ship-to-ship-transfer detection (fires per STS candidate pair)
-#   - detectors/correlation_engine.py's DarkShipDetector, via _check_sanctions_hit
+# (A third former call site, detectors/correlation_engine.py's
+# DarkShipDetector-adjacent `_check_sanctions_hit()`, was confirmed to have
+# zero real callers in the 2026-09 alert/detector audit and was deleted.)
 #
 # Lives here — rather than in detectors/correlation_engine.py, which already
 # had a copy of the flag-plausibility helper — because:

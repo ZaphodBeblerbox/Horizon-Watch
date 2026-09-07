@@ -13,87 +13,17 @@ import math
 import uuid
 import json
 
-# ── Sanctions vessel detection ────────────────────────────────────────────────
-# The hit-detection / flag-plausibility-corroboration / cooldown logic lives
-# in sanctions_loader.check_sanctions_for_vessel() — shared with main.py's
-# _check_sanctions_on_update() and its ship-to-ship-transfer block, so all 3
-# "is this vessel sanctioned" call sites agree on what counts as a
-# trustworthy hit instead of each maintaining a slightly different copy (see
-# that function's docstring for the full rationale). This module now only
-# builds the DarkShipDetector-specific alert shape from the shared result.
-
-
-def _check_sanctions_hit(mmsi: str, vessel: dict) -> "dict | None":
-    try:
-        from sanctions_loader import check_sanctions_for_vessel as _check_shared
-    except ImportError:
-        return None
-
-    result = _check_shared(mmsi=mmsi, name=vessel.get("name") or vessel.get("vessel_name"), vessel=vessel)
-    if result is None:
-        return None
-
-    hit  = result["hit"]
-    name = result["vessel_name"]
-    now  = datetime.utcnow()
-
-    # Position is optional and caller-supplied — never fabricate a 0,0
-    # default for a vessel with no reported position. A vessel genuinely
-    # sitting at 0,0 (Null Island) and a vessel whose position is simply
-    # unknown must not look identical on the map or in this alert's text.
-    raw_lat = vessel.get("lat")
-    raw_lon = vessel.get("lon") if vessel.get("lon") is not None else vessel.get("lng")
-    lat = float(raw_lat) if raw_lat is not None else None
-    lon = float(raw_lon) if raw_lon is not None else None
-    pos_str = f"{lat:.3f}, {lon:.3f}" if lat is not None and lon is not None else "an unreported position"
-
-    flag = vessel.get("flag") or vessel.get("country") or hit.get("flag") or "unknown"
-
-    if result["status"] == "possible":
-        # Hard MMSI/IMO match, but the live vessel's reported flag clearly
-        # contradicts the sanctions record's flag — MMSI/IMO reassignment
-        # after scrapping/reflagging/sale means this could genuinely be a
-        # different, innocent vessel. Downgrade instead of claiming a
-        # confirmed sanctions match we can't actually stand behind.
-        return {
-            "rule_id":        "SANCTIONS_VESSEL_POSSIBLE",
-            "alert_category": "SANCTIONS_VIOLATION",
-            "mmsi":           mmsi,
-            "vessel_name":    name,
-            "title":          f"Possible Sanctions Match (needs review): {name}",
-            "description": (
-                f"{name} ({mmsi}) — MMSI/IMO matches a sanctioned-vessel record, "
-                f"but the live flag ({flag}) does not match the sanctions "
-                f"record's flag ({hit.get('flag')}). MMSI/IMO can be reassigned "
-                f"after a vessel is scrapped, reflagged, or sold, so this is an "
-                f"unconfirmed possible match — needs human review, not an "
-                f"automatic critical alert."
-            ),
-            "lat":            lat,
-            "lon":            lon,
-            "severity":       "medium",
-            "sanctions_hit":  True,
-            "sanctions_hit_confirmed": False,
-            "timestamp":      now.isoformat(),
-        }
-
-    return {
-        "rule_id":        "SANCTIONS_VESSEL_DETECTED",
-        "alert_category": "SANCTIONS_VIOLATION",
-        "mmsi":           mmsi,
-        "vessel_name":    name,
-        "title":          f"Sanctioned Vessel: {name}",
-        "description": (
-            f"{name} ({mmsi}) — sanctioned vessel transmitting AIS at "
-            f"{pos_str}. Flag: {flag}."
-        ),
-        "lat":            lat,
-        "lon":            lon,
-        "severity":       "critical",
-        "sanctions_hit":  True,
-        "sanctions_hit_confirmed": True,
-        "timestamp":      now.isoformat(),
-    }
+# 2026-09 alert/detector audit: removed a dead `_check_sanctions_hit()`
+# helper that used to live here. It built a DarkShipDetector-specific
+# sanctions-alert shape (SANCTIONS_VESSEL_DETECTED/SANCTIONS_VESSEL_POSSIBLE)
+# from sanctions_loader.check_sanctions_for_vessel()'s shared result, but had
+# zero real callers anywhere in the codebase — confirmed by grep. The real,
+# live, wired sanctioned-vessel ALERT (distinct from a base AIS track simply
+# rendering red because its mmsi/imo matched a restricted-party list on
+# refresh — that's a real classification fact about a real base signal, not
+# a derived alert) is main.py's _check_sanctions_on_update(), which routes
+# through the same shared sanctions_loader.check_sanctions_for_vessel() and
+# actually calls write_alert()/pushes to _forge_alerts.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -775,7 +705,6 @@ class DarkShipDetector:
 class CorrelationEngine:
 
     def __init__(self):
-        self.entity_history = {}   # mmsi → {total, last_seen}
         self.confidence_weights = {
             "single":  0.30,
             "dual":    0.60,
@@ -819,9 +748,16 @@ class CorrelationEngine:
                 if assessment:
                     assessments.append(assessment)
 
-        assessments.extend(self._detect_temporal_sequences(all_signals))
-        assessments.extend(self._check_entity_reputation(ais_alerts))
-        assessments.extend(self._propagate_escalation(all_signals, ontology))
+        # 2026-09 alert/detector audit: this used to also call
+        # _detect_temporal_sequences()/_check_entity_reputation()/
+        # _propagate_escalation() here and extend `assessments` with their
+        # output — all three were confirmed dead: real computation every
+        # cycle, but their "escalation_sequence"/"repeat_offender"/
+        # "ontology_propagation" assessment types were never consumed by
+        # anything (only this function's own "correlation"-type assessments
+        # ever got used, by the caller's HIGH/CRITICAL -> ontology auto-add
+        # check) and had zero frontend rendering anywhere. Deleted along
+        # with their now-unused methods below.
 
         return assessments
 
@@ -893,114 +829,21 @@ class CorrelationEngine:
             "recommendation":   self._generate_recommendation(final_severity, domains, related),
         }
 
-    # ── Temporal escalation detection ─────────────────────────────────────────
-
-    def _detect_temporal_sequences(self, signals):
-        assessments = []
-        grid = {}
-        for s in signals:
-            if not s.get("lat"):
-                continue
-            key = (round(s["lat"]), round(s["lng"]))
-            grid.setdefault(key, []).append(s)
-
-        for key, region_signals in grid.items():
-            if len(region_signals) < 3:
-                continue
-            sorted_sigs = sorted(region_signals, key=lambda x: x.get("timestamp", ""))
-            scores = [SEV_SCORES.get(s.get("severity", "low"), 1) for s in sorted_sigs]
-            trend = sum(scores[i+1] - scores[i] for i in range(len(scores)-1)) / (len(scores)-1)
-            if trend > 0.5:
-                assessments.append({
-                    "type":         "escalation_sequence",
-                    "severity":     "HIGH",
-                    "confidence":   0.70,
-                    "lat":          key[0],
-                    "lng":          key[1],
-                    "narrative":    f"Escalation: {len(region_signals)} signals with rising severity (trend +{trend:.1f})",
-                    "signal_count": len(region_signals),
-                    "timestamp":    datetime.now(timezone.utc).isoformat(),
-                })
-        return assessments
-
-    # ── Repeat-offender tracking ──────────────────────────────────────────────
-
-    def _check_entity_reputation(self, ais_alerts):
-        assessments = []
-        entity_counts = {}
-        for a in ais_alerts:
-            mmsi = a.get("mmsi")
-            if mmsi:
-                if mmsi not in entity_counts:
-                    entity_counts[mmsi] = {"count": 0, "alerts": [], "name": a.get("vessel", "Unknown")}
-                entity_counts[mmsi]["count"] += 1
-                entity_counts[mmsi]["alerts"].append(a)
-
-        for mmsi, data in entity_counts.items():
-            prev = self.entity_history.get(mmsi, {"total": 0})
-            new_total = prev["total"] + data["count"]
-            self.entity_history[mmsi] = {"total": new_total, "last_seen": datetime.now(timezone.utc).isoformat()}
-            if new_total >= 3:
-                last = data["alerts"][-1]
-                assessments.append({
-                    "type":       "repeat_offender",
-                    "severity":   "HIGH" if new_total >= 5 else "ELEVATED",
-                    "confidence": min(0.50 + new_total * 0.1, 0.95),
-                    "lat":        last.get("lat"),
-                    "lng":        last.get("lng"),
-                    "narrative":  f"Repeat offender: {data['name']} (MMSI:{mmsi}) triggered {new_total} alerts total",
-                    "entity":     data["name"],
-                    "mmsi":       mmsi,
-                    "signal_count": new_total,
-                    "timestamp":  datetime.now(timezone.utc).isoformat(),
-                })
-        return assessments
-
-    # ── Ontology propagation ──────────────────────────────────────────────────
-
-    def _propagate_escalation(self, signals, ontology):
-        assessments = []
-        if not ontology:
-            return assessments
-        nodes = ontology.get("nodes", [])
-        edges = ontology.get("edges", [])
-
-        active_nodes = set()
-        for signal in signals:
-            if not signal.get("lat"):
-                continue
-            for node in nodes:
-                if not node.get("lat"):
-                    continue
-                if self._haversine(signal["lat"], signal["lng"], node["lat"], node["lng"]) < 100:
-                    active_nodes.add(node["id"])
-
-        propagated = set()
-        for node_id in active_nodes:
-            for edge in edges:
-                connected_id = None
-                if edge.get("source") == node_id:   connected_id = edge.get("target")
-                elif edge.get("target") == node_id: connected_id = edge.get("source")
-                if not connected_id or connected_id in active_nodes or connected_id in propagated:
-                    continue
-                connected_node = next((n for n in nodes if n["id"] == connected_id), None)
-                if connected_node and connected_node.get("type") in ("country", "chokepoint", "facility"):
-                    propagated.add(connected_id)
-                    origin_label = next((n["label"] for n in nodes if n["id"] == node_id), "unknown")
-                    assessments.append({
-                        "type":       "ontology_propagation",
-                        "severity":   "ELEVATED",
-                        "confidence": 0.50,
-                        "lat":        connected_node.get("lat"),
-                        "lng":        connected_node.get("lng"),
-                        "narrative":  (
-                            f"Network effect: activity near {origin_label} propagates threat to "
-                            f"{connected_node['label']} via '{edge.get('type','link')}'"
-                        ),
-                        "signal_count": 1,
-                        "timestamp":  datetime.now(timezone.utc).isoformat(),
-                    })
-        return assessments
+    # 2026-09 alert/detector audit: deleted _detect_temporal_sequences(),
+    # _check_entity_reputation(), and _propagate_escalation() here (real
+    # original intent, preserved for the rebuild phase: a per-grid-cell
+    # rising-severity trend detector producing an "escalation_sequence"
+    # assessment; a per-vessel repeat-alert-count tracker producing a
+    # "repeat_offender" assessment once an mmsi crossed 3 lifetime alerts;
+    # and an ontology-graph network-effect propagator producing an
+    # "ontology_propagation" assessment for a connected country/chokepoint/
+    # facility node). All three computed real work every cycle but their
+    # output was never consumed by anything — correlate()'s only caller
+    # (main.py's _forge_detection_cycle) only ever reads "correlation"-type
+    # assessments from this method's return value, and no frontend anywhere
+    # references "escalation_sequence"/"repeat_offender"/"ontology_
+    # propagation" (confirmed by a full grep of src/). Real, useless: not a
+    # guess, not "this seems messy".
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

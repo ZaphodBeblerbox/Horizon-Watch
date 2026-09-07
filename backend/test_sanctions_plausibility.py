@@ -2,21 +2,24 @@
 Verification script for:
 
 1. `check_sanctions_for_vessel()` (backend/sanctions_loader.py) — the single
-   shared "is this vessel sanctioned" check now used by all 3 call sites
+   shared "is this vessel sanctioned" check used by both real call sites
    that can each independently produce a "Sanctioned Vessel"-type alert:
      - main.py's `_check_sanctions_on_update()`        (per AIS position update)
      - main.py's ship-to-ship-transfer detection block  (per STS candidate pair)
-     - detectors/correlation_engine.py's `_check_sanctions_hit()`
-       (DarkShipDetector.scan — currently dead code, but kept correct)
+   (A third former call site, detectors/correlation_engine.py's
+   `_check_sanctions_hit()`, was confirmed to have zero real callers in the
+   2026-09 alert/detector audit and was deleted outright, along with its
+   tests here — see that file's replacement comment.)
    Confirms the fuzzy-name gate, the flag-plausibility corroboration
    (`_sanctions_hit_is_plausible`, also now living in sanctions_loader.py),
-   and the shared cooldown, plus that each of the 3 real call sites actually
+   and the shared cooldown, plus that each of the 2 real call sites actually
    routes through it (no more copy-pasted per-site gates).
 
 2. The fabricated lat/lon default found during the audit
-   (`float(vessel.get("lat") or 0)` in `_check_sanctions_hit`, with no
-   follow-up guard) — a vessel with no reported position must come back as
-   lat=None/lon=None, not a fake (0, 0) "Null Island" position.
+   (`float(vessel.get("lat") or 0)`, with no follow-up guard, previously
+   found in both main.py's real call sites and the now-deleted
+   `_check_sanctions_hit()`) — a vessel with no reported position must come
+   back as lat=None/lon=None, not a fake (0, 0) "Null Island" position.
 
 3. The missing-speed/heading "fabricated default" fix — a vessel dict with
    speed=None / heading=None must not crash, and must not be silently
@@ -27,8 +30,8 @@ Verification script for:
 
 This is a plain unit test of Python functions/classes with synthetic dicts
 and monkeypatched module attributes — no FastAPI TestClient / DB fixtures
-needed for the spy-based parts (site 1 and site 3's DB write is monkeypatched
-out too, so this writes nothing to the real DB).
+needed for the spy-based parts (site 1's DB write is monkeypatched out too,
+so this writes nothing to the real DB).
 
 Usage:
     cd backend
@@ -197,64 +200,14 @@ check("(f) resetting cooldown lets the same mmsi produce a result again", third_
 _sl_module.sanctions_loader.check_vessel = _ORIGINAL_CHECK_VESSEL
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Part 1b: site 3 — detectors/correlation_engine.py's _check_sanctions_hit
-# delegates to the shared function, and no longer fabricates a (0, 0)
-# position for a vessel with no reported lat/lon.
-# ─────────────────────────────────────────────────────────────────────────
-print("\n-- site 3 (_check_sanctions_hit / DarkShipDetector) routes through the shared function --")
-from detectors.correlation_engine import _check_sanctions_hit
-
-_spy_calls = []
-
-
-def _spy_check_shared_confirmed(mmsi=None, name=None, vessel=None):
-    _spy_calls.append({"mmsi": mmsi, "name": name, "vessel": vessel})
-    return {"status": "confirmed", "hit": {"_match_type": "mmsi", "flag": "KP"}, "mmsi": mmsi, "vessel_name": name or mmsi}
-
-
-_sl_module.check_sanctions_for_vessel = _spy_check_shared_confirmed
-_spy_calls.clear()
-alert3 = _check_sanctions_hit("222000001", {"name": "MV DARKSHIP", "lat": 39.0, "lon": 125.7})
-check("site 3 calls the shared check_sanctions_for_vessel exactly once", len(_spy_calls) == 1, _spy_calls)
-if _spy_calls:
-    check("site 3 forwards mmsi correctly", _spy_calls[0]["mmsi"] == "222000001", _spy_calls[0])
-check("site 3 produces a confirmed/critical alert when the shared function says 'confirmed'",
-      alert3 is not None and alert3.get("severity") == "critical" and alert3.get("sanctions_hit_confirmed") is True,
-      alert3)
-
-# Position-less vessel -> lat/lon must be None, not a fabricated 0,0.
-_spy_calls.clear()
-alert3b = _check_sanctions_hit("222000002", {"name": "MV NO POSITION"})
-check("site 3: vessel with no lat/lon -> alert lat is None (not fabricated 0)", alert3b.get("lat") is None, alert3b)
-check("site 3: vessel with no lat/lon -> alert lon is None (not fabricated 0)", alert3b.get("lon") is None, alert3b)
-check("site 3: vessel with no lat/lon -> description does not claim a bogus '0.000, 0.000' position",
-      "0.000, 0.000" not in alert3b.get("description", ""), alert3b)
-
-
-def _spy_check_shared_possible(mmsi=None, name=None, vessel=None):
-    _spy_calls.append({"mmsi": mmsi, "name": name, "vessel": vessel})
-    return {"status": "possible", "hit": {"_match_type": "imo", "flag": "KP"}, "mmsi": mmsi, "vessel_name": name or mmsi}
-
-
-_sl_module.check_sanctions_for_vessel = _spy_check_shared_possible
-alert3c = _check_sanctions_hit("222000003", {"name": "MV MAYBE", "lat": 1.0, "lon": 2.0, "flag": "PA"})
-check("site 3 produces a downgraded/medium alert when the shared function says 'possible'",
-      alert3c is not None and alert3c.get("severity") == "medium" and alert3c.get("sanctions_hit_confirmed") is False,
-      alert3c)
-
-
-def _spy_check_shared_none(mmsi=None, name=None, vessel=None):
-    _spy_calls.append({"mmsi": mmsi, "name": name, "vessel": vessel})
-    return None
-
-
-_sl_module.check_sanctions_for_vessel = _spy_check_shared_none
-alert3d = _check_sanctions_hit("222000004", {"name": "MV CLEAN"})
-check("site 3 produces no alert when the shared function returns None", alert3d is None, alert3d)
-
-# Restore.
-_sl_module.check_sanctions_for_vessel = check_sanctions_for_vessel
+# 2026-09 alert/detector audit: removed "Part 1b: site 3" here — it tested
+# detectors/correlation_engine.py's `_check_sanctions_hit()`, which this
+# file's own docstring already honestly flagged as "DarkShipDetector.scan —
+# currently dead code, but kept correct". A repeat audit confirmed it still
+# had zero real callers anywhere in the codebase and deleted it outright
+# (see correlation_engine.py's replacement comment at the same location) —
+# so there is no longer anything at that site to test. Sites 1 and 2 below
+# are the real, live, wired sanctioned-vessel alert paths.
 
 
 # ─────────────────────────────────────────────────────────────────────────

@@ -103,28 +103,23 @@ RULES = [
             "min_speed_before_gap": 3.0,
         },
     },
-    {
-        "name":         "Military Squawk Code",
-        "trigger_type": "ADSB_SQUAWK_MILITARY",
-        "severity":     "medium",
-        "icon_type":    "UNKNOWN_CONTACT",
-        "params": {
-            "target":       "ALL",
-            "squawk_codes": ["7700", "7600", "7500", "7777", "6100", "6400"],
-        },
-    },
-    {
-        "name":         "Transponder Anomaly",
-        "trigger_type": "ADSB_TRANSPONDER_ANOMALY",
-        "severity":     "medium",
-        "icon_type":    "DARK_SHIP",
-        "params": {
-            "target":          "ALL",
-            "no_callsign":     True,
-            "no_squawk":       True,
-            "min_altitude_ft": 1000,
-        },
-    },
+    # 2026-09 alert/detector audit: removed the "Military Squawk Code"
+    # (ADSB_SQUAWK_MILITARY) and "Transponder Anomaly"
+    # (ADSB_TRANSPONDER_ANOMALY) seed entries that used to be here. Both had
+    # been seeded (rows id=6/7 in the real DB) and shown as `enabled=True` in
+    # the Rules UI for an unknown amount of time with ZERO backing detector
+    # code anywhere in the codebase — confirmed by grep: these two
+    # trigger_type strings appeared nowhere else in the entire backend.
+    # main.py's own WIRED_RULE_NAMES allowlist (added since these were
+    # seeded) already marks any row like this `wired: false, live: false` in
+    # the API response, but the dead rows themselves were never removed
+    # until now. Real original intent, preserved for a future proper
+    # rebuild: "Military Squawk Code" would flag real emergency/hijack/
+    # radio-failure ADS-B squawk codes (7700/7600/7500/etc.); "Transponder
+    # Anomaly" would flag aircraft broadcasting with no callsign/squawk
+    # above 1000ft. Both are genuinely useful detector ideas that were never
+    # implemented — do not silently re-add this seed data without also
+    # building the real detector logic behind it.
 ]
 
 
