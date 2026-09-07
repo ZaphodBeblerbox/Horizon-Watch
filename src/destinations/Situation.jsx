@@ -32,6 +32,7 @@ import { getActiveViews, subscribeActiveSession, saveCurrentAsView, applyView, d
 import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
+import SignalsExportPanel from "./SignalsExportPanel.jsx"
 
 const API = API_BASE
 const REFRESH_MS = 60000
@@ -212,6 +213,7 @@ export default function Situation({ onOpenDossier }) {
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
     const [contextOn, setContextOn] = useState({ risk: false, graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
+    const [exportOpen, setExportOpen] = useState(false)
 
     // V3 Phase 1, §5.1 — real live mirror of this filter state, published
     // on every change so a session-save action can read the current
@@ -654,6 +656,16 @@ export default function Situation({ onOpenDossier }) {
                     </div>
 
                     <div style={{ flex: 1 }} />
+                    <button
+                        onClick={() => setExportOpen(true)}
+                        title="Export signals for a time period (CSV/PDF)"
+                        style={{
+                            flex: "none", whiteSpace: "nowrap", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "none", border: "1px solid var(--line-soft)", borderRadius: 3, cursor: "pointer", color: "var(--txt-3)",
+                        }}
+                    >
+                        <svg className="icon sm"><use href="#i-export" /></svg>
+                    </button>
                     <div className="seg" style={{ flex: "none" }}>
                         {CAMERA_PRESETS.map((p) => (
                             <button
@@ -811,6 +823,15 @@ export default function Situation({ onOpenDossier }) {
                     </div>
                 )}
             </div>
+            )}
+
+            {exportOpen && (
+                <SignalsExportPanel
+                    defaultFrom={new Date(Date.now() - windowHours * 3600 * 1000)}
+                    defaultTo={new Date()}
+                    defaultMinSeverity={severityFloor === "low" ? "" : severityFloor}
+                    onClose={() => setExportOpen(false)}
+                />
             )}
         </div>
     )

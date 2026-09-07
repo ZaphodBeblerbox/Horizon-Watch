@@ -272,12 +272,14 @@ from routers import infrastructure as _infra_router
 from routers import tile_proxy as _tile_proxy_router
 from routers import analytics as _analytics_router
 from routers import forge as _forge_router
+from routers import signals_export as _signals_export_router
 app.include_router(_intel_router.router)
 app.include_router(_briefings_router.router)
 app.include_router(_infra_router.router)
 app.include_router(_tile_proxy_router.router)
 app.include_router(_analytics_router.router)
 app.include_router(_forge_router.router)
+app.include_router(_signals_export_router.router)
 
 # ── Optional fastapi-cache2 response caching ──────────────────────────────────
 try:
