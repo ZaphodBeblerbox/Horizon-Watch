@@ -27,8 +27,17 @@ Model-based lenses (skipped gracefully, not faked, if no client is configured):
 """
 from __future__ import annotations
 import json
+import os
 import re
 from typing import Optional
+
+# Real, explicit cost-control bypass (2026-09 spend audit) — "We will plug
+# that into Claude later instead of blasting our tokens on this." Distinct
+# from "no Claude client configured": that's an honest can't-run; this is a
+# deliberate won't-run-yet. Flipping this env var back on is the entire
+# re-enable path — no code change needed. Deterministic checks
+# (citation_exists, geo_sanity) never look at this flag; they always run.
+COUNCIL_CLAUDE_LENSES_ENABLED = os.getenv("COUNCIL_CLAUDE_LENSES_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 
 
 # ── Deterministic pass ──────────────────────────────────────────────────────
@@ -234,7 +243,11 @@ def _claims_context(claims: list, snapshot_content: dict) -> str:
 
 def run_citation_fidelity_lens(claims: list, snapshot_content: dict, client, usage_tracker_mod) -> dict:
     """Does each claim's own wording overstate what its cited data actually
-    supports? Skipped (not faked) if no Claude client is configured."""
+    supports? Skipped (not faked) if no Claude client is configured. Reports
+    a real, distinct "bypassed" status — not blended with the "skipped"
+    no-key case — when COUNCIL_CLAUDE_LENSES_ENABLED is deliberately off."""
+    if not COUNCIL_CLAUDE_LENSES_ENABLED:
+        return {"status": "bypassed", "reason": "COUNCIL_CLAUDE_LENSES_ENABLED is off — bypassed by configuration, not a missing API key", "findings": []}
     if client is None:
         return {"status": "skipped", "reason": "no Claude client configured", "findings": []}
     if not claims:
@@ -271,7 +284,12 @@ def run_citation_fidelity_lens(claims: list, snapshot_content: dict, client, usa
 
 def run_completeness_lens(report_title: str, key_judgments: str, claims: list, client, usage_tracker_mod) -> dict:
     """What caveats, missing context, or alternative reads should a reviewer
-    see before approving? Skipped (not faked) if no Claude client is configured."""
+    see before approving? Skipped (not faked) if no Claude client is
+    configured. Reports a real, distinct "bypassed" status — not blended
+    with the "skipped" no-key case — when COUNCIL_CLAUDE_LENSES_ENABLED is
+    deliberately off."""
+    if not COUNCIL_CLAUDE_LENSES_ENABLED:
+        return {"status": "bypassed", "reason": "COUNCIL_CLAUDE_LENSES_ENABLED is off — bypassed by configuration, not a missing API key", "findings": []}
     if client is None:
         return {"status": "skipped", "reason": "no Claude client configured", "findings": []}
     system = (

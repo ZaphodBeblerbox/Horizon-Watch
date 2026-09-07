@@ -73,6 +73,15 @@ def _generate_surge_explanation(keyword: str, evidence_titles: list[str]) -> dic
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
+        try:
+            import usage_tracker as _ut
+            _ut.record_call(
+                msg.usage.input_tokens, msg.usage.output_tokens,
+                call_type="surge_explanation", headline=keyword,
+                model="claude-haiku-4-5-20251001", item_id=keyword,
+            )
+        except Exception as _ut_e:
+            print(f"[surge] usage_tracker record error: {_ut_e}")
         raw = (msg.content[0].text or "").strip()
         # strip markdown code fences if present
         if raw.startswith("```"):

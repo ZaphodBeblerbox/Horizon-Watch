@@ -5501,18 +5501,36 @@ def _run_news_conflict_extraction_sync():
                 continue
 
             # ── LLM article analysis (before geocoding — gates on tier) ───────
-            _article_calls_today = usage_tracker.get_calls_today_by_type("article_intelligence")
-            try:
-                _clf = _classify_article_intel(
-                    title, summary, source_name, _ACTIVE_PROFILE,
-                    llm_calls_this_cycle, _article_calls_today,
-                )
-            except Exception as _clf_ex:
-                print(f"[article_intel] classification crashed for {url}: {_clf_ex} — skipping article")
-                with _DS_STATUS_LOCK:
-                    _DS_STATUS["embedding_relevance"]["failures"] = _DS_STATUS["embedding_relevance"].get("failures", 0) + 1
-                    _DS_STATUS["embedding_relevance"]["last_error"] = str(_clf_ex)
-                continue
+            # Real cross-restart dedup (2026-09 spend audit): _PROCESSED_URLS
+            # (the guard at the top of this loop) is pure in-memory and resets
+            # on every restart/redeploy, while a real article can sit in an RSS
+            # feed's "still fresh" window (_NEWS_WINDOW_HOURS, up to 7 days) for
+            # a long time. Without this, every restart re-ran Haiku on every
+            # article still present in the live feeds — a genuinely unmetered
+            # multiplier, structurally identical to fusion_engine's. usage_
+            # tracker's disk-persisted 24h dedup cache (already built for this
+            # exact purpose, Gate 3) survives restarts; check it BEFORE ever
+            # calling _classify_article_intel.
+            _dedup_key = f"article_intel:{url}"
+            _cached_intel = usage_tracker.check_dedup(_dedup_key)
+            if _cached_intel is not None:
+                _clf = {"intel": _cached_intel, "llm_called": False, "stage": "cached_dedup",
+                        "prescore": None, "embedding_score": 0.0, "embedding_verdict": "not_computed"}
+            else:
+                _article_calls_today = usage_tracker.get_calls_today_by_type("article_intelligence")
+                try:
+                    _clf = _classify_article_intel(
+                        title, summary, source_name, _ACTIVE_PROFILE,
+                        llm_calls_this_cycle, _article_calls_today,
+                    )
+                except Exception as _clf_ex:
+                    print(f"[article_intel] classification crashed for {url}: {_clf_ex} — skipping article")
+                    with _DS_STATUS_LOCK:
+                        _DS_STATUS["embedding_relevance"]["failures"] = _DS_STATUS["embedding_relevance"].get("failures", 0) + 1
+                        _DS_STATUS["embedding_relevance"]["last_error"] = str(_clf_ex)
+                    continue
+                if _clf["llm_called"]:
+                    usage_tracker.store_dedup(_dedup_key, _clf["intel"])
             with _DS_STATUS_LOCK:
                 _DS_STATUS["embedding_relevance"]["last_success_ts"] = datetime.now(timezone.utc).isoformat()
             _intel = _clf["intel"]
@@ -10087,6 +10105,14 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
                             ]}],
                         )
                         det["specific_type"] = _json.loads(resp.content[0].text).get("specific_type", det["class"])
+                        try:
+                            usage_tracker.record_call(
+                                resp.usage.input_tokens, resp.usage.output_tokens,
+                                call_type="overwatch_enhance", headline=det["class"],
+                                model="claude-sonnet-4-6", item_id=det["class"],
+                            )
+                        except Exception as _ut_e:
+                            print(f"[overwatch] usage_tracker record error: {_ut_e}")
                     except Exception as e_cls:
                         print(f"[overwatch] classify error: {e_cls}")
                 for det in detections[10:]:

@@ -25,6 +25,16 @@ FUSION_WINDOW_HOURS   = 2
 MIN_DOMAINS_FOR_FUSION = 2
 MIN_SIGNALS_FOR_FUSION = 2
 
+# Real cost-control fix (2026-09 spend audit): _generate_haiku_assessment()
+# was completely unmetered and unthrottled — _update_fusion() re-fired it on
+# every single contributing signal added to an already-existing cluster, and
+# a restart re-fired it again for every active cluster (see
+# _reload_fusions_from_db()'s docstring for the duplicate-row half of that
+# bug). A real narrative doesn't need sub-30-minute freshness; a genuinely
+# NEW domain joining the cluster is real news and still regenerates
+# immediately regardless of this timer.
+FUSION_NARRATIVE_MIN_REFRESH_MINUTES = 30
+
 DOMAIN_COLORS = {
     "AIS":      "#34AADC",
     "NEWS":     "#FF9500",
@@ -403,13 +413,16 @@ class FusionEngine:
         )
 
     def _generate_haiku_assessment(self, signals: list, domains: set, severity: str, location_name: str,
-                                    score: dict = None) -> tuple:
+                                    score: dict = None, item_id: str = "") -> tuple:
         """Returns (title, subtitle, narrative, key_signals, threat_indicators).
         `score` is the real, already-computed correlation_scoring.score_cluster()
         bundle for this cluster (may be None for callers not yet passing one,
         e.g. before Part 5 wiring) — when present, its real components and
         final strength are given to the model as decided facts, never asked
-        for."""
+        for. `item_id` (the real fusion_id) is threaded through to
+        usage_tracker.record_call so this call site is no longer invisible
+        to the real per-call spend audit (2026-09) — every real API call
+        made here, including the one-time regeneration retry, is logged."""
         score = score or {}
         shared_entity_names = score.get("shared_entities") or []
         try:
@@ -471,6 +484,15 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                     temperature=0,
                     messages=[{"role": "user", "content": prompt}],
                 )
+                try:
+                    import usage_tracker as _ut
+                    _ut.record_call(
+                        msg.usage.input_tokens, msg.usage.output_tokens,
+                        call_type="fusion_narrative", headline=location_name,
+                        model="claude-haiku-4-5-20251001", item_id=item_id,
+                    )
+                except Exception as _ut_e:
+                    print(f"[fusion] usage_tracker record error: {_ut_e}")
                 raw = msg.content[0].text.strip()
                 if raw.startswith("```"):
                     parts = raw.split("```")
@@ -533,15 +555,18 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
         confidence = (score.get("strength") or 0.0) / 100.0
 
         title, subtitle, narrative, key_signals, threat_indicators = \
-            self._generate_haiku_assessment(signals, domains, severity, location_name, score=score)
+            self._generate_haiku_assessment(signals, domains, severity, location_name, score=score, item_id=fusion_id)
+        narrative_generated_at = datetime.datetime.utcnow()
 
         try:
             with get_db() as db:
                 fe = FusionEvent(
                     fusion_id               = fusion_id,
+                    geo_key                 = geo_key,
                     title                   = title[:200],
                     subtitle                = subtitle[:300],
                     narrative               = narrative,
+                    narrative_generated_at  = narrative_generated_at,
                     severity                = severity,
                     confidence              = round(confidence, 3),
                     correlation_strength    = score.get("strength"),
@@ -643,6 +668,7 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
             "threat_indicators": threat_indicators,
             "status":        "active",
             "created_at":    datetime.datetime.utcnow().isoformat(),
+            "narrative_generated_at": narrative_generated_at,
         }
         self.active_fusions[fusion_id] = fusion_dict
 
@@ -655,11 +681,33 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
             suppressed_alert_ids = [s["alert_id"] for s in signals if s.get("alert_id")]
             self._fire_callback(fusion_dict, suppressed_alert_ids)
 
+    def _narrative_refresh_due(self, existing: dict) -> bool:
+        """Real gate on _generate_haiku_assessment (2026-09 spend audit) —
+        without this, _update_fusion re-narrated on EVERY contributing
+        signal added to an already-existing cluster, completely unmetered.
+        A cluster with no narrative yet always regenerates; otherwise only
+        after FUSION_NARRATIVE_MIN_REFRESH_MINUTES have actually elapsed
+        since the last real generation (new-domain arrivals are handled
+        separately by the caller, which always regenerates for those)."""
+        if not existing.get("narrative"):
+            return True
+        last = existing.get("narrative_generated_at")
+        if not last:
+            return True
+        if isinstance(last, str):
+            try:
+                last = datetime.datetime.fromisoformat(last)
+            except Exception:
+                return True
+        elapsed_min = (datetime.datetime.utcnow() - last).total_seconds() / 60.0
+        return elapsed_min >= FUSION_NARRATIVE_MIN_REFRESH_MINUTES
+
     def _update_fusion(self, existing: dict, signals: list, geo_key: str, domains: set):
         from database import get_db, FusionEvent
         fusion_id   = existing["fusion_id"]
         old_domains = set(existing.get("domains", []))
         all_domains = domains | old_domains
+        new_domains_joined = domains - old_domains
         severity    = self._composite_severity(signals, all_domains)
 
         location_name = existing.get("location_name") or self._best_location_name(signals)
@@ -672,8 +720,17 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
             score = {}
         confidence = (score.get("strength") or 0.0) / 100.0
 
-        title, subtitle, narrative, key_signals, threat_indicators = \
-            self._generate_haiku_assessment(signals, all_domains, severity, location_name, score=score)
+        should_regenerate = bool(new_domains_joined) or self._narrative_refresh_due(existing)
+        if should_regenerate:
+            title, subtitle, narrative, key_signals, threat_indicators = \
+                self._generate_haiku_assessment(signals, all_domains, severity, location_name, score=score, item_id=fusion_id)
+            narrative_generated_at = datetime.datetime.utcnow()
+        else:
+            title, subtitle, narrative = existing["title"], existing["subtitle"], existing["narrative"]
+            key_signals, threat_indicators = existing.get("key_signals", []), existing.get("threat_indicators", [])
+            narrative_generated_at = existing.get("narrative_generated_at")
+            print(f"[fusion] SKIP narrative regen for {fusion_id} — no new domain, "
+                  f"refreshed within the last {FUSION_NARRATIVE_MIN_REFRESH_MINUTES}m")
 
         try:
             with get_db() as db:
@@ -682,6 +739,8 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                     fe.title              = title[:200]
                     fe.subtitle           = subtitle[:300]
                     fe.narrative          = narrative
+                    if should_regenerate:
+                        fe.narrative_generated_at = narrative_generated_at
                     fe.severity           = severity
                     fe.confidence         = round(confidence, 3)
                     fe.correlation_strength   = score.get("strength")
@@ -715,6 +774,7 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
             "signal_count":  len(signals),
             "key_signals":   key_signals,
             "threat_indicators": threat_indicators,
+            "narrative_generated_at": narrative_generated_at,
         })
         for s in signals:
             self.signal_to_fusion[s["signal_id"]] = fusion_id
@@ -824,6 +884,80 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
         except Exception as e:
             print(f"[fusion] Signal reload error: {e}")
 
+    def _reload_fusions_from_db(self):
+        """Rebuild the in-memory active_fusions registry from real, active,
+        non-expired FusionEvent rows on startup.
+
+        Real bug fix (2026-09 spend audit): this previously didn't exist at
+        all — active_fusions started empty on every restart, so
+        _find_existing_fusion() always returned None for a geo_key that
+        already had a real FusionEvent row, routing _evaluate_fusion() back
+        into _create_fusion() instead of _update_fusion(). That meant every
+        restart minted a genuinely NEW duplicate FusionEvent row (new
+        fusion_id, duplicate DB row) AND a fresh, completely unmetered Haiku
+        call for every cluster that was already fused — not just a wasted
+        re-narration, a real data-integrity bug too. Must run BEFORE
+        _reload_signals_from_db(), whose own re-evaluation pass depends on
+        active_fusions already reflecting reality so it correctly falls
+        into the (now-throttled) _update_fusion() path instead."""
+        try:
+            from database import SessionLocal, FusionEvent
+            _db = SessionLocal()
+            try:
+                now = datetime.datetime.utcnow()
+                rows = (
+                    _db.query(FusionEvent)
+                    .filter(FusionEvent.status == "active")
+                    .filter(FusionEvent.expires_at > now)
+                    .filter(FusionEvent.geo_key.isnot(None))
+                    .all()
+                )
+                for row in rows:
+                    try:
+                        domains = json.loads(row.domains or "[]")
+                    except Exception:
+                        domains = []
+                    try:
+                        key_signals = json.loads(row.key_signals or "[]")
+                    except Exception:
+                        key_signals = []
+                    try:
+                        threat_indicators = json.loads(row.threat_indicators or "[]")
+                    except Exception:
+                        threat_indicators = []
+                    try:
+                        correlation_components = json.loads(row.correlation_components) if row.correlation_components else {}
+                    except Exception:
+                        correlation_components = {}
+                    self.active_fusions[row.fusion_id] = {
+                        "fusion_id":     row.fusion_id,
+                        "geo_key":       row.geo_key,
+                        "title":         row.title,
+                        "subtitle":      row.subtitle,
+                        "narrative":     row.narrative,
+                        "severity":      row.severity,
+                        "confidence":    row.confidence,
+                        "correlation_strength":   row.correlation_strength,
+                        "correlation_components": correlation_components,
+                        "domains":       domains,
+                        "domain_count":  row.domain_count,
+                        "location_name": row.location_name,
+                        "lat":           row.lat,
+                        "lon":           row.lon,
+                        "signal_count":  row.signal_count,
+                        "key_signals":   key_signals,
+                        "threat_indicators": threat_indicators,
+                        "status":        row.status,
+                        "created_at":    row.created_at.isoformat() if row.created_at else None,
+                        "narrative_generated_at": row.narrative_generated_at,
+                    }
+                print(f"[fusion] Reloaded {len(rows)} active fusion events from DB "
+                      f"({sum(1 for r in rows if r.geo_key)} with a real geo_key)")
+            finally:
+                _db.close()
+        except Exception as e:
+            print(f"[fusion] Fusion reload error: {e}")
+
     def _suppress_assessments(self, db, assessment_ids: list):
         if not assessment_ids:
             return
@@ -839,4 +973,9 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
 
 # Module-level singleton
 fusion_engine = FusionEngine()
+# Order matters: active_fusions must be reloaded BEFORE active_signals, since
+# _reload_signals_from_db()'s own re-evaluation pass depends on
+# _find_existing_fusion() already seeing real existing fusions (see
+# _reload_fusions_from_db()'s docstring for the bug this fixes).
+fusion_engine._reload_fusions_from_db()
 fusion_engine._reload_signals_from_db()

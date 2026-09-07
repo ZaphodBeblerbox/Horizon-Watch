@@ -697,6 +697,30 @@ class FusionEvent(Base):
     correlation_strength     = Column(Float, nullable=True)          # 0-100, correlation_scoring.combined_strength()
     correlation_components   = Column(Text, nullable=True)           # JSON: {geo_temporal, graph, domain_diversity, statistical, weights_used, graph_available, ...}
 
+    # Real per-call-site cost audit (2026-09): when the Haiku narrative was
+    # last actually (re)generated — distinct from updated_at, which also
+    # changes on every mechanical field update (signal_count, expiry,
+    # correlation strength). fusion_engine.py's _update_fusion() checks this
+    # before spending a real Claude call, so a busy cluster receiving many
+    # contributing signals in a short window doesn't re-narrate on every one
+    # of them, and a process restart's startup re-evaluation pass doesn't
+    # either — see fusion_engine.py's FUSION_NARRATIVE_MIN_REFRESH_MINUTES.
+    narrative_generated_at  = Column(DateTime, nullable=True)
+
+    # Real bug fix (2026-09 spend audit): the in-memory active_fusions
+    # registry (fusion_engine.py) was NEVER reloaded from this table on
+    # startup — only the raw contributing signals were. That meant every
+    # restart found active_fusions empty, so _find_existing_fusion() always
+    # returned None for a geo_key that already had a real FusionEvent row,
+    # routing back into _create_fusion() instead of _update_fusion() —
+    # minting a genuinely NEW duplicate FusionEvent (and a fresh unmetered
+    # Haiku call) for every already-fused cluster on every single restart.
+    # geo_key wasn't previously stored on this row at all, so there was no
+    # way to even reconstruct active_fusions correctly after a restart.
+    # Persisting it here is what lets _reload_fusions_from_db() rebuild the
+    # in-memory registry keyed exactly the way live signals are.
+    geo_key                 = Column(String, nullable=True, index=True)
+
     # Geography
     location_name           = Column(String, nullable=True)
     location_country        = Column(String, nullable=True)
@@ -1483,6 +1507,12 @@ def migrate_db():
         if 'correlation_components' not in fe_existing:
             cur.execute('ALTER TABLE fusion_events ADD COLUMN correlation_components TEXT')
             print('[db-migrate] fusion_events: added column correlation_components')
+        if 'narrative_generated_at' not in fe_existing:
+            cur.execute('ALTER TABLE fusion_events ADD COLUMN narrative_generated_at DATETIME')
+            print('[db-migrate] fusion_events: added column narrative_generated_at')
+        if 'geo_key' not in fe_existing:
+            cur.execute('ALTER TABLE fusion_events ADD COLUMN geo_key VARCHAR')
+            print('[db-migrate] fusion_events: added column geo_key')
 
     conn.commit()
     conn.close()
