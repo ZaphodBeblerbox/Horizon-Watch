@@ -115,14 +115,26 @@ def _save(data: dict[str, Any]) -> None:
 
 # ── Token recording ───────────────────────────────────────────────────────────
 
+# Real per-call-site audit log (2026-09 spend audit, Part 5) — every call
+# recorded here regardless of cost, distinct from `expensive_calls` below
+# (which is deliberately cost-sorted and pruned to the top 20 this week, so
+# it can't answer "what actually happened in the last hour"). Bounded to the
+# most recent CALL_LOG_MAX entries so this file can't grow unbounded; this
+# is what makes a future spend spike traceable in minutes — filter by
+# call_type/item_id/model instead of re-running this whole audit.
+CALL_LOG_MAX = 1000
+
+
 def record_call(
     input_tokens:  int,
     output_tokens: int,
-    call_type:     str = "analysis",   # "briefing" | "analysis" | "route" | "background"
+    call_type:     str = "analysis",   # "briefing" | "analysis" | "route" | "background" | ... (also doubles as "job" for the Part 5 log)
     headline:      str = "",
     model:         str | None = None,  # e.g. "claude-haiku-4-5-20251001" — drives correct per-model pricing
+    item_id:       str = "",           # the real item this call acted on (fusion_id, article url, zone_id, ...)
 ) -> None:
-    """Accumulate token counts and cost after a successful Claude call."""
+    """Accumulate token counts and cost after a successful Claude call, and
+    append one real structured entry to the per-call audit log."""
     price_in, price_out = _price_for(model, call_type)
     cost  = (input_tokens * price_in) + (output_tokens * price_out)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -164,7 +176,34 @@ def record_call(
         expensive.sort(key=lambda e: e["cost"], reverse=True)
         data["expensive_calls"] = expensive[:20]
 
+        # Real per-call audit log (Part 5) — every call, in order, capped.
+        call_log = data.setdefault("call_log", [])
+        call_log.append({
+            "ts": now,
+            "model": model or "unknown",
+            "call_type": call_type,
+            "item_id": item_id[:200] if item_id else "",
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost": round(cost, 6),
+        })
+        data["call_log"] = call_log[-CALL_LOG_MAX:]
+
         _save(data)
+
+
+def get_call_log(limit: int = 100, call_type: str | None = None, item_id: str | None = None) -> list[dict]:
+    """Return the most recent per-call audit entries, most recent first,
+    optionally filtered — the real trace for "what actually called Claude
+    and when" without re-running a spend audit from scratch."""
+    with _lock:
+        data = _load()
+    entries = list(reversed(data.get("call_log", [])))
+    if call_type:
+        entries = [e for e in entries if e.get("call_type") == call_type]
+    if item_id:
+        entries = [e for e in entries if e.get("item_id") == item_id]
+    return entries[:limit]
 
 
 def get_stats(budget_usd: float) -> dict[str, Any]:

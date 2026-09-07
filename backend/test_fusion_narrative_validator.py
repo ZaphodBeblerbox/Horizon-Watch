@@ -37,6 +37,7 @@ real_location = "Piraeus Port Approach"
 def _mock_msg(text):
     m = MagicMock()
     m.content = [MagicMock(text=text)]
+    m.usage = MagicMock(input_tokens=100, output_tokens=50)  # real numeric usage — the 2026-09 spend-audit round's usage_tracker.record_call() needs real ints, not an auto-generated MagicMock
     return m
 
 

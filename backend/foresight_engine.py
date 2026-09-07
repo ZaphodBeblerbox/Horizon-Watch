@@ -279,6 +279,14 @@ async def run_foresight_analysis(
             messages=[{"role": "user", "content": prompt}],
         )
         _analyses_this_hour += 1
+        try:
+            import usage_tracker as _ut
+            _ut.record_call(
+                response.usage.input_tokens, response.usage.output_tokens,
+                call_type="foresight", headline=zone_name, model=model, item_id=zone_id,
+            )
+        except Exception as _ut_e:
+            print(f"[foresight] usage_tracker record error: {_ut_e}")
 
         raw = response.content[0].text
         match = re.search(r'\{.*\}', raw, re.DOTALL)
