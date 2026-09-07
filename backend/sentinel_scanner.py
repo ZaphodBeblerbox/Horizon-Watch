@@ -131,10 +131,13 @@ class SentinelScanner:
                         scan_id=scan_id,
                         zone_id=zone_id,
                         # This scanner only ever runs the optical Sentinel-2 /
-                        # YOLO-OBB pipeline (sentinel_ml.py) — real Sentinel-1
-                        # SAR detections come from the separate sar_detector.py
-                        # pipeline and are never written through this path, so
-                        # "OPTICAL" is always correct here, not a guess.
+                        # YOLO-OBB pipeline (sentinel_ml.py) — a separate real
+                        # Sentinel-1 SAR ship-detection pipeline (sar_detector.py)
+                        # used to exist but was confirmed unwired to any live
+                        # caller and removed (2026-10 alert/detector audit
+                        # follow-up); nothing writes SAR detections through
+                        # this path, so "OPTICAL" is always correct here, not
+                        # a guess.
                         instrument=det.get("instrument", "OPTICAL"),
                         object_type=det["object_type"],
                         confidence=det["confidence"],
