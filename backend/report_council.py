@@ -243,13 +243,15 @@ def _claims_context(claims: list, snapshot_content: dict) -> str:
 
 def run_citation_fidelity_lens(claims: list, snapshot_content: dict, client, usage_tracker_mod) -> dict:
     """Does each claim's own wording overstate what its cited data actually
-    supports? Skipped (not faked) if no Claude client is configured. Reports
-    a real, distinct "bypassed" status — not blended with the "skipped"
-    no-key case — when COUNCIL_CLAUDE_LENSES_ENABLED is deliberately off."""
-    if not COUNCIL_CLAUDE_LENSES_ENABLED:
-        return {"status": "bypassed", "reason": "COUNCIL_CLAUDE_LENSES_ENABLED is off — bypassed by configuration, not a missing API key", "findings": []}
+    supports? Skipped (not faked) if no Claude client is configured — that
+    check runs FIRST and keeps reporting the honest "skipped" state even
+    when the bypass flag is also off, so the two reasons are never blended:
+    "skipped" means it genuinely couldn't run (no key); "bypassed" means it
+    could have, but was deliberately told not to."""
     if client is None:
         return {"status": "skipped", "reason": "no Claude client configured", "findings": []}
+    if not COUNCIL_CLAUDE_LENSES_ENABLED:
+        return {"status": "bypassed", "reason": "COUNCIL_CLAUDE_LENSES_ENABLED is off — bypassed by configuration, not a missing API key", "findings": []}
     if not claims:
         return {"status": "ok", "findings": []}
     system = (
@@ -285,13 +287,15 @@ def run_citation_fidelity_lens(claims: list, snapshot_content: dict, client, usa
 def run_completeness_lens(report_title: str, key_judgments: str, claims: list, client, usage_tracker_mod) -> dict:
     """What caveats, missing context, or alternative reads should a reviewer
     see before approving? Skipped (not faked) if no Claude client is
-    configured. Reports a real, distinct "bypassed" status — not blended
-    with the "skipped" no-key case — when COUNCIL_CLAUDE_LENSES_ENABLED is
-    deliberately off."""
-    if not COUNCIL_CLAUDE_LENSES_ENABLED:
-        return {"status": "bypassed", "reason": "COUNCIL_CLAUDE_LENSES_ENABLED is off — bypassed by configuration, not a missing API key", "findings": []}
+    configured — that check runs FIRST and keeps reporting the honest
+    "skipped" state even when the bypass flag is also off, so the two
+    reasons are never blended: "skipped" means it genuinely couldn't run
+    (no key); "bypassed" means it could have, but was deliberately told
+    not to."""
     if client is None:
         return {"status": "skipped", "reason": "no Claude client configured", "findings": []}
+    if not COUNCIL_CLAUDE_LENSES_ENABLED:
+        return {"status": "bypassed", "reason": "COUNCIL_CLAUDE_LENSES_ENABLED is off — bypassed by configuration, not a missing API key", "findings": []}
     system = (
         "You are an experienced intelligence reviewer. You are NOT fact-checking whether claims "
         "are individually true — a separate pass does that. Your job is completeness: what would "

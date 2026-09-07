@@ -8302,10 +8302,12 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     Routes through the single shared `check_sanctions_for_vessel()`
     (backend/sanctions_loader.py) — the fuzzy-name gate, hard-match
     flag-plausibility corroboration, and cooldown are all owned there so
-    this call site, the ship-to-ship-transfer block below, and
-    detectors/correlation_engine.py's DarkShipDetector all agree on what
+    this call site and the ship-to-ship-transfer block below agree on what
     counts as a trustworthy sanctions hit instead of each reimplementing it
-    slightly differently.
+    slightly differently. (A third former call site,
+    detectors/correlation_engine.py's `_check_sanctions_hit()`, was
+    confirmed dead — zero real callers — and deleted in the 2026-09
+    alert/detector audit.)
     """
     mmsi = str(vessel.get("mmsi", ""))
     name = vessel.get("name", "")

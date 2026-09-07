@@ -146,7 +146,13 @@ with TestClient(main.app) as client:
 
     class _FakeMsg:
         def __init__(self, obj):
-            self.content = [type("C", (), {"text": json.dumps(obj)})]
+            # report_council.py's real _extract_text() only ever reads a
+            # content block whose .type == "text" (it has to skip a real
+            # ThinkingBlock that precedes the text block on claude-sonnet-5
+            # extended-thinking responses) — a fake block missing .type
+            # silently produces an empty string, not a parse failure that
+            # points at the real cause. Match the real SDK response shape.
+            self.content = [type("C", (), {"type": "text", "text": json.dumps(obj)})]
             self.usage = _FakeUsage()
 
     class _FakeMessages:
@@ -164,6 +170,14 @@ with TestClient(main.app) as client:
     claims_from_report = report["claims"]
     real_client = main.client
     main.client = _FakeClient()
+    # 2026-09 Claude-spend audit: the Council's Claude lenses are
+    # bypassed by default (COUNCIL_CLAUDE_LENSES_ENABLED=false) as a real
+    # cost-control measure — this block is specifically testing that the
+    # lenses produce real "ok" results when they DO run (stubbed client),
+    # so it must explicitly opt back in for its own duration.
+    import report_council as _rc_mod
+    real_lenses_enabled = _rc_mod.COUNCIL_CLAUDE_LENSES_ENABLED
+    _rc_mod.COUNCIL_CLAUDE_LENSES_ENABLED = True
     try:
         r = client.post(f"/api/reports/{report_id}/submit-for-review", headers=HEADERS)
         check("submit-for-review returns 200", r.status_code == 200, r.text)
@@ -195,6 +209,7 @@ with TestClient(main.app) as client:
         check("completeness lens ran (stubbed client) with ok status", findings["completeness"].get("status") == "ok", findings["completeness"])
     finally:
         main.client = real_client
+        _rc_mod.COUNCIL_CLAUDE_LENSES_ENABLED = real_lenses_enabled
 
     # ── 8. Editing after submission is rejected ─────────────────────────────────
     r = client.patch(f"/api/reports/{report_id}", json={"title": "changed"}, headers=HEADERS)

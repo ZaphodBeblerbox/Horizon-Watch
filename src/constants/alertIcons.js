@@ -1,15 +1,7 @@
-// ── News Pattern Assessment Icons ─────────────────────────────────────────────
-export const NEWS_PATTERN_ICONS = {
-  RISING_TENSIONS:       { label: "Rising Tensions",        color: "#FF6B35", description: "Multiple conflict articles detected in same location" },
-  PORT_DISRUPTION:       { label: "Port Disruption",        color: "#FF9500", description: "Maritime disruption signals at port" },
-  INFRASTRUCTURE_THREAT: { label: "Infrastructure Threat",  color: "#FF2D55", description: "Articles signalling infrastructure attack or damage" },
-  ESCALATION_SPIKE:      { label: "Escalation Spike",       color: "#9B0000", description: "Sudden surge in conflict article volume" },
-  SANCTIONS_PRESSURE:    { label: "Sanctions Pressure",     color: "#5856D6", description: "Multiple sanctions-related articles targeting same country" },
-  MILITARY_MOBILISATION: { label: "Military Mobilisation",  color: "#FF3B30", description: "Troop movement or military buildup signals" },
-  HUMANITARIAN_CRISIS:   { label: "Humanitarian Crisis",    color: "#FF6B35", description: "Civilian casualty or displacement signals" },
-  CEASEFIRE_BREAKDOWN:   { label: "Ceasefire Breakdown",    color: "#9B0000", description: "Peace process failure or ceasefire violation signals" },
-  ENERGY_SUPPLY_RISK:    { label: "Energy Supply Risk",     color: "#FFCC00", description: "Threat to energy supply chain detected" },
-}
+// 2026-09 alert/detector audit: removed the NEWS_PATTERN_ICONS dict that
+// used to sit here — confirmed unused anywhere in the frontend (a grep
+// found only its own definition), and an exact duplicate of the first 9
+// entries already in ALERT_ICONS below, which IS the real, consumed table.
 
 // Note: this table used to also carry a `icon:` field holding a Lucide
 // icon-component name string (e.g. "TrendingUp"). lucide-react was never
@@ -37,16 +29,16 @@ export const ALERT_ICONS = {
   CHOKEPOINT_LOITER:  { label: "Chokepoint Loiterer",     color: "#FF6B35", description: "Vessel loitering at a strategic chokepoint" },
   ESCALATED_DUAL:     { label: "Dual Rule Escalation",    color: "#FF2D55", description: "Two simultaneous anomaly rules fired on same vessel" },
   ESCALATED_TRIPLE:   { label: "Triple Rule Escalation",  color: "#9B0000", description: "Three or more anomaly rules fired on same vessel" },
-  BORDER_CROSSING:    { label: "Border Crossing",         color: "#5AC8FA", description: "Vessel crossing a maritime border zone" },
   SANCTIONED_VESSEL:  { label: "Sanctioned Vessel",       color: "#FF3B30", description: "Vessel on sanctions or watch list" },
-  FORMATION_SAILING:  { label: "Formation Sailing",       color: "#FFCC00", description: "Multiple vessels moving in coordinated formation" },
-  REVERSE_COURSE:     { label: "Reverse Course",          color: "#FF9500", description: "Vessel reversed heading unexpectedly" },
-  PORT_SKIP:          { label: "Port Skip",               color: "#5856D6", description: "Vessel bypassed declared destination port" },
   IDENTITY_CHANGE:    { label: "Identity Change",         color: "#FF2D55", description: "Vessel MMSI or name changed while at sea" },
   POSITION_JUMP:      { label: "Position Jump",           color: "#FF3B30", description: "Vessel position jumped a physically impossible distance between reports" },
-  CONVOY:             { label: "Convoy Movement",         color: "#34AADC", description: "Multiple vessels moving in convoy pattern" },
   UNKNOWN_CONTACT:    { label: "Unknown Contact",         color: "#8E8E93", description: "Unidentified vessel contact requiring investigation" },
   FUSION_EVENT:       { label: "Intelligence Fusion Event", color: "#BF5AF2", description: "Multi-domain correlated intelligence event" },
+  // 2026-09 alert/detector audit: removed BORDER_CROSSING, FORMATION_SAILING,
+  // REVERSE_COURSE, PORT_SKIP, and CONVOY — confirmed via a full backend grep
+  // that no detector/rule/alert-generation code anywhere in the codebase
+  // ever produces any of these icon_type values. Dead UI referencing
+  // nothing, not a currently-working feature.
 }
 
 export const FORGE_EXPLANATIONS = {
@@ -70,14 +62,9 @@ export const FORGE_EXPLANATIONS = {
   CHOKEPOINT_LOITER:  "A vessel is loitering at or near a strategic maritime chokepoint without apparent operational purpose. Loitering at chokepoints can indicate surveillance, pre-positioning, or an undeclared rendezvous.",
   ESCALATED_DUAL:     "Two separate Forge anomaly rules have fired simultaneously on this vessel. Concurrent rule matches indicate elevated threat probability — both signals should be assessed together.",
   ESCALATED_TRIPLE:   "Three or more Forge anomaly rules have fired simultaneously on this vessel. This is the highest-priority alert tier — the vessel's behaviour matches multiple independent threat indicators at once.",
-  BORDER_CROSSING:    "A vessel has crossed a monitored maritime boundary. Tracked in areas of active territorial dispute, sanctions enforcement zones, or restricted waters.",
   SANCTIONED_VESSEL:  "This vessel appears on a sanctions list, watch list, or is associated with a sanctioned entity. Any transit or activity by sanctioned vessels may indicate sanctions evasion or illicit trade.",
-  FORMATION_SAILING:  "Multiple vessels are moving in a coordinated formation. Formation sailing in strategic areas may indicate a naval exercise, convoy protection, or a coordinated undeclared operation.",
-  REVERSE_COURSE:     "A vessel made an unexpected course reversal while underway. Sudden reversals can indicate surveillance detection, threat avoidance, or an undisclosed last-minute operational change.",
-  PORT_SKIP:          "A vessel bypassed its declared destination port. Port skipping is a known indicator of illicit cargo transfer, sanctions evasion, or undeclared operational changes mid-voyage.",
   IDENTITY_CHANGE:    "This vessel's MMSI number or registered name was changed while at sea — a practice associated with sanctions evasion, flag-of-convenience abuse, and illicit maritime operations. Note: with a single AIS receiver and no multi-source correlation, this same signal cannot be distinguished from two different vessels colliding on a reused or misconfigured MMSI.",
   POSITION_JUMP:      "This vessel's reported position moved a physically impossible distance between two consecutive detection cycles — an implied speed far beyond any real vessel. Consistent with AIS spoofing, GPS manipulation, MMSI reuse by a different vessel, or a data error; this signal alone cannot distinguish between those causes.",
-  CONVOY:             "Multiple vessels are moving together in a convoy pattern. Convoys in sensitive areas may indicate military logistics, VIP escort, or coordinated supply operations requiring monitoring.",
   UNKNOWN_CONTACT:    "An unidentified vessel has been detected in a monitored area with insufficient data to classify. Unknown contacts in sensitive or restricted zones require investigation.",
   FUSION_EVENT:       "Multiple independent intelligence signals from different domains — AIS, news, satellite imagery, or ADSB — have been correlated into a single event by the Forge fusion engine. Fusion events represent higher-confidence threat indicators than any single-source alert.",
 }
@@ -88,13 +75,17 @@ export const NEWS_PATTERN_ICON_KEYS = new Set([
   "CEASEFIRE_BREAKDOWN", "ENERGY_SUPPLY_RISK",
 ])
 
+// 2026-09 alert/detector audit: removed the "stationary_near_infrastructure"
+// and "transponder_gap" entries here — both were trigger_type strings from
+// AISAnomalyDetector.check_vessel(), which had zero real callers anywhere
+// (confirmed dead in main.py's own comments) and has now been deleted
+// outright from ais_detector.py. Neither trigger_type can ever be produced
+// again.
 export const DEFAULT_ICON_FOR_TRIGGER = {
-  stationary_near_infrastructure: "LOITERING_INFRA",
   AIS_LOITERING_NEAR_CABLE:       "LOITERING_CABLE",
   AIS_LOITERING_NEAR_INFRA:       "LOITERING_INFRA",
   AIS_DARK_SHIP:                  "DARK_SHIP",
   chokepoint_loitering:           "CHOKEPOINT_LOITER",
-  transponder_gap:                "DARK_SHIP",
   ESCALATED_DUAL:                 "ESCALATED_DUAL",
   ESCALATED_TRIPLE:               "ESCALATED_TRIPLE",
   AIS_POSITION_JUMP:              "POSITION_JUMP",

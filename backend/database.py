@@ -1514,6 +1514,27 @@ def migrate_db():
             cur.execute('ALTER TABLE fusion_events ADD COLUMN geo_key VARCHAR')
             print('[db-migrate] fusion_events: added column geo_key')
 
+    # 2026-09 alert/detector audit: a real clean delete (not just "stop
+    # seeding") of the two orphaned RuleConfig rows confirmed to have zero
+    # backing detector code anywhere in the codebase — ADSB_SQUAWK_MILITARY
+    # ("Military Squawk Code") and ADSB_TRANSPONDER_ANOMALY ("Transponder
+    # Anomaly"). Both were `enabled=True` in the live DB but main.py's own
+    # WIRED_RULE_NAMES allowlist already marked them wired=false/live=false
+    # — they could never actually fire. seed_rules.py's seed definitions for
+    # both were removed in the same pass; this one-time cleanup removes the
+    # already-seeded rows themselves so a fresh deploy doesn't carry them
+    # forward as dead configuration. Confirmed (2026-09) no EscalationChain
+    # or RuleConnection row references either rule_id, so this is a safe,
+    # standalone delete.
+    if 'rule_configs' in tables:
+        cur.execute(
+            "DELETE FROM rule_configs WHERE rule_name IN "
+            "('ADSB_SQUAWK_MILITARY', 'ADSB_TRANSPONDER_ANOMALY')"
+        )
+        if cur.rowcount:
+            print(f'[db-migrate] rule_configs: removed {cur.rowcount} orphaned row(s) '
+                  f'(ADSB_SQUAWK_MILITARY / ADSB_TRANSPONDER_ANOMALY — no backing detector code)')
+
     conn.commit()
     conn.close()
     # Create new tables via SQLAlchemy (idempotent)
