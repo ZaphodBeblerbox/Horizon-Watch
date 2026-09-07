@@ -59,6 +59,13 @@ from exposure_index import _SEV_RANK, _TIER_SEV, classify_severity_deterministic
 _ALERT_SOURCE_TO_DOMAIN = {"ais": "maritime", "adsb": "air", "news": "news",
                            "surge": "news", "fusion": "zones", "manual": "zones"}
 
+# A per-table safety ceiling only, not the real "how many rows does the user
+# get" limit (that's the `limit` param, ranked and truncated AFTER this
+# fetch). Must stay well above the largest realistic `limit` request so a
+# genuinely large window's true top-N is ranked over the real full matching
+# set rather than an arbitrarily truncated one.
+_PER_TABLE_FETCH_CAP = 50_000
+
 
 def _sev_rank(sev: str) -> int:
     return _SEV_RANK.get((sev or "").lower(), 2)
@@ -185,7 +192,7 @@ def query_top_signals(
             q = q.filter(Alert.country_code == country)
         if region:
             q = q.filter(Alert.region == region)
-        for a in q.limit(5000).all():
+        for a in q.limit(_PER_TABLE_FETCH_CAP).all():
             r = _row_from_alert(a)
             if domain and r["domain"] != domain:
                 continue
@@ -197,7 +204,7 @@ def query_top_signals(
             q = q.filter(NewsArticle.country_code == country)
         if region:
             q = q.filter(NewsArticle.region == region)
-        for n in q.limit(5000).all():
+        for n in q.limit(_PER_TABLE_FETCH_CAP).all():
             rows.append(_row_from_article(n))
 
     if domain in (None, "zones"):
@@ -206,7 +213,7 @@ def query_top_signals(
             q = q.filter(FusionEvent.location_country == country)
         if region:
             q = q.filter(FusionEvent.region_id == region)
-        for f in q.limit(5000).all():
+        for f in q.limit(_PER_TABLE_FETCH_CAP).all():
             rows.append(_row_from_fusion(f))
 
     if domain in (None, "news"):
@@ -215,7 +222,7 @@ def query_top_signals(
             q = q.filter(SurgeEvent.location_country == country)
         if region:
             q = q.filter(SurgeEvent.region_id == region)
-        for s in q.limit(5000).all():
+        for s in q.limit(_PER_TABLE_FETCH_CAP).all():
             rows.append(_row_from_surge(s))
 
     if min_severity:

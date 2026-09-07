@@ -35,7 +35,7 @@ def signals_export_json(
     region: str | None = Query(None),
     country: str | None = Query(None),
     min_severity: str | None = Query(None),
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(3000, ge=1, le=20000),
 ):
     """Real JSON preview — same real query the CSV/PDF exports use, for the
     UI's live count/preview before the user actually downloads a file."""
@@ -67,7 +67,7 @@ def signals_export_csv(
     region: str | None = Query(None),
     country: str | None = Query(None),
     min_severity: str | None = Query(None),
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(3000, ge=1, le=20000),
 ):
     dt_from, dt_to = _parse_window(date_from, date_to)
     with get_db() as db:
@@ -91,7 +91,7 @@ def signals_export_pdf(
     region: str | None = Query(None),
     country: str | None = Query(None),
     min_severity: str | None = Query(None),
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(3000, ge=1, le=20000),
 ):
     dt_from, dt_to = _parse_window(date_from, date_to)
     with get_db() as db:
