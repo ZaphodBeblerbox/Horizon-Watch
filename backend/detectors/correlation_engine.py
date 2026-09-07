@@ -698,196 +698,26 @@ class DarkShipDetector:
         }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CORRELATION ENGINE (unchanged public interface)
-# ══════════════════════════════════════════════════════════════════════════════
-
-class CorrelationEngine:
-
-    def __init__(self):
-        self.confidence_weights = {
-            "single":  0.30,
-            "dual":    0.60,
-            "triple":  0.85,
-            "quad":    0.95,
-        }
-
-    # ── Public entry point ────────────────────────────────────────────────────
-
-    def correlate(self, ais_alerts, adsb_alerts, news_events, satellite_changes, ontology):
-        assessments = []
-
-        all_signals = []
-        for a in ais_alerts:
-            all_signals.append({**a, "domain": "maritime", "source": "AIS"})
-        for a in adsb_alerts:
-            all_signals.append({**a, "domain": "aviation", "source": "ADSB"})
-        for e in news_events:
-            lat = e.get("lat")
-            lng = e.get("lng") or e.get("lon")
-            if lat and lng:
-                all_signals.append({
-                    "lat":       lat,
-                    "lng":       lng,
-                    "message":   e.get("title") or e.get("headline") or "",
-                    "severity":  e.get("severity", "medium"),
-                    "domain":    "news",
-                    "source":    "NEWS",
-                    "timestamp": e.get("published") or e.get("published_at") or "",
-                })
-        for s in satellite_changes:
-            all_signals.append({**s, "domain": "satellite", "source": "SAT"})
-
-        clusters = self._cluster_by_proximity(all_signals, radius_km=100)
-        for cluster in clusters:
-            if len(cluster) < 2:
-                continue
-            domains = set(s["source"] for s in cluster)
-            if len(domains) >= 2:
-                assessment = self._assess_cluster(cluster, domains, ontology)
-                if assessment:
-                    assessments.append(assessment)
-
-        # 2026-09 alert/detector audit: this used to also call
-        # _detect_temporal_sequences()/_check_entity_reputation()/
-        # _propagate_escalation() here and extend `assessments` with their
-        # output — all three were confirmed dead: real computation every
-        # cycle, but their "escalation_sequence"/"repeat_offender"/
-        # "ontology_propagation" assessment types were never consumed by
-        # anything (only this function's own "correlation"-type assessments
-        # ever got used, by the caller's HIGH/CRITICAL -> ontology auto-add
-        # check) and had zero frontend rendering anywhere. Deleted along
-        # with their now-unused methods below.
-
-        return assessments
-
-    # ── Clustering ────────────────────────────────────────────────────────────
-
-    def _cluster_by_proximity(self, signals, radius_km=100):
-        used = set()
-        clusters = []
-        for i, s1 in enumerate(signals):
-            if i in used or not s1.get("lat"):
-                continue
-            cluster = [s1]
-            used.add(i)
-            for j, s2 in enumerate(signals):
-                if j in used or not s2.get("lat"):
-                    continue
-                if self._haversine(s1["lat"], s1["lng"], s2["lat"], s2["lng"]) < radius_km:
-                    cluster.append(s2)
-                    used.add(j)
-            clusters.append(cluster)
-        return clusters
-
-    # ── Cluster assessment ────────────────────────────────────────────────────
-
-    def _assess_cluster(self, cluster, domains, ontology):
-        n = len(domains)
-        if n >= 4:   confidence = self.confidence_weights["quad"]
-        elif n >= 3: confidence = self.confidence_weights["triple"]
-        else:        confidence = self.confidence_weights["dual"]
-
-        severities = [s.get("severity", "low") for s in cluster]
-        avg_sev = sum(SEV_SCORES.get(sv, 1) for sv in severities) / len(severities)
-
-        if "AIS" in domains and "ADSB" in domains:   avg_sev += 1.0
-        if "NEWS" in domains and avg_sev >= 2:        avg_sev += 0.5
-
-        if avg_sev >= 3.5:   final_severity = "CRITICAL"
-        elif avg_sev >= 2.5: final_severity = "HIGH"
-        elif avg_sev >= 1.5: final_severity = "ELEVATED"
-        else:                final_severity = "LOW"
-
-        lats = [s["lat"] for s in cluster if s.get("lat")]
-        lngs = [s["lng"] for s in cluster if s.get("lng")]
-        center_lat = sum(lats) / len(lats) if lats else None
-        center_lng = sum(lngs) / len(lngs) if lngs else None
-
-        related = self._find_nearby_entities(center_lat, center_lng, ontology, radius_km=150)
-
-        parts = []
-        for domain in sorted(domains):
-            dsigs = [s for s in cluster if s["source"] == domain]
-            if domain == "AIS":    parts.append(f"Maritime: {len(dsigs)} vessel anomalies")
-            elif domain == "ADSB": parts.append(f"Aviation: {len(dsigs)} aircraft activities")
-            elif domain == "NEWS": parts.append(f"OSINT: {len(dsigs)} news events")
-            elif domain == "SAT":  parts.append(f"Satellite: {len(dsigs)} imagery changes")
-
-        return {
-            "type":             "correlation",
-            "severity":         final_severity,
-            "confidence":       round(confidence, 2),
-            "domains":          list(domains),
-            "signal_count":     len(cluster),
-            "lat":              center_lat,
-            "lng":              center_lng,
-            "narrative":        " | ".join(parts),
-            "related_entities": related,
-            "signals":          [{"source": s["source"], "message": s.get("message", "")[:100]} for s in cluster[:10]],
-            "timestamp":        datetime.now(timezone.utc).isoformat(),
-            "recommendation":   self._generate_recommendation(final_severity, domains, related),
-        }
-
-    # 2026-09 alert/detector audit: deleted _detect_temporal_sequences(),
-    # _check_entity_reputation(), and _propagate_escalation() here (real
-    # original intent, preserved for the rebuild phase: a per-grid-cell
-    # rising-severity trend detector producing an "escalation_sequence"
-    # assessment; a per-vessel repeat-alert-count tracker producing a
-    # "repeat_offender" assessment once an mmsi crossed 3 lifetime alerts;
-    # and an ontology-graph network-effect propagator producing an
-    # "ontology_propagation" assessment for a connected country/chokepoint/
-    # facility node). All three computed real work every cycle but their
-    # output was never consumed by anything — correlate()'s only caller
-    # (main.py's _forge_detection_cycle) only ever reads "correlation"-type
-    # assessments from this method's return value, and no frontend anywhere
-    # references "escalation_sequence"/"repeat_offender"/"ontology_
-    # propagation" (confirmed by a full grep of src/). Real, useless: not a
-    # guess, not "this seems messy".
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _find_nearby_entities(self, lat, lng, ontology, radius_km=150):
-        if not ontology or lat is None or lng is None:
-            return []
-        nearby = []
-        for node in ontology.get("nodes", []):
-            if node.get("lat") and node.get("lng"):
-                dist = self._haversine(lat, lng, node["lat"], node["lng"])
-                if dist < radius_km:
-                    nearby.append({
-                        "id":          node["id"],
-                        "label":       node["label"],
-                        "type":        node["type"],
-                        "distance_km": round(dist, 1),
-                    })
-        return sorted(nearby, key=lambda x: x["distance_km"])[:10]
-
-    def _generate_recommendation(self, severity, domains, entities):
-        if severity == "CRITICAL":
-            return (
-                "IMMEDIATE ACTION: Multi-source intelligence confirms critical threat. "
-                "Activate response protocols and escalate to command."
-            )
-        if severity == "HIGH":
-            recs = ["Increase surveillance frequency for affected area."]
-            if "AIS" in domains:  recs.append("Task maritime patrol asset for close monitoring.")
-            if "ADSB" in domains: recs.append("Alert air defense coordination centre.")
-            if "NEWS" in domains: recs.append("Monitor open-source media for escalation indicators.")
-            return " ".join(recs)
-        if severity == "ELEVATED":
-            return "Continue monitoring. Multiple signals suggest developing situation. Re-assess in 6 hours."
-        return "Log and monitor. No immediate action required."
-
-    @staticmethod
-    def _haversine(lat1, lon1, lat2, lon2):
-        R = 6371
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-        a = (math.sin(dlat / 2) ** 2
-             + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
-             * math.sin(dlon / 2) ** 2)
-        return R * 2 * math.asin(math.sqrt(min(a, 1.0)))
+# 2026-10 fold: CorrelationEngine (correlate()/_assess_cluster()/
+# _cluster_by_proximity()/_find_nearby_entities()/_generate_recommendation())
+# deleted outright — confirmed zero remaining callers (grep across the
+# whole backend). It was a cruder proximity-clustering duplicate of
+# fusion_engine.py's real correlation-scoring pipeline (correlation_
+# scoring.py's real per-component scoring, real Haiku narration, real
+# per-(mmsi,cable,rule) state), flagged as such by the 2026-09 alert/
+# detector audit and folded per the explicit follow-up decision: ontology
+# auto-add for HIGH/CRITICAL cross-domain correlations now reads directly
+# off a real FusionEvent's own severity/lat/lon/narrative/confidence/
+# domains, fired from main.py's _fusion_fire_callback the moment fusion_
+# engine.py creates or updates one — see that function and main.py's
+# _find_nearby_entities() (the same nearby-ontology-node lookup this class
+# used to own, now a standalone function since it has no class to live on).
+# Real original intent, preserved for reference: cluster raw same-cycle
+# alerts within 100km via _cluster_by_proximity(), score confidence by
+# domain count (single/dual/triple/quad), derive a real severity
+# (LOW/ELEVATED/HIGH/CRITICAL) from a domain-diversity-boosted average of
+# per-signal severities, and generate a canned recommendation string per
+# severity tier.
 
 
 # ── Module-level haversine (metres) used by STS/Dark detectors ───────────────

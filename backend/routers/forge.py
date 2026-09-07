@@ -23,7 +23,7 @@ via `_m.<name>` instead:
     detection-cycle code, not endpoints) write to the ontology graph through
     these too.
   - _forge_alerts, _correlation_assessments, _last_cycle_stats, _HAS_DETECTORS,
-    _threat_engine, _correlation_engine, _cycle_history — live, in-memory
+    _threat_engine, _fusion_engine, _cycle_history — live, in-memory
     detection-engine state mutated by the AIS/ADSB/news ingestion loops and
     the detection cycle itself, not just read by Forge endpoints.
   - _GLOBAL_ADSB_CACHE, _AIS_VESSELS, _AIS_BBOXES, _AIS_LOCK, _SCAN_FEEDS,
@@ -1433,20 +1433,18 @@ def forge_brain_inspect():
                 "status":  "active" if "obb" in fname else "standby",
             })
 
-    # Correlation engine params. CorrelationEngine.__init__ only ever defines
-    # entity_history and confidence_weights — there is no time_window / distance_km /
-    # min_confidence / min_signals attribute anywhere on the class, so those were
-    # previously fabricated fallback numbers (and didn't even match the real hardcoded
-    # radius_km=100 used by CorrelationEngine.correlate() -> _cluster_by_proximity).
-    # Report only what's real: the actual hardcoded clustering radius, the actual
-    # domain-diversity requirement to form an assessment (correlate(): len(domains) >= 2),
-    # and the real confidence_weights attribute.
+    # Correlation params. 2026-09 audit folded CorrelationEngine's cruder
+    # proximity-clustering scoring into fusion_engine.py's real correlation-
+    # scoring pipeline — a HIGH/CRITICAL FusionEvent now drives the ontology
+    # auto-add directly (see main.py's _fusion_fire_callback), so these are
+    # the real params of the engine actually doing that work now.
     corr_params = {}
-    if _m._correlation_engine:
+    if _m._fusion_engine:
         corr_params = {
-            "distance_km":                  100,   # CorrelationEngine.correlate() -> _cluster_by_proximity(radius_km=100), hardcoded
-            "min_domains_for_correlation":  2,      # CorrelationEngine.correlate(): requires len(domains) >= 2
-            "confidence_weights":           _m._correlation_engine.confidence_weights,
+            "fusion_window_hours":            _m._fusion_engine.fusion_window_hours,
+            "min_domains_for_fusion":         _m._fusion_engine.min_domains,
+            "min_signals_for_fusion":         _m._fusion_engine.min_signals,
+            "narrative_min_refresh_minutes":  _m._fusion_module.FUSION_NARRATIVE_MIN_REFRESH_MINUTES,
         }
 
     return {

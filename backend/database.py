@@ -508,8 +508,12 @@ class SentinelDetection(Base):
     # via main.py's shared yolov8n-obb.onnx/DOTA inference — confirmed real as
     # of the 2026-08 audit fix; it previously ran a plain axis-aligned COCO
     # detector despite this comment, which has since been corrected in code
-    # rather than just here), "SAR" for Sentinel-1 detections from
-    # sar_detector.py. Defaults to "OPTICAL" so existing rows/writers (which
+    # rather than just here). "SAR" was reserved for Sentinel-1 detections
+    # from a separate real ship-detection pipeline (sar_detector.py) — that
+    # pipeline was confirmed unwired to any live caller and removed (2026-10
+    # alert/detector audit follow-up); "SAR" is currently unused but the
+    # value is kept valid in case a real SAR detector is built properly in
+    # the future. Defaults to "OPTICAL" so existing rows/writers (which
     # predate this column) remain valid without a data migration.
     instrument               = Column(String, nullable=False, default="OPTICAL")
     object_type              = Column(String, nullable=False)

@@ -111,16 +111,13 @@ if "copernicus" in by_id:
           {"token_valid", "expires_at", "sar_last_success", "sar_failures", "sar_last_error"}.issubset(c),
           c)
 
-check("'sar_detection' entry present (pre-provisioned)", "sar_detection" in by_id, list(by_id))
-if "sar_detection" in by_id:
-    sd = by_id["sar_detection"]
-    check("sar_detection has required fields",
-          {"last_fetch", "status", "failures", "last_success", "model_loaded",
-           "detections_last_run", "message"}.issubset(sd), sd)
-    check("sar_detection initial status is 'pending' (no caller wired in yet)",
-          sd["status"] == "pending", sd["status"])
-    check("sar_detection message explains it's pre-provisioned",
-          "pre-provisioned" in (sd.get("message") or ""), sd.get("message"))
+# 2026-10 alert/detector audit follow-up: the 'sar_detection' entry (a
+# pre-provisioned placeholder for sar_detector.py, which was never wired
+# into any live caller) was removed along with sar_detector.py itself —
+# confirmed real code, confirmed zero production callers. This is now a
+# real regression guard that the dead placeholder doesn't come back.
+check("'sar_detection' entry no longer exists (sar_detector.py was fully removed, not just left pre-provisioned)",
+      "sar_detection" not in by_id, list(by_id))
 
 check("'embedding_relevance' entry present", "embedding_relevance" in by_id, list(by_id))
 if "embedding_relevance" in by_id:

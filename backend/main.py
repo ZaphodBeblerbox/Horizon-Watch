@@ -296,7 +296,6 @@ try:
     from detectors.adsb_detector import ADSBPatternDetector as _ADSBPatternDetector
     from detectors.threat_engine import ThreatEngine as _ThreatEngine
     from detectors.correlation_engine import (
-        CorrelationEngine as _CorrelationEngine,
         EscalationEngine as _EscalationEngine,
         ADSBLoiterDetector as _ADSBLoiterDetector,
         ChokepointActivityDetector as _ChokepointActivityDetector,
@@ -312,10 +311,12 @@ except ImportError as _det_err:
     _HAS_DETECTORS = False
 
 try:
+    import fusion_engine as _fusion_module
     from fusion_engine import fusion_engine as _fusion_engine
     _HAS_FUSION = True
 except ImportError as _fe_err:
     print(f"[startup] fusion engine not available: {_fe_err}")
+    _fusion_module = None
     _fusion_engine = None
     _HAS_FUSION = False
 
@@ -653,14 +654,6 @@ _DS_STATUS: dict = {
     # OpenSanctions maritime vessel list (sanctions_loader.py load_or_refresh()).
     "sanctions": {"last_loaded": None, "last_attempt": None, "failures": 0,
                   "vessel_count": 0, "error": None},
-    # AllenAI SAR ship detector (sar_detector.py) — pre-provisioned prerequisite
-    # only. Confirmed (2026-08 audit) that nothing outside test_sar_detector.py
-    # calls this module yet — no live loop/endpoint wires it in. This key exists
-    # so /api/health/detailed already has a place to report through once a real
-    # caller is added; it is never updated by this pass.
-    "sar_detection": {"last_run": None, "last_success": None, "failures": 0,
-                       "last_error": None, "model_loaded": False,
-                       "detections_last_run": 0},
     # News funnel's near-dup / embedding-relevance stage (relevance_embedding.py,
     # called from the per-article loop in _run_news_conflict_extraction_sync).
     "embedding_relevance": {"failures": 0, "last_error": None, "last_success_ts": None},
@@ -1227,19 +1220,6 @@ def get_health_detailed():
             "last_attempt": ds["sanctions"].get("last_attempt"),
             "vessel_count": ds["sanctions"].get("vessel_count", 0),
             "message":   ds["sanctions"].get("error"),
-        },
-        {
-            "id":        "sar_detection",
-            "name":      "AllenAI SAR Ship Detector",
-            "type":      "satellite",
-            "last_fetch": ds["sar_detection"].get("last_run"),
-            "status":    _status(ds["sar_detection"].get("failures", 0), ds["sar_detection"].get("last_run")),
-            "failures":  ds["sar_detection"].get("failures", 0),
-            "last_success": ds["sar_detection"].get("last_success"),
-            "model_loaded": ds["sar_detection"].get("model_loaded", False),
-            "detections_last_run": ds["sar_detection"].get("detections_last_run", 0),
-            "message":   None if ds["sar_detection"].get("last_run") else
-                         "Not yet wired into a live caller — pre-provisioned status only",
         },
         {
             "id":        "embedding_relevance",
@@ -7998,14 +7978,13 @@ if _HAS_DETECTORS:
     _ais_detector        = _AISAnomalyDetector()
     _adsb_detector       = _ADSBPatternDetector()
     _threat_engine       = _ThreatEngine()
-    _correlation_engine  = _CorrelationEngine()
     _escalation_engine   = _EscalationEngine()
     _adsb_loiter_detector = _ADSBLoiterDetector()
     _chokepoint_detector  = _ChokepointActivityDetector()
     _ais_spoofing_detector = _AISSpoofingDetector()
     _dark_ship_detector    = _DarkShipDetector()
 else:
-    _ais_detector = _adsb_detector = _threat_engine = _correlation_engine = None
+    _ais_detector = _adsb_detector = _threat_engine = None
     _escalation_engine = _adsb_loiter_detector = None
     _chokepoint_detector = None
     _ais_spoofing_detector = None
@@ -8409,6 +8388,14 @@ async def _run_sts_detection() -> None:
     """
     Spatial O(n²) scan across all slow-moving vessels.
     n ≤ 2000, so worst case ~2M comparisons. Runs every 5 minutes.
+
+    Real, fully-wired, working detector — but its scheduler loop
+    (_sts_detection_loop(), started near startup_event()'s other
+    asyncio.create_task() calls) is currently commented out:
+    "# COST REDUCTION: paused for pilot phase". Re-confirmed as a
+    deliberate, current decision in the 2026-10 alert/detector audit
+    follow-up, not a bug or something forgotten — this function needs no
+    rebuild if a future pass decides to re-enable it.
     """
     global _sts_candidates
 
@@ -10887,6 +10874,73 @@ def _reset_recent_llm_extractions(days: int = 7) -> int:
     return reset_count
 
 
+def _fusion_fire_callback(fusion_dict: dict, suppressed_alert_ids: list):
+    """Append fusion event as a forge alert and suppress individual markers.
+
+    Pulled out to module level (was previously a closure defined inline
+    inside startup_event()) so it can be exercised directly by tests
+    without triggering the real startup_event() — which makes real
+    outbound network calls (e.g. sanctions_loader's OpenSanctions download)
+    a test must not depend on. Same real behavior, just testable — see
+    test_correlation_ontology_fold.py, which registers this exact function
+    via _fusion_engine.set_fire_callback() itself rather than needing the
+    full app startup sequence."""
+    _forge_alert = {
+        "id":           fusion_dict["fusion_id"],
+        "fusion_id":    fusion_dict["fusion_id"],
+        "rule_name":    "INTELLIGENCE_FUSION",
+        "source":       "FUSION",
+        "severity":     fusion_dict.get("severity", "high"),
+        "icon_type":    "FUSION_EVENT",
+        "lat":          fusion_dict.get("lat"),
+        "lng":          fusion_dict.get("lon"),
+        "title":        fusion_dict.get("title"),
+        "message":      fusion_dict.get("narrative", ""),
+        "subtitle":     fusion_dict.get("subtitle"),
+        "domains":      fusion_dict.get("domains", []),
+        "signal_count": fusion_dict.get("signal_count", 0),
+        "confidence":   fusion_dict.get("confidence", 0.5),
+        "key_signals":  fusion_dict.get("key_signals", []),
+        "threat_indicators": fusion_dict.get("threat_indicators", []),
+        "timestamp":    datetime.utcnow().isoformat(),
+        "provenance": {"source_type": "FUSION", "detection_rule": "INTELLIGENCE_FUSION"},
+    }
+    global _forge_alerts
+    _forge_alerts.append(_forge_alert)
+    # Remove suppressed individual alert markers
+    _forge_alerts = [a for a in _forge_alerts if a.get("id") not in suppressed_alert_ids]
+
+    # 2026-09 fold: ontology auto-add for HIGH/CRITICAL cross-domain
+    # correlations now reads fusion_engine.py's real, already-computed
+    # scoring — replaces the deleted CorrelationEngine.correlate()'s
+    # cruder proximity-clustering pass, which fed the exact same
+    # _auto_add_correlation_to_ontology() with a naive re-clustering
+    # of raw alerts instead of the real fusion pipeline (correlation_
+    # scoring.py's real component scoring, real Haiku narration, real
+    # per-(mmsi,cable,rule) state). Fusion severity is lowercase
+    # ("info"/"medium"/"high"/"critical") — "high"/"critical" is the
+    # equivalent threshold to the old path's "HIGH"/"CRITICAL".
+    if fusion_dict.get("severity") in ("high", "critical"):
+        global _correlation_assessments
+        ontology = _forge_ontology_load()
+        assessment = {
+            "type":             "correlation",
+            "severity":         fusion_dict["severity"].upper(),
+            "confidence":       fusion_dict.get("confidence", 0.5),
+            "domains":          fusion_dict.get("domains", []),
+            "signal_count":     fusion_dict.get("signal_count", 0),
+            "lat":              fusion_dict.get("lat"),
+            "lng":              fusion_dict.get("lon"),
+            "narrative":        fusion_dict.get("narrative") or fusion_dict.get("title", ""),
+            "related_entities": _find_nearby_entities(fusion_dict.get("lat"), fusion_dict.get("lon"), ontology, radius_km=150),
+            "recommendation":   "; ".join(fusion_dict.get("threat_indicators", [])),
+            "timestamp":        datetime.utcnow().isoformat(),
+            "fusion_id":        fusion_dict.get("fusion_id"),
+        }
+        _auto_add_correlation_to_ontology(assessment)
+        _correlation_assessments.append(assessment)
+
+
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
@@ -10988,35 +11042,10 @@ async def startup_event():
         _news_pattern_engine.set_fire_callback(_news_assessment_fire)
         print("[startup] NewsPatternEngine fire callback registered")
 
-    # Wire FusionEngine fire callback
+    # Wire FusionEngine fire callback (module-level _fusion_fire_callback,
+    # defined above startup_event() so tests can register/exercise it
+    # directly without needing this whole real startup sequence to run)
     if _fusion_engine:
-        def _fusion_fire_callback(fusion_dict: dict, suppressed_alert_ids: list):
-            """Append fusion event as a forge alert and suppress individual markers."""
-            _forge_alert = {
-                "id":           fusion_dict["fusion_id"],
-                "fusion_id":    fusion_dict["fusion_id"],
-                "rule_name":    "INTELLIGENCE_FUSION",
-                "source":       "FUSION",
-                "severity":     fusion_dict.get("severity", "high"),
-                "icon_type":    "FUSION_EVENT",
-                "lat":          fusion_dict.get("lat"),
-                "lng":          fusion_dict.get("lon"),
-                "title":        fusion_dict.get("title"),
-                "message":      fusion_dict.get("narrative", ""),
-                "subtitle":     fusion_dict.get("subtitle"),
-                "domains":      fusion_dict.get("domains", []),
-                "signal_count": fusion_dict.get("signal_count", 0),
-                "confidence":   fusion_dict.get("confidence", 0.5),
-                "key_signals":  fusion_dict.get("key_signals", []),
-                "threat_indicators": fusion_dict.get("threat_indicators", []),
-                "timestamp":    datetime.utcnow().isoformat(),
-                "provenance": {"source_type": "FUSION", "detection_rule": "INTELLIGENCE_FUSION"},
-            }
-            global _forge_alerts
-            _forge_alerts.append(_forge_alert)
-            # Remove suppressed individual alert markers
-            _forge_alerts = [a for a in _forge_alerts if a.get("id") not in suppressed_alert_ids]
-
         _fusion_engine.set_fire_callback(_fusion_fire_callback)
         print("[startup] FusionEngine fire callback registered")
         # Reload persisted signals NOW that the callback is wired,
@@ -11052,7 +11081,15 @@ async def startup_event():
         asyncio.create_task(_youtube_reels_loop())
     asyncio.create_task(_shorts_refresh_loop())
     asyncio.create_task(_forge_detection_cycle())
-    # COST REDUCTION: paused for pilot phase
+    # COST REDUCTION: paused for pilot phase.
+    # Re-confirmed as of the 2026-10 alert/detector audit follow-up — this
+    # is a real, working, fully-wired ship-to-ship-transfer detector
+    # (_run_sts_detection(): real O(n^2) proximity/speed/duration/offshore/
+    # cooldown gating, real write_alert()/ontology-linking on a real hit),
+    # not a bug and not forgotten. It stays paused deliberately for cost
+    # reasons during the pilot phase; no code changes were made here. If a
+    # future pass decides to re-enable it, this is the only line to
+    # uncomment — the detector itself needs no rebuild.
     # asyncio.create_task(_sts_detection_loop())
     asyncio.create_task(_sentinel_zone_scheduler_loop())
     asyncio.create_task(_auto_ingest_task())
@@ -12723,9 +12760,11 @@ async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
     (SIGMA0_ELLIPSOID) radiometric calibration and orthorectification done
     server-side by Sentinel Hub (same pattern the task brief describes for
     the existing Sentinel-2 path: no local SNAP-style calibration needed for
-    *this* visualisation path — the separate real ship-detection pipeline in
-    sar_detector.py works from raw downloaded SAFE products instead, since
-    that model expects uncalibrated amplitude).
+    *this* visualisation path). A separate real ship-detection pipeline
+    working from raw, uncalibrated-amplitude SAFE products (sar_detector.py)
+    used to exist alongside this visualisation path — confirmed unwired to
+    any live caller and removed in the 2026-10 alert/detector audit
+    follow-up; this function's own real SAR-imagery fetch is unaffected.
     Returns {"image_bytes", "width", "height", "instrument": "SAR"} on success,
     or {"error": "..."} on any failure. Never raises."""
     west  = bounds.get("west");  east  = bounds.get("east")
@@ -18131,8 +18170,40 @@ def _auto_add_ontology_edge(alert: dict):
         pass
 
 
+def _find_nearby_entities(lat, lng, ontology, radius_km=150):
+    """Real ontology nodes within radius_km of (lat, lng), nearest first.
+
+    Extracted from the now-deleted CorrelationEngine._find_nearby_entities()
+    (2026-09 fold of CorrelationEngine's cluster scoring into fusion_engine.py's
+    real scoring) — same logic, made a standalone function since it no
+    longer has a class to live on. Still the real, live JSON-file ontology
+    store (_forge_ontology_load()), not the separate DB-backed OntologyEntity/
+    OntologyLink tables entity_linker.py uses — _auto_add_correlation_to_
+    ontology() below has always written to this same JSON store, so this
+    stays consistent with what it actually reads back."""
+    if not ontology or lat is None or lng is None:
+        return []
+    nearby = []
+    for node in ontology.get("nodes", []):
+        if node.get("lat") and node.get("lng"):
+            dist = _haversine_km(lat, lng, node["lat"], node["lng"])
+            if dist < radius_km:
+                nearby.append({
+                    "id":          node["id"],
+                    "label":       node["label"],
+                    "type":        node["type"],
+                    "distance_km": round(dist, 1),
+                })
+    return sorted(nearby, key=lambda x: x["distance_km"])[:10]
+
+
 def _auto_add_correlation_to_ontology(assessment: dict):
-    """Add a cross-domain correlation as a node in the ontology, linking related entities."""
+    """Add a cross-domain correlation as a node in the ontology, linking related entities.
+
+    2026-09: now fed by fusion_engine.py's real, already-computed scoring
+    (see main.py's _fusion_fire_callback) instead of the deleted
+    CorrelationEngine's cruder proximity-clustering — same function, same
+    JSON-ontology-store shape, just a real upstream source now."""
     try:
         if not assessment.get("related_entities"):
             return
@@ -18561,6 +18632,14 @@ async def _forge_detection_cycle():
     while True:
         try:
             cycle_start = datetime.now(timezone.utc)
+            # Real per-cycle correlation count via a before/after delta —
+            # correlations are now fed asynchronously by fusion_engine.py's
+            # fire callback (main.py's _fusion_fire_callback) as signals
+            # stream in, not gathered in one batch here anymore, so "how many
+            # new correlations this cycle" has to be measured as a delta on
+            # the same real _correlation_assessments list rather than
+            # returned directly by a single call.
+            _correlations_before_cycle = len(_correlation_assessments)
 
             # Bootstrap default rules on first run; backfill missing sources on subsequent runs
             rules = _forge_load("rules.json")
@@ -18864,40 +18943,17 @@ async def _forge_detection_cycle():
             except Exception as _ne:
                 print(f"[forge-brain] news error: {_ne}")
 
-            # Stage 4 — Cross-domain correlation engine
-            new_assessments: list = []
-            # (new_dark_alerts is populated earlier, at Stage 1f — not reset
-            # here; it already flows into new_ais_alerts, which correlate()
-            # reads via ais_alerts=new_ais_alerts below.)
-            try:
-                ontology = _forge_ontology_load()
-                recent_events: list = []
-                try:
-                    recent_events = [
-                        {"lat": e.get("lat"), "lng": e.get("lng") or e.get("lon"),
-                         "title": e.get("headline") or e.get("title") or "",
-                         "severity": e.get("severity", "medium"),
-                         "published": e.get("published_at") or e.get("published") or ""}
-                        for e in es.get_active_events()[:50]
-                        if e.get("lat") and (e.get("lng") or e.get("lon"))
-                    ]
-                except Exception:
-                    pass
-
-                new_assessments = _correlation_engine.correlate(
-                    ais_alerts=new_ais_alerts,
-                    adsb_alerts=new_adsb_alerts,
-                    news_events=recent_events,
-                    satellite_changes=[],
-                    ontology=ontology,
-                )
-
-                for a in new_assessments:
-                    if a.get("severity") in ("HIGH", "CRITICAL") and a.get("type") == "correlation":
-                        _auto_add_correlation_to_ontology(a)
-
-            except Exception as _ce:
-                print(f"[forge-brain] correlation error: {_ce}")
+            # 2026-09: the old "Stage 4 — Cross-domain correlation engine"
+            # block used to live here — it re-clustered raw alerts via
+            # CorrelationEngine.correlate() (a cruder proximity pass,
+            # duplicating fusion_engine.py's real scoring) and fed HIGH/
+            # CRITICAL results into _auto_add_correlation_to_ontology().
+            # That's now done directly off fusion_engine.py's own real
+            # scoring, in main.py's _fusion_fire_callback, fired the moment
+            # a real FusionEvent is created/updated rather than re-derived
+            # from scratch every 5-minute cycle. CorrelationEngine.
+            # _assess_cluster()/correlate() were deleted outright (confirmed
+            # zero remaining callers).
 
             # Auto-wire cable alerts into ontology
             for alert in new_ais_alerts:
@@ -18976,7 +19032,12 @@ async def _forge_detection_cycle():
 
             all_new = new_ais_alerts + new_adsb_alerts + new_news_alerts
             _forge_alerts.extend(all_new)
-            _correlation_assessments.extend(new_assessments)
+            # 2026-09: _correlation_assessments is no longer batch-extended
+            # here — it's appended to directly, per real HIGH/CRITICAL
+            # FusionEvent, by main.py's _fusion_fire_callback as signals
+            # stream in (see that function). Still real, still the same
+            # list routers/forge.py's brain-inspect endpoint reads for the
+            # live "Correlations" stat.
             # Persist new alerts to DB (write_alert() itself now handles
             # OntologyLinks — see its docstring)
             for _aw_alert in all_new:
@@ -19028,11 +19089,17 @@ async def _forge_detection_cycle():
                 "dark_alerts":       len(new_dark_alerts),
                 "adsb_alerts":       len(new_adsb_alerts),
                 "news_alerts":       len(new_news_alerts),
-                "new_correlations":  len(new_assessments),
                 "alerts_24h":        len(_forge_alerts),
-                "correlations_24h":  len(_correlation_assessments),
                 "weights":           _threat_engine.weights if _threat_engine else {},
             }
+            # Real per-cycle correlation count: fusion-driven correlations
+            # arrive asynchronously via _fusion_fire_callback as signals are
+            # processed through this very cycle (write_alert() below feeds
+            # each new alert into the fusion engine), so "new this cycle" is
+            # measured as a real before/after delta on _correlation_
+            # assessments rather than a batch return value (see
+            # _correlations_before_cycle at the top of this loop iteration).
+            new_correlations_this_cycle = max(0, len(_correlation_assessments) - _correlations_before_cycle)
             _cycle_history.append({
                 "ts":          _last_cycle_stats["last_cycle"],
                 "vessels":     len(normalized_snap),
@@ -19042,7 +19109,7 @@ async def _forge_detection_cycle():
                 "ais_alerts":  len(new_ais_alerts),
                 "adsb_alerts": len(new_adsb_alerts),
                 "news_alerts": len(new_news_alerts),
-                "correlations": len(new_assessments),
+                "correlations": new_correlations_this_cycle,
                 "alerts_24h":  len(_forge_alerts),
             })
             while len(_cycle_history) > 50:
@@ -19051,7 +19118,7 @@ async def _forge_detection_cycle():
                 f"[forge-brain] {cycle_s:.1f}s — "
                 f"{len(normalized_snap)}v/{len(_GLOBAL_ADSB_CACHE)}ac/{news_checked}nw → "
                 f"{len(new_ais_alerts)}+{len(new_adsb_alerts)}+{len(new_news_alerts)} alerts, "
-                f"{len(new_assessments)} correlations, {len(_forge_alerts)} total"
+                f"{new_correlations_this_cycle} correlations, {len(_forge_alerts)} total"
             )
             _write_snapshot_sync("forge_alerts", list(_forge_alerts))
             # Write alerts_active from DB
