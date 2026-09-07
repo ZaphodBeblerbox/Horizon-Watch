@@ -78,7 +78,7 @@ export default function SignalsExportPanel({ defaultFrom, defaultTo, defaultMinS
         ...(domain ? { domain } : {}),
         ...(minSeverity ? { min_severity: minSeverity } : {}),
         ...(country.trim() ? { country: country.trim().toLowerCase() } : {}),
-        limit: 200,
+        limit: 3000,
     }
 
     useEffect(() => {
