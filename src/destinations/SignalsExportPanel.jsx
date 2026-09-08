@@ -73,19 +73,23 @@ export default function SignalsExportPanel({ defaultFrom, defaultTo, defaultMinS
     const [previewError, setPreviewError] = useState(false)
     const [busy, setBusy] = useState(null) // "csv" | "pdf" | null
 
+    // No `limit` key at all — the real download (CSV/PDF) is genuinely
+    // unlimited, every matched signal ranked and exported, never truncated.
     const params = {
         from: dateFrom, to: dateTo,
         ...(domain ? { domain } : {}),
         ...(minSeverity ? { min_severity: minSeverity } : {}),
         ...(country.trim() ? { country: country.trim().toLowerCase() } : {}),
-        limit: 3000,
     }
 
     useEffect(() => {
         let cancelled = false
         setPreview(null)
         setPreviewError(false)
-        const qs = new URLSearchParams(params).toString()
+        // The live count-check only ever needs total_matched, so it asks for
+        // a cheap limit=1 response — the actual CSV/PDF download below sends
+        // no limit at all and gets every real matched signal.
+        const qs = new URLSearchParams({ ...params, limit: 1 }).toString()
         const t = setTimeout(() => {
             fetch(`${API}/api/signals/export?${qs}`)
                 .then((r) => { if (!r.ok) throw new Error(r.status); return r.json() })
@@ -150,7 +154,7 @@ export default function SignalsExportPanel({ defaultFrom, defaultTo, defaultMinS
                         {previewError ? "Could not load a preview." :
                          preview == null ? "Checking…" :
                          preview.total_matched === 0 ? "No signals matched this window and these filters." :
-                         `${preview.total_matched} signal${preview.total_matched === 1 ? "" : "s"} match — top ${preview.returned} will be exported.`}
+                         `${preview.total_matched} signal${preview.total_matched === 1 ? "" : "s"} match — all will be exported (unlimited; a large window may take longer to build).`}
                     </div>
                 </div>
 

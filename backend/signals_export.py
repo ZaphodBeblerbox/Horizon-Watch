@@ -59,12 +59,14 @@ from exposure_index import _SEV_RANK, _TIER_SEV, classify_severity_deterministic
 _ALERT_SOURCE_TO_DOMAIN = {"ais": "maritime", "adsb": "air", "news": "news",
                            "surge": "news", "fusion": "zones", "manual": "zones"}
 
-# A per-table safety ceiling only, not the real "how many rows does the user
-# get" limit (that's the `limit` param, ranked and truncated AFTER this
-# fetch). Must stay well above the largest realistic `limit` request so a
-# genuinely large window's true top-N is ranked over the real full matching
-# set rather than an arbitrarily truncated one.
-_PER_TABLE_FETCH_CAP = 50_000
+# A per-table sanity ceiling only, not the real "how many rows does the user
+# get" limit — the `limit` param (now optionally None/unlimited) is ranked
+# and truncated AFTER this fetch, over every row this cap lets through. Kept
+# very high (not removed entirely) purely to bound a single pathological
+# request (e.g. an accidental multi-decade window) rather than to cap any
+# realistic export — real per-table row counts for any sane window are
+# nowhere near this.
+_PER_TABLE_FETCH_CAP = 500_000
 
 
 def _sev_rank(sev: str) -> int:
@@ -175,13 +177,13 @@ def query_top_signals(
     region: Optional[str] = None,
     country: Optional[str] = None,
     min_severity: Optional[str] = None,  # "low" | "medium" | "high" | "critical"
-    limit: int = 200,
+    limit: Optional[int] = None,         # None = unlimited — every real matched signal, ranked
 ) -> dict:
-    """Real, deterministic top-N signals in [dt_from, dt_to), ranked by the
-    real severity-rank scale (exposure_index.py's own _SEV_RANK), with a
-    real per-domain numeric tiebreaker for signals that tie on severity.
-    Never invents a match, never returns a placeholder — an empty window is
-    a real empty result."""
+    """Real, deterministic top-N (or, when limit is None, ALL) signals in
+    [dt_from, dt_to), ranked by the real severity-rank scale (exposure_
+    index.py's own _SEV_RANK), with a real per-domain numeric tiebreaker for
+    signals that tie on severity. Never invents a match, never returns a
+    placeholder — an empty window is a real empty result."""
     from database import Alert, NewsArticle, FusionEvent, SurgeEvent
 
     rows: list[dict] = []
@@ -232,7 +234,7 @@ def query_top_signals(
     rows.sort(key=lambda r: (_sev_rank(r["severity"]), r["score_tiebreak"] or 0.0, r["timestamp"] or dt_from),
               reverse=True)
     total_matched = len(rows)
-    top = rows[:limit]
+    top = rows if limit is None else rows[:limit]
 
     return {
         "from": dt_from.isoformat(), "to": dt_to.isoformat(),
@@ -276,6 +278,7 @@ def build_pdf(result: dict) -> bytes:
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from xml.sax.saxutils import escape as _xml_escape
     import report_pdf as _rp
     import functools
 
@@ -291,10 +294,10 @@ def build_pdf(result: dict) -> bytes:
     story.append(Paragraph("Signals Export", ss["ReportTitle"]))
     meta = (
         f"Window: {result['from']} → {result['to']} &middot; "
-        f"Domain: {result['domain'] or 'all'} &middot; "
-        f"Region: {result['region'] or 'all'} &middot; "
-        f"Country: {result['country'] or 'all'} &middot; "
-        f"Min severity: {result['min_severity'] or 'none'} &middot; "
+        f"Domain: {_xml_escape(result['domain'] or 'all')} &middot; "
+        f"Region: {_xml_escape(result['region'] or 'all')} &middot; "
+        f"Country: {_xml_escape(result['country'] or 'all')} &middot; "
+        f"Min severity: {_xml_escape(result['min_severity'] or 'none')} &middot; "
         f"Total matched: {result['total_matched']} &middot; "
         f"Shown: {result['returned']}"
     )
@@ -313,11 +316,11 @@ def build_pdf(result: dict) -> bytes:
                 ts_str,
                 r.get("domain") or "",
                 (r.get("severity") or "").upper(),
-                Paragraph((r.get("title") or "")[:90], ss["ClaimText"]),
+                Paragraph(_xml_escape((r.get("title") or "")[:90]), ss["ClaimText"]),
                 r.get("country") or "",
                 r.get("source_name") or "",
                 str(r.get("corroboration_count")) if r.get("corroboration_count") is not None else "",
-                Paragraph((r.get("excerpt") or "")[:160], ss["ClaimMeta"]),
+                Paragraph(_xml_escape((r.get("excerpt") or "")[:160]), ss["ClaimMeta"]),
             ])
         col_widths = [24*mm, 16*mm, 16*mm, 55*mm, 16*mm, 22*mm, 14*mm, 60*mm]
         table = Table(data, colWidths=col_widths, repeatRows=1)
