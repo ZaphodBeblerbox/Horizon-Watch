@@ -198,6 +198,21 @@ function AlertRow({ item, isRead, isAcked, isSelected, onSelect, onAcknowledge, 
                 </div>
             )}
 
+            {/* Real summary snippet — GeoConfirmed-origin rows (and any other
+                source that carries a real item.context) previously showed
+                nothing but the headline here; the row now surfaces one real
+                truncated line of the actual caption text, with the full text
+                available in DetailPanel below on open. Never a placeholder —
+                only renders when item.context is real and non-empty. */}
+            {!isFusion && item.context && (
+                <div style={{
+                    fontSize: "var(--text-sm)", color: "var(--text-muted)", paddingLeft: 14,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                    {item.context}
+                </div>
+            )}
+
             <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", paddingLeft: 14, flexWrap: "wrap" }}>
                 {chips.map((c, i) => (
                     <span key={`${c}-${i}`} style={{
@@ -351,6 +366,21 @@ function DetailPanel({ item, onSelectEntity }) {
                         <AttributeRow label="Severity" value={item.severity_tier} />
                         <AttributeRow label="Type" value={item.type} />
                         <AttributeRow label="Relevance score" value={typeof item.relevance_score === "number" ? item.relevance_score.toFixed(1) : null} />
+
+                        {/* Real, complete, untruncated caption/description —
+                            mirrors the fusion branch's "Narrative" section
+                            above. item.context already carried this real text
+                            (e.g. a GeoConfirmed placemark's real description,
+                            see _collect_geoconfirmed_items() in main.py) —
+                            it just had nowhere to render until now. */}
+                        {item.context && (
+                            <div style={{ marginTop: "var(--space-4)" }}>
+                                <SectionLabel>Context</SectionLabel>
+                                <div style={{ fontSize: "var(--text-body)", color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                                    {item.context}
+                                </div>
+                            </div>
+                        )}
                         {item.auto_brief && (
                             <div style={{
                                 display: "inline-flex", alignItems: "center", gap: 6, marginTop: "var(--space-3)",

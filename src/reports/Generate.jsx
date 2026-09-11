@@ -37,10 +37,23 @@ const ID_FIELD = {
     ais_anomalies: "signal_id", adsb_anomalies: "signal_id", fusion_events: "fusion_id",
     surge_events: "surge_id", sentinel_detections: "detection_id", news_assessments: "assessment_id",
     strategic_zones: "zone_id", top_articles: "url", foresight_risks: "zone",
+    geoconfirmed_signals: "signal_id",
 }
 const SECTION_TO_SNAPSHOT = {
     maritime_activity: ["ais_anomalies"], aerial_activity: ["adsb_anomalies"],
-    imagery_detection: ["sentinel_detections"], open_source_context: ["news_assessments", "top_articles"],
+    imagery_detection: ["sentinel_detections"],
+    // RSS is retired (news_assessments/top_articles are now always real-but-
+    // empty — see briefing_prep.py). GeoConfirmed's own real, individually
+    // geolocation-verified placemarks are what "open-source context" is
+    // actually made of now — a genuinely closer semantic fit than RSS ever
+    // was, not just a source swap of convenience. Root cause of the prior
+    // "GeoConfirmed points don't load into Generate at all" bug: these
+    // signals were already scored/counted in briefing_prep.py's real
+    // pipeline but had no output bucket of their own (fixed there) and no
+    // corresponding entry here (fixed here) — never a shared-selector
+    // mismatch, since Generate's corpus assembly is its own real, separate
+    // query (briefing_prep.py), not Situation's /api/surface pool.
+    open_source_context: ["news_assessments", "top_articles", "geoconfirmed_signals"],
     alerts_events: ["fusion_events", "surge_events"], outlook_watch: ["foresight_risks"],
 }
 
