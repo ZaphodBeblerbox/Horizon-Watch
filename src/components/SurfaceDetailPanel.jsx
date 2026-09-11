@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+import { linkifyText } from "../lib/linkifyText.jsx"
 
 const API = API_BASE
 
@@ -61,7 +62,7 @@ function InfoRow({ label, value }) {
             <span style={{ minWidth: 90, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 9 }}>
                 {label}
             </span>
-            <span style={{ color: "var(--akili-text-primary)" }}>{value}</span>
+            <span style={{ color: "var(--akili-text-primary)" }}>{linkifyText(value)}</span>
         </div>
     )
 }

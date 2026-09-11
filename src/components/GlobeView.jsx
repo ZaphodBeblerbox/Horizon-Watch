@@ -93,6 +93,8 @@ export default function GlobeView({
     // with an independent GlobePopup/inspector, so this must be scoped to
     // THIS GlobeView, not broadcast app-wide.
     onInspectorOpenChange = null,
+    dockExternally = false,
+    onInspectorPopupChange = null,
     // Layer toggles — mirror workspace layer keys
     infraEnabled     = false,
     nauticalEnabled  = false,
@@ -710,7 +712,8 @@ export default function GlobeView({
             </Viewer>
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
-            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} onInspectorOpenChange={onInspectorOpenChange} />
+            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} onInspectorOpenChange={onInspectorOpenChange}
+                dockExternally={dockExternally} onInspectorPopupChange={onInspectorPopupChange} />
 
             {/* Real annotation drawing (select/marker/route/area/measure) —
                 same real viewerRef pattern as GlobePopup above. */}

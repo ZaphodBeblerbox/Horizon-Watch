@@ -4,6 +4,7 @@ import { entityMarkerSvg } from "../globe/entityIcons.js"
 import { normalizeEntity } from "../inspector/adapters.js"
 import { Panel, Button, EmptyState } from "../ui/index.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+import { linkifyText } from "../lib/linkifyText.jsx"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -94,7 +95,7 @@ function AttributeRow({ label, value }) {
             fontSize: "var(--text-sm)",
         }}>
             <span style={{ color: "var(--text-secondary)", flexShrink: 0 }}>{label}</span>
-            <span style={{ color: "var(--text-primary)", textAlign: "right", wordBreak: "break-word" }}>{value}</span>
+            <span style={{ color: "var(--text-primary)", textAlign: "right", wordBreak: "break-word" }}>{linkifyText(value)}</span>
         </div>
     )
 }
@@ -133,6 +134,17 @@ export default function InspectorPanel({
     onTrackEntity = null,
     style,
     slideOut = false,
+    // When true, this component renders as a plain flex-column filling
+    // whatever container the caller already provides (a real `.pane-glass`
+    // shell — see Situation.jsx) instead of its own fixed-position/
+    // hardcoded-width/keyframe-animated dock. The caller's own shell owns
+    // width, background, minimize-to-rail and the slide transition; this
+    // component still owns everything else (header/attributes/provenance/
+    // related entities/actions) unchanged. Default false preserves the
+    // exact original self-docking behavior for callers that haven't been
+    // folded into the shared pane system yet (GlobePopup's dockExternally
+    // default-false path — Dashboard.jsx, MapTab.jsx).
+    bare = false,
 }) {
     const [links, setLinks] = useState([])
     const [linksLoading, setLinksLoading] = useState(false)
@@ -209,14 +221,24 @@ export default function InspectorPanel({
         size: 36,
     })
 
+    // `bare`: a plain, backgroundless/borderless flex-column — the parent
+    // `.pane-glass` shell (Situation.jsx) is the only real background/
+    // border here. Panel's own panelStyle() always applies an opaque
+    // `--bg-secondary` fill plus a border (no documented way to opt out),
+    // which would sit on top of and completely hide the shell's actual
+    // frosted-glass blur — so bare mode renders a plain div instead of
+    // <Panel>, not <Panel elevation={0}>.
+    const Wrapper = bare ? "div" : Panel
+    const wrapperProps = bare
+        ? { style: { width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", ...style } }
+        : {
+            as: "div", elevation: 2, padded: false,
+            className: slideOut ? "inspector-panel-slide-out" : "inspector-panel-slide-in",
+            style: { ...DEFAULT_DOCK_STYLE, ...style, pointerEvents: slideOut ? "none" : undefined },
+        }
+
     return (
-        <Panel
-            as="div"
-            elevation={2}
-            padded={false}
-            className={slideOut ? "inspector-panel-slide-out" : "inspector-panel-slide-in"}
-            style={{ ...DEFAULT_DOCK_STYLE, ...style, pointerEvents: slideOut ? "none" : undefined }}
-        >
+        <Wrapper {...wrapperProps}>
             {/* Slides in from the right on mount — same short, no-bounce
                 120-160ms ease-out timing used elsewhere in the app (e.g.
                 app.jsx's "opacity 150ms ease"), not the unrelated 400ms
@@ -231,13 +253,21 @@ export default function InspectorPanel({
                 already open and a different entity is clicked — previously
                 that just swapped content in the same mounted instance with
                 no transition at all, since only first-mount ever played
-                the slide-in keyframe. */}
-            <style>{`
-                @keyframes inspector-panel-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
-                @keyframes inspector-panel-slide-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
-                .inspector-panel-slide-in { animation: inspector-panel-slide-in 150ms ease-out; }
-                .inspector-panel-slide-out { animation: inspector-panel-slide-out 150ms ease-out forwards; }
-            `}</style>
+                the slide-in keyframe.
+
+                None of this applies in `bare` mode: the caller's own
+                `.pane-glass` shell (Situation.jsx) already owns a real
+                transition-based slide for its whole pane, so a second,
+                keyframe-based slide on the content inside it would fight
+                the shell's own transition rather than compose with it. */}
+            {!bare && (
+                <style>{`
+                    @keyframes inspector-panel-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+                    @keyframes inspector-panel-slide-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
+                    .inspector-panel-slide-in { animation: inspector-panel-slide-in 150ms ease-out; }
+                    .inspector-panel-slide-out { animation: inspector-panel-slide-out 150ms ease-out forwards; }
+                `}</style>
+            )}
             {/* Header */}
             <div style={{
                 display: "flex", alignItems: "flex-start", gap: "var(--space-2)",
@@ -353,6 +383,6 @@ export default function InspectorPanel({
                     )}
                 </div>
             )}
-        </Panel>
+        </Wrapper>
     )
 }

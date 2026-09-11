@@ -33,6 +33,7 @@ import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
+import InspectorPanel from "../components/InspectorPanel.jsx"
 
 const API = API_BASE
 const REFRESH_MS = 60000
@@ -194,6 +195,12 @@ export default function Situation({ onOpenDossier }) {
     const [fusionEvents, setFusionEvents] = useState([])
     const [health, setHealth] = useState(null)
     const [selected, setSelected] = useState(null)
+    // A map-marker click (GlobePopup, via GlobeView's dockExternally path)
+    // now renders INSIDE this same real Inspector pane instead of a second,
+    // uncoordinated fixed-position overlay — see the pane content below.
+    // Clearing whichever of the two "detail" states isn't the active one
+    // keeps them from fighting over this one slot.
+    const [inspectorPopup, setInspectorPopup] = useState(null)
     // V3 Phase 1, §2.2 — real hook-based extension point. This component
     // owns this Inspector pane (a separate real surface from the map's
     // own InspectorPanel/GlobePopup) and calls every registered extension
@@ -425,13 +432,20 @@ export default function Situation({ onOpenDossier }) {
     // shrinking the flex sibling's width already reflows the map
     // automatically, without needing a separate CSS-var indirection layer).
     const leftPaneStyle = {
-        width: 250, flexShrink: 0, borderRight: "1px solid var(--line)",
+        width: "var(--pane-l)", flexShrink: 0, borderRight: "1px solid var(--line)",
         display: "flex", flexDirection: "column", overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(-14px)",
         opacity: entered ? 1 : 0,
     }
     const rightPaneStyle = {
-        width: 312, flexShrink: 0, borderLeft: "1px solid var(--line)", overflowY: "auto",
+        // Real shared token (index.html :root — "the map fit AND every map
+        // overlay inset derive from these two tokens, so they can never
+        // drift apart"), not a hardcoded literal that happens to match it —
+        // this is also now the Inspector's real width when a map marker is
+        // clicked (see the pane content below), so one token now drives
+        // Layers, this pane's default view, AND the marker-click Inspector.
+        width: "var(--pane-r)", flexShrink: 0, borderLeft: "1px solid var(--line)",
+        display: "flex", flexDirection: "column", minHeight: 0,
         transform: entered ? "translateX(0)" : "translateX(14px)",
         opacity: entered ? 1 : 0,
     }
@@ -686,6 +700,8 @@ export default function Situation({ onOpenDossier }) {
                     <GlobeView
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
                         geoConfirmedEnabled={groupsOn.news}
+                        dockExternally
+                        onInspectorPopupChange={(p) => { if (p) setSelected(null); setInspectorPopup(p) }}
                         alertsEnabled={groupsOn.alerts}
                         cablesEnabled={groupsOn.maritime} chokepointsEnabled={groupsOn.maritime}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}
@@ -729,13 +745,34 @@ export default function Situation({ onOpenDossier }) {
                 <div className="panetab" role="button" tabIndex={0} onClick={() => setRightMin(false)} title="Restore Inspector">Inspector</div>
             ) : (
             <div className="pane-glass" style={rightPaneStyle}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Inspector</span>
                     <button onClick={() => setRightMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
                         <svg className="icon sm"><use href="#i-collapse-r" /></svg>
                     </button>
                 </div>
-                {!selected ? (
+                <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                {inspectorPopup ? (
+                    // A real map-marker click (GlobePopup, via GlobeView's
+                    // dockExternally) — same real InspectorPanel component
+                    // GlobePopup used to self-render as a fixed 340px
+                    // overlay with its own bespoke tokens/keyframe slide;
+                    // `bare` makes it fill this pane instead, so it now
+                    // shares this pane's real width (var(--pane-r)), real
+                    // frosted-glass background, real minimize rail, and
+                    // real transition-based slide — not a second, out-of-
+                    // sync panel with its own copy of all of that.
+                    <InspectorPanel
+                        bare
+                        entityType={inspectorPopup.entityType}
+                        entityId={inspectorPopup.entityId}
+                        data={inspectorPopup.data}
+                        onClose={() => { inspectorPopup.onClose?.(); setInspectorPopup(null) }}
+                        onSelectRelated={inspectorPopup.onSelectRelated}
+                        onJumpToLocation={inspectorPopup.onJumpToLocation}
+                        onTrackEntity={inspectorPopup.onTrackEntity}
+                    />
+                ) : !selected ? (
                     <div style={{ padding: 12 }}>
                         <div className="statgrid" style={{ marginBottom: 12 }}>
                             <div className="stat"><span className="value">{visibleRows.length}</span><span className="label">Signals in window</span></div>
@@ -760,7 +797,7 @@ export default function Situation({ onOpenDossier }) {
                             {newestCritical.length === 0 ? (
                                 <div style={{ font: "400 12px var(--font)", color: "var(--txt-4)" }}>No critical or high-severity signals in this window.</div>
                             ) : newestCritical.map((r) => (
-                                <div key={r.id} className="evrow" onClick={() => setSelected(r)}>
+                                <div key={r.id} className="evrow" onClick={() => { setInspectorPopup(null); setSelected(r) }}>
                                     <span className={`dia ${SEV_CLASS_BY_RANK[r.severityRank] || "moderate"}`} />
                                     <div>
                                         <div className="title">{r.title}</div>
@@ -823,6 +860,7 @@ export default function Situation({ onOpenDossier }) {
                         ))}
                     </div>
                 )}
+                </div>
             </div>
             )}
 
