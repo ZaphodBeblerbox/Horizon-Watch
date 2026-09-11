@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { claimMetaLine } from "./citationLine.js"
+import { linkifyText } from "../lib/linkifyText.jsx"
 import { bucketForKind } from "./findingBucket.js"
 import { buildXrefCandidates, wrapXrefsHtml, checkForUnwrappedReferences } from "./xrefEngine.js"
 
@@ -57,7 +58,9 @@ function ClaimList({ claims, mode, candidates, onEditClaim, resolvedComments, on
                         <XrefText text={claim.text} candidates={candidates} style={{ margin: 0 }} />
                     )}
                     <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginTop: 2 }}>
-                        {claimMetaLine(claim)}
+                        {/* print stays byte-for-byte plain text, matching report_pdf.py's
+                            PDF rendering exactly — only "read"/"edit" get real links. */}
+                        {mode === "print" ? claimMetaLine(claim) : linkifyText(claimMetaLine(claim))}
                     </div>
                     {mode === "edit" && (claim.findings || []).map((f, i) => {
                         const id = `${claim.claim_id}::${f.kind}::${i}`

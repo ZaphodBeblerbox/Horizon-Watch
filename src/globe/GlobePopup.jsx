@@ -129,7 +129,18 @@ function buildOverpassQuery(lat, lon, radius) {
     return `[out:json][timeout:8];(way["power"](around:${radius},${lat},${lon});way["man_made"="pipeline"](around:${radius},${lat},${lon});node["power"~"substation|transformer"](around:${radius},${lat},${lon});way["telecom"](around:${radius},${lat},${lon}););out body 5;`
 }
 
-export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible = true, onInspectorOpenChange = null }) {
+export default function GlobePopup({
+    viewerRef, infraEnabled = false, isVisible = true, onInspectorOpenChange = null,
+    // Opt-in: when true, this component never self-renders the fixed-
+    // docked InspectorPanel — it only reports the current inspector-
+    // eligible popup (bundled with its real handlers) via
+    // onInspectorPopupChange, and the caller renders InspectorPanel itself
+    // inside its own real pane-glass shell (see Situation.jsx). Default
+    // false keeps every existing caller (Dashboard.jsx, MapTab.jsx)
+    // byte-for-byte unchanged until they're each deliberately migrated.
+    dockExternally = false,
+    onInspectorPopupChange = null,
+}) {
     const [popup,   setPopup]   = useState(null)
     const [tooltip, setTooltip] = useState(null)  // { title, subtitle, position, x, y }
     const hoveredIdRef = useRef(null)
@@ -421,6 +432,25 @@ export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible 
         }
     }
 
+    // Bundled inspector-eligible popup state + its real handlers, for a
+    // caller that renders InspectorPanel itself (dockExternally). Reuses
+    // the exact same handlers the self-rendered path below passes —
+    // dockExternally changes WHERE InspectorPanel mounts, never what it's
+    // given to work with.
+    useEffect(() => {
+        if (!dockExternally) return
+        if (popup && INSPECTOR_TYPES.has(popup.type)) {
+            onInspectorPopupChange?.({
+                entityType: popup.type, entityId: popup.entityId, data: popup.data,
+                onClose: handleClose, onSelectRelated: handleSelectRelated,
+                onJumpToLocation: handleJumpToLocation, onTrackEntity: handleTrackEntity,
+            })
+        } else {
+            onInspectorPopupChange?.(null)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dockExternally, popup, onInspectorPopupChange])
+
     return (
         <>
             {/* Map hover-callout card — full UI rebuild spec section 9, built
@@ -471,7 +501,7 @@ export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible 
                 Keyed by entityId so switching to a genuinely different
                 entity remounts it (playing the real slide-in keyframe)
                 instead of silently reusing the same instance. */}
-            {outgoingPopup && (
+            {!dockExternally && outgoingPopup && (
                 <InspectorPanel
                     key={`out-${outgoingPopup.entityId}`}
                     entityType={outgoingPopup.type}
@@ -481,7 +511,7 @@ export default function GlobePopup({ viewerRef, infraEnabled = false, isVisible 
                     slideOut
                 />
             )}
-            {popup && INSPECTOR_TYPES.has(popup.type) && (
+            {!dockExternally && popup && INSPECTOR_TYPES.has(popup.type) && (
                 <InspectorPanel
                     key={popup.entityId}
                     entityType={popup.type}
