@@ -25,7 +25,7 @@
  */
 import { renderToStaticMarkup } from "react-dom/server"
 import { createElement } from "react"
-import { Ship, Plane, Building2, MapPin, Newspaper, TriangleAlert, Target, Sparkles } from "lucide-react"
+import { Ship, Plane, Building2, MapPin, Newspaper, TriangleAlert, Target, Sparkles, Crosshair } from "lucide-react"
 
 export const ENTITY_ICON_COMPONENT = {
     vessel: Ship,
@@ -35,6 +35,12 @@ export const ENTITY_ICON_COMPONENT = {
     news_event: Newspaper,
     alert: TriangleAlert,
     zone: Target,
+    // GeoConfirmed conflict-event pins — real, individually geolocated/
+    // verified incidents (see GlobeGeoConfirmedLayer.jsx). Deliberately NOT
+    // the shared news diamond (getNewsMarkerDataUri) below: these replace
+    // the raw, imprecisely-geocoded RSS points that diamond represents, and
+    // reusing the same shape would visually re-conflate the two.
+    geoconfirmed: Crosshair,
     // "fusion" is a real, still-used entity kind (backend /api/fusions
     // multi-domain correlated intelligence events — see GlobeAlertsLayer.jsx's
     // fusionIcon() — plus DirectorBar's own logo mark and ForceGraph's

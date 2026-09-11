@@ -1074,6 +1074,77 @@ class OntologyClaim(Base):
     )
 
 
+class GeoConfirmedPlacemark(Base):
+    """A real, geolocated conflict-event pin from GeoConfirmed's public API
+    (per-theatre fetch — 'World' is a small curated highlight reel, NOT the
+    union of every theatre; ~530 pins vs. Ukraine's real ~60,000, confirmed
+    live against the real API on ingest). GeoConfirmed's real placemark API
+    carries NO lastUpdate/version field (verified live 2026-09 — the id +
+    date + lat/lon returned by the cheap bulk per-theatre listing is what
+    change-detection actually keys on; the expensive per-id detail fetch
+    only runs for a genuinely new id or one whose bulk-listing date/lat/lon
+    changed). A placemark that vanishes from a live sync is soft-deleted via
+    `status` (this app's existing active/removed convention — see Alert/
+    SurgeEvent/WatchZone), never hard-deleted: a pin that occurred inside an
+    already-generated signals-export date range must stay real and
+    queryable even after GeoConfirmed itself later removes it upstream."""
+    __tablename__ = "geoconfirmed_placemarks"
+
+    id                  = Column(String, primary_key=True)   # GeoConfirmed's own real placemark UUID
+    theatre_slug        = Column(String, nullable=False, index=True)   # e.g. "ukraine", "world"
+    name                = Column(String, nullable=True)       # GeoConfirmed's own short label (often a date string)
+    description         = Column(Text, nullable=True)         # real prose from Placemark/detail
+    date                = Column(DateTime, nullable=False, index=True)  # real event date (day precision from source)
+    date_precision      = Column(String, nullable=False, default="day")  # honest precision — never a fabricated finer one
+    t_end               = Column(DateTime, nullable=True)     # end-of-day for day-precision dates
+    latitude            = Column(Float, nullable=False)
+    longitude           = Column(Float, nullable=False)
+    faction             = Column(String, nullable=True)       # real GeoConfirmed faction/category label
+    icon_url            = Column(String, nullable=True)       # GeoConfirmed's own icon path — real attribution/debug
+    origin              = Column(String, nullable=True)
+    original_source     = Column(Text, nullable=True)         # real citation URL(s), as GeoConfirmed provides them
+    geolocation_source  = Column(String, nullable=True)       # real geolocation-verification URL
+    plus_code           = Column(String, nullable=True)
+    orbat_node_id       = Column(Integer, nullable=True, index=True)  # real GeoConfirmed ORBAT node id, if present
+    orbat_unit_name     = Column(String, nullable=True)       # denormalized for display without a join
+    status              = Column(String, nullable=False, default="active", index=True)  # active|removed — soft-delete only
+    detail_fetched_at   = Column(DateTime, nullable=True)     # last time the expensive detail endpoint actually ran
+    ingested_at         = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at          = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_gc_theatre_status", "theatre_slug", "status"),
+    )
+
+
+class GeoConfirmedOrbatNode(Base):
+    """A real node from GeoConfirmed's own ORBAT tree (/api/OrbatNode/{id}),
+    keyed on GeoConfirmed's real numeric node id — never name-matched. A
+    dedicated table rather than folding into OntologyEntity, for the same
+    reason Asset already documents for itself: a genuinely different real
+    shape (a parent/child military-unit hierarchy, not infrastructure).
+    Linking one of these to an EXISTING tracked/sanctioned entity in this
+    app (`linked_system_id`) requires real evidence and is NEVER auto-
+    applied on a name collision — see geoconfirmed.py's
+    link_orbat_to_existing_entities(), which routes any candidate match to
+    the real OntologyClaim review queue instead of merging it directly."""
+    __tablename__ = "geoconfirmed_orbat_nodes"
+
+    id                  = Column(Integer, primary_key=True, autoincrement=False)  # GeoConfirmed's own real node id
+    parent_id           = Column(Integer, nullable=True, index=True)
+    theatre_slug        = Column(String, nullable=False, index=True)
+    name                = Column(String, nullable=False)
+    structure_path      = Column(Text, nullable=True)   # real breadcrumb, e.g. "58th CAA ▸ Southern MD ▸ Russian Ground Forces"
+    is_deleted          = Column(Boolean, default=False)
+    is_disbanded        = Column(Boolean, default=False)
+    color               = Column(String, nullable=True)
+    linked_system_id    = Column(String, nullable=True, index=True)  # real OntologyEntity system_id / sanctioned entity name — ONLY set on hard evidence, never set by this app's own code today (see link_status)
+    link_status         = Column(String, nullable=True, index=True)  # null | "pending_review" — never "auto_linked"
+    source_last_update  = Column(DateTime, nullable=True)  # GeoConfirmed's own real lastUpdate for this node
+    ingested_at         = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at          = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class ReportSnapshot(Base):
     """A frozen, versioned intelligence-picture artefact — the persistence layer
     the report pipeline needs but never had. Before this model existed,
