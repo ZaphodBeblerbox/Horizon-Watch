@@ -273,6 +273,7 @@ from routers import tile_proxy as _tile_proxy_router
 from routers import analytics as _analytics_router
 from routers import forge as _forge_router
 from routers import signals_export as _signals_export_router
+from routers import geoconfirmed as _geoconfirmed_router
 app.include_router(_intel_router.router)
 app.include_router(_briefings_router.router)
 app.include_router(_infra_router.router)
@@ -280,6 +281,7 @@ app.include_router(_tile_proxy_router.router)
 app.include_router(_analytics_router.router)
 app.include_router(_forge_router.router)
 app.include_router(_signals_export_router.router)
+app.include_router(_geoconfirmed_router.router)
 
 # ── Optional fastapi-cache2 response caching ──────────────────────────────────
 try:
@@ -10599,6 +10601,28 @@ def _auto_ingest() -> None:
     except Exception as _e:
         print(f"[auto-ingest] StrategicZones seed failed: {_e}")
 
+    # 10. GeoConfirmed placemarks (real per-theatre fetch, bounded to a
+    # recent window — see geoconfirmed.py's upsert_theatre_placemarks
+    # docstring for why the full historical archive is never bulk-imported
+    # here). Runs once if the table is empty; the periodic
+    # _geoconfirmed_sync_loop (registered at startup) keeps it current
+    # afterward.
+    try:
+        with _SL() as _db:
+            from database import GeoConfirmedPlacemark as _GCP
+            gc_count = _db.query(_GCP).count()
+        if gc_count == 0:
+            print("[auto-ingest] GeoConfirmed: first sync…")
+            import geoconfirmed as _gc
+            stats = _gc.run_ingest()
+            total_inserted = sum(p.get("inserted", 0) for p in stats.get("placemarks", []))
+            print(f"[auto-ingest] GeoConfirmed: {total_inserted} placemarks inserted across "
+                  f"{len(stats.get('theatres', []))} theatres; linking={stats.get('linking')}")
+        else:
+            print(f"[auto-ingest] GeoConfirmed: {gc_count} placemarks present, skipping first sync")
+    except Exception as _e:
+        print(f"[auto-ingest] GeoConfirmed first sync failed: {_e}")
+
     print("[auto-ingest] ✓ complete")
 
 
@@ -11120,6 +11144,28 @@ async def startup_event():
                 print(f"[sanctions] Scheduled refresh failed: {_se}")
             await asyncio.sleep(86400)
     asyncio.create_task(_sanctions_refresh_loop())
+
+    # Scheduled GeoConfirmed re-sync (first run 10 min after startup, then
+    # every 30 min — the bulk per-theatre listing is cheap, but real
+    # per-placemark detail fetches for anything new/changed add up across
+    # ~19 theatres, so this isn't run more often than that).
+    async def _geoconfirmed_sync_loop():
+        await asyncio.sleep(600)
+        while True:
+            try:
+                loop = asyncio.get_event_loop()
+                import geoconfirmed as _gc
+                stats = await loop.run_in_executor(_executor, _gc.run_ingest)
+                total_inserted = sum(p.get("inserted", 0) for p in stats.get("placemarks", []))
+                total_updated = sum(p.get("updated", 0) for p in stats.get("placemarks", []))
+                total_removed = sum(p.get("removed", 0) for p in stats.get("placemarks", []))
+                print(f"[geoconfirmed] Scheduled sync: +{total_inserted} ~{total_updated} "
+                      f"-{total_removed} across {len(stats.get('theatres', []))} theatres; "
+                      f"linking={stats.get('linking')}")
+            except Exception as _ge:
+                print(f"[geoconfirmed] Scheduled sync failed: {_ge}")
+            await asyncio.sleep(1800)
+    asyncio.create_task(_geoconfirmed_sync_loop())
 
     # ── Event bus ─────────────────────────────────────────────────────────
     _evt_loop = asyncio.get_event_loop()

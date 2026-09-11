@@ -331,6 +331,41 @@ export function adaptZone(data = {}) {
     }
 }
 
+// ── GeoConfirmed conflict-event pin ──────────────────────────────────────────
+
+export function adaptGeoConfirmed(data = {}) {
+    const point = pointOf(data)
+    const title = data.description || data.name || "GeoConfirmed Event"
+    const sources = (data.original_source || "").split("\n").map((s) => s.trim()).filter(Boolean)
+    const geoloc = (data.geolocation_source || "").split("\n").map((s) => s.trim()).filter(Boolean)
+
+    const attributes = compact([
+        attr("Theatre", data.theatre_slug),
+        attr("Date", data.date ? fmtTimestamp(data.date) : null),
+        attr("Faction", data.faction),
+        attr("Location", data.plus_code || (point ? fmtCoord(point.lat, point.lon) : null)),
+        attr("ORBAT unit", data.orbat_unit_name),
+        attr("Origin media", data.origin),
+        attr("Source", sources.join(", ") || null),
+        attr("Geolocation verification", geoloc.join(", ") || null),
+    ])
+
+    return {
+        identity: {
+            title,
+            subtitle: data.name && data.name !== title ? data.name : null,
+            entityType: "geoconfirmed",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes,
+        provenance: { feed: "GeoConfirmed", ingestedAt: null },
+        actions: {
+            canJumpToLocation: !!point,
+        },
+    }
+}
+
 // ── news / event ───────────────────────────────────────────────────────────────
 
 export function adaptNews(data = {}) {
@@ -464,6 +499,7 @@ const ADAPTERS = {
     strategic_zone: adaptZone,
     news: adaptNews,
     event: adaptNews,
+    geoconfirmed: adaptGeoConfirmed,
     infra: adaptInfrastructure,
     infrastructure: adaptInfrastructure,
 }

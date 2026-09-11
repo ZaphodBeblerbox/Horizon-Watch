@@ -4,7 +4,7 @@ import {
     Save, Send, Upload, Download, Clipboard, LayoutDashboard, FileText, Radio,
     Sparkles, Search, Settings, User, ChevronRight, X, Menu, Home, Locate,
     RotateCcw, ExternalLink, Check, ArrowUpRight, PlaneTakeoff, Anchor, Cable,
-    Moon, Mountain, Printer, Presentation,
+    Moon, Mountain, Printer, Presentation, Crosshair,
 } from "lucide-react"
 
 /**
@@ -72,6 +72,7 @@ const ICONS = {
     basemapTerrain: Mountain,
     print: Printer,
     present: Presentation,
+    geoconfirmed: Crosshair,
 }
 
 export const ICON_NAMES = Object.keys(ICONS)

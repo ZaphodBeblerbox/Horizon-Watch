@@ -12,7 +12,7 @@ import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeGraticuleLayer      from "../globe/GlobeGraticuleLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
-import GlobeEventsLayer         from "../globe/GlobeEventsLayer.jsx"
+import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
 import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
@@ -103,6 +103,16 @@ export default function GlobeView({
     chokepointsEnabled = false,
     strategicZonesEnabled = false,
     eventsEnabled    = true,
+    // GeoConfirmed conflict-event pins (GlobeGeoConfirmedLayer.jsx) — the
+    // precise replacement for raw RSS/news map points now that
+    // GlobeEventsLayer is no longer mounted below. A separate prop, not a
+    // reuse of eventsEnabled/precisionEventsEnabled: those two remain wired
+    // for callers that still pass them (Dashboard.jsx, MapTab.jsx) but no
+    // longer drive any visible layer here — GlobeSurgeLayer is the only
+    // other real consumer of eventsEnabled, and is unrelated to raw news
+    // points (it visualizes news-VOLUME surge anomalies from its own
+    // /api/surge/events fetch, not individual articles).
+    geoConfirmedEnabled = false,
     cityLabelsEnabled = false,
     // Fidelity pass, build spec v2 §4 — a real 10° graticule overlay
     // (GlobeGraticuleLayer.jsx — genuine polylines at exact 10-degree
@@ -651,7 +661,7 @@ export default function GlobeView({
                 {/* ── Point / entity layers ───────────────────────────────────── */}
                 <GlobeStrategicZonesLayer enabled={strategicZonesEnabled} />
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
-                <GlobeEventsLayer       enabled={eventsEnabled} precisionEnabled={precisionEventsEnabled} bounds={viewBounds} minRelevance={eventsMinRelevance} />
+                <GlobeGeoConfirmedLayer enabled={geoConfirmedEnabled} />
                 <GlobeSurgeLayer        enabled={eventsEnabled} />
                 {cityLabelsEnabled && (
                     <ImageryLayer imageryProvider={esriLabelsProvider} alpha={1.0} maximumTerrainLevel={19} />

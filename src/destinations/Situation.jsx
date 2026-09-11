@@ -685,6 +685,7 @@ export default function Situation({ onOpenDossier }) {
                         it's now explicitly wired to the same real toggle. */}
                     <GlobeView
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
+                        geoConfirmedEnabled={groupsOn.news}
                         alertsEnabled={groupsOn.alerts}
                         cablesEnabled={groupsOn.maritime} chokepointsEnabled={groupsOn.maritime}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}

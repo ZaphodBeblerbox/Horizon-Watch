@@ -20,7 +20,7 @@ import API_BASE                  from "../apiBase.js"
 export const INSPECTOR_TYPES = new Set([
     "aircraft", "vessel", "event", "eez", "cable", "infra", "heatmap_cell",
     "alert", "assessment", "fusion", "airport", "port",
-    "sentinel_detection", "chokepoint",
+    "sentinel_detection", "chokepoint", "geoconfirmed",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
