@@ -190,7 +190,7 @@ export default function InspectorPanel({
     // wins over the hexdb.io fallback lookup for the same key.
     const enrichedData = (entityType === "aircraft" && aircraftInfo) ? { ...aircraftInfo, ...data } : data
     const normalized = normalizeEntity(entityType, enrichedData)
-    const { identity, attributes, provenance, actions, media } = normalized
+    const { identity, attributes, provenance, actions, media, description } = normalized
 
     useEffect(() => {
         if (!entityType || !entityId) { setLinks([]); setLinksError(false); return }
@@ -318,6 +318,21 @@ export default function InspectorPanel({
                         />
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
                             {[media.photographer && `Photo: ${media.photographer}`, media.sourceLabel].filter(Boolean).join(" · ")}
+                        </div>
+                    </div>
+                )}
+
+                {/* Real, complete, untruncated description/context text —
+                    the header title is deliberately short (single-line,
+                    ellipsis-truncated by design); this is the one real
+                    place the full text always renders, wrapping normally.
+                    Only present when an adapter actually has one (see
+                    adaptGeoConfirmed) — never fabricated. */}
+                {description && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <SectionLabel>Description</SectionLabel>
+                        <div style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                            {description}
                         </div>
                     </div>
                 )}
