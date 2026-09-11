@@ -11,7 +11,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import func, or_
 
 from database import (
-    TrackDensity, Alert, NewsArticle, SentinelDetection, WatchZone, Report,
+    TrackDensity, Alert, SentinelDetection, WatchZone, Report,
     get_db,
 )
 import threat_matrix
@@ -62,13 +62,6 @@ def _fetch_and_normalize_signals(db, since):
         .filter(Alert.created_at >= since)
         .all()
     )
-    articles = (
-        db.query(NewsArticle.url, NewsArticle.tier, NewsArticle.lat, NewsArticle.lon,
-                 NewsArticle.ingested_at, NewsArticle.source_name, NewsArticle.title,
-                 NewsArticle.llm_extracted)
-        .filter(NewsArticle.ingested_at >= since)
-        .all()
-    )
     detections = (
         db.query(SentinelDetection.detection_id, SentinelDetection.severity,
                  SentinelDetection.centroid_lat, SentinelDetection.centroid_lon,
@@ -93,6 +86,12 @@ def _fetch_and_normalize_signals(db, since):
             dom = "air"
         elif "ais" in src_norm:
             dom = "maritime"
+        elif "geoconfirmed" in src_norm:
+            # Real replacement for RSS's former "news" domain contribution
+            # (see geoconfirmed.py's write_geoconfirmed_alerts) — RSS/
+            # NewsArticle is retired; GeoConfirmed alerts are what the
+            # "news" domain bucket is now made of.
+            dom = "news"
         else:
             dom = "zones"
         signals.append({
@@ -102,16 +101,6 @@ def _fetch_and_normalize_signals(db, since):
             "created_at": created_at, "title": title, "source": src_norm or "unknown",
             "status": status, "entity_id": entity_id, "entity_type": entity_type,
             "assessed": bool(analyst_note),
-        })
-    for row in articles:
-        url, tier, lat, lon, ingested_at, source_name, title, llm_extracted = row
-        signals.append({
-            "id": url, "kind": "news", "domain": "news",
-            "severity": _TIER_SEV.get(tier, "moderate"),
-            "region": _classify_region(lat, lon), "lat": lat, "lon": lon,
-            "created_at": ingested_at, "title": title,
-            "source": (source_name or "unknown"), "status": "active",
-            "entity_id": None, "entity_type": None, "assessed": bool(llm_extracted),
         })
     for row in detections:
         det_id, sev, lat, lon, created_at, object_type = row

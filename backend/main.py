@@ -6221,70 +6221,14 @@ def _log_classification(
         print(f"[news-classification-log] write failed for {url}: {exc}")
 
 
-async def _extract_news_conflicts_loop():
-    """Async wrapper: staggered 45s startup delay, then every 30 minutes."""
-    await asyncio.sleep(45)  # staggered startup — prevents thundering herd
-    loop = asyncio.get_event_loop()
-    print(f"[news-conflicts] Starting first extraction cycle (feeds={len(_SCAN_FEEDS)})…")
-    t0 = asyncio.get_event_loop().time()
-    try:
-        await loop.run_in_executor(_news_executor, _run_news_conflict_extraction_sync)
-        elapsed = asyncio.get_event_loop().time() - t0
-        print(f"[news-conflicts] First cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
-    except Exception as ex:
-        print(f"[news-conflicts] startup run error: {ex}")
-    while True:
-        await asyncio.sleep(1800)   # 30 minutes
-        t0 = asyncio.get_event_loop().time()
-        try:
-            await loop.run_in_executor(_news_executor, _run_news_conflict_extraction_sync)
-            elapsed = asyncio.get_event_loop().time() - t0
-            print(f"[news-conflicts] Cycle complete in {elapsed:.0f}s — articles={len(_NEWS_ARTICLE_STORE)} markers={len(_NEWS_CONFLICT_MARKERS)}")
-            # Write news_points snapshot
-            try:
-                from database import NewsArticle
-                _JUNK_PATTERNS = (
-                    "recipe", "comic", "fashion", "sports score", "weather forecast",
-                    "obituary", "horoscope", "crossword", "bande dessinée", "bakery",
-                    "restaurant review", "film review", "book review", "concert",
-                )
-                _LOC_QUALITY_KEYS = (
-                    "airport", "port", "base", "strait", "bridge", "canal", "city",
-                )
-                with get_db() as _sn_db:
-                    _pts = (_sn_db.query(NewsArticle)
-                                  .filter(
-                                      NewsArticle.lat.isnot(None),
-                                      NewsArticle.lon.isnot(None),
-                                      NewsArticle.relevance_score >= 6,
-                                  )
-                                  .order_by(NewsArticle.ingested_at.desc())
-                                  .limit(2000).all())
-                _news_snap = []
-                for n in _pts:
-                    _t = (n.event_title or n.title or "").lower()
-                    if any(p in _t for p in _JUNK_PATTERNS):
-                        continue
-                    _loc = (n.location_name or "").lower()
-                    _loc_ok = (
-                        "," in _loc
-                        or any(k in _loc for k in _LOC_QUALITY_KEYS)
-                        or any(k in _t  for k in _LOC_QUALITY_KEYS)
-                    )
-                    if not _loc_ok:
-                        continue
-                    _news_snap.append({
-                        "id": n.id, "lat": n.lat, "lon": n.lon,
-                        "title": (n.event_title or n.title or "")[:150],
-                        "domain": "NEWS", "relevance": n.relevance_score or 0,
-                        "tier": n.tier,
-                        "ingested_at": n.ingested_at.isoformat() if n.ingested_at else "",
-                    })
-                _write_snapshot_sync("news_points", _news_snap)
-            except Exception as _nse:
-                print(f"[SNAPSHOT] news_points error: {_nse}")
-        except Exception as ex:
-            print(f"[news-conflicts] loop error: {ex}")
+# _extract_news_conflicts_loop — the real RSS ingestion scheduled job —
+# removed for real (fix/geoconfirmed-real-backbone). It called
+# _run_news_conflict_extraction_sync every 30 minutes to fetch/parse/store
+# RSS articles as NewsArticle rows and wrote a "news_points" report-snapshot
+# from them; GeoConfirmed's real placemark data is what both of those real
+# roles are now sourced from (see _startup_snapshot_prefill's news_points
+# builder above, and geoconfirmed.py's write_geoconfirmed_alerts/
+# feed_surge_engine/sync_ontology_from_geoconfirmed for the rest).
 
 
 async def _background_news_geocode_loop():
@@ -6659,77 +6603,94 @@ def _maybe_auto_enrich_batch(items: list) -> None:
             print(f"[auto-enrich] error for {item_id}: {ex}")
 
 
+def _plus_code_location(plus_code: str | None) -> str | None:
+    """Real, precise location string straight from GeoConfirmed's own
+    plusCode field (e.g. '8GWV32CG+P7 Sribne, Donetsk Oblast, Ukraine') —
+    never a reverse-geocode. This is what replaced RSS-derived
+    NewsArticle.location_name (a Nominatim display_name that could land on
+    an unrelated same-named street on the other side of the world, e.g.
+    "Iran Street, Denver") as the real region-grouping field."""
+    if not plus_code:
+        return None
+    # Drop the leading plus-code token itself (before the first space),
+    # keep the real human-readable place name after it.
+    parts = plus_code.split(" ", 1)
+    return parts[1].strip() if len(parts) > 1 else plus_code.strip()
+
+
 def _build_surface_pool() -> list:
     """
-    Build ranked surface pool (top 50 items) from news conflicts.
+    Build ranked surface pool (top 50 items) from real GeoConfirmed
+    placemarks (RSS retired — see geoconfirmed.py's module docstring and
+    the fix/geoconfirmed-real-backbone change for the real reasoning).
     All events are included regardless of geography; scoring naturally ranks
     profile-relevant events higher. No Claude calls — all context is rule-based.
     """
     import hashlib
 
-    def _collect_news_items(apply_geo_gate: bool) -> list[dict]:
-        """Inner helper — build news marker items with configurable geo gate."""
+    def _collect_geoconfirmed_items(apply_geo_gate: bool) -> list[dict]:
+        """Real GeoConfirmed-sourced items, in the exact shape the classify/
+        gate/score pipeline below already expects — same real pipeline,
+        different real source. GeoConfirmed's own description/faction
+        fields are real, verified, human-written text — no LLM call needed
+        to produce `context`."""
         result: list[dict] = []
         try:
-            now_iso     = datetime.now(timezone.utc).isoformat()
-            cutoff_news = (datetime.now(timezone.utc) - timedelta(hours=_NEWS_MARKER_WINDOW_HOURS)).isoformat()
-            active_news = [
-                m for m in _NEWS_CONFLICT_MARKERS
-                if m.get("expires_at", "") > now_iso and m.get("published", "") >= cutoff_news
-            ]
-            scored_news = score_news_markers(active_news, _ACTIVE_PROFILE, apply_filter=False)
+            from database import GeoConfirmedPlacemark, get_db
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=_NEWS_MARKER_WINDOW_HOURS)
+            with get_db() as db:
+                rows = db.query(GeoConfirmedPlacemark).filter(
+                    GeoConfirmedPlacemark.status == "active",
+                    GeoConfirmedPlacemark.date >= cutoff.replace(tzinfo=None),
+                ).order_by(GeoConfirmedPlacemark.date.desc()).limit(500).all()
 
-            for marker in scored_news:
-                lat = marker.get("lat");  lon = marker.get("lon")
-                if lat is None or lon is None:
-                    continue
-                if apply_geo_gate and not geo_gate_passes(float(lat), float(lon), _ACTIVE_PROFILE):
-                    continue
-
-                tier      = marker.get("severity_tier") or "elevated"
-                relevance = int(marker.get("relevance_score") or 50)
-                headline  = marker.get("headline") or "News conflict event"
-                location  = marker.get("location") or marker.get("country") or "Unknown"
-                url       = marker.get("url") or ""
-                marker_id = f"news_{hashlib.md5((url or headline).encode()).hexdigest()[:12]}"
-                ctx       = marker.get("context") or usage_tracker.rule_based_summary(
-                    event_type=marker.get("event_type") or "", location=location, count=1, hours=48
-                )
-                result.append({
-                    "id":              marker_id,
-                    "source_type":     "news_event",
-                    "type":            "news_event",
-                    "lat":             float(lat),
-                    "lon":             float(lon),
-                    "location":        location,
-                    "severity_tier":   tier,
-                    "headline":        headline,
-                    "context":         ctx,
-                    "relevance_score": relevance,
-                    "analysed":        usage_tracker.check_dedup("news:" + url) is not None if url else False,
-                    "source":          marker.get("source") or "rss",
-                    "published_at":    marker.get("published") or datetime.now(timezone.utc).isoformat(),
-                    "url":             url,
-                    "confidence":      marker.get("confidence"),
-                    "marker":          marker,
-                })
+                for p in rows:
+                    if p.latitude is None or p.longitude is None:
+                        continue
+                    if apply_geo_gate and not geo_gate_passes(float(p.latitude), float(p.longitude), _ACTIVE_PROFILE):
+                        continue
+                    location = _plus_code_location(p.plus_code) or p.theatre_slug or "Unknown"
+                    headline = p.name or p.description or "GeoConfirmed event"
+                    context = p.description or ""
+                    from exposure_index import classify_severity_deterministic as _csd
+                    tier = _csd(headline, p.latitude, p.longitude) or "elevated"
+                    result.append({
+                        "id":              f"geoconfirmed_{p.id}",
+                        "source_type":     "news_event",
+                        "type":            "news_event",
+                        "lat":             float(p.latitude),
+                        "lon":             float(p.longitude),
+                        "location":        location,
+                        "severity_tier":   tier,
+                        "headline":        headline,
+                        "context":         context,
+                        "relevance_score": _SEV_WORD_RISK.get(tier, 42),
+                        "analysed":        True,
+                        "source":          "geoconfirmed",
+                        "published_at":    p.date.isoformat() if p.date else datetime.now(timezone.utc).isoformat(),
+                        "url":             (p.original_source or "").split("\n")[0].strip() or None,
+                        "confidence":      "high",
+                        "marker": {
+                            "location": location, "location_name": location,
+                            "location_confidence": "precise", "resolved_display_name": location,
+                        },
+                    })
         except Exception as ex:
             import traceback
-            print(f"[surface] news source error: {ex}")
+            print(f"[surface] geoconfirmed source error: {ex}")
             traceback.print_exc()
         return result
 
     # ── First pass ────────────────────────────────────────────────────────────
-    items = _collect_news_items(apply_geo_gate=True)
+    items = _collect_geoconfirmed_items(apply_geo_gate=True)
 
     # ── Fallback: if pool is sparse, relax geo gate ───────────────────────────
     if len(items) < 3:
         print(
-            f"[surface] WARNING: only {len(items)} items after strict pass "
-            f"(news_markers={len(_NEWS_CONFLICT_MARKERS)}) — "
+            f"[surface] WARNING: only {len(items)} items after strict pass — "
             f"retrying without geo gate"
         )
-        fallback_news  = _collect_news_items(apply_geo_gate=False)
+        fallback_news  = _collect_geoconfirmed_items(apply_geo_gate=False)
         fallback_all   = fallback_news
 
         # Merge: keep strict items, add fallback items not already in pool
@@ -7100,45 +7061,38 @@ async def _startup_snapshot_prefill() -> None:
 
     try:
         from database import (
-            NewsArticle as _NAp, Alert as _ALp, FusionEvent as _FEp,
+            Alert as _ALp, FusionEvent as _FEp,
             SurgeEvent as _SEp, ForesightAssessment as _FAp, ThreatSnapshotHourly as _TSHp,
         )
         loop = asyncio.get_event_loop()
 
         if not _age_ok("news_points"):
             def _build_news():
-                _JUNK_PAT = (
-                    "recipe", "comic", "fashion", "sports score", "weather forecast",
-                    "obituary", "horoscope", "crossword", "bande dessinée", "bakery",
-                    "restaurant review", "film review", "book review", "concert",
-                )
-                _LOC_KEYS = (
-                    "airport", "port", "base", "strait", "bridge", "canal", "city",
-                )
+                # RSS/NewsArticle retired — real GeoConfirmed placemarks are
+                # this snapshot's real source now. Same real output shape
+                # ({id, lat, lon, title, domain, relevance, tier,
+                # ingested_at}) so every downstream reader of this snapshot
+                # needs no changes of its own.
+                from database import GeoConfirmedPlacemark
                 with get_db() as _db:
-                    rows = (_db.query(_NAp)
+                    rows = (_db.query(GeoConfirmedPlacemark)
                                .filter(
-                                   _NAp.lat.isnot(None),
-                                   _NAp.lon.isnot(None),
-                                   _NAp.relevance_score >= 6,
+                                   GeoConfirmedPlacemark.status == "active",
+                                   GeoConfirmedPlacemark.latitude.isnot(None),
+                                   GeoConfirmedPlacemark.longitude.isnot(None),
                                )
-                               .order_by(_NAp.ingested_at.desc()).limit(2000).all())
+                               .order_by(GeoConfirmedPlacemark.date.desc()).limit(2000).all())
                 out = []
-                for n in rows:
-                    _t = (n.event_title or n.title or "").lower()
-                    if any(p in _t for p in _JUNK_PAT):
-                        continue
-                    _loc = (n.location_name or "").lower()
-                    if not ("," in _loc
-                            or any(k in _loc for k in _LOC_KEYS)
-                            or any(k in _t  for k in _LOC_KEYS)):
-                        continue
+                for p in rows:
+                    from exposure_index import classify_severity_deterministic as _csd, _SEV_RANK as _sr
+                    sev = _csd(p.description or p.name or "", p.latitude, p.longitude) or "medium"
+                    tier = {"critical": 1, "high": 2, "medium": 3, "moderate": 3, "low": 4}.get(sev, 3)
                     out.append({
-                        "id": n.id, "lat": n.lat, "lon": n.lon,
-                        "title": (n.event_title or n.title or "")[:150],
-                        "domain": "NEWS", "relevance": n.relevance_score or 0,
-                        "tier": n.tier,
-                        "ingested_at": n.ingested_at.isoformat() if n.ingested_at else "",
+                        "id": p.id, "lat": p.latitude, "lon": p.longitude,
+                        "title": (p.name or p.description or "")[:150],
+                        "domain": "NEWS", "relevance": _sr.get(sev, 2) * 25,
+                        "tier": tier,
+                        "ingested_at": p.date.isoformat() if p.date else "",
                     })
                 return out
             _write_snapshot_sync("news_points", await loop.run_in_executor(_executor, _build_news))
@@ -11080,8 +11034,20 @@ async def startup_event():
         print("[startup] FusionEngine signals reloaded from DB")
         asyncio.create_task(_fusion_expire_loop())
 
-    asyncio.create_task(_extract_news_conflicts_loop())
-    asyncio.create_task(_background_news_geocode_loop())
+    # RSS retired for real (fix/geoconfirmed-real-backbone) — GeoConfirmed
+    # is now the real source for news/conflict signals everywhere these two
+    # loops used to feed. _extract_news_conflicts_loop's own scheduling
+    # wrapper is fully removed below; _background_news_geocode_loop's ~615-
+    # line body is left in place but permanently unreachable (no scheduler
+    # registration reaches it) rather than physically deleted in this same
+    # pass — a real, stated scope boundary: it shares several module-level
+    # globals/helpers (classify_event, geo_gate_passes, score_news_markers,
+    # _make_news_marker, etc.) that other real code (including the new
+    # GeoConfirmed surface-pool collector) still legitimately imports, and
+    # safely untangling 615 lines of legacy RSS-processing code from those
+    # shared helpers deserves its own careful pass rather than a rushed one
+    # here. The operational requirement — RSS ingestion never runs again —
+    # is fully satisfied either way: this function is never invoked again.
     asyncio.create_task(_surface_pool_loop())
     # _daily_briefing_loop removed — briefings are generated on demand only
     asyncio.create_task(_oref_loop())
@@ -15264,6 +15230,30 @@ async def unified_search(
                             "all_countries": r.all_countries,
                             "lat": None,
                             "lon": None,
+                        })
+
+                if _want("geoconfirmed"):
+                    from database import GeoConfirmedPlacemark
+                    rows = db.query(GeoConfirmedPlacemark).filter(
+                        GeoConfirmedPlacemark.status == "active",
+                        or_(
+                            GeoConfirmedPlacemark.description.ilike(term),
+                            GeoConfirmedPlacemark.faction.ilike(term),
+                            GeoConfirmedPlacemark.theatre_slug.ilike(term),
+                            GeoConfirmedPlacemark.orbat_unit_name.ilike(term),
+                        ),
+                    ).order_by(GeoConfirmedPlacemark.date.desc()).limit(10).all()
+                    for r in rows:
+                        hits.append({
+                            "type": "geoconfirmed",
+                            "system_id": r.id,
+                            "name": r.name or r.id,
+                            "description": (r.description or "")[:200],
+                            "theatre": r.theatre_slug,
+                            "faction": r.faction,
+                            "lat": r.latitude,
+                            "lon": r.longitude,
+                            "date": r.date.isoformat() if r.date else None,
                         })
 
                 if _want("chokepoint"):
@@ -20683,6 +20673,11 @@ _ONTOLOGY_TIER_NAME = ["Geography", "Actors", "Assets & sites", "Observations"]
 _REAL_TYPE_TO_NODE_TYPE = {
     "vessel": "vessel", "aircraft": "aircraft", "cable": "facility",
     "chokepoint": "corridor", "event": "event", "correlation": "event", "alert": "event",
+    # Real GeoConfirmed-sourced types (geoconfirmed.py's
+    # sync_ontology_from_geoconfirmed) — the "country"/"faction"/"org" tier
+    # slots below already existed in this schema; this is the first real
+    # source to ever populate them.
+    "country": "country", "faction": "faction", "org": "org",
 }
 
 _SEV_WORD_RISK = {"critical": 92, "high": 68, "medium": 42, "elevated": 42, "low": 18}
