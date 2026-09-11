@@ -6209,7 +6209,7 @@ function OntologyPatternsPanel() {
     return (
         <WorkspaceBody>
             <div style={{ color: "#475569", fontSize: 11, marginBottom: 12, maxWidth: 720 }}>
-                Non-obvious connections found by chaining approved, cited relationships: A relates to B, B relates to C, but nothing directly linked A and C. Every hop below shows its own source — this panel only surfaces the path, it doesn't add anything new to what was already approved. Requires at least two approved entity-relationship claims sharing an entity to find anything.
+                Non-obvious connections found by chaining relationships: A relates to B, B relates to C, but nothing directly linked A and C. Every hop below shows its own source — a real, human-reviewed claim citation, or an "auto" tag for a relationship derived directly from live data (GeoConfirmed/ORBAT/correlation) rather than a cited claim. This panel only surfaces the path, it doesn't add anything new to what already exists.
             </div>
             <div style={{ marginBottom: 12 }}>
                 <button onClick={() => setShowDismissed(v => !v)} style={{ ...ghostBtn, color: showDismissed ? "#60a5fa" : "#94a3b8" }}>
@@ -6219,7 +6219,7 @@ function OntologyPatternsPanel() {
             {!loaded && <div style={{ color: "#334155", fontSize: 11 }}>Loading…</div>}
             {loaded && patterns.length === 0 && (
                 <div style={{ color: "#334155", fontSize: 11 }}>
-                    No patterns found yet. This needs at least two approved entity-relationship claims that share an entity — approve some pending claims in the Uploads workspace, then check back here.
+                    No patterns found yet. This needs at least two relationships (an approved claim, or a real auto-derived one from GeoConfirmed/ORBAT/correlation data) that share an entity — approve some pending claims in the Uploads workspace, or check back once more live data has synced.
                 </div>
             )}
             {patterns.map(p => (
@@ -6235,8 +6235,12 @@ function OntologyPatternsPanel() {
                     </div>
                     {p.hops.map((h, i) => (
                         <div key={i} style={{ color: "#64748b", fontSize: 10, marginBottom: 4, paddingLeft: 8, borderLeft: "2px solid rgba(148,163,184,0.15)" }}>
-                            <b>{h.source_label} → {h.target_label}</b> ({h.relationship_type}{h.as_of ? `, ${h.as_of}` : ""}, confidence: {h.confidence || "unset"}) — {h.citation?.title || "untitled source"}
-                            {h.citation?.url && <>{" "}<a href={h.citation.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>↗</a></>}
+                            <b>{h.source_label} → {h.target_label}</b> ({h.relationship_type}{h.as_of ? `, ${h.as_of}` : ""})
+                            {" — "}
+                            {h.auto
+                                ? <span style={{ color: "#34d399" }}>auto-derived (live data, not a human-reviewed claim)</span>
+                                : <>confidence: {h.confidence || "unset"} — {h.citation?.title || "untitled source"}
+                                    {h.citation?.url && <>{" "}<a href={h.citation.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>↗</a></>}</>}
                         </div>
                     ))}
                     <div style={{ display: "flex", gap: 6, marginTop: 8 }}>

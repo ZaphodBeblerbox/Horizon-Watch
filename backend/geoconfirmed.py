@@ -40,6 +40,8 @@ import json
 import urllib.request
 from typing import Optional
 
+import country_registry
+
 GEOCONFIRMED_BASE = "https://geoconfirmed.org"
 HEADERS = {"User-Agent": "NaginiIngest/1.0"}
 
@@ -391,14 +393,39 @@ def _slug(name: str) -> str:
     return _re.sub(r"[^a-z0-9]+", "_", (name or "").strip().lower()).strip("_") or "unknown"
 
 
-def _plus_code_country(plus_code: Optional[str]) -> Optional[str]:
-    """Real country name — the last comma-segment of GeoConfirmed's own
-    plusCode string (e.g. '8GWV32CG+P7 Sribne, Donetsk Oblast, Ukraine' ->
-    'Ukraine'). Real, GeoConfirmed-provided evidence, never a theatre-slug
-    guess or a separate geocode call."""
+def _plus_code_country(plus_code: Optional[str]) -> tuple[str, str] | None:
+    """Real (iso_code, canonical_name) for GeoConfirmed's own plusCode
+    string (e.g. '8GWV32CG+P7 Sribne, Donetsk Oblast, Ukraine' -> ('UA',
+    'Ukraine')), validated through country_registry.canonical_country() —
+    never the raw last-comma-segment trusted blindly.
+
+    Real, confirmed bug this fixes: the raw last segment is sometimes a
+    locality or a postal-code fragment, not a country (Gaza-area/Crimea
+    placemarks whose plusCode ends in a city name; a Moscow example ending
+    in a bare postal code) — the previous version of this function created
+    a real "country" node for each of those (9 locality nodes + 1 garbage
+    numeric-label node, confirmed live in forge_ontology.json), which is
+    what the live "duplicate/wrong country" bug actually was. Returns None
+    (an honest abstention — no node created) rather than guessing, for
+    both the known-bogus cases and any string the real canonical registry
+    doesn't recognize."""
     if not plus_code or "," not in plus_code:
         return None
-    return plus_code.rsplit(",", 1)[-1].strip() or None
+    raw = plus_code.rsplit(",", 1)[-1].strip()
+    if not raw:
+        return None
+    resolved = country_registry.canonical_country(raw)
+    if resolved:
+        return resolved
+    if not country_registry.is_known_non_country(raw):
+        # A real string this registry doesn't yet recognize AND isn't a
+        # known locality/postal-code artifact either — could be a genuinely
+        # new real country (a new theatre) or a new parsing edge case.
+        # Logged clearly rather than silently dropped or silently turned
+        # into an unvalidated node, so a developer can add the real entry
+        # to country_registry.py.
+        print(f"[geoconfirmed] unrecognized country string in plus_code (no node created): {raw!r}")
+    return None
 
 
 def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> dict:
@@ -437,6 +464,14 @@ def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> d
     countries_seen: set[str] = set()
     factions_seen: set[str] = set()
     country_faction_pairs: set[tuple[str, str]] = set()
+    # Real cross-reference between a Faction and a same-named Country
+    # (e.g. faction "Ukraine" and country "Ukraine" are genuinely
+    # different real-world concepts — a combatant side vs. a geographic/
+    # political entity — so they stay separate node types rather than
+    # being merged into one, but a real "same_polity_as" edge makes the
+    # relationship explicit instead of leaving two same-labeled nodes that
+    # look like an accidental duplicate with no stated connection.
+    same_polity_pairs: set[tuple[str, str]] = set()
 
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=placemark_window_days)
     placemarks = db.query(GeoConfirmedPlacemark).filter(
@@ -445,14 +480,15 @@ def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> d
     ).all()
 
     for p in placemarks:
-        country_name = _plus_code_country(p.plus_code)
+        country_resolved = _plus_code_country(p.plus_code)
         faction_name = p.faction
-        country_node_id = f"country_{_slug(country_name)}" if country_name else None
+        country_node_id = f"country_{country_resolved[0]}" if country_resolved else None
         faction_node_id = f"faction_{_slug(faction_name)}" if faction_name else None
 
         if country_node_id and country_node_id not in countries_seen:
             nodes_by_id[country_node_id] = {
-                "id": country_node_id, "type": "country", "label": country_name, "source": "geoconfirmed",
+                "id": country_node_id, "type": "country", "label": country_resolved[1],
+                "iso_code": country_resolved[0], "source": "geoconfirmed",
             }
             countries_seen.add(country_node_id)
 
@@ -472,6 +508,7 @@ def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> d
                     "type": "located_in", "auto": True,
                 }
 
+
         event_id = f"geoconfirmed_{p.id}"
         nodes_by_id[event_id] = {
             "id": event_id, "type": "event", "label": p.name or p.id,
@@ -490,6 +527,29 @@ def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> d
                 "id": edge_id, "source": event_id, "target": f"orbat_{p.orbat_node_id}",
                 "type": "involves", "auto": True,
             }
+
+    # Faction/Country same-name cross-reference — a real, evidence-based
+    # edge (exact canonical-name match via the same registry, never a bare
+    # substring guess), run only after every faction/country node from this
+    # pass has actually been created, so processing order within the
+    # placemark loop above can never cause a missed pairing.
+    for faction_id_seen in factions_seen:
+        faction_label = nodes_by_id[faction_id_seen]["label"]
+        faction_as_country = country_registry.canonical_country(faction_label)
+        if not faction_as_country:
+            continue
+        same_country_id = f"country_{faction_as_country[0]}"
+        if same_country_id not in countries_seen:
+            continue
+        pair2 = (faction_id_seen, same_country_id)
+        if pair2 in same_polity_pairs:
+            continue
+        same_polity_pairs.add(pair2)
+        edge_id2 = f"e_samepolity_{pair2[0]}_{pair2[1]}"
+        edges_by_id[edge_id2] = {
+            "id": edge_id2, "source": pair2[0], "target": pair2[1],
+            "type": "same_polity_as", "auto": True,
+        }
 
     orbat_rows = db.query(GeoConfirmedOrbatNode).filter(GeoConfirmedOrbatNode.is_deleted.is_(False)).all()
     for r in orbat_rows:
@@ -617,7 +677,8 @@ def feed_surge_engine(db, *, window_days: int = 7) -> dict:
 
     fed = 0
     for p in rows:
-        country = _plus_code_country(p.plus_code) or p.theatre_slug
+        _country_resolved = _plus_code_country(p.plus_code)
+        country = _country_resolved[1] if _country_resolved else p.theatre_slug
         location_name = _plus_code_location(p.plus_code) or p.theatre_slug
         title = p.name or (p.description or "")[:100] or "GeoConfirmed event"
         record = {

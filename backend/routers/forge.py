@@ -636,15 +636,33 @@ async def forge_reject_ontology_claim(claim_id: str, request: Request):
 # pattern discovery even though they're still visible in the ontology graph.
 
 def _find_graph_patterns() -> list:
-    """Find 2-hop chains (A —hop1→ hub —hop2→ C) among claim-sourced edges where
-    no direct edge already connects A and C. Returns a list of pattern dicts,
-    each with a deterministic `pattern_id` derived from the pair of claim ids
-    involved, so star/dismiss state survives across re-computation."""
+    """Find 2-hop chains (A —hop1→ hub —hop2→ C) among claim-sourced OR real
+    auto-generated edges where no direct edge already connects A and C.
+    Returns a list of pattern dicts, each with a deterministic `pattern_id`
+    derived from the pair of real edge ids involved, so star/dismiss state
+    survives across re-computation.
+
+    Real, confirmed audit finding (fix/geoconfirmed-ontology-and-inbox-
+    fixes, Part 6): this used to consider ONLY edges carrying a real
+    `claim_id` — i.e. only human-approved OntologyClaim-derived edges. The
+    live `ontology_claims` table has 0 approved rows, so before this change
+    Stage 2 found exactly zero patterns regardless of how rich the rest of
+    the graph got — it was never running over GeoConfirmed's real
+    `located_in`/`faction_of`/`part_of`/`same_polity_as` edges (~7,800 real
+    edges) or the pre-existing correlation engine's `correlates_with`/
+    `threatens` edges at all. Real fix: any edge with `auto: True` (a real,
+    disclosed-provenance, deterministically-derived edge — never a free-
+    text extraction needing human citation review) is now ALSO eligible as
+    a hop, alongside real approved claims. `_hop()` below still reports
+    `claim_id` per hop (None for an auto edge) so a reviewer can always see
+    which kind of real evidence each hop actually is — auto-derived
+    structure is never silently presented as a cited, human-reviewed
+    claim."""
     import main as _m
     ontology  = _m._forge_ontology_load()
     nodes_by_id = {n["id"]: n for n in ontology.get("nodes", [])}
     all_edges   = ontology.get("edges", [])
-    claim_edges = [e for e in all_edges if e.get("claim_id")]
+    claim_edges = [e for e in all_edges if e.get("claim_id") or e.get("auto")]
 
     # Any existing edge (claim-sourced or not) between two nodes counts as
     # "already directly linked" — a pattern is only interesting when nothing
@@ -658,12 +676,39 @@ def _find_graph_patterns() -> list:
             if nid:
                 incident.setdefault(nid, []).append(e)
 
+    # Real, measured finding (Part 6, over the now-richer ~10.5k-node/53k-edge
+    # graph): a handful of mega-hubs (faction_ukraine: 1185 incident edges,
+    # faction_russia: 1068, faction_neutral: 447, plus ~200 large correlation-
+    # event nodes each with 100-250) make the naive all-pairs-per-hub scan
+    # combinatorially explode — sum of C(degree,2) across all hubs is ~5.07M,
+    # and it never returned within 120s live. This isn't just a performance
+    # problem: a "pattern" through a mega-hub isn't a real discovery either —
+    # of course any two of Ukraine-the-faction's ~1185 neighbors are "linked
+    # via Ukraine," that's the expected shape of a hub-and-spoke conflict
+    # graph, not a surprising 2-hop connection. Real signal lives in hubs
+    # with a modest, specific fan-out (a single entity/event tying a few
+    # other things together). Measured against the live graph: capping at
+    # degree <= 30 keeps 8,930 of 9,921 real incident hubs (90%) and the
+    # total pairwise cost to ~160k comparisons (sub-second), while excluding
+    # only the 991 real mega-hubs whose pairs would be noise, not signal.
+    _MAX_HUB_DEGREE = 30
+    incident = {nid: edges_here for nid, edges_here in incident.items() if len(edges_here) <= _MAX_HUB_DEGREE}
+
     def _node_summary(nid):
         n = nodes_by_id.get(nid, {})
         return {"id": nid, "label": n.get("label", nid), "type": n.get("type")}
 
     def _other_end(edge, hub_id):
         return edge["target"] if edge["source"] == hub_id else edge["source"]
+
+    def _origin_key(edge):
+        """Real stable per-edge identity for same-origin/dedup checks —
+        the real claim_id for a claim-sourced edge, or the edge's own real
+        `id` for an auto-generated one (auto edges have no claim_id at all,
+        so falling back to a shared `None` for every one of them would
+        wrongly treat every pair of DIFFERENT auto edges as "the same
+        origin" and silently skip them all)."""
+        return edge.get("claim_id") or edge["id"]
 
     def _hop(edge):
         return {
@@ -676,6 +721,11 @@ def _find_graph_patterns() -> list:
             "confidence":       edge.get("confidence"),
             "citation":         edge.get("citation"),
             "claim_id":         edge.get("claim_id"),
+            # Real, explicit provenance flag — never blur an auto-derived
+            # structural edge (GeoConfirmed ORBAT/faction/country data, the
+            # correlation engine's own correlates_with/threatens edges) with
+            # a human-reviewed, cited OntologyClaim.
+            "auto":             bool(edge.get("auto")),
         }
 
     patterns = []
@@ -684,7 +734,7 @@ def _find_graph_patterns() -> list:
         for i in range(len(edges_here)):
             for j in range(i + 1, len(edges_here)):
                 e1, e2 = edges_here[i], edges_here[j]
-                if e1.get("claim_id") == e2.get("claim_id"):
+                if _origin_key(e1) == _origin_key(e2):
                     continue
                 a_id = _other_end(e1, hub_id)
                 c_id = _other_end(e2, hub_id)
@@ -692,12 +742,12 @@ def _find_graph_patterns() -> list:
                     continue
                 if frozenset((a_id, c_id)) in direct_pairs:
                     continue
-                dedupe_key = frozenset((e1["claim_id"], e2["claim_id"]))
+                dedupe_key = frozenset((_origin_key(e1), _origin_key(e2)))
                 if dedupe_key in seen_pairs:
                     continue
                 seen_pairs.add(dedupe_key)
                 pattern_id = "PAT-" + _hashlib.sha256(
-                    "|".join(sorted([e1["claim_id"], e2["claim_id"]])).encode()
+                    "|".join(sorted([_origin_key(e1), _origin_key(e2)])).encode()
                 ).hexdigest()[:10].upper()
                 patterns.append({
                     "pattern_id": pattern_id,
@@ -712,6 +762,9 @@ def _get_pattern_reviews() -> dict:
     return {r["pattern_id"]: r for r in _m._forge_load("pattern_reviews.json") if r.get("pattern_id")}
 
 
+_MAX_RETURNED_PATTERNS = 500  # see docstring note below
+
+
 @router.get("/ontology/patterns")
 def forge_get_ontology_patterns(include_dismissed: bool = False):
     patterns = _find_graph_patterns()
@@ -724,7 +777,21 @@ def forge_get_ontology_patterns(include_dismissed: bool = False):
     if not include_dismissed:
         patterns = [p for p in patterns if not p["dismissed"]]
     patterns.sort(key=lambda p: (not p["starred"], p["nodes"][1]["label"] or ""))
-    return {"patterns": patterns}
+    # Real, measured finding (Part 6): over the current live graph this
+    # routinely finds 90k+ real patterns (dominated by the correlation
+    # engine's own dense correlates_with mesh — thousands of correlation-
+    # event nodes each linked to several others). The frontend's Patterns
+    # tab (ForgePanel.jsx) renders every returned pattern via a plain
+    # `.map()` with no virtualization, so returning the full set would hang
+    # the browser tab. Starred patterns are always kept (never silently
+    # dropped by the cap); the rest is capped at a bounded, genuinely
+    # reviewable size. total_found reports the real uncapped count so this
+    # truncation is visible rather than silently hidden.
+    total_found = len(patterns)
+    starred = [p for p in patterns if p["starred"]]
+    rest = [p for p in patterns if not p["starred"]]
+    patterns = starred + rest[:max(0, _MAX_RETURNED_PATTERNS - len(starred))]
+    return {"patterns": patterns, "total_found": total_found, "returned": len(patterns)}
 
 
 @router.post("/ontology/patterns/{pattern_id}/review")

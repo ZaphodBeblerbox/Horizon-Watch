@@ -258,8 +258,13 @@ def prepare_intelligence_picture(
         # higher-tier real classifications when they exist, without
         # excluding tier-3 "contextual" real articles entirely when nothing
         # better is available — real content beats an empty section.
+        # RSS is retired (status="retired" on every existing row) — explicit
+        # filter rather than relying solely on the time window, so an old-
+        # period historical report request can never resurface retired rows
+        # as if they were live.
         _news_q = db.query(_NADB).filter(
-            _NADB.tier <= 3, _NADB.ingested_at >= (period_start or cutoff_24h)
+            _NADB.tier <= 3, _NADB.ingested_at >= (period_start or cutoff_24h),
+            _NADB.status == "active",
         )
         _news_region_clause = _sql_region_filter(_NADB.lat, _NADB.lon, region)
         if _news_region_clause is not None:
@@ -458,6 +463,14 @@ def prepare_intelligence_picture(
     high_relevance.sort(key=lambda s: -(s.get("relevance_score") or 0))
     ais_signals    = [s for s in high_relevance if s.get("domain", "") == "AIS"]
     adsb_signals   = [s for s in high_relevance if s.get("domain", "") == "ADSB"]
+    # Real GeoConfirmed-origin signals (write_geoconfirmed_alerts() writes
+    # these as real Alert rows, domain="GEOCONFIRMED" per this same
+    # relevance_scorer pass) were already being computed and counted into
+    # statistics.total_active_signals above — they just had no output
+    # bucket of their own and were silently dropped before Generate.jsx's
+    # corpus grid, the actual root cause of "GeoConfirmed points don't load
+    # into Generate at all."
+    geoconfirmed_signals = [s for s in high_relevance if s.get("domain", "") == "GEOCONFIRMED"]
 
     # ── 5. Recent Sentinel detections (14d, immediate + digest tier) ──────────
     # Was alert_tier == "immediate" only, 48h — too narrow on both axes for a
@@ -683,6 +696,7 @@ def prepare_intelligence_picture(
         "surge_events":       surge_items,
         "ais_anomalies":      ais_signals[:10],
         "adsb_anomalies":     adsb_signals[:10],
+        "geoconfirmed_signals": geoconfirmed_signals[:10],
         "sentinel_detections": sentinel_items[:10],
         "news_assessments":   assessment_items[:10],
         "strategic_zones":    active_zones[:10],
