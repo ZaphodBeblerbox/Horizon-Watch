@@ -958,6 +958,14 @@ class NewsArticle(Base):
     body                 = Column(Text, nullable=True)
     ingested_at          = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     region               = Column(String, nullable=True, index=True)
+    # RSS ingestion is retired (fix/geoconfirmed-real-backbone) — real,
+    # deliberate soft-delete rather than a hard delete: existing rows may
+    # already be cited by a real report, export, or OntologyLink, and a
+    # hard delete would silently dangle those. New rows are never written
+    # again (the RSS ingestion adapter itself is removed); this column
+    # exists purely so every real consumer can filter retired rows out of
+    # anything CURRENT while historical citations still resolve.
+    status               = Column(String, nullable=False, default="active", index=True)  # active|retired
 
     __table_args__ = (
         Index("ix_news_country_time",  "country_code", "ingested_at"),
@@ -1443,6 +1451,16 @@ def migrate_db():
             if col not in rc_existing:
                 cur.execute(f'ALTER TABLE rule_configs ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] rule_configs: added column {col}')
+
+    # news_articles.status — RSS retirement soft-delete column (see the
+    # model's own docstring). Existing rows default to 'active' via the
+    # ALTER's own DEFAULT clause, then the real bulk retirement pass
+    # (backend/retire_rss.py) flips them all to 'retired' once, separately.
+    if 'news_articles' in tables:
+        na_existing = [row[1] for row in cur.execute('PRAGMA table_info(news_articles)').fetchall()]
+        if 'status' not in na_existing:
+            cur.execute("ALTER TABLE news_articles ADD COLUMN status TEXT DEFAULT 'active'")
+            print('[db-migrate] news_articles: added column status')
 
     # regional_scan_jobs new columns (tile-by-tile streaming schema)
     rscan_new_cols = [

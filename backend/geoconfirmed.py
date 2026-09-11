@@ -384,6 +384,262 @@ def link_orbat_to_existing_entities(db, *, min_name_len: int = 9) -> dict:
     return {"checked": checked, "flagged": flagged}
 
 
+# ── Ontology integration ──────────────────────────────────────────────────────
+
+def _slug(name: str) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9]+", "_", (name or "").strip().lower()).strip("_") or "unknown"
+
+
+def _plus_code_country(plus_code: Optional[str]) -> Optional[str]:
+    """Real country name — the last comma-segment of GeoConfirmed's own
+    plusCode string (e.g. '8GWV32CG+P7 Sribne, Donetsk Oblast, Ukraine' ->
+    'Ukraine'). Real, GeoConfirmed-provided evidence, never a theatre-slug
+    guess or a separate geocode call."""
+    if not plus_code or "," not in plus_code:
+        return None
+    return plus_code.rsplit(",", 1)[-1].strip() or None
+
+
+def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> dict:
+    """Real Country/Faction/ORBAT-unit ontology entities, plus GeoConfirmed
+    event nodes for the real live/recent window — sourced entirely from
+    GeoConfirmed's own real data (plusCode-derived country, real faction
+    string, real ORBAT parent/child hierarchy), never a name-matching
+    auto-merge into anything that already exists (see
+    link_orbat_to_existing_entities for that real-evidence-only path).
+
+    Deliberately bounded to `placemark_window_days` for the individual
+    per-placemark event nodes, not the full historic archive: this is a
+    JSON-file-backed graph (forge_ontology.json), and a node per historic
+    placemark (tens of thousands once fully backfilled) would make it slow
+    to load/save on every sync pass for a diagram that only ever renders a
+    curated top-N subset anyway. The full historic archive lives in, and
+    stays queryable by date range from, the real geoconfirmed_placemarks
+    SQL table (Part 5) — and is separately searchable via /api/search
+    (routers real search handler) regardless of this window. Country/
+    Faction/ORBAT-unit nodes themselves are NOT windowed — they're a
+    bounded, real, graph-appropriate set (dozens of countries/factions,
+    thousands of ORBAT units, not growing per-event).
+
+    Every node here is keyed/deduped by its own real hard id (placemark
+    UUID / ORBAT node id / a deterministic country-or-faction-name slug),
+    never by label — this deliberately does NOT reuse routers/forge.py's
+    _add_entities_to_ontology, whose case-insensitive label-match merge is
+    a known, documented weak point for exactly this kind of collision."""
+    import main as _m
+    from database import GeoConfirmedPlacemark, GeoConfirmedOrbatNode
+
+    ontology = _m._forge_ontology_load()
+    nodes_by_id = {n["id"]: n for n in ontology.get("nodes", [])}
+    edges_by_id = {e["id"]: e for e in ontology.get("edges", [])}
+
+    countries_seen: set[str] = set()
+    factions_seen: set[str] = set()
+    country_faction_pairs: set[tuple[str, str]] = set()
+
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=placemark_window_days)
+    placemarks = db.query(GeoConfirmedPlacemark).filter(
+        GeoConfirmedPlacemark.status == "active",
+        GeoConfirmedPlacemark.date >= cutoff,
+    ).all()
+
+    for p in placemarks:
+        country_name = _plus_code_country(p.plus_code)
+        faction_name = p.faction
+        country_node_id = f"country_{_slug(country_name)}" if country_name else None
+        faction_node_id = f"faction_{_slug(faction_name)}" if faction_name else None
+
+        if country_node_id and country_node_id not in countries_seen:
+            nodes_by_id[country_node_id] = {
+                "id": country_node_id, "type": "country", "label": country_name, "source": "geoconfirmed",
+            }
+            countries_seen.add(country_node_id)
+
+        if faction_node_id and faction_node_id not in factions_seen:
+            nodes_by_id[faction_node_id] = {
+                "id": faction_node_id, "type": "faction", "label": faction_name, "source": "geoconfirmed",
+            }
+            factions_seen.add(faction_node_id)
+
+        if country_node_id and faction_node_id:
+            pair = (faction_node_id, country_node_id)
+            if pair not in country_faction_pairs:
+                country_faction_pairs.add(pair)
+                edge_id = f"e_locatedin_{pair[0]}_{pair[1]}"
+                edges_by_id[edge_id] = {
+                    "id": edge_id, "source": pair[0], "target": pair[1],
+                    "type": "located_in", "auto": True,
+                }
+
+        event_id = f"geoconfirmed_{p.id}"
+        nodes_by_id[event_id] = {
+            "id": event_id, "type": "event", "label": p.name or p.id,
+            "lat": p.latitude, "lng": p.longitude, "source": "geoconfirmed",
+            "description": (p.description or "")[:280],
+        }
+        if faction_node_id:
+            edge_id = f"e_factionof_{event_id}"
+            edges_by_id[edge_id] = {
+                "id": edge_id, "source": event_id, "target": faction_node_id,
+                "type": "faction_of", "auto": True,
+            }
+        if p.orbat_node_id is not None:
+            edge_id = f"e_involves_{event_id}_orbat_{p.orbat_node_id}"
+            edges_by_id[edge_id] = {
+                "id": edge_id, "source": event_id, "target": f"orbat_{p.orbat_node_id}",
+                "type": "involves", "auto": True,
+            }
+
+    orbat_rows = db.query(GeoConfirmedOrbatNode).filter(GeoConfirmedOrbatNode.is_deleted.is_(False)).all()
+    for r in orbat_rows:
+        unit_node_id = f"orbat_{r.id}"
+        nodes_by_id[unit_node_id] = {
+            "id": unit_node_id, "type": "org", "label": r.name,
+            "source": "geoconfirmed", "structure_path": r.structure_path,
+        }
+        if r.parent_id is not None:
+            edge_id = f"e_partof_{r.id}_{r.parent_id}"
+            edges_by_id[edge_id] = {
+                "id": edge_id, "source": unit_node_id, "target": f"orbat_{r.parent_id}",
+                "type": "part_of", "auto": True,
+            }
+
+    ontology["nodes"] = list(nodes_by_id.values())
+    ontology["edges"] = list(edges_by_id.values())
+    _m._forge_ontology_save(ontology)
+    return {
+        "countries": len(countries_seen), "factions": len(factions_seen),
+        "orbat_units": len(orbat_rows), "events_in_window": len(placemarks),
+    }
+
+
+# ── Real Alert-writing — feeds fusion_engine/threat_matrix/Analytics/Dossiers ──
+
+def _plus_code_location(plus_code: Optional[str]) -> Optional[str]:
+    """Real, precise location string straight from GeoConfirmed's own
+    plusCode (mirrors main.py's identical helper — kept in both modules
+    since main.py can't import this module's private helpers without a
+    circular import, and this one real 2-line function isn't worth a third
+    shared-utils module for)."""
+    if not plus_code:
+        return None
+    parts = plus_code.split(" ", 1)
+    return parts[1].strip() if len(parts) > 1 else plus_code.strip()
+
+
+def write_geoconfirmed_alerts(db, *, window_days: int = 90) -> dict:
+    """Real Alert rows for real, recent GeoConfirmed placemarks — the same
+    real role RSS-derived Alert rows (surge_engine's on_raw_article path,
+    the old news-conflict-extraction path) used to play, now played by
+    GeoConfirmed's real, precisely-geolocated placemarks instead. Every
+    Alert-writing path in this app already calls fusion_engine.on_signal()
+    generically (alert_writer.write_alert()) — GeoConfirmed alerts get that
+    for free, which is what makes them reach threat_matrix (reads Alert +
+    FusionEvent) and Analytics/Dossiers (both read Alert directly) exactly
+    the way RSS-derived alerts did.
+
+    Deterministic alert_id per placemark (GC-<uuid>) makes this idempotent —
+    write_alert() itself skips silently if that id already exists, so
+    re-running this after every sync pass never duplicates.
+
+    Calls main.py's own write_alert() wrapper (not alert_writer.write_alert
+    directly) — that wrapper is what adds the real fusion_engine.on_signal()
+    AND entity_linker.link_alert() calls on top of the base DB write; every
+    other real alert-writing path in this app already goes through it, and
+    an earlier audit (main.py:120-124) found paths that called the base
+    writer directly had silently missed entity-linking — not repeating
+    that here."""
+    import main as _m
+    from database import GeoConfirmedPlacemark
+    from exposure_index import classify_severity_deterministic as _csd
+
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=window_days)
+    rows = db.query(GeoConfirmedPlacemark).filter(
+        GeoConfirmedPlacemark.status == "active",
+        GeoConfirmedPlacemark.date >= cutoff,
+    ).all()
+
+    written = skipped = 0
+    for p in rows:
+        alert_id = f"GC-{p.id}"
+        title = p.name or (p.description or "")[:80] or "GeoConfirmed event"
+        severity = _csd(p.description or title, p.latitude, p.longitude) or "medium"
+        region = _plus_code_location(p.plus_code) or p.theatre_slug
+        result = _m.write_alert({
+            "id": alert_id,
+            "source": "geoconfirmed",
+            "alert_type": "geoconfirmed_event",
+            "title": title,
+            "severity": severity,
+            "lat": p.latitude, "lon": p.longitude,
+            "region": region,
+            "country_code": None,
+            "entity_type": "geoconfirmed_placemark",
+            "entity_id": p.id,
+            "entity_name": p.orbat_unit_name,
+            "raw": {
+                "description": p.description, "faction": p.faction, "theatre_slug": p.theatre_slug,
+                "original_source": p.original_source, "geolocation_source": p.geolocation_source,
+                "plus_code": p.plus_code, "date": p.date.isoformat() if p.date else None,
+            },
+        })
+        if result:
+            written += 1
+        else:
+            skipped += 1
+    return {"written": written, "skipped_existing": skipped}
+
+
+# ── Real Surge feed — replaces RSS as surge_engine's real input ─────────────
+
+def feed_surge_engine(db, *, window_days: int = 7) -> dict:
+    """Real replacement for RSS's role as surge_engine's sole input (the old
+    news-ingest loop's on_raw_article/on_article calls, main.py). Surge
+    detects a real spike in reporting volume for a (country, article_type)
+    or keyword bucket — GeoConfirmed's real placemarks are individually
+    verified incidents, not raw articles, so "volume" here is a real spike
+    of newly-confirmed incidents rather than repeated coverage of one, which
+    is the honest equivalent for this source. `article_type` is always the
+    real, always-true "conflict" tag (GeoConfirmed's whole real scope) —
+    not a classifier guess, since it doesn't need one to be accurate here.
+    Windowed short (7 real days, not 90) — surge is inherently about a
+    RECENT spike, and feeding it a placemark from weeks ago on every sync
+    pass would just re-arm cooldowns pointlessly."""
+    from database import GeoConfirmedPlacemark
+    from surge_engine import surge_engine as _se
+
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=window_days)
+    rows = db.query(GeoConfirmedPlacemark).filter(
+        GeoConfirmedPlacemark.status == "active",
+        GeoConfirmedPlacemark.date >= cutoff,
+    ).all()
+
+    fed = 0
+    for p in rows:
+        country = _plus_code_country(p.plus_code) or p.theatre_slug
+        location_name = _plus_code_location(p.plus_code) or p.theatre_slug
+        title = p.name or (p.description or "")[:100] or "GeoConfirmed event"
+        record = {
+            "article_type": "conflict",
+            "location_country": country,
+            "location_name": location_name,
+            "region_id": None,
+            "lat": p.latitude, "lon": p.longitude,
+            "title": title, "source": "geoconfirmed",
+            "relevance_score": 7.0,
+            "url": (p.original_source or "").split("\n")[0].strip(),
+        }
+        try:
+            _se.on_raw_article(record)
+            if country:
+                _se.on_article(record)
+            fed += 1
+        except Exception as e:
+            print(f"[geoconfirmed] surge feed error for {p.id}: {e}")
+    return {"fed": fed}
+
+
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def run_ingest(db=None, theatres: Optional[list[str]] = None, since_days: int = 90) -> dict:
@@ -404,16 +660,25 @@ def run_ingest(db=None, theatres: Optional[list[str]] = None, since_days: int = 
         orbat_stats = []
         for slug in theatres:
             try:
-                placemark_stats.append(upsert_theatre_placemarks(slug, db, since_days=since_days))
+                stats = upsert_theatre_placemarks(slug, db, since_days=since_days)
+                placemark_stats.append(stats)
+                print(f"[geoconfirmed] {slug}: {stats}", flush=True)
             except Exception as e:
-                print(f"[geoconfirmed] placemark sync failed for theatre={slug}: {e}")
+                print(f"[geoconfirmed] placemark sync failed for theatre={slug}: {e}", flush=True)
             try:
                 orbat_stats.append(upsert_orbat_tree(slug, db))
             except Exception as e:
-                print(f"[geoconfirmed] orbat sync failed for theatre={slug}: {e}")
+                print(f"[geoconfirmed] orbat sync failed for theatre={slug}: {e}", flush=True)
 
         link_stats = link_orbat_to_existing_entities(db)
-        return {"theatres": theatres, "placemarks": placemark_stats, "orbat": orbat_stats, "linking": link_stats}
+        ontology_stats = sync_ontology_from_geoconfirmed(db)
+        alert_stats = write_geoconfirmed_alerts(db)
+        surge_stats = feed_surge_engine(db)
+        return {
+            "theatres": theatres, "placemarks": placemark_stats, "orbat": orbat_stats,
+            "linking": link_stats, "ontology": ontology_stats, "alerts": alert_stats,
+            "surge": surge_stats,
+        }
     finally:
         if own:
             db.close()
