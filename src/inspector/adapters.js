@@ -335,7 +335,14 @@ export function adaptZone(data = {}) {
 
 export function adaptGeoConfirmed(data = {}) {
     const point = pointOf(data)
-    const title = data.description || data.name || "GeoConfirmed Event"
+    // GeoConfirmed's real `name` field is its own short label (near-always a
+    // "DD MON YYYY" date string) — the real header-appropriate title. The
+    // real `description` field is full prose (sometimes several sentences)
+    // and was previously used AS the title, silently truncated by the
+    // header's single-line CSS with no way to read the rest — it's now a
+    // real, separate, untruncated body field instead (see `description`
+    // below, rendered by InspectorPanel as its own wrapping section).
+    const title = data.name || (data.description ? data.description.slice(0, 60) : null) || "GeoConfirmed Event"
     const sources = (data.original_source || "").split("\n").map((s) => s.trim()).filter(Boolean)
     const geoloc = (data.geolocation_source || "").split("\n").map((s) => s.trim()).filter(Boolean)
 
@@ -353,11 +360,15 @@ export function adaptGeoConfirmed(data = {}) {
     return {
         identity: {
             title,
-            subtitle: data.name && data.name !== title ? data.name : null,
+            subtitle: data.theatre_slug || null,
             entityType: "geoconfirmed",
             subtype: null,
             sanctionsStatus: null,
         },
+        // Real, complete, untruncated free text — never squeezed into the
+        // single-line header title. Null (not rendered at all) when the
+        // real placemark genuinely has no description.
+        description: data.description || null,
         attributes,
         provenance: { feed: "GeoConfirmed", ingestedAt: null },
         actions: {
