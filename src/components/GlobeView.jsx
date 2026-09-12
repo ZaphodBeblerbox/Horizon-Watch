@@ -13,6 +13,7 @@ import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeGraticuleLayer      from "../globe/GlobeGraticuleLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
+import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
 import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
@@ -664,6 +665,7 @@ export default function GlobeView({
                 <GlobeStrategicZonesLayer enabled={strategicZonesEnabled} />
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
                 <GlobeGeoConfirmedLayer enabled={geoConfirmedEnabled} />
+                <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeSurgeLayer        enabled={eventsEnabled} />
                 {cityLabelsEnabled && (
                     <ImageryLayer imageryProvider={esriLabelsProvider} alpha={1.0} maximumTerrainLevel={19} />

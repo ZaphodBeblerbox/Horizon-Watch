@@ -72,7 +72,7 @@ function csvEscape(v) {
 
 function exportCsv(data) {
     const lines = [
-        "Horizon Watch — Analytics export",
+        "Parallax — Analytics export",
         `Range,${data.range}`, `Region,${data.region}`, `Domain,${data.domain}`,
         `Generated,${data.generated_at}`, "",
         "KPI,Value,Delta %",

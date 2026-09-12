@@ -1728,6 +1728,31 @@ def _real_node_attributes(node: dict) -> dict:
     return {k: v for k, v in node.items() if k not in hidden and v not in (None, "", [])}
 
 
+# Real node types eligible for Wikipedia/flagcdn enrichment. Country gets
+# both a real flagcdn flag and a real Wikipedia summary; every other real
+# type here gets Wikipedia's own `thumbnail` labeled "image" — never
+# "flag" — per entity_enrichment.py's honesty rules (Part 5/7.5).
+_ENRICHABLE_TYPES = {"country", "faction", "org"}
+
+
+def _real_entity_enrichment(node: dict) -> dict | None:
+    """Real, cached flag/image + Wikipedia summary for this node, or None
+    for a node type this doesn't apply to (never fetched/fabricated for
+    e.g. a vessel/event/cable node)."""
+    node_type = node.get("type")
+    if node_type not in _ENRICHABLE_TYPES:
+        return None
+    import entity_enrichment as _ee
+    label = node.get("label")
+    if not label:
+        return None
+    if node_type == "country" and node.get("iso_code"):
+        result = _ee.enrich_country(label, node["iso_code"])
+        return {"kind": "country", "flag_path": result["flag_path"], "wikipedia": result["wikipedia"]}
+    result = _ee.enrich_group_entity(label)
+    return {"kind": "group", "image": result["image"], "wikipedia": result["wikipedia"]}
+
+
 @router.get("/ontology/node/{node_id}/connections")
 def forge_ontology_node_connections(node_id: str):
     """Real entity panel data for ANY forge ontology node: its own real
@@ -1757,11 +1782,21 @@ def forge_ontology_node_connections(node_id: str):
             "id": other_id, "type": other.get("type"), "label": other.get("label") or other_id,
             "relationship_type": e.get("type"),
             "auto": bool(e.get("auto")), "claim_id": e.get("claim_id"),
+            # Real map coordinates, when this connected entity actually has
+            # them (an event/vessel/chokepoint does; a Country/Faction node
+            # does not) — lets a map-level consumer (Part 2's GeoConfirmed
+            # pin-click connector lines) draw a real line without a second,
+            # separate lookup query.
+            "lat": other.get("lat"), "lng": other.get("lng"),
         })
+
+    enrichment = _real_entity_enrichment(node)
 
     return {
         "id": node_id, "type": node.get("type"), "label": node.get("label") or node_id,
+        "lat": node.get("lat"), "lng": node.get("lng"),
         "attributes": _real_node_attributes(node), "connections": connections,
+        "enrichment": enrichment,
     }
 
 
@@ -1769,11 +1804,17 @@ def forge_ontology_node_connections(node_id: str):
 # claim. Deliberately narrow: this app already removed a hardcoded country/
 # alliance/sponsorship graph once (see forge_build_ontology()'s own removal
 # comment) and the ground rule for this rebuild is "never reintroduce that
-# pattern" — so a country-to-country edge is only ever real here when a
-# human analyst approved an OntologyClaim asserting one of these three types.
+# pattern" — so a country-to-country edge is only ever real here when EITHER
+# a human analyst approved an OntologyClaim asserting one of these three
+# types, OR it comes from wikidata_alliances.py's real, live-queried formal
+# alliance/organizational-membership data (source_kind: "wikidata" /
+# "wikidata_fallback" — see that module's docstring for the narrow real
+# scope: P463 member-of against a small explicit list of formal alliance
+# orgs, never P530 diplomatic-relations, never a soft/contested judgment).
 # Auto-derived/structural edges (located_in, same_polity_as, correlates_with,
 # threatens) are never treated as a stated geopolitical relationship.
 _COUNTRY_RELATIONSHIP_TYPES = {"allied_with", "adversarial_to", "neutral_with"}
+_REAL_RELATIONSHIP_SOURCES = {"wikidata", "wikidata_fallback"}
 _COUNTRY_SUBGRAPH_REL_TYPES = {"same_polity_as", "located_in"}
 _FACTION_SUBGRAPH_NODE_CAP = 300
 
@@ -1781,11 +1822,12 @@ _FACTION_SUBGRAPH_NODE_CAP = 300
 @router.get("/ontology/countries")
 def forge_ontology_countries():
     """Real top-level Country nodes for the Graph tab's country-clustered
-    view, plus real inter-country relationship edges (claim-sourced only —
-    see _COUNTRY_RELATIONSHIP_TYPES). At real current data (0 approved
-    OntologyClaim rows in the live DB), `relationships` is correctly empty —
-    an honest reflection of what's actually been reviewed and approved, not
-    a bug to paper over with an inferred or hardcoded guess."""
+    view, plus real inter-country relationship edges — either human-
+    approved OntologyClaim edges, or real Wikidata-sourced formal-alliance
+    edges (wikidata_alliances.py). At real current data (0 approved
+    OntologyClaim rows in the live DB), every relationship returned today
+    is Wikidata-sourced — an honest reflection of what's actually backed by
+    real evidence, never a hardcoded or inferred guess."""
     import main as _m
     ontology = _m._forge_ontology_load()
     nodes = ontology.get("nodes", [])
@@ -1801,16 +1843,27 @@ def forge_ontology_countries():
             if e.get("source") in country_ids:
                 faction_count[e["source"]] = faction_count.get(e["source"], 0) + 1
 
+    import entity_enrichment as _ee
     countries_out = [{
         "id": n["id"], "label": n.get("label") or n["id"], "iso_code": n.get("iso_code"),
-        "flag_path": n.get("flag_path"), "faction_count": faction_count.get(n["id"], 0),
+        # Real flag: prefer GeoConfirmed's own ORBAT-sourced flag_path when
+        # present (n.get("flag_path")), else fall back to flagcdn's real,
+        # universally-available flag for the country's real ISO code (Part
+        # 5) — never left empty just because ORBAT's own field was.
+        "flag_path": n.get("flag_path") or (_ee.flagcdn_url(n["iso_code"]) if n.get("iso_code") else None),
+        "faction_count": faction_count.get(n["id"], 0),
     } for n in country_nodes]
 
     relationship_edges = [
-        {"id": e["id"], "source": e["source"], "target": e["target"], "type": e.get("type")}
+        {
+            "id": e["id"], "source": e["source"], "target": e["target"], "type": e.get("type"),
+            "source_kind": "claim" if e.get("claim_id") else e.get("source_kind"),
+            "citation": e.get("citation"),
+        }
         for e in edges
         if e.get("source") in country_ids and e.get("target") in country_ids
-        and e.get("claim_id") and e.get("type") in _COUNTRY_RELATIONSHIP_TYPES
+        and e.get("type") in _COUNTRY_RELATIONSHIP_TYPES
+        and (e.get("claim_id") or e.get("source_kind") in _REAL_RELATIONSHIP_SOURCES)
     ]
     return {
         "countries": countries_out, "relationships": relationship_edges,
@@ -1904,6 +1957,155 @@ def forge_ontology_faction_subgraph(faction_id: str):
     return {
         "faction_id": faction_id, "nodes": nodes_out, "edges": edges_out,
         "truncated": truncated, "node_cap": _FACTION_SUBGRAPH_NODE_CAP,
+    }
+
+
+# Real category-box categories for the pyramid rebuild (Part 7). Every
+# category here is checked against REAL current forge_ontology.json data at
+# request time — a category with zero real backing entities is reported as
+# absent (see `categories_absent` below), never rendered as an empty box.
+#
+# Real audit finding (this round): forge_ontology.json's only real node
+# types today are aircraft/alert/cable/chokepoint/correlation/country/
+# escalation chain/event/faction/org/rule/vessel — there is no real
+# "mercenary"/"pmc" or "company" type anywhere, so those two example
+# categories from the prompt are absent and get no box.
+#
+# "Non-state armed group" is not a distinct real node TYPE (it's still
+# type=="faction") — it's derived from a real STRUCTURAL fact: a faction
+# with no real same_polity_as/located_in edge to any country. Of the 4 real
+# factions with no country link, 3 are generic bucket labels ("Other
+# factions", "Palestinian Civilian", "Other Militant Factions") rather than
+# a real specific organization — a box needs one real, specific top entity,
+# so those are excluded. Only "Hamas" is a real, specific non-state actor
+# by this structural test.
+_GENERIC_FACTION_LABELS = {"other factions", "other militant factions", "civilian", "neutral", "unknown",
+                           "palestinian civilian", "ukraine civilian", "russia civilian", "israel civilian"}
+
+
+@router.get("/ontology/pyramid")
+def forge_ontology_pyramid():
+    """Real category-boxed pyramid data for the Ontology Graph tab's Part 7
+    rebuild: Top entity -> Groups/Armies/Units -> Locations -> Signals,
+    per real category box, plus real cross-box connections (Wikidata
+    alliance edges from Part 4; any real faction-to-faction edge ORBAT or
+    an approved claim establishes)."""
+    import main as _m
+    ontology = _m._forge_ontology_load()
+    nodes = ontology.get("nodes", [])
+    edges = ontology.get("edges", [])
+    nodes_by_id = {n["id"]: n for n in nodes}
+
+    country_nodes = [n for n in nodes if n.get("type") == "country"]
+    country_ids = {n["id"] for n in country_nodes}
+    faction_nodes = [n for n in nodes if n.get("type") == "faction"]
+
+    country_linked_faction_ids = {
+        e["source"] for e in edges
+        if e.get("type") in _COUNTRY_SUBGRAPH_REL_TYPES and e.get("target") in country_ids
+    }
+    non_state_tops = [
+        f for f in faction_nodes
+        if f["id"] not in country_linked_faction_ids
+        and (f.get("label") or "").strip().lower() not in _GENERIC_FACTION_LABELS
+    ]
+
+    def _events_for_factions(faction_ids: list) -> tuple[list, bool]:
+        """Real events (faction_of-linked) for a real list of faction ids,
+        capped per faction (same real cap/reason as /ontology/faction/{id}
+        /subgraph — a major theatre's faction can have thousands of real
+        linked locations)."""
+        seen, truncated = [], False
+        seen_ids = set()
+        for fid in faction_ids:
+            direct_edges = [e for e in edges if e.get("target") == fid and e.get("type") == "faction_of"]
+            event_ids = [e["source"] for e in direct_edges if e.get("source") in nodes_by_id]
+            if len(event_ids) > _FACTION_SUBGRAPH_NODE_CAP:
+                truncated = True
+            for eid in event_ids[-_FACTION_SUBGRAPH_NODE_CAP:]:
+                if eid not in seen_ids:
+                    seen_ids.add(eid)
+                    seen.append(nodes_by_id[eid])
+        return seen, truncated
+
+    def _signals_for_events(event_nodes: list) -> list:
+        """Real correlation/alert nodes connected to a real set of event
+        nodes — the real tier-4 "Signals" per Part 7.2."""
+        event_ids = {n["id"] for n in event_nodes}
+        out = []
+        for e in edges:
+            if e.get("type") not in ("correlates_with", "threatens"):
+                continue
+            if e.get("source") in event_ids or e.get("target") in event_ids:
+                other_id = e["target"] if e["source"] in event_ids else e["source"]
+                other = nodes_by_id.get(other_id)
+                if other and other.get("type") in ("correlation", "alert"):
+                    out.append(other)
+        return out
+
+    def _finish_box(category: str, top_node: dict, tier2: list, tier3: list, tier4: list, truncated: bool) -> dict:
+        return {
+            "category": category,
+            "top": {"id": top_node["id"], "label": top_node.get("label") or top_node["id"],
+                    "iso_code": top_node.get("iso_code"), "flag_path": top_node.get("flag_path")},
+            "tier2_groups": [{"id": n["id"], "label": n.get("label") or n["id"]} for n in tier2],
+            "tier3_locations": [{"id": n["id"], "label": n.get("label") or n["id"],
+                                 "lat": n.get("lat"), "lng": n.get("lng")} for n in tier3],
+            "tier4_signals": [{"id": n["id"], "label": n.get("label") or n["id"], "type": n.get("type")} for n in tier4],
+            "truncated": truncated,
+        }
+
+    boxes = []
+    for cn in country_nodes:
+        # Country box: tier2 = real factions linked to this country; tier3 =
+        # real events faction_of-linked to those factions; tier4 = real
+        # correlations/alerts tied to those events.
+        faction_ids = [
+            e["source"] for e in edges
+            if e.get("type") in _COUNTRY_SUBGRAPH_REL_TYPES and e.get("target") == cn["id"]
+            and e.get("source") in nodes_by_id
+        ]
+        tier2 = [nodes_by_id[fid] for fid in faction_ids]
+        tier3, truncated = _events_for_factions(faction_ids)
+        tier4 = _signals_for_events(tier3)
+        boxes.append(_finish_box("country", cn, tier2, tier3, tier4, truncated))
+    for f in non_state_tops:
+        # Non-state box: this faction IS the top entity (not one of its own
+        # tier2 groups) — its real tier2 is the real ORBAT units its own
+        # events `involve`; tier3 is those same real events (Locations);
+        # tier4 is real correlations/alerts tied to them. Same real shape
+        # /ontology/faction/{id}/subgraph already computes for one faction.
+        tier3, truncated = _events_for_factions([f["id"]])
+        event_ids = {n["id"] for n in tier3}
+        tier2_ids = {
+            e["target"] for e in edges
+            if e.get("type") == "involves" and e.get("source") in event_ids and e.get("target") in nodes_by_id
+        }
+        tier2 = [nodes_by_id[uid] for uid in tier2_ids]
+        tier4 = _signals_for_events(tier3)
+        boxes.append(_finish_box("non_state_armed_group", f, tier2, tier3, tier4, truncated))
+
+    # Real cross-box connections: Wikidata alliance edges (Part 4) between
+    # country top entities, styled/sourced exactly as /ontology/countries
+    # already reports.
+    cross_box_edges = [
+        {"id": e["id"], "source": e["source"], "target": e["target"], "type": e.get("type"),
+         "source_kind": "claim" if e.get("claim_id") else e.get("source_kind"), "citation": e.get("citation")}
+        for e in edges
+        if e.get("source") in country_ids and e.get("target") in country_ids
+        and e.get("type") in _COUNTRY_RELATIONSHIP_TYPES
+        and (e.get("claim_id") or e.get("source_kind") in _REAL_RELATIONSHIP_SOURCES)
+    ]
+
+    categories_present = sorted({b["category"] for b in boxes})
+    categories_absent = sorted(
+        {"mercenary_pmc", "company"} - set(categories_present)
+        | ({"non_state_armed_group"} if not non_state_tops else set())
+    )
+
+    return {
+        "boxes": boxes, "cross_box_edges": cross_box_edges,
+        "categories_present": categories_present, "categories_absent": categories_absent,
     }
 
 

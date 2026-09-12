@@ -55,7 +55,7 @@ export default function MobileApp({ initialBriefingReportId }) {
     return (
         <div className={`phone-shell m-body${tab === "map" ? " map-active" : ""}`}>
             <div />
-            <div className="m-header">Horizon Watch</div>
+            <div className="m-header">Parallax</div>
 
             {/* No inline `position` here — an inline style always wins over
                 the stylesheet, which would silently defeat mobileShell.css's

@@ -75,7 +75,7 @@ export default function TopBar({
                 </svg>
                 <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                     <span style={{ font: "600 12.5px var(--font)", color: "var(--txt)", whiteSpace: "nowrap" }}>
-                        Horizon Watch
+                        Parallax
                     </span>
                     <span style={{ font: "400 10px var(--font)", color: "var(--txt-4)", whiteSpace: "nowrap" }}>
                         v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "—"}

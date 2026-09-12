@@ -313,12 +313,19 @@ function EntityPanel({ selected, loading, onSelectConnection, onClose }) {
                         <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 15 }}>✕</button>
                     </div>
 
+                    <EnrichmentSection enrichment={selected.enrichment} />
+
                     {Object.keys(selected.attributes || {}).length > 0 && (
                         <div style={{ marginBottom: 14 }}>
                             <SectionLabel>Real held information</SectionLabel>
                             {Object.entries(selected.attributes).map(([k, v]) => (
                                 k === "flag_path"
-                                    ? <div key={k} style={{ marginBottom: 6 }}><img src={v} alt="" style={{ maxWidth: 80, borderRadius: 3 }} /></div>
+                                    ? (
+                                        <div key={k} style={{ marginBottom: 6 }}>
+                                            <img src={v} alt="" style={{ maxWidth: 80, borderRadius: 3 }} />
+                                            <div style={{ fontSize: 8.5, color: "#475569" }}>flag (GeoConfirmed/ORBAT)</div>
+                                        </div>
+                                    )
                                     : (
                                         <div key={k} style={{ fontSize: 10.5, color: "#94a3b8", marginBottom: 3 }}>
                                             <span style={{ color: "#475569" }}>{k.replace(/_/g, " ")}: </span>
@@ -346,6 +353,38 @@ function EntityPanel({ selected, loading, onSelectConnection, onClose }) {
                         ))}
                     </div>
                 </>
+            )}
+        </div>
+    )
+}
+
+function EnrichmentSection({ enrichment }) {
+    if (!enrichment) return null
+    const { kind, flag_path, image, wikipedia } = enrichment
+    // Real honesty rule (Part 5/7.5): a country's real flag comes from
+    // flagcdn (kind "country"); every other real entity type never gets a
+    // "flag" label at all — only Wikipedia's own real thumbnail, labeled
+    // "image". Nothing rendered at all if neither is real/present.
+    const pic = kind === "country" ? flag_path : image
+    const picLabel = kind === "country" ? "flag (flagcdn)" : "image (Wikipedia)"
+    if (!pic && !wikipedia) return null
+    return (
+        <div style={{ marginBottom: 14 }}>
+            {pic && (
+                <div style={{ marginBottom: 6 }}>
+                    <img src={pic} alt="" style={{ maxWidth: kind === "country" ? 80 : 140, maxHeight: 90, borderRadius: 3, objectFit: "cover" }} />
+                    <div style={{ fontSize: 8.5, color: "#475569" }}>{picLabel}</div>
+                </div>
+            )}
+            {wikipedia?.extract && (
+                <div style={{ fontSize: 10.5, color: "#94a3b8", lineHeight: 1.5, marginBottom: 4 }}>
+                    {wikipedia.extract.slice(0, 420)}{wikipedia.extract.length > 420 ? "…" : ""}
+                </div>
+            )}
+            {wikipedia?.citation?.url && (
+                <a href={wikipedia.citation.url} target="_blank" rel="noreferrer" style={{ fontSize: 9.5, color: "#60a5fa" }}>
+                    {wikipedia.citation.title} ↗
+                </a>
             )}
         </div>
     )

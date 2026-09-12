@@ -113,7 +113,7 @@ export default function ChatPanel({ activeSituation, onClose }) {
                 </div>
                 {!activeSituation && (
                     <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,179,0,0.6)", lineHeight: 1.4 }}>
-                        Open a situation to give Horizon Watch mission context
+                        Open a situation to give Parallax mission context
                     </div>
                 )}
             </div>

@@ -162,6 +162,25 @@ export default function GlobePopup({
         onInspectorOpenChange?.(inspectorOpen)
     }, [inspectorOpen, onInspectorOpenChange])
 
+    // Real map-level connector-line trigger (Part 2 of the GeoConfirmed
+    // pin-linking rebuild): whenever a real GeoConfirmed pin becomes the
+    // selected popup, tell GlobeConnectorLinesLayer to draw real lines to
+    // its specifically-linked entities; any other selection (a different
+    // entity type, or closing the popup) clears them. Scoped to `isVisible`
+    // like every other cross-instance signal in this file — GlobeView stays
+    // mounted (display:none) per destination, so a hidden instance's popup
+    // changes must never drive the visible instance's connector lines.
+    useEffect(() => {
+        if (!isVisible) return
+        if (popup?.type === "geoconfirmed" && popup.entityId) {
+            window.dispatchEvent(new CustomEvent("akili:geoconfirmed-selected", {
+                detail: { entityId: popup.entityId, data: popup.data },
+            }))
+        } else {
+            window.dispatchEvent(new CustomEvent("akili:geoconfirmed-selected", { detail: null }))
+        }
+    }, [popup, isVisible])
+
     // Real slide-out choreography when the docked InspectorPanel is already
     // open and a DIFFERENT entity gets clicked (vessel -> news marker, etc.)
     // — previously this just swapped content inside the same mounted
