@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import datetime
+import time as _perf_time
 from datetime import timedelta
 
 
@@ -179,6 +180,17 @@ def prepare_intelligence_picture(
     def _scoped_limit(base: int) -> int:
         return base * 10 if scoped else base
 
+    # Real perf round — one lightweight, permanent total-timing log (not
+    # the 10-checkpoint-per-call instrumentation used to actually find the
+    # real bottleneck during that round's investigation, which lived here
+    # temporarily and was removed once section 8's real missing-index cost
+    # was confirmed and fixed — see AircraftHistory/VesselHistory's own
+    # composite-index comments in database.py). A real >3s call is still
+    # worth a visible log line in production even after that fix, since
+    # this function's cost is a direct function of live table sizes that
+    # will keep growing.
+    _perf_t0 = _perf_time.perf_counter()
+
     alerts = list(forge_alerts or [])
     excluded_low_quality_alerts = 0
 
@@ -283,7 +295,6 @@ def prepare_intelligence_picture(
         ]
     except Exception:
         top_articles = []
-
     # ── 1. Threat matrix — use cached scores (refreshed hourly) ──────────────
     cached = threat_matrix.get_cached_scores()
     elevated_regions = []
@@ -298,7 +309,6 @@ def prepare_intelligence_picture(
                 "signals": row.get("contributing_signals", []),
             })
     elevated_regions.sort(key=lambda x: x["score"], reverse=True)
-
     # ── 2. Active fusion events ────────────────────────────────────────────────
     try:
         fusions = (
@@ -343,7 +353,6 @@ def prepare_intelligence_picture(
             })
         except Exception:
             pass
-
     # ── 3. Active surge events ─────────────────────────────────────────────────
     try:
         surges = (
@@ -385,7 +394,6 @@ def prepare_intelligence_picture(
             })
         except Exception:
             pass
-
     # ── 4. Collect + score signals from forge alerts + fusion engine ───────────
     signals_raw: list[dict] = []
     seen_ids: set[str] = set()
@@ -471,7 +479,6 @@ def prepare_intelligence_picture(
     # corpus grid, the actual root cause of "GeoConfirmed points don't load
     # into Generate at all."
     geoconfirmed_signals = [s for s in high_relevance if s.get("domain", "") == "GEOCONFIRMED"]
-
     # ── 5. Recent Sentinel detections (14d, immediate + digest tier) ──────────
     # Was alert_tier == "immediate" only, 48h — too narrow on both axes for a
     # real imagery-analysis section: "digest" tier is still a real, confirmed
@@ -528,7 +535,6 @@ def prepare_intelligence_picture(
             })
         except Exception:
             pass
-
     # ── 6. Top news assessments (high/critical, not expired) ──────────────────
     try:
         from sqlalchemy import or_ as _or
@@ -579,7 +585,6 @@ def prepare_intelligence_picture(
             })
         except Exception:
             pass
-
     # ── 7. Active strategic zones with signal counts ───────────────────────────
     try:
         zone_rows = db.query(StrategicZone).filter(StrategicZone.enabled == True).all()
@@ -615,7 +620,6 @@ def prepare_intelligence_picture(
             })
 
     active_zones.sort(key=lambda x: x["highest_signal_score"], reverse=True)
-
     # ── 8. Traffic summary — real counts, not just the top-10 "notable
     # anomaly" lists above. ais_signals/adsb_signals (relevance_score >= 60)
     # answer "what's worth flagging"; this answers "how much real traffic is
@@ -671,10 +675,13 @@ def prepare_intelligence_picture(
         "chokepoint_activity_count": _count_alerts_matching(rule_names={"AIS_CHOKEPOINT_ACTIVITY"}),
         "window_hours": int((now - _traffic_window_start).total_seconds() // 3600) if _traffic_window_start else 24,
     }
-
     # ── 9. Statistics ──────────────────────────────────────────────────────────
     total_signals    = len(all_scored)
     critical_signals = len([s for s in all_scored if s.get("relevance_score", 0) >= 70])
+
+    _perf_elapsed = _perf_time.perf_counter() - _perf_t0
+    if _perf_elapsed > 3.0:
+        print(f"[perf][prepare_intelligence_picture] slow real call: {_perf_elapsed:.2f}s (scoped={scoped})")
 
     return {
         "generated_at":   now.isoformat(),
