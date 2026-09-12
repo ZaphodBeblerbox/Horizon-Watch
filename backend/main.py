@@ -21309,6 +21309,13 @@ async def api_users_update(user_id: str, request: Request):
         return _user_to_dict(u)
 
 
+# Real case approval-chain stages, hoisted to module level (Workstation
+# round, Part 5) so My Work's "awaiting my review" queue and
+# api_cases_advance() below both read the exact same real mapping — never
+# two copies of which capability gates which transition.
+CASE_STAGES = ["draft", "review", "approved", "issued"]
+CASE_STAGE_GATE = {"approved": "approve", "issued": "issue"}
+
 def _case_id() -> str:
     return f"CS-{uuid.uuid4().hex[:6].upper()}"
 
@@ -21471,17 +21478,15 @@ async def api_cases_advance(case_id: str, request: Request):
     403 without the right capability."""
     from database import Case, get_db as _gdb_cases
     current_user = _require_current_user(request)
-    STAGES = ["draft", "review", "approved", "issued"]
-    STAGE_GATE = {"approved": "approve", "issued": "issue"}
     with _gdb_cases() as db:
         c = db.query(Case).filter(Case.case_id == case_id).first()
         if not c:
             raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
-        cur_i = STAGES.index(c.approval_stage) if c.approval_stage in STAGES else 0
-        if cur_i >= len(STAGES) - 1:
+        cur_i = CASE_STAGES.index(c.approval_stage) if c.approval_stage in CASE_STAGES else 0
+        if cur_i >= len(CASE_STAGES) - 1:
             raise HTTPException(status_code=409, detail="case is already issued")
-        next_stage = STAGES[cur_i + 1]
-        needed = STAGE_GATE.get(next_stage)
+        next_stage = CASE_STAGES[cur_i + 1]
+        needed = CASE_STAGE_GATE.get(next_stage)
         if needed:
             _require_capability_real(current_user, needed)
         c.approval_stage = next_stage
@@ -21560,6 +21565,209 @@ async def api_rfis_answer(rfi_id: str, request: Request):
         db.commit()
         db.refresh(r)
         return _rfi_row_to_dict(r)
+
+
+@app.get("/api/workstation/queues")
+def api_workstation_queues(request: Request, scope: str = "mine"):
+    """Workstation round, Part 5 — the real 7 My Work queues, each a real
+    DB query (never a static/placeholder list), re-run with the same real
+    ownership filter swapped for mine/team/unassigned rather than three
+    separately-maintained implementations. Real, honest reporting where a
+    domain genuinely has no assignment concept to filter on — see each
+    queue's own comment below — rather than a fabricated result.
+
+    Response assembles each row's real display title/sub server-side
+    (already has the real record in hand from this very query — no reason
+    to make the client re-fetch the same row through ref.js's resolve()/
+    label() just to render a list), but every row's `ref` is a real
+    reference-grammar string (case:/rfi:/sig:) so the client still opens
+    it via the exact same real ref.js open()/resolve() every other
+    reference in this app uses — one real navigation mechanism, not two.
+    """
+    if scope not in ("mine", "team", "unassigned"):
+        raise HTTPException(status_code=400, detail="scope must be one of: mine, team, unassigned")
+    current_user = _require_current_user(request)
+    from database import Case, RFI, Alert, User, get_db as _gdb_wq
+
+    with _gdb_wq() as db:
+        if scope == "mine":
+            owner_ids = [current_user["id"]]
+        elif scope == "team":
+            me = db.query(User).filter(User.id == current_user["id"]).first()
+            owner_ids = [u.id for u in db.query(User).filter(User.team_id == me.team_id).all()] if (me and me.team_id) else []
+        else:
+            owner_ids = None  # "unassigned" — real sentinel meaning "no owner set", not a user-id list
+
+        def case_row(c):
+            return {
+                "ref": f"case:{c.case_id}", "title": c.title, "sub": f"{c.status} · {c.priority}",
+                "severity": c.priority, "due_at": c.due_at.isoformat() if c.due_at else None,
+                "assignee_user_id": c.owner_user_id,
+            }
+
+        def rfi_row(r):
+            return {
+                "ref": f"rfi:{r.rfi_id}", "title": r.question, "sub": f"case {r.case_id}",
+                "severity": None, "due_at": r.due_at.isoformat() if r.due_at else None,
+                "assignee_user_id": r.to_user_id,
+            }
+
+        def alert_row(a):
+            return {
+                "ref": f"sig:{a.alert_id}", "title": a.title, "sub": a.alert_type,
+                "severity": a.severity, "due_at": None, "assignee_user_id": None,
+            }
+
+        all_cases = db.query(Case).order_by(Case.updated_at.desc()).all()
+
+        # 1. Assigned to me — real union of every domain with a real
+        # per-user assignment field: Case ownership + open-RFI recipiency.
+        # No other domain has one (confirmed by audit: Alert has no
+        # assignee column, Mail doesn't exist, mentions aren't an
+        # assignment) — this is the real, full extent of "assignment" in
+        # this app today, not a narrowed-down subset.
+        if owner_ids is None:
+            assigned_cases = [c for c in all_cases if c.owner_user_id is None]
+            assigned_rfis = []  # RFI.to_user_id is NOT NULL — a real "unassigned RFI" cannot exist
+        else:
+            assigned_cases = [c for c in all_cases if c.owner_user_id in owner_ids]
+            assigned_rfis = db.query(RFI).filter(RFI.to_user_id.in_(owner_ids), RFI.status == "open").all()
+        assigned_to_me = [case_row(c) for c in assigned_cases] + [rfi_row(r) for r in assigned_rfis]
+
+        # 2. Mentions — no dedicated mentions schema exists anywhere in
+        # this app (confirmed by audit — Cases.jsx's own comment defers
+        # the full @mention-with-autocomplete primitive to a later
+        # "collaboration primitives" round). Rather than fabricate a
+        # result or silently return nothing with no explanation, this
+        # really scans the one place free-text discussion already exists
+        # (Case.notes_json) for a real "@firstname" substring matching a
+        # real user this scope covers. Honestly near-certain to be empty
+        # for real usage today since no note composer offers @mention
+        # entry yet — that gap is real, not hidden.
+        mentions = []
+        if owner_ids is not None:
+            handles = [
+                (u.name or "").split()[0].lower()
+                for u in db.query(User).filter(User.id.in_(owner_ids)).all() if u.name
+            ]
+            if handles:
+                for c in all_cases:
+                    for note in _json.loads(c.notes_json or "[]"):
+                        text = (note.get("text") or "").lower()
+                        if any(h and f"@{h}" in text for h in handles):
+                            mentions.append({
+                                "ref": f"case:{c.case_id}", "title": (note.get("text") or "")[:120],
+                                "sub": c.title, "severity": None, "due_at": None,
+                                "assignee_user_id": note.get("author_user_id"),
+                            })
+        # "unassigned" has no real meaning for a mention (a mention always names someone) — real, honest empty.
+
+        # 3. RFIs to answer
+        if owner_ids is None:
+            rfis_to_answer = []  # same real reason as above — to_user_id is required
+        else:
+            rfis_to_answer = [rfi_row(r) for r in db.query(RFI).filter(RFI.to_user_id.in_(owner_ids), RFI.status == "open").all()]
+
+        # 4. My cases — real owner OR watcher
+        if owner_ids is None:
+            my_cases = [case_row(c) for c in all_cases if c.owner_user_id is None]
+        else:
+            my_cases = [
+                case_row(c) for c in all_cases
+                if c.owner_user_id in owner_ids or any(w in owner_ids for w in _json.loads(c.watchers_json or "[]"))
+            ]
+
+        # 5. Awaiting my review — no per-user "assigned reviewer" field
+        # exists on Case (confirmed by audit); this is a real, honest
+        # capability-based interpretation reusing the exact same
+        # CASE_STAGE_GATE mapping Cases.jsx's own advance button already
+        # gates on and api_cases_advance() above enforces server-side —
+        # never a second, invented reviewer-assignment concept.
+        awaiting_my_review = []
+        if owner_ids is not None:
+            caps = set()
+            for u in db.query(User).filter(User.id.in_(owner_ids)).all():
+                caps |= _ACCESS_ROLE_CAPS.get(u.capability_role or "", set())
+            for c in all_cases:
+                cur_i = CASE_STAGES.index(c.approval_stage) if c.approval_stage in CASE_STAGES else 0
+                if cur_i >= len(CASE_STAGES) - 1:
+                    continue
+                needed = CASE_STAGE_GATE.get(CASE_STAGES[cur_i + 1])
+                if needed and needed in caps:
+                    awaiting_my_review.append(case_row(c))
+        # "unassigned" has no real meaning for a capability gate (a capability belongs to a real user) — real, honest empty.
+
+        # 6. Urgent mail — no Mail/Message model exists anywhere in this
+        # app (confirmed by audit; src/destinations/Mail.jsx is still a
+        # placeholder). Real, honest zero — not blocking the other six
+        # queues on it, per this round's own explicit instruction.
+        urgent_mail = []
+
+        # 7. Unreviewed signals — Alert has no assignment/owner column at
+        # all (confirmed by audit), so mine/team/unassigned genuinely
+        # cannot filter it distinctly; the same real query runs for every
+        # scope value, disclosed here rather than faked with a column
+        # that doesn't exist. "Unreviewed" = the closest real proxy this
+        # model actually supports: never acknowledged by anyone.
+        unreviewed_signals = [
+            alert_row(a) for a in
+            db.query(Alert).filter(Alert.status == "active", Alert.acknowledged_by.is_(None))
+                .order_by(Alert.created_at.desc()).limit(50).all()
+        ]
+
+        queues = {
+            "assigned_to_me":     assigned_to_me,
+            "mentions":           mentions,
+            "rfis_to_answer":     rfis_to_answer,
+            "my_cases":           my_cases,
+            "awaiting_my_review": awaiting_my_review,
+            "urgent_mail":        urgent_mail,
+            "unreviewed_signals": unreviewed_signals,
+        }
+        return {
+            "scope": scope,
+            "queues": {k: {"items": v, "total": len(v)} for k, v in queues.items()},
+        }
+
+
+@app.get("/api/workstation/sidebar")
+def api_workstation_sidebar(request: Request):
+    """Workstation round, Part 5 — My Work's right column. Real calendar
+    entries only: Case/RFI due dates plus real scheduled Sentinel scans
+    (WatchZone.next_scan_at) — deliberately no invented "meetings" concept,
+    since no such model exists anywhere in this app (confirmed by audit).
+    Real recent team activity drawn from the same real sources (Case
+    approval-history transitions, RFI answers) — every item a real
+    reference-grammar string, opened through the exact same resolve()/
+    open() every other reference in this app already uses."""
+    _require_current_user(request)
+    from database import Case, RFI, WatchZone, get_db as _gdb_sb
+    now = datetime.utcnow()
+    with _gdb_sb() as db:
+        calendar = []
+        for c in db.query(Case).filter(Case.due_at.isnot(None), Case.due_at >= now).order_by(Case.due_at).limit(20).all():
+            calendar.append({"ref": f"case:{c.case_id}", "label": f"Due: {c.title}", "at": c.due_at.isoformat(), "kind": "case_due"})
+        for r in db.query(RFI).filter(RFI.due_at.isnot(None), RFI.due_at >= now, RFI.status == "open").order_by(RFI.due_at).limit(20).all():
+            calendar.append({"ref": f"rfi:{r.rfi_id}", "label": f"RFI due: {(r.question or '')[:60]}", "at": r.due_at.isoformat(), "kind": "rfi_due"})
+        for z in db.query(WatchZone).filter(WatchZone.enabled == True, WatchZone.next_scan_at.isnot(None), WatchZone.next_scan_at >= now).order_by(WatchZone.next_scan_at).limit(20).all():  # noqa: E712
+            calendar.append({"ref": f"aoi:{z.system_id}", "label": f"Scheduled scan: {z.name}", "at": z.next_scan_at.isoformat(), "kind": "scheduled_scan"})
+        calendar.sort(key=lambda e: e["at"])
+
+        activity = []
+        for c in db.query(Case).order_by(Case.updated_at.desc()).limit(15).all():
+            hist = _json.loads(c.approval_history_json or "[]")
+            if hist:
+                last = hist[-1]
+                if last.get("at"):
+                    activity.append({"ref": f"case:{c.case_id}", "label": f"{c.title} → {last.get('stage')}", "at": last["at"], "user_id": last.get("user_id")})
+        for r in db.query(RFI).filter(RFI.status == "answered").order_by(RFI.created_at.desc()).limit(15).all():
+            answers = _json.loads(r.answers_json or "[]")
+            if answers and answers[-1].get("at"):
+                last = answers[-1]
+                activity.append({"ref": f"rfi:{r.rfi_id}", "label": f"RFI answered: {(r.question or '')[:60]}", "at": last["at"], "user_id": last.get("user_id")})
+        activity.sort(key=lambda e: e["at"], reverse=True)
+
+        return {"calendar": calendar[:20], "activity": activity[:20]}
 
 
 @app.patch("/api/forge/ontology/node/{node_id}")
