@@ -10,14 +10,18 @@ import Icon from "./Icon.jsx"
  * "Tools" utility-toggle flyout, and the header's Settings "coming soon"
  * state — one consistent pattern, not three bespoke ones.
  *
- * Real glass, reusing the exact --pane-glass-bg token/backdrop-filter recipe
- * the theming round's `.pane-glass` shell uses (theming regression fix —
- * this used to point at --bg-panel-translucent, a legacy name a LATER,
- * unrelated round repointed at a fully opaque --bg-1 ["Translucency is gone
- * this round" — index.html], so this panel was never actually translucent
- * despite its own name/comment claiming otherwise; --bg-panel-translucent
- * itself is left alone since Sources.jsx and others still rely on it being
- * opaque for their own, non-floating card surfaces).
+ * Real glass, matched to --map-tooltip-bg + the exact real blur/saturate
+ * recipe .vessel-popup's own floating card uses (src/index.css) — the SAME
+ * real translucent treatment every map hover bar/popup already uses, per
+ * direct user correction (theming regression fix — this used to point at
+ * --bg-panel-translucent, a legacy name a LATER, unrelated round repointed
+ * at a fully opaque --bg-1 ["Translucency is gone this round" —
+ * index.html], so this panel was never actually translucent despite its
+ * own name/comment claiming otherwise, then briefly matched to
+ * --pane-glass-bg — a real but more see-through tint reserved for
+ * Situation/Dossiers' large side panes, not this map-control flyout;
+ * --bg-panel-translucent itself is left alone since Sources.jsx and others
+ * still rely on it being opaque for their own, non-floating card surfaces).
  *
  * Self-contained: owns its own open/closed state, closes on outside click
  * and on Escape. `align="right"` (default) anchors the panel's right edge to
@@ -100,9 +104,9 @@ export default function FlyoutMenu({ icon, buttonText, label, title, align = "ri
                     [direction === "up" ? "bottom" : "top"]: "calc(100% + 6px)",
                     [align === "right" ? "right" : "left"]: 0,
                     width: panelWidth, zIndex: 2000,
-                    background: "var(--pane-glass-bg)",
-                    backdropFilter: "blur(16px) saturate(115%)",
-                    WebkitBackdropFilter: "blur(16px) saturate(115%)",
+                    background: "var(--map-tooltip-bg)",
+                    backdropFilter: "blur(20px) saturate(1.4)",
+                    WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                     border: "1px solid var(--border-strong)",
                     borderRadius: "var(--radius-md)", overflow: "hidden",
                     maxHeight: "70vh", overflowY: "auto",
