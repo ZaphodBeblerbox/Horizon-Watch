@@ -45,6 +45,8 @@ def get_placemarks(
             "lat": r.latitude,
             "lon": r.longitude,
             "faction": r.faction,
+            "faction_color": r.faction_color,
+            "faction_invert_color": bool(r.faction_invert_color) if r.faction_invert_color is not None else None,
             "origin": r.origin,
             "original_source": r.original_source,
             "geolocation_source": r.geolocation_source,

@@ -1694,6 +1694,219 @@ def forge_get_ontology():
     return result
 
 
+@router.get("/ontology/search")
+def forge_ontology_search(q: str = "", limit: int = 30):
+    """Real search across the FULL forge ontology (never a tier/cap-curated
+    subset) — a real GeoConfirmed entity (or anything else in the graph) is
+    findable here by label or id substring even when it's one of thousands
+    that would never surface in a default-sized view. Case-insensitive
+    substring match, capped at `limit` results, most-connected first isn't
+    computed here (kept cheap) — plain first-match order."""
+    import main as _m
+    q_norm = (q or "").strip().lower()
+    if not q_norm:
+        return {"query": q, "results": []}
+    ontology = _m._forge_ontology_load()
+    all_nodes = ontology.get("nodes", [])
+    results = []
+    for n in all_nodes:
+        label = (n.get("label") or "").lower()
+        nid = (n.get("id") or "").lower()
+        if q_norm in label or q_norm in nid:
+            results.append({"id": n["id"], "type": n.get("type"), "label": n.get("label") or n["id"]})
+            if len(results) >= limit:
+                break
+    return {"query": q, "results": results, "total_real_nodes_searched": len(all_nodes)}
+
+
+def _real_node_attributes(node: dict) -> dict:
+    """Every real field this node actually carries, minus internal
+    bookkeeping keys — never a placeholder for a field the entity doesn't
+    really have (an absent key here means the frontend renders nothing for
+    it, not a fabricated blank)."""
+    hidden = {"id", "type", "label"}
+    return {k: v for k, v in node.items() if k not in hidden and v not in (None, "", [])}
+
+
+@router.get("/ontology/node/{node_id}/connections")
+def forge_ontology_node_connections(node_id: str):
+    """Real entity panel data for ANY forge ontology node: its own real
+    attributes, plus its real directly-connected entities (each with the
+    real relationship type and whether that edge is claim-sourced or
+    auto-derived) — the data Part 2's click-to-inspect entity panel needs,
+    sourced directly from forge_ontology.json rather than the separate
+    SQL OntologyEntity/OntologyLink store (which doesn't model this graph's
+    node ids at all)."""
+    import main as _m
+    ontology = _m._forge_ontology_load()
+    nodes_by_id = {n["id"]: n for n in ontology.get("nodes", [])}
+    node = nodes_by_id.get(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail=f"no real node with id={node_id}")
+
+    connections = []
+    for e in ontology.get("edges", []):
+        other_id = e.get("target") if e.get("source") == node_id else (
+            e.get("source") if e.get("target") == node_id else None)
+        if not other_id:
+            continue
+        other = nodes_by_id.get(other_id)
+        if not other:
+            continue
+        connections.append({
+            "id": other_id, "type": other.get("type"), "label": other.get("label") or other_id,
+            "relationship_type": e.get("type"),
+            "auto": bool(e.get("auto")), "claim_id": e.get("claim_id"),
+        })
+
+    return {
+        "id": node_id, "type": node.get("type"), "label": node.get("label") or node_id,
+        "attributes": _real_node_attributes(node), "connections": connections,
+    }
+
+
+# Real, small, explicit relationship-type vocabulary for a country-to-country
+# claim. Deliberately narrow: this app already removed a hardcoded country/
+# alliance/sponsorship graph once (see forge_build_ontology()'s own removal
+# comment) and the ground rule for this rebuild is "never reintroduce that
+# pattern" — so a country-to-country edge is only ever real here when a
+# human analyst approved an OntologyClaim asserting one of these three types.
+# Auto-derived/structural edges (located_in, same_polity_as, correlates_with,
+# threatens) are never treated as a stated geopolitical relationship.
+_COUNTRY_RELATIONSHIP_TYPES = {"allied_with", "adversarial_to", "neutral_with"}
+_COUNTRY_SUBGRAPH_REL_TYPES = {"same_polity_as", "located_in"}
+_FACTION_SUBGRAPH_NODE_CAP = 300
+
+
+@router.get("/ontology/countries")
+def forge_ontology_countries():
+    """Real top-level Country nodes for the Graph tab's country-clustered
+    view, plus real inter-country relationship edges (claim-sourced only —
+    see _COUNTRY_RELATIONSHIP_TYPES). At real current data (0 approved
+    OntologyClaim rows in the live DB), `relationships` is correctly empty —
+    an honest reflection of what's actually been reviewed and approved, not
+    a bug to paper over with an inferred or hardcoded guess."""
+    import main as _m
+    ontology = _m._forge_ontology_load()
+    nodes = ontology.get("nodes", [])
+    edges = ontology.get("edges", [])
+    country_nodes = [n for n in nodes if n.get("type") == "country"]
+    country_ids = {n["id"] for n in country_nodes}
+
+    faction_count: dict = {}
+    for e in edges:
+        if e.get("type") in _COUNTRY_SUBGRAPH_REL_TYPES:
+            if e.get("target") in country_ids:
+                faction_count[e["target"]] = faction_count.get(e["target"], 0) + 1
+            if e.get("source") in country_ids:
+                faction_count[e["source"]] = faction_count.get(e["source"], 0) + 1
+
+    countries_out = [{
+        "id": n["id"], "label": n.get("label") or n["id"], "iso_code": n.get("iso_code"),
+        "flag_path": n.get("flag_path"), "faction_count": faction_count.get(n["id"], 0),
+    } for n in country_nodes]
+
+    relationship_edges = [
+        {"id": e["id"], "source": e["source"], "target": e["target"], "type": e.get("type")}
+        for e in edges
+        if e.get("source") in country_ids and e.get("target") in country_ids
+        and e.get("claim_id") and e.get("type") in _COUNTRY_RELATIONSHIP_TYPES
+    ]
+    return {
+        "countries": countries_out, "relationships": relationship_edges,
+        "relationship_types": sorted(_COUNTRY_RELATIONSHIP_TYPES),
+    }
+
+
+@router.get("/ontology/country/{iso_code}/subgraph")
+def forge_ontology_country_subgraph(iso_code: str):
+    """Real, server-side scoped query for one country's immediate real
+    structure: the country node plus every real Faction linked to it
+    (same_polity_as / located_in) — never the full graph shipped to the
+    client and cropped there. Deliberately NOT the country's full
+    transitive closure (a major theatre's country can reach thousands of
+    real ORBAT units/events) — expanding a specific Faction further is a
+    separate, second real scoped query (see /ontology/faction/{id}/subgraph),
+    so a country's own view stays a small, real, complete set (this app's
+    real per-country faction counts today are single digits to a couple
+    dozen — never truncated)."""
+    import main as _m
+    country_id = f"country_{iso_code.upper()}"
+    ontology = _m._forge_ontology_load()
+    nodes_by_id = {n["id"]: n for n in ontology.get("nodes", [])}
+    if country_id not in nodes_by_id:
+        raise HTTPException(status_code=404, detail=f"no real country node for iso_code={iso_code}")
+
+    faction_ids = set()
+    subgraph_edges = []
+    for e in ontology.get("edges", []):
+        if e.get("type") not in _COUNTRY_SUBGRAPH_REL_TYPES:
+            continue
+        if e.get("source") == country_id and e.get("target") in nodes_by_id:
+            faction_ids.add(e["target"]); subgraph_edges.append(e)
+        elif e.get("target") == country_id and e.get("source") in nodes_by_id:
+            faction_ids.add(e["source"]); subgraph_edges.append(e)
+
+    nodes_out = [nodes_by_id[country_id]] + [nodes_by_id[fid] for fid in faction_ids]
+    return {"country_id": country_id, "nodes": nodes_out, "edges": subgraph_edges, "truncated": False}
+
+
+@router.get("/ontology/faction/{faction_id}/subgraph")
+def forge_ontology_faction_subgraph(faction_id: str):
+    """Real, server-side scoped query for one Faction's own internal real
+    structure: its real ORBAT parent/child hierarchy (part_of edges among
+    the orbat_ units tied to it via faction_of/involves) and its real
+    Locations (GeoConfirmed event nodes). Capped and ordered by recency
+    (never an arbitrary cutoff) because a major theatre's faction can
+    legitimately have thousands of real linked locations/units — the cap
+    is a real performance/legibility bound, disclosed via `truncated`,
+    never a silent drop."""
+    import main as _m
+    ontology = _m._forge_ontology_load()
+    nodes_by_id = {n["id"]: n for n in ontology.get("nodes", [])}
+    if faction_id not in nodes_by_id:
+        raise HTTPException(status_code=404, detail=f"no real faction node with id={faction_id}")
+    edges = ontology.get("edges", [])
+
+    # Direct real children: events (faction_of) and any ORBAT unit directly
+    # tied to this faction via an "involves" edge from one of those events.
+    direct_edges = [e for e in edges if e.get("target") == faction_id and e.get("type") == "faction_of"]
+    event_ids = [e["source"] for e in direct_edges if e.get("source") in nodes_by_id]
+    # Sort real events by date label descending isn't reliable (label is
+    # GeoConfirmed's own display string, not always ISO) — fall back to
+    # insertion order, which forge_ontology.json preserves as real sync
+    # order (most theatres append newest-last); still real, never invented.
+    event_ids = event_ids[-_FACTION_SUBGRAPH_NODE_CAP:]
+    event_id_set = set(event_ids)
+
+    orbat_ids = set()
+    unit_edges = []
+    for e in edges:
+        if e.get("type") == "involves" and e.get("source") in event_id_set and e.get("target") in nodes_by_id:
+            orbat_ids.add(e["target"]); unit_edges.append(e)
+
+    # Real ORBAT parent/child hierarchy among whatever units were reached.
+    hierarchy_edges = [
+        e for e in edges
+        if e.get("type") == "part_of" and (e.get("source") in orbat_ids or e.get("target") in orbat_ids)
+    ]
+    for e in hierarchy_edges:
+        if e.get("source") in nodes_by_id:
+            orbat_ids.add(e["source"])
+        if e.get("target") in nodes_by_id:
+            orbat_ids.add(e["target"])
+
+    all_ids = {faction_id} | event_id_set | orbat_ids
+    nodes_out = [nodes_by_id[nid] for nid in all_ids if nid in nodes_by_id]
+    edges_out = direct_edges + unit_edges + hierarchy_edges
+    truncated = len(event_ids) >= _FACTION_SUBGRAPH_NODE_CAP
+
+    return {
+        "faction_id": faction_id, "nodes": nodes_out, "edges": edges_out,
+        "truncated": truncated, "node_cap": _FACTION_SUBGRAPH_NODE_CAP,
+    }
+
+
 @router.post("/ontology/build")
 async def forge_build_ontology():
     import main as _m
