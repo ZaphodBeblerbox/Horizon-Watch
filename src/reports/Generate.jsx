@@ -4,6 +4,7 @@ import { createSnapshotReportTask, listWatchZones, runTaskAction, scoreTaskExpos
 import { getBriefingItems, useBriefingCount } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import Icon from "../ui/Icon.jsx"
+import { getSettings } from "../state/settingsStore.js"
 
 // Generate — page-by-page rebuild. Layout 290px / 1fr / 322px. A single-shot
 // "configure, run, watch it happen" screen — not a persistent task browser
@@ -72,7 +73,13 @@ export default function Generate({ onOpenTab }) {
     const [scope, setScope] = useState("")
     const [audience, setAudience] = useState("Duty analyst")
     const [horizon, setHorizon] = useState("7d")
-    const [classification, setClassification] = useState("UNCLASSIFIED // FOR ANALYTICAL USE ONLY")
+    // Real Settings round, Briefing section — the analyst's own persisted
+    // default classification marking (settings.briefing.classificationDefault),
+    // falling back to the pre-existing hardcoded string for anyone who
+    // hasn't set one. Still fully editable per-report below, unchanged.
+    const [classification, setClassification] = useState(
+        getSettings()?.briefing?.classificationDefault || "UNCLASSIFIED // FOR ANALYTICAL USE ONLY"
+    )
     const [standingInstruction, setStandingInstruction] = useState("")
     const [sectionsOn, setSectionsOn] = useState(() => Object.fromEntries(SECTION_TOGGLES.map((s) => [s.key, true])))
     const [watchZoneId, setWatchZoneId] = useState("")

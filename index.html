@@ -23,7 +23,14 @@
                 if (localStorage.getItem("hw-theme-cache") === "light") {
                     document.documentElement.setAttribute("data-theme", "light")
                 }
-            } catch (e) { /* private mode / storage blocked — falls back to dark, the pre-existing default */ }
+                // Real Settings round, General section — density is the
+                // same real per-user, server-persisted mechanism (see
+                // src/state/settingsStore.js), same synchronous paint-time
+                // mirror pattern as theme above.
+                if (localStorage.getItem("hw-density-cache") === "compact") {
+                    document.documentElement.setAttribute("data-density", "compact")
+                }
+            } catch (e) { /* private mode / storage blocked — falls back to the pre-existing defaults */ }
         })()
     </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -429,6 +436,25 @@
             --scrim-bg: rgba(35,30,22,.45);
             --sheet-shadow-color: rgba(70,60,45,.28);
         }
+
+        /* ── Real Settings round, General section: density ─────────────────
+           A genuine second value set on the exact spacing tokens the whole
+           app already reads (--space-1..4, --top) — same architecture as
+           [data-theme]: an explicit [data-density] attribute on <html>,
+           applied by the same synchronous no-flash bootstrap script that
+           applies theme, never inferred/guessed. No attribute = today's
+           existing "comfortable" spacing, zero regression for every
+           current user. Every existing var(--space-N)/var(--top) call site
+           in the app picks this up automatically — no per-component change
+           needed, exactly like a theme switch. */
+        :root[data-density="compact"] {
+            --space-1: 3px;
+            --space-2: 6px;
+            --space-3: 9px;
+            --space-4: 12px;
+            --top: 34px;
+        }
+
 /* ── User location pulse animation ──────────────────────────────── */
         @keyframes akiliUserLocPulse {
             0%, 100% { transform: scale(1);   opacity: 0.25; }
