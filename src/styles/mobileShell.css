@@ -52,10 +52,10 @@
 .phone-shell .kv > dd { font-size: 14px; }
 
 /* Bottom sheet */
-.phone-shell .m-sheet-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.5); z-index: 60; }
+.phone-shell .m-sheet-scrim { position: absolute; inset: 0; background: var(--scrim-bg); z-index: 60; }
 .phone-shell .m-sheet {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 61; max-height: 82%;
-    background: var(--bg-1); border-radius: 20px 20px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.4);
+    background: var(--bg-1); border-radius: 20px 20px 0 0; box-shadow: 0 -10px 30px var(--sheet-shadow-color);
     display: flex; flex-direction: column; overflow: hidden;
 }
 .phone-shell .m-sheet-handle { width: 36px; height: 4px; border-radius: 100px; background: var(--line-strong); margin: 10px auto; flex: none; }
@@ -93,8 +93,8 @@
 .phone-shell.map-active .m-header,
 .phone-shell.map-active .m-tabbar {
     position: absolute; left: 0; right: 0; z-index: 70; height: auto;
-    background: rgba(26,31,37,.72); backdrop-filter: blur(16px) saturate(115%); -webkit-backdrop-filter: blur(16px) saturate(115%);
-    border-color: rgba(255,255,255,.08);
+    background: var(--pane-glass-bg); backdrop-filter: blur(16px) saturate(115%); -webkit-backdrop-filter: blur(16px) saturate(115%);
+    border-color: var(--akili-glass-border);
 }
 .phone-shell.map-active .m-header { top: 0; padding-top: env(safe-area-inset-top, 0px); height: calc(52px + env(safe-area-inset-top, 0px)); }
 .phone-shell.map-active .m-tabbar { bottom: 0; }

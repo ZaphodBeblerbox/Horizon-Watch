@@ -32,18 +32,18 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
+    background: var(--scrollbar-thumb);
     border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--scrollbar-thumb-hover);
 }
 
 
 /* ── Leaflet overrides ───────────────────────────────────────────────────── */
 .leaflet-container {
-    background: #111827;
+    background: var(--leaflet-bg);
 }
 
 .leaflet-control-attribution {
@@ -85,8 +85,8 @@ body {
 
 /* ── Vessel floating popup ───────────────────────────────────────────────── */
 .vessel-popup .leaflet-popup-content-wrapper {
-    background: rgba(15, 23, 42, 0.95) !important;
-    border: 1px solid rgba(56, 189, 248, 0.35) !important;
+    background: var(--map-tooltip-bg) !important;
+    border: 1px solid var(--map-vessel-border) !important;
     border-radius: 8px !important;
     padding: 0 !important;
     overflow: hidden !important;
@@ -110,7 +110,7 @@ body {
     display: block !important;
     width: 2px !important;
     height: 20px !important;
-    background: #38bdf8 !important;
+    background: var(--map-vessel-accent) !important;
     transform: none !important;
     margin: 0 auto !important;
     border-radius: 1px;
@@ -121,7 +121,7 @@ input:focus,
 select:focus,
 textarea:focus {
     outline: none;
-    border-color: rgba(26, 110, 181, 0.6) !important;
+    border-color: var(--focus-ring) !important;
 }
 
 /* ── Select elements global dark ────────────────────────────────────────── */
@@ -138,7 +138,7 @@ select {
 }
 
 select option {
-    background: var(--akili-panel-solid, #0e1420);
+    background: var(--akili-panel-solid);
     color: var(--akili-text-primary);
 }
 
@@ -165,10 +165,10 @@ textarea::placeholder {
 
 /* ── Akili glass panel utility ──────────────────────────────────────────── */
 .akili-glass {
-    background: rgba(14, 20, 32, 0.88);
+    background: var(--akili-glass-bg);
     backdrop-filter: blur(20px) saturate(1.4);
     -webkit-backdrop-filter: blur(20px) saturate(1.4);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    border: 1px solid var(--akili-glass-border);
     border-radius: 4px;
 }
 
@@ -302,10 +302,10 @@ textarea::placeholder {
     display: none !important;
 }
 .shipping-tooltip-inner {
-    background: rgba(10, 14, 20, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--map-tooltip-bg);
+    border: 1px solid var(--map-tooltip-border);
     border-radius: 6px;
-    color: #e2e8f0;
+    color: var(--map-tooltip-text);
     padding: 7px 11px;
     font-family: inherit;
     font-size: 11px;
@@ -313,16 +313,16 @@ textarea::placeholder {
     white-space: nowrap;
 }
 .shipping-tooltip-inner strong {
-    color: #f0f4f8;
+    color: var(--map-tooltip-text-strong);
     font-size: 12px;
 }
 
 /* Country border tooltips */
 .country-tooltip {
-    background: rgba(10, 14, 20, 0.92) !important;
-    border: 1px solid rgba(56, 189, 248, 0.3) !important;
+    background: var(--map-tooltip-bg) !important;
+    border: 1px solid var(--map-country-border) !important;
     border-radius: 6px !important;
-    color: #e2e8f0 !important;
+    color: var(--map-tooltip-text) !important;
     padding: 5px 10px !important;
     font-size: 12px !important;
 }
@@ -332,10 +332,10 @@ textarea::placeholder {
 
 /* EEZ layer tooltips */
 .eez-tooltip {
-    background: rgba(10, 14, 20, 0.92) !important;
-    border: 1px solid rgba(13, 148, 136, 0.35) !important;
+    background: var(--map-tooltip-bg) !important;
+    border: 1px solid var(--map-eez-border) !important;
     border-radius: 6px !important;
-    color: #e2e8f0 !important;
+    color: var(--map-tooltip-text) !important;
     padding: 5px 10px !important;
     font-size: 12px !important;
 }
@@ -384,14 +384,14 @@ textarea::placeholder {
 
 /* Overwatch detection hover labels */
 .ow-det-label {
-    background: rgba(0, 0, 0, 0.75) !important;
+    background: var(--map-detection-label-bg) !important;
     border: none !important;
     border-radius: 2px !important;
     padding: 2px 4px !important;
     font-family: Inter, system-ui, sans-serif !important;
     font-size: 9px !important;
     font-weight: 700 !important;
-    color: #f0f4f8 !important;
+    color: var(--map-detection-label-text) !important;
     white-space: nowrap !important;
     box-shadow: none !important;
     pointer-events: none !important;
@@ -415,17 +415,17 @@ textarea::placeholder {
     line-height: 1.4;
 }
 .infra-popup .leaflet-popup-tip {
-    background: #1A2433;
-    border: 1px solid #2C3645;
+    background: var(--map-infra-bg);
+    border: 1px solid var(--map-infra-border);
     box-shadow: none;
 }
 .infra-popup .leaflet-popup-close-button {
-    color: #9AA4B5 !important;
+    color: var(--map-infra-text) !important;
     font-size: 18px;
     padding: 4px 8px;
 }
 .infra-popup .leaflet-popup-close-button:hover {
-    color: #E8ECF1 !important;
+    color: var(--map-infra-text-hover) !important;
 }
 @keyframes infra-spin {
     to { transform: rotate(360deg); }

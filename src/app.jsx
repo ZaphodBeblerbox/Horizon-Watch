@@ -8,6 +8,7 @@ import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
 import { checkSession, subscribeAuth } from "./state/authStore.js"
+import { reconcileTheme } from "./state/themeStore.js"
 import StatusBar from "./components/StatusBar.jsx"
 import CommandPalette from "./components/CommandPalette.jsx"
 import ToastHost from "./ui/ToastHost.jsx"
@@ -180,7 +181,7 @@ export default function App() {
     const [authUser, setAuthUser] = useState(null)
     const [authChecked, setAuthChecked] = useState(false)
     useEffect(() => {
-        checkSession().then((u) => { setAuthUser(u); setAuthChecked(true) })
+        checkSession().then((u) => { setAuthUser(u); setAuthChecked(true); reconcileTheme(u) })
         return subscribeAuth(setAuthUser)
     }, [])
 

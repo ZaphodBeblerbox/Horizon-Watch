@@ -69,6 +69,12 @@ class User(Base):
     team_id             = Column(String, nullable=True, index=True)  # Team.id
     title               = Column(String, nullable=True)              # e.g. "CTO" — display only
     capability_role     = Column(String, nullable=True)              # one of ACCESS_ROLE_IDS
+    # Parallax theming round — real per-user, server-persisted theme
+    # ("dark" | "light"), same DB-not-localStorage discipline as
+    # DeskSession below. Nullable: unset means "dark", the pre-existing
+    # look every current user already sees, so this column's addition is
+    # a zero-visual-change migration for every existing row.
+    theme               = Column(String, nullable=True)
 
 
 class DeskSession(Base):
@@ -1503,6 +1509,7 @@ def migrate_db():
         ('team_id', 'TEXT'),
         ('title', 'TEXT'),
         ('capability_role', 'TEXT'),
+        ('theme', 'TEXT'),
     ]
     existing = [row[1] for row in cur.execute('PRAGMA table_info(users)').fetchall()]
     for col, typ in cols:

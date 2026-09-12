@@ -37,9 +37,14 @@ function Gauge({ score, band, size = 96, thickness = 6 }) {
     const frac = Math.max(0, Math.min(1, score / 100))
     return (
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-            <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--bg-3)" strokeWidth={thickness} />
+            {/* Real fix — the documented SVG-theming trap: bare fill/stroke
+                presentation attributes holding a var(--x) string don't
+                reliably resolve CSS custom properties in every rendering
+                path; `style` always resolves correctly via the real CSS
+                cascade. */}
+            <circle cx={size / 2} cy={size / 2} r={r} style={{ fill: "none", stroke: "var(--bg-3)" }} strokeWidth={thickness} />
             <circle
-                cx={size / 2} cy={size / 2} r={r} fill="none" stroke={SEV_COLOR[band]} strokeWidth={thickness}
+                cx={size / 2} cy={size / 2} r={r} style={{ fill: "none", stroke: SEV_COLOR[band] }} strokeWidth={thickness}
                 strokeDasharray={`${c * frac} ${c}`} strokeLinecap="round"
                 transform={`rotate(-90 ${size / 2} ${size / 2})`}
             />
@@ -62,7 +67,7 @@ function Sparkline({ history, width = 168, height = 42 }) {
     return (
         <div>
             <svg width={width} height={height}>
-                <path d={areaGen(points)} fill="var(--chart-area-fill)" stroke="var(--chart-area-stroke)" strokeWidth={1.25} />
+                <path d={areaGen(points)} style={{ fill: "var(--chart-area-fill)", stroke: "var(--chart-area-stroke)" }} strokeWidth={1.25} />
             </svg>
             <div style={{ display: "flex", justifyContent: "space-between", font: "400 9.5px var(--mono)", color: "var(--txt-4)", width }}>
                 <span>min {min.toFixed(0)}</span><span>max {max.toFixed(0)}</span><span>now {now.toFixed(0)}</span>
@@ -161,11 +166,11 @@ function HistoryTab({ profile }) {
                 <g transform={`translate(${margin.left},${margin.top})`}>
                     {y.ticks(3).map((t) => (
                         <g key={t}>
-                            <line x1={0} x2={innerW} y1={y(t)} y2={y(t)} stroke="var(--chart-grid)" strokeWidth={1} />
+                            <line x1={0} x2={innerW} y1={y(t)} y2={y(t)} style={{ stroke: "var(--chart-grid)" }} strokeWidth={1} />
                             <text x={-6} y={y(t)} dy="0.32em" textAnchor="end" style={{ font: "400 9.5px var(--mono)", fill: "var(--txt-4)" }}>{t}</text>
                         </g>
                     ))}
-                    <path d={areaGen(points)} fill="var(--chart-area-fill)" stroke="var(--chart-area-stroke)" strokeWidth={1.25} />
+                    <path d={areaGen(points)} style={{ fill: "var(--chart-area-fill)", stroke: "var(--chart-area-stroke)" }} strokeWidth={1.25} />
                 </g>
             </svg>
             <div>

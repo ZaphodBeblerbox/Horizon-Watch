@@ -21173,6 +21173,7 @@ def _user_to_dict(u) -> dict:
         "title": u.title,
         "team_id": u.team_id,
         "capability_role": u.capability_role,
+        "theme": u.theme or "dark",
     }
 
 def _team_to_dict(t) -> dict:
@@ -21186,6 +21187,28 @@ def api_users_list():
     with _gdb_users() as db:
         rows = db.query(User).order_by(User.name).all()
         return [_user_to_dict(u) for u in rows]
+
+@app.put("/api/users/me/theme")
+async def api_set_own_theme(request: Request):
+    """Parallax theming round — real per-user, server-persisted theme
+    setting. Scoped to the real verified session (never a client-supplied
+    user_id, unlike the older /api/users/{user_id} below) since this is a
+    genuine self-service preference, not an admin edit of someone else's
+    row."""
+    user = _require_current_user(request)
+    body = await request.json()
+    theme = body.get("theme")
+    if theme not in ("dark", "light"):
+        raise HTTPException(status_code=400, detail="theme must be 'dark' or 'light'")
+    from database import User, get_db as _gdb_theme
+    with _gdb_theme() as db:
+        u = db.query(User).filter(User.id == user["id"]).first()
+        if not u:
+            raise HTTPException(status_code=404, detail="user not found")
+        u.theme = theme
+        db.commit()
+    return {"theme": theme}
+
 
 @app.put("/api/users/{user_id}")
 async def api_users_update(user_id: str, request: Request):

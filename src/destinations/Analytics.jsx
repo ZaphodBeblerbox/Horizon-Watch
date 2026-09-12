@@ -41,9 +41,16 @@ const SEV_COLOR = {
 // region/source donuts + reused nowhere else) — a category's shade is a
 // hash of its own name, not its position in whatever subset is currently
 // visible, so "Baltic" keeps the same shade across any filter combination.
+// Real fix (Parallax theming pass): this used to hardcode a JS-side copy
+// of index.html's --cat-1..--cat-14 dark-theme hex values — already an
+// exact-value duplicate of the real tokens, and structurally unable to
+// ever pick up the real light-theme category-ramp values (a hardcoded JS
+// literal can't react to [data-theme]). Real var(--cat-N) references
+// instead — the browser resolves these per the active theme, same as any
+// other themed color.
 const GREY_RAMP = [
-    "#9aa5ae", "#8b96a0", "#8d9aa4", "#7c8792", "#7d8993", "#6d7883", "#6f7b85",
-    "#5f6a74", "#626e78", "#515c66", "#55616b", "#444e58", "#4a555f", "#404b54",
+    "var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)", "var(--cat-5)", "var(--cat-6)", "var(--cat-7)",
+    "var(--cat-8)", "var(--cat-9)", "var(--cat-10)", "var(--cat-11)", "var(--cat-12)", "var(--cat-13)", "var(--cat-14)",
 ]
 function greyForName(name) {
     let h = 0
@@ -180,12 +187,12 @@ function VolumeChart({ timeseries }) {
                         <g transform={`translate(${margin.left},${margin.top})`}>
                             {ticks.map((t) => (
                                 <g key={t}>
-                                    <line x1={0} x2={innerW} y1={y(t)} y2={y(t)} stroke="var(--chart-grid)" strokeWidth={1} />
+                                    <line x1={0} x2={innerW} y1={y(t)} y2={y(t)} style={{ stroke: "var(--chart-grid)" }} strokeWidth={1} />
                                     <text x={-6} y={y(t)} dy="0.32em" textAnchor="end"
                                         style={{ font: "400 9.5px var(--mono)", fill: "var(--txt-4)" }}>{t}</text>
                                 </g>
                             ))}
-                            <path d={areaGen(points)} fill="var(--chart-area-fill)" stroke="var(--chart-area-stroke)" strokeWidth={1.25} />
+                            <path d={areaGen(points)} style={{ fill: "var(--chart-area-fill)", stroke: "var(--chart-area-stroke)" }} strokeWidth={1.25} />
                             {[points[0], points[points.length - 1]].map((p, i) => (
                                 <text key={i} x={x(p.date)} y={innerH + 14}
                                     textAnchor={i === 0 ? "start" : "end"}
@@ -238,7 +245,12 @@ function Donut({ label, items, colorFor }) {
                 <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
                     <g transform={`translate(${size / 2},${size / 2})`}>
                         {rendered.map((d) => (
-                            <path key={d.data.key} d={arcGen(d) || undefined} fill={colorFor(d.data)}>
+                            // Real fix — the documented SVG-theming trap: a
+                            // bare fill={...} attribute holding a var(--x)
+                            // string doesn't reliably resolve CSS custom
+                            // properties in every rendering path; `style`
+                            // always resolves correctly via the real CSS cascade.
+                            <path key={d.data.key} d={arcGen(d) || undefined} style={{ fill: colorFor(d.data) }}>
                                 <title>{d.data.label}: {d.data.value.toLocaleString()}</title>
                             </path>
                         ))}
@@ -265,7 +277,15 @@ function Heatmap({ regions, domains, cells }) {
 
     function colorFor(count) {
         if (!count) return "var(--heatmap-empty)"
-        return lerpHex("#232a30", "#5c6b78", count / maxCount)
+        // Real fix (Parallax theming pass): this used to hardcode a JS-side
+        // copy of --heatmap-lo/--heatmap-hi's dark-theme hex values, unable
+        // to ever pick up the real light-theme heatmap values (lerpHex needs
+        // real numeric hex to interpolate, so a plain var(--x) string can't
+        // be used directly here — reads the REAL computed value instead).
+        const cs = getComputedStyle(document.documentElement)
+        const lo = cs.getPropertyValue("--heatmap-lo").trim()
+        const hi = cs.getPropertyValue("--heatmap-hi").trim()
+        return lerpHex(lo, hi, count / maxCount)
     }
 
     return (

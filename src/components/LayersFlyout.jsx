@@ -130,8 +130,11 @@ function Legend() {
             <div style={{ fontSize: 10, textTransform: "uppercase", color: "var(--text-muted)", letterSpacing: "0.08em", marginBottom: "var(--space-2)" }}>
                 Legend
             </div>
-            {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="var(--accent-blue)" strokeWidth="2" /></svg>, "Track (AIS/ADS-B)")}
-            {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="var(--accent-cyan)" strokeWidth="2" strokeDasharray="4 3" /></svg>, "AOI boundary")}
+            {/* Real fix — the documented SVG-theming trap: a bare
+                stroke="var(--x)" presentation attribute doesn't reliably
+                resolve CSS custom properties in every rendering path. */}
+            {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" style={{ stroke: "var(--accent-blue)" }} strokeWidth="2" /></svg>, "Track (AIS/ADS-B)")}
+            {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" style={{ stroke: "var(--accent-cyan)" }} strokeWidth="2" strokeDasharray="4 3" /></svg>, "AOI boundary")}
             {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--danger)", display: "inline-block" }} />, "Sanctions — confirmed")}
             {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--warn)", display: "inline-block" }} />, "Sanctions — possible")}
             {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--accent-cyan)", display: "inline-block" }} />, "Selected entity")}

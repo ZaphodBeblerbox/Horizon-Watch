@@ -59,11 +59,18 @@ export default function LocatorMiniMap({ focus, context = [], height = 196, span
         : []
     return (
         <svg width="100%" height={height} viewBox={`0 0 ${w} ${height}`} style={{ background: "var(--bg-0)", display: "block" }}>
+            {/* Real fix — the documented SVG-theming trap: a bare `stroke="var(--x)"`
+                presentation attribute doesn't reliably resolve CSS custom
+                properties in every rendering path (it can render correctly in
+                one theme and go invisible in the other with no error); the
+                `style` prop always resolves correctly since it goes through
+                the real CSS cascade, same as the `fill`/`style` combo already
+                used correctly below on the "No location" <text>. */}
             {Array.from({ length: 7 }, (_, i) => (
-                <line key={`v${i}`} x1={(i * w) / 6} x2={(i * w) / 6} y1={0} y2={height} stroke="var(--chart-grid)" strokeWidth={1} />
+                <line key={`v${i}`} x1={(i * w) / 6} x2={(i * w) / 6} y1={0} y2={height} style={{ stroke: "var(--chart-grid)" }} strokeWidth={1} />
             ))}
             {Array.from({ length: 4 }, (_, i) => (
-                <line key={`h${i}`} x1={0} x2={w} y1={(i * height) / 3} y2={(i * height) / 3} stroke="var(--chart-grid)" strokeWidth={1} />
+                <line key={`h${i}`} x1={0} x2={w} y1={(i * height) / 3} y2={(i * height) / 3} style={{ stroke: "var(--chart-grid)" }} strokeWidth={1} />
             ))}
             {effectiveFocus?.lat == null ? (
                 <text x={w / 2} y={height / 2} textAnchor="middle" style={{ font: "400 11px var(--font)", fill: "var(--txt-4)" }}>
@@ -74,18 +81,18 @@ export default function LocatorMiniMap({ focus, context = [], height = 196, span
                     {contextPts.map((c, i) => {
                         const [x, y] = project(c.lat, c.lon)
                         if (x < -6 || x > w + 6 || y < -6 || y > height + 6) return null
-                        return <rect key={i} x={x - 2.5} y={y - 2.5} width={5} height={5} transform={`rotate(45 ${x} ${y})`} fill="var(--txt-4)" opacity={0.7} />
+                        return <rect key={i} x={x - 2.5} y={y - 2.5} width={5} height={5} transform={`rotate(45 ${x} ${y})`} style={{ fill: "var(--txt-4)" }} opacity={0.7} />
                     })}
                     {(() => {
                         const [x, y] = project(effectiveFocus.lat, effectiveFocus.lon)
                         const color = usingUserLocation ? "var(--txt-3)" : "var(--acc-hi)"
                         return (
                             <g>
-                                <circle cx={x} cy={y} r={7} fill="none" stroke={color} strokeWidth={1.5}>
+                                <circle cx={x} cy={y} r={7} style={{ fill: "none", stroke: color }} strokeWidth={1.5}>
                                     <animate attributeName="r" values="5;9;5" dur="1.4s" repeatCount="2" fill="freeze" />
                                     <animate attributeName="opacity" values="1;0.2;1" dur="1.4s" repeatCount="2" fill="freeze" />
                                 </circle>
-                                <circle cx={x} cy={y} r={3} fill={color} />
+                                <circle cx={x} cy={y} r={3} style={{ fill: color }} />
                             </g>
                         )
                     })()}

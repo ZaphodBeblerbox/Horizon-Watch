@@ -41,7 +41,7 @@
    `transform`/`opacity` inline style (see Situation.jsx), never by adding/
    removing a class that carries its own animation. */
 .pane-glass {
-    background: rgba(26, 31, 37, .72);
+    background: var(--pane-glass-bg);
     -webkit-backdrop-filter: blur(16px) saturate(115%);
     backdrop-filter: blur(16px) saturate(115%);
     animation: none;
@@ -72,10 +72,10 @@
 }
 .btn:hover { background: var(--bg-4); }
 .btn svg, .btn img { width: 12px; height: 12px; opacity: 0.8; }
-.btn.primary { background: var(--acc); border-color: #4a7cb5; color: #f2f6fa; }
-.btn.primary:hover { background: #487cba; }
-.btn.danger { background: var(--bg-3); color: #cf6259; border-color: var(--line-strong); }
-.btn.danger:hover { background: #3a2c2b; border-color: #5c3b38; }
+.btn.primary { background: var(--acc); border-color: var(--btn-primary-border); color: var(--btn-primary-text); }
+.btn.primary:hover { background: var(--btn-primary-hover); }
+.btn.danger { background: var(--bg-3); color: var(--tag-red); border-color: var(--line-strong); }
+.btn.danger:hover { background: var(--bg-4); border-color: var(--tag-red-border); }
 .btn.ghost { background: transparent; color: var(--txt-3); border-color: transparent; }
 .btn.ghost:hover { background: var(--bg-3); }
 .btn.sm { height: 21px; padding: 0 7px; font-size: 11.5px; }
@@ -138,7 +138,7 @@ textarea.input { height: auto; padding: 6px 8px; line-height: 1.5; resize: verti
 .check:checked { background: var(--acc); border-color: var(--acc); }
 .check:checked::after {
     content: ""; position: absolute; left: 3px; top: 1px; width: 5px; height: 8px;
-    border: solid #eef3f8; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+    border: solid var(--check-mark-color); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
 }
 input[type="range"] {
     -webkit-appearance: none; appearance: none; height: 3px; background: var(--bg-4);
@@ -246,10 +246,10 @@ input[type="range"]::-moz-range-thumb {
 .xref {
     text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer;
     background: transparent; border-radius: 2px; transition: background 120ms linear;
-    color: #82aede;
+    color: var(--xref-color);
 }
-.xref:hover { color: #a8c8ee; background: rgba(63,111,168,.16); }
-.xref.xref-active { background: rgba(63,111,168,.28); color: #cfe0f4; text-decoration-style: solid; }
+.xref:hover { color: var(--xref-hover-color); background: var(--xref-hover-bg); }
+.xref.xref-active { background: var(--xref-active-bg); color: var(--xref-active-color); text-decoration-style: solid; }
 .xref .rt { font-family: var(--mono); font-size: 11px; }
 .xref:focus-visible { outline: 2px solid var(--acc-hi); outline-offset: 2px; }
 
@@ -282,7 +282,7 @@ input[type="range"]::-moz-range-thumb {
 /* ── Floating layers — the ONLY things allowed --shadow ──────────────── */
 .tooltip {
     position: fixed; z-index: 10000; max-width: 246px;
-    background: #20262c; border: 1px solid var(--line-strong); border-radius: var(--r);
+    background: var(--tooltip-bg); border: 1px solid var(--line-strong); border-radius: var(--r);
     padding: 6px 8px; box-shadow: var(--shadow);
     opacity: 0; transition: opacity 100ms linear; pointer-events: none;
 }

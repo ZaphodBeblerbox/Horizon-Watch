@@ -85,12 +85,20 @@ const CANONICAL_LAYER_DEFAULTS = {
     // imageAnalysis renders a placeholder instead of a map — no layer set needed.
 }
 
-// Real severity-token -> hex map (index.html's --danger/--warn/--live), used
-// only to derive a low-alpha tint for a Watch Queue row's card background —
-// the spec's permitted secondary visual cue (never a colored border/stripe).
-const SEVERITY_TINT_HEX = { "var(--danger)": "#EF4444", "var(--warn)": "#F5A524", "var(--live)": "#22C55E" }
-function tintBackground(hex, alpha) {
-    const n = parseInt(hex.slice(1), 16)
+// Real fix (Parallax theming pass): this used to hardcode a JS-side copy of
+// --danger/--warn/--live's real hex values (#EF4444/#F5A524/#22C55E) —
+// already stale/out of sync with the real tokens (--red/--amber/--green
+// are #c4453c/#b7822c/#4c7d63), and structurally unable to ever pick up
+// the real light-theme values, since a hardcoded JS literal can't react to
+// [data-theme] at all. Reads the REAL computed CSS custom property value
+// at call time instead — genuinely theme-aware, correct in both themes,
+// never a second, drifting copy of a value the token system already owns.
+function tintBackground(cssVarExpr, alpha) {
+    const varName = cssVarExpr.match(/--[\w-]+/)?.[0]
+    if (!varName) return `rgba(0,0,0,${alpha})`
+    const hex = getComputedStyle(document.documentElement).getPropertyValue(varName).trim()
+    const n = parseInt(hex.replace("#", ""), 16)
+    if (Number.isNaN(n)) return `rgba(0,0,0,${alpha})`
     return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
 }
 
@@ -120,14 +128,14 @@ function StatTile({ label, value, icon }) {
 // secondary visual cue is a subtle full-card low-opacity severity tint,
 // layered under the translucent background, never a border.
 function WatchQueueRow({ row, onSelect }) {
-    const tintHex = SEVERITY_TINT_HEX[row.severityToken]
+    const tint = row.severityToken ? tintBackground(row.severityToken, 0.06) : null
     return (
         <div
             onClick={() => onSelect(row)}
             style={{
                 borderBottom: "1px solid var(--border)",
                 background: "var(--bg-card-translucent)",
-                backgroundImage: tintHex ? `linear-gradient(${tintBackground(tintHex, 0.06)}, ${tintBackground(tintHex, 0.06)})` : "none",
+                backgroundImage: tint ? `linear-gradient(${tint}, ${tint})` : "none",
                 padding: "var(--space-2) var(--space-3)",
                 cursor: "pointer",
             }}
