@@ -114,12 +114,18 @@ function NodePlate({ node, pos, selected, onSelect, onDragStart }) {
             onPointerDown={(e) => onDragStart(e, node.id)}
             onClick={(e) => { e.stopPropagation(); onSelect(node) }}
         >
-            <rect width={PLATE_W} height={PLATE_H} rx={2} fill="var(--bg-2)"
-                stroke={selected ? "var(--acc-hi)" : "var(--line-strong)"} strokeWidth={selected ? 1.5 : 1} />
+            {/* Real fix — the documented SVG-theming trap: a bare
+                fill/stroke="var(--x)" presentation attribute doesn't
+                reliably resolve CSS custom properties in every rendering
+                path; `style` always resolves correctly via the real CSS
+                cascade (the two <text> elements below already did this
+                correctly — the <rect>s hadn't). */}
+            <rect width={PLATE_W} height={PLATE_H} rx={2} style={{ fill: "var(--bg-2)",
+                stroke: selected ? "var(--acc-hi)" : "var(--line-strong)" }} strokeWidth={selected ? 1.5 : 1} />
             <svg x={4} y={4} width={15} height={15} className="icon"><use href={`#${NODE_TYPE_ICON[node.type] || "i-node-event"}`} /></svg>
             <text x={22} y={14} style={{ font: "400 10.5px var(--font)", fill: "var(--txt)" }}>{node.label.slice(0, 14)}</text>
             <text x={5} y={27} style={{ font: "400 8.5px var(--font)", fill: "var(--txt-3)" }}>{node.type} · {node.risk}</text>
-            <rect x={0} y={PLATE_H - 3} width={PLATE_W} height={3} fill={BAND_COLOR[band]} />
+            <rect x={0} y={PLATE_H - 3} width={PLATE_W} height={3} style={{ fill: BAND_COLOR[band] }} />
         </g>
     )
 }
@@ -374,7 +380,7 @@ export default function Ontology({ onOpenGenerate }) {
                             {TIER_NAME.map((name, i) => (
                                 <g key={name}>
                                     <text x={-10} y={i * TIER_HEIGHT - 8} style={{ font: "600 11px var(--font)", fill: "var(--txt-3)" }}>{name}</text>
-                                    <line x1={-10} x2={5000} y1={i * TIER_HEIGHT} y2={i * TIER_HEIGHT} stroke="var(--line-soft)" strokeDasharray="4 4" />
+                                    <line x1={-10} x2={5000} y1={i * TIER_HEIGHT} y2={i * TIER_HEIGHT} style={{ stroke: "var(--line-soft)" }} strokeDasharray="4 4" />
                                 </g>
                             ))}
                             {visibleLinks.map((l) => {
@@ -383,9 +389,10 @@ export default function Ontology({ onOpenGenerate }) {
                                 const mx = (a.x + b.x) / 2 + PLATE_W / 2, my = (a.y + b.y) / 2 + PLATE_H / 2
                                 return (
                                     <g key={l.id}>
-                                        <path d={linkPath(a, b)} fill="none" stroke="var(--line-strong)"
+                                        <path d={linkPath(a, b)}
                                             strokeWidth={l.conf >= 0.9 ? 2 : 1} strokeDasharray={l.inferred ? "4 3" : "none"}
-                                            onClick={(e) => { e.stopPropagation(); setSelected({ kind: "link", item: l }) }} style={{ cursor: "pointer" }} />
+                                            onClick={(e) => { e.stopPropagation(); setSelected({ kind: "link", item: l }) }}
+                                            style={{ cursor: "pointer", fill: "none", stroke: "var(--line-strong)" }} />
                                         <text x={mx} y={my} textAnchor="middle" style={{ font: "400 9px var(--font)", fill: "var(--txt-4)" }}>{l.kind}</text>
                                     </g>
                                 )

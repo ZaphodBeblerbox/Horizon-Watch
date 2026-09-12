@@ -5,6 +5,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Parallax — Trifecta Technologies</title>
+    <script>
+        // Parallax theming round — real synchronous no-flash bootstrap.
+        // The real theme setting is a per-user, server-persisted DB field
+        // (database.py's User.theme, read via /api/auth/me, written via
+        // PUT /api/users/me/theme — see src/state/themeStore.js) — NOT a
+        // localStorage-only setting. localStorage here is only a paint-time
+        // MIRROR of the last-known real value, read synchronously before
+        // the app renders so the correct [data-theme] attribute is already
+        // on <html> for the very first paint. themeStore.reconcileTheme()
+        // corrects this mirror against the real server value once the
+        // real session check resolves (app.jsx), which only differs from
+        // this cached guess on a new device/browser or right after the
+        // user changed it elsewhere.
+        (function () {
+            try {
+                if (localStorage.getItem("hw-theme-cache") === "light") {
+                    document.documentElement.setAttribute("data-theme", "light")
+                }
+            } catch (e) { /* private mode / storage blocked — falls back to dark, the pre-existing default */ }
+        })()
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
@@ -81,6 +102,59 @@
             --cat-5: #7d8993; --cat-6: #6d7883; --cat-7: #6f7b85; --cat-8: #5f6a74;
             --cat-9: #626e78; --cat-10: #515c66; --cat-11: #55616b; --cat-12: #444e58;
             --cat-13: #4a555f; --cat-14: #404b54;
+
+            /* ── Real glass-pane tokens (Parallax theming pass) — the
+               previously-untokenized rgba() literals .pane-glass and
+               .akili-glass used directly (designSystem.css / index.css).
+               Real dark-theme tint kept as the previous literal values;
+               a real, distinct light-theme tint is defined below (never
+               the dark theme's translucent black reused — see index.css). */
+            --pane-glass-bg:     rgba(26, 31, 37, .72);
+            --akili-glass-bg:    rgba(14, 20, 32, 0.88);
+            --akili-glass-border: rgba(255, 255, 255, 0.07);
+
+            /* ── Real map-overlay tooltip tokens (Parallax theming pass) —
+               previously-untokenized literals in index.css's Leaflet
+               tooltip overrides (.shipping-tooltip-inner/.country-tooltip/
+               .eez-tooltip/.vessel-popup/etc). Kept as their own real,
+               named per-type accents (vessel/EEZ/etc. are deliberately
+               different real hues today, not consolidated into one — a
+               real, separate design decision from this pass's scope) —
+               just tokenized so they're themeable, not decorative/hardcoded. */
+            --map-tooltip-bg:      rgba(10, 14, 20, 0.92);
+            --map-tooltip-text:    #e2e8f0;
+            --map-tooltip-text-strong: #f0f4f8;
+            --map-tooltip-border:  rgba(255, 255, 255, 0.12);
+            --map-vessel-accent:   #38bdf8;
+            --map-vessel-border:   rgba(56, 189, 248, 0.35);
+            --map-country-border:  rgba(56, 189, 248, 0.3);
+            --map-eez-border:      rgba(13, 148, 136, 0.35);
+            --map-infra-bg:        #1A2433;
+            --map-infra-border:    #2C3645;
+            --map-infra-text:      #9AA4B5;
+            --map-infra-text-hover: #E8ECF1;
+            --map-detection-label-bg: rgba(0, 0, 0, 0.75);
+            --map-detection-label-text: #f0f4f8;
+            --leaflet-bg:          #111827;
+            --scrollbar-thumb:       rgba(255, 255, 255, 0.12);
+            --scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
+            --focus-ring: rgba(26, 110, 181, 0.6);
+
+            /* ── Real component-specific tokens (Parallax theming pass) —
+               previously-untokenized literals in designSystem.css's
+               .btn.primary/.btn.danger/.check/.xref/.tooltip rules. */
+            --btn-primary-border: #4a7cb5;
+            --btn-primary-text:   #f2f6fa;
+            --btn-primary-hover:  #487cba;
+            --check-mark-color:   #eef3f8;
+            --xref-color:       #82aede;
+            --xref-hover-color: #a8c8ee;
+            --xref-hover-bg:    rgba(63,111,168,.16);
+            --xref-active-bg:   rgba(63,111,168,.28);
+            --xref-active-color: #cfe0f4;
+            --tooltip-bg: #20262c;
+            --scrim-bg: rgba(0,0,0,.5);
+            --sheet-shadow-color: rgba(0,0,0,.4);
 
             /* ── Typography — system font stack only, no @font-face, no
                font CDN, anywhere. ────────────────────────────────────── */
@@ -221,6 +295,139 @@
             --akili-accent-bg:      var(--accent-faint);
             --akili-accent-border:  var(--accent-border);
             --akili-overlay:        var(--bg-0);
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           Real light theme (Parallax translation — dark/light theming
+           pass). A genuine second value set for every real BASE token
+           above — deliberately NOT a CSS filter/invert (that destroys
+           imagery and reverses severity hues: a red-critical marker
+           inverting into something reading as safe). Legacy alias names
+           are NOT repeated here — they're defined once, above, as
+           `var(--base-token)` references, so they inherit the light
+           values automatically the moment the base token changes; only
+           the ~40 real non-aliased base tokens need a real light value.
+
+           Driven by a real explicit [data-theme] attribute on <html>,
+           set synchronously by the bootstrap script below (before first
+           paint, from a real per-user server-persisted setting — never
+           localStorage-only, never a useEffect that runs after paint).
+           No attribute = dark (today's only real theme, zero regression
+           for existing users); prefers-color-scheme is intentionally NOT
+           consulted here — theme is a real explicit per-user choice, not
+           inferred from the OS.
+
+           Real, reversed-lightness-curve mapping (never a flat linear
+           inversion, which collapses mid-tones into each other): surfaces
+           go lightest(bg-0, base)->less-light(bg-4, most elevated/pressed)
+           on a warm paper ramp, NEVER pure white (#fff glares on a dense
+           console and hairline borders vanish into it); text goes
+           darkest(txt, most prominent)->lighter(txt-4, most muted) ink;
+           amber-family hues (sev-high/tag-amber) get real extra chroma
+           (darkened + saturated, not just naively inverted) to stay
+           legible on paper, which a plain invert would wash out.
+
+           Real, computed WCAG contrast (not eyeballed) against --bg-0
+           (#f5f0e6): txt 14.7:1, txt-2 9.2:1, txt-3 5.2:1 — all real
+           passes of the 4.5:1 reference. txt-4 (the dimmest, meta-only
+           tier — timestamps, least-emphasized captions) sits at ~4.0:1 by
+           deliberate design, consistent with (and better than) the DARK
+           theme's own pre-existing txt-4 contrast of 3.19:1 against its
+           own bg-0 — this app's established real precedent for that
+           tier, not a new gap introduced here. ══════════════════════ */
+        :root[data-theme="light"] {
+            /* ── Surfaces — warm paper ramp, reversed-lightness curve,
+               never pure white ──────────────────────────────────────── */
+            --bg-0: #f5f0e6;
+            --bg-1: #efe9dc;
+            --bg-2: #e8e1d1;
+            --bg-3: #ddd4bf;
+            --bg-4: #d0c5ab;
+
+            /* ── Lines — warm, visible-but-subtle on paper ───────────── */
+            --line:        #d4c9b0;
+            --line-soft:   #e2d9c7;
+            --line-strong: #c2b494;
+
+            /* ── Text — dark ink, 4 steps (real computed contrast in the
+               block comment above) ──────────────────────────────────── */
+            --txt:   #221d16;
+            --txt-2: #463f33;
+            --txt-3: #6b6355;
+            --txt-4: #7d7566;
+
+            /* ── Accent — same hue family, deepened for real contrast on
+               paper (still "selection/interaction, nothing else") ────── */
+            --acc:      #2f5c8f;
+            --acc-hi:   #1f4d7d;
+            --acc-dim:  rgba(47,92,143,.16);
+            --acc-line: rgba(31,77,125,.38);
+
+            /* ── Semantic — amber-family (sev-high/tag-amber) gets real
+               extra chroma + darkening, never a naive invert, to stay
+               legible on a warm-paper ground ───────────────────────────── */
+            --red: #a8352c; --amber: #8a5e12; --steel: #3a5f80; --green: #3f6b52; --grey: #6b7480;
+            --sev-critical: #a8352c; --sev-high: #8a5e12; --sev-moderate: #3a5f80; --sev-low: #6b7480;
+
+            /* ── Derived ───────────────────────────────────────────────── */
+            --delta-worse:  #9c4f47;
+            --delta-better: #3f7a5e;
+            --tag-red:    #a8352c; --tag-red-border:   #d9c3ab;
+            --tag-amber:  #8a5e12; --tag-amber-border: #d9c3ab;
+            --tag-green:  #3f6b52; --tag-green-border: #c7d3ab;
+            --tag-blue:   #2f5c8f; --tag-blue-border:  #abc0d9;
+            --chart-area-fill:   rgba(47,92,143,.13);
+            --chart-area-stroke: #3a5f80;
+            --chart-grid:        #e2d9c7;
+            --chart-hist:        #b3a48a;
+            --chart-hist-hot:    #8a4a3a;
+            --heatmap-lo: #e2d9c7; --heatmap-hi: #ab9a78; --heatmap-empty: #ede5d4;
+            --cat-1: #6b6355; --cat-2: #746c5d; --cat-3: #7d7566; --cat-4: #867e6f;
+            --cat-5: #8f8778; --cat-6: #988f80; --cat-7: #a19889; --cat-8: #aaa192;
+            --cat-9: #b3aa9b; --cat-10: #bcb3a4; --cat-11: #c5bcad; --cat-12: #cec5b6;
+            --cat-13: #d7cebf; --cat-14: #e0d7c8;
+
+            --shadow: 0 10px 26px rgba(70,60,45,.16), 0 1px 3px rgba(70,60,45,.14);
+
+            /* ── Glass panes — a real, distinct light-theme tint, never
+               the dark theme's translucent black reused (that would read
+               muddy on a warm-paper ground) ──────────────────────────── */
+            --pane-glass-bg:      rgba(245, 240, 230, .74);
+            --akili-glass-bg:     rgba(245, 240, 230, .82);
+            --akili-glass-border: rgba(70, 60, 45, 0.10);
+
+            /* ── Map overlay tooltips — same real per-type accent hues,
+               real light backing/border/text ────────────────────────── */
+            --map-tooltip-bg:      rgba(245, 240, 230, 0.94);
+            --map-tooltip-text:    #262019;
+            --map-tooltip-text-strong: #14110c;
+            --map-tooltip-border:  rgba(70, 60, 45, 0.16);
+            --map-country-border:  rgba(31, 77, 125, 0.35);
+            --map-eez-border:      rgba(40, 108, 98, 0.4);
+            --map-infra-bg:        #efe9dc;
+            --map-infra-border:    #d4c9b0;
+            --map-infra-text:      #6b6355;
+            --map-infra-text-hover: #221d16;
+            --map-detection-label-bg: rgba(245, 240, 230, 0.88);
+            --map-detection-label-text: #221d16;
+            --leaflet-bg:          #efe9dc;
+            --scrollbar-thumb:       rgba(70, 60, 45, 0.16);
+            --scrollbar-thumb-hover: rgba(70, 60, 45, 0.28);
+            --focus-ring: rgba(31, 77, 125, 0.5);
+
+            /* ── Real component-specific light-theme tokens ──────────── */
+            --btn-primary-border: #1f4d7d;
+            --btn-primary-text:   #f5f0e6;
+            --btn-primary-hover:  #1a4269;
+            --check-mark-color:   #f5f0e6;
+            --xref-color:       #2f5c8f;
+            --xref-hover-color: #1f4d7d;
+            --xref-hover-bg:    rgba(47,92,143,.14);
+            --xref-active-bg:   rgba(47,92,143,.24);
+            --xref-active-color: #14324f;
+            --tooltip-bg: #efe9dc;
+            --scrim-bg: rgba(35,30,22,.45);
+            --sheet-shadow-color: rgba(70,60,45,.28);
         }
 /* ── User location pulse animation ──────────────────────────────── */
         @keyframes akiliUserLocPulse {
