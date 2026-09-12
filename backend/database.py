@@ -555,6 +555,18 @@ class WatchZone(Base):
     aoi_class           = Column(String, nullable=False, default="custom")
     status              = Column(String, nullable=False, default="active")  # active|paused|proposed
     owner               = Column(String, nullable=True)
+    # Real Imagery pipeline round — the spec's #sc-sensor selector
+    # (sentinel2_optical|sentinel1_sar|commercial_eo|commercial_sar).
+    # Real, honest gating on the value, not cosmetic: sentinel1_sar/
+    # commercial_eo/commercial_sar are accepted and persisted (an analyst's
+    # real stated intent survives), but a real scan attempt against one of
+    # them fails with a clear real error (see api_watch_zone_scan_now/
+    # SentinelScanner.run_scan) rather than silently running the one real
+    # deployed detector (Sentinel-2 optical/YOLO-OBB) against imagery it
+    # was never built for — no dedicated SAR/commercial pipeline exists in
+    # this codebase today (sar_detector.py was confirmed unwired and
+    # removed; see SentinelDetection.instrument's own docstring).
+    sensor_preference   = Column(String, nullable=False, default="sentinel2_optical")
 
 
 class SentinelScan(Base):
@@ -1758,6 +1770,9 @@ def migrate_db():
         if 'owner' not in wz2_existing:
             cur.execute('ALTER TABLE watch_zones ADD COLUMN owner TEXT')
             print('[db-migrate] watch_zones: added column owner')
+        if 'sensor_preference' not in wz2_existing:
+            cur.execute("ALTER TABLE watch_zones ADD COLUMN sensor_preference TEXT DEFAULT 'sentinel2_optical'")
+            print('[db-migrate] watch_zones: added column sensor_preference')
 
     # Real correlation-strength breakdown (correlation_scoring.py) — see
     # FusionEvent.correlation_strength/correlation_components above.
