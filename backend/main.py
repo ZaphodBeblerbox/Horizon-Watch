@@ -1075,6 +1075,30 @@ def _broadcast_push(title: str, body: str, data: dict | None = None) -> None:
     for uid in uids:
         threading.Thread(target=_send_push, args=(uid, title, body, data), daemon=True).start()
 
+
+# Real Settings round, Sources section — real (origin_class, licence_tier)
+# per source, reusing provenance.py's own real mapping (never a second,
+# invented copy); a source not in that mapping honestly gets (None, None)
+# rather than a guess. Real, verified-in-code poll cadence for the sources
+# whose actual repeating interval I could confirm directly in this file's
+# own loop functions (oref=_oref_loop's real asyncio.sleep(20), usgs=
+# _usgs_loop's asyncio.sleep(60), gdacs=_gdacs_loop's asyncio.sleep(300),
+# rss=the real "[startup] Poll intervals" log line's own 1800s, ais=the
+# same log line's real WebSocket push, not a poll) — every other source is
+# left unset rather than guessed, an honest gap matching provenance.py's
+# own "deliberately not assigned" precedent.
+_SOURCE_PROVENANCE_ALERT_KEY = {"ais": "ais"}
+_SOURCE_CADENCE_SECONDS = {"oref": 20, "usgs": 60, "gdacs": 300, "rss": 1800}
+_SOURCE_CADENCE_LABEL = {"ais": "real-time (WebSocket push)"}
+
+def _cadence_label(source_id: str) -> str | None:
+    if source_id in _SOURCE_CADENCE_LABEL:
+        return _SOURCE_CADENCE_LABEL[source_id]
+    secs = _SOURCE_CADENCE_SECONDS.get(source_id)
+    if secs is None:
+        return None
+    return f"poll, every {secs}s" if secs < 120 else f"poll, every {secs // 60}min"
+
 @app.get("/api/health/detailed")
 def get_health_detailed():
     """Return backend status, data source statuses, and Claude usage stats."""
@@ -1258,6 +1282,13 @@ def get_health_detailed():
             "message":   _PIPELINES_DATA.get("error"),
         },
     ]
+
+    from provenance import provenance_for_alert_source
+    for _src in sources:
+        _origin_class, _licence_tier = provenance_for_alert_source(_SOURCE_PROVENANCE_ALERT_KEY.get(_src["id"], _src["id"]))
+        _src["origin_class"] = _origin_class
+        _src["licence_tier"] = _licence_tier
+        _src["cadence"] = _cadence_label(_src["id"])
 
     usage = usage_tracker.get_stats(CLAUDE_BUDGET_USD)
     _today_spend = usage_tracker.get_today_cost()
@@ -21174,6 +21205,7 @@ def _user_to_dict(u) -> dict:
         "team_id": u.team_id,
         "capability_role": u.capability_role,
         "theme": u.theme or "dark",
+        "settings": u.settings or {},
     }
 
 def _team_to_dict(t) -> dict:
@@ -21208,6 +21240,57 @@ async def api_set_own_theme(request: Request):
         u.theme = theme
         db.commit()
     return {"theme": theme}
+
+
+def _deep_merge_settings(base: dict, patch: dict) -> dict:
+    """Merge `patch` into `base` in place, recursing into nested dicts so a
+    change to one leaf (e.g. alerts.quietHours.enabled) never clobbers its
+    siblings (e.g. alerts.thresholds) the way a flat dict.update() would."""
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge_settings(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+@app.patch("/api/users/me/settings")
+async def api_patch_own_settings(request: Request):
+    """Real Settings round — the one real per-user, server-persisted,
+    apply-on-change settings store (General/Map & layers/Alerts/Briefing —
+    everything except theme, which keeps its own pre-existing column/
+    endpoint). Every control in the Settings UI calls this with just the
+    one leaf that changed; never a whole-form Save. Scoped to the real
+    verified session, same as /api/users/me/theme above — never a client-
+    supplied user id."""
+    user = _require_current_user(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+    import copy
+    from sqlalchemy.orm.attributes import flag_modified
+    from database import User, get_db as _gdb_settings
+    with _gdb_settings() as db:
+        u = db.query(User).filter(User.id == user["id"]).first()
+        if not u:
+            raise HTTPException(status_code=404, detail="user not found")
+        # Real bug found and fixed while writing this endpoint's own
+        # verification script: a shallow dict(u.settings or {}) shares every
+        # NESTED dict by reference with the ORM-tracked value, so
+        # _deep_merge_settings' in-place recursion silently mutated
+        # u.settings' own nested dicts before the `u.settings = merged`
+        # reassignment ever ran. SQLAlchemy's plain (non-Mutable-wrapped)
+        # JSON column then compared the new value against the old one by
+        # deep equality, found them already equal (because they'd already
+        # been made equal by the in-place mutation), and skipped the
+        # UPDATE entirely — a second nested patch to the same top-level key
+        # silently failed to persist. A real deepcopy breaks every shared
+        # reference, and flag_modified() is the standard, explicit fix for
+        # mutable JSON columns regardless (belt and suspenders, not either/or).
+        merged = _deep_merge_settings(copy.deepcopy(u.settings or {}), body)
+        u.settings = merged
+        flag_modified(u, "settings")
+        db.commit()
+        return merged
 
 
 @app.put("/api/users/{user_id}")

@@ -9,8 +9,10 @@ import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionSto
 import LoginScreen from "./components/LoginScreen.jsx"
 import { checkSession, subscribeAuth } from "./state/authStore.js"
 import { reconcileTheme } from "./state/themeStore.js"
+import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from "./state/settingsStore.js"
 import StatusBar from "./components/StatusBar.jsx"
 import CommandPalette from "./components/CommandPalette.jsx"
+import SettingsModal from "./components/SettingsModal.jsx"
 import ToastHost from "./ui/ToastHost.jsx"
 import Situation from "./destinations/Situation.jsx"
 import { MODULES } from "./data/modules.js"
@@ -73,7 +75,6 @@ import Cases from "./destinations/Cases.jsx"
 import Team from "./destinations/Team.jsx"
 import API_BASE from "./apiBase.js"
 import ProfilePanel from "./components/ProfilePanel.jsx"
-import { loadSettings } from "./components/PreferencesPanel.jsx"
 import NewsReels from "./components/NewsReels.jsx"
 import { mergeNotificationItems } from "./components/notificationsNormalize.js"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
@@ -186,7 +187,7 @@ export default function App() {
     const [authUser, setAuthUser] = useState(null)
     const [authChecked, setAuthChecked] = useState(false)
     useEffect(() => {
-        checkSession().then((u) => { setAuthUser(u); setAuthChecked(true); reconcileTheme(u) })
+        checkSession().then((u) => { setAuthUser(u); setAuthChecked(true); reconcileTheme(u); reconcileSettings(u) })
         return subscribeAuth(setAuthUser)
     }, [])
 
@@ -490,6 +491,7 @@ export default function App() {
     // Redesign Round 2 — command palette open state (the global ⌘K/1-7
     // keyboard handler lives further down, after openTab is declared).
     const [paletteOpen, setPaletteOpen] = useState(false)
+    const [settingsOpen, setSettingsOpen] = useState(false)
 
     useEffect(() => {
         if (!profile) return
@@ -581,17 +583,16 @@ export default function App() {
         return { layers }
     }, [selectedSurface])
 
-    // ── App settings (from PreferencesPanel) ─────────────────────────────────
-    const [appSettings, setAppSettings] = useState(loadSettings)
+    // ── App settings — real Settings round: real per-user, server-persisted
+    // store (settingsStore.js), replacing the old localStorage + non-per-
+    // user global /api/settings dict. Same flat keys/consumers as before
+    // (real alert sound cues, real alert-poll interval below) — only the
+    // persistence mechanism underneath changed. ───────────────────────────
+    const [appSettings, setAppSettings] = useState(getSettings)
     const settingsRef = useRef(appSettings)
     useEffect(() => { settingsRef.current = appSettings }, [appSettings])
 
-    // Re-sync whenever PreferencesPanel saves to localStorage
-    useEffect(() => {
-        const h = () => setAppSettings(loadSettings())
-        window.addEventListener("akili:settings-changed", h)
-        return () => window.removeEventListener("akili:settings-changed", h)
-    }, [])
+    useEffect(() => subscribeSettings(setAppSettings), [])
 
     // ── Real-time alert sound cues (UI correction pass: toast popups removed
     // entirely — alerts surface exclusively via the header bell badge and the
@@ -604,12 +605,7 @@ export default function App() {
     const soundMuted = appSettings.soundMuted
 
     const onToggleSound = useCallback(() => {
-        setAppSettings(prev => {
-            const next = { ...prev, soundMuted: !prev.soundMuted }
-            try { localStorage.setItem("akili-settings-v1", JSON.stringify(next)) } catch {}
-            window.dispatchEvent(new CustomEvent("akili:settings-changed"))
-            return next
-        })
+        updateSetting("soundMuted", !settingsRef.current.soundMuted)
     }, [])
 
     useEffect(() => {
@@ -1060,6 +1056,7 @@ export default function App() {
                         onOpenPalette={() => setPaletteOpen(true)}
                         mode={mode}
                         onToggleMode={() => setMode(mode === "work" ? "watch" : "work")}
+                        onOpenSettings={() => setSettingsOpen(true)}
                     />
                     <TabStrip
                         tabs={tabs}
@@ -1090,6 +1087,12 @@ export default function App() {
                 }}
                 onOpenReport={() => openTab("briefings")}
             />
+            {settingsOpen && (
+                <SettingsModal
+                    onClose={() => setSettingsOpen(false)}
+                    onOpenSources={() => openTab("sources")}
+                />
+            )}
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
             <div style={{ flex: 1, display: "flex", minHeight: 0, paddingBottom: (isMobile && !showAutoMode) ? 56 : 0 }}>

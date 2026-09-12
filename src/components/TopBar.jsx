@@ -23,6 +23,7 @@ export default function TopBar({
     onOpenPalette,
     mode = "watch",
     onToggleMode = null,
+    onOpenSettings = null,
 }) {
     // Mode, not modules (§7.1) — the rendered rail set is filtered off one
     // real registry field (data/modules.js's `set`), re-derived fresh every
@@ -192,6 +193,18 @@ export default function TopBar({
                 >
                     <svg className="icon sm"><use href={theme === "light" ? "#i-moon" : "#i-sun"} /></svg>
                 </button>
+                {onOpenSettings && (
+                    <button
+                        onClick={onOpenSettings}
+                        title="Settings"
+                        style={{
+                            width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
+                        }}
+                    >
+                        <svg className="icon sm"><use href="#i-settings" /></svg>
+                    </button>
+                )}
 
                 <button
                     onClick={onOpenPalette}

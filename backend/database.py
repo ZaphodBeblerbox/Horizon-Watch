@@ -75,6 +75,15 @@ class User(Base):
     # look every current user already sees, so this column's addition is
     # a zero-visual-change migration for every existing row.
     theme               = Column(String, nullable=True)
+    # Real Settings round — every OTHER real per-user setting (density,
+    # units, map/layers, alert thresholds incl. quiet hours, briefing
+    # defaults, notification/sound toggles). Theme keeps its own dedicated
+    # column/endpoint (pre-existing, reused as-is — Settings' General
+    # section is a second real control surface for the SAME value, never a
+    # second mechanism). One JSON blob rather than a column per setting,
+    # merged in-place by PATCH /api/users/me/settings so every control
+    # applies immediately with no client-side "unsaved changes" state.
+    settings            = Column(JSON, nullable=True)
 
 
 class DeskSession(Base):
@@ -1510,6 +1519,7 @@ def migrate_db():
         ('title', 'TEXT'),
         ('capability_role', 'TEXT'),
         ('theme', 'TEXT'),
+        ('settings', 'TEXT'),
     ]
     existing = [row[1] for row in cur.execute('PRAGMA table_info(users)').fetchall()]
     for col, typ in cols:
