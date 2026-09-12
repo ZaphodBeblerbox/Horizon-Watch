@@ -376,7 +376,8 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
                     while the InspectorPanel is open in this same screen
                     region — reversed the instant the inspector closes. */}
                 <div style={{
-                    flex: 1, minWidth: 280, background: "var(--bg-panel-translucent)",
+                    flex: 1, minWidth: 280, background: "var(--pane-glass-bg)",
+                    backdropFilter: "blur(16px) saturate(115%)", WebkitBackdropFilter: "blur(16px) saturate(115%)",
                     display: "flex", flexDirection: "column", minHeight: 0,
                     transform: inspectorOpen ? "translateX(100%)" : "translateX(0)",
                     transition: "transform 150ms ease-out",
