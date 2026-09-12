@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { createPortal } from "react-dom"
 import { Entity } from "resium"
 import { useCesium } from "resium"
@@ -9,6 +9,7 @@ import {
 } from "cesium"
 import API_BASE from "../apiBase.js"
 import { getEntityMarkerDataUri } from "./entityIcons.js"
+import { isSignalVisible, ageHoursSince, rankForRawSeverity } from "../lib/signalVisibility.js"
 
 // ── Article-type → human explanation ──────────────────────────────────────────
 
@@ -253,23 +254,36 @@ function SurgePopup({ surge, x, y, visible, onClose }) {
 
 // ── Main layer ────────────────────────────────────────────────────────────────
 
-export default function GlobeSurgeLayer({ enabled }) {
-    const { viewer }          = useCesium()
-    const [surges, setSurges] = useState([])
+export default function GlobeSurgeLayer({ enabled, windowHours = null, maxRank = null }) {
+    const { viewer }                = useCesium()
+    const [rawSurges, setRawSurges] = useState([])
+    // Real root-cause fix: filtered here (derived, not re-fetched) so
+    // changing the Time window/severity floor re-filters instantly rather
+    // than waiting for the next 120s poll — the same real
+    // signalVisibility.js decision Situation.jsx's own header/legend/
+    // histogram counts use.
+    const surges = useMemo(() => {
+        if (windowHours == null && maxRank == null) return rawSurges
+        const nowMs = Date.now()
+        return rawSurges.filter((s) => isSignalVisible(
+            { ageHours: ageHoursSince(s.created_at, nowMs), severityRank: rankForRawSeverity(s.severity) },
+            { windowHours, maxRank },
+        ))
+    }, [rawSurges, windowHours, maxRank])
     const [selSurge, setSel]  = useState(null)
     const [popupPos, setPos]  = useState({ x: 0, y: 0 })
     const [popupVis, setVis]  = useState(false)
     const posRef              = useRef(null)
 
     useEffect(() => {
-        if (!enabled) { setSurges([]); setSel(null); setVis(false); return }
+        if (!enabled) { setRawSurges([]); setSel(null); setVis(false); return }
         let cancelled = false
         const load = () =>
             fetch(`${API_BASE}/api/surge/events?status=active&limit=50`)
                 .then(r => r.ok ? r.json() : [])
                 .then(d => {
                     if (!cancelled)
-                        setSurges(Array.isArray(d) ? d.filter(s => s.lat != null && s.lon != null) : [])
+                        setRawSurges(Array.isArray(d) ? d.filter(s => s.lat != null && s.lon != null) : [])
                 })
                 .catch(() => {})
         load()

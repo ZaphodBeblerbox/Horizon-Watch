@@ -116,6 +116,19 @@ export default function GlobeView({
     // points (it visualizes news-VOLUME surge anomalies from its own
     // /api/surge/events fetch, not individual articles).
     geoConfirmedEnabled = false,
+    // Real root-cause fix (Time-window-doesn't-filter-the-map bug) — the
+    // same real time-window/severity-floor selector Situation.jsx's own
+    // header/legend/histogram counts already use (src/lib/
+    // signalVisibility.js), now forwarded to every real "signal" layer
+    // below (GlobeAlertsLayer, GlobeSurgeLayer, GlobeGeoConfirmedLayer).
+    // null (the default) means "no window/floor passed" — every existing
+    // caller that doesn't pass these (Dashboard.jsx, MapTab.jsx) keeps its
+    // current unfiltered behavior unchanged. Deliberately NOT applied to
+    // AIS/ADS-B live track layers — those are real raw position rendering,
+    // independent of the event-domain severity/window concept by design
+    // (Situation.jsx's own comment on tracksOn).
+    signalWindowHours = null,
+    signalMaxRank = null,
     cityLabelsEnabled = false,
     // Fidelity pass, build spec v2 §4 — a real 10° graticule overlay
     // (GlobeGraticuleLayer.jsx — genuine polylines at exact 10-degree
@@ -691,9 +704,12 @@ export default function GlobeView({
                 {/* ── Point / entity layers ───────────────────────────────────── */}
                 <GlobeStrategicZonesLayer enabled={strategicZonesEnabled} />
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
-                <GlobeGeoConfirmedLayer enabled={geoConfirmedEnabled} />
+                <GlobeGeoConfirmedLayer
+                    enabled={geoConfirmedEnabled}
+                    {...(signalWindowHours != null ? { maxAgeDays: Math.max(1, Math.ceil(signalWindowHours / 24)) } : {})}
+                />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
-                <GlobeSurgeLayer        enabled={eventsEnabled} />
+                <GlobeSurgeLayer        enabled={eventsEnabled} windowHours={signalWindowHours} maxRank={signalMaxRank} />
                 {cityLabelsEnabled && (
                     <ImageryLayer imageryProvider={esriLabelsProvider} alpha={1.0} maximumTerrainLevel={19} />
                 )}
@@ -722,7 +738,7 @@ export default function GlobeView({
                 <GlobePortLayer    enabled={portsEnabled}    viewBounds={viewBounds} />
 
                 {/* ── Forge alerts layer ──────────────────────────────────────── */}
-                <GlobeAlertsLayer enabled={alertsEnabled} viewBounds={viewBounds} />
+                <GlobeAlertsLayer enabled={alertsEnabled} viewBounds={viewBounds} windowHours={signalWindowHours} maxRank={signalMaxRank} />
 
                 {/* ── Threat heatmap layer ─────────────────────────────────────── */}
                 <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />

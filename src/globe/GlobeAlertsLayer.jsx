@@ -8,6 +8,7 @@ import { alertEntityTypeAndSubtype } from "../inspector/adapters.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { ALERT_ICONS } from "../constants/alertIcons.js"
 import { clusterTracks } from "./trackClustering.js"
+import { isSignalVisible, ageHoursSince, rankForRawSeverity } from "../lib/signalVisibility.js"
 
 // Same real per-viewport render cap GlobeAISLayer/GlobeADSBLayer already use.
 // Forge's alert feed is a running history (hundreds of sanctioned-vessel
@@ -142,7 +143,7 @@ function fusionIcon(severity) {
     })
 }
 
-export default function GlobeAlertsLayer({ enabled, viewBounds }) {
+export default function GlobeAlertsLayer({ enabled, viewBounds, windowHours = null, maxRank = null }) {
     const [alerts,           setAlerts]           = useState([])
     const [fusions,          setFusions]          = useState([])
     const [sanctionedMmsiSet, setSanctionedMmsiSet] = useState(new Set())
@@ -242,14 +243,23 @@ export default function GlobeAlertsLayer({ enabled, viewBounds }) {
         return () => ids.forEach(deleteEntity)
     }, [fusions])
 
-    // enabled controls visibility only — fetch cycle runs regardless
+    // enabled controls visibility only — fetch cycle runs regardless.
+    // Real root-cause fix: the Time window/severity-floor selector never
+    // reached this layer before — it now applies the exact same real
+    // signalVisibility.js decision Situation.jsx's own header/legend/
+    // histogram counts use, so the map can't disagree with them again.
+    const _nowMs = Date.now()
     const _seenIds = new Set()
     const filteredAlerts = (enabled ? alerts : []).filter(a => {
         if (a.lat == null || (a.lng ?? a.lon) == null || !isFinite(Number(a.lat))) return false
         const id = a.id || a.alert_id
         if (!id || _seenIds.has(id)) return false
         _seenIds.add(id)
-        return filterAlert(a, sanctionedMmsiSet)
+        if (!filterAlert(a, sanctionedMmsiSet)) return false
+        return isSignalVisible(
+            { ageHours: ageHoursSince(a.timestamp, _nowMs), severityRank: rankForRawSeverity(a.severity) },
+            { windowHours, maxRank },
+        )
     })
     const { individual: visibleAlerts, clusters: alertClusters } = clusterTracks(filteredAlerts, {
         getLat: alertLat, getLon: alertLon, viewBounds, maxIndividual: DESKTOP_ALERTS_CAP,
@@ -258,7 +268,13 @@ export default function GlobeAlertsLayer({ enabled, viewBounds }) {
         // label), so even 2-3 close together still visually stack.
         clusterMinSize: 2,
     })
-    const visibleFusions = (enabled ? fusions : []).filter(f => f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false)
+    const visibleFusions = (enabled ? fusions : []).filter(f =>
+        f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false &&
+        isSignalVisible(
+            { ageHours: ageHoursSince(f.created_at, _nowMs), severityRank: rankForRawSeverity(f.severity) },
+            { windowHours, maxRank },
+        )
+    )
 
     return (
         <>

@@ -25,6 +25,7 @@ import { LAYER_GROUPS } from "../components/layerRailConfig.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { summarizeHealth } from "../utils/systemHealth.js"
 import { buildWatchQueueRows, sortRowsBySeverity, timeAgoLabel } from "./dashboardLogic.js"
+import { isSignalVisible, ageHoursSince } from "../lib/signalVisibility.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useAnnotations, renameAnnotation, removeAnnotation } from "../state/annotationStore.js"
@@ -343,12 +344,16 @@ export default function Situation({ onOpenDossier }) {
     const windowRows = useMemo(() => {
         const merged = mergeNotificationItems(surfaceItems, fusionEvents)
         const rows = sortRowsBySeverity(buildWatchQueueRows(merged))
-        return rows.filter((r) => {
-            if (r.severityRank > maxRank) return false
-            if (!r.publishedAt) return true // no real timestamp — never assumed out of window
-            const ageHours = (nowMs - new Date(r.publishedAt).getTime()) / 3600000
-            return ageHours <= windowHours
-        })
+        // The one real shared window/severity-floor decision (src/lib/
+        // signalVisibility.js) — the map's own "signal" layers
+        // (GlobeAlertsLayer/GlobeSurgeLayer/GlobeGeoConfirmedLayer) now
+        // call the exact same function over their own raw data, real
+        // root-cause fix for the map previously ignoring both dimensions
+        // entirely rather than a second, ad-hoc filter added there.
+        return rows.filter((r) => isSignalVisible(
+            { ageHours: ageHoursSince(r.publishedAt, nowMs), severityRank: r.severityRank },
+            { windowHours, maxRank },
+        ))
     }, [surfaceItems, fusionEvents, maxRank, windowHours, nowMs])
 
     // visibleRows: fidelity pass §1 — the base/default state is all layers
@@ -715,6 +720,13 @@ export default function Situation({ onOpenDossier }) {
                     <GlobeView
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
                         geoConfirmedEnabled={groupsOn.news}
+                        /* Real root-cause fix — the Time window/severity-
+                           floor selector previously never reached the map
+                           at all (only the domain on/off toggles did); the
+                           "signal" layers below now apply the exact same
+                           real src/lib/signalVisibility.js decision this
+                           screen's own header/legend/histogram counts use. */
+                        signalWindowHours={windowHours} signalMaxRank={maxRank}
                         dockExternally
                         onInspectorPopupChange={handleInspectorPopupChange}
                         alertsEnabled={groupsOn.alerts}
