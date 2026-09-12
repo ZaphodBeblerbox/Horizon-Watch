@@ -97,6 +97,12 @@ _IDX_EVENT_BASE_CODE = 27
 _IDX_EVENT_ROOT_CODE = 28  # QuadClass is at 29 — do NOT mix up
 _IDX_GOLDSTEIN = 30
 _IDX_NUM_MENTIONS = 31
+# Real, standard GDELT 2.0 Event Export column (AvgTone) — the next real
+# field after NumArticles(33) in GDELT's own documented fixed schema. Added
+# for the real GDELT country risk index (Parallax translation step 1, Part
+# 4) — previously never extracted at all despite being a real field in
+# every real event row this app already downloads.
+_IDX_AVGTONE = 34
 _IDX_NUM_SOURCES = 32
 _IDX_NUM_ARTICLES = 33
 _IDX_ACTION_GEO_FULLNAME_NEW = 52
@@ -447,6 +453,7 @@ def _normalize_row(row: list[str], source_url: str, row_index: int) -> dict[str,
     actor1_country = (row[_IDX_ACTOR1_COUNTRYCODE] or "").strip().upper()
     actor2_country = (row[_IDX_ACTOR2_COUNTRYCODE] or "").strip().upper()
     goldstein = _safe_float(row[_IDX_GOLDSTEIN], 0.0)
+    avg_tone = _safe_float(row[_IDX_AVGTONE]) if len(row) > _IDX_AVGTONE else None
     mentions = _safe_int(row[_IDX_NUM_MENTIONS], 0)
     sources = _safe_int(row[_IDX_NUM_SOURCES], 0)
     articles = _safe_int(row[_IDX_NUM_ARTICLES], 0)
@@ -472,6 +479,7 @@ def _normalize_row(row: list[str], source_url: str, row_index: int) -> dict[str,
         "event_root_code": event_root_code,
         "event_type": event_type,
         "goldstein": goldstein,
+        "avg_tone": avg_tone,  # real GDELT AvgTone — None (never fabricated) when absent from a real row
         "mentions": mentions,
         "sources": sources,
         "articles": articles,

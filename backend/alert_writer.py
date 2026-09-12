@@ -13,6 +13,7 @@ import datetime
 from typing import Optional
 
 from database import get_db, Alert, NewsArticle
+from provenance import provenance_for_alert_source
 
 
 # ── ID generators ──────────────────────────────────────────────────────────
@@ -69,10 +70,17 @@ def write_alert(alert_dict: dict) -> Optional[str]:
     try:
         alert_id = alert_dict.get("id") or _alert_id()
         region   = alert_dict.get("region") or None
+        source   = str(alert_dict.get("source") or "manual")
+        # Real provenance (Parallax translation step 1, Part 2) — populated
+        # per real Alert.source at write time (source varies row to row,
+        # unlike the single-source tables); (None, None) for surge/fusion/
+        # manual, which the real mapping table doesn't cover — left
+        # honestly unclassified rather than guessed at.
+        origin_class, licence_tier = provenance_for_alert_source(source)
 
         row = Alert(
             alert_id        = alert_id,
-            source          = str(alert_dict.get("source") or "manual"),
+            source          = source,
             alert_type      = str(alert_dict.get("alert_type") or alert_dict.get("type") or "unknown"),
             title           = str(alert_dict.get("title") or alert_dict.get("headline") or ""),
             severity        = str(alert_dict.get("severity") or "medium"),
@@ -86,6 +94,8 @@ def write_alert(alert_dict: dict) -> Optional[str]:
             raw_json        = json.dumps(alert_dict, default=str),
             zone_ids        = json.dumps(alert_dict.get("zone_ids") or []),
             tags            = json.dumps(alert_dict.get("tags") or []),
+            origin_class    = origin_class,
+            licence_tier    = licence_tier,
             status          = "active",
             expires_at      = alert_dict.get("expires_at") or None,
         )
