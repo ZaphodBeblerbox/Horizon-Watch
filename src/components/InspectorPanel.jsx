@@ -58,17 +58,20 @@ const ENTITY_TYPE_TO_REF_KIND = { vessel: "trk", aircraft: "trk", alert: "sig", 
  * component doesn't know what a "destination" is), see GlobePopup.jsx.
  */
 
-// Theming regression fix: this self-docking (non-`bare`) shell is the real
-// "Inspector pane" reported as not translucent (Dashboard.jsx/MapTab.jsx's
-// floating-over-the-map case, via GlobePopup's default dockExternally=false
-// path) — it was a flat var(--bg-panel) (== --bg-1, fully opaque), unlike
-// the `bare` path which correctly relies on the caller's own real
-// `.pane-glass` shell (Situation.jsx). Reuses `.pane-glass`'s exact real
-// background token + blur/saturate recipe directly here (not the shared
-// `.pane-glass` class itself) because this component's OWN keyframe-based
-// slide-in/out classes below would fight `.pane-glass`'s transition-based
-// slide handling on the same element — shell only, the header/attributes/
-// buttons rendered inside stay exactly as opaque/flat as before.
+// Theming regression fix, follow-up correction: this self-docking
+// (non-`bare`) shell is the real "Inspector pane" reported as not
+// translucent (Dashboard.jsx/MapTab.jsx's floating-over-the-map case, via
+// GlobePopup's default dockExternally=false path) — it was a flat
+// var(--bg-panel) (== --bg-1, fully opaque), unlike the `bare` path which
+// correctly relies on the caller's own real `.pane-glass` shell
+// (Situation.jsx). Now matched to --map-tooltip-bg + the exact real
+// blur/saturate recipe .vessel-popup's own floating card uses (src/
+// index.css) — the SAME real translucent treatment every map hover
+// bar/popup already uses, per direct user correction, rather than
+// `.pane-glass`'s own more see-through tint (a deliberately different,
+// more transparent treatment reserved for Situation/Dossiers' large side
+// panes). Shell only — the header/attributes/buttons rendered inside stay
+// exactly as opaque/flat as before.
 const DEFAULT_DOCK_STYLE = {
     position: "fixed",
     top: 0,
@@ -80,9 +83,9 @@ const DEFAULT_DOCK_STYLE = {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
-    background: "var(--pane-glass-bg)",
-    backdropFilter: "blur(16px) saturate(115%)",
-    WebkitBackdropFilter: "blur(16px) saturate(115%)",
+    background: "var(--map-tooltip-bg)",
+    backdropFilter: "blur(20px) saturate(1.4)",
+    WebkitBackdropFilter: "blur(20px) saturate(1.4)",
     borderLeft: "1px solid var(--border)",
 }
 
