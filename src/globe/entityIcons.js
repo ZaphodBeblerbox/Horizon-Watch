@@ -225,6 +225,45 @@ export function getNewsMarkerDataUri({ color = TEXT_MUTED } = {}) {
     return uri
 }
 
+// ── GeoConfirmed markers — real color-coded dot per faction/side ─────────────
+// GeoConfirmed's own live map renders conflict-event pins as color-coded
+// dots by faction (confirmed live 2026-09 via their real bulk placemark API,
+// GET /api/Placemark/{theatre} -> [{name, color, invertColor, icons:[...]}]
+// — a real per-theatre faction->color field, not a universal palette: the
+// same hex denotes a different real side in a different theatre). This
+// reproduces that real convention faithfully as a bespoke hand-drawn shape
+// (same precedent as newsDiamondSvg above, not the shared outline-glyph
+// family ENTITY_ICON_COMPONENT uses for other entity types — a plain dot is
+// GeoConfirmed's own real visual language here, not a shape this app invented).
+//
+// `invertColor` reasoning (stated explicitly — GeoConfirmed's API exposes
+// this boolean but not its own pixel-level rendering logic): applied here as
+// a light-fill/colored-stroke swap, since GeoConfirmed uses it on very pale
+// colors (e.g. a near-white yellow) that would be nearly invisible as a
+// solid fill against a map background. Never fabricated new colors — only
+// a rendering-mode choice for genuinely-real GeoConfirmed color values.
+const GEOCONFIRMED_DOT_FALLBACK = "#E8C547" // pre-existing color, used only when this placemark has no real faction_color yet
+export const GEOCONFIRMED_MARKER_SIZE = 22
+
+function geoconfirmedDotSvg(color, size, invert) {
+    const cx = size / 2, cy = size / 2, r = size * 0.36
+    const fill = invert ? "#0B0F1A" : color
+    const stroke = invert ? color : "#070B14"
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
+        + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`
+        + `</svg>`
+}
+
+const _geoconfirmedCache = new Map()
+export function getGeoConfirmedMarkerDataUri({ color, invertColor = false, size = GEOCONFIRMED_MARKER_SIZE } = {}) {
+    const realColor = color || GEOCONFIRMED_DOT_FALLBACK
+    const key = `geoconfirmed:${realColor}:${invertColor}:${size}`
+    if (_geoconfirmedCache.has(key)) return _geoconfirmedCache.get(key)
+    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(geoconfirmedDotSvg(realColor, size, invertColor))}`
+    _geoconfirmedCache.set(key, uri)
+    return uri
+}
+
 // ── ForceGraph (forge entity graph) support ───────────────────────────────────
 // Maps a canonical graph node type (ForceGraph.jsx's canonType()) to this
 // module's real {entityType} identity — replaces markerRenderer.js's

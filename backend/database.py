@@ -1108,6 +1108,17 @@ class GeoConfirmedPlacemark(Base):
     latitude            = Column(Float, nullable=False)
     longitude           = Column(Float, nullable=False)
     faction             = Column(String, nullable=True)       # real GeoConfirmed faction/category label
+    # Real, per-theatre faction color GeoConfirmed's own bulk placemark API
+    # serves alongside the faction grouping (GET /api/Placemark/{slug} ->
+    # [{name, color, invertColor, icons: [...]}]) — confirmed live 2026-09
+    # via direct API inspection. The SAME hex can mean a different real side
+    # in a different theatre (e.g. #0051CA is "Ukraine" in the ukraine
+    # theatre but "IDF" in israel), so this is stored per-placemark-row,
+    # never as a global name->color constant. Null for a placemark ingested
+    # before this field existed, until its theatre next re-syncs — an
+    # honest gap, never backfilled with a guessed color.
+    faction_color        = Column(String, nullable=True)
+    faction_invert_color = Column(Boolean, nullable=True)
     icon_url            = Column(String, nullable=True)       # GeoConfirmed's own icon path — real attribution/debug
     origin              = Column(String, nullable=True)
     original_source     = Column(Text, nullable=True)         # real citation URL(s), as GeoConfirmed provides them
@@ -1146,6 +1157,16 @@ class GeoConfirmedOrbatNode(Base):
     is_deleted          = Column(Boolean, default=False)
     is_disbanded        = Column(Boolean, default=False)
     color               = Column(String, nullable=True)
+    # Real flag/patch image path GeoConfirmed's own ORBAT node carries
+    # (`patches` field, confirmed live 2026-09 via direct API inspection —
+    # e.g. Ukraine's ORBAT root: "/files/orbat/Flag_of_Ukraine.svg.png",
+    # joined with https://geoconfirmed.org to load). Inconsistently
+    # populated across countries/units (confirmed empty on Israel's root) —
+    # null here means GeoConfirmed genuinely doesn't provide one, never a
+    # placeholder. No description/general-info field exists at the
+    # country/faction root level in GeoConfirmed's real API (confirmed by
+    # direct audit), so there is no equivalent field to store for that.
+    flag_path           = Column(String, nullable=True)
     linked_system_id    = Column(String, nullable=True, index=True)  # real OntologyEntity system_id / sanctioned entity name — ONLY set on hard evidence, never set by this app's own code today (see link_status)
     link_status         = Column(String, nullable=True, index=True)  # null | "pending_review" — never "auto_linked"
     source_last_update  = Column(DateTime, nullable=True)  # GeoConfirmed's own real lastUpdate for this node
@@ -1627,6 +1648,29 @@ def migrate_db():
         if cur.rowcount:
             print(f'[db-migrate] rule_configs: removed {cur.rowcount} orphaned row(s) '
                   f'(ADSB_SQUAWK_MILITARY / ADSB_TRANSPONDER_ANOMALY — no backing detector code)')
+
+    # geoconfirmed_placemarks.faction_color / faction_invert_color — real,
+    # per-theatre faction color GeoConfirmed's own bulk placemark API serves
+    # (GET /api/Placemark/{slug} groups placemarks under a faction object
+    # carrying its own real {color, invertColor}), confirmed live 2026-09.
+    # Previously discarded during ingestion; the map marker used one fixed
+    # hardcoded color for every placemark regardless of real faction/side.
+    if 'geoconfirmed_placemarks' in tables:
+        gcp_existing = [row[1] for row in cur.execute('PRAGMA table_info(geoconfirmed_placemarks)').fetchall()]
+        if 'faction_color' not in gcp_existing:
+            cur.execute('ALTER TABLE geoconfirmed_placemarks ADD COLUMN faction_color TEXT')
+            print('[db-migrate] geoconfirmed_placemarks: added column faction_color')
+        if 'faction_invert_color' not in gcp_existing:
+            cur.execute('ALTER TABLE geoconfirmed_placemarks ADD COLUMN faction_invert_color BOOLEAN DEFAULT 0')
+            print('[db-migrate] geoconfirmed_placemarks: added column faction_invert_color')
+
+    # geoconfirmed_orbat_nodes.flag_path — real flag/patch image path
+    # (GeoConfirmed's own `patches` field), confirmed live 2026-09.
+    if 'geoconfirmed_orbat_nodes' in tables:
+        gon_existing = [row[1] for row in cur.execute('PRAGMA table_info(geoconfirmed_orbat_nodes)').fetchall()]
+        if 'flag_path' not in gon_existing:
+            cur.execute('ALTER TABLE geoconfirmed_orbat_nodes ADD COLUMN flag_path TEXT')
+            print('[db-migrate] geoconfirmed_orbat_nodes: added column flag_path')
 
     conn.commit()
     conn.close()

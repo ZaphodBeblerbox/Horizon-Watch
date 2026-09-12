@@ -12,10 +12,10 @@ import { Entity } from "resium"
 import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getEntityMarkerDataUri } from "./entityIcons.js"
+import { getGeoConfirmedMarkerDataUri, GEOCONFIRMED_MARKER_SIZE } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-const MARKER_SIZE = 30
+const MARKER_SIZE = GEOCONFIRMED_MARKER_SIZE
 
 export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 30 }) {
     const [placemarks, setPlacemarks] = useState([])
@@ -48,7 +48,13 @@ export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 3
 
     if (!enabled || !placemarks.length) return null
 
-    const icon = getEntityMarkerDataUri({ entityType: "geoconfirmed", size: MARKER_SIZE, color: "#E8C547" })
+    // Real, per-placemark faction color (GeoConfirmed's own real bulk API
+    // field — see entityIcons.js's getGeoConfirmedMarkerDataUri doc comment).
+    // Cached per distinct (color, invert) pair, not per placemark, so this
+    // stays cheap even across thousands of pins.
+    const iconFor = (p) => getGeoConfirmedMarkerDataUri({
+        color: p.faction_color, invertColor: !!p.faction_invert_color, size: MARKER_SIZE,
+    })
 
     return (
         <>
@@ -60,7 +66,7 @@ export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 3
                         key={p.id}
                         position={Cartesian3.fromDegrees(p.lon, p.lat, 0)}
                         billboard={{
-                            image: icon,
+                            image: iconFor(p),
                             width: MARKER_SIZE,
                             height: MARKER_SIZE,
                             heightReference: HeightReference.CLAMP_TO_GROUND,

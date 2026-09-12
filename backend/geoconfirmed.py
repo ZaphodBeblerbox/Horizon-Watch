@@ -91,6 +91,25 @@ def fetch_placemarks_bulk(theatre_slug: str) -> list[dict]:
     return out
 
 
+def fetch_faction_colors_bulk(theatre_slug: str) -> dict[str, dict]:
+    """Real per-theatre {faction_name: {color, invert_color}} map, from the
+    SAME bulk endpoint fetch_placemarks_bulk() already calls — GeoConfirmed's
+    own faction grouping carries its own real {name, color, invertColor}
+    (confirmed live 2026-09), previously discarded during flattening. Colors
+    are real but theatre-scoped, never a universal palette: the same hex can
+    denote a different real side in a different theatre (e.g. #0051CA is
+    "Ukraine" in the ukraine theatre but "IDF" in israel), so callers must
+    always look this up per-theatre and match by this theatre's own real
+    faction name — never cache/reuse across theatres."""
+    data = _get_json(f"/api/Placemark/{theatre_slug}")
+    out = {}
+    for faction in data or []:
+        name = faction.get("name")
+        if name and faction.get("color"):
+            out[name] = {"color": faction["color"], "invert_color": bool(faction.get("invertColor"))}
+    return out
+
+
 def fetch_placemark_detail(placemark_id: str) -> Optional[dict]:
     return _get_json(f"/api/Placemark/detail/{placemark_id}")
 
@@ -141,6 +160,11 @@ def upsert_theatre_placemarks(theatre_slug: str, db, *, since_days: int = 90,
 
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=since_days)
     bulk_all = fetch_placemarks_bulk(theatre_slug)
+    try:
+        faction_colors = fetch_faction_colors_bulk(theatre_slug)
+    except Exception as e:
+        print(f"[geoconfirmed] faction color fetch failed for {theatre_slug}: {e}")
+        faction_colors = {}
     bulk = []
     for p in bulk_all:
         d = _parse_gc_date(p["date"])
@@ -190,6 +214,8 @@ def upsert_theatre_placemarks(theatre_slug: str, db, *, since_days: int = 90,
         orbat_name = orbat_units[0]["name"] if orbat_units else None
         t_end = event_date.replace(hour=23, minute=59, second=59)
         now = datetime.datetime.utcnow()
+        faction_name = detail.get("faction")
+        fcolor = faction_colors.get(faction_name) if faction_name else None
 
         if row:
             row.name = detail.get("name")
@@ -199,7 +225,9 @@ def upsert_theatre_placemarks(theatre_slug: str, db, *, since_days: int = 90,
             row.t_end = t_end
             row.latitude = p["la"]
             row.longitude = p["lo"]
-            row.faction = detail.get("faction")
+            row.faction = faction_name
+            row.faction_color = fcolor["color"] if fcolor else None
+            row.faction_invert_color = fcolor["invert_color"] if fcolor else None
             row.icon_url = detail.get("icon")
             row.origin = detail.get("origin")
             row.original_source = detail.get("originalSource")
@@ -217,7 +245,10 @@ def upsert_theatre_placemarks(theatre_slug: str, db, *, since_days: int = 90,
                 name=detail.get("name"), description=detail.get("description"),
                 date=event_date, date_precision="day", t_end=t_end,
                 latitude=p["la"], longitude=p["lo"],
-                faction=detail.get("faction"), icon_url=detail.get("icon"),
+                faction=faction_name,
+                faction_color=fcolor["color"] if fcolor else None,
+                faction_invert_color=fcolor["invert_color"] if fcolor else None,
+                icon_url=detail.get("icon"),
                 origin=detail.get("origin"), original_source=detail.get("originalSource"),
                 geolocation_source=detail.get("geolocation"), plus_code=detail.get("plusCode"),
                 orbat_node_id=orbat_id, orbat_unit_name=orbat_name,
@@ -250,12 +281,19 @@ def _flatten_orbat_tree(node: dict, theatre_slug: str, parent_id: Optional[int] 
     nid = node.get("id")
     if nid is None:
         return rows
+    # Real flag/patch image path (GeoConfirmed's own `patches` field —
+    # confirmed live 2026-09, inconsistently populated per country/unit).
+    # Absolute URL so a consumer never has to know GEOCONFIRMED_BASE itself;
+    # left None (never a placeholder image) when GeoConfirmed provides none.
+    patches = node.get("patches")
+    flag_path = f"{GEOCONFIRMED_BASE}{patches}" if patches else None
     rows.append({
         "id": nid, "parent_id": parent_id, "theatre_slug": theatre_slug,
         "name": node.get("name") or f"Unit {nid}",
         "is_deleted": bool(node.get("isDeleted")),
         "is_disbanded": bool(node.get("isDisbanded")),
         "color": node.get("color"),
+        "flag_path": flag_path,
         "source_last_update": node.get("lastUpdate"),
     })
     for child in (node.get("children") or []):
@@ -307,6 +345,7 @@ def upsert_orbat_tree(theatre_slug: str, db) -> dict:
             row.is_deleted = r["is_deleted"]
             row.is_disbanded = r["is_disbanded"]
             row.color = r["color"]
+            row.flag_path = r.get("flag_path")
             row.source_last_update = last_update
             row.updated_at = now
             updated += 1
@@ -314,7 +353,8 @@ def upsert_orbat_tree(theatre_slug: str, db) -> dict:
             db.add(GeoConfirmedOrbatNode(
                 id=r["id"], parent_id=r["parent_id"], theatre_slug=theatre_slug,
                 name=r["name"], structure_path=struct, is_deleted=r["is_deleted"],
-                is_disbanded=r["is_disbanded"], color=r["color"], source_last_update=last_update,
+                is_disbanded=r["is_disbanded"], color=r["color"], flag_path=r.get("flag_path"),
+                source_last_update=last_update,
             ))
             inserted += 1
 
@@ -479,23 +519,43 @@ def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> d
         GeoConfirmedPlacemark.date >= cutoff,
     ).all()
 
+    # Real per-theatre ORBAT-root flag lookup (Part 3 audit finding: a real
+    # flag exists as GeoConfirmed's own `patches` field, but ONLY on ORBAT
+    # tree nodes — confirmed absent from placemark/plusCode data). A theatre's
+    # ORBAT root is a real, named entity (e.g. theatre "ukraine" -> root
+    # name "Ukraine") — only attached to a Country/Faction node whose own
+    # real label case-insensitively matches that root's name, never blindly
+    # applied to every faction active within that theatre (e.g. "Russia"
+    # fighting inside the "ukraine" theatre must NOT inherit Ukraine's flag).
+    theatre_root_flags: dict[str, dict] = {
+        r.theatre_slug: {"name": (r.name or "").strip().lower(), "flag_path": r.flag_path}
+        for r in db.query(GeoConfirmedOrbatNode).filter(GeoConfirmedOrbatNode.parent_id.is_(None)).all()
+        if r.flag_path
+    }
+
     for p in placemarks:
         country_resolved = _plus_code_country(p.plus_code)
         faction_name = p.faction
         country_node_id = f"country_{country_resolved[0]}" if country_resolved else None
         faction_node_id = f"faction_{_slug(faction_name)}" if faction_name else None
 
+        root_flag = theatre_root_flags.get(p.theatre_slug)
+
         if country_node_id and country_node_id not in countries_seen:
             nodes_by_id[country_node_id] = {
                 "id": country_node_id, "type": "country", "label": country_resolved[1],
                 "iso_code": country_resolved[0], "source": "geoconfirmed",
             }
+            if root_flag and root_flag["name"] == country_resolved[1].strip().lower():
+                nodes_by_id[country_node_id]["flag_path"] = root_flag["flag_path"]
             countries_seen.add(country_node_id)
 
         if faction_node_id and faction_node_id not in factions_seen:
             nodes_by_id[faction_node_id] = {
                 "id": faction_node_id, "type": "faction", "label": faction_name, "source": "geoconfirmed",
             }
+            if root_flag and faction_name and root_flag["name"] == faction_name.strip().lower():
+                nodes_by_id[faction_node_id]["flag_path"] = root_flag["flag_path"]
             factions_seen.add(faction_node_id)
 
         if country_node_id and faction_node_id:

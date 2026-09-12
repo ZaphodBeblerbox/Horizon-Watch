@@ -5,6 +5,7 @@ import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.
 import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ForceGraph from "./forge/ForceGraph.jsx"
+import OntologyCountryGraph from "./forge/OntologyCountryGraph.jsx"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts"
 import { locateReportClaim } from "../services/reportDeepLink.js"
 import { FOCUS_REGIONS } from "../constants/profile.js"
@@ -6273,6 +6274,14 @@ function OntologyWorkspace() {
     const [showAdd,      setShowAdd]      = useState(false)
     const [showLink,     setShowLink]     = useState(false)
     const [view,         setView]         = useState("table")
+    // Real Part 5 rebuild: "Countries" (real country-clustered, server-
+    // scoped structure) is the new default Graph sub-view; "Classic" keeps
+    // the pre-existing flat force layout available (still the real
+    // mechanism for the Rule-connection drag-to-link feature, which the
+    // country-clustered rebuild doesn't cover — that's a Rule-config
+    // feature, not part of the Country/Faction/GeoConfirmed structure this
+    // rebuild is scoped to).
+    const [graphSubView, setGraphSubView] = useState("countries")
     // Drag-to-connect state
     const [pendingConnect, setPendingConnect] = useState(null)  // {nodeA, nodeB}
     const [editConn,       setEditConn]       = useState(null)  // RuleConnection being edited
@@ -6401,9 +6410,9 @@ function OntologyWorkspace() {
             {(view === "table" || view === "graph" || view === "live") && (
                 <div style={{ padding: "4px 12px", fontSize: 10, lineHeight: 1.4, color: "#64748b", borderBottom: "1px solid rgba(148,163,184,0.06)", background: "#0a0e1a" }}>
                     {view === "live" ? (
-                        <><b style={{ color: "#ec4899" }}>Live Operational Graph</b> — the DB-backed entity/link graph (OntologyEntity/OntologyLink), continuously populated from raw AIS/ADSB/cable/news feeds. Unreviewed by an analyst; this is a different dataset from the Reviewed Claims Graph, not another view of it.</>
+                        <><b style={{ color: "#ec4899" }}>Live Operational Graph</b> — the DB-backed entity/link graph (OntologyEntity/OntologyLink), continuously populated from raw AIS/ADSB/cable/news feeds. A different dataset from the Forge Ontology Graph, not another view of it.</>
                     ) : (
-                        <><b style={{ color: "#60a5fa" }}>Reviewed Claims Graph</b> — built only from claims an analyst has approved (upload document → Claude extracts claims → analyst approves → edge added). Distinct from the Live Operational Graph; not the same data.</>
+                        <><b style={{ color: "#60a5fa" }}>Forge Ontology Graph</b> — the full real graph (forge_ontology.json): GeoConfirmed-derived Country/Faction/ORBAT/event entities, the correlation engine's own output, and any analyst-approved claims, all together. Distinct from the Live Operational Graph above; not the same data.</>
                     )}
                 </div>
             )}
@@ -6420,9 +6429,27 @@ function OntologyWorkspace() {
                     ))}
                 </div>
             )}
+            {view === "graph" && (
+                <div style={{ display: "flex", gap: 2, padding: "6px 12px", borderBottom: "1px solid rgba(148,163,184,0.06)" }}>
+                    {["countries", "classic"].map(v => (
+                        <button key={v} onClick={() => setGraphSubView(v)} style={{
+                            padding: "2px 9px", borderRadius: 10, border: "1px solid " + (graphSubView === v ? "#60a5fa" : "rgba(148,163,184,0.15)"),
+                            background: graphSubView === v ? "rgba(96,165,250,0.14)" : "transparent",
+                            color: graphSubView === v ? "#60a5fa" : "#475569", fontSize: 10, cursor: "pointer",
+                            fontWeight: graphSubView === v ? 700 : 400, textTransform: "capitalize",
+                        }}>{v}</button>
+                    ))}
+                    {graphSubView === "classic" && (
+                        <span style={{ fontSize: 9.5, color: "#475569", marginLeft: 8, alignSelf: "center" }}>
+                            Flat force layout — also where Rule-to-Rule connections are drawn (shift-drag between two Rule nodes).
+                        </span>
+                    )}
+                </div>
+            )}
             <WorkspaceBody style={(view === "graph" || view === "live") ? { padding: 0, overflow: "hidden" } : {}}>
                 {view === "live" ? <ForceGraph /> :
                 !loaded ? <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div> :
+                view === "graph" && graphSubView === "countries" ? <OntologyCountryGraph /> :
                 view === "graph" ? <OntologyGraph
                     nodes={nodes} edges={allEdges}
                     onNodeClick={setSelectedNode}
