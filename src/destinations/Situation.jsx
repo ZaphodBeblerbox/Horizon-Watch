@@ -17,7 +17,7 @@
  * that SAME filtered list — never independently recomputed, so they can't
  * disagree.
  */
-import { useEffect, useMemo, useState, useRef } from "react"
+import { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import GlobeView from "../components/GlobeView.jsx"
 import MapControlStack from "../components/MapControlStack.jsx"
@@ -201,6 +201,21 @@ export default function Situation({ onOpenDossier }) {
     // Clearing whichever of the two "detail" states isn't the active one
     // keeps them from fighting over this one slot.
     const [inspectorPopup, setInspectorPopup] = useState(null)
+    // Real root-cause fix for a confirmed "Maximum update depth exceeded"
+    // loop: this was previously an inline arrow function passed directly as
+    // the onInspectorPopupChange prop below — a brand-new function
+    // reference on every render of Situation.jsx. GlobePopup.jsx's own
+    // effect that calls this prop has it in its dependency array (alongside
+    // `popup`), so a new reference each render made that effect re-fire
+    // every render, which calls setInspectorPopup(...) here, which
+    // re-renders Situation.jsx, which created yet another new inline
+    // function reference — a self-sustaining loop. useCallback gives this a
+    // stable identity across renders, so GlobePopup's effect only re-fires
+    // when its OTHER real dependency (the actual popup selection) changes.
+    const handleInspectorPopupChange = useCallback((p) => {
+        if (p) setSelected(null)
+        setInspectorPopup(p)
+    }, [])
     // V3 Phase 1, §2.2 — real hook-based extension point. This component
     // owns this Inspector pane (a separate real surface from the map's
     // own InspectorPanel/GlobePopup) and calls every registered extension
@@ -701,7 +716,7 @@ export default function Situation({ onOpenDossier }) {
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
                         geoConfirmedEnabled={groupsOn.news}
                         dockExternally
-                        onInspectorPopupChange={(p) => { if (p) setSelected(null); setInspectorPopup(p) }}
+                        onInspectorPopupChange={handleInspectorPopupChange}
                         alertsEnabled={groupsOn.alerts}
                         cablesEnabled={groupsOn.maritime} chokepointsEnabled={groupsOn.maritime}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}
