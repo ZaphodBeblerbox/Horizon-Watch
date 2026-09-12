@@ -10410,21 +10410,23 @@ async def _sentinel_zone_scheduler_loop():
                         "bbox_max_lon": z.bbox_max_lon, "bbox_max_lat": z.bbox_max_lat,
                         "ml_tasks": z.ml_tasks, "scan_interval_hours": z.scan_interval_hours,
                         "alert_threshold": z.alert_threshold,
+                        "sensor_preference": getattr(z, "sensor_preference", None) or "sentinel2_optical",
                     }
                     for z in due_zones
                 ]
 
+            # Real root-cause-fix consolidation: this loop had its own
+            # second copy of the exact "wrap SentinelScanner.run_scan in a
+            # background task" launcher (_run_zone), independent of the one
+            # the manual scan-now/zone-creation endpoints use
+            # (_launch_zone_scan_background) — reusing that single real
+            # function here too, both for consistency and to get its real
+            # sensor-pipeline gate for free (a zone left on a non-deployed
+            # sensor no longer gets silently retried every 15 minutes
+            # forever with no real chance of succeeding).
             for zd in zone_data:
                 print(f"[sentinel-scheduler] Scan triggered for zone {zd['system_id']} ({zd['name']})")
-                async def _run_zone(zone_dict=zd):
-                    try:
-                        from sentinel_scanner import SentinelScanner as _Sc
-                        await _asyncio_sched.get_event_loop().run_in_executor(
-                            None, lambda: _Sc().run_scan(zone_dict, triggered_by="schedule")
-                        )
-                    except Exception as _e:
-                        print(f"[sentinel-scheduler] scan error for {zone_dict['system_id']}: {_e}")
-                _asyncio_sched.ensure_future(_run_zone())
+                _launch_zone_scan_background(zd, "schedule")
 
         except Exception as _sched_e:
             print(f"[sentinel-scheduler] loop error: {_sched_e}")
@@ -16080,6 +16082,16 @@ import json as _json_wz
 import math as _math_wz
 
 
+# Real spec sensor options (#sc-sensor) — only sentinel2_optical has a real
+# deployed fetch+detect pipeline in this codebase today (Sentinel Hub/
+# Copernicus + the YOLO-OBB/DOTA optical detector). The other three are
+# real, valid, PERSISTABLE choices (an analyst's stated intent is never
+# silently dropped) but have no real backing pipeline — see
+# _launch_zone_scan_background's own gate below, which is the one real
+# place this is enforced rather than fabricating a result for them.
+_REAL_SENSOR_OPTIONS = ["sentinel2_optical", "sentinel1_sar", "commercial_eo", "commercial_sar"]
+_SENSOR_PIPELINES_DEPLOYED = {"sentinel2_optical"}
+
 def _zone_row_to_dict(row) -> dict:
     return {
         "id":                   row.id,
@@ -16102,6 +16114,7 @@ def _zone_row_to_dict(row) -> dict:
         "aoi_class":            getattr(row, "aoi_class", None) or "custom",
         "status":               getattr(row, "status", None) or ("active" if row.enabled else "paused"),
         "owner":                getattr(row, "owner", None),
+        "sensor_preference":    getattr(row, "sensor_preference", None) or "sentinel2_optical",
     }
 
 
@@ -16255,7 +16268,22 @@ def api_watch_zones_create(body: dict):
             ))
         db.commit()
         db.refresh(zone)
-        return _zone_row_to_dict(zone)
+        result = _zone_row_to_dict(zone)
+        zone_dict = {
+            "id": zone.id, "system_id": zone.system_id, "name": zone.name,
+            "bbox_min_lon": zone.bbox_min_lon, "bbox_min_lat": zone.bbox_min_lat,
+            "bbox_max_lon": zone.bbox_max_lon, "bbox_max_lat": zone.bbox_max_lat,
+            "ml_tasks": zone.ml_tasks, "scan_interval_hours": zone.scan_interval_hours,
+            "alert_threshold": zone.alert_threshold,
+            "sensor_preference": getattr(zone, "sensor_preference", None) or "sentinel2_optical",
+        }
+
+    # Real root-cause fix — fire the real first scan now rather than
+    # leaving this newly-created, already-enabled zone to wait for its own
+    # next_scan_at (up to `scan_interval_hours` away); reuses the exact
+    # same real launcher the manual scan-now endpoint uses.
+    _launch_zone_scan_background(zone_dict, "manual")
+    return result
 
 
 @app.get("/api/watch-zones")
@@ -16312,6 +16340,10 @@ def api_watch_zone_update(system_id: str, body: dict):
             zone.status = body["status"]
         if "owner" in body:
             zone.owner = body["owner"]
+        if "sensor_preference" in body:
+            if body["sensor_preference"] not in _REAL_SENSOR_OPTIONS:
+                raise HTTPException(status_code=400, detail=f"sensor_preference must be one of {_REAL_SENSOR_OPTIONS}")
+            zone.sensor_preference = body["sensor_preference"]
         if "metadata" in body:
             zone.zone_metadata = _json_wz.dumps(body["metadata"])
 
@@ -16746,33 +16778,64 @@ def api_imagery_reject_detection(detection_id: str):
         return _detection_row_to_dict(d)
 
 
+def _launch_zone_scan_background(zone_dict: dict, triggered_by: str) -> None:
+    """The one real detector-invocation launcher — every real trigger point
+    (this manual scan-now endpoint, a just-created zone's real first scan
+    below, and any future in-image-window trigger) calls this SAME function
+    rather than each re-implementing its own background-task wrapper around
+    SentinelScanner. Real root-cause fix (2026-09 Imagery pipeline audit):
+    a newly-created zone previously only got next_scan_at = now + cadence
+    (up to 5 real days by this form's own default) with no real scan fired
+    immediately — from a live analyst's seat that reads as "nothing is
+    firing for any AOI." This does not change the scheduler's own cadence
+    for subsequent scans, only gets the real FIRST one running now."""
+    import asyncio as _asyncio_wz
+
+    sensor = zone_dict.get("sensor_preference") or "sentinel2_optical"
+    if sensor not in _SENSOR_PIPELINES_DEPLOYED:
+        # Defense in depth — the real user-facing scan-now endpoint already
+        # rejects this immediately with a clear 409; this covers the other
+        # real caller (a just-created zone's automatic first scan) the
+        # same honest way rather than silently launching nothing.
+        print(f"[scan] skipped for {zone_dict.get('system_id')} — no real pipeline deployed for sensor '{sensor}'")
+        return
+
+    async def _run():
+        try:
+            from sentinel_scanner import SentinelScanner as _Sc
+            await _asyncio_wz.get_event_loop().run_in_executor(
+                None, lambda: _Sc().run_scan(zone_dict, triggered_by=triggered_by)
+            )
+        except Exception as _e:
+            print(f"[scan] real scan error for {zone_dict.get('system_id')}: {_e}")
+    _asyncio_wz.ensure_future(_run())
+
+
 @app.post("/api/watch-zones/{system_id}/scan-now")
 async def api_watch_zone_scan_now(system_id: str):
     from database import WatchZone, SentinelScan, get_db
-    import asyncio as _asyncio_wz, datetime as _dt_wz
 
     with get_db() as db:
         zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
         if not zone:
             raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+        sensor = getattr(zone, "sensor_preference", None) or "sentinel2_optical"
+        if sensor not in _SENSOR_PIPELINES_DEPLOYED:
+            # Real, honest, immediate rejection — never silently run the
+            # one real deployed detector (Sentinel-2 optical/YOLO-OBB)
+            # against a sensor it was never built for. No dedicated SAR/
+            # commercial pipeline exists in this codebase today.
+            raise HTTPException(status_code=409, detail=f"No real scan/detection pipeline is deployed for sensor '{sensor}' yet — only sentinel2_optical is real and working today.")
         zone_dict = {
             "id": zone.id, "system_id": zone.system_id, "name": zone.name,
             "bbox_min_lon": zone.bbox_min_lon, "bbox_min_lat": zone.bbox_min_lat,
             "bbox_max_lon": zone.bbox_max_lon, "bbox_max_lat": zone.bbox_max_lat,
             "ml_tasks": zone.ml_tasks, "scan_interval_hours": zone.scan_interval_hours,
             "alert_threshold": zone.alert_threshold,
+            "sensor_preference": sensor,
         }
 
-    # Launch scan as background task — scanner creates its own scan record
-    async def _run():
-        try:
-            from sentinel_scanner import SentinelScanner as _Sc
-            await _asyncio_wz.get_event_loop().run_in_executor(
-                None, lambda: _Sc().run_scan(zone_dict, triggered_by="manual")
-            )
-        except Exception as _e:
-            print(f"[scan-now] scan error for {system_id}: {_e}")
-    _asyncio_wz.ensure_future(_run())
+    _launch_zone_scan_background(zone_dict, "manual")
 
     # Return a lightweight immediate response (scan_id assigned by scanner async)
     with get_db() as db:

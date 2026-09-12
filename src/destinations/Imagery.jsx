@@ -23,6 +23,22 @@ const AOI_CLASS_ICON = { airport: "i-plane", port: "i-anchor", military: "i-targ
 const AOI_CLASSES = ["airport", "port", "military", "energy", "urban", "border", "custom"]
 const CADENCES = ["daily", "3-day", "weekly", "monthly", "on demand"]
 
+// Real #sc-sensor options — only sentinel2_optical has a real deployed
+// fetch+detect pipeline in this codebase today (backend/main.py's
+// _SENSOR_PIPELINES_DEPLOYED). The other three are real, selectable,
+// persisted choices (an analyst's stated intent is never silently
+// dropped), but a real scan attempt against one of them is honestly
+// rejected server-side rather than quietly running the one real deployed
+// optical detector against imagery it was never built for — see this
+// select's own disabled state/title below.
+const SENSOR_OPTIONS = [
+    { value: "sentinel2_optical", label: "Sentinel-2 · optical 10m", real: true },
+    { value: "sentinel1_sar",     label: "Sentinel-1 · SAR 20m",     real: false },
+    { value: "commercial_eo",     label: "Commercial EO · 0.5m",     real: false },
+    { value: "commercial_sar",    label: "Commercial SAR · 1m",      real: false },
+]
+const SENSOR_LABEL = Object.fromEntries(SENSOR_OPTIONS.map((s) => [s.value, s.label]))
+
 function fmtDate(iso) { return iso ? iso.slice(0, 10) : "—" }
 
 export default function Imagery({ onOpenGenerate }) {
@@ -237,7 +253,7 @@ export default function Imagery({ onOpenGenerate }) {
             <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                 <div style={{ height: 32, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 10, padding: "0 10px" }}>
                     <span style={{ font: "400 11px var(--mono)", color: "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {scene ? `${scene.scan.scan_id.slice(0, 8)} · ${scene.zone.name} · ${fmtDate(scene.reference_date)} → ${fmtDate(scene.scan.image_timestamp_utc)} · Sentinel-2 optical` : "No scene selected"}
+                        {scene ? `${scene.scan.scan_id.slice(0, 8)} · ${scene.zone.name} · ${fmtDate(scene.reference_date)} → ${fmtDate(scene.scan.image_timestamp_utc)} · ${SENSOR_LABEL[scene.zone.sensor_preference] || "Sentinel-2 · optical 10m"}` : "No scene selected"}
                     </span>
                     <div style={{ flex: 1 }} />
                     <div className="seg">{["split", "swipe", "after"].map((v) => <button key={v} aria-pressed={view === v} onClick={() => setView(v)}>{v}</button>)}</div>
@@ -252,6 +268,14 @@ export default function Imagery({ onOpenGenerate }) {
                             <input type="range" min={0} max={100} value={fadeOpacity} onChange={onFadeSlider} style={{ width: 70, opacity: fadeOn ? 1 : 0.4, pointerEvents: fadeOn ? "auto" : "none" }} />
                         </>
                     )}
+                    {/* Real Part 3 fix — "run detection now" reachable directly from
+                        the image/comparison window itself, not only the left rail.
+                        Calls the exact same real reRunDetection() function as the
+                        left rail's "re-run detection" button — one real detector-
+                        invocation entry point, not a second implementation. */}
+                    <button className="btn sm" disabled={!selectedAoi || running} onClick={reRunDetection}>
+                        {running ? "running…" : "run detection now"}
+                    </button>
                     <button className="btn sm" onClick={raiseSignal}>raise signal</button>
                     <button className="btn sm" onClick={addToBriefingScene}>add to briefing</button>
                 </div>
@@ -391,12 +415,13 @@ function AoiEditor({ aoi, onSaved, onAccept, onLocate, onDeleted }) {
     const [cadenceH, setCadenceH] = useState(aoi.scan_interval_hours)
     const [notes, setNotes] = useState(aoi.description || "")
     const [owner, setOwner] = useState(aoi.owner || "")
-    useEffect(() => { setName(aoi.name); setCls(aoi.aoi_class); setCadenceH(aoi.scan_interval_hours); setNotes(aoi.description || ""); setOwner(aoi.owner || "") }, [aoi.system_id])
+    const [sensor, setSensor] = useState(aoi.sensor_preference || "sentinel2_optical")
+    useEffect(() => { setName(aoi.name); setCls(aoi.aoi_class); setCadenceH(aoi.scan_interval_hours); setNotes(aoi.description || ""); setOwner(aoi.owner || ""); setSensor(aoi.sensor_preference || "sentinel2_optical") }, [aoi.system_id])
 
     function save() {
         fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, {
             method: "PUT", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, aoi_class: cls, scan_interval_hours: cadenceH, description: notes, owner }),
+            body: JSON.stringify({ name, aoi_class: cls, scan_interval_hours: cadenceH, description: notes, owner, sensor_preference: sensor }),
         }).then(() => { toast("Area saved", { icon: "i-check" }); onSaved() })
     }
     function togglePause() {
@@ -415,6 +440,21 @@ function AoiEditor({ aoi, onSaved, onAccept, onLocate, onDeleted }) {
                 <select className="input" value={cls} onChange={(e) => setCls(e.target.value)}>{AOI_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
             </div>
             <div className="field"><label>Cadence (hours)</label><input className="input" type="number" value={cadenceH} onChange={(e) => setCadenceH(Number(e.target.value))} /></div>
+            <div className="field">
+                <label>Sensor</label>
+                <select className="input" value={sensor} onChange={(e) => setSensor(e.target.value)}>
+                    {SENSOR_OPTIONS.map((s) => (
+                        <option key={s.value} value={s.value} disabled={!s.real} title={s.real ? "" : "No real scan/detection pipeline is deployed for this sensor yet"}>
+                            {s.label}{s.real ? "" : " (not yet implemented)"}
+                        </option>
+                    ))}
+                </select>
+                {sensor !== "sentinel2_optical" && (
+                    <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)", marginTop: 3 }}>
+                        Saved as this area's real stated preference, but no real scan/detection pipeline exists for it yet — a scan attempt will be honestly rejected until one is built.
+                    </div>
+                )}
+            </div>
             <div className="field"><label>Owner</label><input className="input" value={owner} onChange={(e) => setOwner(e.target.value)} /></div>
             <div className="field"><label>Standing note</label><textarea className="input" style={{ minHeight: 50 }} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
             <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>Status: {aoi.status}</div>
