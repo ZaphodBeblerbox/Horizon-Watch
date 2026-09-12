@@ -4145,7 +4145,7 @@ def _push_real_time_alert(alert: dict) -> None:
         headline = (alert.get("headline") or alert.get("title") or "New alert")[:120]
         location = alert.get("location") or ""
         body     = f"{location} — {headline}" if location else headline
-        title    = "CRITICAL ALERT" if tier == "critical" else "Horizon Watch"
+        title    = "CRITICAL ALERT" if tier == "critical" else "Parallax"
         push_data = {
             "severity": tier,
             "id":       alert.get("id"),
@@ -9581,7 +9581,7 @@ async def _generate_weekly_snapshot():
                     model="claude-haiku-4-5-20251001",
                     max_tokens=1500,
                     system=(
-                        "You are a weekly intelligence analyst for Horizon Watch. "
+                        "You are a weekly intelligence analyst for Parallax. "
                         "Produce a structured JSON analysis. Include: "
                         "'summary' (3-paragraph narrative), "
                         "'threat_levels' (dict: region → green/amber/red), "

@@ -396,7 +396,7 @@ return (
                     gap:        4,
                 }}>
                     <div style={{ fontSize: 12, color: "var(--akili-text-primary)", fontWeight: 500 }}>
-                        Horizon Watch v1.0.0
+                        Parallax v1.0.0
                     </div>
                     <div style={{ fontSize: 10, color: "var(--akili-text-muted)" }}>
                         by Trifecta Technologies

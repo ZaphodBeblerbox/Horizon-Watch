@@ -6,6 +6,7 @@ import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ForceGraph from "./forge/ForceGraph.jsx"
 import OntologyCountryGraph from "./forge/OntologyCountryGraph.jsx"
+import OntologyPyramid from "./forge/OntologyPyramid.jsx"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts"
 import { locateReportClaim } from "../services/reportDeepLink.js"
 import { FOCUS_REGIONS } from "../constants/profile.js"
@@ -6274,14 +6275,16 @@ function OntologyWorkspace() {
     const [showAdd,      setShowAdd]      = useState(false)
     const [showLink,     setShowLink]     = useState(false)
     const [view,         setView]         = useState("table")
-    // Real Part 5 rebuild: "Countries" (real country-clustered, server-
-    // scoped structure) is the new default Graph sub-view; "Classic" keeps
-    // the pre-existing flat force layout available (still the real
-    // mechanism for the Rule-connection drag-to-link feature, which the
-    // country-clustered rebuild doesn't cover — that's a Rule-config
-    // feature, not part of the Country/Faction/GeoConfirmed structure this
-    // rebuild is scoped to).
-    const [graphSubView, setGraphSubView] = useState("countries")
+    // Real Part 7 rebuild: "Pyramid" (real category-boxed pyramid — Top
+    // entity -> Groups/Armies/Units -> Locations -> Signals, real cross-box
+    // connections, click-to-glow) is the new default Graph sub-view,
+    // superseding the flat country-clustered layout from the prior round
+    // ("Countries", kept available — real, working code, not removed).
+    // "Classic" keeps the original flat force layout available too (still
+    // the real mechanism for the Rule-connection drag-to-link feature,
+    // which neither rebuild covers — that's a Rule-config feature, not
+    // part of the Country/Faction/GeoConfirmed structure these are scoped to).
+    const [graphSubView, setGraphSubView] = useState("pyramid")
     // Drag-to-connect state
     const [pendingConnect, setPendingConnect] = useState(null)  // {nodeA, nodeB}
     const [editConn,       setEditConn]       = useState(null)  // RuleConnection being edited
@@ -6431,7 +6434,7 @@ function OntologyWorkspace() {
             )}
             {view === "graph" && (
                 <div style={{ display: "flex", gap: 2, padding: "6px 12px", borderBottom: "1px solid rgba(148,163,184,0.06)" }}>
-                    {["countries", "classic"].map(v => (
+                    {["pyramid", "countries", "classic"].map(v => (
                         <button key={v} onClick={() => setGraphSubView(v)} style={{
                             padding: "2px 9px", borderRadius: 10, border: "1px solid " + (graphSubView === v ? "#60a5fa" : "rgba(148,163,184,0.15)"),
                             background: graphSubView === v ? "rgba(96,165,250,0.14)" : "transparent",
@@ -6449,6 +6452,7 @@ function OntologyWorkspace() {
             <WorkspaceBody style={(view === "graph" || view === "live") ? { padding: 0, overflow: "hidden" } : {}}>
                 {view === "live" ? <ForceGraph /> :
                 !loaded ? <div style={{ color: "#475569", fontSize: 12 }}>Loading…</div> :
+                view === "graph" && graphSubView === "pyramid" ? <OntologyPyramid /> :
                 view === "graph" && graphSubView === "countries" ? <OntologyCountryGraph /> :
                 view === "graph" ? <OntologyGraph
                     nodes={nodes} edges={allEdges}

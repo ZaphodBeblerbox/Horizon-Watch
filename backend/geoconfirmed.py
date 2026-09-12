@@ -634,6 +634,44 @@ def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> d
     }
 
 
+def sync_geo_proximity_links() -> dict:
+    """Real, deterministic country<->chokepoint and GeoConfirmed-event<->
+    chokepoint proximity links (fix/geoconfirmed-parallax-rebuild, Parts 1/3).
+    See geo_proximity_linker.py's module docstring for the real geometric
+    rule used and why this lives outside the human-reviewed OntologyClaim
+    path (a direct, disclosed geometric fact, not an interpretation).
+
+    Must run AFTER sync_ontology_from_geoconfirmed() (needs real country/
+    event nodes already present) — called as the next step in run_ingest()."""
+    import main as _m
+    import geo_proximity_linker as _gpl
+
+    ontology = _m._forge_ontology_load()
+    nodes_by_id = {n["id"]: n for n in ontology.get("nodes", [])}
+    edges_by_id = {e["id"]: e for e in ontology.get("edges", [])}
+
+    country_nodes = [n for n in nodes_by_id.values() if n.get("type") == "country"]
+    event_nodes = [n for n in nodes_by_id.values() if n.get("type") == "event" and n.get("lat") is not None]
+
+    for cp_node in _gpl.chokepoint_nodes(_m._CHOKEPOINT_DEFS):
+        nodes_by_id[cp_node["id"]] = cp_node
+
+    geojson_path = str(_m._GEO_COUNTRIES_FILE)
+    country_edges = _gpl.country_chokepoint_links(country_nodes, _m._CHOKEPOINT_DEFS, geojson_path)
+    event_edges = _gpl.event_chokepoint_links(event_nodes, _m._CHOKEPOINT_DEFS)
+    for e in country_edges + event_edges:
+        edges_by_id[e["id"]] = e
+
+    ontology["nodes"] = list(nodes_by_id.values())
+    ontology["edges"] = list(edges_by_id.values())
+    _m._forge_ontology_save(ontology)
+    return {
+        "chokepoint_nodes": len(_gpl.chokepoint_nodes(_m._CHOKEPOINT_DEFS)),
+        "country_chokepoint_links": len(country_edges),
+        "event_chokepoint_links": len(event_edges),
+    }
+
+
 # ── Real Alert-writing — feeds fusion_engine/threat_matrix/Analytics/Dossiers ──
 
 def _plus_code_location(plus_code: Optional[str]) -> Optional[str]:
@@ -793,12 +831,20 @@ def run_ingest(db=None, theatres: Optional[list[str]] = None, since_days: int = 
 
         link_stats = link_orbat_to_existing_entities(db)
         ontology_stats = sync_ontology_from_geoconfirmed(db)
+        proximity_stats = sync_geo_proximity_links()
+        try:
+            import wikidata_alliances as _wa
+            alliance_stats = _wa.sync_alliance_edges()
+        except Exception as e:
+            print(f"[geoconfirmed] wikidata alliance sync failed: {e}", flush=True)
+            alliance_stats = {"error": str(e)}
         alert_stats = write_geoconfirmed_alerts(db)
         surge_stats = feed_surge_engine(db)
         return {
             "theatres": theatres, "placemarks": placemark_stats, "orbat": orbat_stats,
-            "linking": link_stats, "ontology": ontology_stats, "alerts": alert_stats,
-            "surge": surge_stats,
+            "linking": link_stats, "ontology": ontology_stats,
+            "geo_proximity": proximity_stats, "alliances": alliance_stats,
+            "alerts": alert_stats, "surge": surge_stats,
         }
     finally:
         if own:

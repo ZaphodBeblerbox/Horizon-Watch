@@ -53,7 +53,7 @@ export default function StatusBar({ health, taskCount = null }) {
             <Cell label="Briefing basket" value={briefingCount} />
             <div style={{ display: "flex", alignItems: "center", padding: "0 10px", flexShrink: 0 }}>
                 <span style={{ font: "400 11px var(--mono)", color: "var(--txt-4)" }}>
-                    Horizon Watch v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "—"}
+                    Parallax v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "—"}
                 </span>
             </div>
         </div>

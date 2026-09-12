@@ -150,6 +150,31 @@ export default function InspectorPanel({
     const [linksLoading, setLinksLoading] = useState(false)
     const [linksError, setLinksError] = useState(false)
 
+    // Real GeoConfirmed-specific connections (fix/geoconfirmed-parallax-
+    // rebuild, Part 2) — the SQL OntologyLink-backed `links` fetch above
+    // has no rows for a GeoConfirmed pin (that store never modeled these
+    // ids at all), so this reuses the SAME forge_ontology.json endpoint
+    // the Ontology graph's own entity panel uses (never a second, separate
+    // "what's near this pin" query that could disagree with it). Lists
+    // every real specific link this pin has, including ones with no real
+    // map coordinates (a Country/Faction) — those just never got a drawn
+    // connector line (see GlobeConnectorLinesLayer.jsx), they still show here.
+    const [forgeConnections, setForgeConnections] = useState([])
+    const [forgeConnectionsLoading, setForgeConnectionsLoading] = useState(false)
+    useEffect(() => {
+        setForgeConnections([])
+        if (entityType !== "geoconfirmed" || !entityId) return
+        const forgeId = entityId.replace(/^geoconfirmed-/, "geoconfirmed_")
+        let cancelled = false
+        setForgeConnectionsLoading(true)
+        fetch(`${API_BASE}/api/forge/ontology/node/${encodeURIComponent(forgeId)}/connections`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled) setForgeConnections(d?.connections || []) })
+            .catch(() => { if (!cancelled) setForgeConnections([]) })
+            .finally(() => { if (!cancelled) setForgeConnectionsLoading(false) })
+        return () => { cancelled = true }
+    }, [entityType, entityId])
+
     // V3 Phase 1, §2.2 — the real hook-based extension point. This
     // component (the owner) calls every registered extension itself, from
     // inside its own render, below. Nothing external ever reassigns or
@@ -353,6 +378,32 @@ export default function InspectorPanel({
                         <SectionLabel>Provenance</SectionLabel>
                         {provenance.feed && <AttributeRow label="Feed" value={provenance.feed} />}
                         {provenance.ingestedAt && <AttributeRow label="Ingested" value={provenance.ingestedAt} />}
+                    </div>
+                )}
+
+                {/* Real GeoConfirmed-specific links (Part 2) — separate
+                    from the generic "Related entities" section below,
+                    since this is forge_ontology.json-sourced, real, and
+                    specific (a real ORBAT faction, a real nearby
+                    chokepoint), not the SQL OntologyLink store's shape. */}
+                {entityType === "geoconfirmed" && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <SectionLabel>Real linked entities</SectionLabel>
+                        {forgeConnectionsLoading ? (
+                            <div style={{ fontSize: "var(--text-sm)", color: "var(--text-dim)" }}>Loading…</div>
+                        ) : forgeConnections.length > 0 ? (
+                            forgeConnections.map((c) => (
+                                <div key={c.id} style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)", padding: "3px 0" }}>
+                                    <span style={{ color: "var(--text-dim)", textTransform: "uppercase", fontSize: "var(--text-xs)", marginRight: 6 }}>{c.type}</span>
+                                    {c.label}
+                                    <span style={{ color: "var(--text-dim)", fontSize: "var(--text-xs)", marginLeft: 6 }}>
+                                        ({c.relationship_type}{c.lat == null ? ", no map position" : ""})
+                                    </span>
+                                </div>
+                            ))
+                        ) : (
+                            <EmptyState description="No real specific links found for this pin." />
+                        )}
                     </div>
                 )}
 

@@ -452,7 +452,7 @@ function SettingsPanel({ profile, onSave, onClose }) {
                 lineHeight:   1.55,
                 flexShrink:   0,
             }}>
-                Your profile tells Horizon Watch what to pay attention to. It does not activate any layers.
+                Your profile tells Parallax what to pay attention to. It does not activate any layers.
             </div>
 
             {/* Scrollable form */}

@@ -1,6 +1,6 @@
 {
-    "name": "Horizon Watch",
-    "short_name": "Horizon",
+    "name": "Parallax",
+    "short_name": "Parallax",
     "description": "Real-time geopolitical intelligence platform by Trifecta Technologies",
     "start_url": "/",
     "display": "standalone",

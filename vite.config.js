@@ -49,8 +49,8 @@ export default defineConfig({
                 ],
             },
             manifest: {
-                name: 'Horizon Watch',
-                short_name: 'HorizonWatch',
+                name: 'Parallax',
+                short_name: 'Parallax',
                 theme_color: '#0a1220',
                 background_color: '#0a1220',
                 display: 'standalone',

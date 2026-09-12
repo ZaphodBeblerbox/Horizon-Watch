@@ -22,7 +22,7 @@ export default function StartupChoiceModal({ onChoice }) {
                 textAlign:       "center",
             }}>
                 <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.2em", color: "rgba(255,255,255,0.3)", marginBottom: 14, textTransform: "uppercase" }}>
-                    Horizon Watch
+                    Parallax
                 </div>
                 <h1 style={{ color: "#e2e8f0", fontSize: 22, fontWeight: 400, marginBottom: 8, letterSpacing: "0.02em" }}>
                     Good to see you

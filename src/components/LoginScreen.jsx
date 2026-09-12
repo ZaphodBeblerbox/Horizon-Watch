@@ -40,7 +40,7 @@ export default function LoginScreen({ onLoggedIn }) {
                 border: "1px solid var(--line, #30373f)", borderRadius: "var(--r, 2px)",
                 display: "flex", flexDirection: "column", gap: 12,
             }}>
-                <div style={{ font: "600 15px var(--font)", color: "var(--txt, #d5dae0)", marginBottom: 4 }}>Horizon Watch</div>
+                <div style={{ font: "600 15px var(--font)", color: "var(--txt, #d5dae0)", marginBottom: 4 }}>Parallax</div>
                 <div style={{ font: "400 12px var(--font)", color: "var(--txt-3, #818c96)", marginBottom: 8 }}>Sign in to continue</div>
                 <input
                     type="email" placeholder="Email" value={email} autoFocus
