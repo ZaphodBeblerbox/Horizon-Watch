@@ -17487,12 +17487,48 @@ async def _freeze_task_snapshot(row, db, region=None, bbox=None, period_start=No
     from database import ReportSnapshot
     from briefing_prep import prepare_intelligence_picture as _prep_ip_fin
     loop = asyncio.get_event_loop()
+    # Real root-cause fix (auth/performance + Generate loading round): the
+    # in-memory _forge_alerts list this function has always fed to
+    # prepare_intelligence_picture() only ever accumulates new_ais_alerts/
+    # new_adsb_alerts/new_news_alerts (see the real-time forge-brain loop
+    # above) — GeoConfirmed-sourced alerts are written straight to the real
+    # DB by geoconfirmed.write_geoconfirmed_alerts() and NEVER touch this
+    # in-memory list at all, so Generate's evidence corpus structurally
+    # never saw them regardless of how much real GeoConfirmed data exists
+    # (confirmed live: 3,205 real Alert rows with source='geoconfirmed' in
+    # the DB, 0 ever reaching a snapshot's geoconfirmed_signals bucket).
+    # Fixed by querying the real, most-recent geoconfirmed-sourced Alert
+    # rows directly from the DB and merging them in here — the one real
+    # shared freeze step both snapshot-creation entry points use — rather
+    # than duplicating this at each caller.
+    geoconfirmed_forge_alerts = []
+    try:
+        from database import Alert as _AlertGC
+        _gcdb = next(_db_gen())
+        _gc_rows = (
+            _gcdb.query(_AlertGC)
+            .filter(_AlertGC.source == "geoconfirmed", _AlertGC.status == "active")
+            .order_by(_AlertGC.created_at.desc())
+            .limit(150)
+            .all()
+        )
+        geoconfirmed_forge_alerts = [
+            {
+                "id": r.alert_id, "source": r.source, "title": r.title,
+                "severity": r.severity, "lat": r.lat, "lon": r.lon,
+                "timestamp": r.created_at.isoformat() if r.created_at else None,
+                "region": r.region,
+            }
+            for r in _gc_rows
+        ]
+    except Exception as _gc_e:
+        print(f"[snapshot-freeze] real geoconfirmed-alert merge failed (non-fatal, snapshot proceeds without them): {_gc_e}")
     try:
         pic = await asyncio.wait_for(
             loop.run_in_executor(
                 _executor,
                 lambda: _prep_ip_fin(
-                    db=next(_db_gen()), forge_alerts=list(_forge_alerts),
+                    db=next(_db_gen()), forge_alerts=list(_forge_alerts) + geoconfirmed_forge_alerts,
                     fusion_engine_instance=_fusion_engine,
                     region=region, bbox=bbox, period_start=period_start, period_end=period_end,
                 ),
@@ -21197,10 +21233,21 @@ def api_auth_logout(request: Request, response: Response):
     return {"ok": True}
 
 @app.get("/api/auth/me")
-def api_auth_me(request: Request):
+def api_auth_me(request: Request, response: Response):
+    """Real per-request session check — also the one real sliding-expiry
+    mechanism (auth/performance round): every successful check reissues
+    the session cookie with a fresh JWT_SESSION_HOURS window, so a
+    genuinely active user (reopening a tab, or the frontend's own periodic
+    re-validation ping) never hits the raw 7-day expiry while still using
+    the app. Chosen over a second refresh-token system since this
+    endpoint is already called on every real app mount — no new endpoint,
+    no new frontend auth flow, and it can't accidentally extend a session
+    that's actually invalid (the 401 path below never reissues anything)."""
     user = _get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="not authenticated")
+    token = _create_session_token(user["id"])
+    response.set_cookie(key="hw_session", value=token, max_age=JWT_SESSION_HOURS * 3600, **_cookie_kwargs(request))
     return user
 
 @app.get("/api/teams")

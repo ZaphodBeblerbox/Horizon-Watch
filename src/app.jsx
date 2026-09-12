@@ -7,7 +7,7 @@ import TabStrip from "./components/TabStrip.jsx"
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
-import { checkSession, subscribeAuth } from "./state/authStore.js"
+import { checkSession, subscribeAuth, isAuthTransientError } from "./state/authStore.js"
 import { reconcileTheme } from "./state/themeStore.js"
 import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from "./state/settingsStore.js"
 import StatusBar from "./components/StatusBar.jsx"
@@ -191,10 +191,41 @@ export default function App() {
     // (real 401 if not — never assumed).
     const [authUser, setAuthUser] = useState(null)
     const [authChecked, setAuthChecked] = useState(false)
-    useEffect(() => {
-        checkSession().then((u) => { setAuthUser(u); setAuthChecked(true); reconcileTheme(u); reconcileSettings(u) })
-        return subscribeAuth(setAuthUser)
+    // Real auth/performance round fix — a transient failure (network
+    // error, timeout, a cold-starting backend's 5xx) of the mount-time
+    // GET /api/auth/me check is no longer treated the same as a genuine
+    // 401: checkSession() itself now retries transient failures with
+    // backoff and only ever clears a real session on an actual 401. If
+    // every retry still fails transiently, authTransientError is set so
+    // the Render section below shows a real "reconnecting" state instead
+    // of silently forcing a still-valid, still-logged-in user back to the
+    // login screen (the confirmed root cause of "closing the tab forces a
+    // re-login").
+    const [authTransientError, setAuthTransientError] = useState(false)
+    const runAuthCheck = useCallback(() => {
+        checkSession().then((u) => {
+            setAuthUser(u)
+            setAuthTransientError(isAuthTransientError())
+            setAuthChecked(true)
+            reconcileTheme(u)
+            reconcileSettings(u)
+        })
     }, [])
+    useEffect(() => {
+        runAuthCheck()
+        return subscribeAuth(setAuthUser)
+    }, [runAuthCheck])
+    // Real sliding-expiry companion (backend/main.py's GET /api/auth/me
+    // now reissues the session cookie with a fresh window on every real
+    // success) — this periodic re-check is what actually exercises that
+    // for a tab an analyst keeps open for a long real session, not just
+    // on remount. Six hours is comfortably inside the real 7-day token
+    // window even if one tick is missed (tab backgrounded/throttled).
+    useEffect(() => {
+        if (!authUser) return
+        const iv = setInterval(runAuthCheck, 6 * 3600 * 1000)
+        return () => clearInterval(iv)
+    }, [authUser, runAuthCheck])
 
     const [showTV,       setShowTV]       = useState(false)
     const [overwatchActive,     setOverwatchActive]     = useState(false)
@@ -1011,6 +1042,23 @@ export default function App() {
     // nothing to show yet); a real login screen once we know there's no
     // valid session.
     if (!authChecked) return null
+    // Real fix for the confirmed root cause of "closing the tab forces a
+    // re-login": a transient failure (never a genuine 401) never shows
+    // the login screen — it shows this honest, real "couldn't reach the
+    // server" state instead, since the real session cookie may still be
+    // perfectly valid.
+    if (!authUser && authTransientError) {
+        return (
+            <div style={{
+                position: "fixed", inset: 0, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", gap: "var(--space-3)",
+                background: "var(--bg-0)", color: "var(--txt-2)", font: "400 13px var(--font)",
+            }}>
+                <div>Couldn't reach the server — your session may still be valid.</div>
+                <button className="btn primary sm" onClick={runAuthCheck}>Retry</button>
+            </div>
+        )
+    }
     if (!authUser) return <LoginScreen onLoggedIn={setAuthUser} />
 
     // Real structural swap (not a fluid reflow) — below the phone breakpoint,
