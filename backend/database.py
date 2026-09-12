@@ -238,6 +238,12 @@ class AircraftHistory(Base):
     aircraft_type = Column(String(20))
     is_military  = Column(Boolean, default=False)
     timestamp    = Column(DateTime, index=True)
+    # Real provenance (Parallax translation step 1, Part 2) — see
+    # provenance.py's module docstring for the real two-axis model and why
+    # this app's real ADS-B source (api.adsb.lol, a free community-
+    # aggregated redistribution) is real class C, not A, with T1 licensing.
+    origin_class  = Column(String(1), default="C")
+    licence_tier  = Column(String(2), default="T1")
 
 
 class VesselHistory(Base):
@@ -255,6 +261,12 @@ class VesselHistory(Base):
     flag           = Column(String(10))
     destination    = Column(String(100))
     timestamp      = Column(DateTime, index=True)
+    # Real provenance (Parallax translation step 1, Part 2) — see
+    # provenance.py's module docstring. Real AIS class/tier per the source
+    # mapping table: B (authoritative registry-grade tracking data), T1
+    # (client-deliverable).
+    origin_class   = Column(String(1), default="B")
+    licence_tier   = Column(String(2), default="T1")
 
 
 class TrackDensity(Base):
@@ -538,6 +550,11 @@ class SentinelDetection(Base):
     # confirming/rejecting actually changes what a later scan's delta is
     # computed against. See backend/imagery_pipeline.py.
     reviewed_status          = Column(String, nullable=False, default="pending")
+    # Real provenance (Parallax translation step 1, Part 2) — real
+    # satellite-imagery detections are class A (primary instrument, real
+    # unmediated sensor output) and T1 (client-deliverable).
+    origin_class             = Column(String(1), default="A")
+    licence_tier             = Column(String(2), default="T1")
 
 
 class OverwatchScanRecord(Base):
@@ -849,6 +866,16 @@ class Alert(Base):
     acknowledged_at = Column(DateTime, nullable=True)
     acknowledged_by = Column(String, nullable=True)
 
+    # Real provenance (Parallax translation step 1, Part 2) — independently
+    # populated per real `source` at write time (see provenance.py's
+    # ALERT_SOURCE_PROVENANCE) since Alert.source varies row to row (ais/
+    # adsb/geoconfirmed/surge/fusion/manual), unlike the single-source
+    # tables above. Deliberately null for surge/fusion/manual — those don't
+    # map to one real primary source in the provenance table, so they're
+    # left honestly unclassified rather than guessed at.
+    origin_class    = Column(String(1), nullable=True)
+    licence_tier    = Column(String(2), nullable=True)
+
     # ── Deduplication ──────────────────────────────────────────────────────
     dedup_key       = Column(String, nullable=True, index=True)                # domain:entity_id:alert_type
     fire_count      = Column(Integer, default=1, nullable=True)               # times this dedup key fired
@@ -931,6 +958,10 @@ class SanctionedEntity(Base):
     topics       = Column(Text, nullable=True)
     loaded_at    = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at   = Column(DateTime, nullable=True)
+    # Real provenance (Parallax translation step 1, Part 2) — OpenSanctions
+    # is a real authoritative registry (B), client-deliverable (T1).
+    origin_class = Column(String(1), default="B")
+    licence_tier = Column(String(2), default="T1")
 
 
 class NewsArticle(Base):
@@ -1071,6 +1102,14 @@ class OntologyClaim(Base):
 
     upload_id         = Column(String, nullable=True, index=True)  # forge upload record this came from, if any
 
+    # Real provenance (Parallax translation step 1, Part 2). Default B/T2
+    # matches this table's real current sole source (client-uploaded
+    # documents) — see provenance.py. origin_class is also the real,
+    # general structural gate for the open-reporting (D-class) edge-type
+    # restriction: see database.py's validate_claim_relationship_type().
+    origin_class      = Column(String(1), nullable=True, default="B")
+    licence_tier      = Column(String(2), nullable=True, default="T2")
+
     status            = Column(String, nullable=False, default="pending", index=True)  # pending|approved|rejected
     reviewer          = Column(String, nullable=True)
     review_note       = Column(Text, nullable=True)
@@ -1080,6 +1119,30 @@ class OntologyClaim(Base):
     __table_args__ = (
         Index("ix_claim_status_created", "status", "created_at"),
     )
+
+
+# Real, general structural rule from Part 0's own definition ("D — open
+# reporting... may only ever mint a mentioned_with-strength edge, never a
+# stronger claim like 'supplies' or 'owns'"). Real audit finding: no
+# existing edge-type restriction mechanism for OntologyClaim existed before
+# this — this is the first real one, not a second parallel system layered
+# on an existing gate. Applies to ANY class-D (open-reporting) claim, not
+# hardcoded to "GDELT" specifically, since GDELT itself creates zero real
+# OntologyClaim rows today (confirmed: it only ever feeds
+# fusion_engine.on_signal(), never a claim/edge) — this guard is real,
+# general, and ready for the day a class-D source does mint a claim.
+OPEN_REPORTING_MAX_RELATIONSHIP = "mentioned_with"
+
+
+def validate_claim_relationship_type(origin_class: str | None, relationship_type: str) -> None:
+    """Raises ValueError if a real class-D (open-reporting) claim attempts
+    to assert anything stronger than mentioned_with. Call this at every
+    real OntologyClaim creation site before the row is committed."""
+    if origin_class == "D" and relationship_type != OPEN_REPORTING_MAX_RELATIONSHIP:
+        raise ValueError(
+            f"class-D (open-reporting) evidence cannot mint a '{relationship_type}' claim — "
+            f"only '{OPEN_REPORTING_MAX_RELATIONSHIP}' is allowed for this origin_class"
+        )
 
 
 class GeoConfirmedPlacemark(Base):
@@ -1130,6 +1193,12 @@ class GeoConfirmedPlacemark(Base):
     detail_fetched_at   = Column(DateTime, nullable=True)     # last time the expensive detail endpoint actually ran
     ingested_at         = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at          = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    # Real provenance (Parallax translation step 1, Part 2) — GeoConfirmed
+    # is a real authoritative registry (B: a real, actively-maintained body
+    # of record of verified conflict events), T3 (derived metrics/counts may
+    # ship to a client; the underlying placemark records may not).
+    origin_class        = Column(String(1), default="B")
+    licence_tier        = Column(String(2), default="T3")
 
     __table_args__ = (
         Index("ix_gc_theatre_status", "theatre_slug", "status"),
@@ -1671,6 +1740,40 @@ def migrate_db():
         if 'flag_path' not in gon_existing:
             cur.execute('ALTER TABLE geoconfirmed_orbat_nodes ADD COLUMN flag_path TEXT')
             print('[db-migrate] geoconfirmed_orbat_nodes: added column flag_path')
+
+    # Real provenance fields (Parallax translation step 1, Part 2) — see
+    # provenance.py's module docstring for the real two-axis model. Each
+    # real source table gets its own real default matching the source
+    # mapping table; `alerts` is left nullable/no-default since its
+    # provenance varies per real Alert.source row (populated at write time
+    # in alert_writer.write_alert(), not via a column default).
+    _PROVENANCE_DEFAULTS = [
+        ('aircraft_history',        'C', 'T1'),
+        ('vessel_history',          'B', 'T1'),
+        ('sentinel_detections',     'A', 'T1'),
+        ('sanctioned_entities',     'B', 'T1'),
+        ('ontology_claims',         'B', 'T2'),
+        ('geoconfirmed_placemarks', 'B', 'T3'),
+    ]
+    for table_name, oclass_default, ltier_default in _PROVENANCE_DEFAULTS:
+        if table_name in tables:
+            existing_cols = [row[1] for row in cur.execute(f'PRAGMA table_info({table_name})').fetchall()]
+            if 'origin_class' not in existing_cols:
+                cur.execute(f"ALTER TABLE {table_name} ADD COLUMN origin_class TEXT DEFAULT '{oclass_default}'")
+                cur.execute(f"UPDATE {table_name} SET origin_class = '{oclass_default}' WHERE origin_class IS NULL")
+                print(f'[db-migrate] {table_name}: added column origin_class (real default {oclass_default})')
+            if 'licence_tier' not in existing_cols:
+                cur.execute(f"ALTER TABLE {table_name} ADD COLUMN licence_tier TEXT DEFAULT '{ltier_default}'")
+                cur.execute(f"UPDATE {table_name} SET licence_tier = '{ltier_default}' WHERE licence_tier IS NULL")
+                print(f'[db-migrate] {table_name}: added column licence_tier (real default {ltier_default})')
+    if 'alerts' in tables:
+        al_prov_existing = [row[1] for row in cur.execute('PRAGMA table_info(alerts)').fetchall()]
+        if 'origin_class' not in al_prov_existing:
+            cur.execute('ALTER TABLE alerts ADD COLUMN origin_class TEXT')
+            print('[db-migrate] alerts: added column origin_class (no default — populated per-row by real source at write time)')
+        if 'licence_tier' not in al_prov_existing:
+            cur.execute('ALTER TABLE alerts ADD COLUMN licence_tier TEXT')
+            print('[db-migrate] alerts: added column licence_tier (no default — populated per-row by real source at write time)')
 
     conn.commit()
     conn.close()
