@@ -58,6 +58,17 @@ const ENTITY_TYPE_TO_REF_KIND = { vessel: "trk", aircraft: "trk", alert: "sig", 
  * component doesn't know what a "destination" is), see GlobePopup.jsx.
  */
 
+// Theming regression fix: this self-docking (non-`bare`) shell is the real
+// "Inspector pane" reported as not translucent (Dashboard.jsx/MapTab.jsx's
+// floating-over-the-map case, via GlobePopup's default dockExternally=false
+// path) — it was a flat var(--bg-panel) (== --bg-1, fully opaque), unlike
+// the `bare` path which correctly relies on the caller's own real
+// `.pane-glass` shell (Situation.jsx). Reuses `.pane-glass`'s exact real
+// background token + blur/saturate recipe directly here (not the shared
+// `.pane-glass` class itself) because this component's OWN keyframe-based
+// slide-in/out classes below would fight `.pane-glass`'s transition-based
+// slide handling on the same element — shell only, the header/attributes/
+// buttons rendered inside stay exactly as opaque/flat as before.
 const DEFAULT_DOCK_STYLE = {
     position: "fixed",
     top: 0,
@@ -69,7 +80,9 @@ const DEFAULT_DOCK_STYLE = {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
-    background: "var(--bg-panel)",
+    background: "var(--pane-glass-bg)",
+    backdropFilter: "blur(16px) saturate(115%)",
+    WebkitBackdropFilter: "blur(16px) saturate(115%)",
     borderLeft: "1px solid var(--border)",
 }
 

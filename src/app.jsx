@@ -157,14 +157,19 @@ function loadActiveId(workspaces) {
 const RIGHT_PANEL_W = 300
 
 // ── Panel style (glass) ───────────────────────────────────────────────────────
+// Theming regression fix: was a hardcoded rgba(6,14,45,...) literal predating
+// the real token system — never responded to [data-theme="light"], and
+// didn't even match dark mode's real --bg-0. Reuses the exact real glass
+// token the theming round already established (--pane-glass-bg, same one
+// .pane-glass uses in designSystem.css) rather than a second glass value.
 const PANEL_STYLE = {
     width:       RIGHT_PANEL_W,
     flexShrink:  0,
     height:      "100%",
-    background:  "rgba(6,14,45,0.92)",
+    background:  "var(--pane-glass-bg)",
     backdropFilter: "blur(20px) saturate(1.3)",
     WebkitBackdropFilter: "blur(20px) saturate(1.3)",
-    borderLeft:  "1px solid rgba(56,189,248,0.2)",
+    borderLeft:  "1px solid var(--acc-line)",
     overflowY:   "auto",
     boxSizing:   "border-box",
     fontFamily:  "system-ui, -apple-system, sans-serif",
@@ -1025,7 +1030,7 @@ export default function App() {
         right:       0,
         bottom:      56,
         zIndex:      1500,
-        background:  "rgba(6,14,45,0.95)",
+        background:  "var(--pane-glass-bg)",
         backdropFilter: "blur(20px) saturate(1.3)",
         WebkitBackdropFilter: "blur(20px) saturate(1.3)",
         overflowY:   "auto",
@@ -1037,7 +1042,7 @@ export default function App() {
         <div style={{
             position:      "fixed",
             inset:         0,
-            background:    "#050c1c",
+            background:    "var(--bg-0)",
             display:       "flex",
             flexDirection: "column",
             overflow:      "hidden",
