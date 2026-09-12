@@ -73,7 +73,11 @@ export default function GlobeAirportLayer({ enabled, viewBounds }) {
             {airports.map(f => {
                 const p = f.properties || {}
                 const [lon, lat] = f.geometry?.coordinates || []
-                if (!isFinite(lat) || !isFinite(lon)) return null
+                // Number.isFinite (never Number.isFinite(null) === true like
+                // bare isFinite(null)) — same real crash class fixed in
+                // GlobeConnectorLinesLayer.jsx: a null coordinate must never
+                // reach Cesium's fromDegrees().
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
                 const icon = getIcon(p.airport_type || "small_airport")
                 if (!icon) return null
                 const sz = ICON_SIZE[p.airport_type] || 22

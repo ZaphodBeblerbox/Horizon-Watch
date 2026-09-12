@@ -67,7 +67,10 @@ export default function GlobePortLayer({ enabled, viewBounds }) {
             {ports.map(f => {
                 const p = f.properties || {}
                 const [lon, lat] = f.geometry?.coordinates || []
-                if (!isFinite(lat) || !isFinite(lon)) return null
+                // Number.isFinite (isFinite(null) === true would let a
+                // real [null, null] coordinate pair through) — same real
+                // crash class fixed in GlobeConnectorLinesLayer.jsx.
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
                 const icon = getIcon(p.port_size || "Small")
                 if (!icon) return null
                 const sz = ICON_SIZE[p.port_size] || 18

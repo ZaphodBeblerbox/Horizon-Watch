@@ -24,6 +24,7 @@ import { useState, useEffect } from "react"
 import { Entity } from "resium"
 import { Cartesian3, PolylineDashMaterialProperty, Color } from "cesium"
 import API_BASE from "../apiBase.js"
+import { isRealFiniteNumber, selectRealConnectorTargets } from "./connectorLineGeometry.js"
 
 const LINE_COLOR = Color.fromCssColorString("#E8C547").withAlpha(0.85)
 
@@ -55,9 +56,26 @@ export default function GlobeConnectorLinesLayer({ enabled = true }) {
 
     if (!enabled || !selected?.data) return null
     const originLat = selected.data.lat, originLon = selected.data.lon
-    if (!isFinite(originLat) || !isFinite(originLon)) return null
+    if (!isRealFiniteNumber(originLat) || !isRealFiniteNumber(originLon)) {
+        if (import.meta.env.DEV) {
+            console.warn(`[GlobeConnectorLinesLayer] skipping all connector lines — origin pin ${selected.entityId} has no real finite lat/lon`, selected.data)
+        }
+        return null
+    }
 
-    const realTargets = connections.filter(c => isFinite(c.lat) && isFinite(c.lng))
+    const realTargets = selectRealConnectorTargets(connections)
+    if (import.meta.env.DEV) {
+        for (const c of connections) {
+            const isReal = isRealFiniteNumber(c.lat) && isRealFiniteNumber(c.lng)
+            // Only warn when the entity actually carries a non-null-but-
+            // invalid coordinate — a plain null/undefined (an abstract
+            // Country/Faction node) is the expected, documented "no
+            // drawn line" case, not worth logging every time.
+            if (!isReal && (c.lat != null || c.lng != null)) {
+                console.warn(`[GlobeConnectorLinesLayer] skipping connector line — entity ${c.id} (${c.type}) has a non-finite coordinate`, { lat: c.lat, lng: c.lng })
+            }
+        }
+    }
 
     return (
         <>

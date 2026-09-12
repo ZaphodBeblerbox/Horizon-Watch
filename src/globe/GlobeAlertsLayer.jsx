@@ -276,8 +276,17 @@ export default function GlobeAlertsLayer({ enabled, viewBounds }) {
                 />
             ))}
             {visibleAlerts.map((a, i) => {
-                const lat = Number(a.lat)
-                const lon = Number(a.lng ?? a.lon)
+                // Real bug fix: Number(null) is 0 (a real, finite but
+                // fabricated-looking coordinate — the equator/prime
+                // meridian), so converting through Number() before the
+                // null check let a real missing lat/lon silently plot at
+                // (0,0) instead of being skipped. Null-check first (same
+                // safe order already used above at line 248 and in
+                // GlobeADSBLayer.jsx/GlobeAISLayer.jsx).
+                const rawLat = a.lat, rawLon = a.lng ?? a.lon
+                if (rawLat == null || rawLon == null) return null
+                const lat = Number(rawLat)
+                const lon = Number(rawLon)
                 if (!isFinite(lat) || !isFinite(lon)) return null
                 const icon  = alertIcon(a)
                 if (!icon) return null
@@ -339,8 +348,14 @@ export default function GlobeAlertsLayer({ enabled, viewBounds }) {
                 )
             })}
             {visibleFusions.map(f => {
-                const lat   = Number(f.lat)
-                const lon   = Number(f.lon)
+                // visibleFusions is already null-filtered above (f.lat/f.lon
+                // != null), but converting through Number() before an
+                // isFinite check is the same real footgun fixed elsewhere in
+                // this file (Number(null) === 0, a fabricated-looking valid
+                // coordinate) — kept null-safe here too for consistency.
+                if (f.lat == null || f.lon == null) return null
+                const lat = Number(f.lat)
+                const lon = Number(f.lon)
                 if (!isFinite(lat) || !isFinite(lon)) return null
                 const sev   = f.severity || "medium"
                 const scale = FUSION_SCALE[sev] || 1.2

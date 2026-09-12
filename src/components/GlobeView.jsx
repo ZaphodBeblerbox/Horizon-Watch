@@ -298,7 +298,14 @@ export default function GlobeView({
         const handler = (e) => {
             const { lat, lon, altitude = 100_000 } = e.detail || {}
             const viewer = viewerRef.current?.cesiumElement
-            if (!viewer || lat == null || lon == null) return
+            // Real guard: this handler fires off a global window event and
+            // could in principle run in the same tick a prior render error
+            // has already torn the widget down (GlobeErrorBoundary unmounts
+            // the whole Viewer subtree on any child render error) — Cesium's
+            // own `scene` getter throws "this._cesiumWidget.scene" on an
+            // already-destroyed viewer, so this must be checked before ANY
+            // `.scene` access, not just in the later restore() callback.
+            if (!viewer || viewer.isDestroyed() || lat == null || lon == null) return
             const wasRequestRenderMode = viewer.scene.requestRenderMode
             viewer.scene.requestRenderMode = false
             const restore = () => { if (!viewer.isDestroyed()) viewer.scene.requestRenderMode = wasRequestRenderMode }
@@ -323,7 +330,8 @@ export default function GlobeView({
         const handler = (e) => {
             const { lon, lat, height, heading = 0, pitch = -Math.PI / 2, roll = 0 } = e.detail || {}
             const viewer = viewerRef.current?.cesiumElement
-            if (!viewer || lon == null || lat == null || height == null) return
+            // Real guard — see the akili:fly-to handler above for why.
+            if (!viewer || viewer.isDestroyed() || lon == null || lat == null || height == null) return
             viewer.camera.setView({
                 destination: Cartesian3.fromDegrees(lon, lat, height),
                 orientation: { heading, pitch, roll },
@@ -359,7 +367,8 @@ export default function GlobeView({
         const handler = (e) => {
             const { lat, lon, name, osm_type, category } = e.detail || {}
             const viewer = viewerRef.current?.cesiumElement
-            if (!viewer || lat == null || lon == null) return
+            // Real guard — see the akili:fly-to handler above for why.
+            if (!viewer || viewer.isDestroyed() || lat == null || lon == null) return
 
             const pos    = Cartesian3.fromDegrees(lon, lat)
             const dotCol = Color.fromCssColorString("#34AADC")
@@ -407,6 +416,10 @@ export default function GlobeView({
             }
 
             setTimeout(() => {
+                // Real guard — this fires 4s after the handler ran, long
+                // enough for the viewer to have since been destroyed by an
+                // unrelated crash elsewhere in the tree.
+                if (viewer.isDestroyed()) return
                 if (viewer.entities.contains(marker)) viewer.entities.remove(marker)
                 if (circle && viewer.entities.contains(circle)) viewer.entities.remove(circle)
             }, 4000)
@@ -423,7 +436,13 @@ export default function GlobeView({
         const onRestored = () => setWebglLost(false)
         const tryApply = () => {
             const viewer = viewerRef.current?.cesiumElement
-            if (!viewer) {
+            // Real guard — a queued retry (setTimeout(tryApply, 250)) can
+            // fire after this effect's own cleanup already removed the DOM
+            // listeners but before viewerRef.current is cleared, if a prior
+            // render error tore the widget down first (GlobeErrorBoundary
+            // unmounts the whole Viewer subtree on any child render error);
+            // touching `.scene` on it throws "this._cesiumWidget.scene".
+            if (!viewer || viewer.isDestroyed?.()) {
                 if (attempts++ < 15) setTimeout(tryApply, 250)
                 return
             }
@@ -509,7 +528,8 @@ export default function GlobeView({
         let attempts = 0
         const tryAttach = () => {
             const viewer = viewerRef.current?.cesiumElement
-            if (!viewer) {
+            // Real guard — see the akili:fly-to handler above for why.
+            if (!viewer || viewer.isDestroyed?.()) {
                 if (attempts++ < 20) setTimeout(tryAttach, 300)
                 return
             }
@@ -541,7 +561,14 @@ export default function GlobeView({
             }
             update()
             viewer.camera.moveEnd.addEventListener(update)
-            cleanup = () => viewer.camera.moveEnd.removeEventListener(update)
+            // Real guard in the cleanup itself, not just at attach time —
+            // this effect's cleanup can run well after tryAttach(), once the
+            // viewer has since been destroyed by an unrelated render error
+            // elsewhere in the tree (GlobeErrorBoundary unmounts the whole
+            // Viewer subtree on any child render error); `.camera` on an
+            // already-destroyed viewer throws the same class of error as
+            // the `.scene` getter does.
+            cleanup = () => { if (!viewer.isDestroyed?.()) viewer.camera.moveEnd.removeEventListener(update) }
         }
         tryAttach()
         return () => { cleanup?.() }

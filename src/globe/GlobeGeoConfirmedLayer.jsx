@@ -59,7 +59,13 @@ export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 3
     return (
         <>
             {placemarks.map((p) => {
-                if (!isFinite(p.lat) || !isFinite(p.lon)) return null
+                // Number.isFinite, not bare isFinite (isFinite(null) is
+                // true) — defense in depth for the same real crash class
+                // fixed in GlobeConnectorLinesLayer.jsx. GeoConfirmedPlacemark
+                // rows are DB-constrained non-null today, so this is
+                // currently unreachable, but the cheap fix keeps this layer
+                // safe against that assumption ever changing.
+                if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return null
                 return (
                     <Entity
                         id={`geoconfirmed-${p.id}`}
