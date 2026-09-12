@@ -13,6 +13,11 @@ import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from
 import StatusBar from "./components/StatusBar.jsx"
 import CommandPalette from "./components/CommandPalette.jsx"
 import SettingsModal from "./components/SettingsModal.jsx"
+// Workstation round, Part 8 — importing this for its module-level
+// registerInspectorExtension() side effect (see the file's own comment).
+// Not referenced directly here; every real surface that calls
+// useInspectorExtensions() picks it up automatically once registered.
+import "./components/collab/CollabPanel.jsx"
 import ToastHost from "./ui/ToastHost.jsx"
 import Situation from "./destinations/Situation.jsx"
 import { MODULES } from "./data/modules.js"
