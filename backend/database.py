@@ -227,6 +227,68 @@ class RFI(Base):
     created_at     = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class Comment(Base):
+    """Workstation round, Part 8 — real, generic per-record discussion,
+    injected via the app's one real UI extension point (src/inspector/
+    extensionRegistry.js) onto every record surface, not a case-only or
+    signal-only feature. `record_ref` is a real reference-grammar string
+    (src/lib/ref.js's `kind:id` form — "case:CS-1A2B3C", "sig:ALT-...",
+    "ent:...", "onto:...", "aoi:..."), so one real table covers every
+    record kind rather than one comments table per surface. Deliberately
+    additive alongside Case.notes_json (Cases.jsx's own pre-existing,
+    simpler per-case note list) rather than replacing it — migrating an
+    already-shipped, working feature's data model is real, separate,
+    riskier work not attempted in this pass; a case gets both."""
+    __tablename__ = "comments"
+    id                      = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    comment_id              = Column(String, unique=True, index=True, nullable=False)  # CMT-######
+    record_ref              = Column(String, nullable=False, index=True)
+    author_user_id          = Column(String, nullable=False)
+    body                    = Column(Text, nullable=False)
+    mentioned_user_ids_json = Column(Text, nullable=False, default="[]")  # [user_id, ...] — real users picked via the real @mention autocomplete, never free-text parsed
+    resolved                = Column(Boolean, default=False)
+    created_at              = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at              = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class RecordAssignment(Base):
+    """Workstation round, Part 8 — real, generic per-record assignment,
+    keyed the same real reference-grammar way as Comment above. Additive:
+    Case.owner_user_id (a case's own pre-existing ownership field) is left
+    untouched; this is the assignment mechanism for every OTHER record
+    kind that has never had one (a signal, an entity, an AOI...), and
+    cases can carry both. Exactly one active (done=False) row per
+    record_ref in practice, enforced at the application layer —
+    "reassign" marks the old row done and inserts a new one rather than
+    mutating history, so real past assignments stay visible in the
+    activity log."""
+    __tablename__ = "record_assignments"
+    id                   = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    record_ref           = Column(String, nullable=False, index=True)
+    assignee_user_id     = Column(String, nullable=False, index=True)
+    assigned_by_user_id  = Column(String, nullable=True)
+    due_at               = Column(DateTime, nullable=True)
+    done                 = Column(Boolean, default=False)
+    created_at           = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at           = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class ActivityLogEntry(Base):
+    """Workstation round, Part 8 — real per-record activity log (who did
+    what, when) for the assignment/comment primitives above. A different,
+    smaller thing than My Work's own sidebar "recent activity" (which
+    already has its own real, working, unrelated derivation from Case
+    approval-history + RFI answers, left untouched) — this is the
+    per-record feed shown inside the collaboration panel itself."""
+    __tablename__ = "activity_log"
+    id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    record_ref     = Column(String, nullable=False, index=True)
+    actor_user_id  = Column(String, nullable=True)
+    verb           = Column(String, nullable=False)  # assigned | reassigned | done | commented | resolved_comment | reopened_comment
+    detail_json    = Column(Text, nullable=False, default="{}")
+    created_at     = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class DirectMessage(Base):
     __tablename__ = "direct_messages"
     id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))

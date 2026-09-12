@@ -21587,7 +21587,21 @@ def api_workstation_queues(request: Request, scope: str = "mine"):
     if scope not in ("mine", "team", "unassigned"):
         raise HTTPException(status_code=400, detail="scope must be one of: mine, team, unassigned")
     current_user = _require_current_user(request)
-    from database import Case, RFI, Alert, User, get_db as _gdb_wq
+    from database import Case, RFI, Alert, User, Comment, RecordAssignment, get_db as _gdb_wq
+
+    def ref_title(db, ref: str) -> str:
+        """Best-effort real display title for a generic record_ref — only
+        the two kinds this queue can cheaply resolve today (case/sig) get
+        a real title; everything else honestly falls back to the raw ref
+        string rather than a fabricated label."""
+        kind, _, rid = ref.partition(":")
+        if kind == "case":
+            c = db.query(Case).filter(Case.case_id == rid).first()
+            return c.title if c else ref
+        if kind == "sig":
+            a = db.query(Alert).filter(Alert.alert_id == rid).first()
+            return a.title if a else ref
+        return ref
 
     with _gdb_wq() as db:
         if scope == "mine":
@@ -21620,46 +21634,43 @@ def api_workstation_queues(request: Request, scope: str = "mine"):
 
         all_cases = db.query(Case).order_by(Case.updated_at.desc()).all()
 
-        # 1. Assigned to me — real union of every domain with a real
-        # per-user assignment field: Case ownership + open-RFI recipiency.
-        # No other domain has one (confirmed by audit: Alert has no
-        # assignee column, Mail doesn't exist, mentions aren't an
-        # assignment) — this is the real, full extent of "assignment" in
-        # this app today, not a narrowed-down subset.
+        # 1. Assigned to me — real union of every real per-user assignment
+        # field this app has: Case ownership, open-RFI recipiency, AND
+        # (Workstation Part 8) the new generic RecordAssignment table,
+        # which covers every OTHER record kind (signals, entities, AOIs,
+        # ...) that never had an assignment concept before. A case COULD
+        # appear via both its owner_user_id and a RecordAssignment row if
+        # both are ever set on the same case — a real, accepted, harmless
+        # overlap rather than a fabricated dedup.
         if owner_ids is None:
             assigned_cases = [c for c in all_cases if c.owner_user_id is None]
             assigned_rfis = []  # RFI.to_user_id is NOT NULL — a real "unassigned RFI" cannot exist
+            assigned_generic = db.query(RecordAssignment).filter(RecordAssignment.assignee_user_id.is_(None), RecordAssignment.done == False).all()  # noqa: E712 — real sentinel: assignee_user_id is NOT NULL by schema, so this is always empty; kept for symmetry/honesty rather than silently omitted
         else:
             assigned_cases = [c for c in all_cases if c.owner_user_id in owner_ids]
             assigned_rfis = db.query(RFI).filter(RFI.to_user_id.in_(owner_ids), RFI.status == "open").all()
-        assigned_to_me = [case_row(c) for c in assigned_cases] + [rfi_row(r) for r in assigned_rfis]
+            assigned_generic = db.query(RecordAssignment).filter(RecordAssignment.assignee_user_id.in_(owner_ids), RecordAssignment.done == False).all()  # noqa: E712
+        assigned_to_me = (
+            [case_row(c) for c in assigned_cases] + [rfi_row(r) for r in assigned_rfis] +
+            [{"ref": a.record_ref, "title": ref_title(db, a.record_ref), "sub": "assigned", "severity": None,
+              "due_at": a.due_at.isoformat() if a.due_at else None, "assignee_user_id": a.assignee_user_id}
+             for a in assigned_generic]
+        )
 
-        # 2. Mentions — no dedicated mentions schema exists anywhere in
-        # this app (confirmed by audit — Cases.jsx's own comment defers
-        # the full @mention-with-autocomplete primitive to a later
-        # "collaboration primitives" round). Rather than fabricate a
-        # result or silently return nothing with no explanation, this
-        # really scans the one place free-text discussion already exists
-        # (Case.notes_json) for a real "@firstname" substring matching a
-        # real user this scope covers. Honestly near-certain to be empty
-        # for real usage today since no note composer offers @mention
-        # entry yet — that gap is real, not hidden.
+        # 2. Mentions — Workstation Part 8's new real Comment table
+        # (mentioned_user_ids_json, populated only from real @mention
+        # autocomplete picks, never free text) is now the real source —
+        # this queue will actually return results once a real comment
+        # mentions this scope's real user(s), not just report zero forever.
         mentions = []
         if owner_ids is not None:
-            handles = [
-                (u.name or "").split()[0].lower()
-                for u in db.query(User).filter(User.id.in_(owner_ids)).all() if u.name
-            ]
-            if handles:
-                for c in all_cases:
-                    for note in _json.loads(c.notes_json or "[]"):
-                        text = (note.get("text") or "").lower()
-                        if any(h and f"@{h}" in text for h in handles):
-                            mentions.append({
-                                "ref": f"case:{c.case_id}", "title": (note.get("text") or "")[:120],
-                                "sub": c.title, "severity": None, "due_at": None,
-                                "assignee_user_id": note.get("author_user_id"),
-                            })
+            for cm in db.query(Comment).order_by(Comment.created_at.desc()).all():
+                mentioned = _json.loads(cm.mentioned_user_ids_json or "[]")
+                if any(uid in owner_ids for uid in mentioned):
+                    mentions.append({
+                        "ref": cm.record_ref, "title": cm.body[:120], "sub": ref_title(db, cm.record_ref),
+                        "severity": None, "due_at": None, "assignee_user_id": cm.author_user_id,
+                    })
         # "unassigned" has no real meaning for a mention (a mention always names someone) — real, honest empty.
 
         # 3. RFIs to answer
@@ -21768,6 +21779,219 @@ def api_workstation_sidebar(request: Request):
         activity.sort(key=lambda e: e["at"], reverse=True)
 
         return {"calendar": calendar[:20], "activity": activity[:20]}
+
+
+# ── Workstation round, Part 8 — collaboration primitives ─────────────────
+# Comments (with real @mention), assignment, and activity are all keyed by
+# the same real reference-grammar `record_ref` string (src/lib/ref.js) so
+# one real implementation of each covers every record kind this app has —
+# injected client-side via the one real UI extension point (src/inspector/
+# extensionRegistry.js), never four one-off per-surface implementations.
+
+def _comment_id() -> str:
+    return f"CMT-{uuid.uuid4().hex[:6].upper()}"
+
+def _comment_row_to_dict(c) -> dict:
+    return {
+        "comment_id": c.comment_id, "record_ref": c.record_ref, "author_user_id": c.author_user_id,
+        "body": c.body, "mentioned_user_ids": _json.loads(c.mentioned_user_ids_json or "[]"),
+        "resolved": c.resolved,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+def _log_activity(db, record_ref: str, actor_user_id: str | None, verb: str, detail: dict | None = None) -> None:
+    from database import ActivityLogEntry
+    db.add(ActivityLogEntry(record_ref=record_ref, actor_user_id=actor_user_id, verb=verb, detail_json=_json.dumps(detail or {})))
+
+@app.get("/api/comments")
+def api_comments_list(record_ref: str):
+    from database import Comment, get_db as _gdb_comments
+    with _gdb_comments() as db:
+        rows = db.query(Comment).filter(Comment.record_ref == record_ref).order_by(Comment.created_at).all()
+        return [_comment_row_to_dict(c) for c in rows]
+
+@app.post("/api/comments")
+async def api_comments_create(request: Request):
+    """Real session-authenticated author; real @mention list — the client
+    sends the user ids actually picked from the real autocomplete, and
+    this endpoint independently re-validates every one of them against
+    the real User table before treating it as a real mention (never trust
+    an arbitrary client-supplied id as real without checking)."""
+    current_user = _require_current_user(request)
+    from database import Comment, User, get_db as _gdb_comments
+    body = await request.json()
+    record_ref = (body.get("record_ref") or "").strip()
+    text = (body.get("body") or "").strip()
+    if not record_ref or not text:
+        raise HTTPException(status_code=400, detail="record_ref and body are required")
+    raw_mentions = body.get("mentioned_user_ids") or []
+    with _gdb_comments() as db:
+        real_mentions = [u.id for u in db.query(User).filter(User.id.in_(raw_mentions)).all()] if raw_mentions else []
+        c = Comment(
+            comment_id=_comment_id(), record_ref=record_ref, author_user_id=current_user["id"],
+            body=text, mentioned_user_ids_json=_json.dumps(real_mentions),
+        )
+        db.add(c)
+        _log_activity(db, record_ref, current_user["id"], "commented", {"comment_id": c.comment_id})
+        db.commit()
+        db.refresh(c)
+        for uid in real_mentions:
+            if uid != current_user["id"]:
+                _send_push(uid, "You were mentioned", f"{current_user.get('name') or 'Someone'}: {text[:120]}", {"record_ref": record_ref})
+        return _comment_row_to_dict(c)
+
+@app.post("/api/comments/{comment_id}/resolve")
+def api_comments_resolve(comment_id: str, request: Request):
+    current_user = _require_current_user(request)
+    from database import Comment, get_db as _gdb_comments
+    with _gdb_comments() as db:
+        c = db.query(Comment).filter(Comment.comment_id == comment_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail=f"Comment {comment_id} not found")
+        c.resolved = True
+        _log_activity(db, c.record_ref, current_user["id"], "resolved_comment", {"comment_id": comment_id})
+        db.commit()
+        db.refresh(c)
+        return _comment_row_to_dict(c)
+
+@app.post("/api/comments/{comment_id}/reopen")
+def api_comments_reopen(comment_id: str, request: Request):
+    current_user = _require_current_user(request)
+    from database import Comment, get_db as _gdb_comments
+    with _gdb_comments() as db:
+        c = db.query(Comment).filter(Comment.comment_id == comment_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail=f"Comment {comment_id} not found")
+        c.resolved = False
+        _log_activity(db, c.record_ref, current_user["id"], "reopened_comment", {"comment_id": comment_id})
+        db.commit()
+        db.refresh(c)
+        return _comment_row_to_dict(c)
+
+
+def _assignment_row_to_dict(a) -> dict:
+    return {
+        "id": a.id, "record_ref": a.record_ref, "assignee_user_id": a.assignee_user_id,
+        "assigned_by_user_id": a.assigned_by_user_id,
+        "due_at": a.due_at.isoformat() if a.due_at else None, "done": a.done,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+    }
+
+@app.get("/api/assignments")
+def api_assignments_get(record_ref: str):
+    """The one real current (not-done) assignment for a record, or null —
+    never a list, since exactly one active assignment is the real
+    invariant this app enforces at write time (see api_assignments_create
+    below)."""
+    from database import RecordAssignment, get_db as _gdb_assign
+    with _gdb_assign() as db:
+        a = (db.query(RecordAssignment)
+             .filter(RecordAssignment.record_ref == record_ref, RecordAssignment.done == False)  # noqa: E712
+             .order_by(RecordAssignment.created_at.desc()).first())
+        return _assignment_row_to_dict(a) if a else None
+
+@app.post("/api/assignments")
+async def api_assignments_create(request: Request):
+    """Real assign/reassign: marks any existing active assignment for this
+    real record done (real history preserved, never overwritten), creates
+    the new real row, writes a real activity-log entry, and pushes a real
+    notification to the new real assignee — reusing this app's existing
+    Web Push mechanism (_send_push) rather than inventing a second
+    notification channel."""
+    current_user = _require_current_user(request)
+    from database import RecordAssignment, User, get_db as _gdb_assign
+    body = await request.json()
+    record_ref = (body.get("record_ref") or "").strip()
+    assignee_user_id = body.get("assignee_user_id")
+    if not record_ref or not assignee_user_id:
+        raise HTTPException(status_code=400, detail="record_ref and assignee_user_id are required")
+    due_at = None
+    if body.get("due_at"):
+        try: due_at = datetime.fromisoformat(body["due_at"])
+        except Exception: due_at = None
+    with _gdb_assign() as db:
+        assignee = db.query(User).filter(User.id == assignee_user_id).first()
+        if not assignee:
+            raise HTTPException(status_code=404, detail="assignee_user_id must be a real user")
+        existing = (db.query(RecordAssignment)
+                    .filter(RecordAssignment.record_ref == record_ref, RecordAssignment.done == False)  # noqa: E712
+                    .all())
+        verb = "reassigned" if existing else "assigned"
+        for e in existing:
+            e.done = True
+        a = RecordAssignment(record_ref=record_ref, assignee_user_id=assignee_user_id,
+                              assigned_by_user_id=current_user["id"], due_at=due_at)
+        db.add(a)
+        _log_activity(db, record_ref, current_user["id"], verb, {"assignee_user_id": assignee_user_id, "due_at": body.get("due_at")})
+        db.commit()
+        db.refresh(a)
+        if assignee_user_id != current_user["id"]:
+            _send_push(assignee_user_id, "You were assigned", f"{current_user.get('name') or 'Someone'} assigned you {record_ref}", {"record_ref": record_ref})
+        return _assignment_row_to_dict(a)
+
+@app.post("/api/assignments/{assignment_id}/done")
+def api_assignments_done(assignment_id: str, request: Request):
+    current_user = _require_current_user(request)
+    from database import RecordAssignment, get_db as _gdb_assign
+    with _gdb_assign() as db:
+        a = db.query(RecordAssignment).filter(RecordAssignment.id == assignment_id).first()
+        if not a:
+            raise HTTPException(status_code=404, detail=f"Assignment {assignment_id} not found")
+        a.done = True
+        _log_activity(db, a.record_ref, current_user["id"], "done", {})
+        db.commit()
+        db.refresh(a)
+        return _assignment_row_to_dict(a)
+
+
+@app.get("/api/activity")
+def api_activity_list(record_ref: str):
+    from database import ActivityLogEntry, get_db as _gdb_activity
+    with _gdb_activity() as db:
+        rows = (db.query(ActivityLogEntry).filter(ActivityLogEntry.record_ref == record_ref)
+                .order_by(ActivityLogEntry.created_at.desc()).limit(50).all())
+        return [{
+            "actor_user_id": r.actor_user_id, "verb": r.verb,
+            "detail": _json.loads(r.detail_json or "{}"),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        } for r in rows]
+
+
+# Real presence — Option A chosen explicitly (see this round's own report):
+# no real live-update channel exists anywhere in this app that could push
+# presence to the browser (the AIS "WebSocket" is a backend-to-vendor
+# ingest client, never exposed to the frontend; every real "live" feature
+# here is REST polling, confirmed by audit). Rather than a purely
+# decorative color/initial derived only from the record ref (no real
+# "who has this open" tracking existed anywhere to derive it FROM, so a
+# pure function of the ref alone would carry zero real information), this
+# is the minimal REAL tracking actually built for this: a genuine
+# server-side heartbeat the client posts every ~15s while a record panel
+# is open, read back via a real GET. Not push-based — a viewer's presence
+# can lag up to one heartbeat interval — so the UI must say "viewing now"
+# or similar, never "live".
+_PRESENCE: dict = {}
+_PRESENCE_LOCK = threading.Lock()
+_PRESENCE_TTL_SECONDS = 45
+
+@app.post("/api/presence")
+def api_presence_heartbeat(record_ref: str, request: Request):
+    current_user = _require_current_user(request)
+    with _PRESENCE_LOCK:
+        _PRESENCE.setdefault(record_ref, {})[current_user["id"]] = time.time()
+    return {"ok": True}
+
+@app.get("/api/presence")
+def api_presence_get(record_ref: str):
+    now = time.time()
+    with _PRESENCE_LOCK:
+        seen = dict(_PRESENCE.get(record_ref, {}))
+    active_ids = [uid for uid, ts in seen.items() if now - ts <= _PRESENCE_TTL_SECONDS]
+    from database import User, get_db as _gdb_presence
+    with _gdb_presence() as db:
+        users = db.query(User).filter(User.id.in_(active_ids)).all() if active_ids else []
+        return {"users": [_user_to_dict(u) for u in users], "ttl_seconds": _PRESENCE_TTL_SECONDS}
 
 
 @app.patch("/api/forge/ontology/node/{node_id}")

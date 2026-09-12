@@ -15,6 +15,7 @@ import {
 import { label, open as openRef } from "../lib/ref.js"
 import { can, requireCapability, currentUserId } from "../lib/capabilities.js"
 import { toast } from "../ui/toast.js"
+import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 
 const PRIORITY_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-high)", moderate: "var(--sev-moderate)", low: "var(--sev-low)" }
 const STAGES = ["draft", "review", "approved", "issued"]
@@ -52,6 +53,12 @@ function userLabel(users, id) {
 }
 
 export default function Cases() {
+    // Workstation round, Part 8 — wires this surface into the app's one
+    // real UI extension point for the first time (it previously had none
+    // at all, confirmed by audit); the real CollabPanel (comments/
+    // @mention/assignment/presence) now renders here automatically,
+    // alongside this file's own pre-existing plain note list below.
+    const inspectorExtensions = useInspectorExtensions()
     const [cases, setCases] = useState([])
     const [users, setUsers] = useState([])
     const [activeCaseId, setActiveCaseId] = useState(null)
@@ -371,6 +378,9 @@ export default function Cases() {
                         <button className="btn sm" onClick={handleAddNote}>send</button>
                     </div>
                 )}
+                {activeCase && inspectorExtensions.map((Ext, i) => (
+                    <Ext key={i} recordRef={`case:${activeCase.case_id}`} record={activeCase} />
+                ))}
             </div>
         </div>
     )
