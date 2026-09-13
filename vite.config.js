@@ -60,6 +60,16 @@ export default defineConfig({
                 maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
                 skipWaiting: false,
                 clientsClaim: false,
+                // Real, one-time, version-gated recovery for browsers whose
+                // ALREADY-INSTALLED service worker predates this registerType:
+                // 'prompt' fix (Round 2 stale-registerSW.js investigation) —
+                // see public/sw-recovery.js's own docstring for the full real
+                // root cause and why this is bounded/safe, not a return to the
+                // skipWaiting/clientsClaim race this config just above moved
+                // away from. Runs inside the SAME generated SW via workbox's
+                // own importScripts, so it reaches an old tab with zero
+                // cooperation from whatever (old, code-less) JS it's running.
+                importScripts: ['/sw-recovery.js'],
                 runtimeCaching: [
                     {
                         urlPattern: /\/api\/(strategic-zones|chokepoints|cables|rules|watch-zones)/,

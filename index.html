@@ -49,13 +49,22 @@
         // guard, deliberately kept in sync rather than a second competing
         // policy) is unavoidable: it must survive in a world where the
         // entire rest of this app's JS has failed to load.
+        //
+        // Real fix (Round 2 stale-registerSW.js investigation): this used
+        // to only match a failing /assets/ URL — a stale index.html's own
+        // <script src="/registerSW.js"> tag (injectRegister:'auto''s output,
+        // served from the site ROOT, not /assets/) failed this check
+        // entirely and was silently ignored, even though it's the exact
+        // same real "this index.html is stale" signal. Confirmed live via
+        // direct reproduction (install the pre-fix service worker, ship the
+        // current build, observe the still-open tab's own failed requests).
         (function () {
             var FLAG = "hw-stale-chunk-reload-attempted"
             window.addEventListener("error", function (event) {
                 var el = event.target
                 if (!el || (el.tagName !== "SCRIPT" && el.tagName !== "LINK")) return
                 var src = el.src || el.href || ""
-                if (src.indexOf("/assets/") === -1) return
+                if (src.indexOf("/assets/") === -1 && src.indexOf("registerSW.js") === -1) return
                 var already = false
                 try { already = sessionStorage.getItem(FLAG) === "1" } catch (e) { /* private mode */ }
                 if (already) {
