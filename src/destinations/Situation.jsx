@@ -473,15 +473,30 @@ export default function Situation({ onOpenDossier }) {
         toast(`Added "${row.title.slice(0, 40)}" to briefing basket`)
     }
 
-    // Build spec v2, §4.6 — one real transition drives the slide, whatever
-    // triggers it (mount, or the minimize toggle): translateX + opacity,
-    // never a keyframe. Minimizing swaps the full pane for a 30px .panetab
-    // restore rail (a real, simpler equivalent of the spec's grid-var-
-    // override approach — this app's Situation layout is flexbox, so
-    // shrinking the flex sibling's width already reflows the map
-    // automatically, without needing a separate CSS-var indirection layer).
+    // Round 4 fix — real root cause of "Layers/Inspector glass never
+    // visibly blurs anything" (confirmed with hard evidence, not assumed):
+    // this layout was flexbox siblings — Layers | map | Inspector — so the
+    // real Cesium canvas's own bounding rect started exactly at x=250
+    // (--pane-l's width) and ended exactly at var(--pane-r) from the right
+    // edge. There was never any real map content behind these panes to
+    // blur; backdrop-filter was compositing over the flat app-shell
+    // background the whole time, which is why real pixel-sampling (not
+    // just getComputedStyle) showed a perfectly uniform color with zero
+    // correlation to the map. Confirmed live via
+    // document.querySelector('canvas').getBoundingClientRect().
+    //
+    // Real fix: Layers/Inspector are now real absolutely-positioned
+    // overlays on top of a full-bleed map (the aside.pane "glass side
+    // panel" semantics the reference spec actually describes — a pane
+    // that floats OVER content, not one that sits beside it), inside the
+    // exact same real position:relative map container MapControlStack and
+    // GeoConfirmedTimelinePanel already overlay. Minimize/restore no
+    // longer needs a flex-reflow at all — the map is already full-bleed
+    // underneath at all times, so minimizing an overlay pane just reveals
+    // more of the real map that was already there.
     const leftPaneStyle = {
-        width: "var(--pane-l)", flexShrink: 0, borderRight: "1px solid var(--line)",
+        position: "absolute", left: 0, top: 0, bottom: 0, zIndex: 3,
+        width: "var(--pane-l)", borderRight: "1px solid var(--line)",
         display: "flex", flexDirection: "column", overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(-14px)",
         opacity: entered ? 1 : 0,
@@ -493,14 +508,23 @@ export default function Situation({ onOpenDossier }) {
         // this is also now the Inspector's real width when a map marker is
         // clicked (see the pane content below), so one token now drives
         // Layers, this pane's default view, AND the marker-click Inspector.
-        width: "var(--pane-r)", flexShrink: 0, borderLeft: "1px solid var(--line)",
+        position: "absolute", right: 0, top: 0, bottom: 0, zIndex: 3,
+        width: "var(--pane-r)", borderLeft: "1px solid var(--line)",
         display: "flex", flexDirection: "column", minHeight: 0,
         transform: entered ? "translateX(0)" : "translateX(14px)",
         opacity: entered ? 1 : 0,
     }
+    // Real, dynamic clearance for the map's own bottom-right control stack
+    // (zIndex 40, so it always stays clickable/visible above these panes)
+    // — it must shift left by the Inspector's real width whenever Inspector
+    // is open, now that Inspector overlays that corner instead of sitting
+    // beside it. The GeoConfirmed timeline panel's own right-inset (Part
+    // 6 of an earlier round) needs the same real shift, on top of its
+    // existing button-column clearance.
+    const inspectorOverlayWidth = rightMin ? 0 : 312 // px, matches --pane-r
 
     return (
-        <div data-testid="view-root-situation" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
+        <div data-testid="view-root-situation" style={{ display: "flex", position: "relative", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
             {/* Left — Layers (real frosted glass per build spec v2 §4.6 —
                 corrects an earlier round's "no translucency anywhere"
                 reversal of this; only the panel's own background is glass,
@@ -752,6 +776,7 @@ export default function Situation({ onOpenDossier }) {
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
                         mapChromeBottomInset={groupsOn.news && geoConfirmedPanelHeight ? geoConfirmedPanelHeight + 8 : 0}
+                        mapChromeLeftInset={leftMin ? 0 : 250}
                         /* Real root-cause fix — the Time window/severity-
                            floor selector previously never reached the map
                            at all (only the domain on/off toggles did); the
@@ -778,7 +803,7 @@ export default function Situation({ onOpenDossier }) {
                         annotationTool={annotationTool}
                         basemap={basemap}
                     />
-                    <MapControlStack onFullscreen={() => {}} basemap={{ value: basemap, onChange: setBasemap }} />
+                    <MapControlStack onFullscreen={() => {}} basemap={{ value: basemap, onChange: setBasemap }} rightInset={inspectorOverlayWidth} />
                     {/* The severity legend used to float here, bottom-right —
                         per the map-overlay-geometry table it does not belong
                         on the map surface at all; it now lives inside the
@@ -795,6 +820,7 @@ export default function Situation({ onOpenDossier }) {
                             endDate={geoConfirmedEndDate}
                             onEndDateChange={setGeoConfirmedEndDate}
                             onHeightChange={setGeoConfirmedPanelHeight}
+                            rightInset={56 + inspectorOverlayWidth}
                         />
                     )}
                 </div>

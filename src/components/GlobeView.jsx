@@ -137,6 +137,11 @@ export default function GlobeView({
     // dodge it horizontally (the scale bar's width varies with zoom level,
     // so a fixed horizontal exclusion zone can't be sized reliably).
     mapChromeBottomInset = 0,
+    // Round 4 layout fix — same real reason as MapControlStack's
+    // rightInset: the map is now a real full-bleed canvas behind the
+    // Layers/Inspector overlay panes, so this chrome's own left:12 would
+    // otherwise fall underneath the Layers pane whenever it's open.
+    mapChromeLeftInset = 0,
     // Real root-cause fix (Time-window-doesn't-filter-the-map bug) — the
     // same real time-window/severity-floor selector Situation.jsx's own
     // header/legend/histogram counts already use (src/lib/
@@ -793,7 +798,7 @@ export default function GlobeView({
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
             {cesiumViewer && (
-                <div data-testid="map-bottom-chrome" style={{ position: "absolute", left: 12, bottom: 12 + mapChromeBottomInset, zIndex: 40, display: "flex", flexDirection: "column", gap: 4, transition: "bottom 0.15s ease" }}>
+                <div data-testid="map-bottom-chrome" style={{ position: "absolute", left: 12 + mapChromeLeftInset, bottom: 12 + mapChromeBottomInset, zIndex: 40, display: "flex", flexDirection: "column", gap: 4, transition: "left 0.15s ease, bottom 0.15s ease" }}>
                     <ScaleBar viewer={cesiumViewer} />
                     <CoordinateReadout viewer={cesiumViewer} />
                 </div>
