@@ -249,6 +249,12 @@ export default function Situation({ onOpenDossier }) {
     // historic position across sessions the way the theatre filter does.
     const [geoConfirmedTheatres, setGeoConfirmedTheatres] = useState(() => getSettings()?.mapLayers?.geoConfirmedTheatres || [])
     const [geoConfirmedEndDate, setGeoConfirmedEndDate] = useState(null)
+    // Round 3 fix (Part 6.3) — the panel's own real measured height, so the
+    // map's scale-bar/coordinate-readout chrome can be pushed up above it
+    // rather than overlapping/interleaving with its text at the same
+    // screen position (both were technically visible per z-index already —
+    // this isn't a stacking-order bug, it's a spatial-collision one).
+    const [geoConfirmedPanelHeight, setGeoConfirmedPanelHeight] = useState(0)
     useEffect(() => subscribeSettings((s) => setGeoConfirmedTheatres(s?.mapLayers?.geoConfirmedTheatres || [])), [])
     function handleGeoConfirmedTheatresChange(next) {
         setGeoConfirmedTheatres(next)
@@ -745,6 +751,7 @@ export default function Situation({ onOpenDossier }) {
                         geoConfirmedEnabled={groupsOn.news}
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
+                        mapChromeBottomInset={groupsOn.news && geoConfirmedPanelHeight ? geoConfirmedPanelHeight + 8 : 0}
                         /* Real root-cause fix — the Time window/severity-
                            floor selector previously never reached the map
                            at all (only the domain on/off toggles did); the
@@ -787,6 +794,7 @@ export default function Situation({ onOpenDossier }) {
                             onTheatresChange={handleGeoConfirmedTheatresChange}
                             endDate={geoConfirmedEndDate}
                             onEndDateChange={setGeoConfirmedEndDate}
+                            onHeightChange={setGeoConfirmedPanelHeight}
                         />
                     )}
                 </div>

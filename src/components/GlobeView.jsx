@@ -126,6 +126,17 @@ export default function GlobeView({
     // keeps current unfiltered/live behavior unchanged.
     geoConfirmedTheatres = null,
     geoConfirmedEndDate = null,
+    // Round 3 fix — the GeoConfirmed timeline panel docks to the bottom of
+    // the map, right where this real bottom-left scale-bar/coordinate
+    // chrome already lives; that chrome is genuinely on top per z-index
+    // (confirmed via elementsFromPoint) but visually OVERLAPS/interleaves
+    // with the panel's own text at the same screen position, reading as
+    // illegible garble to a human eye even though nothing is technically
+    // hidden. Real fix: push this chrome up by the panel's own real
+    // measured height (reported by Situation.jsx) rather than trying to
+    // dodge it horizontally (the scale bar's width varies with zoom level,
+    // so a fixed horizontal exclusion zone can't be sized reliably).
+    mapChromeBottomInset = 0,
     // Real root-cause fix (Time-window-doesn't-filter-the-map bug) — the
     // same real time-window/severity-floor selector Situation.jsx's own
     // header/legend/histogram counts already use (src/lib/
@@ -782,7 +793,7 @@ export default function GlobeView({
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
             {cesiumViewer && (
-                <div style={{ position: "absolute", left: 12, bottom: 12, zIndex: 40, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div data-testid="map-bottom-chrome" style={{ position: "absolute", left: 12, bottom: 12 + mapChromeBottomInset, zIndex: 40, display: "flex", flexDirection: "column", gap: 4, transition: "bottom 0.15s ease" }}>
                     <ScaleBar viewer={cesiumViewer} />
                     <CoordinateReadout viewer={cesiumViewer} />
                 </div>

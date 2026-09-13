@@ -189,13 +189,49 @@ test.describe("theming regression guard — pane backgrounds + glass treatment",
                 // treatment as Inspector/Layers, never a private tint.
                 await page.click('button[title="News"]')
                 await page.waitForSelector('[data-testid="glass-geoconfirmed-timeline-panel"]', { timeout: 10000 })
+                await page.waitForTimeout(500) // real content load, so its real measured height (and therefore the chrome push-up below) has settled
                 const gcStyle = await computedOf(page, '[data-testid="glass-geoconfirmed-timeline-panel"]')
                 expect(gcStyle, "glass-geoconfirmed-timeline-panel must be present once News is toggled on").not.toBeNull()
                 expect(
                     gcStyle.backdropFilter,
                     `GeoConfirmed timeline panel must carry a real backdrop-filter blur in ${theme} theme — got "${gcStyle.backdropFilter}"`
                 ).toMatch(/blur/)
+                // Round 3 fix — the panel previously used --map-tooltip-bg
+                // (a real, theme-flipping, blur-bearing token — which is
+                // exactly why the OLD version of this very assertion block
+                // still reported passing) instead of the same --pane-
+                // glass-bg family Layers/Inspector use, and read as
+                // near-black at this panel's scale as a result. A test that
+                // only checks "has some blur, in some theme-reactive color"
+                // can't catch "the wrong real token" — it must compare
+                // against the actual reference value.
+                const layersStyle = await computedOf(page, '[data-testid="glass-layers-pane"]')
+                expect(
+                    gcStyle.backgroundColor,
+                    `GeoConfirmed timeline panel's background in ${theme} theme must match the real Layers/Inspector glass tint (${layersStyle.backgroundColor}) — got ${gcStyle.backgroundColor}. A mismatch here is exactly the "reads as near-black, not the app's blue-grey family" regression.`
+                ).toBe(layersStyle.backgroundColor)
                 collected[theme]["glass-geoconfirmed-timeline-panel"] = gcStyle.backgroundColor
+
+                // Round 3 fix — the map's real scale-bar/coordinate-readout
+                // chrome must render ABOVE (not spatially overlapping) the
+                // open GeoConfirmed panel. Real bounding-box check, not a
+                // z-index/computed-style one: the prior bug had the chrome
+                // technically on top per z-index already (confirmed via
+                // elementsFromPoint) while still visually overlapping the
+                // panel's own text at the same screen position.
+                const overlap = await page.evaluate(() => {
+                    const chrome = document.querySelector('[data-testid="map-bottom-chrome"]')
+                    const panel = document.querySelector('[data-testid="glass-geoconfirmed-timeline-panel"]')
+                    if (!chrome || !panel) return null
+                    const c = chrome.getBoundingClientRect(), p = panel.getBoundingClientRect()
+                    return { chromeBottom: c.bottom, panelTop: p.top }
+                })
+                expect(overlap, "map-bottom-chrome and the GeoConfirmed panel must both be present to check their layout").not.toBeNull()
+                expect(
+                    overlap.chromeBottom,
+                    `the map's scale-bar/coordinate-readout chrome (bottom edge at ${overlap.chromeBottom}) must not extend below the GeoConfirmed panel's top edge (${overlap.panelTop}) — an overlap here is the exact "scale bar rendering underneath/covered by the panel" regression, even if both are technically visible per z-index.`
+                ).toBeLessThanOrEqual(overlap.panelTop)
+
                 await page.click('button[title="News"]') // real toggle-off — confirms it un-mounts, not just visually hides
                 await expect(page.locator('[data-testid="glass-geoconfirmed-timeline-panel"]')).toHaveCount(0)
             }
