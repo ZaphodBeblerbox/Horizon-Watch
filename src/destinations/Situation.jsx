@@ -471,7 +471,7 @@ export default function Situation({ onOpenDossier }) {
     }
 
     return (
-        <div style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
+        <div data-testid="view-root-situation" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
             {/* Left — Layers (real frosted glass per build spec v2 §4.6 —
                 corrects an earlier round's "no translucency anywhere"
                 reversal of this; only the panel's own background is glass,
@@ -479,7 +479,7 @@ export default function Situation({ onOpenDossier }) {
             {leftMin ? (
                 <div className="panetab" role="button" tabIndex={0} onClick={() => setLeftMin(false)} title="Restore Layers">Layers</div>
             ) : (
-            <div className="pane-glass" style={leftPaneStyle}>
+            <div className="pane-glass" data-testid="glass-layers-pane" style={leftPaneStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Layers</span>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -771,7 +771,7 @@ export default function Situation({ onOpenDossier }) {
             {rightMin ? (
                 <div className="panetab" role="button" tabIndex={0} onClick={() => setRightMin(false)} title="Restore Inspector">Inspector</div>
             ) : (
-            <div className="pane-glass" style={rightPaneStyle}>
+            <div className="pane-glass" data-testid="glass-inspector-pane" style={rightPaneStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Inspector</span>
                     <button onClick={() => setRightMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>

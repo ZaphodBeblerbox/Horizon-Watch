@@ -26,7 +26,7 @@ export default function Team() {
     }, [])
 
     return (
-        <div style={{ padding: 20, overflowY: "auto", height: "100%" }}>
+        <div data-testid="view-root-team" style={{ padding: 20, overflowY: "auto", height: "100%", background: "var(--bg-0)" }}>
             <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Roster</div>
             {teams.length === 0 && <div style={{ font: "400 12px var(--font)", color: "var(--txt-4)" }}>No real team configured yet.</div>}
             {teams.map((t) => (

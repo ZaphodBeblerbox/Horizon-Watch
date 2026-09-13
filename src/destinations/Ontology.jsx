@@ -328,7 +328,7 @@ export default function Ontology({ onOpenGenerate }) {
     const typeCounts = data?.type_counts || {}
 
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "236px 1fr 316px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
+        <div data-testid="view-root-ontology" style={{ display: "grid", gridTemplateColumns: "236px 1fr 316px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 14 }}>
                 <div>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Types</div>

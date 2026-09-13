@@ -37,3 +37,7 @@ __pycache__/
 *$py.class
 *.pt
 backend/data/forge/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

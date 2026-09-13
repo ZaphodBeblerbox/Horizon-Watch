@@ -296,7 +296,7 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, isVisi
     const activeRecord = activeRef ? recordLookup.get(`${activeRef.kind}:${activeRef.id}`) || { kind: activeRef.kind, id: activeRef.id, label: activeRef.id } : null
 
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "236px 1fr 336px", height: "100%", overflow: "hidden" }}>
+        <div data-testid="view-root-briefings" style={{ display: "grid", gridTemplateColumns: "236px 1fr 336px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             {/* Left — register + reference index */}
             <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 10 }}>
                 <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Briefings</div>
