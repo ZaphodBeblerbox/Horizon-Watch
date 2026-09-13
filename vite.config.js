@@ -16,7 +16,43 @@ export default defineConfig({
     plugins: [
         react(),
         VitePWA({
-            registerType: 'autoUpdate',
+            // Real root-cause fix (stale-chunk-404 + multi-minute-hang
+            // prompt), two real, compounding bugs found and fixed together:
+            //
+            // 1) injectRegister:'auto' (the default) injected a bare-bones
+            //    registerSW.js doing ONE navigator.serviceWorker.register()
+            //    on window load and nothing else — no periodic update
+            //    check, no onNeedRefresh/forced-activation handling. The
+            //    app never imported vite-plugin-pwa's own richer
+            //    virtual:pwa-register client helper (confirmed via a
+            //    repo-wide grep), so nothing ever re-checked for a new
+            //    worker beyond the browser's own slow, non-deterministic
+            //    native cadence. Fixed: injectRegister:false here, and
+            //    src/main.jsx now imports virtual:pwa-register directly,
+            //    polling every 30 min + on tab-focus.
+            // 2) registerType:'autoUpdate' presets the generated service
+            //    worker itself to call self.skipWaiting()/clientsClaim()
+            //    unconditionally on install — confirmed directly (built
+            //    dist/sw.js and inspected it). That races against a
+            //    client-driven onNeedRefresh flow: the new worker can
+            //    finish activating on its own, silently, before the page's
+            //    own JS ever observes a "waiting" worker to report —
+            //    onNeedRefresh then never fires, clientsClaim() hands the
+            //    new worker control in the background with no reload, and
+            //    the already-loaded (stale) page just keeps running old
+            //    code until some unrelated future navigation. Confirmed
+            //    live: with registerType:'autoUpdate', a real rebuild-and-
+            //    registration.update() test left an open tab NOT reloading
+            //    at all. Fixed: 'prompt' (vite-plugin-pwa's other real
+            //    registerType) leaves the generated SW's own skipWaiting/
+            //    clientsClaim behavior to the real workbox.skipWaiting/
+            //    clientsClaim settings below (both false) — only this
+            //    app's own onNeedRefresh -> updateSW(true) call now tells a
+            //    waiting worker to activate, so the client-driven reload
+            //    this prompt asks for ("at most one fast automatic
+            //    refresh") actually gets a chance to run.
+            registerType: 'prompt',
+            injectRegister: false,
             workbox: {
                 // Exclude large Cesium bundles from precache — they'd blow the 2 MiB limit
                 globPatterns: ['**/*.{css,html,ico,png,svg,woff2}'],

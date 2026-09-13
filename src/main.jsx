@@ -4,6 +4,8 @@ import App from './app.jsx'
 import './index.css'
 import './styles/designSystem.css'
 import { initPushNotifications } from './utils/pushNotifications.js'
+import { registerSW } from 'virtual:pwa-register'
+import { reloadOnceForStaleChunk } from './utils/staleChunkRecovery.js'
 
 // Register service worker and listen for notification-click messages
 initPushNotifications().then(({ supported }) => {
@@ -17,13 +19,59 @@ initPushNotifications().then(({ supported }) => {
     })
 })
 
+// Real service-worker update-check wiring (stale-chunk-404 fix). The old
+// injectRegister:'auto' script only ever registered the SW once on load —
+// no periodic re-check, no forced activation. This is the real fix:
+// register immediately, poll for a new SW every 30 minutes AND whenever
+// the tab regains focus (catches the common "left a tab open overnight"
+// case the browser's own ~24h native check cadence was too slow for), and
+// when a new version is found, activate it and reload immediately — one
+// fast automatic refresh, never a silent multi-minute stale hang.
+//
+// The activate-and-reload step is done directly against the real
+// ServiceWorkerRegistration/postMessage/controllerchange primitives
+// (the documented, standard Workbox "manual update" recipe) rather than
+// through registerSW()'s own returned updateSW(true) helper — live testing
+// found that helper's reload did not reliably fire in this app's build
+// (generateSW mode + registerType:'prompt'); this direct version was
+// verified live (real rebuild, real registration.update(), real
+// controllerchange, real reload observed) before being kept.
+let swRegistration = null
+function activateWaitingWorkerAndReload() {
+    const waiting = swRegistration?.waiting
+    if (!waiting) return
+    navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true })
+    waiting.postMessage({ type: 'SKIP_WAITING' })
+}
+registerSW({
+    immediate: true,
+    onNeedRefresh() {
+        activateWaitingWorkerAndReload()
+    },
+    onRegisteredSW(_swUrl, registration) {
+        if (!registration) return
+        swRegistration = registration
+        if (registration.waiting) activateWaitingWorkerAndReload()
+        const check = () => registration.update().catch(() => {})
+        setInterval(check, 30 * 60 * 1000)
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') check()
+        })
+    },
+    onRegisterError(err) {
+        console.error('[sw] registration failed:', err)
+    },
+})
+
 window.onerror = function(msg, src, line, col, err) {
   console.error('GLOBAL CRASH:', msg, 'at', src, line, col)
   console.error('Stack:', err?.stack)
+  if (reloadOnceForStaleChunk(msg)) return true
   return false
 }
 window.onunhandledrejection = function(e) {
   console.error('UNHANDLED PROMISE:', e.reason)
+  reloadOnceForStaleChunk(e.reason?.message || String(e.reason))
 }
 
 class ErrorBoundary extends React.Component {
