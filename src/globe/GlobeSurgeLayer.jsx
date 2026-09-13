@@ -83,9 +83,12 @@ function SurgePopup({ surge, x, y, visible, onClose }) {
                 left:           x,
                 top:            y,
                 width:          w,
-                background:     "rgba(10,18,35,0.95)",
-                backdropFilter: "blur(16px)",
-                WebkitBackdropFilter: "blur(16px)",
+                // Real glass round — was a private hardcoded rgba (never
+                // flipped with theme); now the one shared real map-hover-
+                // callout recipe (index.html's --map-tooltip-bg).
+                background:     "var(--map-tooltip-bg)",
+                backdropFilter: "blur(20px) saturate(1.4)",
+                WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                 border:         "1px solid rgba(255,255,255,0.08)",
                 borderRadius:   12,
                 overflow:       "hidden",

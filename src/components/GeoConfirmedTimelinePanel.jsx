@@ -121,7 +121,7 @@ export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, 
         : theatreOptions.reduce((s, t) => s + t.active_count, 0)
 
     return (
-        <div style={{
+        <div data-testid="glass-geoconfirmed-timeline-panel" style={{
             // Real inset on the right (56px = MapControlStack's 32px button
             // width + its own 16px edge margin + 8px clearance) so the
             // histogram/slider never renders underneath that always-on-top
