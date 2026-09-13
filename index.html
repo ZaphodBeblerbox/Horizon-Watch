@@ -33,6 +33,41 @@
             } catch (e) { /* private mode / storage blocked — falls back to the pre-existing defaults */ }
         })()
     </script>
+    <script>
+        // Real stale-deploy resilience — the literal last line of defense
+        // for the exact reported symptom: a hashed entry bundle
+        // (index-<hash>.js) 404ing because this page's own index.html was
+        // served stale (via an out-of-date service-worker cache) and still
+        // references a build the server no longer has. src/utils/
+        // staleChunkRecovery.js (bundled into that SAME entry bundle) is
+        // the real, shared implementation of this same guarded-reload
+        // logic for every OTHER case (a failed dynamic import inside an
+        // already-running app) — but it cannot help THIS specific failure,
+        // since if the entry bundle itself never loads, none of that
+        // bundled code ever runs either. This one small, dependency-free,
+        // inline duplicate (same sessionStorage key, same one-time-reload
+        // guard, deliberately kept in sync rather than a second competing
+        // policy) is unavoidable: it must survive in a world where the
+        // entire rest of this app's JS has failed to load.
+        (function () {
+            var FLAG = "hw-stale-chunk-reload-attempted"
+            window.addEventListener("error", function (event) {
+                var el = event.target
+                if (!el || (el.tagName !== "SCRIPT" && el.tagName !== "LINK")) return
+                var src = el.src || el.href || ""
+                if (src.indexOf("/assets/") === -1) return
+                var already = false
+                try { already = sessionStorage.getItem(FLAG) === "1" } catch (e) { /* private mode */ }
+                if (already) {
+                    console.error("[stale-chunk] " + src + " failed to load even after a reload — a real reload cannot fix this; not retrying again.")
+                    return
+                }
+                try { sessionStorage.setItem(FLAG, "1") } catch (e) { /* private mode — reload still proceeds */ }
+                console.warn("[stale-chunk] " + src + " failed to load (likely a stale cached index.html referencing a superseded deploy) — reloading once.")
+                window.location.reload()
+            }, true)
+        })()
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
