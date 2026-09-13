@@ -606,6 +606,14 @@ class SentinelScan(Base):
     raw_result_json       = Column(Text, nullable=True)
     alert_fired           = Column(Boolean, default=False)
     error_message         = Column(String, nullable=True)
+    # Real Imagery/Sentinel round — which real instrument produced this
+    # scan (OPTICAL default for every existing/optical row; SAR is set
+    # explicitly by sentinel_scanner.py's real SAR branch). Needed so
+    # imagery_pipeline.reference_scan() can enforce real same-sensor
+    # pairing — a scan's own detections already carried this per-row, but
+    # a SAR scan that (honestly) finds zero real vessels would otherwise
+    # be indistinguishable from an optical scan at the scan level.
+    instrument            = Column(String, nullable=False, default="OPTICAL")
     # The real fetched true-colour crop for this scan, base64-encoded — the
     # Imagery page's comparison view needs a real image to render; previously
     # nothing persisted the fetched bytes at all (image_crop_url/overlay_url
@@ -1773,6 +1781,9 @@ def migrate_db():
         if 'image_b64' not in ss_existing:
             cur.execute('ALTER TABLE sentinel_scans ADD COLUMN image_b64 TEXT')
             print('[db-migrate] sentinel_scans: added column image_b64')
+        if 'instrument' not in ss_existing:
+            cur.execute("ALTER TABLE sentinel_scans ADD COLUMN instrument TEXT DEFAULT 'OPTICAL'")
+            print('[db-migrate] sentinel_scans: added column instrument (real default OPTICAL — every existing row predates the real SAR path)')
     if 'sentinel_detections' in tables:
         sd2_existing = [row[1] for row in cur.execute('PRAGMA table_info(sentinel_detections)').fetchall()]
         if 'reviewed_status' not in sd2_existing:

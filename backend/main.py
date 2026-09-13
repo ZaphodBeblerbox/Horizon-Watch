@@ -12902,6 +12902,93 @@ async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
         return {"error": str(e)}
 
 
+# Real detection-oriented evalscript — raw VH/VV digital-number amplitude
+# as a 2-band output, no log-stretch/false-colour mapping (that's what
+# _EVALSCRIPT_SAR_VV_VH above is for — a human-legible preview, not model
+# input). AllenAI's vessel-detection-sentinels model (sar_detector.py,
+# restored/deployed this round) was trained on raw, uncalibrated Sentinel-1
+# GRD digital numbers, not sigma-nought-calibrated backscatter — so this
+# request below deliberately omits the "processing"/"backCoeff" key
+# _fetch_sentinel1_image_bytes uses for its visualization path.
+_EVALSCRIPT_SAR_RAW_VH_VV = """//VERSION=3
+function setup() {
+  return { input: ["VH", "VV"], output: { bands: 2, sampleType: "FLOAT32" } }
+}
+function evaluatePixel(s) {
+  return [s.VH, s.VV]
+}"""
+
+
+async def _fetch_sentinel1_raw_bands_geotiff(bounds: dict, max_age_days: int = 30,
+                                              width: int | None = None, height: int | None = None) -> dict:
+    """Real SAR-detection-oriented counterpart to _fetch_sentinel1_image_bytes
+    — same real OAuth/Process API plumbing, but returns a real 2-band
+    (VH, VV) GeoTIFF of raw digital-number amplitude (no calibration, no
+    visual stretch) for sar_detector.py's real detector to consume directly.
+    Returns {"image_bytes": <geotiff bytes>, "width", "height",
+    "instrument": "SAR"} on success, or {"error": "..."} on any failure.
+    Never raises."""
+    west  = bounds.get("west");  east  = bounds.get("east")
+    south = bounds.get("south"); north = bounds.get("north")
+    if None in (west, east, south, north):
+        return {"error": "bounds {north,south,east,west} required"}
+    if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
+        return {"error": "Copernicus credentials not configured"}
+
+    lat_span = abs(north - south); lng_span = abs(east - west)
+    if width and height:
+        width  = min(2500, max(32, int(width)))
+        height = min(2500, max(32, int(height)))
+    else:
+        max_span = max(lat_span, lng_span)
+        width = height = 512 if max_span < 0.1 else (1024 if max_span < 0.5 else 2048)
+
+    now = datetime.now(timezone.utc)
+    time_range = {
+        "from": (now - timedelta(days=max_age_days)).strftime("%Y-%m-%dT00:00:00Z"),
+        "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+    }
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": [west, south, east, north],
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+            },
+            "data": [{
+                "type": "sentinel-1-grd",
+                "dataFilter": {
+                    "timeRange": time_range,
+                    "mosaickingOrder": "mostRecent",
+                    "resolution": "HIGH",
+                },
+            }],
+        },
+        "output": {
+            "width":  width,
+            "height": height,
+            "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}],
+        },
+        "evalscript": _EVALSCRIPT_SAR_RAW_VH_VV,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client_h:
+            token, err = await _get_copernicus_access_token(client_h)
+            if not token:
+                return {"error": f"Sentinel Hub auth failed: {err}"}
+            resp = await client_h.post(
+                _SH_PROCESS_URL, json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if resp.status_code == 200:
+            return {"image_bytes": resp.content, "width": width, "height": height, "instrument": "SAR"}
+        detail = resp.text[:500]
+        print(f"[sentinel1-raw-bands] Process API {resp.status_code}: {detail}")
+        return {"error": f"Sentinel Hub API error {resp.status_code}", "detail": detail}
+    except Exception as e:
+        print(f"[sentinel1-raw-bands] fetch error: {e}")
+        return {"error": str(e)}
+
+
 @app.post("/api/sentinel/sar-imagery")
 async def sentinel_sar_imagery(request: Request):
     """Fetch a full Sentinel-1 GRD (SAR) image for a drawn bounding box.
@@ -16082,15 +16169,20 @@ import json as _json_wz
 import math as _math_wz
 
 
-# Real spec sensor options (#sc-sensor) — only sentinel2_optical has a real
-# deployed fetch+detect pipeline in this codebase today (Sentinel Hub/
-# Copernicus + the YOLO-OBB/DOTA optical detector). The other three are
-# real, valid, PERSISTABLE choices (an analyst's stated intent is never
-# silently dropped) but have no real backing pipeline — see
+# Real spec sensor options (#sc-sensor). sentinel2_optical (Sentinel Hub/
+# Copernicus + the YOLO-OBB/DOTA optical detector) and, as of this round,
+# sentinel1_sar (Sentinel Hub raw VH/VV bands + AllenAI's real
+# vessel-detection-sentinels Faster R-CNN + attribute model,
+# sar_detector.py — restored from real git history and wired into
+# sentinel_scanner.py's real scan path, tested end to end against a real
+# live Sentinel-1 fetch over the Strait of Hormuz) both have real deployed
+# fetch+detect pipelines. commercial_eo/commercial_sar remain real, valid,
+# PERSISTABLE choices (an analyst's stated intent is never silently
+# dropped) with no real backing pipeline yet — see
 # _launch_zone_scan_background's own gate below, which is the one real
 # place this is enforced rather than fabricating a result for them.
 _REAL_SENSOR_OPTIONS = ["sentinel2_optical", "sentinel1_sar", "commercial_eo", "commercial_sar"]
-_SENSOR_PIPELINES_DEPLOYED = {"sentinel2_optical"}
+_SENSOR_PIPELINES_DEPLOYED = {"sentinel2_optical", "sentinel1_sar"}
 
 def _zone_row_to_dict(row) -> dict:
     return {
@@ -16161,6 +16253,7 @@ def _scan_row_to_dict(row) -> dict:
         "alert_fired":          row.alert_fired,
         "error_message":        row.error_message,
         "has_image":            bool(getattr(row, "image_b64", None)),
+        "instrument":           getattr(row, "instrument", None) or "OPTICAL",
     }
 
 
@@ -16182,6 +16275,7 @@ def _detection_row_to_dict(row) -> dict:
         "detection_id":            row.detection_id,
         "scan_id":                 row.scan_id,
         "zone_id":                 row.zone_id,
+        "instrument":              row.instrument or "OPTICAL",
         "object_type":             row.object_type,
         "confidence":              row.confidence,
         "centroid_lat":            row.centroid_lat,

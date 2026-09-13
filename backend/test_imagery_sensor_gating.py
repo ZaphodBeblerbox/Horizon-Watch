@@ -46,8 +46,8 @@ import main  # noqa: E402
 check("_REAL_SENSOR_OPTIONS lists exactly the 4 real spec sensor values",
       set(main._REAL_SENSOR_OPTIONS) == {"sentinel2_optical", "sentinel1_sar", "commercial_eo", "commercial_sar"},
       str(main._REAL_SENSOR_OPTIONS))
-check("only sentinel2_optical is honestly marked as a real deployed pipeline",
-      main._SENSOR_PIPELINES_DEPLOYED == {"sentinel2_optical"}, str(main._SENSOR_PIPELINES_DEPLOYED))
+check("sentinel2_optical and sentinel1_sar (real AllenAI SAR detector, deployed this round) are honestly marked as real deployed pipelines, commercial_eo/commercial_sar are not",
+      main._SENSOR_PIPELINES_DEPLOYED == {"sentinel2_optical", "sentinel1_sar"}, str(main._SENSOR_PIPELINES_DEPLOYED))
 
 from fastapi.testclient import TestClient
 from database import WatchZone, get_db
@@ -61,23 +61,23 @@ with get_db() as db:
         system_id=system_id, name=f"Sensor gate test {suffix}",
         polygon_geojson=json.dumps(poly),
         bbox_min_lon=0, bbox_min_lat=0, bbox_max_lon=0.01, bbox_max_lat=0.01,
-        enabled=True, status="active", sensor_preference="sentinel1_sar",
+        enabled=True, status="active", sensor_preference="commercial_eo",
     )
     db.add(zone)
     db.commit()
-    check("throwaway zone created with a real non-deployed sensor_preference", zone.sensor_preference == "sentinel1_sar")
+    check("throwaway zone created with a real non-deployed sensor_preference", zone.sensor_preference == "commercial_eo")
 
 with TestClient(main.app) as client:
     got = client.get("/api/watch-zones").json()
     row = next((z for z in got if z["system_id"] == system_id), None)
-    check("GET /api/watch-zones exposes the real sensor_preference field", row is not None and row.get("sensor_preference") == "sentinel1_sar", str(row))
+    check("GET /api/watch-zones exposes the real sensor_preference field", row is not None and row.get("sensor_preference") == "commercial_eo", str(row))
 
     # The real, honest, immediate rejection — never reaches Copernicus/YOLO
     # for a sensor with no real deployed pipeline.
     r = client.post(f"/api/watch-zones/{system_id}/scan-now")
     check("scan-now on a non-deployed sensor is honestly rejected (409), not silently run against the optical detector",
           r.status_code == 409, str(r.status_code))
-    check("the real rejection message names the actual unsupported sensor", "sentinel1_sar" in r.json().get("detail", ""), str(r.json()))
+    check("the real rejection message names the actual unsupported sensor", "commercial_eo" in r.json().get("detail", ""), str(r.json()))
 
     # Switching the zone back to the one real deployed sensor is accepted
     # (persistence only checked here — not actually launching a real scan).
