@@ -30,6 +30,7 @@ import { test, expect } from "@playwright/test"
 import { execFileSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { PNG } from "pngjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BACKEND_DIR = path.resolve(__dirname, "../../backend")
@@ -139,6 +140,36 @@ async function computedOf(page, selector) {
     }, selector)
 }
 
+// Round 4 fix — a getComputedStyle match is NECESSARY but not SUFFICIENT
+// evidence that a pane is genuinely visually translucent: this exact repo
+// shipped Layers/Inspector with a fully correct token + backdrop-filter
+// (confirmed by this same computedOf check, every prior round) while the
+// map canvas underneath them never actually extended behind their real
+// screen position at all (a layout bug — flex siblings, not an overlay —
+// found only by real pixel sampling). This helper does what
+// getComputedStyle structurally cannot: it reads real, rendered, post-
+// compositing pixel values from an actual PNG screenshot (pngjs — Node's
+// built-in zlib does the real DEFLATE decompression PNG requires; no
+// headless-browser canvas trick can capture a real backdrop-filter's
+// actual compositor output any other way) and asserts they are NOT all
+// identical — a flat, unvarying color under a pane is exactly the
+// signature of "nothing real is behind this to blur", regardless of what
+// its own computed style claims.
+async function samplePaneEdgeColors(page, selector, { edgeOffset = 6, fromEdge = "left", sampleCount = 40 } = {}) {
+    const el = await page.$(selector)
+    const box = await el.boundingBox()
+    const buffer = await page.screenshot({ clip: box })
+    const png = PNG.sync.read(buffer)
+    const x = fromEdge === "left" ? edgeOffset : png.width - 1 - edgeOffset
+    const colors = []
+    for (let i = 0; i < sampleCount; i++) {
+        const y = Math.floor((i / sampleCount) * (png.height - 1))
+        const idx = (png.width * y + x) << 2
+        colors.push(`${png.data[idx]},${png.data[idx + 1]},${png.data[idx + 2]}`)
+    }
+    return colors
+}
+
 test.describe("theming regression guard — pane backgrounds + glass treatment", () => {
     // Collected per-theme so the "does it actually flip between themes"
     // assertion (the exact symptom of the historical regression) can be
@@ -181,6 +212,27 @@ test.describe("theming regression guard — pane backgrounds + glass treatment",
                         `${testid} must carry a real backdrop-filter blur in ${theme} theme (glass treatment) — got "${style.backdropFilter}"`
                     ).toMatch(/blur/)
                     collected[theme][testid] = style.backgroundColor
+                }
+
+                // Round 4 fix — real pixel-sampling check, the exact gap
+                // that let Layers/Inspector ship with correct computed
+                // styles but zero real visible translucency (the map
+                // canvas's own real layout never extended behind these
+                // panes at all — a flex-sibling, not overlay, bug found
+                // only by sampling actual rendered pixels). Fly to a real,
+                // visually-varied coastline first so there's real content
+                // to detect variation against.
+                await page.evaluate(() => {
+                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: 36.5, lon: -5.5, altitude: 400000 } }))
+                })
+                await page.waitForTimeout(2000)
+                for (const [testid, fromEdge] of [["glass-layers-pane", "left"], ["glass-inspector-pane", "right"]]) {
+                    const colors = await samplePaneEdgeColors(page, `[data-testid="${testid}"]`, { fromEdge })
+                    const uniqueColors = new Set(colors)
+                    expect(
+                        uniqueColors.size,
+                        `${testid} in ${theme} theme shows a real pixel-flat, unvarying color (${colors[0]}) across its whole height — this is the exact "glass mechanism is correct but nothing real is behind it to blur" regression (a layout bug: the map canvas's own real bounding rect must extend behind this pane, confirmed via document.querySelector('canvas').getBoundingClientRect() in the real browser). A getComputedStyle match alone cannot catch this.`
+                    ).toBeGreaterThan(1)
                 }
 
                 // GeoConfirmed historic-timeline panel (urgent glass-sweep

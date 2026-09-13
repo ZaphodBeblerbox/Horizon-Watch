@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from "recharts"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
+import { fetchWithTimeout } from "../utils/fetchWithTimeout.js"
 
 // GeoConfirmedTimelinePanel.jsx — GeoConfirmed historic-timeline round,
 // Parts 1-3. Auto-surfaced by Situation.jsx whenever the real News/
@@ -34,10 +35,20 @@ import { safeArray } from "../utils/safeArray.js"
 // what this panel needs anyway (a static scrub position across a 13-year
 // span with a density histogram). Built new, on purpose, rather than
 // extracting Replay's inline implementation.
-export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, endDate, onEndDateChange, onHeightChange }) {
+export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, endDate, onEndDateChange, onHeightChange, rightInset = 56 }) {
     const [theatreOptions, setTheatreOptions] = useState([])
     const [dateRange, setDateRange] = useState(null) // real {min_date, max_date}
     const [histogram, setHistogram] = useState(null) // real [{bucket, count}] or null while loading
+    // Round 4 fix — real, live-reported bug: this fetch previously had no
+    // timeout at all, so a hung/unresponsive backend (this repo's own
+    // real, disclosed continuous event-loop-blocking condition) left the
+    // "Loading real historic range…" text showing forever, with no way to
+    // tell "still working" apart from "actually failed". dateRangeError +
+    // retryTick below make that a real, distinct, honest state instead —
+    // and this is a generic "any fetch can hang" fix (fetchWithTimeout.js),
+    // not a special case for today's specific backend symptom.
+    const [dateRangeError, setDateRangeError] = useState(false)
+    const [retryTick, setRetryTick] = useState(0)
     const rootRef = useRef(null)
 
     // Round 3 fix (Part 6.3) — report this panel's real, measured rendered
@@ -66,25 +77,35 @@ export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, 
     // never a hardcoded theatre list.
     useEffect(() => {
         let cancelled = false
-        fetch(`${API_BASE}/api/geoconfirmed/theatres`)
+        fetchWithTimeout(`${API_BASE}/api/geoconfirmed/theatres`)
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => { if (!cancelled) setTheatreOptions(safeArray(d?.theatres)) })
-            .catch(() => {})
+            .catch(() => {}) // real, honest degrade — an empty chip row is a legitimate empty state, not a stuck one
         return () => { cancelled = true }
     }, [])
 
     // Real full span for the current theatre filter — sizes the slider's
-    // real bounds, never an assumed/hardcoded span.
+    // real bounds, never an assumed/hardcoded span. Real, bounded timeout +
+    // a distinct error state (Round 4 fix) — previously an unbounded fetch
+    // left "Loading real historic range…" showing forever on any hung/slow
+    // backend, with the loading and failed states visually identical
+    // (indistinguishable to the analyst) because there was no failed state
+    // at all.
     useEffect(() => {
         let cancelled = false
+        setDateRangeError(false)
         const params = new URLSearchParams()
         if (theatresKey) params.set("theatre", theatresKey)
-        fetch(`${API_BASE}/api/geoconfirmed/date-range?${params.toString()}`)
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (!cancelled && d?.min_date && d?.max_date) setDateRange(d) })
-            .catch(() => {})
+        fetchWithTimeout(`${API_BASE}/api/geoconfirmed/date-range?${params.toString()}`)
+            .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+            .then((d) => {
+                if (cancelled) return
+                if (d?.min_date && d?.max_date) setDateRange(d)
+                else setDateRangeError(true)
+            })
+            .catch(() => { if (!cancelled) setDateRangeError(true) })
         return () => { cancelled = true }
-    }, [theatresKey])
+    }, [theatresKey, retryTick])
 
     // Real occurrence-density histogram (Part 2) — one grouped-count fetch
     // per theatre-filter/date-range change, real server-side bucketing.
@@ -93,10 +114,10 @@ export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, 
         let cancelled = false
         const params = new URLSearchParams({ start_date: dateRange.min_date, end_date: dateRange.max_date })
         if (theatresKey) params.set("theatre", theatresKey)
-        fetch(`${API_BASE}/api/geoconfirmed/histogram?${params.toString()}`)
+        fetchWithTimeout(`${API_BASE}/api/geoconfirmed/histogram?${params.toString()}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => { if (!cancelled) setHistogram(safeArray(d?.buckets)) })
-            .catch(() => { if (!cancelled) setHistogram([]) })
+            .catch(() => { if (!cancelled) setHistogram([]) }) // real, honest degrade to "no real history for this filter" — dateRange's own error state (above) already covers the "actually hung" case
         return () => { cancelled = true }
     }, [dateRange, theatresKey])
 
@@ -161,7 +182,13 @@ export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, 
             // typically-dark map canvas, not the blue-grey pane family
             // every other panel in the app uses. Switched to the same
             // token AND recipe Situation.jsx's own .pane-glass class uses.
-            position: "absolute", left: 0, right: 56, bottom: 0, zIndex: 5,
+            // rightInset defaults to 56 (MapControlStack's 32px button
+            // width + its own 16px edge margin + 8px clearance) and grows
+            // by Inspector's real overlay width when Inspector is also
+            // open (Round 4 layout fix — see Situation.jsx's own
+            // inspectorOverlayWidth), so this panel's own content never
+            // renders underneath either.
+            position: "absolute", left: 0, right: rightInset, bottom: 0, zIndex: 5,
             background: "var(--pane-glass-bg)", backdropFilter: "blur(16px) saturate(115%)", WebkitBackdropFilter: "blur(16px) saturate(115%)",
             borderTop: "1px solid var(--line)", padding: "8px 12px 10px", display: "flex", flexDirection: "column", gap: 6,
         }}>
@@ -189,7 +216,12 @@ export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, 
                 )}
             </div>
 
-            {!dateRange ? (
+            {dateRangeError ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
+                    <span style={{ font: "400 11px var(--font)", color: "var(--sev-high)" }}>Couldn't load historic range — the backend may be slow or unreachable right now.</span>
+                    <button className="btn sm" onClick={() => setRetryTick((t) => t + 1)}>retry</button>
+                </div>
+            ) : !dateRange ? (
                 <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", padding: "8px 0" }}>Loading real historic range…</div>
             ) : histogram && histogram.length === 0 ? (
                 <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", padding: "8px 0" }}>No real GeoConfirmed history for this filter.</div>

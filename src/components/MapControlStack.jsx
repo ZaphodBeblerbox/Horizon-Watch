@@ -51,11 +51,19 @@ const BASEMAP_PRESETS = [
  * ControlButton, a thin divider instead of a second floating box) so it
  * reads as one continuous control cluster rather than a disconnected one.
  */
-export default function MapControlStack({ layers = null, onLocate, onZoomIn, onZoomOut, onFullscreen, isFullscreen = false, basemap = null }) {
+export default function MapControlStack({ layers = null, onLocate, onZoomIn, onZoomOut, onFullscreen, isFullscreen = false, basemap = null, rightInset = 0 }) {
     return (
         <div style={{
-            position: "absolute", right: 16, bottom: 16, zIndex: 40,
+            // Round 4 layout fix — the map is now a real full-bleed canvas
+            // behind the Layers/Inspector overlay panes (previously they
+            // were flex siblings, so this stack's own right:16 always fell
+            // within the map's own narrower flex-allocated width — now
+            // that same fixed 16 would fall underneath the Inspector pane
+            // whenever it's open). rightInset shifts this stack left by
+            // Inspector's real width so it stays in the visible map gutter.
+            position: "absolute", right: 16 + rightInset, bottom: 16, zIndex: 40,
             display: "flex", flexDirection: "column", gap: 6,
+            transition: "right 0.15s ease",
         }}>
             {layers && (
                 <LayersFlyout
