@@ -472,14 +472,23 @@ export default function GlobePopup({
 
     return (
         <>
-            {/* Map hover-callout card — full UI rebuild spec section 9, built
-                for real in the UI correction pass (Part 3.1): a small
-                floating plate, --bg-card-translucent, 8px radius, 1px
-                --border-strong, the one permitted drop-shadow anywhere in
-                the app. Only one ever visible (this component has exactly
-                one `tooltip` state slot); a full click always replaces it
-                with the full docked inspector (see the click handler above,
-                which clears this first). */}
+            {/* Map hover-callout card — full UI rebuild spec section 9. Real
+                glass round: this used to read --bg-card-translucent, a
+                legacy token an earlier round deliberately repointed at a
+                flat, opaque --bg-2 ("translucency is gone this round" —
+                index.html's own comment on that token) — a real, explicit
+                reversal of an even earlier decision, now itself reversed
+                again by direct instruction: every map hover-callout must
+                carry the same real glass treatment as Inspector/Layers and
+                the GeoConfirmed timeline panel. Switched to the one real
+                shared map-hover-callout recipe (--map-tooltip-bg + blur(20px)
+                saturate(1.4)) rather than mutating --bg-card-translucent
+                itself, since Dashboard.jsx and Sources.jsx also read that
+                token and are not in scope for this change. Only one ever
+                visible (this component has exactly one `tooltip` state
+                slot); a full click always replaces it with the full docked
+                inspector (see the click handler above, which clears this
+                first). */}
             {tooltip && (
                 <div
                     style={{
@@ -488,7 +497,9 @@ export default function GlobePopup({
                         top:           Math.max(Math.min(tooltip.y - 36, (window.innerHeight || 800) - 100 - (isMob ? 56 : 16)), 56),
                         zIndex:        10001,
                         width:         "min(220px, calc(100vw - 32px))",
-                        background:    "var(--bg-card-translucent)",
+                        background:    "var(--map-tooltip-bg)",
+                        backdropFilter: "blur(20px) saturate(1.4)",
+                        WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                         border:        "1px solid var(--border-strong)",
                         borderRadius:  "var(--radius-md)",
                         boxShadow:     "var(--shadow-callout)",
@@ -555,7 +566,9 @@ export default function GlobePopup({
                         width:         W,
                         maxHeight:     520,
                         overflowY:     "auto",
-                        background:    "#0F1721",
+                        background:    "var(--map-tooltip-bg)",
+                        backdropFilter: "blur(20px) saturate(1.4)",
+                        WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                         border:        "var(--elevation-2)",
                         borderRadius:  8,
                         pointerEvents: "auto",

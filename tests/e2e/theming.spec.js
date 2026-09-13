@@ -182,6 +182,22 @@ test.describe("theming regression guard — pane backgrounds + glass treatment",
                     ).toMatch(/blur/)
                     collected[theme][testid] = style.backgroundColor
                 }
+
+                // GeoConfirmed historic-timeline panel (urgent glass-sweep
+                // round) — a real floating window over the map, auto-shown
+                // by the News toggle; must carry the same real glass
+                // treatment as Inspector/Layers, never a private tint.
+                await page.click('button[title="News"]')
+                await page.waitForSelector('[data-testid="glass-geoconfirmed-timeline-panel"]', { timeout: 10000 })
+                const gcStyle = await computedOf(page, '[data-testid="glass-geoconfirmed-timeline-panel"]')
+                expect(gcStyle, "glass-geoconfirmed-timeline-panel must be present once News is toggled on").not.toBeNull()
+                expect(
+                    gcStyle.backdropFilter,
+                    `GeoConfirmed timeline panel must carry a real backdrop-filter blur in ${theme} theme — got "${gcStyle.backdropFilter}"`
+                ).toMatch(/blur/)
+                collected[theme]["glass-geoconfirmed-timeline-panel"] = gcStyle.backgroundColor
+                await page.click('button[title="News"]') // real toggle-off — confirms it un-mounts, not just visually hides
+                await expect(page.locator('[data-testid="glass-geoconfirmed-timeline-panel"]')).toHaveCount(0)
             }
         })
     }
@@ -202,7 +218,7 @@ test.describe("theming regression guard — pane backgrounds + glass treatment",
                 `${win.key}'s background must actually flip between themes — dark (${collected.dark[win.key]}) and light (${collected.light[win.key]}) resolved identically, meaning this window ignores data-theme entirely (the exact "same dark background in light mode too" regression).`
             ).not.toBe(collected.light[win.key])
         }
-        for (const testid of ["glass-layers-pane", "glass-inspector-pane"]) {
+        for (const testid of ["glass-layers-pane", "glass-inspector-pane", "glass-geoconfirmed-timeline-panel"]) {
             expect(
                 collected.dark[testid],
                 `${testid}'s glass tint must actually flip between themes — got identical values in both`
