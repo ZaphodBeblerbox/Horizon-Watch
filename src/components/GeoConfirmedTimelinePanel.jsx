@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from "recharts"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
@@ -34,10 +34,31 @@ import { safeArray } from "../utils/safeArray.js"
 // what this panel needs anyway (a static scrub position across a 13-year
 // span with a density histogram). Built new, on purpose, rather than
 // extracting Replay's inline implementation.
-export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, endDate, onEndDateChange }) {
+export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, endDate, onEndDateChange, onHeightChange }) {
     const [theatreOptions, setTheatreOptions] = useState([])
     const [dateRange, setDateRange] = useState(null) // real {min_date, max_date}
     const [histogram, setHistogram] = useState(null) // real [{bucket, count}] or null while loading
+    const rootRef = useRef(null)
+
+    // Round 3 fix (Part 6.3) — report this panel's real, measured rendered
+    // height so the caller (Situation.jsx -> GlobeView.jsx) can push the
+    // map's own bottom-left scale-bar/coordinate-readout chrome up above
+    // it. A ResizeObserver, not a hardcoded constant, since this panel's
+    // real height varies with content (theatre-chip row wrapping, the
+    // "scrubbed to <date>" button appearing/disappearing).
+    useEffect(() => {
+        const el = rootRef.current
+        if (!el || !onHeightChange) return
+        // Real border-box height (el.offsetHeight), not ResizeObserver's
+        // own default contentRect — contentRect excludes this panel's real
+        // padding (8px top + 10px bottom) and border (1px), so relying on
+        // it directly undercounted the panel's true rendered height by
+        // ~19px, which is exactly what caused the map chrome to still
+        // overlap the panel's top edge by a few pixels after the "fix".
+        const ro = new ResizeObserver(() => onHeightChange(Math.ceil(el.offsetHeight)))
+        ro.observe(el)
+        return () => { ro.disconnect(); onHeightChange(0) }
+    }, [onHeightChange])
 
     const theatresKey = theatres.length ? [...theatres].sort().join(",") : ""
 
@@ -121,13 +142,27 @@ export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, 
         : theatreOptions.reduce((s, t) => s + t.active_count, 0)
 
     return (
-        <div data-testid="glass-geoconfirmed-timeline-panel" style={{
+        <div ref={rootRef} data-testid="glass-geoconfirmed-timeline-panel" style={{
             // Real inset on the right (56px = MapControlStack's 32px button
             // width + its own 16px edge margin + 8px clearance) so the
             // histogram/slider never renders underneath that always-on-top
             // (zIndex 40) button column.
+            //
+            // Round 3 fix: this is a large, wide, DOCKED panel — the same
+            // real family as the Layers/Inspector panes (--pane-glass-bg +
+            // blur(16px) saturate(115%)), not a small hover tooltip. It
+            // previously used --map-tooltip-bg (rgba(10,14,20,.92) dark),
+            // a recipe designed for small high-contrast callouts against
+            // arbitrary map imagery — correct on paper (real token, real
+            // blur, genuinely flips between themes, which is why the
+            // automated test reported it passing) but visibly wrong at
+            // this panel's scale: that recipe's darker base color + higher
+            // (92%) opacity reads as near-solid black over this app's
+            // typically-dark map canvas, not the blue-grey pane family
+            // every other panel in the app uses. Switched to the same
+            // token AND recipe Situation.jsx's own .pane-glass class uses.
             position: "absolute", left: 0, right: 56, bottom: 0, zIndex: 5,
-            background: "var(--map-tooltip-bg)", backdropFilter: "blur(20px) saturate(1.4)", WebkitBackdropFilter: "blur(20px) saturate(1.4)",
+            background: "var(--pane-glass-bg)", backdropFilter: "blur(16px) saturate(115%)", WebkitBackdropFilter: "blur(16px) saturate(115%)",
             borderTop: "1px solid var(--line)", padding: "8px 12px 10px", display: "flex", flexDirection: "column", gap: 6,
         }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
