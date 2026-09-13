@@ -125,9 +125,25 @@ def write_alert(alert_dict: dict):
     entity-linking failure must never break the primary alert write itself.
     """
     result = _write_alert_base(alert_dict)
-    # Feed every alert to the fusion engine for multi-domain correlation
-    try:
-        if _fusion_engine:
+    # Feed every NEWLY-WRITTEN alert to the fusion engine for multi-domain
+    # correlation. Real correctness fix (2026-09 backend event-loop-blocking
+    # audit): this used to call on_signal() unconditionally, even when
+    # `result` was None — which _write_alert_base() (alert_writer.write_alert)
+    # returns both on a real write failure AND on its own documented
+    # idempotent duplicate-skip ("write_alert() itself skips silently if
+    # [the alert_id] already exists"). geoconfirmed.py's 30-minute scheduled
+    # sync (_geoconfirmed_sync_loop) re-submits the SAME ~3,100+ real,
+    # unchanged historic placemarks (deterministic GC-<id> alert_id) on
+    # every single pass — confirmed live, 2026-09 — so every one of them was
+    # being re-fed into fusion_engine.on_signal() every 30 minutes forever,
+    # needlessly re-running the expensive geo-key resolution
+    # (correlation_scoring.find_or_create_radius_geo_key) over data that had
+    # not changed at all since the previous pass. Skipping the fusion feed
+    # whenever the underlying alert row wasn't actually newly written is the
+    # real, generic fix — it applies identically to every alert-writing call
+    # site, not just GeoConfirmed's.
+    if result and _fusion_engine:
+        try:
             _fusion_engine.on_signal({
                 "signal_id":     alert_dict.get("id") or result or "",
                 "domain":        (alert_dict.get("source") or alert_dict.get("domain") or "UNKNOWN").upper(),
@@ -141,8 +157,8 @@ def write_alert(alert_dict: dict):
                 "summary":       (alert_dict.get("title") or "")[:200],
                 "created_at":    datetime.now(timezone.utc).isoformat(),
             })
-    except Exception:
-        pass
+        except Exception:
+            pass
     # Link entities (cables/ports/airports/zones) for every alert. Prefer the
     # id the DB write actually used (`result`) over alert_dict's own "id" —
     # several call sites don't set one up front and rely on write_alert/
@@ -699,6 +715,22 @@ _executor = ThreadPoolExecutor(max_workers=4)   # for blocking I/O in sync extra
 # starve interactive request handling, regardless of how much per-article
 # work it does.
 _news_executor = ThreadPoolExecutor(max_workers=1)
+# Dedicated, single-worker executor for the GeoConfirmed scheduled sync only
+# (backend event-loop-blocking audit, 2026-09) — same real reasoning as
+# _news_executor immediately above. geoconfirmed.run_ingest() re-processes
+# every real placemark in a 90-day window (~3,100+ real rows live) through
+# write_alert()/fusion_engine.on_signal() every 30 minutes; even after the
+# correctness fix (write_alert now skips the fusion feed for an alert that
+# already existed) and the geo-key-resolution complexity fix (correlation_
+# scoring.find_or_create_radius_geo_key — see its docstring), this is still
+# real, comprehensive, DB-heavy batch work with no natural yield points. It
+# previously shared the general 4-worker _executor with dozens of other,
+# short, latency-sensitive on-demand call sites (icao24 photo/route lookups,
+# city/spaceflight/stock article fetches, snapshot writers, …) — a long
+# GeoConfirmed sync could occupy one of only 4 slots for its whole duration,
+# starving those unrelated requests. Isolating it here means it can't do
+# that regardless of how long any future sync takes.
+_geoconfirmed_executor = ThreadPoolExecutor(max_workers=1)
 _NEWS_STORE_MAX_ARTICLES = 2000
 _NEWS_WINDOW_HOURS = 168
 _NEWS_MARKER_WINDOW_HOURS = 168
@@ -11156,13 +11188,30 @@ async def startup_event():
             try:
                 loop = asyncio.get_event_loop()
                 import geoconfirmed as _gc
-                stats = await loop.run_in_executor(_executor, _gc.run_ingest)
+                # Real watchdog (backend event-loop-blocking audit, 2026-09):
+                # this is the real, confirmed source of the disclosed
+                # "[FUSION] Evaluating GEO:..." CPU-pegging condition — see
+                # correlation_scoring.find_or_create_radius_geo_key's
+                # docstring and write_alert()'s comment above for the two
+                # real bugs (an O(n) per-call geo-key scan, and needless
+                # reprocessing of unchanged data) this pass fixed. Loud,
+                # honest timing here so a future regression that reintroduces
+                # this class of bug is immediately visible in logs instead
+                # of silently rediscovered an hour into an unresponsive
+                # backend, the way this one was.
+                _gc_sync_start = time.monotonic()
+                stats = await loop.run_in_executor(_geoconfirmed_executor, _gc.run_ingest)
+                _gc_sync_s = time.monotonic() - _gc_sync_start
                 total_inserted = sum(p.get("inserted", 0) for p in stats.get("placemarks", []))
                 total_updated = sum(p.get("updated", 0) for p in stats.get("placemarks", []))
                 total_removed = sum(p.get("removed", 0) for p in stats.get("placemarks", []))
                 print(f"[geoconfirmed] Scheduled sync: +{total_inserted} ~{total_updated} "
                       f"-{total_removed} across {len(stats.get('theatres', []))} theatres; "
-                      f"linking={stats.get('linking')}")
+                      f"linking={stats.get('linking')} ({_gc_sync_s:.1f}s)")
+                if _gc_sync_s > 60:
+                    print(f"[geoconfirmed] [WATCHDOG] Scheduled sync took {_gc_sync_s:.1f}s "
+                          f"(>60s threshold) — investigate for a performance regression before "
+                          f"this recurs every 30 minutes indefinitely")
             except Exception as _ge:
                 print(f"[geoconfirmed] Scheduled sync failed: {_ge}")
             await asyncio.sleep(1800)

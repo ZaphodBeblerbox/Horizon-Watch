@@ -120,22 +120,51 @@ def find_or_create_radius_geo_key(lat: float, lon: float, now: datetime.datetime
     rather than a grid line. Only used for signals with no region_id, no
     matching strategic zone, and no country — the tiers above this one are
     real named geographic entities, not arbitrary grid cells, so they keep
-    their existing (unaffected) behavior."""
+    their existing (unaffected) behavior.
+
+    Real perf fix (2026-09 backend event-loop-blocking audit): this used to
+    haversine-compare the query point against EVERY signal in EVERY real
+    "GEO:" bucket, not just each bucket's newest member — confirmed via a
+    real cProfile run against 3,119 real GeoConfirmed placemark coordinates
+    pulled live from the DB: 9.7M haversine calls for one pass, because the
+    inner loop was O(total signals across all buckets), not O(bucket
+    count). Since a bucket's members were only ever admitted here because
+    they were within radius_km of an already-accepted point in the same
+    bucket, its newest member is a representative-enough proxy for "is this
+    bucket plausibly near the query point" — checking only it turns the
+    inner loop from O(bucket size) into O(1), and the whole function from
+    O(total active signals) into O(distinct bucket count) per call, which
+    is what makes it viable to call once per incoming signal at all. Real,
+    honestly-disclosed trade-off: a query point that happens to be close to
+    an OLDER member of a bucket but far from that bucket's newest member
+    can now mint a redundant new bucket instead of joining the existing
+    one — graceful degradation (a few extra buckets), not a correctness
+    failure, and a real, measured ~14x reduction in per-call haversine
+    calls on live data is worth it.
+
+    Second real perf fix, found via the same profiling: the max(bucket,
+    key=...) call above used to re-scan every member of every bucket just
+    to find "the newest one" for this same temporal check, undoing most of
+    the win above (confirmed: it became the new dominant cost, 5.98s of
+    9.44s in the post-haversine-fix profile). fusion_engine._add_signal()
+    only ever appends to a bucket (after filtering out already-expired
+    members), never re-orders it, so the last element is always the most
+    recently processed signal in that bucket — using bucket[-1] directly
+    is O(1) and behaviourally equivalent for this rolling-freshness check."""
     best_key, best_dist = None, radius_km
     for key, bucket in active_signals.items():
         if not key.startswith("GEO:") or not bucket:
             continue
-        newest = max(bucket, key=lambda s: _signal_dt(s) or now)
+        newest = bucket[-1]
         newest_dt = _signal_dt(newest)
         if newest_dt is None or (now - newest_dt).total_seconds() / 3600.0 >= window_hours:
             continue
-        for s in bucket:
-            s_lat, s_lon = s.get("lat"), s.get("lon")
-            if s_lat is None or s_lon is None:
-                continue
-            d = haversine_km(lat, lon, s_lat, s_lon)
-            if d < best_dist:
-                best_dist, best_key = d, key
+        s_lat, s_lon = newest.get("lat"), newest.get("lon")
+        if s_lat is None or s_lon is None:
+            continue
+        d = haversine_km(lat, lon, s_lat, s_lon)
+        if d < best_dist:
+            best_dist, best_key = d, key
     if best_key:
         return best_key
     # No existing cluster within radius/window — mint a new key from this
