@@ -35,6 +35,8 @@ import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
+import GeoConfirmedTimelinePanel from "../components/GeoConfirmedTimelinePanel.jsx"
+import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
 
 const API = API_BASE
 const REFRESH_MS = 60000
@@ -237,6 +239,27 @@ export default function Situation({ onOpenDossier }) {
     const [contextOn, setContextOn] = useState({ risk: false, graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
     const [exportOpen, setExportOpen] = useState(false)
+
+    // GeoConfirmed historic-timeline round — real per-user, server-
+    // persisted theatre selection (Part 3.4), same settingsStore.js
+    // apply-then-persist pattern every other real filter/view setting in
+    // this app already uses. geoConfirmedEndDate (the scrub-slider
+    // position) is deliberately NOT persisted — Part 1.2 only asks the
+    // slider to default sensibly on open, not to remember a scrubbed
+    // historic position across sessions the way the theatre filter does.
+    const [geoConfirmedTheatres, setGeoConfirmedTheatres] = useState(() => getSettings()?.mapLayers?.geoConfirmedTheatres || [])
+    const [geoConfirmedEndDate, setGeoConfirmedEndDate] = useState(null)
+    useEffect(() => subscribeSettings((s) => setGeoConfirmedTheatres(s?.mapLayers?.geoConfirmedTheatres || [])), [])
+    function handleGeoConfirmedTheatresChange(next) {
+        setGeoConfirmedTheatres(next)
+        updateSetting("mapLayers.geoConfirmedTheatres", next)
+    }
+    // Part 1.1 — the timeline panel is auto-shown by the News toggle and
+    // never persists detached from it; switching News off resets any
+    // in-progress scrub back to live, so re-enabling News never silently
+    // reopens the map filtered to a stale historic date the analyst can no
+    // longer see the panel/slider for.
+    useEffect(() => { if (!groupsOn.news) setGeoConfirmedEndDate(null) }, [groupsOn.news])
 
     // V3 Phase 1, §5.1 — real live mirror of this filter state, published
     // on every change so a session-save action can read the current
@@ -720,6 +743,8 @@ export default function Situation({ onOpenDossier }) {
                     <GlobeView
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
                         geoConfirmedEnabled={groupsOn.news}
+                        geoConfirmedTheatres={geoConfirmedTheatres}
+                        geoConfirmedEndDate={geoConfirmedEndDate}
                         /* Real root-cause fix — the Time window/severity-
                            floor selector previously never reached the map
                            at all (only the domain on/off toggles did); the
@@ -751,6 +776,19 @@ export default function Situation({ onOpenDossier }) {
                         per the map-overlay-geometry table it does not belong
                         on the map surface at all; it now lives inside the
                         Inspector pane only (both its states, below). */}
+                    {/* GeoConfirmed historic-timeline panel — Part 1.1:
+                        auto-surfaced by the real News/GeoConfirmed toggle,
+                        never a separate page nav, never persists detached
+                        from it (unmounts, not just visually hides, the
+                        instant groupsOn.news goes false). */}
+                    {groupsOn.news && (
+                        <GeoConfirmedTimelinePanel
+                            theatres={geoConfirmedTheatres}
+                            onTheatresChange={handleGeoConfirmedTheatresChange}
+                            endDate={geoConfirmedEndDate}
+                            onEndDateChange={setGeoConfirmedEndDate}
+                        />
+                    )}
                 </div>
 
                 {/* Density strip */}
