@@ -45,6 +45,11 @@ export const DEFAULTS = {
     soundElevated:       false,
     toastsEnabled:       true,
     toastsCriticalOnly:  false,
+    // GeoConfirmed historic-timeline round (Part 3.4) — the analyst's real
+    // theatre-filter selection for the timeline panel, persisted the same
+    // way every other per-user filter/view setting in this store is. []
+    // means "all theatres" (never resets to some other implied default).
+    mapLayers: { geoConfirmedTheatres: [] },
 }
 
 let _settings = { ...DEFAULTS }

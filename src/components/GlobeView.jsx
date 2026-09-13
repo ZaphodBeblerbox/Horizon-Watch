@@ -116,6 +116,16 @@ export default function GlobeView({
     // points (it visualizes news-VOLUME surge anomalies from its own
     // /api/surge/events fetch, not individual articles).
     geoConfirmedEnabled = false,
+    // Historic-timeline round — the panel's real theatre multi-select and
+    // scrub-slider position, forwarded straight through to
+    // GlobeGeoConfirmedLayer's own fetch (which already owns all real
+    // GeoConfirmed filtering server-side; see that file's own doc comment
+    // for why this is a real, single, coherent extension rather than a
+    // second parallel filter). null/[] means "no theatre filter" / "live,
+    // anchored at now" — every existing caller that doesn't pass these
+    // keeps current unfiltered/live behavior unchanged.
+    geoConfirmedTheatres = null,
+    geoConfirmedEndDate = null,
     // Real root-cause fix (Time-window-doesn't-filter-the-map bug) — the
     // same real time-window/severity-floor selector Situation.jsx's own
     // header/legend/histogram counts already use (src/lib/
@@ -707,6 +717,8 @@ export default function GlobeView({
                 <GlobeGeoConfirmedLayer
                     enabled={geoConfirmedEnabled}
                     {...(signalWindowHours != null ? { maxAgeDays: Math.max(1, Math.ceil(signalWindowHours / 24)) } : {})}
+                    theatres={geoConfirmedTheatres}
+                    endDate={geoConfirmedEndDate}
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeSurgeLayer        enabled={eventsEnabled} windowHours={signalWindowHours} maxRank={signalMaxRank} />
