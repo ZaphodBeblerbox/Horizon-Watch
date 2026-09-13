@@ -501,7 +501,7 @@ export default function Analytics() {
     }
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
+        <div data-testid="view-root-analytics" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             <div style={{
                 height: 28, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)",
                 display: "flex", alignItems: "center", gap: 10, padding: "0 12px",

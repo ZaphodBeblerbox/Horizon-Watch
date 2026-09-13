@@ -192,7 +192,7 @@ export default function MyWork() {
     }, [])
 
     return (
-        <div style={{ display: "flex", height: "100%", background: "var(--bg-0)" }}>
+        <div data-testid="view-root-mywork" style={{ display: "flex", height: "100%", background: "var(--bg-0)" }}>
             <div style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-3)", borderBottom: "1px solid var(--line)" }}>
                     <span style={{ font: "700 13px var(--font)", color: "var(--txt)" }}>My work</span>

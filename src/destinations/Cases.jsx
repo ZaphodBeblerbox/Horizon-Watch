@@ -177,7 +177,7 @@ export default function Cases() {
     const uid = currentUserId()
 
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "260px 1fr 280px", height: "100%", overflow: "hidden" }}>
+        <div data-testid="view-root-cases" style={{ display: "grid", gridTemplateColumns: "260px 1fr 280px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             {/* Left — case list */}
             <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", display: "flex", flexDirection: "column" }}>
                 <div style={{ padding: 10, borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>

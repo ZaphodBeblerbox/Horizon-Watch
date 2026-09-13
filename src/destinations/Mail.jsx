@@ -4,7 +4,7 @@
 // to route to.
 export default function Mail() {
     return (
-        <div style={{ padding: 24, color: "var(--txt-3)", font: "400 13px var(--font)" }}>
+        <div data-testid="view-root-mail" style={{ padding: 24, color: "var(--txt-3)", font: "400 13px var(--font)", height: "100%", boxSizing: "border-box", background: "var(--bg-0)" }}>
             Mail
         </div>
     )

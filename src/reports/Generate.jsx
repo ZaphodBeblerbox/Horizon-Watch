@@ -261,7 +261,7 @@ export default function Generate({ onOpenTab }) {
     const genState = running ? "running" : cancelled ? "cancelled" : completedReport ? "complete" : "idle"
 
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "290px 1fr 322px", height: "100%", overflow: "hidden" }}>
+        <div data-testid="view-root-generate" style={{ display: "grid", gridTemplateColumns: "290px 1fr 322px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             {/* Left — parameters. Panehead matches the reference's "Briefing
                 parameters" header (HorizonWatch.html:318). */}
             <div style={{ borderRight: "1px solid var(--line)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
