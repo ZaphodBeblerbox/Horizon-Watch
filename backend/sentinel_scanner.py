@@ -122,6 +122,7 @@ class SentinelScanner:
                     alert_fired=bool(result.get("alert_fired", False)),
                     error_message=result.get("error_message"),
                     image_b64=result.get("image_b64"),
+                    instrument=result.get("instrument", "OPTICAL"),
                 )
                 db.add(scan_row)
 
@@ -130,14 +131,15 @@ class SentinelScanner:
                         detection_id=f"DET-{uuid.uuid4().hex[:12]}",
                         scan_id=scan_id,
                         zone_id=zone_id,
-                        # This scanner only ever runs the optical Sentinel-2 /
-                        # YOLO-OBB pipeline (sentinel_ml.py) — a separate real
-                        # Sentinel-1 SAR ship-detection pipeline (sar_detector.py)
-                        # used to exist but was confirmed unwired to any live
-                        # caller and removed (2026-10 alert/detector audit
-                        # follow-up); nothing writes SAR detections through
-                        # this path, so "OPTICAL" is always correct here, not
-                        # a guess.
+                        # Real Imagery/Sentinel round update: sar_detector.py
+                        # (AllenAI's vessel-detection-sentinels model) is now
+                        # restored and wired in via _run_sar_scan_async() above
+                        # for any zone with sensor_preference="sentinel1_sar" —
+                        # its real detections are already dicts carrying
+                        # instrument="SAR" explicitly; every optical detection
+                        # still has no "instrument" key of its own, so the
+                        # "OPTICAL" default below is what actually applies to
+                        # those, not a blanket assumption.
                         instrument=det.get("instrument", "OPTICAL"),
                         object_type=det["object_type"],
                         confidence=det["confidence"],
@@ -194,7 +196,6 @@ class SentinelScanner:
 
     async def _run_scan_async(self, zone_dict: dict, zone_baseline: float = 0.0) -> dict:
         from main import _satellite_search_impl, _fetch_sentinel_image_bytes
-        import sentinel_ml
 
         min_lon = zone_dict["bbox_min_lon"]; min_lat = zone_dict["bbox_min_lat"]
         max_lon = zone_dict["bbox_max_lon"]; max_lat = zone_dict["bbox_max_lat"]
@@ -205,6 +206,18 @@ class SentinelScanner:
         # sentinel_ml.py's detection functions take {min_lon,min_lat,max_lon,max_lat}
         ml_bbox = {"min_lon": min_lon, "min_lat": min_lat, "max_lon": max_lon, "max_lat": max_lat}
 
+        # Real SAR branch (Imagery/Sentinel round, Part 4) — a zone whose
+        # real sensor_preference is sentinel1_sar runs an entirely
+        # different real pipeline (Sentinel-1 raw bands + AllenAI's real
+        # vessel-detection-sentinels model, sar_detector.py) instead of the
+        # Sentinel-2/YOLO-OBB optical path below. Kept as an early branch
+        # here (not interleaved into the optical code) since the two real
+        # pipelines share almost nothing — different fetch API, different
+        # model, different real scene-freshness source.
+        if (zone_dict.get("sensor_preference") or "sentinel2_optical") == "sentinel1_sar":
+            return await self._run_sar_scan_async(zone_dict, bounds_wsen)
+
+        import sentinel_ml
         raw_ml_tasks = zone_dict.get("ml_tasks")
         try:
             requested_tasks = json.loads(raw_ml_tasks) if isinstance(raw_ml_tasks, str) else (raw_ml_tasks or [])
@@ -321,5 +334,95 @@ class SentinelScanner:
             "raw_result": {"requested_tasks": requested_tasks, "run_tasks": run_tasks},
             "alert_fired": alert_fired,
             "detections": all_detections,
+            **base_meta,
+        }
+
+    async def _run_sar_scan_async(self, zone_dict: dict, bounds_wsen: dict) -> dict:
+        """Real Sentinel-1 SAR scan path (Imagery/Sentinel round, Part 4).
+        Fetches real raw VH/VV bands via Sentinel Hub (main.py's
+        _fetch_sentinel1_raw_bands_geotiff — the same real OAuth/Process
+        API plumbing the optical path's own Sentinel-2 fetch uses) and
+        runs AllenAI's real vessel-detection-sentinels model
+        (sar_detector.py, restored + deployed this round) end to end.
+        Every real detection this returns is tagged instrument="SAR" —
+        see SentinelScanner.run_scan()'s own comment on why that's no
+        longer always "OPTICAL"."""
+        import base64
+        from main import _fetch_sentinel1_raw_bands_geotiff
+        import sar_detector
+
+        img_result = await _fetch_sentinel1_raw_bands_geotiff(bounds_wsen, max_age_days=30)
+        if img_result.get("error"):
+            return {"status": "error", "error_message": f"Sentinel-1 image fetch failed: {img_result['error']}", "instrument": "SAR"}
+
+        tiff_bytes = img_result["image_bytes"]
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        base_meta = {
+            "instrument": "SAR",
+            # Sentinel Hub's mosaickingOrder="mostRecent" resolves the real
+            # underlying acquisition server-side but doesn't return its
+            # exact timestamp to this request shape — honestly reported as
+            # "now" (when this fetch happened) rather than a fabricated
+            # acquisition date; cloud_cover/image_age concepts don't apply
+            # to a SAR fetch at all (real, deliberate None, not a copy of
+            # the optical path's fields).
+            "image_id": None,
+            "image_timestamp_utc": now_utc.replace(tzinfo=None),
+            "cloud_cover_percent": None,
+            "image_age_hours": None,
+        }
+
+        try:
+            sar_dets = sar_detector.run_sar_ship_detection_from_geotiff_bytes(tiff_bytes)
+        except sar_detector.SarDetectorError as e:
+            return {"status": "error", "error_message": f"SAR detection failed: {e}", **base_meta}
+        except Exception as e:
+            return {"status": "error", "error_message": f"SAR detection crashed: {type(e).__name__}: {e}", **base_meta}
+
+        # Real preview image for the Imagery comparison view — generated
+        # locally from the same real fetched/rescaled bands rather than a
+        # second live Sentinel Hub call, using the false-colour VH/VV/ratio
+        # mapping _EVALSCRIPT_SAR_VV_VH already establishes as this app's
+        # real SAR visual convention.
+        try:
+            import numpy as np
+            from PIL import Image as _PILImage
+            prep = sar_detector.preprocess_raw_geotiff_bytes(tiff_bytes)
+            vh, vv = prep["array"][0].astype(np.float32), prep["array"][1].astype(np.float32)
+            ratio = np.clip(vh - vv + 128, 0, 255).astype(np.uint8)
+            preview = np.stack([vv.astype(np.uint8), vh.astype(np.uint8), ratio], axis=-1)
+            buf = io.BytesIO()
+            _PILImage.fromarray(preview, mode="RGB").save(buf, format="JPEG", quality=87)
+            base_meta["image_b64"] = base64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception as e:
+            print(f"[sentinel-scanner] SAR preview image generation failed (non-fatal): {e}")
+
+        detections = []
+        for d in sar_dets:
+            detections.append({
+                "instrument": "SAR",
+                "object_type": "vessel",
+                "confidence": d["score"],
+                "centroid_lat": d["lat"],
+                "centroid_lon": d["lon"],
+                "severity": "info",
+                "alert_tier": "silent",
+                "attributes": json.dumps({
+                    "vessel_length_m": round(d["vessel_length_m"], 1),
+                    "vessel_width_m": round(d["vessel_width_m"], 1),
+                    "vessel_speed_k": round(d["vessel_speed_k"], 2),
+                    "heading_bucket_i": d["heading_bucket_i"],
+                    "is_fishing_vessel": d["is_fishing_vessel"],
+                    "is_fishing_vessel_prob": d["is_fishing_vessel_prob"],
+                    "meters_per_pixel": d["meters_per_pixel"],
+                }),
+            })
+
+        return {
+            "status": "completed",
+            "result_summary": {"by_type": {"vessel": len(detections)}, "total_detections": len(detections)},
+            "raw_result": {"model": "allenai/vessel-detection-sentinels (frcnn_cmp2 + attr)", "instrument": "SAR"},
+            "alert_fired": False,
+            "detections": detections,
             **base_meta,
         }

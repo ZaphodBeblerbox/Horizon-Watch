@@ -70,8 +70,13 @@ def bbox_percent(lat, lon, zone_bbox, box_km=0.12):
 
 def reference_scan(db, zone_id: int, before_scan_id: str):
     """The zone's most recent OTHER real completed scan strictly before the
-    given one — never pairs across zones, never invents a reference when
-    none exists."""
+    given one, of the SAME real instrument — never pairs across zones,
+    never invents a reference when none exists, and (Imagery/Sentinel
+    round, Part 4.4) never pairs a SAR scan against an optical reference
+    or vice versa. A zone that switches sensor_preference mid-history is
+    the real, honest reason this filter exists — its most recent scan
+    under the OLD sensor is correctly not offered as this new sensor's
+    reference."""
     from database import SentinelScan
     current = db.query(SentinelScan).filter(SentinelScan.scan_id == before_scan_id).first()
     if not current:
@@ -79,7 +84,8 @@ def reference_scan(db, zone_id: int, before_scan_id: str):
     return (
         db.query(SentinelScan)
         .filter(SentinelScan.zone_id == zone_id, SentinelScan.status == "completed",
-                SentinelScan.created_at < current.created_at)
+                SentinelScan.created_at < current.created_at,
+                SentinelScan.instrument == (current.instrument or "OPTICAL"))
         .order_by(SentinelScan.created_at.desc())
         .first()
     )
@@ -142,6 +148,7 @@ def compare_scans(db, zone, current_scan):
             "note": "", "severity": d.severity, "reviewed_status": d.reviewed_status,
             "lat": d.centroid_lat, "lon": d.centroid_lon,
             "interpretation": _detection_interpretation(d),
+            "instrument": d.instrument or "OPTICAL",
         })
     for r in ref_dets:
         if id(r) not in matched_ref_ids:
@@ -150,6 +157,7 @@ def compare_scans(db, zone, current_scan):
                 "conf": round(r.confidence, 3), "bbox": bbox_percent(r.centroid_lat, r.centroid_lon, zone_bbox),
                 "note": "no longer detected vs. the reference scene", "severity": r.severity,
                 "reviewed_status": "pending", "lat": r.centroid_lat, "lon": r.centroid_lon,
+                "instrument": r.instrument or "OPTICAL",
             })
 
     # Real per-class counts, reference -> current, with signed deltas.
