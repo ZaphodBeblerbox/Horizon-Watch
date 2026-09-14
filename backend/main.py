@@ -380,9 +380,25 @@ MAX_LLM_CALLS_PER_CYCLE       = 50    # restored (Reports follow-up round) — r
 _COPERNICUS_CLIENT_ID = os.getenv("COPERNICUS_CLIENT_ID", "").strip()
 _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
 
+# Real kill switch (nuclear-option production-stability round) — the
+# Sentinel/Copernicus imagery-detection feature (PR #64/#66/#69) is the
+# leading suspect for a real, confirmed production event-loop freeze.
+# PR #69 fixed one real un-offloaded blocking call in that path, but that
+# fix's effect in production hadn't been independently reconfirmed in
+# time, and the app needs to be stable now. Rather than bet on one fix,
+# every real Copernicus/Sentinel Hub/Earth-Search network call in this
+# file short-circuits to a real, honest "disabled" error below, never
+# attempting the call. Defaults OFF; set SENTINEL_IMAGERY_ENABLED=true to
+# re-enable once production stability is independently reconfirmed.
+_SENTINEL_IMAGERY_ENABLED = os.getenv("SENTINEL_IMAGERY_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+_SENTINEL_IMAGERY_DISABLED_MSG = "Sentinel/SAR imagery detection is temporarily disabled (production stability)"
+
 # ── Auth configuration ────────────────────────────────────────────────────────
 if _COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET:
-    print("[startup] Copernicus credentials detected — satellite search will prefer OAuth mode.")
+    if _SENTINEL_IMAGERY_ENABLED:
+        print("[startup] Copernicus credentials detected — satellite search will prefer OAuth mode.")
+    else:
+        print("[startup] Copernicus credentials detected but Sentinel/SAR imagery is DISABLED via kill switch (SENTINEL_IMAGERY_ENABLED not set) — production-freeze mitigation round.")
 else:
     print("[startup] Copernicus credentials missing — satellite search will use public mode.")
 
@@ -12212,6 +12228,8 @@ _EARTH_SEARCH_STAC_URL = "https://earth-search.aws.element84.com/v1/search"
 
 async def _get_copernicus_access_token(client_h: httpx.AsyncClient) -> tuple[Optional[str], Optional[str]]:
     """Get (and cache) CDSE OAuth token for client_credentials auth."""
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return None, _SENTINEL_IMAGERY_DISABLED_MSG
     if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
         return None, "missing_credentials"
 
@@ -12355,6 +12373,8 @@ async def satellite_auth_status():
 
 
 async def _satellite_search_impl(bbox, max_cloud=20, days_back=60, date_range: str | None = None):
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return {"items": [], "error": _SENTINEL_IMAGERY_DISABLED_MSG, "count": 0}
     try:
         bbox = [float(v) for v in bbox]
         if len(bbox) != 4:
@@ -12472,6 +12492,8 @@ async def api_satellite_search(
 # conflate a SAR scene with an optical one.
 
 async def _satellite_search_sentinel1_impl(bbox, days_back=60, date_range: str | None = None):
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return {"items": [], "error": _SENTINEL_IMAGERY_DISABLED_MSG, "count": 0}
     try:
         bbox = [float(v) for v in bbox]
         if len(bbox) != 4:
@@ -12725,6 +12747,8 @@ async def _fetch_sentinel_image_bytes(bounds: dict, image_type: str = "true-colo
     Returns {"image_bytes": bytes, "width", "height", "image_type", "date"} on success,
     or {"error": "..."} on any failure. Never raises — every failure path returns a real,
     specific error string rather than throwing or silently producing an empty result."""
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return {"error": _SENTINEL_IMAGERY_DISABLED_MSG}
     _TYPE_ALIASES = {
         "true_color":   "true-colour",
         "false_color":  "false-colour",
@@ -12845,7 +12869,8 @@ async def sentinel_imagery(request: Request):
             date_str=date_str, width=req_w, height=req_h,
         )
         if result.get("error"):
-            return JSONResponse(result)
+            status = 503 if not _SENTINEL_IMAGERY_ENABLED else 200
+            return JSONResponse(result, status_code=status)
 
         img_b64 = _b64.b64encode(result["image_bytes"]).decode()
         return JSONResponse({
@@ -12903,6 +12928,8 @@ async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
     follow-up; this function's own real SAR-imagery fetch is unaffected.
     Returns {"image_bytes", "width", "height", "instrument": "SAR"} on success,
     or {"error": "..."} on any failure. Never raises."""
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return {"error": _SENTINEL_IMAGERY_DISABLED_MSG}
     west  = bounds.get("west");  east  = bounds.get("east")
     south = bounds.get("south"); north = bounds.get("north")
     if None in (west, east, south, north):
@@ -13015,6 +13042,8 @@ async def _fetch_sentinel1_raw_bands_geotiff(bounds: dict, max_age_days: int = 3
     Returns {"image_bytes": <geotiff bytes>, "width", "height",
     "instrument": "SAR"} on success, or {"error": "..."} on any failure.
     Never raises."""
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return {"error": _SENTINEL_IMAGERY_DISABLED_MSG}
     west  = bounds.get("west");  east  = bounds.get("east")
     south = bounds.get("south"); north = bounds.get("north")
     if None in (west, east, south, north):
@@ -13093,7 +13122,8 @@ async def sentinel_sar_imagery(request: Request):
             bounds, max_age_days=max_age_days, width=req_w, height=req_h,
         )
         if result.get("error"):
-            return JSONResponse(result)
+            status = 503 if not _SENTINEL_IMAGERY_ENABLED else 200
+            return JSONResponse(result, status_code=status)
 
         img_b64 = _b64.b64encode(result["image_bytes"]).decode()
         return JSONResponse({
@@ -16996,6 +17026,8 @@ async def api_imagery_receive_scene(request: Request):
     own docstring) -- the fetch window is narrowed to just past the search
     hit's date instead, a real, disclosed best-effort alignment, not a
     byte-exact guarantee."""
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return JSONResponse({"error": _SENTINEL_IMAGERY_DISABLED_MSG}, status_code=503)
     import base64 as _b64
     body = await request.json()
     bounds = body.get("bounds") or {}
@@ -17066,6 +17098,8 @@ async def api_imagery_detect_scene(request: Request):
     Returns detections already converted to real geo corners/center
     (lat/lon) -- ready for GlobeOverwatchLayer's existing real rendering,
     no percent-of-frame conversion needed for this globe-native workflow."""
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return JSONResponse({"error": _SENTINEL_IMAGERY_DISABLED_MSG}, status_code=503)
     import base64 as _b64
     import functools
     body = await request.json()
