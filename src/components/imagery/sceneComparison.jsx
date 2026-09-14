@@ -88,9 +88,14 @@ export function EmptyFrame() {
 // Real before/after/swipe comparison view with detection boxes — renders
 // actual base64 scene imagery (scene.image_b64/reference_image_b64), never
 // placeholder art.
-export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet }) {
+export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false }) {
     const refSrc = scene.reference_image_b64 ? `data:image/jpeg;base64,${scene.reference_image_b64}` : null
     const curSrc = scene.image_b64 ? `data:image/jpeg;base64,${scene.image_b64}` : null
+    // Real size caps — fullscreen genuinely renders the same real image
+    // bigger (not just inside a bigger container that still shrinks it).
+    const soloMaxH = fullscreen ? "94vh" : "70vh"
+    const splitMaxW = fullscreen ? "46vw" : 420
+    const splitMaxH = fullscreen ? "88vh" : "60vh"
 
     function Boxes() {
         if (!showBoxes) return null
@@ -114,7 +119,7 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
     if (view === "after") {
         return (
             <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%" }}>
-                {curSrc ? <img src={curSrc} alt="current scene" style={{ display: "block", maxWidth: "100%", maxHeight: "70vh" }} /> : <EmptyFrame />}
+                {curSrc ? <img src={curSrc} alt="current scene" style={{ display: "block", maxWidth: "100%", maxHeight: soloMaxH }} /> : <EmptyFrame />}
                 <Boxes />
             </div>
         )
@@ -122,10 +127,10 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
     if (view === "swipe") {
         return (
             <div style={{ position: "relative", maxWidth: "100%", cursor: "ew-resize" }} onPointerDown={onSwipeDrag}>
-                {refSrc ? <img src={refSrc} alt="reference" style={{ display: "block", maxWidth: "100%", maxHeight: "70vh", filter: fadeOn ? "grayscale(.35)" : "none" }} /> : <EmptyFrame />}
+                {refSrc ? <img src={refSrc} alt="reference" style={{ display: "block", maxWidth: "100%", maxHeight: soloMaxH, filter: fadeOn ? "grayscale(.35)" : "none" }} /> : <EmptyFrame />}
                 <div ref={clipRef} style={{ position: "absolute", inset: 0, clipPath: `inset(0 ${100 - swipePos}% 0 0)` }}>
                     <div ref={fadeRef} style={{ opacity: fadeOn ? fadeOpacity / 100 : 1 }}>
-                        {curSrc ? <img src={curSrc} alt="current" style={{ display: "block", maxWidth: "100%", maxHeight: "70vh" }} /> : <EmptyFrame />}
+                        {curSrc ? <img src={curSrc} alt="current" style={{ display: "block", maxWidth: "100%", maxHeight: soloMaxH }} /> : <EmptyFrame />}
                         <Boxes />
                     </div>
                 </div>
@@ -137,11 +142,11 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
         <div style={{ display: "flex", gap: 10 }}>
             <div style={{ position: "relative" }}>
                 <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginBottom: 3 }}>Reference · {fmtDate(scene.reference_date)}</div>
-                {refSrc ? <img src={refSrc} alt="reference" style={{ display: "block", maxWidth: 420, maxHeight: "60vh" }} /> : <EmptyFrame />}
+                {refSrc ? <img src={refSrc} alt="reference" style={{ display: "block", maxWidth: splitMaxW, maxHeight: splitMaxH }} /> : <EmptyFrame />}
             </div>
             <div style={{ position: "relative" }}>
                 <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginBottom: 3 }}>Current · {fmtDate(scene.scan.image_timestamp_utc)}</div>
-                {curSrc ? <img src={curSrc} alt="current" style={{ display: "block", maxWidth: 420, maxHeight: "60vh" }} /> : <EmptyFrame />}
+                {curSrc ? <img src={curSrc} alt="current" style={{ display: "block", maxWidth: splitMaxW, maxHeight: splitMaxH }} /> : <EmptyFrame />}
                 <div style={{ position: "absolute", top: 18, left: 0, right: 0, bottom: 0 }}><Boxes /></div>
             </div>
         </div>
