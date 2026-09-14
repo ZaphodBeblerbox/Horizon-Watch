@@ -576,15 +576,17 @@ class WatchZone(Base):
     owner               = Column(String, nullable=True)
     # Real Imagery pipeline round — the spec's #sc-sensor selector
     # (sentinel2_optical|sentinel1_sar|commercial_eo|commercial_sar).
-    # Real, honest gating on the value, not cosmetic: sentinel1_sar/
-    # commercial_eo/commercial_sar are accepted and persisted (an analyst's
-    # real stated intent survives), but a real scan attempt against one of
-    # them fails with a clear real error (see api_watch_zone_scan_now/
-    # SentinelScanner.run_scan) rather than silently running the one real
-    # deployed detector (Sentinel-2 optical/YOLO-OBB) against imagery it
-    # was never built for — no dedicated SAR/commercial pipeline exists in
-    # this codebase today (sar_detector.py was confirmed unwired and
-    # removed; see SentinelDetection.instrument's own docstring).
+    # Real, honest gating on the value, not cosmetic: commercial_eo/
+    # commercial_sar are accepted and persisted (an analyst's real stated
+    # intent survives), but a real scan attempt against one of them fails
+    # with a clear real error (see api_watch_zone_scan_now/SentinelScanner.
+    # run_scan) rather than silently running a detector against imagery it
+    # was never built for — no commercial EO/SAR pipeline exists in this
+    # codebase today. sentinel1_sar IS real and deployed (recovered from
+    # git history and wired to a live Sentinel Hub raw-band fetch + the
+    # real Faster R-CNN detector, see sar_detector.py and
+    # SentinelDetection.instrument's own docstring) — see
+    # _SENSOR_PIPELINES_DEPLOYED in main.py for the current real set.
     sensor_preference   = Column(String, nullable=False, default="sentinel2_optical")
 
 
@@ -632,17 +634,16 @@ class SentinelDetection(Base):
     scan_id                  = Column(String, ForeignKey("sentinel_scans.scan_id"), nullable=False, index=True)
     zone_id                  = Column(Integer, ForeignKey("watch_zones.id"), nullable=False, index=True)
     # Always populated (never inferred implicitly downstream) — "OPTICAL" for
-    # today's Sentinel-2/YOLO-OBB detections (sentinel_ml.run_ship_detection(),
-    # via main.py's shared yolov8n-obb.onnx/DOTA inference — confirmed real as
-    # of the 2026-08 audit fix; it previously ran a plain axis-aligned COCO
-    # detector despite this comment, which has since been corrected in code
-    # rather than just here). "SAR" was reserved for Sentinel-1 detections
-    # from a separate real ship-detection pipeline (sar_detector.py) — that
-    # pipeline was confirmed unwired to any live caller and removed (2026-10
-    # alert/detector audit follow-up); "SAR" is currently unused but the
-    # value is kept valid in case a real SAR detector is built properly in
-    # the future. Defaults to "OPTICAL" so existing rows/writers (which
-    # predate this column) remain valid without a data migration.
+    # Sentinel-2/YOLO-OBB detections (sentinel_ml.run_ship_detection(), via
+    # main.py's shared yolov8n-obb.onnx/DOTA inference). "SAR" is real and
+    # in active use as of the SAR-detector deployment round: real Sentinel-1
+    # raw VH/VV bands fetched via Sentinel Hub, detected by the real,
+    # recovered-from-git-history sar_detector.py (Faster R-CNN + attribute
+    # model, AllenAI vessel-detection-sentinels weights) — see
+    # sentinel_scanner.py's SAR branch and main.py's
+    # _SENSOR_PIPELINES_DEPLOYED. Defaults to "OPTICAL" so existing rows/
+    # writers (which predate this column) remain valid without a data
+    # migration.
     instrument               = Column(String, nullable=False, default="OPTICAL")
     object_type              = Column(String, nullable=False)
     confidence               = Column(Float, nullable=False)

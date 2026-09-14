@@ -36,6 +36,7 @@ import { publishFilterState } from "../state/situationFilterState.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import GeoConfirmedTimelinePanel from "../components/GeoConfirmedTimelinePanel.jsx"
+import ImageryDetectionPanel from "../components/ImageryDetectionPanel.jsx"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
 
 const API = API_BASE
@@ -239,6 +240,18 @@ export default function Situation({ onOpenDossier }) {
     const [contextOn, setContextOn] = useState({ risk: false, graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
     const [exportOpen, setExportOpen] = useState(false)
+    // Imagery/detection top-bar entry point — real audit (Part 0) confirmed
+    // no draw-to-scan tool existed in this top bar at all (the existing
+    // "Imagery" quick-layer button only toggles the satellite overlay's
+    // visibility, per QUICK_LAYERS below — it never opened anything). This
+    // is the new, real, distinct entry point that opens the shared AOI/
+    // scan/detection UI without leaving Situation.
+    const [imageryPanelOpen, setImageryPanelOpen] = useState(false)
+    // Real camera view bounds, published by GlobeView's own existing
+    // event-layer-scoping computation (onViewBoundsChange) — reused here to
+    // scope the Imagery panel's AOI list to "areas in view" rather than a
+    // second, independently-computed bbox.
+    const [situationViewBounds, setSituationViewBounds] = useState(null)
 
     // GeoConfirmed historic-timeline round — real per-user, server-
     // persisted theatre selection (Part 3.4), same settingsStore.js
@@ -522,6 +535,11 @@ export default function Situation({ onOpenDossier }) {
     // 6 of an earlier round) needs the same real shift, on top of its
     // existing button-column clearance.
     const inspectorOverlayWidth = rightMin ? 0 : 312 // px, matches --pane-r
+    // The Imagery panel occupies the exact same real right-edge slot as
+    // Inspector (322px, its own real width) — while open it visually
+    // covers Inspector, so map chrome should clear THIS width instead of
+    // Inspector's whenever it's the active right-side overlay.
+    const activeRightOverlayWidth = imageryPanelOpen ? 322 : inspectorOverlayWidth
 
     return (
         <div data-testid="view-root-situation" style={{ display: "flex", position: "relative", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
@@ -743,6 +761,23 @@ export default function Situation({ onOpenDossier }) {
                     </div>
 
                     <div style={{ flex: 1 }} />
+                    {/* Real Imagery/detection entry point — distinct from the
+                        "Imagery" quick-layer toggle above (which only shows/
+                        hides the satellite overlay on the globe itself and
+                        never opened anything). Opens the real, shared AOI/
+                        scan/detection panel without leaving Situation. */}
+                    <button
+                        onClick={() => setImageryPanelOpen((v) => !v)}
+                        title="Imagery & detection — load Sentinel scenes and run object detection"
+                        aria-pressed={imageryPanelOpen}
+                        style={{
+                            flex: "none", whiteSpace: "nowrap", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                            background: imageryPanelOpen ? "var(--bg-4)" : "none", border: "1px solid var(--line-soft)", borderRadius: 3, cursor: "pointer",
+                            color: imageryPanelOpen ? "var(--txt)" : "var(--txt-3)",
+                        }}
+                    >
+                        <svg className="icon sm"><use href="#i-sat" /></svg>
+                    </button>
                     <button
                         onClick={() => setExportOpen(true)}
                         title="Export signals for a time period (CSV/PDF)"
@@ -802,8 +837,9 @@ export default function Situation({ onOpenDossier }) {
                         portsEnabled={tracksOn.ports} airportsEnabled={tracksOn.ports}
                         annotationTool={annotationTool}
                         basemap={basemap}
+                        onViewBoundsChange={setSituationViewBounds}
                     />
-                    <MapControlStack onFullscreen={() => {}} basemap={{ value: basemap, onChange: setBasemap }} rightInset={inspectorOverlayWidth} />
+                    <MapControlStack onFullscreen={() => {}} basemap={{ value: basemap, onChange: setBasemap }} rightInset={activeRightOverlayWidth} />
                     {/* The severity legend used to float here, bottom-right —
                         per the map-overlay-geometry table it does not belong
                         on the map surface at all; it now lives inside the
@@ -820,7 +856,13 @@ export default function Situation({ onOpenDossier }) {
                             endDate={geoConfirmedEndDate}
                             onEndDateChange={setGeoConfirmedEndDate}
                             onHeightChange={setGeoConfirmedPanelHeight}
-                            rightInset={56 + inspectorOverlayWidth}
+                            rightInset={56 + activeRightOverlayWidth}
+                        />
+                    )}
+                    {imageryPanelOpen && (
+                        <ImageryDetectionPanel
+                            onClose={() => setImageryPanelOpen(false)}
+                            viewBounds={situationViewBounds}
                         />
                     )}
                 </div>
