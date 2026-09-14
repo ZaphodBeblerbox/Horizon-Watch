@@ -35,7 +35,7 @@ import { fetchWithTimeout } from "../utils/fetchWithTimeout.js"
 // what this panel needs anyway (a static scrub position across a 13-year
 // span with a density histogram). Built new, on purpose, rather than
 // extracting Replay's inline implementation.
-export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, endDate, onEndDateChange, onHeightChange, rightInset = 56 }) {
+export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, endDate, onEndDateChange, onHeightChange, rightInset = 56, leftInset = 0 }) {
     const [theatreOptions, setTheatreOptions] = useState([])
     const [dateRange, setDateRange] = useState(null) // real {min_date, max_date}
     const [histogram, setHistogram] = useState(null) // real [{bucket, count}] or null while loading
@@ -188,7 +188,20 @@ export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, 
             // open (Round 4 layout fix — see Situation.jsx's own
             // inspectorOverlayWidth), so this panel's own content never
             // renders underneath either.
-            position: "absolute", left: 0, right: rightInset, bottom: 0, zIndex: 5,
+            //
+            // Real layout fix: this panel used to start at the map's
+            // absolute left edge (left: 0), so it rendered UNDER the
+            // Layers pane (Situation.jsx's own left sidebar, zIndex 3) —
+            // visible whenever the panel's own zIndex (5, needed so it
+            // sits above the plain map canvas) put it above that pane's
+            // background too. leftInset is the Layers pane's own real
+            // width (Situation.jsx's leftMin-aware value, matching the
+            // exact same real number GlobeView's mapChromeLeftInset
+            // already uses for the bottom-left scale/coordinate readout)
+            // so this panel now starts exactly where that pane ends,
+            // never under it, only in the real space between both
+            // sidebars.
+            position: "absolute", left: leftInset, right: rightInset, bottom: 0, zIndex: 5,
             background: "var(--pane-glass-bg)", backdropFilter: "blur(16px) saturate(115%)", WebkitBackdropFilter: "blur(16px) saturate(115%)",
             borderTop: "1px solid var(--line)", padding: "8px 12px 10px", display: "flex", flexDirection: "column", gap: 6,
         }}>
