@@ -16384,7 +16384,24 @@ def _detection_row_to_dict(row) -> dict:
 
 
 @app.post("/api/watch-zones")
-def api_watch_zones_create(body: dict):
+async def api_watch_zones_create(body: dict):
+    # Real root-cause fix, found live (Imagery/Situation top-bar entry
+    # point round): this was a plain `def` (synchronous) endpoint, so
+    # FastAPI/Starlette ran it in an AnyIO worker thread — not the real
+    # asyncio event loop thread. Its own real zone row got created and
+    # committed successfully, but the very next real step,
+    # _launch_zone_scan_background()'s asyncio.ensure_future(), calls
+    # asyncio.get_event_loop() internally, which raises
+    # "RuntimeError: There is no current event loop in thread
+    # 'AnyIO worker thread'" — an uncaught exception that made the WHOLE
+    # endpoint return a real 500, even though the zone had already been
+    # persisted. A real, confusing false-negative: every caller (this
+    # panel's own real "draw a new area" flow, and Sources.jsx's existing
+    # "+ New Watch Area") saw a failure while the AOI was actually created
+    # server-side. Fixed by making this endpoint async, matching the
+    # already-async, already-working api_watch_zone_scan_now — the same
+    # real _launch_zone_scan_background() call site there runs on the
+    # real event loop thread and has never had this problem.
     from database import WatchZone, OntologyEntity, get_db
     import datetime as _dt_wz
 
@@ -17002,11 +17019,12 @@ async def api_watch_zone_scan_now(system_id: str):
             raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
         sensor = getattr(zone, "sensor_preference", None) or "sentinel2_optical"
         if sensor not in _SENSOR_PIPELINES_DEPLOYED:
-            # Real, honest, immediate rejection — never silently run the
-            # one real deployed detector (Sentinel-2 optical/YOLO-OBB)
-            # against a sensor it was never built for. No dedicated SAR/
-            # commercial pipeline exists in this codebase today.
-            raise HTTPException(status_code=409, detail=f"No real scan/detection pipeline is deployed for sensor '{sensor}' yet — only sentinel2_optical is real and working today.")
+            # Real, honest, immediate rejection — never silently run one of
+            # the real deployed detectors (Sentinel-2 optical/YOLO-OBB,
+            # Sentinel-1 SAR/Faster R-CNN — see _SENSOR_PIPELINES_DEPLOYED)
+            # against a sensor it was never built for. No commercial
+            # EO/SAR pipeline exists in this codebase today.
+            raise HTTPException(status_code=409, detail=f"No real scan/detection pipeline is deployed for sensor '{sensor}' yet — only {', '.join(sorted(_SENSOR_PIPELINES_DEPLOYED))} are real and working today.")
         zone_dict = {
             "id": zone.id, "system_id": zone.system_id, "name": zone.name,
             "bbox_min_lon": zone.bbox_min_lon, "bbox_min_lat": zone.bbox_min_lat,
