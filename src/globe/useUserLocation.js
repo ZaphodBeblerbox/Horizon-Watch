@@ -34,3 +34,12 @@ export function useUserLocation() {
     }, [])
     return loc
 }
+
+/** Same real, shared, cached geolocation request as useUserLocation() above,
+ * as a plain Promise — for non-component callers (e.g. themeStore.js's Auto
+ * theme mode) that need the real location without a React hook. Shares the
+ * exact same cachedPromise, so it never triggers a second permission prompt
+ * independent of any minimap already using useUserLocation(). */
+export function getUserLocation() {
+    return requestLocation()
+}

@@ -21521,8 +21521,8 @@ async def api_set_own_theme(request: Request):
     user = _require_current_user(request)
     body = await request.json()
     theme = body.get("theme")
-    if theme not in ("dark", "light"):
-        raise HTTPException(status_code=400, detail="theme must be 'dark' or 'light'")
+    if theme not in ("dark", "light", "auto"):
+        raise HTTPException(status_code=400, detail="theme must be 'dark', 'light', or 'auto'")
     from database import User, get_db as _gdb_theme
     with _gdb_theme() as db:
         u = db.query(User).filter(User.id == user["id"]).first()

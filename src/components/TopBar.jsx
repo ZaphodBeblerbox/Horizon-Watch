@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import { WATCH_MODULES, WORK_MODULES } from "../data/modules.js"
 import { STATUS_COLOR_TOKEN, STATUS_WORD } from "../utils/systemHealth.js"
-import { getTheme, toggleTheme, subscribeTheme } from "../state/themeStore.js"
+import ThemeControl from "./ThemeControl.jsx"
 
 /**
  * TopBar.jsx — redesign Round 2, §2. Replaces AppHeader.jsx entirely: a
@@ -61,14 +61,6 @@ export default function TopBar({
             document.documentElement.requestFullscreen().catch(() => {})
         }
     }
-
-    // Parallax theming round, Part 5 — the real top-bar theme toggle (this
-    // pass's stated home for it; Settings gets its own real theme control
-    // in a later round once Settings itself exists). Mirrors the real
-    // per-user server value via themeStore, not local-only state, so it
-    // stays correct if the theme is ever changed from elsewhere.
-    const [theme, setThemeState] = useState(() => getTheme())
-    useEffect(() => subscribeTheme(setThemeState), [])
 
     return (
         <div style={{
@@ -183,16 +175,7 @@ export default function TopBar({
                 >
                     <svg className="icon sm"><use href={isFullscreen ? "#i-fullscreen-exit" : "#i-fullscreen-enter"} /></svg>
                 </button>
-                <button
-                    onClick={toggleTheme}
-                    title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
-                    style={{
-                        width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
-                        background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
-                    }}
-                >
-                    <svg className="icon sm"><use href={theme === "light" ? "#i-moon" : "#i-sun"} /></svg>
-                </button>
+                <ThemeControl />
                 {onOpenSettings && (
                     <button
                         onClick={onOpenSettings}

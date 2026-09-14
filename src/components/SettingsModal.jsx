@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { getCurrentUser } from "../state/authStore.js"
-import { getTheme, toggleTheme, subscribeTheme } from "../state/themeStore.js"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
 import { LAYER_GROUPS } from "./layerRailConfig.js"
 import { KEYBOARD_SHORTCUTS } from "../data/keyboardShortcuts.js"
 import PushNotificationToggle from "./PushNotificationToggle.jsx"
+import ThemeControl from "./ThemeControl.jsx"
 
 /**
  * SettingsModal — real Settings round: 7 real sections, every control
@@ -102,8 +102,6 @@ function SectionTitle({ children }) {
 
 // ── General ──────────────────────────────────────────────────────────────
 function GeneralSection({ settings }) {
-    const [theme, setThemeState] = useState(getTheme)
-    useEffect(() => subscribeTheme(setThemeState), [])
     const user = getCurrentUser()
     const [timezone, setTimezone] = useState(user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
     const [tzSaving, setTzSaving] = useState(false)
@@ -123,8 +121,8 @@ function GeneralSection({ settings }) {
     return (
         <div>
             <SectionTitle>Appearance</SectionTitle>
-            <Row label="Theme" hint="Same real per-user value the top-bar toggle reads and writes.">
-                <ChoiceGroup value={theme} options={[{ value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} onChange={toggleTheme} />
+            <Row label="Theme" hint="Same real per-user value the top-bar control reads and writes. Auto fades with the real sun at your location.">
+                <ThemeControl inline />
             </Row>
             <Row label="Density" hint="Compact reduces spacing app-wide.">
                 <ChoiceGroup
