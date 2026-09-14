@@ -499,6 +499,116 @@
             --top: 34px;
         }
 
+/* ── Auto theme mode — real solar-elevation-driven token interpolation ───
+   (src/state/themeStore.js). @property registers every real, color-
+   bearing themed token (names discovered at runtime from THIS light-theme
+   block via the CSSOM — see themeStore.js's getRealTokenPairs(), so this
+   list only needs a name added here, never a value, when a new themed
+   color token is introduced) so the browser can natively, smoothly
+   transition it like any other animatable CSS value. initial-value is a
+   placeholder only — :root always explicitly sets every real token, so it
+   is never actually used; @property requires SOME valid <color> here. ── */
+            @property --bg-0 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --bg-1 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --bg-2 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --bg-3 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --bg-4 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --line { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --line-soft { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --line-strong { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --txt { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --txt-2 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --txt-3 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --txt-4 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --acc { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --acc-hi { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --acc-dim { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --acc-line { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --red { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --amber { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --steel { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --green { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --grey { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --sev-critical { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --sev-high { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --sev-moderate { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --sev-low { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --delta-worse { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --delta-better { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tag-red { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tag-red-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tag-amber { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tag-amber-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tag-green { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tag-green-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tag-blue { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tag-blue-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --chart-area-fill { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --chart-area-stroke { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --chart-grid { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --chart-hist { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --chart-hist-hot { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --heatmap-lo { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --heatmap-hi { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --heatmap-empty { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-1 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-2 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-3 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-4 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-5 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-6 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-7 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-8 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-9 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-10 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-11 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-12 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-13 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --cat-14 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --pane-glass-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --akili-glass-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --akili-glass-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-tooltip-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-tooltip-text { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-tooltip-text-strong { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-tooltip-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-country-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-eez-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-infra-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-infra-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-infra-text { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-infra-text-hover { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-detection-label-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --map-detection-label-text { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --leaflet-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --scrollbar-thumb { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --scrollbar-thumb-hover { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --focus-ring { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --btn-primary-border { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --btn-primary-text { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --btn-primary-hover { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --check-mark-color { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --xref-color { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --xref-hover-color { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --xref-hover-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --xref-active-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --xref-active-color { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --tooltip-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --scrim-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --sheet-shadow-color { syntax: '<color>'; inherits: true; initial-value: #000000; }
+
+/* Real transition — only active while Auto mode's fade engine is driving
+   these tokens (toggled via the .theme-fading class on <html>, set/
+   cleared by themeStore.js). 75s is deliberately a little longer than the
+   ~60s recompute tick, so each new value retargets the transition
+   in-flight for continuous, seamless motion instead of visibly settling
+   between ticks. Explicit Light/Dark selection never gets this class, so
+   the existing instant, no-fade toggle behaviour is completely
+   unaffected. */
+html.theme-fading {
+    transition: --bg-0 75s linear, --bg-1 75s linear, --bg-2 75s linear, --bg-3 75s linear, --bg-4 75s linear, --line 75s linear, --line-soft 75s linear, --line-strong 75s linear, --txt 75s linear, --txt-2 75s linear, --txt-3 75s linear, --txt-4 75s linear, --acc 75s linear, --acc-hi 75s linear, --acc-dim 75s linear, --acc-line 75s linear, --red 75s linear, --amber 75s linear, --steel 75s linear, --green 75s linear, --grey 75s linear, --sev-critical 75s linear, --sev-high 75s linear, --sev-moderate 75s linear, --sev-low 75s linear, --delta-worse 75s linear, --delta-better 75s linear, --tag-red 75s linear, --tag-red-border 75s linear, --tag-amber 75s linear, --tag-amber-border 75s linear, --tag-green 75s linear, --tag-green-border 75s linear, --tag-blue 75s linear, --tag-blue-border 75s linear, --chart-area-fill 75s linear, --chart-area-stroke 75s linear, --chart-grid 75s linear, --chart-hist 75s linear, --chart-hist-hot 75s linear, --heatmap-lo 75s linear, --heatmap-hi 75s linear, --heatmap-empty 75s linear, --cat-1 75s linear, --cat-2 75s linear, --cat-3 75s linear, --cat-4 75s linear, --cat-5 75s linear, --cat-6 75s linear, --cat-7 75s linear, --cat-8 75s linear, --cat-9 75s linear, --cat-10 75s linear, --cat-11 75s linear, --cat-12 75s linear, --cat-13 75s linear, --cat-14 75s linear, --pane-glass-bg 75s linear, --akili-glass-bg 75s linear, --akili-glass-border 75s linear, --map-tooltip-bg 75s linear, --map-tooltip-text 75s linear, --map-tooltip-text-strong 75s linear, --map-tooltip-border 75s linear, --map-country-border 75s linear, --map-eez-border 75s linear, --map-infra-bg 75s linear, --map-infra-border 75s linear, --map-infra-text 75s linear, --map-infra-text-hover 75s linear, --map-detection-label-bg 75s linear, --map-detection-label-text 75s linear, --leaflet-bg 75s linear, --scrollbar-thumb 75s linear, --scrollbar-thumb-hover 75s linear, --focus-ring 75s linear, --btn-primary-border 75s linear, --btn-primary-text 75s linear, --btn-primary-hover 75s linear, --check-mark-color 75s linear, --xref-color 75s linear, --xref-hover-color 75s linear, --xref-hover-bg 75s linear, --xref-active-bg 75s linear, --xref-active-color 75s linear, --tooltip-bg 75s linear, --scrim-bg 75s linear, --sheet-shadow-color 75s linear;
+}
+
 /* ── User location pulse animation ──────────────────────────────── */
         @keyframes akiliUserLocPulse {
             0%, 100% { transform: scale(1);   opacity: 0.25; }
