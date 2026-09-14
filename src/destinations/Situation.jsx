@@ -903,6 +903,7 @@ export default function Situation({ onOpenDossier }) {
                             endDate={geoConfirmedEndDate}
                             onEndDateChange={setGeoConfirmedEndDate}
                             onHeightChange={setGeoConfirmedPanelHeight}
+                            leftInset={leftMin ? 0 : 250}
                             rightInset={56 + activeRightOverlayWidth}
                         />
                     )}
