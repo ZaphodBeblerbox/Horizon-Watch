@@ -12677,6 +12677,22 @@ async def satellite_tile_png(z: int, x: int, y: int, dt: str = ""):
     if z < 8:
         return FastAPIResponse(content=_TRANSPARENT_PNG, media_type="image/png")
 
+    # Real kill-switch coverage fix: this tile proxy is a separate code path
+    # from the Situation Imagery sidebar's Copernicus calls PR #71 already
+    # guarded (_get_copernicus_access_token, the STAC search/fetch
+    # functions) -- it was missed. Confirmed live in production: this route
+    # was hammering the dead Copernicus upstream on every map pan/zoom (a
+    # dozen+ tile requests per gesture), each one a real 502. A real 502
+    # from THIS app also risks Cesium's own imagery-provider retry logic
+    # amplifying that burst further client-side. Checked here, before
+    # opening any real httpx client (no connection/thread-pool resource
+    # consumed at all while disabled), and returns the exact same real
+    # transparent tile this route already uses for z<8 -- a real 200, no
+    # fabricated imagery, and nothing for a tile-layer's own retry logic to
+    # latch onto.
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return FastAPIResponse(content=_TRANSPARENT_PNG, media_type="image/png")
+
     if not (_COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET):
         raise HTTPException(status_code=503, detail="Sentinel Hub credentials not configured")
 
