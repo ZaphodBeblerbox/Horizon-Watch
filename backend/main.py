@@ -17099,7 +17099,11 @@ async def api_imagery_detect_scene(request: Request):
             detections.append({
                 "corners": _oriented_rect_corners(d["lat"], d["lon"], d["vessel_length_m"], d["vessel_width_m"], heading_deg),
                 "center": [d["lat"], d["lon"]],
-                "category": "Vessel",
+                # Real sub-type from the attribute model's own real
+                # is_fishing_vessel classification -- not a fabricated
+                # split -- so the globe's color-coding-by-type is
+                # genuinely meaningful, not every box the same color.
+                "category": "Fishing vessel" if d["is_fishing_vessel"] else "Vessel",
                 "confidence": round(float(d["score"]), 3),
                 "attributes": {
                     "vessel_length_m": round(d["vessel_length_m"], 1),
