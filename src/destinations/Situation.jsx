@@ -73,6 +73,16 @@ const ANNOTATION_TOOLS = [
 ]
 // Quick-layer buttons — the same real groupsOn state the Layers pane's own
 // domain rows use (one shared toggle, never a second independent list).
+// Nuclear-option production-stability round: the Sentinel/Copernicus
+// imagery-detection feature (PR #64/#66/#69) is the leading suspect for a
+// real, confirmed production event-loop freeze. Mirrors the real backend
+// kill switch (SENTINEL_IMAGERY_ENABLED, backend/main.py, also defaulted
+// off) — every backend route this entry point calls already short-
+// circuits to a real 503, so this just keeps the UI from showing a
+// button that would only ever error. Flip both back together once
+// production stability is independently reconfirmed.
+const SENTINEL_IMAGERY_ENABLED = false
+
 // The "activate all satellite imagery" quick-layer button (key: "imagery",
 // icon: i-sat) that used to live here is removed this round — it was a
 // second, visually-identical top-bar icon sitting right next to the real
@@ -798,14 +808,24 @@ export default function Situation({ onOpenDossier }) {
                         sidebar (ImagerySidebar.jsx) to draw a shape, pick a
                         sensor + cloud/date filter, receive a real scene, and
                         run real detection — all rendered directly on this
-                        globe, not inside the sidebar. */}
+                        globe, not inside the sidebar.
+                        Nuclear-option production-stability round: disabled
+                        (grayed out, not removed) rather than shown live and
+                        erroring — the real backend kill switch
+                        (SENTINEL_IMAGERY_ENABLED, backend/main.py) defaults
+                        this same feature off in production right now.
+                        SENTINEL_IMAGERY_ENABLED here mirrors that default;
+                        flip both back together once production stability is
+                        independently reconfirmed. */}
                     <button
-                        onClick={() => (imageryPanelOpen ? closeImageryPanel() : setImageryPanelOpen(true))}
-                        title="Imagery & detection — load Sentinel scenes and run object detection"
+                        onClick={() => SENTINEL_IMAGERY_ENABLED && (imageryPanelOpen ? closeImageryPanel() : setImageryPanelOpen(true))}
+                        disabled={!SENTINEL_IMAGERY_ENABLED}
+                        title={SENTINEL_IMAGERY_ENABLED ? "Imagery & detection — load Sentinel scenes and run object detection" : "Imagery & detection — temporarily disabled (production stability)"}
                         aria-pressed={imageryPanelOpen}
                         style={{
                             flex: "none", whiteSpace: "nowrap", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
-                            background: imageryPanelOpen ? "var(--bg-4)" : "none", border: "1px solid var(--line-soft)", borderRadius: 3, cursor: "pointer",
+                            background: imageryPanelOpen ? "var(--bg-4)" : "none", border: "1px solid var(--line-soft)", borderRadius: 3,
+                            cursor: SENTINEL_IMAGERY_ENABLED ? "pointer" : "not-allowed", opacity: SENTINEL_IMAGERY_ENABLED ? 1 : 0.4,
                             color: imageryPanelOpen ? "var(--txt)" : "var(--txt-3)",
                         }}
                     >
