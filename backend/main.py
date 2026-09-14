@@ -8301,6 +8301,34 @@ def _ais_ship_type(type_code: int) -> str:
 async def _check_sanctions_on_update(vessel: dict) -> None:
     """Check if a vessel is on a sanctions list; write an alert if so.
 
+    Real fix (production event-loop-starvation incident, 2026-09):
+    previously ran its entire real body — check_sanctions_for_vessel()'s
+    own DB query, write_alert()'s DB commit, entity_linker.link_alert(),
+    and fusion_engine.on_signal()'s geo-key resolution — directly on the
+    asyncio event loop thread, since asyncio.create_task() only schedules
+    a coroutine onto that SAME single thread; it does not run it on a
+    background thread. Under this app's real production AIS volume
+    (confirmed live: 8,000+ messages/60s, 2000 vessels tracked, a real
+    burst of concurrent sanctions hits), enough of these synchronous,
+    DB-writing tasks queued up back-to-back that the event loop had no
+    free moment to accept or answer ANY new HTTP request for 60+ seconds
+    straight — confirmed directly: curl to production timed out with zero
+    bytes on GET /, GET /api/health/detailed, and even an OPTIONS
+    preflight, while the real Railway runtime logs showed the process
+    alive and actively processing AIS/sanctions/fusion work throughout,
+    not crashed. The browser's own "access control checks" CORS error for
+    /api/sessions was a real, direct symptom of this — the request never
+    got any response for the browser to apply CORS rules to at all, not a
+    genuine CORS policy rejection.
+
+    Fixed the same way this codebase already isolates other batch-ish
+    synchronous work from the shared request-handling path (see
+    _geoconfirmed_executor / _news_executor): the real synchronous body
+    now runs via loop.run_in_executor() on the shared _executor, off the
+    event loop thread, so a burst of sanctions hits can no longer prevent
+    the event loop from servicing normal HTTP requests, regardless of how
+    much real sanctions/AIS traffic arrives.
+
     Routes through the single shared `check_sanctions_for_vessel()`
     (backend/sanctions_loader.py) — the fuzzy-name gate, hard-match
     flag-plausibility corroboration, and cooldown are all owned there so
@@ -8311,6 +8339,16 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     confirmed dead — zero real callers — and deleted in the 2026-09
     alert/detector audit.)
     """
+    mmsi = str(vessel.get("mmsi", ""))
+    if not mmsi:
+        return
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(_executor, _check_sanctions_on_update_sync, vessel)
+
+
+def _check_sanctions_on_update_sync(vessel: dict) -> None:
+    """Real synchronous body of _check_sanctions_on_update — see that
+    function's docstring for why this now runs off the event loop thread."""
     mmsi = str(vessel.get("mmsi", ""))
     name = vessel.get("name", "")
     if not mmsi:

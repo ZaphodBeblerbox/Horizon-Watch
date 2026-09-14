@@ -107,7 +107,7 @@ The entire backend is a ~7,500-line FastAPI monolith. All HTTP endpoints, backgr
 
 **Middleware stack (applied in order):**
 1. `GZipMiddleware` — compresses responses ≥ 1 kB
-2. `CORSMiddleware` — allows all origins (permissive for development)
+2. `CORSMiddleware` — real explicit allowlist (localhost dev ports, the real production Vercel domain, and the Railway backend's own origin) plus `allow_origin_regex=r"https://.*\.vercel\.app"` so every real Vercel preview deployment is covered too, `allow_credentials=True` (legal here since the origin list is explicit, never a wildcard). Confirmed live 2026-09-14 during the `/api/sessions` CORS incident investigation — the earlier "allows all origins" state below is resolved.
 
 **Thread pool:** A shared `ThreadPoolExecutor` (`_executor`) is used throughout via `loop.run_in_executor()` to offload all blocking I/O (HTTP calls, file reads, feed parsing, Claude calls) without blocking the asyncio event loop.
 
@@ -645,7 +645,7 @@ GET /api/briefing/latest → BriefingPanel.jsx
 2. **JWT_SECRET is a weak default** — `hw-prod-secret-change-me-2026-trifecta` must be changed in production (currently hardcoded in `.env`).
 3. **All caches are in-memory** — backend restart loses all cached data, surface pool, and news markers (event store has disk persistence but news markers do not).
 4. **No database migrations** — `migrate_db()` only adds columns; column removal, type changes, or index changes require manual SQL.
-5. **CORS is fully permissive** — `allow_origins=["*"]` is inappropriate for production.
+5. ~~CORS is fully permissive~~ — **resolved 2026-09-14**: `allow_origins` is a real explicit allowlist (dev localhost ports + the real production Vercel domain + the Railway origin) plus `allow_origin_regex` for Vercel previews. Confirmed live against production during the `/api/sessions` CORS incident investigation.
 6. **Nominatim rate limiting** — the 1.1s sleep between uncached requests means large feed cycles take minutes; 100-call cap per cycle helps but means some articles miss coordinates on first pass.
 7. **Resend API key missing** — password reset emails will fail silently.
 8. **`AERODATABOX_API_KEY` and `AVIATIONSTACK_API_KEY` are empty** — these services are no longer used (replaced by hexdb.io) but the env vars remain.
@@ -684,7 +684,7 @@ GET /api/briefing/latest → BriefingPanel.jsx
 
 ### Weaknesses / Risks
 - **JWT secret is a known default** in `.env` — must be rotated before any production exposure
-- **CORS allows all origins** — any site can make credentialed requests
+- ~~CORS allows all origins~~ — **resolved 2026-09-14**: explicit origin allowlist + Vercel-preview regex, see §3.1
 - **SQLite with no connection pooling** — concurrent writes may be slow but are thread-safe via `check_same_thread=False`
 - **No rate limiting on most endpoints** — `/news`, `/adsb`, `/analyse` etc. can be hammered
 - **API keys in plaintext `.env`** — `ANTHROPIC_API_KEY`, `COPERNICUS_CLIENT_SECRET`, `AISSTREAM_API_KEY` exposed if `.env` is committed (it should not be)
@@ -704,7 +704,7 @@ GET /api/briefing/latest → BriefingPanel.jsx
 ### Medium Priority
 5. **Database migrations** — adopt Alembic so schema changes can be managed safely
 6. **Rate limiting** — add `slowapi` or similar to protect `/analyse`, `/news`, `/adsb`
-7. **CORS tightening** — restrict to known frontend origins
+7. ~~CORS tightening~~ — **resolved 2026-09-14**: already an explicit allowlist + Vercel-preview regex, see §3.1
 8. **Event bridge loop** — `event_bridge.py` bridges news store into event store; the polling interval and dedup logic need review for production load
 9. **AIS vessel cap** — 2,000 vessels at 5-minute TTL may be insufficient for dense shipping lanes
 
