@@ -54,16 +54,34 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 /** Real GET /api/auth/me attempt — returns a real, explicit outcome
  * rather than throwing, so the caller can tell a genuine "not logged in"
  * (401) apart from a transient failure (network error, timeout, 5xx) that
- * says nothing real about whether the session is actually still valid. */
+ * says nothing real about whether the session is actually still valid.
+ *
+ * Real root-cause fix, live-reproduced: this fetch had no timeout at all.
+ * The production backend was confirmed (repeatedly, directly) to
+ * intermittently accept the connection and then never respond — not a
+ * network error, not a 5xx, just a promise that never settles. checkSession
+ * ()'s own retry loop below is powerless against that: it only runs again
+ * AFTER _tryFetchMe() returns, and an unbounded fetch that never resolves
+ * or rejects never returns at all. app.jsx's `if (!authChecked) return
+ * null` render gate then stays blank forever — the real, confirmed cause
+ * of the reported "the app doesn't work" blank-page incidents, not a
+ * stale-build/CDN issue. A real 10s AbortController timeout turns a hung
+ * connection into the same "transient" outcome a network error already
+ * gets, so the existing retry-then-honest-fallback logic actually runs. */
 async function _tryFetchMe() {
     let r
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10_000)
     try {
         r = await fetch(`${API_BASE}/api/auth/me`, {
             headers: { "Content-Type": "application/json" },
             credentials: "include",
+            signal: controller.signal,
         })
     } catch {
         return { outcome: "transient" }
+    } finally {
+        clearTimeout(timeoutId)
     }
     if (r.status === 401) return { outcome: "unauthenticated" }
     if (!r.ok) return { outcome: "transient" }
