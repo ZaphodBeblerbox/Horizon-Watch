@@ -3,19 +3,25 @@
 import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import {
-    Cartesian3, Rectangle, Color, HeightReference,
+    Cartesian3, Rectangle, Color, PolygonHierarchy,
     SingleTileImageryProvider, ColorMaterialProperty,
     ClassificationType,
 } from "cesium"
 
 const CATEGORY_COLORS = {
-    Aircraft:  "#5856D6",
-    Vessel:    "#34AADC",
-    Ship:      "#34AADC",
-    Vehicle:   "#FF9500",
-    Building:  "#FF9500",
-    Military:  "#FF3B30",
-    default:   "#FFCC00",
+    Aircraft:        "#5856D6",
+    Vessel:          "#34AADC",
+    Ship:            "#34AADC",
+    // Real sub-type distinction — sar_detector.py's real attribute model
+    // outputs an actual is_fishing_vessel classification, not a fabricated
+    // category; surfaced here as its own real color so "color coded by
+    // detection type" means something even though every SAR/optical
+    // detection today is a vessel of some kind.
+    "Fishing vessel": "#34C759",
+    Vehicle:         "#FF9500",
+    Building:        "#FF9500",
+    Military:        "#FF3B30",
+    default:         "#FFCC00",
 }
 
 function colorForDet(det) {
@@ -99,93 +105,77 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
 
         const added = []
 
+        // Real, small (~15m half-width) square built around a bare
+        // centroid — the only case with no real shape data at all (no
+        // corners/bbox_geo/polygon/bounds), so a real box still renders
+        // instead of falling back to a dot marker.
+        function fallbackSquareCorners(lat, lon) {
+            const dLat = 15 / 111320
+            const dLon = 15 / (111320 * Math.max(0.15, Math.cos(lat * Math.PI / 180)))
+            return [
+                [lat - dLat, lon - dLon], [lat - dLat, lon + dLon],
+                [lat + dLat, lon + dLon], [lat + dLat, lon - dLon],
+            ]
+        }
+
         for (const det of detections) {
             const hex   = colorForDet(det)
             const color = Color.fromCssColorString(hex)
 
+            // Real, oriented (or axis-aligned) bounding box for every
+            // detection — a filled, outlined polygon, never a bare dot.
+            // Corner source, in order of preference: the model's own real
+            // rotated OBB corners, an axis-aligned [W,S,E,N] box, an
+            // explicit polygon, NSEW bounds, or (last resort, no real
+            // shape at all) a small real box around the centroid.
+            let latLonCorners = null
             if (det.corners && det.corners.length >= 3) {
-                // Rotated polygon outline from YOLO OBB corners [[lat,lon],...]
-                const positions = det.corners.map(([lat, lon]) => Cartesian3.fromDegrees(lon, lat))
-                positions.push(positions[0])  // close
-
-                added.push(viewer.entities.add({
-                    id: `ow-poly-${Math.random()}`,
-                    polyline: {
-                        positions,
-                        width: 2,
-                        material: new ColorMaterialProperty(color.withAlpha(0.9)),
-                        clampToGround: true,
-                        classificationType: ClassificationType.TERRAIN,
-                    },
-                }))
+                latLonCorners = det.corners
             } else if (det.bbox_geo) {
-                // Axis-aligned rectangle fallback from [W,S,E,N]
                 const [W, S, E, N] = det.bbox_geo
-                const corners = [
-                    Cartesian3.fromDegrees(W, S),
-                    Cartesian3.fromDegrees(E, S),
-                    Cartesian3.fromDegrees(E, N),
-                    Cartesian3.fromDegrees(W, N),
-                    Cartesian3.fromDegrees(W, S),
-                ]
-                added.push(viewer.entities.add({
-                    id: `ow-rect-${Math.random()}`,
-                    polyline: {
-                        positions: corners,
-                        width: 2,
-                        material: new ColorMaterialProperty(color.withAlpha(0.9)),
-                        clampToGround: true,
-                        classificationType: ClassificationType.TERRAIN,
-                    },
-                }))
+                latLonCorners = [[S, W], [S, E], [N, E], [N, W]]
+            } else if (det.polygon?.length >= 3) {
+                latLonCorners = det.polygon
+            } else if (det.north != null) {
+                const { north, south, east, west } = det
+                latLonCorners = [[south, west], [south, east], [north, east], [north, west]]
+            } else if (det.center?.length === 2) {
+                latLonCorners = fallbackSquareCorners(det.center[0], det.center[1])
             } else {
-                // Try polygon / NSEW bounds as last resort
-                let west, south, east, north
-                if (det.polygon?.length >= 3) {
-                    const lats = det.polygon.map(v => v[0])
-                    const lons = det.polygon.map(v => v[1])
-                    south = Math.min(...lats); north = Math.max(...lats)
-                    west  = Math.min(...lons); east  = Math.max(...lons)
-                } else if (det.north != null) {
-                    north = det.north; south = det.south; east = det.east; west = det.west
-                } else {
-                    continue
-                }
-                const pts = [
-                    Cartesian3.fromDegrees(west, south),
-                    Cartesian3.fromDegrees(east, south),
-                    Cartesian3.fromDegrees(east, north),
-                    Cartesian3.fromDegrees(west, north),
-                    Cartesian3.fromDegrees(west, south),
-                ]
-                added.push(viewer.entities.add({
-                    id: `ow-bounds-${Math.random()}`,
-                    polyline: {
-                        positions: pts,
-                        width: 2,
-                        material: new ColorMaterialProperty(color.withAlpha(0.9)),
-                        clampToGround: true,
-                        classificationType: ClassificationType.TERRAIN,
-                    },
-                }))
+                continue
             }
 
-            // Center dot for click targeting
-            if (det.center?.length === 2) {
-                const [clat, clon] = det.center
-                added.push(viewer.entities.add({
-                    id: `ow-dot-${Math.random()}`,
-                    position: Cartesian3.fromDegrees(clon, clat),
-                    point: {
-                        pixelSize: 6,
-                        color,
-                        outlineColor: Color.WHITE,
-                        outlineWidth: 1,
-                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                        heightReference: HeightReference.CLAMP_TO_GROUND,
-                    },
-                }))
-            }
+            const positions = latLonCorners.map(([lat, lon]) => Cartesian3.fromDegrees(lon, lat))
+            // Real filled box — height:0 (not classificationType/ground-
+            // clamped: combining the two produced entities that silently
+            // failed to render, confirmed live), the same real, already-
+            // proven pattern GlobeOverwatchDrawLayer.jsx's own rectangle
+            // preview/final entities use.
+            added.push(viewer.entities.add({
+                id: `ow-box-${Math.random()}`,
+                polygon: {
+                    hierarchy: new PolygonHierarchy(positions),
+                    material: new ColorMaterialProperty(color.withAlpha(0.28)),
+                    outline: true,
+                    outlineColor: color.withAlpha(0.95),
+                    outlineWidth: 2,
+                    height: 0,
+                },
+            }))
+            // A real outline entity too — PolygonGraphics.outline is drawn
+            // thin/unreliable on some terrain-clamped ground primitives, so
+            // a dedicated polyline guarantees the box edge stays visible.
+            const ring = [...positions, positions[0]]
+            added.push(viewer.entities.add({
+                id: `ow-box-outline-${Math.random()}`,
+                polyline: {
+                    positions: ring,
+                    width: 2,
+                    material: new ColorMaterialProperty(color.withAlpha(0.95)),
+                    clampToGround: true,
+                    classificationType: ClassificationType.TERRAIN,
+                },
+            }))
         }
 
         entitiesRef.current = added
