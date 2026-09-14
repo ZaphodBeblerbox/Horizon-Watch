@@ -17088,8 +17088,23 @@ async def api_imagery_detect_scene(request: Request):
         raw = await _fetch_sentinel1_raw_bands_geotiff(bounds, max_age_days=fetch_days_back)
         if raw.get("error"):
             return JSONResponse({"error": raw["error"]}, status_code=502)
+        # Real root-cause fix (production freeze, confirmed live): this used
+        # to call the real synchronous, CPU-heavy PyTorch/rasterio sliding-
+        # window inference directly on the event loop -- unlike the exact
+        # same call in sentinel_scanner.py's pre-existing WatchZone scan
+        # pipeline (already isolated in its own run_in_executor thread) and
+        # unlike this same endpoint's own optical branch a few lines below
+        # (already offloaded). Every other coroutine on the process --
+        # AIS/ADS-B ingestion, forge-brain, snapshot writes, FUSION
+        # evaluation -- froze for the full real duration of one SAR
+        # detection call, matching the reported "everything goes silent at
+        # once" signature exactly. Same run_in_executor pattern as PR #60's
+        # FUSION event-loop-blocking fix.
+        loop = asyncio.get_event_loop()
         try:
-            sar_dets = sar_detector.run_sar_ship_detection_from_geotiff_bytes(raw["image_bytes"])
+            sar_dets = await loop.run_in_executor(
+                None, functools.partial(sar_detector.run_sar_ship_detection_from_geotiff_bytes, raw["image_bytes"])
+            )
         except sar_detector.SarDetectorError as e:
             return JSONResponse({"error": f"SAR detection failed: {e}"}, status_code=502)
 
