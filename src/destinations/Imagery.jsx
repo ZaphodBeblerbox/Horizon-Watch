@@ -41,6 +41,19 @@ export default function Imagery({ onOpenGenerate }) {
     const [scene, setScene] = useState(null)
     const [view, setView] = useState("split")
     const [showBoxes, setShowBoxes] = useState(true)
+    // Real fullscreen toggle for the scene/detection image itself — the
+    // comparison view's images were capped at a small fixed size
+    // (maxWidth 420 / maxHeight 60-70vh) with no way to inspect a scan at
+    // full resolution. This expands the same real <SceneComparison> in
+    // place to fill the viewport rather than opening a second, parallel
+    // "big image" viewer.
+    const [fullscreen, setFullscreen] = useState(false)
+    useEffect(() => {
+        if (!fullscreen) return
+        const onKey = (e) => { if (e.key === "Escape") setFullscreen(false) }
+        window.addEventListener("keydown", onKey)
+        return () => window.removeEventListener("keydown", onKey)
+    }, [fullscreen])
     const [confFloor, setConfFloor] = useState(0)
     const [kinds, setKinds] = useState({ new: true, expanded: true, removed: true })
     const [swipePos, setSwipePos] = useState(50)
@@ -238,8 +251,13 @@ export default function Imagery({ onOpenGenerate }) {
                 )}
             </div>
 
-            {/* Centre — comparison */}
-            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+            {/* Centre — comparison. Becomes a real fixed full-viewport
+                overlay (not a second component) when fullscreen is on, so
+                the exact same real <SceneComparison> just renders bigger —
+                no separate "big image" viewer to keep in sync. */}
+            <div style={fullscreen
+                ? { position: "fixed", inset: 0, zIndex: 50, background: "var(--bg-0)", display: "flex", flexDirection: "column" }
+                : { display: "flex", flexDirection: "column", minWidth: 0 }}>
                 <div style={{ height: 32, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 10, padding: "0 10px" }}>
                     <span style={{ font: "400 11px var(--mono)", color: "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {scene ? `${scene.scan.scan_id.slice(0, 8)} · ${scene.zone.name} · ${fmtDate(scene.reference_date)} → ${fmtDate(scene.scan.image_timestamp_utc)} · ${SENSOR_LABEL[scene.zone.sensor_preference] || "Sentinel-2 · optical 10m"}` : "No scene selected"}
@@ -267,6 +285,11 @@ export default function Imagery({ onOpenGenerate }) {
                     </button>
                     <button className="btn sm" onClick={raiseSignal}>raise signal</button>
                     <button className="btn sm" onClick={addToBriefingScene}>add to briefing</button>
+                    <button className="btn sm" disabled={!scene || scene.scan.status !== "completed"}
+                        title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen — inspect this scan at full size"}
+                        aria-pressed={fullscreen} onClick={() => setFullscreen((v) => !v)}>
+                        {fullscreen ? "exit fullscreen" : "fullscreen"}
+                    </button>
                 </div>
 
                 <SceneScrubber scenes={scenes} selectedScanId={selectedScanId} onSelect={setSelectedScanId} currentInstrument={scene?.scan?.instrument} />
@@ -279,7 +302,8 @@ export default function Imagery({ onOpenGenerate }) {
                     ) : (
                         <SceneComparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
                             swipePos={swipePos} onSwipeDrag={onSwipeDrag} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
-                            clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet} />
+                            clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet}
+                            fullscreen={fullscreen} />
                     )}
                 </div>
             </div>
