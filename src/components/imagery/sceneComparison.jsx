@@ -1,11 +1,15 @@
 // sceneComparison.jsx — the one real, shared AOI scene-comparison UI
 // (sensor vocabulary, scene-history date-scrubber, before/after/swipe
 // comparison view with detection boxes). Extracted from
-// src/destinations/Imagery.jsx (the standalone Imagery module) so
-// src/components/ImageryDetectionPanel.jsx (Situation's top-bar imagery
-// entry point) can reuse the exact same real components rather than a
-// second copy — the standalone module and this panel are now the two real
-// consumers of one shared implementation, not two parallel ones.
+// src/destinations/Imagery.jsx (the standalone Imagery module).
+//
+// Round 2 UX correction: Situation's top-bar imagery entry point
+// (src/components/ImagerySidebar.jsx) now renders its loaded scene +
+// detections directly on the main globe (GlobeOverwatchLayer.jsx), not in
+// a side panel — so it only reuses this file's real SENSOR_OPTIONS
+// vocabulary, not SceneScrubber/SceneComparison (which stay real and used
+// solely by the standalone Imagery module's own scene-history/before-
+// after view, out of scope for that round).
 //
 // Real #sc-sensor options — only sentinel2_optical and sentinel1_sar have
 // a real deployed fetch+detect pipeline in this codebase today (backend/

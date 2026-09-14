@@ -16949,6 +16949,200 @@ def api_imagery_scene(scan_id: str):
         }
 
 
+def _oriented_rect_corners(lat: float, lon: float, length_m: float, width_m: float, heading_deg: float) -> list:
+    """Real oriented-rectangle corners (4x [lat,lon]) from a real centroid +
+    real model-estimated length/width/heading -- the SAR counterpart of
+    sentinel_ml.run_ship_detection's own real rotated-OBB-corners approach
+    for optical (see that function's docstring on why an axis-aligned box
+    is the wrong fit for an overhead vessel at an arbitrary heading). The
+    SAR attribute model (sar_detector.py) only ever outputs a centroid +
+    length/width/heading-bucket, never corner pixels directly, so this is
+    real trigonometry over real model outputs, not a fabricated shape.
+    heading_deg: compass heading (0=north), clockwise, matching
+    heading_bucket_i * 22.5 (16 real buckets) from sar_detector.py."""
+    hdg = math.radians(heading_deg)
+    fwd_e, fwd_n = math.sin(hdg), math.cos(hdg)
+    right_e, right_n = math.sin(hdg + math.pi / 2), math.cos(hdg + math.pi / 2)
+    hl, hw = length_m / 2.0, width_m / 2.0
+    offsets_m = [
+        (-hl * fwd_e - hw * right_e, -hl * fwd_n - hw * right_n),
+        ( hl * fwd_e - hw * right_e,  hl * fwd_n - hw * right_n),
+        ( hl * fwd_e + hw * right_e,  hl * fwd_n + hw * right_n),
+        (-hl * fwd_e + hw * right_e, -hl * fwd_n + hw * right_n),
+    ]
+    lat_rad = math.radians(lat)
+    m_per_deg_lat = 111132.92 - 559.82 * math.cos(2 * lat_rad) + 1.175 * math.cos(4 * lat_rad)
+    m_per_deg_lon = 111412.84 * math.cos(lat_rad) - 93.5 * math.cos(3 * lat_rad)
+    return [[lat + dn / m_per_deg_lat, lon + de / (m_per_deg_lon or 1e-9)] for de, dn in offsets_m]
+
+
+@app.post("/api/imagery/receive-scene")
+async def api_imagery_receive_scene(request: Request):
+    """Real ad-hoc (non-WatchZone) scene fetch for Situation's docked
+    Imagery/detection sidebar (Round 2 UX correction of PR #64's floating
+    panel): draw a shape on the main globe, pick a sensor + cloud/date
+    filter, get back one real scene to render directly on the globe. No
+    new Sentinel Hub integration -- this wires together the exact real
+    fetch functions /api/sentinel/imagery and /api/sentinel/sar-imagery
+    already use (_fetch_sentinel_image_bytes / _fetch_sentinel1_image_bytes).
+
+    A real capture datestamp (never "now") needs to know which exact scene
+    the Process API's mosaicking resolved -- so this runs the real STAC
+    search first (_satellite_search_impl / _satellite_search_sentinel1_impl)
+    for the real top candidate's real acquisition datetime + cloud cover,
+    then fetches pixels for that same scene. Optical: an exact date_str
+    pins the fetch to that one real day, guaranteeing the same scene.
+    SAR: _fetch_sentinel1_image_bytes has no exact-date parameter (see its
+    own docstring) -- the fetch window is narrowed to just past the search
+    hit's date instead, a real, disclosed best-effort alignment, not a
+    byte-exact guarantee."""
+    import base64 as _b64
+    body = await request.json()
+    bounds = body.get("bounds") or {}
+    sensor = body.get("sensor", "sentinel2_optical")
+    max_cloud = int(body.get("max_cloud", 20))
+    days_back = int(body.get("days_back", 30))
+    date = body.get("date")  # optional exact "YYYY-MM-DD", optical only
+
+    west, south, east, north = bounds.get("west"), bounds.get("south"), bounds.get("east"), bounds.get("north")
+    if None in (west, south, east, north):
+        return JSONResponse({"error": "bounds {north,south,east,west} required"}, status_code=400)
+    stac_bbox = [west, south, east, north]
+
+    if sensor == "sentinel1_sar":
+        search = await _satellite_search_sentinel1_impl(stac_bbox, days_back=days_back)
+        top = (search.get("items") or [None])[0]
+        capture_ts = top.get("datetime") if top else None
+        fetch_days_back = days_back
+        if capture_ts:
+            try:
+                scene_dt = datetime.fromisoformat(capture_ts.replace("Z", "+00:00"))
+                fetch_days_back = max(1, (datetime.now(timezone.utc) - scene_dt).days + 1)
+            except Exception:
+                pass
+        img = await _fetch_sentinel1_image_bytes(bounds, max_age_days=fetch_days_back)
+        if img.get("error"):
+            return JSONResponse({"error": img["error"]}, status_code=502)
+        return JSONResponse({
+            "image_b64": _b64.b64encode(img["image_bytes"]).decode("ascii"),
+            "bounds": bounds, "sensor": sensor,
+            "capture_timestamp": capture_ts, "cloud_cover": None,
+        })
+
+    # sentinel2_optical
+    search = await _satellite_search_impl(stac_bbox, max_cloud=max_cloud, days_back=days_back)
+    top = (search.get("items") or [None])[0]
+    capture_ts = top.get("datetime") if top else None
+    cloud_cover = top.get("cloud_cover") if top else None
+    resolved_date = date or (capture_ts[:10] if capture_ts else None)
+    img = await _fetch_sentinel_image_bytes(bounds, image_type="true-colour", max_cloud=max_cloud,
+                                             days_back=days_back, date_str=resolved_date)
+    if img.get("error"):
+        return JSONResponse({"error": img["error"]}, status_code=502)
+    return JSONResponse({
+        "image_b64": _b64.b64encode(img["image_bytes"]).decode("ascii"),
+        "bounds": bounds, "sensor": sensor,
+        "capture_timestamp": capture_ts, "cloud_cover": cloud_cover,
+    })
+
+
+@app.post("/api/imagery/detect-scene")
+async def api_imagery_detect_scene(request: Request):
+    """Real detection on an ad-hoc scene fetched via /api/imagery/receive-
+    scene. Reuses the exact real per-sensor detector pairing
+    sentinel_scanner.py's WatchZone scan pipeline already uses --
+    sentinel_ml.run_ship_detection (DOTA YOLO-OBB) for optical,
+    sar_detector.run_sar_ship_detection_from_geotiff_bytes (AllenAI
+    vessel-detection-sentinels) for SAR -- never the generic ESRI/COCO
+    Overwatch detector, which has no real SAR-specific model.
+
+    Optical detects on the EXACT same bytes already rendered on the globe
+    (image_b64, passed back by the caller) -- no second fetch, no risk of
+    a different mosaicked scene. SAR has no true-colour/raw-band
+    equivalence, so it re-fetches the real raw VH/VV GeoTIFF the detector
+    actually needs, narrowed to the same real capture window receive-scene
+    already resolved (capture_timestamp, passed back by the caller).
+
+    Returns detections already converted to real geo corners/center
+    (lat/lon) -- ready for GlobeOverwatchLayer's existing real rendering,
+    no percent-of-frame conversion needed for this globe-native workflow."""
+    import base64 as _b64
+    import functools
+    body = await request.json()
+    bounds = body.get("bounds") or {}
+    sensor = body.get("sensor", "sentinel2_optical")
+    west, south, east, north = bounds.get("west"), bounds.get("south"), bounds.get("east"), bounds.get("north")
+    if None in (west, south, east, north):
+        return JSONResponse({"error": "bounds {north,south,east,west} required"}, status_code=400)
+
+    if sensor == "sentinel1_sar":
+        import sar_detector
+        capture_timestamp = body.get("capture_timestamp")
+        fetch_days_back = 30
+        if capture_timestamp:
+            try:
+                scene_dt = datetime.fromisoformat(capture_timestamp.replace("Z", "+00:00"))
+                fetch_days_back = max(1, (datetime.now(timezone.utc) - scene_dt).days + 1)
+            except Exception:
+                pass
+        raw = await _fetch_sentinel1_raw_bands_geotiff(bounds, max_age_days=fetch_days_back)
+        if raw.get("error"):
+            return JSONResponse({"error": raw["error"]}, status_code=502)
+        try:
+            sar_dets = sar_detector.run_sar_ship_detection_from_geotiff_bytes(raw["image_bytes"])
+        except sar_detector.SarDetectorError as e:
+            return JSONResponse({"error": f"SAR detection failed: {e}"}, status_code=502)
+
+        detections = []
+        for d in sar_dets:
+            heading_deg = d["heading_bucket_i"] * 22.5
+            detections.append({
+                "corners": _oriented_rect_corners(d["lat"], d["lon"], d["vessel_length_m"], d["vessel_width_m"], heading_deg),
+                "center": [d["lat"], d["lon"]],
+                "category": "Vessel",
+                "confidence": round(float(d["score"]), 3),
+                "attributes": {
+                    "vessel_length_m": round(d["vessel_length_m"], 1),
+                    "vessel_width_m": round(d["vessel_width_m"], 1),
+                    "vessel_speed_k": round(d["vessel_speed_k"], 2),
+                    "heading_deg": round(heading_deg, 1),
+                    "is_fishing_vessel": d["is_fishing_vessel"],
+                },
+            })
+        return JSONResponse({"detections": detections, "sensor": sensor, "model": "allenai/vessel-detection-sentinels"})
+
+    # sentinel2_optical -- detect on the exact bytes already displayed
+    image_b64 = body.get("image_b64", "")
+    if not image_b64:
+        return JSONResponse({"error": "image_b64 required for optical detection"}, status_code=400)
+    if "," in image_b64:
+        image_b64 = image_b64.split(",", 1)[1]
+    from PIL import Image as _PILImage
+    import sentinel_ml
+    tc_image = _PILImage.open(_io.BytesIO(_b64.b64decode(image_b64))).convert("RGB")
+    bbox = {"min_lat": south, "max_lat": north, "min_lon": west, "max_lon": east}
+    loop = asyncio.get_event_loop()
+    raw_dets = await loop.run_in_executor(
+        None, functools.partial(sentinel_ml.run_ship_detection, {"true_colour": tc_image}, bbox)
+    )
+
+    detections = []
+    for d in raw_dets:
+        geo = _json.loads(d["geo_geometry"]) if d.get("geo_geometry") else None
+        corners = None
+        if geo and geo.get("coordinates"):
+            ring = geo["coordinates"][0][:-1]  # drop closing duplicate vertex
+            corners = [[lat_, lon_] for lon_, lat_ in ring]
+        detections.append({
+            "corners": corners,
+            "center": [d["centroid_lat"], d["centroid_lon"]],
+            "category": "Vessel",
+            "confidence": d["confidence"],
+            "attributes": _json.loads(d["attributes"]) if d.get("attributes") else {},
+        })
+    return JSONResponse({"detections": detections, "sensor": sensor, "model": "yolov8n-obb (DOTA)"})
+
+
 @app.post("/api/imagery/detections/{detection_id}/confirm")
 def api_imagery_confirm_detection(detection_id: str):
     """Real analyst feedback — genuinely persisted (not a cosmetic UI
