@@ -142,13 +142,6 @@ export default function GlobeView({
     // Layers/Inspector overlay panes, so this chrome's own left:12 would
     // otherwise fall underneath the Layers pane whenever it's open.
     mapChromeLeftInset = 0,
-    // Imagery/detection top-bar panel round — real callback, not a global
-    // event (same reasoning as onInspectorPopupChange above): exposes the
-    // exact same real viewBounds this component already computes for its
-    // own event-layer scoping below, so a caller (Situation.jsx's imagery
-    // panel) can filter real AOIs to the current map view without a
-    // second, independently-computed bbox calculation.
-    onViewBoundsChange = null,
     // Real root-cause fix (Time-window-doesn't-filter-the-map bug) — the
     // same real time-window/severity-floor selector Situation.jsx's own
     // header/legend/histogram counts already use (src/lib/
@@ -589,11 +582,9 @@ export default function GlobeView({
                 // Don't bother with bbox when nearly whole globe is visible
                 if ((n - s) > 160 || (e - w) > 340) {
                     setViewBounds(null)
-                    onViewBoundsChange?.(null)
                 } else {
                     const b = { south: s, north: n, west: w, east: e }
                     setViewBounds(b)
-                    onViewBoundsChange?.(b)
                 }
                 // V3 Phase 1, §5.1 — real Cesium camera position + orientation,
                 // published on every real move so a session-save action can

@@ -36,7 +36,7 @@ import { publishFilterState } from "../state/situationFilterState.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import GeoConfirmedTimelinePanel from "../components/GeoConfirmedTimelinePanel.jsx"
-import ImageryDetectionPanel from "../components/ImageryDetectionPanel.jsx"
+import ImagerySidebar from "../components/ImagerySidebar.jsx"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
 
 const API = API_BASE
@@ -73,11 +73,19 @@ const ANNOTATION_TOOLS = [
 ]
 // Quick-layer buttons — the same real groupsOn state the Layers pane's own
 // domain rows use (one shared toggle, never a second independent list).
+// The "activate all satellite imagery" quick-layer button (key: "imagery",
+// icon: i-sat) that used to live here is removed this round — it was a
+// second, visually-identical top-bar icon sitting right next to the real
+// Imagery/detection entry point button below, a confirmed source of UX
+// confusion. groupsOn.imagery (satelliteEnabled/infraEnabled on GlobeView)
+// is untouched and still real — it's just no longer reachable from a
+// top-bar icon; the Layers pane's own "Event domains" → "Imagery" row
+// (DomainRow, driven by the same LAYER_GROUPS/groupsOn state) is the one
+// real, unchanged home for it now.
 const QUICK_LAYERS = [
     { key: "maritime", label: "Maritime", icon: "i-ship" },
     { key: "air", label: "Air", icon: "i-plane" },
     { key: "news", label: "News", icon: "i-read" },
-    { key: "imagery", label: "Imagery", icon: "i-sat" },
     { key: "zones", label: "Zones", icon: "i-target" },
     { key: "alerts", label: "Alerts", icon: "i-flag" },
 ]
@@ -241,17 +249,39 @@ export default function Situation({ onOpenDossier }) {
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
     const [exportOpen, setExportOpen] = useState(false)
     // Imagery/detection top-bar entry point — real audit (Part 0) confirmed
-    // no draw-to-scan tool existed in this top bar at all (the existing
-    // "Imagery" quick-layer button only toggles the satellite overlay's
-    // visibility, per QUICK_LAYERS below — it never opened anything). This
-    // is the new, real, distinct entry point that opens the shared AOI/
-    // scan/detection UI without leaving Situation.
+    // no draw-to-scan tool existed in this top bar at all (the old
+    // "activate all satellite imagery" quick-layer button only toggled the
+    // base satellite overlay's visibility — it never opened anything; that
+    // button is now removed from QUICK_LAYERS below, leaving this as the
+    // one real top-bar imagery/detection entry point).
     const [imageryPanelOpen, setImageryPanelOpen] = useState(false)
-    // Real camera view bounds, published by GlobeView's own existing
-    // event-layer-scoping computation (onViewBoundsChange) — reused here to
-    // scope the Imagery panel's AOI list to "areas in view" rather than a
-    // second, independently-computed bbox.
-    const [situationViewBounds, setSituationViewBounds] = useState(null)
+    // Round 2 UX correction of PR #64 — the drawn shape, loaded scene
+    // overlay, and detections all live here (not inside the sidebar
+    // component) because GlobeView (a sibling, not a child, of the
+    // sidebar) needs them too, via the real GlobeOverwatchLayer.jsx /
+    // GlobeOverwatchDrawLayer.jsx plumbing already built into GlobeView.jsx
+    // (confirmed live but with zero real consumers anywhere in the app
+    // until this round).
+    const [imageryDrawMode, setImageryDrawMode] = useState("rectangle")
+    const [imageryDrawActive, setImageryDrawActive] = useState(false)
+    const [imageryDrawn, setImageryDrawn] = useState(null) // {bounds, polygonVertices|null}
+    const [imageryScene, setImageryScene] = useState(null) // {image_b64, image_b64_composited, bounds, sensor, capture_timestamp, cloud_cover}
+    const [imageryDetections, setImageryDetections] = useState([])
+    const handleImageryBounds = useCallback((bounds) => {
+        setImageryDrawn({ bounds, polygonVertices: null })
+        setImageryDrawActive(false)
+    }, [])
+    const handleImageryPolygon = useCallback(({ vertices, bounds }) => {
+        setImageryDrawn({ bounds, polygonVertices: vertices })
+        setImageryDrawActive(false)
+    }, [])
+    const closeImageryPanel = useCallback(() => {
+        setImageryPanelOpen(false)
+        setImageryDrawActive(false)
+        setImageryDrawn(null)
+        setImageryScene(null)
+        setImageryDetections([])
+    }, [])
 
     // GeoConfirmed historic-timeline round — real per-user, server-
     // persisted theatre selection (Part 3.4), same settingsStore.js
@@ -535,11 +565,11 @@ export default function Situation({ onOpenDossier }) {
     // 6 of an earlier round) needs the same real shift, on top of its
     // existing button-column clearance.
     const inspectorOverlayWidth = rightMin ? 0 : 312 // px, matches --pane-r
-    // The Imagery panel occupies the exact same real right-edge slot as
-    // Inspector (322px, its own real width) — while open it visually
+    // The Imagery sidebar occupies the exact same real right-edge slot as
+    // Inspector (var(--pane-r), same 312px width) — while open it visually
     // covers Inspector, so map chrome should clear THIS width instead of
     // Inspector's whenever it's the active right-side overlay.
-    const activeRightOverlayWidth = imageryPanelOpen ? 322 : inspectorOverlayWidth
+    const activeRightOverlayWidth = imageryPanelOpen ? 312 : inspectorOverlayWidth
 
     return (
         <div data-testid="view-root-situation" style={{ display: "flex", position: "relative", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
@@ -761,13 +791,16 @@ export default function Situation({ onOpenDossier }) {
                     </div>
 
                     <div style={{ flex: 1 }} />
-                    {/* Real Imagery/detection entry point — distinct from the
-                        "Imagery" quick-layer toggle above (which only shows/
-                        hides the satellite overlay on the globe itself and
-                        never opened anything). Opens the real, shared AOI/
-                        scan/detection panel without leaving Situation. */}
+                    {/* Real Imagery/detection entry point — the one real
+                        top-bar imagery icon now (the old, visually-identical
+                        "activate all satellite imagery" quick-layer icon is
+                        removed, see QUICK_LAYERS above). Opens a real docked
+                        sidebar (ImagerySidebar.jsx) to draw a shape, pick a
+                        sensor + cloud/date filter, receive a real scene, and
+                        run real detection — all rendered directly on this
+                        globe, not inside the sidebar. */}
                     <button
-                        onClick={() => setImageryPanelOpen((v) => !v)}
+                        onClick={() => (imageryPanelOpen ? closeImageryPanel() : setImageryPanelOpen(true))}
                         title="Imagery & detection — load Sentinel scenes and run object detection"
                         aria-pressed={imageryPanelOpen}
                         style={{
@@ -837,7 +870,21 @@ export default function Situation({ onOpenDossier }) {
                         portsEnabled={tracksOn.ports} airportsEnabled={tracksOn.ports}
                         annotationTool={annotationTool}
                         basemap={basemap}
-                        onViewBoundsChange={setSituationViewBounds}
+                        /* Real Imagery/detection draw + overlay + detection
+                           rendering — GlobeOverwatchDrawLayer.jsx /
+                           GlobeOverwatchLayer.jsx, real components already
+                           built into GlobeView.jsx with no live consumer
+                           anywhere in the app until this round (confirmed:
+                           neither app.jsx's own Overwatch sidebar nor
+                           Dashboard.jsx's <GlobeView> ever wired these props
+                           through). */
+                        overwatchEnabled={imageryPanelOpen}
+                        overwatchDetections={imageryDetections}
+                        overwatchDrawActive={imageryDrawActive}
+                        overwatchDrawMode={imageryDrawMode}
+                        onOverwatchBounds={handleImageryBounds}
+                        onOverwatchPolygon={handleImageryPolygon}
+                        overwatchSentinelOverlay={imageryScene ? { image_b64: imageryScene.image_b64_composited, bounds: imageryScene.bounds } : null}
                     />
                     <MapControlStack onFullscreen={() => {}} basemap={{ value: basemap, onChange: setBasemap }} rightInset={activeRightOverlayWidth} />
                     {/* The severity legend used to float here, bottom-right —
@@ -860,9 +907,13 @@ export default function Situation({ onOpenDossier }) {
                         />
                     )}
                     {imageryPanelOpen && (
-                        <ImageryDetectionPanel
-                            onClose={() => setImageryPanelOpen(false)}
-                            viewBounds={situationViewBounds}
+                        <ImagerySidebar
+                            onClose={closeImageryPanel}
+                            drawMode={imageryDrawMode} onDrawModeChange={setImageryDrawMode}
+                            onDrawActiveChange={setImageryDrawActive}
+                            drawn={imageryDrawn}
+                            scene={imageryScene} onSceneChange={setImageryScene}
+                            detections={imageryDetections} onDetectionsChange={setImageryDetections}
                         />
                     )}
                 </div>

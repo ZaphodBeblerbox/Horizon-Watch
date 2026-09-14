@@ -25,7 +25,7 @@ import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, Sce
 // Real Part [Imagery/Situation top-bar entry point] round: the sensor
 // vocabulary and comparison-view UI (SceneScrubber/SceneComparison) now
 // live in ../components/imagery/sceneComparison.jsx, shared with
-// src/components/ImageryDetectionPanel.jsx (Situation's top-bar imagery
+// src/components/ImagerySidebar.jsx (Situation's top-bar imagery/detection
 // entry point) — this file no longer defines its own copy.
 
 const CADENCES = ["daily", "3-day", "weekly", "monthly", "on demand"]
