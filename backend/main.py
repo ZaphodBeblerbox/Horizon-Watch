@@ -393,6 +393,18 @@ _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
 _SENTINEL_IMAGERY_ENABLED = os.getenv("SENTINEL_IMAGERY_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 _SENTINEL_IMAGERY_DISABLED_MSG = "Sentinel/SAR imagery detection is temporarily disabled (production stability)"
 
+# Second kill switch (2026-09-15 event-loop-freeze incident) — live py-spy
+# dumps against the running prod process caught the MainThread stuck inside
+# _run_ais_loitering_rules -> check_loitering -> _point_to_cable_metres,
+# synchronously rebuilding a shapely MultiLineString from raw cable
+# coordinates on every (vessel, cable) pair, every 5-minute detection cycle.
+# On prod's much larger AIS/cable dataset this blocks the single-threaded
+# asyncio event loop long enough to make the whole app unresponsive (502s).
+# Defaults OFF; set AIS_LOITERING_ENABLED=true to re-enable once the
+# geometry-caching fix lands and production stability is reconfirmed.
+_AIS_LOITERING_ENABLED = os.getenv("AIS_LOITERING_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+_AIS_LOITERING_DISABLED_MSG = "AIS loitering detection is temporarily disabled (production stability)"
+
 # ── Auth configuration ────────────────────────────────────────────────────────
 if _COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET:
     if _SENTINEL_IMAGERY_ENABLED:
@@ -401,6 +413,11 @@ if _COPERNICUS_CLIENT_ID and _COPERNICUS_CLIENT_SECRET:
         print("[startup] Copernicus credentials detected but Sentinel/SAR imagery is DISABLED via kill switch (SENTINEL_IMAGERY_ENABLED not set) — production-freeze mitigation round.")
 else:
     print("[startup] Copernicus credentials missing — satellite search will use public mode.")
+
+if _AIS_LOITERING_ENABLED:
+    print("[startup] AIS loitering detection ENABLED.")
+else:
+    print("[startup] AIS loitering detection is DISABLED via kill switch (AIS_LOITERING_ENABLED not set) — event-loop-freeze mitigation (2026-09-15).")
 
 _analysis_cache: CappedDict = CappedDict(maxsize=500)
 _geocode_proxy_cache: CappedDict = CappedDict(maxsize=5_000)
@@ -19413,13 +19430,16 @@ async def _forge_detection_cycle():
                     print(f"[forge-brain] dark-ship update error: {_due}")
 
             # Stage 1b — Loitering near infrastructure (cables + ports)
-            try:
-                loiter_hits = _run_ais_loitering_rules(
-                    _rows_by_handler.get(_run_ais_loitering_rules, []), normalized_snap, cycle_now
-                )
-                new_ais_alerts.extend(loiter_hits)
-            except Exception as _le:
-                print(f"[forge-brain] loitering check error: {_le}")
+            if _AIS_LOITERING_ENABLED:
+                try:
+                    loiter_hits = _run_ais_loitering_rules(
+                        _rows_by_handler.get(_run_ais_loitering_rules, []), normalized_snap, cycle_now
+                    )
+                    new_ais_alerts.extend(loiter_hits)
+                except Exception as _le:
+                    print(f"[forge-brain] loitering check error: {_le}")
+            else:
+                print(f"[forge-brain] Stage1b loitering: {_AIS_LOITERING_DISABLED_MSG}")
 
             # Stage 1e — Chokepoint activity (transit + loitering inside strategic polygons)
             new_choke_alerts: list = []
