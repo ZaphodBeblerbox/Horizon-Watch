@@ -9051,6 +9051,16 @@ async def _ais_aggregate_loop():
 TRACK_DENSITY_RETENTION_DAYS = int(os.getenv("TRACK_DENSITY_RETENTION_DAYS", "30"))
 TRACK_DENSITY_HOURLY_DAYS = int(os.getenv("TRACK_DENSITY_HOURLY_DAYS", "14"))
 
+# Default OFF. Enabling this against the ~123M-row backlog saturates SQLite's
+# single writer: 2026-09-16 it produced continuous "database is locked" errors
+# on every vessel_history insert, collapsed AIS ingest from ~2900 to ~87
+# msgs/min, and failed the healthcheck into a restart loop — each restart
+# beginning the backlog again. Batching alone was not enough; the pass now also
+# yields between batches and stops at a wall-clock budget, and never runs
+# during startup. Turn on deliberately, ideally during a quiet window.
+TRACK_DENSITY_CLEANUP_ENABLED = os.getenv("TRACK_DENSITY_CLEANUP_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+TRACK_DENSITY_CLEANUP_BUDGET_S = int(os.getenv("TRACK_DENSITY_CLEANUP_BUDGET_S", "600"))
+
 
 def _prune_history_once() -> str:
     """One pruning pass. Runs in a worker thread (never on the event loop) and
@@ -9070,24 +9080,32 @@ def _prune_history_once() -> str:
         deleted_vs = db.query(VesselHistory).filter(VesselHistory.timestamp < raw_cutoff).delete()
         db.commit()
 
+    if not TRACK_DENSITY_CLEANUP_ENABLED:
+        return (f"raw: -{deleted_ac} ac, -{deleted_vs} vs (>24h); "
+                f"density cleanup disabled (TRACK_DENSITY_CLEANUP_ENABLED not set)")
+
+    deadline = time.monotonic() + TRACK_DENSITY_CLEANUP_BUDGET_S
+
     # Expired density, deleted id-batched (SQLite has no DELETE ... LIMIT).
+    # Small batches with a real yield between them: SQLite has ONE writer, and
+    # AIS ingest is writing continuously, so anything greedier starves it.
     deleted_td = 0
-    while True:
+    while time.monotonic() < deadline:
         with get_db() as db:
             ids = [r[0] for r in db.query(TrackDensity.id)
-                   .filter(TrackDensity.hour < density_cutoff).limit(20_000).all()]
+                   .filter(TrackDensity.hour < density_cutoff).limit(2_000).all()]
             if not ids:
                 break
             db.query(TrackDensity).filter(TrackDensity.id.in_(ids)).delete(synchronize_session=False)
             db.commit()
         deleted_td += len(ids)
-        time.sleep(0.05)
+        time.sleep(0.5)
 
     # Roll surviving sub-daily rows older than the hourly window into one row
     # per day, oldest day first so an interrupted pass simply resumes later.
     rolled_days = 0
     rolled_rows = 0
-    while True:
+    while time.monotonic() < deadline:
         with get_db() as db:
             oldest = db.execute(_text(
                 "SELECT MIN(date(hour)) FROM track_density "
@@ -9122,7 +9140,7 @@ def _prune_history_once() -> str:
             db.commit()
         rolled_days += 1
         rolled_rows += n
-        time.sleep(0.2)
+        time.sleep(1.0)
 
     # Keep the WAL from ballooning after a large pass (it was already 320MB).
     try:
@@ -9146,6 +9164,10 @@ async def _prune_history_loop():
     cleanup never fired at all — track_density grew unbounded (10M+ rows)
     despite this code already existing.
     """
+    # Never during startup: competing with startup for SQLite's single writer is
+    # what failed the healthcheck into a restart loop on 2026-09-16, with each
+    # restart beginning the whole backlog again.
+    await asyncio.sleep(600)
     while True:
         try:
             summary = await asyncio.to_thread(_prune_history_once)
