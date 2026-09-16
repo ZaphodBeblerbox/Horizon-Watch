@@ -58,10 +58,17 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 load_dotenv()
 
+# Respect the real configured data location instead of hardcoding the legacy
+# Railway mount path. This is the 2026-09-16 outage: the volume is mounted at
+# /app/data (RAILWAY_VOLUME_MOUNT_PATH / DATA_DIR both say so), but this used
+# to hardcode "/var/lib/railway" whenever RAILWAY_ENVIRONMENT was set — so the
+# app ran against a non-volume path, came up with an empty DB, re-seeded users
+# from SEED_TEMP_PASSWORD (every existing login then 401'd), served no live
+# data, and lost the healthcheck race while re-seeding.
 DATA_DIR = (
-    "/var/lib/railway"
-    if os.getenv("RAILWAY_ENVIRONMENT")
-    else os.path.join(os.path.dirname(__file__), "data")
+    os.getenv("DATA_DIR")
+    or os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    or os.path.join(os.path.dirname(__file__), "data")
 )
 os.makedirs(DATA_DIR, exist_ok=True)
 
