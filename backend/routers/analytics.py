@@ -8,7 +8,7 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, Query
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, and_, case
 
 from database import (
     TrackDensity, Alert, SentinelDetection, WatchZone, Report,
@@ -17,6 +17,18 @@ from database import (
 import threat_matrix
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+# 2026-09-15 event-loop-freeze incident #2 — _fetch_and_normalize_signals()
+# was date-scoped in SQL but not region/domain-scoped (those were filtered
+# in Python after a full-window fetch), and had no hard cap at all. This is
+# a real safety net, not the primary optimization for a region=all&domain=all
+# request (that's covered by the SQL push-down below) — sized well above
+# real observed volume (~46k alerts / 60-day window in prod as of this
+# incident) so it only ever fires for a genuinely pathological blowup, never
+# silently truncating a normal response. `truncated` is surfaced honestly in
+# the response rather than letting a hit-cap response masquerade as a
+# complete one.
+_ROW_CAP = 100_000
 
 # ── Overview endpoint — real cross-domain aggregates for the Analytics page ──
 # Severity vocabularies differ across tables (Alert/SentinelDetection use
@@ -48,27 +60,88 @@ def _classify_region(lat, lon):
     return "Other"
 
 
-def _fetch_and_normalize_signals(db, since):
+def _region_sql_case(lat_col, lon_col):
+    """SQL `case()` mirroring _classify_region()'s exact first-match-wins
+    semantics (threat_matrix.REGIONS iteration order — some bboxes genuinely
+    overlap, e.g. South China Sea / Taiwan Strait, so order matters and must
+    match). Used to push the region filter into the DB WHERE clause instead
+    of fetching every row and classifying in Python."""
+    whens = [
+        (
+            and_(lat_col.isnot(None), lon_col.isnot(None),
+                 lat_col >= info["bbox"]["min_lat"], lat_col <= info["bbox"]["max_lat"],
+                 lon_col >= info["bbox"]["min_lon"], lon_col <= info["bbox"]["max_lon"]),
+            name,
+        )
+        for name, info in threat_matrix.REGIONS.items()
+    ]
+    return case(*whens, else_="Other")
+
+
+def _alert_domain_sql_case(source_col, zone_ids_col):
+    """SQL `case()` mirroring the domain classification in the loop below
+    (zones takes priority over source, else adsb/ais/geoconfirmed substring
+    match, else zones) — real DB-level equivalent of the same logic, used to
+    push the domain filter into SQL for Alert rows. SentinelDetection rows
+    are always domain="imagery" and never go through this."""
+    has_zones = and_(zone_ids_col.isnot(None), zone_ids_col != "", zone_ids_col != "[]")
+    src = func.lower(func.coalesce(source_col, ""))
+    return case(
+        (has_zones, "zones"),
+        (src.contains("adsb"), "air"),
+        (src.contains("ais"), "maritime"),
+        (src.contains("geoconfirmed"), "news"),
+        else_="zones",
+    )
+
+
+def _fetch_and_normalize_signals(db, since, region: str = "all", domain: str = "all"):
     """Real Alert/NewsArticle/SentinelDetection rows since `since`, normalized
     onto one unified signal shape (domain/severity/region already classified).
     Factored out of get_overview() so a second real consumer (the Replay
     timeline) can read the exact same live signals without a parallel
     fetch/classification path — see _classify_region()'s own module docblock
-    for why this must never be reimplemented client-side."""
-    alerts = (
-        db.query(Alert.id, Alert.severity, Alert.source, Alert.lat, Alert.lon,
-                 Alert.zone_ids, Alert.created_at, Alert.status, Alert.title,
-                 Alert.entity_id, Alert.entity_type, Alert.alert_id, Alert.analyst_note)
-        .filter(Alert.created_at >= since)
-        .all()
-    )
-    detections = (
-        db.query(SentinelDetection.detection_id, SentinelDetection.severity,
-                 SentinelDetection.centroid_lat, SentinelDetection.centroid_lon,
-                 SentinelDetection.created_at, SentinelDetection.object_type)
-        .filter(SentinelDetection.created_at >= since)
-        .all()
-    )
+    for why this must never be reimplemented client-side.
+
+    region/domain are pushed into the SQL WHERE clause (real DB-side
+    filtering, not a full-window fetch followed by an in-memory filter) —
+    the 2026-09-15 event-loop-freeze incident #2 root cause. When domain
+    resolves to a single table (imagery -> SentinelDetection only, anything
+    else non-"all" -> Alert only), the other table's query is skipped
+    entirely. Returns (signals, truncated) — truncated is True if either
+    query hit _ROW_CAP, meaning the real total may be larger than what's
+    returned (surfaced to the caller rather than silently under-reporting).
+    """
+    truncated = False
+    alerts = []
+    if domain != "imagery":
+        q = (
+            db.query(Alert.id, Alert.severity, Alert.source, Alert.lat, Alert.lon,
+                     Alert.zone_ids, Alert.created_at, Alert.status, Alert.title,
+                     Alert.entity_id, Alert.entity_type, Alert.alert_id, Alert.analyst_note)
+            .filter(Alert.created_at >= since)
+        )
+        if region != "all":
+            q = q.filter(_region_sql_case(Alert.lat, Alert.lon) == region)
+        if domain != "all":
+            q = q.filter(_alert_domain_sql_case(Alert.source, Alert.zone_ids) == domain)
+        alerts = q.order_by(Alert.created_at.desc()).limit(_ROW_CAP).all()
+        if len(alerts) == _ROW_CAP:
+            truncated = True
+
+    detections = []
+    if domain in ("all", "imagery"):
+        q = (
+            db.query(SentinelDetection.detection_id, SentinelDetection.severity,
+                     SentinelDetection.centroid_lat, SentinelDetection.centroid_lon,
+                     SentinelDetection.created_at, SentinelDetection.object_type)
+            .filter(SentinelDetection.created_at >= since)
+        )
+        if region != "all":
+            q = q.filter(_region_sql_case(SentinelDetection.centroid_lat, SentinelDetection.centroid_lon) == region)
+        detections = q.order_by(SentinelDetection.created_at.desc()).limit(_ROW_CAP).all()
+        if len(detections) == _ROW_CAP:
+            truncated = True
 
     signals = []
     for row in alerts:
@@ -112,7 +185,7 @@ def _fetch_and_normalize_signals(db, since):
             "source": "sentinel", "status": "active",
             "entity_id": None, "entity_type": "detection", "assessed": False,
         })
-    return signals
+    return signals, truncated
 
 
 def _window(range_key: str):
@@ -130,7 +203,7 @@ def _pct_delta(cur: int, prior: int):
 
 
 @router.get("/overview")
-async def get_overview(
+def get_overview(
     range: str = Query("30d", pattern="^(7d|30d|90d)$"),
     region: str = Query("all"),
     domain: str = Query("all", pattern="^(all|maritime|air|news|imagery|zones)$"),
@@ -149,7 +222,7 @@ async def get_overview(
         region = "all"
 
     with get_db() as db:
-        signals = _fetch_and_normalize_signals(db, prior_start)
+        signals, truncated = _fetch_and_normalize_signals(db, prior_start, region=region, domain=domain)
 
         watch_zones_enabled = db.query(WatchZone).filter(WatchZone.enabled == True).all()  # noqa: E712
 
@@ -296,6 +369,7 @@ async def get_overview(
     return {
         "range": range, "region": region, "domain": domain,
         "generated_at": now.isoformat(),
+        "truncated": truncated,
         "kpis": kpis,
         "timeseries": timeseries,
         "donuts": {
@@ -310,7 +384,7 @@ async def get_overview(
 
 
 @router.get("/timeline")
-async def get_timeline(hours: int = Query(168, ge=1, le=24 * 90)):
+def get_timeline(hours: int = Query(168, ge=1, le=24 * 90)):
     """Real, bounded-window signal feed for the Replay page's ruler/lanes —
     every real Alert/NewsArticle/SentinelDetection row from the last `hours`
     hours that has a real lat/lon (Replay's minimap/replay-on-map need a real
@@ -324,7 +398,7 @@ async def get_timeline(hours: int = Query(168, ge=1, le=24 * 90)):
     now = datetime.datetime.utcnow()
     since = now - datetime.timedelta(hours=hours)
     with get_db() as db:
-        signals = _fetch_and_normalize_signals(db, since)
+        signals, _ = _fetch_and_normalize_signals(db, since)
 
     signals = [s for s in signals if s["lat"] is not None and s["lon"] is not None and s["created_at"]]
     signals.sort(key=lambda s: s["created_at"])
@@ -359,7 +433,7 @@ def _bbox_filter(query, south, north, west, east):
 
 
 @router.get("/heatmap")
-async def get_heatmap(
+def get_heatmap(
     domain: str   = Query("ais",  pattern="^(ais|adsb)$"),
     hours:  int   = Query(24, ge=1, le=2160),
     south:  Optional[float] = Query(None),
@@ -396,7 +470,7 @@ async def get_heatmap(
 
 
 @router.get("/timeseries")
-async def get_timeseries(
+def get_timeseries(
     domain: str = Query("ais",  pattern="^(ais|adsb)$"),
     hours:  int = Query(168, ge=1, le=2160),
     south:  Optional[float] = Query(None),
@@ -422,7 +496,7 @@ async def get_timeseries(
 
 
 @router.get("/breakdown")
-async def get_type_breakdown(
+def get_type_breakdown(
     domain: str = Query("ais", pattern="^(ais|adsb)$"),
     hours:  int = Query(24,  ge=1, le=2160),
     south:  Optional[float] = Query(None),

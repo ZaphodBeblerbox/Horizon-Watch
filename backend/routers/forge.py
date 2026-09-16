@@ -2110,7 +2110,7 @@ def forge_ontology_pyramid():
 
 
 @router.post("/ontology/build")
-async def forge_build_ontology():
+def forge_build_ontology():
     import main as _m
     import random as _random
     # Merge: keep existing nodes/edges, only add new ones by label
@@ -2572,7 +2572,7 @@ def _deliver_desk_note(title: str, body: str, data: dict) -> int:
 
 
 @router.post("/notes")
-async def create_desk_note(
+def create_desk_note(
     route: str = Form(...),
     kind: str = Form("text"),
     text_content: str = Form(""),

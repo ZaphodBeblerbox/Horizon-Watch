@@ -3472,7 +3472,7 @@ def _db_gen():
 
 
 @app.post("/api/admin/reset-zone-intervals")
-async def admin_reset_zone_intervals(current_user=None):
+def admin_reset_zone_intervals(current_user=None):
     """Set all WatchZone scan_interval_hours to 120 (5 days) and recalculate next_scan_at."""
     from database import WatchZone
     updated = 0
@@ -3488,7 +3488,7 @@ async def admin_reset_zone_intervals(current_user=None):
 
 
 @app.post("/api/admin/purge-dark-ships")
-async def purge_dark_ships(current_user=None):
+def purge_dark_ships(current_user=None):
     global _forge_alerts
     before = len(_forge_alerts)
     _forge_alerts = [
@@ -9062,6 +9062,37 @@ TRACK_DENSITY_CLEANUP_ENABLED = os.getenv("TRACK_DENSITY_CLEANUP_ENABLED", "fals
 TRACK_DENSITY_CLEANUP_BUDGET_S = int(os.getenv("TRACK_DENSITY_CLEANUP_BUDGET_S", "600"))
 
 
+def _wal_checkpoint() -> int:
+    """Fold the WAL back into the database. PASSIVE, never TRUNCATE: TRUNCATE
+    waits for readers to clear, which on this app means waiting behind
+    continuous AIS traffic. PASSIVE checkpoints what it can and returns
+    immediately, so the WAL gets reused instead of growing without bound.
+    Returns pages still in the WAL afterwards."""
+    from sqlalchemy import text as _text
+    from database import get_db
+    try:
+        with get_db() as db:
+            row = db.execute(_text("PRAGMA wal_checkpoint(PASSIVE)")).fetchone()
+        return int(row[1]) if row and row[1] is not None else -1
+    except Exception:
+        return -1
+
+
+async def _wal_checkpoint_loop():
+    """The WAL reached 2GB in hours on 2026-09-16 because auto-checkpointing is
+    starved by continuously-open readers, and a large WAL slows every read.
+    Checkpoint off the event loop on a short cycle to hold it down."""
+    await asyncio.sleep(120)
+    while True:
+        try:
+            pages = await asyncio.to_thread(_wal_checkpoint)
+            if pages > 50_000:
+                print(f"[wal] checkpoint ran; {pages} pages still in WAL")
+        except Exception as e:
+            print(f"[wal] checkpoint error: {e}")
+        await asyncio.sleep(300)
+
+
 def _prune_history_once() -> str:
     """One pruning pass. Runs in a worker thread (never on the event loop) and
     commits in per-day batches, because doing this in one transaction over a
@@ -9081,6 +9112,7 @@ def _prune_history_once() -> str:
         db.commit()
 
     if not TRACK_DENSITY_CLEANUP_ENABLED:
+        _wal_checkpoint()
         return (f"raw: -{deleted_ac} ac, -{deleted_vs} vs (>24h); "
                 f"density cleanup disabled (TRACK_DENSITY_CLEANUP_ENABLED not set)")
 
@@ -9142,12 +9174,7 @@ def _prune_history_once() -> str:
         rolled_rows += n
         time.sleep(1.0)
 
-    # Keep the WAL from ballooning after a large pass (it was already 320MB).
-    try:
-        with get_db() as db:
-            db.execute(_text("PRAGMA wal_checkpoint(TRUNCATE)"))
-    except Exception:
-        pass
+    _wal_checkpoint()
 
     return (f"raw: -{deleted_ac} ac, -{deleted_vs} vs (>24h); "
             f"density: -{deleted_td} (>{TRACK_DENSITY_RETENTION_DAYS}d); "
@@ -9178,7 +9205,7 @@ async def _prune_history_loop():
 
 
 @app.get("/api/history/aircraft")
-async def get_aircraft_history(
+def get_aircraft_history(
     icao24: str = Query(None),
     lat: float = Query(None),
     lon: float = Query(None),
@@ -9247,7 +9274,7 @@ _military_tracks: dict = {}   # icao_hex.upper() → [{lat,lon,alt,speed,heading
 
 
 @app.get("/api/adsb/military-track/{icao_hex}")
-async def get_military_track(icao_hex: str):
+def get_military_track(icao_hex: str):
     """Return rolling track for a military aircraft — in-memory first, DB fallback."""
     hex_upper = icao_hex.upper()
     track = list(_military_tracks.get(hex_upper, []))
@@ -9271,7 +9298,7 @@ async def get_military_track(icao_hex: str):
 
 
 @app.get("/api/history/vessels")
-async def get_vessel_history(
+def get_vessel_history(
     mmsi: str = Query(None),
     lat: float = Query(None),
     lon: float = Query(None),
@@ -9310,7 +9337,7 @@ async def get_vessel_history(
 
 
 @app.get("/api/history/snapshot")
-async def get_historical_snapshot(
+def get_historical_snapshot(
     timestamp: str = Query(..., description="ISO format timestamp"),
     user=None,
 ):
@@ -9905,7 +9932,7 @@ async def _weekly_snapshot_loop():
 
 
 @app.get("/api/statistics/weekly")
-async def get_weekly_snapshots(weeks: int = Query(12), user=None):
+def get_weekly_snapshots(weeks: int = Query(12), user=None):
     try:
         from database import WeeklySnapshot, get_db
     except ImportError as e:
@@ -10539,7 +10566,7 @@ async def overwatch_scans_create(request: Request):
 
 
 @app.get("/api/overwatch/scans")
-async def overwatch_scans_list(request: Request, limit: int = 50):
+def overwatch_scans_list(request: Request, limit: int = 50):
     """Return recent Overwatch scan records for analytics charts."""
     import json as _json
     try:
@@ -11323,6 +11350,7 @@ async def startup_event():
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
     asyncio.create_task(_prune_history_loop())
+    asyncio.create_task(_wal_checkpoint_loop())
     asyncio.create_task(_ais_aggregate_loop())
     asyncio.create_task(_weekly_snapshot_loop())
     asyncio.create_task(_global_adsb_cache_loop())
@@ -16574,7 +16602,7 @@ def _detection_row_to_dict(row) -> dict:
 
 
 @app.post("/api/watch-zones")
-async def api_watch_zones_create(body: dict):
+def api_watch_zones_create(body: dict):
     # Real root-cause fix, found live (Imagery/Situation top-bar entry
     # point round): this was a plain `def` (synchronous) endpoint, so
     # FastAPI/Starlette ran it in an AnyIO worker thread — not the real
@@ -17417,7 +17445,7 @@ def _launch_zone_scan_background(zone_dict: dict, triggered_by: str) -> None:
 
 
 @app.post("/api/watch-zones/{system_id}/scan-now")
-async def api_watch_zone_scan_now(system_id: str):
+def api_watch_zone_scan_now(system_id: str):
     from database import WatchZone, SentinelScan, get_db
 
     with get_db() as db:
@@ -20393,7 +20421,7 @@ def api_fusions_signals(fusion_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/foresight/global/summary")
-async def api_foresight_global():
+def api_foresight_global():
     """Top escalation risks across all zones (last 24h assessments)."""
     errors = []
     try:
@@ -20431,7 +20459,7 @@ async def api_foresight_global():
 
 
 @app.get("/api/foresight/{zone_id}")
-async def api_foresight_get(zone_id: str):
+def api_foresight_get(zone_id: str):
     """Latest foresight assessment for a zone."""
     try:
         from database import ForesightAssessment as _FA
@@ -22185,7 +22213,7 @@ async def api_cases_add_note(case_id: str, request: Request):
         return _case_row_to_dict(c)
 
 @app.post("/api/cases/{case_id}/advance")
-async def api_cases_advance(case_id: str, request: Request):
+def api_cases_advance(case_id: str, request: Request):
     """Real approval-chain advance (§7.6's Briefing tab): draft -> review ->
     approved -> issued, appending a real, permanent {stage, user_id, at}
     entry to approval_history_json on every real transition. Now backed by
@@ -22754,7 +22782,7 @@ async def api_forge_ontology_edge_patch(edge_id: str, request: Request):
 # ── Threat matrix explainability ─────────────────────────────────────────────
 
 @app.get("/api/analytics/threat-matrix/{region_name}/explain")
-async def api_threat_matrix_explain(
+def api_threat_matrix_explain(
     region_name: str,
     current_user=None,
 ):
