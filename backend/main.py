@@ -7221,7 +7221,13 @@ async def _startup_snapshot_prefill() -> None:
                 return [{"alert_id": a.alert_id, "source": a.source, "alert_type": a.alert_type,
                          "title": a.title, "severity": a.severity, "lat": a.lat, "lon": a.lon,
                          "country_code": a.country_code, "status": a.status,
-                         "relevance_score": a.relevance_score,
+                         # Alert carries no relevance_score column — severity is the
+                         # real signal it has. Reading it raised AttributeError on
+                         # every cycle, so this snapshot was never written and the
+                         # inbox that reads /api/snapshot/alerts_active stayed empty.
+                         # Emitted as null rather than derived from severity, so no
+                         # score is invented; the frontend already does `?? 0`.
+                         "relevance_score": None,
                          "created_at": a.created_at.isoformat() if a.created_at else None}
                         for a in rows]
             _write_snapshot_sync("alerts_active", await loop.run_in_executor(_executor, _build_alerts))
@@ -9036,6 +9042,7 @@ def _record_ais_history(mmsi, vessel_data):
 def _flush_ais_history_sync() -> int:
     """Write buffered vessel history in one transaction. Runs in a worker
     thread, never on the event loop."""
+    from database import VesselHistory, get_db
     global _AIS_HISTORY_BUFFER
     with _AIS_HISTORY_LOCK:
         batch = _AIS_HISTORY_BUFFER
@@ -20051,7 +20058,11 @@ async def _forge_detection_cycle():
                     {"alert_id": a.alert_id, "source": a.source, "alert_type": a.alert_type,
                      "title": a.title, "severity": a.severity, "lat": a.lat, "lon": a.lon,
                      "country_code": a.country_code, "status": a.status,
-                     "relevance_score": a.relevance_score,
+                     # See the identical builder near /api/snapshot/alerts_active:
+                     # Alert has no relevance_score column, and reading it aborted
+                     # this snapshot write on every cycle — which is why the inbox
+                     # was never fed. Null, not a score derived from severity.
+                     "relevance_score": None,
                      "created_at": a.created_at.isoformat() if a.created_at else None}
                     for a in _active_alerts
                 ])
