@@ -376,17 +376,31 @@ class EntityLinker:
         results = []
         tl = title.lower()
 
+        # This runs per alert over ~11.7k ports + ~49k airports. Building and
+        # running a regex for each one meant ~61k regex compiles per alert —
+        # far past re's 512-entry cache, so nothing was reused. py-spy caught
+        # this holding the GIL on 2026-09-16, starving the event loop.
+        # A word-boundary match requires the substring to be present, so the
+        # cheap `in` test short-circuits identically and the regex now runs
+        # only for the handful of real candidates. Lowercased names are cached
+        # on first use rather than recomputed per alert.
         for port in self._ports:
-            if port["name"] and len(port["name"]) >= 4:
-                if re.search(r'\b' + re.escape(port["name"].lower()) + r'\b', tl):
+            nm = port.get("_lname")
+            if nm is None:
+                nm = port["_lname"] = (port["name"] or "").lower()
+            if len(nm) >= 4 and nm in tl:
+                if re.search(r'\b' + re.escape(nm) + r'\b', tl):
                     results.append(self._make_link(
                         source_type, source_id, "port", port["id"], port["name"],
                         "mention",
                     ))
 
         for ap in self._airports:
-            if ap["name"] and len(ap["name"]) >= 4:
-                if re.search(r'\b' + re.escape(ap["name"].lower()) + r'\b', tl):
+            nm = ap.get("_lname")
+            if nm is None:
+                nm = ap["_lname"] = (ap["name"] or "").lower()
+            if len(nm) >= 4 and nm in tl:
+                if re.search(r'\b' + re.escape(nm) + r'\b', tl):
                     results.append(self._make_link(
                         source_type, source_id, "airport", ap["id"], ap["name"],
                         "mention",

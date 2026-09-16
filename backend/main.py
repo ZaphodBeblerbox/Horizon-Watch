@@ -8973,6 +8973,12 @@ def _record_adsb_history(aircraft_list):
 
 # AIS aggregation buffer — flushed by _ais_aggregate_loop every 60s
 _AIS_AGG_BUFFER: CappedDict = CappedDict(maxsize=10_000)
+
+# Vessel-history rows staged by _record_ais_history (on the event loop) and
+# written by _ais_history_flush_loop (in a worker thread), so the loop never
+# performs a blocking SQLite commit.
+_AIS_HISTORY_BUFFER: list = []
+_AIS_HISTORY_LOCK = threading.Lock()
 _AIS_AGG_LOCK   = threading.Lock()
 
 
@@ -9004,25 +9010,56 @@ def _record_ais_history(mmsi, vessel_data):
     if last and (now - last) < 600:  # cost reduction: was 300s
         return
     _AIS_LAST_RECORDED[mmsi] = now
+    # Buffer only — never write here. This runs inside _ais_websocket_loop on
+    # the event loop, and a synchronous commit per vessel meant a blocking
+    # SQLite write (on network storage) directly on the loop, in bursts of up
+    # to ~2000 when many vessels cross the throttle window together. py-spy
+    # caught the loop parked in exactly this commit on 2026-09-16 while an
+    # endpoint doing no DB work at all timed out. The flush loop below turns
+    # those N commits into one.
+    with _AIS_HISTORY_LOCK:
+        _AIS_HISTORY_BUFFER.append({
+            "mmsi": mmsi,
+            "name": vessel_data.get('name', ''),
+            "ship_type": vessel_data.get('ship_type_code', 0),
+            "ship_type_text": vessel_data.get('ship_type', ''),
+            "lat": vessel_data.get('lat'),
+            "lon": vessel_data.get('lon'),
+            "speed": vessel_data.get('speed'),
+            "heading": vessel_data.get('heading'),
+            "flag": vessel_data.get('flag', '') or vessel_data.get('country', ''),
+            "destination": vessel_data.get('destination', ''),
+            "timestamp": datetime.utcnow(),
+        })
+
+
+def _flush_ais_history_sync() -> int:
+    """Write buffered vessel history in one transaction. Runs in a worker
+    thread, never on the event loop."""
+    global _AIS_HISTORY_BUFFER
+    with _AIS_HISTORY_LOCK:
+        batch = _AIS_HISTORY_BUFFER
+        _AIS_HISTORY_BUFFER = []
+    if not batch:
+        return 0
     try:
-        record = VesselHistory(
-            mmsi=mmsi,
-            name=vessel_data.get('name', ''),
-            ship_type=vessel_data.get('ship_type_code', 0),
-            ship_type_text=vessel_data.get('ship_type', ''),
-            lat=vessel_data.get('lat'),
-            lon=vessel_data.get('lon'),
-            speed=vessel_data.get('speed'),
-            heading=vessel_data.get('heading'),
-            flag=vessel_data.get('flag', '') or vessel_data.get('country', ''),
-            destination=vessel_data.get('destination', ''),
-            timestamp=datetime.utcnow(),
-        )
         with get_db() as db:
-            db.add(record)
+            db.add_all([VesselHistory(**row) for row in batch])
             db.commit()
+        return len(batch)
     except Exception as e:
-        print(f"[ais-history] record error: {e}")
+        print(f"[ais-history] flush error: {e}")
+        return 0
+
+
+async def _ais_history_flush_loop():
+    """Flush buffered vessel history every 30s, off the event loop."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            await asyncio.to_thread(_flush_ais_history_sync)
+        except Exception as e:
+            print(f"[ais-history] flush loop error: {e}")
 
 
 async def _ais_aggregate_loop():
@@ -11352,6 +11389,7 @@ async def startup_event():
     asyncio.create_task(_prune_history_loop())
     asyncio.create_task(_wal_checkpoint_loop())
     asyncio.create_task(_ais_aggregate_loop())
+    asyncio.create_task(_ais_history_flush_loop())
     asyncio.create_task(_weekly_snapshot_loop())
     asyncio.create_task(_global_adsb_cache_loop())
     # Forge detection engine
