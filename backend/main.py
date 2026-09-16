@@ -1171,6 +1171,16 @@ def _cadence_label(source_id: str) -> str | None:
         return None
     return f"poll, every {secs}s" if secs < 120 else f"poll, every {secs // 60}min"
 
+@app.get("/api/health/live")
+def get_health_live():
+    """Liveness probe for the platform healthcheck. Deliberately touches no
+    database, lock, or data source — /api/health/detailed does real work, so
+    when a slow query stalls the event loop the healthcheck times out and the
+    container is killed, turning a slow query into a full outage. This answers
+    "is the process alive", which is the only question a restart can fix."""
+    return {"status": "ok"}
+
+
 @app.get("/api/health/detailed")
 def get_health_detailed():
     """Return backend status, data source statuses, and Claude usage stats."""
@@ -9031,9 +9041,105 @@ async def _ais_aggregate_loop():
             print(f"[ais-aggregate] loop error: {e}")
 
 
+# track_density retention. The 90-day window let this table reach ~123M rows
+# (~30GB — effectively the entire database) because the ingest rate outruns it;
+# the prune was working but deleting 0 rows, since nothing was yet 90 days old.
+# Hourly detail is kept for TRACK_DENSITY_HOURLY_DAYS, then rolled up to one
+# row per (cell, day, domain) — a 24x reduction that preserves real counts and
+# trends while dropping intra-day detail — and dropped entirely after
+# TRACK_DENSITY_RETENTION_DAYS.
+TRACK_DENSITY_RETENTION_DAYS = int(os.getenv("TRACK_DENSITY_RETENTION_DAYS", "30"))
+TRACK_DENSITY_HOURLY_DAYS = int(os.getenv("TRACK_DENSITY_HOURLY_DAYS", "14"))
+
+
+def _prune_history_once() -> str:
+    """One pruning pass. Runs in a worker thread (never on the event loop) and
+    commits in per-day batches, because doing this in one transaction over a
+    ~100M-row table would hold the write lock long enough to stall every
+    request — the exact failure mode this maintenance exists to prevent."""
+    from sqlalchemy import text as _text
+    from database import AircraftHistory, VesselHistory, TrackDensity, get_db
+
+    now = datetime.utcnow()
+    raw_cutoff = now - timedelta(hours=24)
+    density_cutoff = now - timedelta(days=TRACK_DENSITY_RETENTION_DAYS)
+    rollup_cutoff = now - timedelta(days=TRACK_DENSITY_HOURLY_DAYS)
+
+    with get_db() as db:
+        deleted_ac = db.query(AircraftHistory).filter(AircraftHistory.timestamp < raw_cutoff).delete()
+        deleted_vs = db.query(VesselHistory).filter(VesselHistory.timestamp < raw_cutoff).delete()
+        db.commit()
+
+    # Expired density, deleted id-batched (SQLite has no DELETE ... LIMIT).
+    deleted_td = 0
+    while True:
+        with get_db() as db:
+            ids = [r[0] for r in db.query(TrackDensity.id)
+                   .filter(TrackDensity.hour < density_cutoff).limit(20_000).all()]
+            if not ids:
+                break
+            db.query(TrackDensity).filter(TrackDensity.id.in_(ids)).delete(synchronize_session=False)
+            db.commit()
+        deleted_td += len(ids)
+        time.sleep(0.05)
+
+    # Roll surviving sub-daily rows older than the hourly window into one row
+    # per day, oldest day first so an interrupted pass simply resumes later.
+    rolled_days = 0
+    rolled_rows = 0
+    while True:
+        with get_db() as db:
+            oldest = db.execute(_text(
+                "SELECT MIN(date(hour)) FROM track_density "
+                "WHERE hour < :cut AND hour > datetime(date(hour))"
+            ), {"cut": rollup_cutoff}).scalar()
+            if not oldest:
+                break
+            n = db.execute(_text(
+                "SELECT COUNT(*) FROM track_density "
+                "WHERE date(hour) = :d AND hour > datetime(date(hour))"
+            ), {"d": oldest}).scalar() or 0
+            db.execute(_text("""
+                INSERT INTO track_density
+                    (grid_lat, grid_lon, hour, domain, count, avg_speed, vessel_types, updated_at)
+                SELECT grid_lat, grid_lon, datetime(date(hour)), domain,
+                       SUM(count),
+                       CASE WHEN SUM(count) > 0
+                            THEN SUM(COALESCE(avg_speed, 0) * count) / SUM(count) END,
+                       NULL,
+                       CURRENT_TIMESTAMP
+                FROM track_density
+                WHERE date(hour) = :d AND hour > datetime(date(hour))
+                GROUP BY grid_lat, grid_lon, date(hour), domain
+                ON CONFLICT(grid_lat, grid_lon, hour, domain) DO UPDATE SET
+                    count = count + excluded.count,
+                    updated_at = CURRENT_TIMESTAMP
+            """), {"d": oldest})
+            db.execute(_text(
+                "DELETE FROM track_density "
+                "WHERE date(hour) = :d AND hour > datetime(date(hour))"
+            ), {"d": oldest})
+            db.commit()
+        rolled_days += 1
+        rolled_rows += n
+        time.sleep(0.2)
+
+    # Keep the WAL from ballooning after a large pass (it was already 320MB).
+    try:
+        with get_db() as db:
+            db.execute(_text("PRAGMA wal_checkpoint(TRUNCATE)"))
+    except Exception:
+        pass
+
+    return (f"raw: -{deleted_ac} ac, -{deleted_vs} vs (>24h); "
+            f"density: -{deleted_td} (>{TRACK_DENSITY_RETENTION_DAYS}d); "
+            f"rolled {rolled_rows} hourly rows across {rolled_days} day(s) "
+            f"to daily (>{TRACK_DENSITY_HOURLY_DAYS}d)")
+
+
 async def _prune_history_loop():
-    """Delete raw history older than 24 hours and aggregated density older
-    than 90 days. Runs immediately on startup, then once per day.
+    """Prune raw history, expire old density, and roll hourly density into
+    daily. Runs immediately on startup, then once per day.
 
     Previously this slept 24h *before* the first run, so on a dev machine
     that's restarted before reaching a full day of continuous uptime, the
@@ -9042,16 +9148,8 @@ async def _prune_history_loop():
     """
     while True:
         try:
-            from database import AircraftHistory, VesselHistory, TrackDensity, get_db
-            now = datetime.utcnow()
-            raw_cutoff     = now - timedelta(hours=24)
-            density_cutoff = now - timedelta(days=90)
-            with get_db() as db:
-                deleted_ac = db.query(AircraftHistory).filter(AircraftHistory.timestamp < raw_cutoff).delete()
-                deleted_vs = db.query(VesselHistory).filter(VesselHistory.timestamp < raw_cutoff).delete()
-                deleted_td = db.query(TrackDensity).filter(TrackDensity.hour < density_cutoff).delete()
-                db.commit()
-            print(f"[history-prune] raw: -{deleted_ac} ac, -{deleted_vs} vs (>24h); density: -{deleted_td} (>90d)")
+            summary = await asyncio.to_thread(_prune_history_once)
+            print(f"[history-prune] {summary}")
         except Exception as e:
             print(f"[history-prune] error: {e}")
         await asyncio.sleep(86400)
