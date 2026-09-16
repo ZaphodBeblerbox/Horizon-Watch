@@ -10993,43 +10993,117 @@ def _tm_refresh_once():
         print(f"[threat-matrix] refresh error: {_tm_e}")
 
 
+# ── Retention policy ──────────────────────────────────────────────────────
+# Every table that grows with ingest gets a hard time bound, because the ones
+# that didn't are what broke this system. Two failures taught this:
+#   * alerts were filtered on `status != "active"`, but nothing in this
+#     codebase ever moves an alert off "active" — so all 510k rows matched
+#     nothing and the purge silently deleted zero rows, forever.
+#   * track_density used a 90-day window the ingest rate outran, so it also
+#     deleted zero rows, and reached ~123M rows (~30GB, the whole database).
+# Retention that never fires looks identical to retention that works, right
+# up until the database is too big to serve. Thresholds are env-tunable so
+# they can be changed without a deploy.
+ALERT_RETENTION_DAYS           = int(os.getenv("ALERT_RETENTION_DAYS", "30"))
+ONTOLOGY_LINK_RETENTION_DAYS   = int(os.getenv("ONTOLOGY_LINK_RETENTION_DAYS", "30"))
+THREAT_SNAPSHOT_RETENTION_DAYS = int(os.getenv("THREAT_SNAPSHOT_RETENTION_DAYS", "30"))
+NEWS_ARTICLE_RETENTION_DAYS    = int(os.getenv("NEWS_ARTICLE_RETENTION_DAYS", "90"))
+RETENTION_BUDGET_S             = int(os.getenv("RETENTION_BUDGET_S", "900"))
+RETENTION_BATCH                = int(os.getenv("RETENTION_BATCH", "2000"))
+
+
+def _purge_older_than(model, ts_col, cutoff, deadline, label: str) -> int:
+    """Delete rows older than `cutoff`, in small batches with a real yield
+    between them and a wall-clock deadline.
+
+    Never one large DELETE: SQLite has a single writer and AIS ingest is
+    writing continuously, so a bulk delete holds the write lock long enough to
+    fail every other write with "database is locked" and stall the whole app —
+    observed in production on 2026-09-16. Whatever a pass doesn't finish is
+    picked up by the next one, oldest first.
+    """
+    from database import get_db
+    total = 0
+    while time.monotonic() < deadline:
+        try:
+            with get_db() as db:
+                ids = [r[0] for r in db.query(model.id)
+                       .filter(ts_col < cutoff).limit(RETENTION_BATCH).all()]
+                if not ids:
+                    break
+                db.query(model).filter(model.id.in_(ids)).delete(synchronize_session=False)
+                db.commit()
+        except Exception as e:
+            print(f"[purge] {label} batch error: {e}")
+            break
+        total += len(ids)
+        time.sleep(0.3)
+    return total
+
+
+def _run_retention_once() -> dict:
+    """One retention pass across every bounded table. Runs in a worker thread."""
+    from database import (Alert, SurgeEvent, FusionSignal, ThreatMatrixSnapshot,
+                          OntologyLink, NewsArticle)
+    now = datetime.now(timezone.utc)
+    deadline = time.monotonic() + RETENTION_BUDGET_S
+    deleted: dict = {}
+
+    # Deliberately NOT filtered on status: nothing ever clears "active", and a
+    # filter that cannot match is why this table grew without limit.
+    deleted["alerts"] = _purge_older_than(
+        Alert, Alert.created_at, now - timedelta(days=ALERT_RETENTION_DAYS),
+        deadline, "alerts")
+    deleted["ontology_links"] = _purge_older_than(
+        OntologyLink, OntologyLink.created_at,
+        now - timedelta(days=ONTOLOGY_LINK_RETENTION_DAYS), deadline, "ontology_links")
+    # snapshot_date is a "YYYY-MM-DD" string, not a DateTime — compare as a
+    # string, which is ordered correctly for ISO dates. The previous code
+    # referenced a `snapshot_at` attribute that does not exist on this model;
+    # see _daily_db_purge_loop's note on why that broke everything.
+    deleted["threat_snapshots"] = _purge_older_than(
+        ThreatMatrixSnapshot, ThreatMatrixSnapshot.snapshot_date,
+        (now - timedelta(days=THREAT_SNAPSHOT_RETENTION_DAYS)).strftime("%Y-%m-%d"),
+        deadline, "threat_snapshots")
+    deleted["news_articles"] = _purge_older_than(
+        NewsArticle, NewsArticle.ingested_at,
+        now - timedelta(days=NEWS_ARTICLE_RETENTION_DAYS), deadline, "news_articles")
+    deleted["expired_surges"] = _purge_older_than(
+        SurgeEvent, SurgeEvent.expires_at, now - timedelta(hours=48),
+        deadline, "expired_surges")
+    deleted["expired_fusions"] = _purge_older_than(
+        FusionSignal, FusionSignal.expires_at, now, deadline, "expired_fusions")
+
+    _wal_checkpoint()
+    return deleted
+
+
 async def _daily_db_purge_loop():
-    """Run once daily (at 03:00 UTC) to prune old rows and keep the DB lean."""
-    await asyncio.sleep(240)  # staggered startup
+    """Apply retention once a day, off the event loop.
+
+    Was previously a single unbatched transaction that claimed to run daily
+    while sleeping 7 days. It is now batched, budgeted, and actually daily —
+    small and frequent beats large and rare, which is what a single writer can
+    absorb without starving live traffic.
+
+    That previous version never deleted anything at all. It referenced
+    ThreatMatrixSnapshot.snapshot_at, which does not exist (the column is
+    snapshot_date), so building that query raised AttributeError partway
+    through the block — before the single commit at the end. Every delete in
+    the same transaction was therefore rolled back, every run, and the bare
+    except turned it into one line of log noise. Hence 4.28M ontology_links
+    under a "30-day" policy. Each table is now purged and committed
+    independently, so one broken filter can no longer silently disable
+    retention for everything else.
+    """
+    await asyncio.sleep(900)  # never during startup
     while True:
-        now = datetime.now(timezone.utc)
-        # Run at 03:xx UTC
-        if now.hour == 3:
-            try:
-                from database import get_db as _gdb_purge, Alert, SurgeEvent, FusionSignal, ThreatMatrixSnapshot, OntologyLink
-                cutoff_7d  = datetime.now(timezone.utc) - timedelta(days=7)
-                cutoff_30d = datetime.now(timezone.utc) - timedelta(days=30)
-                cutoff_48h = datetime.now(timezone.utc) - timedelta(hours=48)
-                deleted = {}
-                with _gdb_purge() as _pdb:
-                    deleted["old_alerts"] = _pdb.query(Alert).filter(
-                        Alert.created_at < cutoff_7d, Alert.status != "active"
-                    ).delete(synchronize_session=False)
-                    deleted["expired_surges"] = _pdb.query(SurgeEvent).filter(
-                        SurgeEvent.expires_at < cutoff_48h
-                    ).delete(synchronize_session=False)
-                    deleted["expired_fusions"] = _pdb.query(FusionSignal).filter(
-                        FusionSignal.expires_at < datetime.now(timezone.utc)
-                    ).delete(synchronize_session=False)
-                    deleted["old_snapshots"] = _pdb.query(ThreatMatrixSnapshot).filter(
-                        ThreatMatrixSnapshot.snapshot_at < cutoff_30d
-                    ).delete(synchronize_session=False)
-                    deleted["old_links"] = _pdb.query(OntologyLink).filter(
-                        OntologyLink.created_at < cutoff_30d
-                    ).delete(synchronize_session=False)
-                    _pdb.commit()
-                print(f"[purge] Daily DB purge complete: {deleted}")
-            except Exception as _pe:
-                print(f"[purge] Daily DB purge error: {_pe}")
-            # Sleep 7 days — cost reduction: was daily, now weekly
-            await asyncio.sleep(604800)
-        else:
-            await asyncio.sleep(1800)
+        try:
+            deleted = await asyncio.to_thread(_run_retention_once)
+            print(f"[purge] retention pass: {deleted}")
+        except Exception as _pe:
+            print(f"[purge] retention error: {_pe}")
+        await asyncio.sleep(86400)
 
 
 async def _trajectory_loop():
