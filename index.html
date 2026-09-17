@@ -705,17 +705,19 @@
             @property --scrim-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
             @property --sheet-shadow-color { syntax: '<color>'; inherits: true; initial-value: #000000; }
 
-/* Real transition — only active while Auto mode's fade engine is driving
-   these tokens (toggled via the .theme-fading class on <html>, set/
-   cleared by themeStore.js). 75s is deliberately a little longer than the
-   ~60s recompute tick, so each new value retargets the transition
-   in-flight for continuous, seamless motion instead of visibly settling
-   between ticks. Explicit Light/Dark selection never gets this class, so
-   the existing instant, no-fade toggle behaviour is completely
-   unaffected. */
-html.theme-fading {
-    transition: --bg-0 75s linear, --bg-1 75s linear, --bg-2 75s linear, --bg-3 75s linear, --bg-4 75s linear, --line 75s linear, --line-soft 75s linear, --line-strong 75s linear, --txt 75s linear, --txt-2 75s linear, --txt-3 75s linear, --txt-4 75s linear, --acc 75s linear, --acc-hi 75s linear, --acc-dim 75s linear, --acc-line 75s linear, --red 75s linear, --amber 75s linear, --steel 75s linear, --green 75s linear, --grey 75s linear, --sev-critical 75s linear, --sev-high 75s linear, --sev-moderate 75s linear, --sev-low 75s linear, --delta-worse 75s linear, --delta-better 75s linear, --tag-red 75s linear, --tag-red-border 75s linear, --tag-amber 75s linear, --tag-amber-border 75s linear, --tag-green 75s linear, --tag-green-border 75s linear, --tag-blue 75s linear, --tag-blue-border 75s linear, --chart-area-fill 75s linear, --chart-area-stroke 75s linear, --chart-grid 75s linear, --chart-hist 75s linear, --chart-hist-hot 75s linear, --heatmap-lo 75s linear, --heatmap-hi 75s linear, --heatmap-empty 75s linear, --cat-1 75s linear, --cat-2 75s linear, --cat-3 75s linear, --cat-4 75s linear, --cat-5 75s linear, --cat-6 75s linear, --cat-7 75s linear, --cat-8 75s linear, --cat-9 75s linear, --cat-10 75s linear, --cat-11 75s linear, --cat-12 75s linear, --cat-13 75s linear, --cat-14 75s linear, --pane-glass-bg 75s linear, --akili-glass-bg 75s linear, --akili-glass-border 75s linear, --map-tooltip-bg 75s linear, --map-tooltip-text 75s linear, --map-tooltip-text-strong 75s linear, --map-tooltip-border 75s linear, --map-country-border 75s linear, --map-eez-border 75s linear, --map-infra-bg 75s linear, --map-infra-border 75s linear, --map-infra-text 75s linear, --map-infra-text-hover 75s linear, --map-detection-label-bg 75s linear, --map-detection-label-text 75s linear, --leaflet-bg 75s linear, --scrollbar-thumb 75s linear, --scrollbar-thumb-hover 75s linear, --focus-ring 75s linear, --btn-primary-border 75s linear, --btn-primary-text 75s linear, --btn-primary-hover 75s linear, --check-mark-color 75s linear, --xref-color 75s linear, --xref-hover-color 75s linear, --xref-hover-bg 75s linear, --xref-active-bg 75s linear, --xref-active-color 75s linear, --tooltip-bg 75s linear, --scrim-bg 75s linear, --sheet-shadow-color 75s linear;
+/* The 75s linear transition across ~85 colour tokens that used to live here
+   is deliberately gone (PARALLAX spec §4.1). Interpolating the palette means
+   passing through mid-grey text on a mid-grey ground — contrast collapses to
+   roughly 1:1 at the midpoint, in every colour space — so an automatic turn
+   spent over a minute unreadable. The palette is now binary and turns at
+   solar elevation 0°; what animates is the veil below. */
+#sky-veil {
+    position: fixed; inset: 0; z-index: 200;
+    opacity: 0; pointer-events: none;
+    transition: opacity .15s linear;
 }
+#sky-veil.on { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { #sky-veil { display: none; } }
 
 /* ── User location pulse animation ──────────────────────────────── */
         @keyframes akiliUserLocPulse {

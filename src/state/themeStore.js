@@ -130,19 +130,92 @@ function clearBlendOverrides() {
     for (const name of Object.keys(pairs)) style.removeProperty(name)
 }
 
+/**
+ * The veil element (PARALLAX spec §4.1). A full-bleed sheet in the INCOMING
+ * background colour, faded in over 150ms; the palette is swapped behind it;
+ * the sheet fades out. At every frame the user is looking at either a fully
+ * legible theme or an opaque sheet — never at low-contrast text.
+ */
+function getVeil() {
+    let el = document.getElementById("sky-veil")
+    if (!el) {
+        el = document.createElement("div")
+        el.id = "sky-veil"
+        document.body.appendChild(el)
+    }
+    return el
+}
+
+/**
+ * Set the palette outright. Inline custom properties are cleared FIRST: the
+ * previous interpolating implementation wrote every token inline on <html>,
+ * and an inline custom property outranks the stylesheet forever if it is
+ * left behind — so without this, none of :root / [data-theme] applies.
+ */
+function applyTheme(name) {
+    const st = document.documentElement.style
+    for (let i = st.length - 1; i >= 0; i--) {
+        if (st[i].startsWith("--")) st.removeProperty(st[i])
+    }
+    if (name === "light") document.documentElement.setAttribute("data-theme", "light")
+    else document.documentElement.removeAttribute("data-theme")
+    st.colorScheme = name
+
+    if (renderedTheme !== name) {
+        renderedTheme = name
+        try { localStorage.setItem(RENDERED_CACHE_KEY, name) } catch { /* private mode */ }
+        renderedListeners.forEach((fn) => fn(name))
+    }
+}
+
+/**
+ * Swap the palette behind a veil.
+ *
+ * WHY THERE IS NO CROSS-FADE. Dark is light text on a dark ground; light is
+ * dark text on a light ground. Halfway between them is mid-grey on mid-grey:
+ * foreground and background travel TOWARDS each other, so contrast collapses
+ * to roughly 1:1 at the midpoint — in sRGB, in linear light, in OKLab, in
+ * every colour space. Inversion cannot be cross-faded, and the fix is not a
+ * better blend, it is to stop blending. This replaces a 75-second linear
+ * transition across ~85 colour tokens, which spent over a minute of every
+ * automatic turn in exactly that unreadable zone.
+ *
+ * What stays continuous is the SUN: `blend` below still tracks elevation
+ * smoothly, so the horizon control reads as gradual even though the palette
+ * is binary. Continuous indicator, discrete palette — that split is the
+ * whole design.
+ */
+function veilTo(name) {
+    if (typeof document === "undefined") return
+    if (document.documentElement.dataset.theme === name ||
+        (name === "dark" && !document.documentElement.hasAttribute("data-theme"))) {
+        applyTheme(name)
+        return
+    }
+    const veil = getVeil()
+    // Probe the destination palette so the sheet is already the arriving
+    // colour — otherwise the veil itself flashes the outgoing background.
+    const probe = document.createElement("div")
+    probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none"
+    if (name === "light") probe.setAttribute("data-theme", "light")
+    document.body.appendChild(probe)
+    veil.style.background = getComputedStyle(probe).getPropertyValue("--bg-0") || "#171b20"
+    probe.remove()
+
+    veil.classList.add("on")
+    setTimeout(() => {
+        applyTheme(name)
+        requestAnimationFrame(() => veil.classList.remove("on"))
+    }, 150)
+}
+
+/**
+ * Auto mode tick. `t` is the SUN POSITION only — it drives the horizon
+ * control, never the palette. The palette turns at elevation 0°.
+ */
 function applyBlend(t) {
     blend = t
-    const pairs = getRealTokenPairs()
-    const style = document.documentElement.style
-    for (const [name, { dark, light }] of Object.entries(pairs)) {
-        style.setProperty(name, blendColor(dark, light, t))
-    }
-    const nowRendered = t >= 0.5 ? "light" : "dark"
-    if (nowRendered !== renderedTheme) {
-        renderedTheme = nowRendered
-        try { localStorage.setItem(RENDERED_CACHE_KEY, renderedTheme) } catch { /* private mode */ }
-        renderedListeners.forEach((fn) => fn(renderedTheme))
-    }
+    veilTo(elevationDeg != null ? (elevationDeg >= 0 ? "light" : "dark") : (t >= 0.5 ? "light" : "dark"))
     blendListeners.forEach((fn) => fn({ blend: t, elevationDeg }))
 }
 
@@ -203,11 +276,15 @@ function applyManual(theme) {
     // removing the class drops the `transition` declaration first, THEN
     // the inline overrides are cleared, so the jump to the plain
     // :root/[data-theme] value is instant.
-    document.documentElement.classList.remove("theme-fading")
     clearBlendOverrides()
 
-    if (theme === "light") document.documentElement.setAttribute("data-theme", "light")
-    else document.documentElement.removeAttribute("data-theme")
+    // Manual selection goes through the same veil as an automatic turn.
+    // There is one mechanism for changing the palette, not two — a second,
+    // unveiled path is how an interpolated or half-applied palette creeps
+    // back in. veilTo() also clears any inline custom properties left by the
+    // previous interpolating implementation, which would otherwise outrank
+    // the stylesheet permanently.
+    veilTo(theme)
 
     elevationDeg = null
     blend = theme === "light" ? 1 : 0
