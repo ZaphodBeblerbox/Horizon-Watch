@@ -154,6 +154,7 @@ def get_histogram(
     start_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Omit to use the real earliest stored placemark date for this filter."),
     end_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Omit to use the real latest stored placemark date for this filter."),
     bucket: str | None = Query(None, description="'day' | 'month'. Omit to auto-scale from the real span — see _pick_bucket."),
+    with_categories: bool = Query(False, description="PARALLAX §11.1 — also return a per-category breakdown per bucket, for the stacked archive chart. Off by default so existing callers are unaffected."),
 ):
     """Real occurrence-density histogram for the timeline panel (Part 2) —
     one grouped SQL query, never a fetch-all-rows-then-bucket-in-Python pass
@@ -194,9 +195,37 @@ def get_histogram(
             q = q.filter(GeoConfirmedPlacemark.theatre_slug.in_(theatres))
         rows = q.group_by(bucket_expr).order_by(bucket_expr).all()
 
+        # PARALLAX §11.1 — the archive chart is STACKED BY CATEGORY, so the
+        # strip answers "how much, when, WHAT KIND" before the analyst drags
+        # anything. Second grouped query rather than a widened first one: the
+        # totals must keep counting uncategorised rows (27% of the archive,
+        # see geoconfirmed_title.derive_category), and a single
+        # GROUP BY bucket, category would silently drop them from the totals
+        # or force every caller to re-sum.
+        by_cat: dict[str, dict[str, int]] = {}
+        if with_categories:
+            cq = db.query(bucket_expr, GeoConfirmedPlacemark.category,
+                          func.count(GeoConfirmedPlacemark.id)).filter(
+                GeoConfirmedPlacemark.status == "active",
+                GeoConfirmedPlacemark.date >= start,
+                GeoConfirmedPlacemark.date < end,
+            )
+            if theatres:
+                cq = cq.filter(GeoConfirmedPlacemark.theatre_slug.in_(theatres))
+            for b, cat, c in cq.group_by(bucket_expr, GeoConfirmedPlacemark.category).all():
+                # None is a real answer and is reported as one. Folding
+                # uncategorised rows into a category would put bars in the
+                # chart that no source supports.
+                by_cat.setdefault(b, {})[cat or "uncategorised"] = c
+
+    buckets = [{"bucket": b, "count": c} for b, c in rows]
+    if with_categories:
+        for row in buckets:
+            row["categories"] = by_cat.get(row["bucket"], {})
+
     return {
         "theatre": theatre,
         "start_date": start.date().isoformat(), "end_date": (end - datetime.timedelta(days=1)).date().isoformat(),
         "bucket": bucket_size,
-        "buckets": [{"bucket": b, "count": c} for b, c in rows],
+        "buckets": buckets,
     }

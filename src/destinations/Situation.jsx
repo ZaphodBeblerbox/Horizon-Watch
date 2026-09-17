@@ -38,9 +38,9 @@ import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
-import GeoConfirmedTimelinePanel from "../components/GeoConfirmedTimelinePanel.jsx"
+import TimeStrip from "../components/TimeStrip.jsx"
 import ImagerySidebar from "../components/ImagerySidebar.jsx"
-import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
+import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 
 const API = API_BASE
 const REFRESH_MS = 60000
@@ -318,18 +318,12 @@ export default function Situation({ onOpenDossier }) {
     // rather than overlapping/interleaving with its text at the same
     // screen position (both were technically visible per z-index already —
     // this isn't a stacking-order bug, it's a spatial-collision one).
-    const [geoConfirmedPanelHeight, setGeoConfirmedPanelHeight] = useState(0)
     useEffect(() => subscribeSettings((s) => setGeoConfirmedTheatres(s?.mapLayers?.geoConfirmedTheatres || [])), [])
-    function handleGeoConfirmedTheatresChange(next) {
-        setGeoConfirmedTheatres(next)
-        updateSetting("mapLayers.geoConfirmedTheatres", next)
-    }
-    // Part 1.1 — the timeline panel is auto-shown by the News toggle and
-    // never persists detached from it; switching News off resets any
-    // in-progress scrub back to live, so re-enabling News never silently
-    // reopens the map filtered to a stale historic date the analyst can no
-    // longer see the panel/slider for.
-    useEffect(() => { if (!groupsOn.news) setGeoConfirmedEndDate(null) }, [groupsOn.news])
+    // The scrub used to reset whenever the News layer went off, because the
+    // panel it lived in unmounted with that toggle and a stale filter would
+    // have had no visible control. §11's strip is always present, so the
+    // playhead now stands on its own — switching a map layer off must not
+    // silently undo a scrub whose slider is still on screen.
 
     // V3 Phase 1, §5.1 — real live mirror of this filter state, published
     // on every change so a session-save action can read the current
@@ -553,8 +547,8 @@ export default function Situation({ onOpenDossier }) {
     // overlays on top of a full-bleed map (the aside.pane "glass side
     // panel" semantics the reference spec actually describes — a pane
     // that floats OVER content, not one that sits beside it), inside the
-    // exact same real position:relative map container MapControlStack and
-    // GeoConfirmedTimelinePanel already overlay. Minimize/restore no
+    // exact same real position:relative map container the map chrome
+    // already overlays. Minimize/restore no
     // longer needs a flex-reflow at all — the map is already full-bleed
     // underneath at all times, so minimizing an overlay pane just reveals
     // more of the real map that was already there.
@@ -841,7 +835,6 @@ export default function Situation({ onOpenDossier }) {
                         geoConfirmedEnabled={groupsOn.news}
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
-                        mapChromeBottomInset={groupsOn.news && geoConfirmedPanelHeight ? geoConfirmedPanelHeight + 8 : 0}
                         mapChromeLeftInset={leftMin ? 0 : 250}
                         /* Real root-cause fix — the Time window/severity-
                            floor selector previously never reached the map
@@ -929,22 +922,12 @@ export default function Situation({ onOpenDossier }) {
                         per the map-overlay-geometry table it does not belong
                         on the map surface at all; it now lives inside the
                         Inspector pane only (both its states, below). */}
-                    {/* GeoConfirmed historic-timeline panel — Part 1.1:
-                        auto-surfaced by the real News/GeoConfirmed toggle,
-                        never a separate page nav, never persists detached
-                        from it (unmounts, not just visually hides, the
-                        instant groupsOn.news goes false). */}
-                    {groupsOn.news && (
-                        <GeoConfirmedTimelinePanel
-                            theatres={geoConfirmedTheatres}
-                            onTheatresChange={handleGeoConfirmedTheatresChange}
-                            endDate={geoConfirmedEndDate}
-                            onEndDateChange={setGeoConfirmedEndDate}
-                            onHeightChange={setGeoConfirmedPanelHeight}
-                            leftInset={leftMin ? 0 : 250}
-                            rightInset={56 + activeRightOverlayWidth}
-                        />
-                    )}
+                    {/* The GeoConfirmed archive used to float here as its own
+                        overlay, measuring itself with a ResizeObserver and
+                        pushing the map chrome around from the outside. §11
+                        makes it the timeline FACE of the strip below, so the
+                        strip's height is a fact about the layout rather than
+                        something reported after the fact. */}
                     {imageryPanelOpen && (
                         <ImagerySidebar
                             onClose={closeImageryPanel}
@@ -957,18 +940,18 @@ export default function Situation({ onOpenDossier }) {
                     )}
                 </div>
 
-                {/* Density strip */}
-                <div style={{ height: 56, flexShrink: 0, background: "var(--bg-1)", borderTop: "1px solid var(--line)", display: "flex", alignItems: "flex-end", gap: 2, padding: "6px 10px 4px" }}>
-                    {densityBuckets.counts.map((c, i) => (
-                        <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%" }} title={`${c} signal${c === 1 ? "" : "s"}`}>
-                            <div style={{
-                                height: `${Math.max(2, (c / densityBuckets.max) * 34)}px`,
-                                background: densityBuckets.hot[i] ? "var(--chart-hist-hot)" : "var(--chart-hist)",
-                                borderRadius: "1px",
-                            }} />
-                        </div>
-                    ))}
-                </div>
+                {/* §11 — two faces, one element. The archive face is the
+                    same real playhead the map filters by (geoConfirmedEndDate),
+                    so scrubbing here and the pins on the globe cannot
+                    disagree. */}
+                <TimeStrip
+                    densityBuckets={densityBuckets}
+                    windowHours={windowHours}
+                    nowMs={nowMs}
+                    theatres={geoConfirmedTheatres}
+                    endDate={geoConfirmedEndDate}
+                    onEndDateChange={setGeoConfirmedEndDate}
+                />
             </div>
 
             {/* Right — Inspector (real frosted glass, see Layers pane comment above) */}

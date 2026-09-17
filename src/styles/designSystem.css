@@ -581,3 +581,111 @@ html:not(:has(#view-map.active)) #notifstack { right: 12px; }
 /* A tooltip is a hover affordance and there is no hover on a touch screen;
    showing it there means a card that appears on tap and never clears. */
 @media (hover: none) { #maptip { display: none; } }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §11 the time strip — two faces, one element
+   ═══════════════════════════════════════════════════════════════════════
+   176 = 26 head + 26 time cursor + 122 content + borders. Undersize it and
+   the category chips bleed onto the time cursor — #timecursor is a FLEX
+   SIBLING of #gcstrip, not an overlay.
+   ------------------------------------------------------------------- */
+.timestrip {
+    flex: none; height: 98px; border-top: 1px solid var(--line);
+    background: var(--bg-1); display: flex; flex-direction: column;
+}
+.timestrip:has(#gcstrip:not(.hidden)) { height: 176px; max-height: 38vh; }
+.timestrip .head {
+    display: flex; align-items: center; gap: 10px; padding: 0 9px; height: 26px;
+    border-bottom: 1px solid var(--line-soft); flex: none;
+}
+.timestrip .head .seg { height: 19px; }
+.timestrip .head .seg button { height: 19px; padding: 0 8px; font-size: 10.5px; }
+.timestrip .head .right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.timestrip .head .lbl { font: 10px var(--mono); color: var(--txt-4); white-space: nowrap; }
+.srctag {
+    font: 9.5px var(--mono); letter-spacing: .06em; text-transform: uppercase;
+    padding: 1px 6px; border: 1px solid var(--line);
+    color: var(--green); background: var(--bg-2);
+}
+.srctag[data-real="false"] { color: var(--amber); }
+
+/* A segmented control, shared by the face switch and the window control. */
+.timestrip .seg { display: inline-flex; border: 1px solid var(--line); }
+.timestrip .seg button {
+    background: var(--bg-1); border: 0; color: var(--txt-3); cursor: pointer;
+    font-family: var(--font);
+}
+.timestrip .seg button + button { border-left: 1px solid var(--line); }
+.timestrip .seg button[aria-pressed="true"] { background: var(--bg-3); color: var(--txt); }
+
+/* ── density face ── */
+#stripsvg { flex: 1; min-height: 0; width: 100%; display: block; padding: 4px 9px; box-sizing: border-box; }
+#stripsvg .dbar { fill: var(--acc); }
+#stripsvg .dbar.hot { fill: var(--red); }
+
+/* ── archive face (§11.1) ── */
+.gcstrip { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 11px 7px; overflow: hidden; }
+.gcstrip.hidden { display: none; }
+.gcempty { padding: 14px 2px; font: 11px var(--font); color: var(--txt-3); }
+.gcx {
+    display: grid; grid-template-columns: auto minmax(320px, 1fr) 146px;
+    gap: 13px; align-items: end; padding-top: 7px;
+}
+.gcx-tr { display: flex; align-items: center; gap: 3px; padding-bottom: 15px; }
+.gcb {
+    width: 23px; height: 23px; display: grid; place-items: center;
+    border: 1px solid var(--line); background: var(--bg-2); color: var(--txt-3);
+    font-size: 9px; cursor: pointer;
+}
+.gcb:hover { color: var(--txt); }
+.gcb.play { width: 27px; height: 23px; }
+.gcb.play.on { background: var(--acc-dim); color: var(--acc-hi); border-color: var(--acc-line); }
+.gcb svg { width: 11px; height: 11px; }
+.gcspeed {
+    height: 23px; margin-left: 3px; font: 10px var(--mono);
+    background: var(--bg-2); color: var(--txt-3); border: 1px solid var(--line);
+}
+
+.gcx-track { position: relative; height: 58px; min-width: 0; cursor: pointer; }
+.gchist { position: absolute; inset: 0 0 18px; width: 100%; height: 42px; border-bottom: 1px solid var(--line); }
+.gcwin { fill: var(--acc-dim); }
+.gcaxis { position: absolute; left: 0; right: 0; bottom: 4px; height: 12px; pointer-events: none; }
+.gcaxis span {
+    position: absolute; transform: translateX(-50%);
+    font: 9px var(--mono); color: var(--txt-4); white-space: nowrap;
+}
+.gcaxis span.y { color: var(--txt-2); }
+.gcaxis span::before {
+    content: ''; position: absolute; left: 50%; top: -4px;
+    width: 1px; height: 3px; background: var(--line-strong);
+}
+.gcplay { position: absolute; top: 0; bottom: 18px; width: 1px; background: var(--acc-hi); pointer-events: none; }
+.gcplay::before {
+    content: ''; position: absolute; top: 0; left: -2.5px;
+    width: 6px; height: 6px; background: var(--acc-hi);
+}
+.gcx-track input[type=range] {
+    position: absolute; left: 0; right: 0; bottom: 12px; width: 100%;
+    height: 14px; cursor: ew-resize; background: none; margin: 0;
+}
+
+.gcx-read b { display: block; font: 15px var(--mono); color: var(--txt); line-height: 1.1; }
+.gcx-read .n { display: block; font: 10.5px var(--mono); color: var(--txt-3); margin-top: 2px; }
+.gcwinctl { display: flex; align-items: center; gap: 5px; margin-top: 6px; }
+.gcwinctl .seg { height: 18px; }
+.gcwinctl .seg button { height: 18px; padding: 0 6px; font-size: 10px; }
+.gcwinctl input[type=range] { width: 50px; }
+.gcwinctl .lbl { font: 9.5px var(--mono); color: var(--txt-4); }
+
+.gccats { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.gccat {
+    display: inline-flex; align-items: center; gap: 5px; height: 19px; padding: 0 7px;
+    font-size: 10.5px; border: 1px solid var(--line); opacity: .55;
+    background: none; color: var(--txt-3); cursor: pointer; font-family: var(--font);
+}
+.gccat i { width: 6px; height: 6px; transform: rotate(45deg); flex: none; }
+.gccat.on { opacity: 1; color: var(--txt-2); border-color: var(--line-strong); background: var(--bg-2); }
+.gcmeta { margin-left: auto; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.timecursor { flex: none; height: 26px; border-top: 1px solid var(--line-soft); }
+.timestrip:not(:has(#gcstrip:not(.hidden))) .timecursor { display: none; }

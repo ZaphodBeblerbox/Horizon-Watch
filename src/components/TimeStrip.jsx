@@ -1,0 +1,294 @@
+/**
+ * TimeStrip.jsx — PARALLAX §11. Two faces, one element.
+ *
+ * Replaces two things that used to be separate and disagreed about their own
+ * geometry: a fixed 56px density bar rendered inline by Situation, and
+ * GeoConfirmedTimelinePanel, a floating overlay that measured itself with a
+ * ResizeObserver and pushed the map chrome around from the outside. §11 makes
+ * both faces of one strip, so `--strip-h` is a fact about the layout rather
+ * than something reported after the fact.
+ *
+ * A scrub bar tells you where the playhead is and nothing about whether moving
+ * it is worth the gesture. The archive face answers HOW MUCH, WHEN and WHAT
+ * KIND before the analyst drags anything.
+ *
+ * `#strip-range` HAS TWO WRITERS, and §11 is explicit about which one yields:
+ * the density renderer runs on every map redraw, so the archive renderer
+ * always loses the race. The fix belongs in the density writer, and that is
+ * why the label below is computed from `face` rather than written by whoever
+ * rendered last.
+ */
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import API_BASE from "../apiBase.js"
+import { safeArray } from "../utils/safeArray.js"
+import { fetchWithTimeout } from "../utils/fetchWithTimeout.js"
+import {
+    CAT, CAT_KEYS, UNCATEGORISED, BUCKETS,
+    foldBuckets, stackSegments, calendarTicks,
+    advance, barOpacity, spanDays, SPEEDS, TICK_MS,
+    dayOffsetToMs, msToDayOffset,
+} from "./timeStripMath.js"
+
+const zulu = (ms) => {
+    const d = new Date(ms)
+    return `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}Z`
+}
+const iso = (ms) => new Date(ms).toISOString().slice(0, 10)
+
+export default function TimeStrip({
+    // density face
+    densityBuckets,
+    windowHours = 72,
+    nowMs = Date.now(),
+    // archive face
+    theatres = null,
+    endDate = null,
+    onEndDateChange,
+}) {
+    const [face, setFace] = useState("density")
+    const [range, setRange] = useState(null)      // { min_date, max_date }
+    const [rows, setRows] = useState([])          // histogram buckets, with categories
+    const [loadError, setLoadError] = useState(false)
+    const [playing, setPlaying] = useState(false)
+    const [speed, setSpeed] = useState(1)
+    const [winMode, setWinMode] = useState("window")   // window | all
+    const [winDays, setWinDays] = useState(45)
+    const [catsOff, setCatsOff] = useState(() => new Set())
+    const theatreKey = theatres && theatres.length ? theatres.join(",") : ""
+
+    // ── Archive bounds + histogram ────────────────────────────────────────
+    useEffect(() => {
+        if (face !== "timeline") return
+        let cancelled = false
+        const q = theatreKey ? `?theatre=${encodeURIComponent(theatreKey)}` : ""
+        fetchWithTimeout(`${API_BASE}/api/geoconfirmed/date-range${q}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (!cancelled) { setRange(d?.min_date ? d : null); setLoadError(!d?.min_date) } })
+            .catch(() => { if (!cancelled) setLoadError(true) })
+        return () => { cancelled = true }
+    }, [face, theatreKey])
+
+    useEffect(() => {
+        if (face !== "timeline" || !range?.min_date) return
+        let cancelled = false
+        const p = new URLSearchParams({
+            start_date: range.min_date, end_date: range.max_date, with_categories: "true",
+        })
+        if (theatreKey) p.set("theatre", theatreKey)
+        fetchWithTimeout(`${API_BASE}/api/geoconfirmed/histogram?${p}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (!cancelled) setRows(safeArray(d?.buckets)) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [face, range, theatreKey])
+
+    const minMs = range ? Date.parse(`${range.min_date}T00:00:00Z`) : null
+    const maxMs = range ? Date.parse(`${range.max_date}T00:00:00Z`) : null
+    const totalDays = minMs != null ? spanDays(minMs, maxMs) : 1
+
+    // The playhead lives in the URL-ish `endDate` the map already filters by,
+    // so scrubbing here and the pins on the globe cannot disagree.
+    const playheadMs = endDate ? Date.parse(`${endDate}T00:00:00Z`) : maxMs
+    const dayOffset = minMs != null && playheadMs != null ? msToDayOffset(minMs, playheadMs) : 0
+
+    const setOffset = useCallback((off) => {
+        if (minMs == null) return
+        const clamped = Math.max(0, Math.min(totalDays, off))
+        onEndDateChange?.(iso(dayOffsetToMs(minMs, clamped)))
+    }, [minMs, totalDays, onEndDateChange])
+
+    // ── Transport ─────────────────────────────────────────────────────────
+    const offsetRef = useRef(dayOffset)
+    offsetRef.current = dayOffset
+    useEffect(() => {
+        if (!playing || face !== "timeline" || minMs == null) return
+        const id = setInterval(() => {
+            const { offset, done } = advance(offsetRef.current, speed, totalDays)
+            setOffset(offset)
+            if (done) setPlaying(false)
+        }, TICK_MS)
+        return () => clearInterval(id)
+    }, [playing, speed, face, minMs, totalDays, setOffset])
+
+    // Playing while the face is hidden would scrub the map from a surface
+    // nobody can see.
+    useEffect(() => { if (face !== "timeline") setPlaying(false) }, [face])
+
+    const cols = useMemo(
+        () => (minMs == null ? [] : foldBuckets(rows, minMs, maxMs)),
+        [rows, minMs, maxMs],
+    )
+    const colMax = useMemo(() => Math.max(1, ...cols.map((c) => c.total)), [cols])
+    const ticks = useMemo(() => (minMs == null ? [] : calendarTicks(minMs, maxMs)), [minMs, maxMs])
+
+    const shown = useMemo(() => {
+        if (minMs == null) return 0
+        const from = winMode === "all" ? minMs : playheadMs - winDays * 86_400_000
+        return cols.reduce((a, c) => a + (c.t0 >= from && c.t0 <= playheadMs ? c.total : 0), 0)
+    }, [cols, winMode, winDays, playheadMs, minMs])
+
+    const pct = minMs != null && maxMs > minMs ? ((playheadMs - minMs) / (maxMs - minMs)) * 100 : 0
+    const winFracPct = winMode === "all" ? pct : Math.min(pct, (winDays / totalDays) * 100)
+
+    const jumpFromClientX = (el, clientX) => {
+        const r = el.getBoundingClientRect()
+        if (!r.width) return
+        // §11.1 — click anywhere on the chart to jump. "Dragging a 1px handle
+        // across 18 months is a tax on people who already know roughly when
+        // the thing happened."
+        setOffset(Math.round(((clientX - r.left) / r.width) * totalDays))
+    }
+
+    const toggleCat = (k) =>
+        setCatsOff((prev) => {
+            const next = new Set(prev)
+            next.has(k) ? next.delete(k) : next.add(k)
+            return next
+        })
+
+    const rangeLabel = face === "timeline"
+        ? (range ? `${range.min_date} → ${range.max_date}` : loadError ? "archive range unavailable" : "reading archive range…")
+        : `${zulu(nowMs - windowHours * 3600000)} → ${zulu(nowMs)}`
+
+    return (
+        <div className="timestrip" id="timestrip">
+            <div className="head">
+                <div className="seg" id="strip-mode">
+                    <button type="button" data-s="density" aria-pressed={face === "density"}
+                            onClick={() => setFace("density")}>event density</button>
+                    <button type="button" data-s="timeline" aria-pressed={face === "timeline"}
+                            onClick={() => setFace("timeline")}>timeline</button>
+                </div>
+                <span className="lbl" id="strip-range">{rangeLabel}</span>
+                <div className="right" id="strip-tools">
+                    {/* §11.1 — in archive face this holds ONLY the source tag.
+                        It sits under the inspector column; anything else
+                        clips. */}
+                    {face === "timeline" && (
+                        <span className="srctag" data-real={!loadError}>
+                            {loadError ? "archive unavailable" : "GeoConfirmed"}
+                        </span>
+                    )}
+                </div>
+            </div>
+
+            {/* ── density face ─────────────────────────────────────────── */}
+            {face === "density" && (
+                <svg id="stripsvg" preserveAspectRatio="none" viewBox="0 0 100 40" aria-label="Event density">
+                    {(densityBuckets?.counts || []).map((c, i, arr) => {
+                        const w = 100 / arr.length
+                        const h = Math.max(1.5, (c / (densityBuckets.max || 1)) * 36)
+                        return (
+                            <rect key={i} x={i * w + w * 0.12} width={w * 0.76}
+                                  y={40 - h} height={h}
+                                  className={densityBuckets.hot?.[i] ? "dbar hot" : "dbar"}>
+                                <title>{`${c} signal${c === 1 ? "" : "s"}`}</title>
+                            </rect>
+                        )
+                    })}
+                </svg>
+            )}
+
+            {/* ── archive face ─────────────────────────────────────────── */}
+            <div className={`gcstrip${face === "timeline" ? "" : " hidden"}`} id="gcstrip">
+                {minMs == null ? (
+                    <div className="gcempty">{loadError ? "No archive range available." : "Reading archive range…"}</div>
+                ) : (
+                    <>
+                        <div className="gcx">
+                            <div className="gcx-tr">
+                                <button className="gcb" type="button" title="Back one day"
+                                        onClick={() => setOffset(dayOffset - 1)}>◀</button>
+                                <button className={`gcb play${playing ? " on" : ""}`} type="button"
+                                        title={playing ? "Pause" : "Play"}
+                                        onClick={() => setPlaying((p) => !p)}>
+                                    <svg className="icon sm"><use href={playing ? "#i-pause" : "#i-play"} /></svg>
+                                </button>
+                                <button className="gcb" type="button" title="Forward one day"
+                                        onClick={() => setOffset(dayOffset + 1)}>▶</button>
+                                <select className="gcspeed" value={speed} title="Playback speed"
+                                        onChange={(e) => setSpeed(Number(e.target.value))}>
+                                    {SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}
+                                </select>
+                            </div>
+
+                            <div className="gcx-track"
+                                 onClick={(e) => jumpFromClientX(e.currentTarget, e.clientX)}>
+                                <svg className="gchist" preserveAspectRatio="none" viewBox={`0 0 ${BUCKETS} 100`}>
+                                    <rect className="gcwin" x={(winFracPct / 100) * BUCKETS >= 0 ? ((pct - winFracPct) / 100) * BUCKETS : 0}
+                                          y="0" width={Math.max(0, (winFracPct / 100) * BUCKETS)} height="100" />
+                                    {cols.map((c) => {
+                                        if (!c.total) return null
+                                        const segs = stackSegments(c).filter((s) => !catsOff.has(s.key))
+                                        const visible = segs.reduce((a, s) => a + s.value, 0)
+                                        if (!visible) return null
+                                        const full = (visible / colMax) * 100
+                                        let acc = 0
+                                        return (
+                                            <g key={c.i} opacity={barOpacity(c.t0, playheadMs)}>
+                                                {segs.map((s) => {
+                                                    const h = (s.value / visible) * full
+                                                    const y = 100 - acc - h
+                                                    acc += h
+                                                    return <rect key={s.key} x={c.i + 0.12} width={0.76}
+                                                                 y={y} height={h} fill={s.color} />
+                                                })}
+                                            </g>
+                                        )
+                                    })}
+                                </svg>
+                                <div className="gcaxis">
+                                    {ticks.map((t) => (
+                                        <span key={t.t} className={t.year ? "y" : ""} style={{ left: `${t.pct}%` }}>{t.label}</span>
+                                    ))}
+                                </div>
+                                <div className="gcplay" style={{ left: `${pct}%` }} />
+                                <input type="range" min={0} max={totalDays} value={dayOffset}
+                                       aria-label="Archive playhead"
+                                       onChange={(e) => setOffset(Number(e.target.value))}
+                                       onClick={(e) => e.stopPropagation()} />
+                            </div>
+
+                            <div className="gcx-read">
+                                <b>{iso(playheadMs)}</b>
+                                <span className="n">{shown.toLocaleString()} shown</span>
+                                <div className="gcwinctl">
+                                    <div className="seg">
+                                        <button type="button" aria-pressed={winMode === "window"}
+                                                onClick={() => setWinMode("window")}>window</button>
+                                        <button type="button" aria-pressed={winMode === "all"}
+                                                onClick={() => setWinMode("all")}>all</button>
+                                    </div>
+                                    <input type="range" min={1} max={180} value={winDays}
+                                           aria-label="Window length in days"
+                                           disabled={winMode === "all"}
+                                           onChange={(e) => setWinDays(Number(e.target.value))} />
+                                    <span className="lbl">{winMode === "all" ? "all" : `${winDays}d`}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="gccats">
+                            {CAT_KEYS.concat(UNCATEGORISED.key).map((k) => {
+                                const meta = CAT[k] || UNCATEGORISED
+                                return (
+                                    <button key={k} type="button"
+                                            className={`gccat${catsOff.has(k) ? "" : " on"}`}
+                                            aria-pressed={!catsOff.has(k)}
+                                            onClick={() => toggleCat(k)}>
+                                        <i style={{ background: meta.color }} />{meta.name}
+                                    </button>
+                                )
+                            })}
+                            <span className="gcmeta lbl">
+                                {cols.length ? `peak ${colMax.toLocaleString()} · ${totalDays.toLocaleString()} days` : ""}
+                            </span>
+                        </div>
+                    </>
+                )}
+            </div>
+
+            <div className="timecursor" id="timecursor" />
+        </div>
+    )
+}
