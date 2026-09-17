@@ -37,6 +37,7 @@ import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
+import RiskIndexPanel from "../components/RiskIndexPanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import TimeStrip from "../components/TimeStrip.jsx"
 import ImagerySidebar from "../components/ImagerySidebar.jsx"
@@ -670,6 +671,10 @@ export default function Situation({ onOpenDossier }) {
                     </div>
                 </div>
 
+                {/* §10.3 puts the risk index fifth in this pane, after the
+                    severity floor. Its map shading is gone with the threat
+                    heatmap; sort order and the breakdown are what remain, and
+                    they were always the falsifiable half. */}
                 <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 8 }}>Severity floor</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -678,6 +683,8 @@ export default function Situation({ onOpenDossier }) {
                         ))}
                     </div>
                 </div>
+
+                <RiskIndexPanel />
 
                 <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 8 }}>Time window</div>
