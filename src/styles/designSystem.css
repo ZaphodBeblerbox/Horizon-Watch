@@ -328,8 +328,9 @@ input[type="range"]::-moz-range-thumb {
     z-index: 10002; display: flex; flex-direction: column; gap: 8px;
     transition: right .24s var(--ease), bottom .2s var(--ease);
 }
-html:has(#view-map.active .panes.min-r) .toast-stack { right: 42px; }
-html:not(:has(#view-map.active)) .toast-stack { right: 12px; }
+/* Same correction as #notifstack above — see the note there. */
+html:not(:has(#timestrip)) .toast-stack { right: 12px; }
+html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) .toast-stack { right: 42px; }
 .toast {
     display: flex; align-items: center; gap: 8px; padding: 8px 12px;
     background: var(--bg-3); border: 1px solid var(--line-strong); border-radius: var(--r);
@@ -398,8 +399,19 @@ html:not(:has(#view-map.active)) .toast-stack { right: 12px; }
     align-items: flex-end; pointer-events: none;   /* .ncard re-enables */
     transition: right .24s var(--ease), bottom .2s var(--ease);
 }
-html:has(#view-map.active .panes.min-r) #notifstack { right: 42px; }
-html:not(:has(#view-map.active)) #notifstack { right: 12px; }
+/* These were keyed to #view-map.active / .panes.min-r — NEITHER OF WHICH
+   EXISTS IN THIS APP. The consequence was not cosmetic: the :not() rule
+   therefore matched ALWAYS, pinning the stack to right:12px on every screen
+   including Situation, which is §5.4's named failure — "moving the stack up
+   only relocates the collision onto the inspector; the viewport's right edge
+   is permanently occupied by a pane. The stack belongs in the map channel:
+   geography is the one surface that can afford to be covered."
+
+   #timestrip is the real "this is the map view" signal (§11's strip exists
+   only there), and the Inspector pane's own test id is the real "the pane is
+   open" signal — when it is minimised Situation renders a .panetab instead. */
+html:not(:has(#timestrip)) #notifstack { right: 12px; }
+html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack { right: 42px; }
 
 .ncard {
     display: block;

@@ -67,3 +67,34 @@ describe("the rails end at the strip (§1.5)", () => {
         expect((styles.match(/overflowY: "auto"/g) || []).length).toBe(2)
     })
 })
+
+describe("no rule is keyed to a selector nothing carries", () => {
+    // Comments stripped: the note explaining the fix necessarily names the
+    // dead selectors, and a guard that its own rationale trips is a guard
+    // nobody keeps.
+    const rules = css.replace(/\/\*[\s\S]*?\*\//g, "")
+
+    it("designSystem.css has no #view-map or .panes selectors left", () => {
+        // #view-map.active and .panes.min-r were never in this app's DOM. The
+        // damage was not that the rules did nothing — it was that their
+        // :not() halves matched ALWAYS, so the notification stack and the
+        // toasts were pinned over the Inspector on every screen, which is the
+        // one placement §5.4 rules out by name.
+        expect(rules).not.toMatch(/#view-map/)
+        expect(rules).not.toMatch(/\.panes\.min-r/)
+    })
+
+    it("anchors them to elements that do exist", () => {
+        for (const sel of ["#notifstack", ".toast-stack"]) {
+            expect(css).toContain(`html:not(:has(#timestrip)) ${sel}`)
+            expect(css).toContain(`html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) ${sel}`)
+        }
+        const sit = readFileSync(path.join(root, "src/destinations/Situation.jsx"), "utf8")
+        expect(sit).toMatch(/data-testid="glass-inspector-pane"/)
+    })
+
+    it("keeps the stack in the map channel by default (§5.4)", () => {
+        expect(css).toMatch(/#notifstack \{[^}]*right: calc\(var\(--pane-r\) \+ 12px\)/s)
+        expect(css).toMatch(/#notifstack \{[^}]*bottom: calc\(var\(--status\) \+ var\(--strip-h\) \+ 12px\)/s)
+    })
+})
