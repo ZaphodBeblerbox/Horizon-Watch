@@ -14,6 +14,7 @@ import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeGraticuleLayer      from "../globe/GlobeGraticuleLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobeDerivedAlertsLayer  from "../globe/GlobeDerivedAlertsLayer.jsx"
+import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
@@ -115,6 +116,8 @@ export default function GlobeView({
     geoConfirmedEnabled = false,
     // PARALLAX addendum §A8 — the derived surge/fusion marks.
     derivedAlertsEnabled = false,
+    // PARALLAX §13 — the gaps, not the coverage.
+    coverageEnabled = false,
     // Historic-timeline round — the panel's real theatre multi-select and
     // scrub-slider position, forwarded straight through to
     // GlobeGeoConfirmedLayer's own fetch (which already owns all real
@@ -861,6 +864,7 @@ export default function GlobeView({
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 {/* §A8 — surge and fusion, evaluated at the same playhead the
                     archive pins use (§A7). */}
+                <GlobeCoverageLayer enabled={coverageEnabled} />
                 <GlobeDerivedAlertsLayer
                     enabled={derivedAlertsEnabled}
                     at={geoConfirmedEndDate}

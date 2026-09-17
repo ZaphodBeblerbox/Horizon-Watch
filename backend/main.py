@@ -21244,6 +21244,29 @@ def _purge_retired_alerts_sync(dry_run: bool) -> dict:
     return {"dry_run": False, "deleted": deleted, "by_type": counts}
 
 
+def _coverage_sync(window_days: int) -> dict:
+    import coverage_map
+    from database import get_db
+    with get_db() as db:
+        return coverage_map.to_payload(
+            coverage_map.compute_cells(db, window_days=window_days),
+            window_days=window_days,
+        )
+
+
+@app.get("/api/coverage/cells")
+async def api_coverage_cells(window_days: int = 30):
+    """PARALLAX §13 — which modalities actually reach each 10 degree cell.
+
+    Computed from stored rows, never asserted. Modalities this deployment has
+    no feed for are returned in `modalities_unavailable` rather than as zeros:
+    "we have no thermal sensor" and "the thermal sensor saw nothing" are
+    different statements, and only the second is a fact about the world.
+    """
+    window_days = max(1, min(int(window_days), 365))
+    return await asyncio.to_thread(_coverage_sync, window_days)
+
+
 @app.post("/api/admin/purge-retired-alerts")
 async def api_purge_retired_alerts(dry_run: bool = True, current_user=None):
     """Delete the pre-addendum alert families.

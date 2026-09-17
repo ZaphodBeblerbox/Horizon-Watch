@@ -93,6 +93,22 @@ describe("stackSegments", () => {
         expect(segs[segs.length - 1].color).toBe(UNCATEGORISED.color)
     })
 
+    it("still draws a column that has a count but no breakdown", () => {
+        // /histogram answers with bare {bucket, count} unless asked for
+        // categories, and an older deployment ignores the parameter entirely.
+        // Without this the whole chart rendered empty while holding thousands
+        // of real confirmations — which on screen is indistinguishable from an
+        // empty archive.
+        const segs = stackSegments({ total: 42, categories: {} })
+        expect(segs).toHaveLength(1)
+        expect(segs[0].value).toBe(42)
+        expect(segs[0].color).toBe(UNCATEGORISED.color)
+    })
+
+    it("draws nothing for a column that genuinely has nothing", () => {
+        expect(stackSegments({ total: 0, categories: {} })).toEqual([])
+    })
+
     it("omits empty categories rather than drawing zero-height slivers", () => {
         expect(stackSegments({ categories: { conflict: 0, air: 2 } }).map((s) => s.key)).toEqual(["air"])
     })

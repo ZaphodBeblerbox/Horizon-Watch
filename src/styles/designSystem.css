@@ -861,3 +861,35 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack
     margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--line-soft);
     font-size: 9.5px; color: var(--txt-4); font-style: italic;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §13 coverage — the layer that draws what we cannot know
+   ═══════════════════════════════════════════════════════════════════════ */
+.coverage .grouphead { display: flex; align-items: center; gap: 7px; padding: 8px 9px; }
+.coverage .grouphead h4 {
+    font-size: 11px; font-weight: 600; margin: 0; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--txt-3);
+}
+.covtoggle {
+    margin-left: auto; font: 10px var(--mono); text-transform: uppercase;
+    padding: 1px 6px; border: 1px solid var(--line); background: var(--bg-2);
+    color: var(--txt-4); cursor: pointer;
+}
+.covtoggle[aria-pressed="true"] { color: var(--acc-hi); border-color: var(--acc-line); background: var(--acc-dim); }
+
+.covstates { display: flex; flex-direction: column; padding: 0 9px 6px; }
+.covstate { display: flex; align-items: center; gap: 7px; padding: 3px 0; cursor: help; }
+.covstate i { width: 7px; height: 7px; transform: rotate(45deg); flex: none; }
+.covstate .n { flex: 1; font: 400 11px var(--font); color: var(--txt-2); }
+.covstate b { font: 10.5px var(--mono); color: var(--txt-3); }
+
+.covassets { padding: 5px 9px 9px; border-top: 1px solid var(--line-soft); }
+.covrow { display: flex; align-items: center; gap: 7px; padding: 3px 0; }
+.covrow i { width: 6px; height: 6px; transform: rotate(45deg); flex: none; }
+.covrow .n {
+    flex: 1; font: 400 11px var(--font); color: var(--txt-2); min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.covrow .tag { font: 9.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+.covrow .tag.none { color: var(--red); }
+.covrow .tag.thin { color: var(--amber); }

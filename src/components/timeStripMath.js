@@ -90,6 +90,21 @@ export function stackSegments(col) {
     }
     const u = col.categories[UNCATEGORISED.key] || 0
     if (u > 0) segs.push({ key: UNCATEGORISED.key, value: u, from: acc, color: UNCATEGORISED.color })
+
+    // A COLUMN WITH A COUNT BUT NO BREAKDOWN STILL DRAWS.
+    //
+    // /histogram only returns `categories` when asked with with_categories,
+    // and any deployment running a build from before that parameter existed
+    // simply ignores it and answers with bare {bucket, count} rows. Without
+    // this fallback every column then produced zero segments, so the archive
+    // chart rendered EMPTY while holding thousands of real confirmations —
+    // indistinguishable on screen from "this archive has nothing in it".
+    //
+    // The bar is drawn in the neutral colour, which is honest: we know how
+    // much happened and not what kind.
+    if (!segs.length && col.total > 0) {
+        return [{ key: UNCATEGORISED.key, value: col.total, from: 0, color: UNCATEGORISED.color }]
+    }
     return segs
 }
 

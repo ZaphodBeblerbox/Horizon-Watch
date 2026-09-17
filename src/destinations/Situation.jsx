@@ -38,6 +38,7 @@ import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
 import RiskIndexPanel from "../components/RiskIndexPanel.jsx"
+import CoveragePanel from "../components/CoveragePanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import TimeStrip from "../components/TimeStrip.jsx"
 import ImagerySidebar from "../components/ImagerySidebar.jsx"
@@ -274,7 +275,7 @@ export default function Situation({ onOpenDossier }) {
     // layer toggles, and keep their own sensible defaults since they don't
     // clutter an empty map on their own.
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
-    const [contextOn, setContextOn] = useState({ chokepoints: true, risk: false, graticule: false, flows: false, aois: false, labels: false })
+    const [contextOn, setContextOn] = useState({ chokepoints: true, risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
     const [exportOpen, setExportOpen] = useState(false)
     // Imagery/detection top-bar entry point — real audit (Part 0) confirmed
@@ -613,12 +614,12 @@ export default function Situation({ onOpenDossier }) {
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span role="button" tabIndex={0} onClick={() => {
                             setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))
-                            setContextOn({ chokepoints: true, risk: true, graticule: true, flows: true, aois: true, labels: true })
+                            setContextOn({ chokepoints: true, risk: true, coverage: true, graticule: true, flows: true, aois: true, labels: true })
                             setTracksOn({ vessels: true, aircraft: true, sanctionedOnly: false, ports: true })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>all</span>
                         <span role="button" tabIndex={0} onClick={() => {
                             setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
-                            setContextOn({ chokepoints: false, risk: false, graticule: false, flows: false, aois: false, labels: false })
+                            setContextOn({ chokepoints: false, risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
                             setTracksOn({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
                         <button onClick={() => setLeftMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
@@ -697,6 +698,16 @@ export default function Situation({ onOpenDossier }) {
                 </div>
 
                 {contextOn.risk && <RiskIndexPanel />}
+
+                {/* §13 — seventh in §10.3's pane order. Its own on/off lives
+                    in the panel head rather than the Context-layers list,
+                    because the panel is useless without the layer and vice
+                    versa: the map poses the question and the asset list at the
+                    bottom is the answer. */}
+                <CoveragePanel
+                    on={contextOn.coverage}
+                    onToggle={() => setContextOn((p) => ({ ...p, coverage: !p.coverage }))}
+                />
 
                 <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 8 }}>Time window</div>
@@ -862,6 +873,7 @@ export default function Situation({ onOpenDossier }) {
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
                         derivedAlertsEnabled={groupsOn.alerts}
+                        coverageEnabled={contextOn.coverage}
                         mapChromeLeftInset={leftMin ? 0 : 250}
                         /* Real root-cause fix — the Time window/severity-
                            floor selector previously never reached the map

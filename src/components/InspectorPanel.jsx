@@ -4,6 +4,7 @@ import { entityMarkerSvg } from "../globe/entityIcons.js"
 import { normalizeEntity } from "../inspector/adapters.js"
 import { Panel, Button, EmptyState } from "../ui/index.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+import { buildOntologyRecord, traceRationale } from "../inspector/ontologyRecord.js"
 import { linkifyText } from "../lib/linkifyText.jsx"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
@@ -135,6 +136,53 @@ function RelatedLinkRow({ link, onSelectRelated }) {
                 {[linkType, distance].filter(Boolean).join(" · ")}
             </span>
         </button>
+    )
+}
+
+/** §10.4's trace block: instance · type · origin · licence · source ref ·
+ *  ingested, then the edges as mono chips, then the one-line rationale. */
+function OntologyRecordBlock({ entityType, data }) {
+    const rec = buildOntologyRecord(entityType, data || {})
+    const tagStyle = (ok) => ({
+        font: "9.5px var(--mono)", letterSpacing: ".08em", textTransform: "uppercase",
+        padding: "1px 5px", border: "1px solid var(--line)",
+        color: ok ? "var(--txt-2)" : "var(--amber)", background: "var(--bg-2)",
+    })
+    return (
+        <div style={{ marginBottom: "var(--space-4)", borderTop: "1px solid var(--line-soft)", paddingTop: "var(--space-3)" }}>
+            <SectionLabel>Ontology record</SectionLabel>
+            <AttributeRow label="Instance" value={rec.instance || "— none —"} />
+            <AttributeRow label="Type" value={rec.type || "— untyped —"} />
+            <div style={{ display: "flex", gap: 5, margin: "4px 0 6px", flexWrap: "wrap" }}>
+                <span style={tagStyle(!!rec.originClass)} title={rec.originMeaning || "No origin class on this record"}>
+                    origin {rec.originClass || "?"}
+                </span>
+                <span style={tagStyle(!!rec.licenceTier)} title={rec.licenceMeaning || "No licence tier on this record"}>
+                    {rec.licenceTier || "licence ?"}
+                </span>
+            </div>
+            <AttributeRow
+                label="Source ref"
+                value={rec.sourceRef.length ? rec.sourceRef.slice(0, 4).join(", ") + (rec.sourceRef.length > 4 ? ` +${rec.sourceRef.length - 4}` : "") : "— none cited —"}
+            />
+            {rec.ingested && <AttributeRow label="Ingested" value={rec.ingested} />}
+            {rec.edges.length > 0 && (
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 5 }}>
+                    {rec.edges.map((e) => (
+                        <span key={e} style={{
+                            font: "9.5px var(--mono)", padding: "1px 5px",
+                            border: "1px solid var(--line)", color: "var(--txt-3)",
+                        }}>{e}</span>
+                    ))}
+                </div>
+            )}
+            <p style={{
+                margin: "7px 0 0", font: "400 10.5px var(--font)", lineHeight: 1.45,
+                color: rec.complete ? "var(--txt-4)" : "var(--amber)",
+            }}>
+                {traceRationale(rec)}
+            </p>
+        </div>
     )
 }
 
@@ -442,6 +490,15 @@ export default function InspectorPanel({
                 {inspectorExtensions.map((Ext, i) => (
                     <Ext key={i} recordRef={recordRef} record={data} />
                 ))}
+
+                {/* §10.4 — EVERY inspector body ends with the ontology record.
+                    Part 1's rule 3 is "nothing reaches a view without an
+                    ontology record… if it can be seen, it can be traced", and
+                    the rule is only worth anything if the trace is visible.
+                    Rendered unconditionally: an object with no record still
+                    gets the block, saying so, because a silent omission lets
+                    an untraceable object look exactly like a traced one. */}
+                <OntologyRecordBlock entityType={entityType} data={data} />
             </div>
 
             {/* Actions */}
