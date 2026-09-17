@@ -343,3 +343,24 @@ input[type="range"]::-moz-range-thumb {
    incoming one fades in, so a switch reads as the contents changing inside
    one frame rather than a blink to black. */
 .scrim.instant, .scanpanel.instant { transition: none !important; }
+
+/* ── The sky control (PARALLAX spec §4.3) ──────────────────────────────────
+   One sky, two bodies on a rail, clipped by the disc. Not two icons that
+   swap: a swapping pair can only say "day" or "night", while this shows
+   where in the cycle you are — which is the point of an automatic theme. */
+.iconbtn.sky { position: relative; }
+.iconbtn.sky .skyi { width: 19px; height: 19px; overflow: visible; }
+.skydisc  { fill: var(--bg-0); }
+.skyring  { fill: none; stroke: var(--line-strong); stroke-width: 1; }
+.iconbtn.sky:hover .skyring { stroke: var(--txt-3); }
+.skyground { fill: var(--txt-4); }
+.skyline  { stroke: var(--line-strong); stroke-width: .9; }
+.sun      { fill: var(--amber); }
+.sunray   { stroke: var(--amber); stroke-width: 1.1; stroke-linecap: round; }
+.moon     { fill: var(--txt-2); }
+/* A held mode (light or dark, chosen explicitly) gets a corner tick, so
+   "auto" is never ambiguous. */
+.iconbtn.sky.held::after {
+    content: ''; position: absolute; right: 2px; bottom: 2px;
+    width: 4px; height: 4px; background: var(--acc-hi);
+}

@@ -9,7 +9,7 @@ import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
 import { checkSession, subscribeAuth, isAuthTransientError } from "./state/authStore.js"
-import { reconcileTheme } from "./state/themeStore.js"
+import { reconcileTheme, getThemeMode, setThemeMode } from "./state/themeStore.js"
 import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from "./state/settingsStore.js"
 import StatusBar from "./components/StatusBar.jsx"
 import CommandPalette from "./components/CommandPalette.jsx"
@@ -312,6 +312,14 @@ export default function App() {
             if (e.metaKey || e.ctrlKey || e.altKey) return
             if (e.key === "w" || e.key === "W") { e.preventDefault(); setMode(mode === "work" ? "watch" : "work") }
             else if (e.key === "g" || e.key === "G") { e.preventDefault(); setMode("work"); openTab(MODULE_TO_TAB_TYPE.mywork) }
+            // T cycles auto -> light -> dark -> auto (PARALLAX spec §4.4).
+            // Auto is first in the cycle because it is the default state the
+            // other two are departures from.
+            else if (e.key === "t" || e.key === "T") {
+                e.preventDefault()
+                const cur = getThemeMode()
+                setThemeMode(cur === "auto" ? "light" : cur === "light" ? "dark" : "auto")
+            }
         }
         window.addEventListener("keydown", handler)
         return () => window.removeEventListener("keydown", handler)

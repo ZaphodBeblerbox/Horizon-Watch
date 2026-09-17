@@ -25,58 +25,52 @@ const MODES = [
     { value: "auto", label: "Auto" },
 ]
 
-/** Real elevation-only arc position — see themeStore.js's civilTwilightBlend
- * for the color side of this same real value. Deliberately elevation-only
- * (never a fabricated azimuth): elevation=+90 (zenith) sits at the top of
- * the arc, 0 sits exactly on the horizon line, -90 (nadir) at the bottom —
- * a real, continuous, single-value-driven sweep, not a literal east-to-
- * west sky position (this app has no real azimuth calculation to drive
- * that honestly, and none was asked for). */
-function glyphOffset(elevationDeg, radius) {
-    const el = Math.max(-90, Math.min(90, elevationDeg))
-    const rad = (el * Math.PI) / 180
-    return { dx: radius * Math.cos(rad), dy: -radius * Math.sin(rad) }
-}
 
-function moonPath(r) {
-    // Real, standard "two overlapping circles" crescent-moon SVG trick.
-    return `M ${-r} 0 A ${r} ${r} 0 1 0 ${r} 0 A ${r * 0.62} ${r * 0.62} 0 1 1 ${-r} 0 Z`
-}
 
-/** The horizon-arc sun/moon indicator itself — decorative/informational
- * only (per the prompt's own ground rule): mode/blend/elevation all live
- * in themeStore.js regardless of whether this ever renders. */
-function HorizonGlyph({ mode, renderedTheme, blend, elevationDeg, size = 26 }) {
-    const R = size * 0.4
-    const cx = size / 2
-    const cy = size / 2
-    const isAuto = mode === "auto" && elevationDeg !== null
-    const glyphR = size * 0.15
-
-    if (!isAuto) {
-        // Static, non-animated — reflects the explicit manual choice, not
-        // real time. Reuses the app's existing sun/moon icon exactly.
-        return (
-            <svg className="icon sm" width={size} height={size} viewBox="0 0 24 24">
-                <use href={renderedTheme === "light" ? "#i-sun" : "#i-moon"} />
-            </svg>
-        )
-    }
-
-    const { dx, dy } = glyphOffset(elevationDeg, R)
-    const isDay = elevationDeg >= 0
+/**
+ * The sky control (PARALLAX spec §4.3).
+ *
+ * ONE sky, TWO bodies on a single rail 18px apart, clipped by the disc with
+ * a horizon line across it. As t goes 0 -> 1 the rail translates -18t: the
+ * moon sets as the sun rises, both passing behind the skyline. It is NOT two
+ * icons that swap — a swapping pair can only ever say "day" or "night",
+ * whereas this shows WHERE IN THE CYCLE you are, which is the entire point
+ * of an automatic theme. The sun is what stays continuous while the palette
+ * itself is binary.
+ *
+ * glow = clamp((t - 0.35) / 0.4) — the sun brightens as it clears the line.
+ */
+function SkyGlyph({ mode, blend, size = 19 }) {
+    // Manual modes hold a position rather than tracking the sky: fully up
+    // for light, fully down for dark. The control still reads as the same
+    // object, so switching modes does not change what kind of thing it is.
+    const t = mode === "auto" ? Math.max(0, Math.min(1, blend ?? 0))
+        : (mode === "light" ? 1 : 0)
+    const glow = Math.max(0, Math.min(1, (t - 0.35) / 0.4))
+    const clipId = "skyclip-" + size
 
     return (
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block", overflow: "visible" }}>
-            <line x1={cx - R} y1={cy} x2={cx + R} y2={cy} stroke="var(--txt-4)" strokeWidth="1" opacity="0.6" />
-            <circle cx={cx} cy={cy} r={R} fill="none" stroke="var(--txt-4)" strokeWidth="0.75" opacity="0.3" strokeDasharray="1.5 2.5" />
-            <g style={{ transform: `translate(${cx + dx}px, ${cy + dy}px)`, transition: "transform 75s linear" }}>
-                {isDay ? (
-                    <circle r={glyphR} fill="var(--amber)" />
-                ) : (
-                    <path d={moonPath(glyphR)} fill="var(--txt-2)" />
-                )}
+        <svg viewBox="0 0 24 24" className="skyi" width={size} height={size} style={{ display: "block", overflow: "visible" }}>
+            <defs>
+                <clipPath id={clipId}><circle cx="12" cy="12" r="9.2" /></clipPath>
+            </defs>
+            <circle cx="12" cy="12" r="9.2" className="skydisc" />
+            <g clipPath={`url(#${clipId})`}>
+                <rect x="2" y="12.4" width="20" height="10" className="skyground" opacity={0.25 + 0.45 * t} />
+                <g transform={`translate(0, ${-18 * t})`}>
+                    <g transform="translate(12,27)" opacity={0.4 + 0.6 * glow}>
+                        <circle r="3.1" className="sun" />
+                        {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
+                            <line key={a} x1="0" y1="-4.6" x2="0" y2="-5.9" transform={`rotate(${a})`} className="sunray" />
+                        ))}
+                    </g>
+                    <g transform="translate(12,9)" opacity={1 - glow}>
+                        <path d="M2.9,0a3.1,3.1 0 1,1 -3.1,-3.1 a2.5,2.5 0 0,0 3.1,3.1z" className="moon" />
+                    </g>
+                </g>
             </g>
+            <line x1="2.8" y1="12.4" x2="21.2" y2="12.4" className="skyline" />
+            <circle cx="12" cy="12" r="9.2" className="skyring" />
         </svg>
     )
 }
@@ -112,7 +106,7 @@ export default function ThemeControl({ inline = false }) {
         }
     }, [open])
 
-    const glyph = <HorizonGlyph mode={mode} renderedTheme={renderedTheme} blend={blend} elevationDeg={elevationDeg} />
+    const glyph = <SkyGlyph mode={mode} renderedTheme={renderedTheme} blend={blend} elevationDeg={elevationDeg} />
 
     if (inline) {
         return (
@@ -149,8 +143,15 @@ export default function ThemeControl({ inline = false }) {
     return (
         <div ref={containerRef} style={{ position: "relative" }}>
             <button
+                id="btn-theme"
+                // `held` draws a 4px corner tick when the mode was chosen
+                // explicitly, so "auto" is never ambiguous — without it a
+                // held light theme at midday is indistinguishable from an
+                // automatic one, and the user cannot tell whether the app
+                // will turn on its own later.
+                className={`iconbtn sky${mode === "auto" ? "" : " held"}`}
                 onClick={() => setOpen((v) => !v)}
-                title={`Theme: ${MODES.find((m) => m.value === mode)?.label}`}
+                title={`Theme: ${MODES.find((m) => m.value === mode)?.label} — T cycles auto, light, dark`}
                 aria-label="Theme"
                 aria-expanded={open}
                 style={{
@@ -185,7 +186,7 @@ export default function ThemeControl({ inline = false }) {
                                     <use href={m.value === "light" ? "#i-sun" : "#i-moon"} />
                                 </svg>
                             )}
-                            {m.value === "auto" && <HorizonGlyph mode="auto" renderedTheme={renderedTheme} blend={blend} elevationDeg={elevationDeg ?? 0} size={14} />}
+                            {m.value === "auto" && <SkyGlyph mode="auto" renderedTheme={renderedTheme} blend={blend} elevationDeg={elevationDeg ?? 0} size={14} />}
                             <span>{m.label}</span>
                         </button>
                     ))}
