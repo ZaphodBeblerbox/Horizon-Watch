@@ -21,6 +21,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
+import { publishArchiveState } from "../state/archiveState.js"
 import { fetchWithTimeout } from "../utils/fetchWithTimeout.js"
 import {
     CAT, CAT_KEYS, UNCATEGORISED, BUCKETS,
@@ -145,6 +146,35 @@ export default function TimeStrip({
             next.has(k) ? next.delete(k) : next.add(k)
             return next
         })
+
+    // §16 — publish the strip's own state so a saved view can carry the
+    // apparatus, not just the lens. The playhead (`at`) is geoConfirmedEndDate,
+    // which the map already filters by, so a restored view draws the same
+    // evidence rather than the same filters over today's pins.
+    useEffect(() => {
+        publishArchiveState({
+            face, at: endDate, win: winDays, mode: winMode,
+            cats: CAT_KEYS.concat(UNCATEGORISED.key).filter((k) => !catsOff.has(k)),
+        })
+    }, [face, endDate, winDays, winMode, catsOff])
+
+    // The restore channel. Only fields the saved view actually carried are
+    // applied — a view saved before a control existed must not reset it.
+    useEffect(() => {
+        const onApply = (e) => {
+            const g = e.detail || {}
+            if (g.face === "density" || g.face === "timeline") setFace(g.face)
+            if (typeof g.win === "number") setWinDays(g.win)
+            if (g.mode === "window" || g.mode === "all") setWinMode(g.mode)
+            if (Array.isArray(g.cats)) {
+                const all = CAT_KEYS.concat(UNCATEGORISED.key)
+                setCatsOff(new Set(all.filter((k) => !g.cats.includes(k))))
+            }
+            if (g.at !== undefined) onEndDateChange?.(g.at)
+        }
+        window.addEventListener("akili:apply-archive-state", onApply)
+        return () => window.removeEventListener("akili:apply-archive-state", onApply)
+    }, [onEndDateChange])
 
     const rangeLabel = face === "timeline"
         ? (range ? `${range.min_date} → ${range.max_date}` : loadError ? "archive range unavailable" : "reading archive range…")

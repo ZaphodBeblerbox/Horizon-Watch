@@ -146,6 +146,17 @@ class DeskView(Base):
     domains_json        = Column(Text, nullable=False, default="[]")
     context_layers_json = Column(Text, nullable=False, default="{}")
     projection          = Column(String, nullable=False, default="world")
+    # PARALLAX §16 — the apparatus, not just the lens.
+    #
+    # The docstring above says a view carries filter-level state and never
+    # camera. §16 reverses that deliberately, and names the defect it is
+    # fixing: "the button saved a lens and not the apparatus: you returned to
+    # the right filters with the wrong evidence drawn and the camera somewhere
+    # else." One JSON column rather than six typed ones, because its contents
+    # are a set of per-module snapshots whose shape follows those modules —
+    # a column per sub-key would need a migration every time a layer group
+    # gains a toggle.
+    extra_json          = Column(Text, nullable=True)
 
     created_at          = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -1756,6 +1767,14 @@ def migrate_db():
             if col not in al_existing:
                 cur.execute(f'ALTER TABLE alerts ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] alerts: added column {col}')
+
+    # desk_views.extra_json — PARALLAX §16's camera/tracks/archive snapshot,
+    # added to a table that already exists in deployed databases.
+    if 'desk_views' in tables:
+        dv_existing = [row[1] for row in cur.execute('PRAGMA table_info(desk_views)').fetchall()]
+        if 'extra_json' not in dv_existing:
+            cur.execute('ALTER TABLE desk_views ADD COLUMN extra_json TEXT')
+            print('[db-migrate] desk_views: added column extra_json')
 
     # geoconfirmed_placemarks composed-title columns (PARALLAX addendum §A3).
     # Added to a table that already holds ~74,700 rows in deployed databases,

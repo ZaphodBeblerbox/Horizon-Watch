@@ -32,7 +32,7 @@ import { isSignalVisible, ageHoursSince } from "../lib/signalVisibility.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useAnnotations, renameAnnotation, removeAnnotation } from "../state/annotationStore.js"
-import { getActiveViews, subscribeActiveSession, saveCurrentAsView, applyView, deleteActiveSessionView } from "../state/sessionStore.js"
+import { getActiveViews, subscribeActiveSession, saveCurrentAsView, applyView, deleteActiveSessionView, viewExtraLabels } from "../state/sessionStore.js"
 import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
@@ -181,7 +181,14 @@ function ViewsGroup({ views, onApply, onDelete, onSaveCurrent }) {
                 </div>
             ) : views.map((v) => (
                 <div key={v.view_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
-                    <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</span>
+                    <span style={{ flex: 1, minWidth: 0, font: "400 12px var(--font)", color: "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {v.name}
+                        {/* §16 — the row says what will be restored before it
+                            is restored, so "apply" is not a guess. */}
+                        {viewExtraLabels(v).map((l) => (
+                            <span key={l} style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}> · {l}</span>
+                        ))}
+                    </span>
                     <span role="button" tabIndex={0} onClick={() => onApply(v)} title="Apply view"
                         style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>apply</span>
                     <span role="button" tabIndex={0} onClick={() => onDelete(v.view_id)} title="Delete view"

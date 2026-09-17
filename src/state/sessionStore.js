@@ -15,6 +15,7 @@
 import API_BASE from "../apiBase.js"
 import { getCameraState, restoreCameraState } from "../globe/cameraState.js"
 import { getFilterState, restoreFilterState } from "../state/situationFilterState.js"
+import { getArchiveState, restoreArchiveState } from "./archiveState.js"
 import { getBriefingItems, clearBriefing, addToBriefing } from "./briefingBasket.js"
 import { loadProfile } from "../constants/profile.js"
 
@@ -114,6 +115,32 @@ export function applySession(session) {
     for (const ref of session.basket || []) addToBriefing(ref, ref)
 }
 
+/**
+ * PARALLAX §16 — what a view captures beyond its filters.
+ *
+ * "The defect was never a missing button — it was that the button saved a
+ * lens and not the apparatus: you returned to the right filters with the
+ * wrong evidence drawn and the camera somewhere else."
+ *
+ * §16 lists six keys. Three are captured here because the modules that own
+ * them exist: `cam`, `tracks` and `geoc`. Three are NOT, and their absence is
+ * the honest answer rather than an empty object — `sub` (§14's infrastructure
+ * sublayers), `coverage` (§13) and `risk` (§15's weights) have no live state
+ * to read yet, and writing `{}` for them would make a view claim it restored
+ * something it never saw. A later round adds the key; views saved today
+ * simply do not carry it, and applyView skips what is missing.
+ */
+function captureExtra() {
+    const filters = getFilterState() || {}
+    const extra = {}
+    const cam = getCameraState()
+    if (cam) extra.cam = cam
+    if (filters.tracksOn) extra.tracks = filters.tracksOn
+    const geoc = getArchiveState()
+    if (geoc) extra.geoc = geoc
+    return Object.keys(extra).length ? extra : null
+}
+
 export async function createView(sessionId, name) {
     const filters = getFilterState() || {}
     return req(`/api/sessions/${encodeURIComponent(sessionId)}/views`, {
@@ -124,12 +151,36 @@ export async function createView(sessionId, name) {
             severity_floor: filters.severityFloor || "low",
             domains: Object.entries(filters.groupsOn || {}).filter(([, on]) => on).map(([k]) => k),
             context_layers: filters.contextOn || {},
+            extra: captureExtra(),
         }),
     })
 }
 
-/** Applying a view changes ONLY filter-level state — never camera, tabs,
- * or basket, which stay whole-session concerns (V3 Phase 1, §5.2). */
+/**
+ * §16's row subtitle — " · camera", " · archive" appended when a view
+ * actually carries those, so the list says what will be restored before it
+ * is restored.
+ */
+export function viewExtraLabels(view) {
+    const e = view?.extra
+    if (!e) return []
+    const out = []
+    if (e.cam) out.push("camera")
+    if (e.coverage) out.push("coverage")
+    if (e.geoc && (e.geoc.at || e.geoc.face === "timeline")) out.push("archive")
+    return out
+}
+
+/**
+ * Applying a view restores its filters AND §16's apparatus. Tabs and basket
+ * stay whole-session concerns (V3 Phase 1, §5.2) — those describe what the
+ * desk is working on, not how the map is drawn.
+ *
+ * ORDER MATTERS, and §16 says so outright: the camera goes LAST, "so it beats
+ * the fitView that precedes it". Restoring filters re-renders layers and can
+ * trigger a fit; a camera applied before that is immediately overwritten and
+ * the view lands somewhere the analyst never saved.
+ */
 export function applyView(view) {
     if (!view) return
     restoreFilterState({
@@ -137,7 +188,12 @@ export function applyView(view) {
         timeWindow: view.time_window,
         groupsOn: Object.fromEntries((view.domains || []).map((d) => [d, true])),
         contextOn: view.context_layers || {},
+        // A view saved before §16 carries no tracks; leaving them alone is
+        // right, since the alternative is switching every track layer off.
+        ...(view.extra?.tracks ? { tracksOn: view.extra.tracks } : {}),
     })
+    if (view.extra?.geoc) restoreArchiveState(view.extra.geoc)
+    if (view.extra?.cam) restoreCameraState(view.extra.cam)   // LAST — see above
 }
 
 // ── Active session — the real live mirror + switch/fork/seed orchestration ──

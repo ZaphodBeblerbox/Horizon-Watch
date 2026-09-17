@@ -21976,6 +21976,10 @@ def _view_row_to_dict(v) -> dict:
         "domains": _json.loads(v.domains_json or "[]"),
         "context_layers": _json.loads(v.context_layers_json or "{}"),
         "projection": v.projection,
+        # §16 — absent rather than {} when a view predates the column, so a
+        # client can tell "saved without an apparatus" from "saved with an
+        # empty one" and not silently fly the camera to a default.
+        "extra": _json.loads(v.extra_json) if v.extra_json else None,
         "created_at": v.created_at.isoformat() if v.created_at else None,
     }
 
@@ -22084,9 +22088,12 @@ def api_session_views_list(session_id: str):
 
 @app.post("/api/sessions/{session_id}/views")
 async def api_session_views_create(session_id: str, request: Request):
-    """A view is real, separate, filter-level-only state — window/floor/
-    domains/context layers/projection — deliberately never camera, tabs or
-    basket, which stay session-level (V3 Phase 1, §5.2)."""
+    """A view carries window/floor/domains/context layers/projection, plus
+    §16's `extra`: the camera, track toggles and archive playhead that make
+    the saved view show the same EVIDENCE, not merely the same filters.
+
+    Tabs and basket stay session-level (V3 Phase 1, §5.2) — those are about
+    what the desk is working on, not how the map is drawn."""
     from database import DeskSession, DeskView, get_db as _gdb_ses
     body = await request.json()
     name = (body.get("name") or "").strip()
@@ -22102,6 +22109,7 @@ async def api_session_views_create(session_id: str, request: Request):
             domains_json=_json.dumps(body.get("domains", [])),
             context_layers_json=_json.dumps(body.get("context_layers", {})),
             projection=body.get("projection", "world"),
+            extra_json=(_json.dumps(body["extra"]) if body.get("extra") else None),
         )
         db.add(v)
         db.commit()
