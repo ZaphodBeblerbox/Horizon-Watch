@@ -319,3 +319,27 @@ input[type="range"]::-moz-range-thumb {
 }
 .toast svg, .toast img { width: 14px; height: 14px; }
 .toast.leaving { opacity: 0; }
+
+/* ── One dialog frame (PARALLAX spec §19) ──────────────────────────────────
+   Every dialog used to set its own width (520 / 720 / 760 / 820 / 860 / 900)
+   and its own body height (60vh / 64vh / 76vh / 80vh), so the chrome jumped
+   on every switch. They all take a single box now. Per-dialog inline
+   dimensions must be DELETED rather than overridden — an override still
+   leaves the next author a width to copy.
+
+   The command palette is the one deliberate exception: it keeps its 600px
+   top-anchored type-ahead geometry, because it is a type-ahead, not a panel.
+   It still obeys the one-at-a-time rule. */
+.dlg {
+    width: 860px; max-width: 94vw; height: 74vh;
+    background: var(--bg-1); border: 1px solid var(--line-strong);
+    box-shadow: var(--shadow); border-radius: var(--r);
+    display: flex; flex-direction: column; overflow: hidden;
+}
+.dlg > .panehead, .dlg > .dlgfoot { flex: none; }
+.dlg > .dlgbody { flex: 1; min-height: 0; max-height: none; overflow: auto; }
+
+/* Outgoing overlays are removed with their transition suppressed while the
+   incoming one fades in, so a switch reads as the contents changing inside
+   one frame rather than a blink to black. */
+.scrim.instant, .scanpanel.instant { transition: none !important; }

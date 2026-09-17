@@ -4,6 +4,7 @@ const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
 import IconSprite from "./ui/IconSprite.jsx"
 import TopBar from "./components/TopBar.jsx"
 import TabStrip from "./components/TabStrip.jsx"
+import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayManager.js"
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
@@ -529,6 +530,16 @@ export default function App() {
     const [paletteOpen, setPaletteOpen] = useState(false)
     const [settingsOpen, setSettingsOpen] = useState(false)
 
+    // One overlay at a time (PARALLAX spec §19), enforced centrally rather
+    // than at each opener — an opener only knows about itself, which is how
+    // panels come to stack. Both flags are derived from the single registry,
+    // so opening either one necessarily closes the other and there is no
+    // state in which both are true. Escape is handled inside the manager.
+    useEffect(() => subscribeOverlay((cur) => {
+        setPaletteOpen(cur === "overlay:palette")
+        setSettingsOpen(cur === "overlay:settings")
+    }), [])
+
     useEffect(() => {
         if (!profile) return
         let cancelled = false
@@ -856,7 +867,7 @@ export default function App() {
                 setPaletteOpen(v => !v)
                 return
             }
-            if (e.key === "Escape" && paletteOpen) { setPaletteOpen(false); return }
+            if (e.key === "Escape" && paletteOpen) { closeOverlay("overlay:palette"); return }
             if (inTextInput) return
             const n = Number(e.key)
             if (n >= 1 && n <= 9 && MODULES[n - 1]) {
@@ -1106,17 +1117,17 @@ export default function App() {
                         onSelectModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
                         unreadCount={unreadCount}
                         systemHealth={systemHealth}
-                        onOpenPalette={() => setPaletteOpen(true)}
+                        onOpenPalette={() => openOverlay("overlay:palette")}
                         mode={mode}
                         onToggleMode={() => setMode(mode === "work" ? "watch" : "work")}
-                        onOpenSettings={() => setSettingsOpen(true)}
+                        onOpenSettings={() => openOverlay("overlay:settings")}
                     />
                     <TabStrip
                         tabs={tabs}
                         activeTabId={activeTabId}
                         onSelect={switchTab}
                         onClose={closeTab}
-                        onOpenPalette={() => setPaletteOpen(true)}
+                        onOpenPalette={() => openOverlay("overlay:palette")}
                         liveFeedCount={Array.isArray(healthData?.data_sources) ? healthData.data_sources.filter(s => s.status === "ok").length : null}
                         sessionControl={<SessionControl mode={mode} onSetMode={setMode} />}
                     />
@@ -1125,7 +1136,7 @@ export default function App() {
             <ToastHost />
             <CommandPalette
                 open={paletteOpen}
-                onClose={() => setPaletteOpen(false)}
+                onClose={() => closeOverlay("overlay:palette")}
                 signals={notifItems}
                 onOpenModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
                 onOpenEntity={(r) => {
@@ -1142,7 +1153,7 @@ export default function App() {
             />
             {settingsOpen && (
                 <SettingsModal
-                    onClose={() => setSettingsOpen(false)}
+                    onClose={() => closeOverlay("overlay:settings")}
                     onOpenSources={() => openTab("sources")}
                 />
             )}
