@@ -310,7 +310,24 @@ input[type="range"]::-moz-range-thumb {
 .palette .row .sub { font: 400 11px var(--font); color: var(--txt-3); margin-left: 6px; }
 .palette .row .kind { margin-left: auto; }
 
-.toast-stack { position: fixed; bottom: 16px; right: 16px; z-index: 10002; display: flex; flex-direction: column; gap: 8px; }
+/* Anchored in the MAP CHANNEL (PARALLAX spec §5.4), not at a constant
+   offset. Two failures this replaces, both of which were made:
+     1. A constant bottom rots. It is correct until the time strip changes
+        height, then the cards sit on the archive controls.
+     2. Moving the stack UP only relocates the collision onto the inspector
+        — the viewport's right edge is permanently occupied by a pane.
+   Geography is the one surface that can afford to be covered, so the stack
+   clears --pane-r horizontally and --strip-h vertically. Off the map, and
+   when the right rail is collapsed, it reclaims that space. */
+.toast-stack {
+    position: fixed;
+    right: calc(var(--pane-r) + 12px);
+    bottom: calc(var(--status) + var(--strip-h) + 12px);
+    z-index: 10002; display: flex; flex-direction: column; gap: 8px;
+    transition: right .24s var(--ease), bottom .2s var(--ease);
+}
+html:has(#view-map.active .panes.min-r) .toast-stack { right: 42px; }
+html:not(:has(#view-map.active)) .toast-stack { right: 12px; }
 .toast {
     display: flex; align-items: center; gap: 8px; padding: 8px 12px;
     background: var(--bg-3); border: 1px solid var(--line-strong); border-radius: var(--r);
@@ -364,3 +381,83 @@ input[type="range"]::-moz-range-thumb {
     content: ''; position: absolute; right: 2px; bottom: 2px;
     width: 4px; height: 4px; background: var(--acc-hi);
 }
+
+/* ── Notification cards and tray (PARALLAX spec §5) ────────────────────────
+   Arrival is not interruption. Only a critical, an escalation, something
+   assigned to you, or an RFI earns a card; everything else increments the
+   bell and lands in the tray. A console that shouts at every event trains
+   people to dismiss without reading, which loses the one notification that
+   mattered. */
+#notifstack {
+    position: fixed;
+    right: calc(var(--pane-r) + 12px);          /* the map channel */
+    bottom: calc(var(--status) + var(--strip-h) + 12px);   /* clears the strip */
+    z-index: 88; display: flex; flex-direction: column; gap: 8px;
+    align-items: flex-end; pointer-events: none;   /* .ncard re-enables */
+    transition: right .24s var(--ease), bottom .2s var(--ease);
+}
+html:has(#view-map.active .panes.min-r) #notifstack { right: 42px; }
+html:not(:has(#view-map.active)) #notifstack { right: 12px; }
+
+.ncard {
+    display: block;
+    width: min(326px, calc(100vw - var(--pane-l) - var(--pane-r) - 28px));
+    pointer-events: auto; background: var(--tr15);
+    backdrop-filter: blur(18px) saturate(120%);
+    border: 1px solid var(--line-strong); box-shadow: var(--shadow);
+    opacity: 0; transform: translateX(14px);
+    transition: opacity .22s var(--ease), transform .22s var(--ease);
+}
+.ncard.in { opacity: 1; transform: none; }
+.nc-body { min-width: 0; padding: 8px 11px 9px; }
+.nc-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+/* Severity is the same 7px rotated diamond the map and the inbox use — one
+   vocabulary across three surfaces. An earlier build used a 3px full-height
+   coloured rail down the card edge: it read as an error state on every card
+   regardless of severity, and duplicated what the diamond already said. */
+.nc-head .dia { width: 7px; height: 7px; transform: rotate(45deg); flex: none; }
+.nc-head svg { width: 12px; height: 12px; color: var(--txt-3); flex: none; }
+.nc-head .k {
+    font: 9.5px var(--mono); letter-spacing: .1em;
+    text-transform: uppercase; color: var(--txt-4);
+}
+.nc-head .t { margin-left: auto; font: 9.5px var(--mono); color: var(--txt-4); }
+.nc-x {
+    width: 18px; height: 18px; display: grid; place-items: center;
+    color: var(--txt-4); font-size: 11px; background: none; border: none; cursor: pointer;
+}
+.ncard b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.35; color: var(--txt); }
+.ncard .s { display: block; font-size: 11px; line-height: 1.45; color: var(--txt-3); margin-top: 2px; }
+.nc-acts { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+
+/* The tray is the record — dismissing a card removes the interruption,
+   never the item. */
+.notiftray {
+    position: fixed; top: var(--top); right: 0; bottom: var(--status);
+    width: 352px; max-width: 92vw; z-index: 86;
+    display: flex; flex-direction: column; background: var(--tr0);
+    backdrop-filter: blur(18px) saturate(115%);
+    border-left: 1px solid var(--line-strong);
+    transform: translateX(100%); transition: transform .22s var(--ease);
+}
+.notiftray.open { transform: none; }
+.ntfilt {
+    display: flex; gap: 4px; flex-wrap: wrap; padding: 8px 10px;
+    border-bottom: 1px solid var(--line-soft);
+}
+.ntfilt button {
+    height: 20px; padding: 0 8px; font-size: 10.5px; border: 1px solid var(--line);
+    color: var(--txt-3); background: var(--bg-1); cursor: pointer;
+}
+.ntfilt button[aria-pressed="true"] {
+    color: var(--txt); border-color: var(--line-strong); background: var(--bg-3);
+}
+.ntfilt .ntread { margin-left: auto; border: 0; background: none; color: var(--acc-hi); }
+.nrow {
+    display: grid; grid-template-columns: auto auto minmax(0,1fr) auto; gap: 8px;
+    align-items: start; width: 100%; text-align: left; padding: 9px 11px;
+    border-bottom: 1px solid var(--line-soft); min-height: 44px;
+    background: none; border-left: 0; border-right: 0; border-top: 0; cursor: pointer;
+}
+/* Unread reads as a surface state, not as a dot. */
+.nrow.un { background: var(--acc-dim); }

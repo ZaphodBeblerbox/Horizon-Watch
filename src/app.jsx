@@ -308,14 +308,31 @@ export default function App() {
     // W / G keybindings (§7.1) — both guarded against firing while typing.
     useEffect(() => {
         const handler = (e) => {
-            if (e.target?.matches?.("input,textarea,select")) return
-            if (e.metaKey || e.ctrlKey || e.altKey) return
-            if (e.key === "w" || e.key === "W") { e.preventDefault(); setMode(mode === "work" ? "watch" : "work") }
-            else if (e.key === "g" || e.key === "G") { e.preventDefault(); setMode("work"); openTab(MODULE_TO_TAB_TYPE.mywork) }
-            // T cycles auto -> light -> dark -> auto (PARALLAX spec §4.4).
+            // Every text-entry surface, not just the three form tags. The
+            // previous guard missed contenteditable, which this app uses, so
+            // a bare letter shortcut fired while typing in one. isContentEditable
+            // covers the element and any contenteditable ancestor; role=textbox
+            // covers custom editors that are not contenteditable themselves.
+            const t = e.target
+            if (t?.matches?.("input, textarea, select, [contenteditable], [role='textbox']")) return
+            if (t?.isContentEditable) return
+            if (t?.closest?.("[contenteditable='true'], [role='textbox']")) return
+
+            // These require Alt (Option on Mac) rather than being bare keys.
+            // A bare letter is one missed guard away from firing mid-sentence,
+            // and the guard above can only ever enumerate the text surfaces it
+            // knows about. Alt is used instead of Ctrl/Cmd because Ctrl+T and
+            // Cmd+T are reserved by the browser for "new tab" and never reach
+            // the page reliably.
+            if (!e.altKey) return
+            if (e.metaKey || e.ctrlKey) return
+
+            if (e.key === "w" || e.key === "W" || e.code === "KeyW") { e.preventDefault(); setMode(mode === "work" ? "watch" : "work") }
+            else if (e.key === "g" || e.key === "G" || e.code === "KeyG") { e.preventDefault(); setMode("work"); openTab(MODULE_TO_TAB_TYPE.mywork) }
+            // Alt+T cycles auto -> light -> dark -> auto (PARALLAX spec §4.4).
             // Auto is first in the cycle because it is the default state the
             // other two are departures from.
-            else if (e.key === "t" || e.key === "T") {
+            else if (e.key === "t" || e.key === "T" || e.code === "KeyT") {
                 e.preventDefault()
                 const cur = getThemeMode()
                 setThemeMode(cur === "auto" ? "light" : cur === "light" ? "dark" : "auto")

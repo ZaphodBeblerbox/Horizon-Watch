@@ -10,14 +10,12 @@ import {
 // identically in the top bar and Settings' General section (per the
 // existing real per-user-server-synced mechanism in themeStore.js — this
 // is a second RENDER of that one mechanism, never a second store). Real
-// three-way switch plus the sun/moon horizon indicator (Part 3 of the
-// Auto-theme prompt): in Auto mode the glyph's arc position is driven by
-// the exact same live elevationDeg/blend value the token fade uses (both
-// read from themeStore's single subscribeBlend() stream) — never a second,
-// independently-computed approximation that could drift out of sync. In
-// manual Light/Dark, it's the same static sun/moon icon this app already
-// used before Auto mode existed (#i-sun/#i-moon, IconSprite.jsx) — no
-// arc, no animation, since it reflects the explicit choice, not the sky.
+// three-way switch plus the sky control (PARALLAX spec §4.3). The control's
+// rail position is driven by the same live blend/elevationDeg value the
+// store computes — never a second, independently-computed approximation
+// that could drift out of sync. Manual Light/Dark hold the rail fully up or
+// fully down rather than substituting a different drawing, so the control
+// is always the same object; only where it sits in the cycle changes.
 
 const MODES = [
     { value: "light", label: "Light" },
@@ -151,7 +149,7 @@ export default function ThemeControl({ inline = false }) {
                 // will turn on its own later.
                 className={`iconbtn sky${mode === "auto" ? "" : " held"}`}
                 onClick={() => setOpen((v) => !v)}
-                title={`Theme: ${MODES.find((m) => m.value === mode)?.label} — T cycles auto, light, dark`}
+                title={`Theme: ${MODES.find((m) => m.value === mode)?.label} — Alt+T cycles auto, light, dark`}
                 aria-label="Theme"
                 aria-expanded={open}
                 style={{
