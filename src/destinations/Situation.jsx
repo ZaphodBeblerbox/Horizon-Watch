@@ -849,6 +849,7 @@ export default function Situation({ onOpenDossier }) {
                         geoConfirmedEnabled={groupsOn.news}
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
+                        derivedAlertsEnabled={groupsOn.alerts}
                         mapChromeLeftInset={leftMin ? 0 : 250}
                         /* Real root-cause fix — the Time window/severity-
                            floor selector previously never reached the map

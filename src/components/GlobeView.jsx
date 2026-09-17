@@ -13,6 +13,7 @@ import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeGraticuleLayer      from "../globe/GlobeGraticuleLayer.jsx"
 import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
+import GlobeDerivedAlertsLayer  from "../globe/GlobeDerivedAlertsLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
@@ -113,6 +114,8 @@ export default function GlobeView({
     // heatmap — see the PARALLAX addendum, which replaces both with the
     // §A5/§A6 derived marks.
     geoConfirmedEnabled = false,
+    // PARALLAX addendum §A8 — the derived surge/fusion marks.
+    derivedAlertsEnabled = false,
     // Historic-timeline round — the panel's real theatre multi-select and
     // scrub-slider position, forwarded straight through to
     // GlobeGeoConfirmedLayer's own fetch (which already owns all real
@@ -858,6 +861,13 @@ export default function GlobeView({
                     endDate={geoConfirmedEndDate}
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
+                {/* §A8 — surge and fusion, evaluated at the same playhead the
+                    archive pins use (§A7). */}
+                <GlobeDerivedAlertsLayer
+                    enabled={derivedAlertsEnabled}
+                    at={geoConfirmedEndDate}
+                    theatres={geoConfirmedTheatres}
+                />
                 {cityLabelsEnabled && (
                     <ImageryLayer imageryProvider={esriLabelsProvider} alpha={1.0} maximumTerrainLevel={19} />
                 )}
