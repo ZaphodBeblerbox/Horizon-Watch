@@ -3,6 +3,9 @@ import API_BASE from "../apiBase.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+import { MODES } from "./ontologyModes.js"
+import OntologyOrbat from "./OntologyOrbat.jsx"
+import OntologyEngine from "./OntologyEngine.jsx"
 
 // Ontology — page-by-page rebuild, Part A. A fixed four-tier diagram, never
 // a force simulation. Built on the real Forge ontology (forge_ontology.json,
@@ -144,6 +147,9 @@ export default function Ontology({ onOpenGenerate }) {
     // V3 Phase 1, §2.2 — real hook-based extension point, owned and called
     // by this component itself (never reassigned from outside).
     const inspectorExtensions = useInspectorExtensions()
+    // §17 — four modes, one frame. All four share the left nav, the centre
+    // stage and the inspector; only the CONTENTS change.
+    const [mode, setMode] = useState("graph")
     const [typeFilter, setTypeFilter] = useState(null)
     const [confFloor, setConfFloor] = useState(0)
     const [showInferred, setShowInferred] = useState(true)
@@ -153,6 +159,13 @@ export default function Ontology({ onOpenGenerate }) {
     const [investigations, setInvestigations] = useState(() => {
         try { return JSON.parse(localStorage.getItem("ontology_investigations") || "[]") } catch { return [] }
     })
+    // §17's rule: "Each mode owns the inspector while it is on and CLEARS IT
+    // ON THE WAY OUT — otherwise the right pane keeps answering questions
+    // about the previous mode." A formation's detail pane left standing over
+    // the graph is not merely untidy: it invites an answer read against the
+    // wrong question.
+    useEffect(() => { setSelected(null) }, [mode])
+
     const layoutKeyRef = useRef(null)
     const dragRef = useRef(null)
     const svgRef = useRef(null)
@@ -330,6 +343,22 @@ export default function Ontology({ onOpenGenerate }) {
     return (
         <div data-testid="view-root-ontology" style={{ display: "grid", gridTemplateColumns: "236px 1fr 316px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 14 }}>
+                {/* §17 — the mode switch. One frame; the three columns change
+                    their contents, never their shape. */}
+                <div className="seg onmode" id="on-mode">
+                    {MODES.map((m) => (
+                        <button key={m.key} type="button" aria-pressed={mode === m.key}
+                                onClick={() => setMode(m.key)}>{m.label}</button>
+                    ))}
+                </div>
+                {mode !== "graph" ? (
+                    <p className="risknote" style={{ padding: 0 }}>
+                        {mode === "orbat" && "Theatres, then the countries in them. A country with no held order of battle is drawn hollow rather than omitted."}
+                        {mode === "pat" && "Open-world pattern detection over a document set. No document corpus is loaded in this deployment."}
+                        {mode === "engine" && "The five layers in pipeline order. Only Provenance is built; the rest are named because the order matters."}
+                    </p>
+                ) : (
+                <>
                 <div>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Types</div>
                     <div role="button" onClick={() => setTypeFilter(null)} style={{ font: "400 12px var(--font)", color: !typeFilter ? "var(--txt)" : "var(--txt-3)", cursor: "pointer", marginBottom: 4 }}>All</div>
@@ -358,6 +387,8 @@ export default function Ontology({ onOpenGenerate }) {
                         <div key={i} role="button" onClick={() => loadInvestigation(inv)} style={{ font: "400 12px var(--font)", color: "var(--txt-2)", cursor: "pointer", padding: "3px 0" }}>{inv.name}</div>
                     ))}
                 </div>
+                </>
+                )}
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -374,7 +405,26 @@ export default function Ontology({ onOpenGenerate }) {
                     <button className="btn sm" onClick={briefSelection} disabled={!selected}>brief selection</button>
                     {linkMode && <span style={{ font: "400 11px var(--font)", color: "var(--acc-hi)" }}>{linkFirst ? `${linkFirst.label} → click target` : "click first node"}</span>}
                 </div>
-                <div ref={containerRef} style={{ flex: 1, overflow: "hidden", position: "relative" }} onWheel={onWheel}>
+                {mode === "orbat" && (
+                    <div style={{ flex: 1, minHeight: 0 }}>
+                        <OntologyOrbat onSelect={setSelected} selectedId={selected?.id} />
+                    </div>
+                )}
+                {mode === "engine" && (
+                    <div style={{ flex: 1, minHeight: 0 }}><OntologyEngine /></div>
+                )}
+                {mode === "pat" && (
+                    <div style={{ flex: 1, minHeight: 0, padding: 16 }}>
+                        <div className="scanhint" style={{ maxWidth: 560 }}>
+                            §17.2's open-world detector runs over a loaded document set and mints
+                            exactly one edge type, <code>mentioned_with</code>. No document corpus
+                            is loaded in this deployment, so there is nothing to segment, resolve
+                            or test against a null model — and a findings list assembled without
+                            one would be the fabrication the whole surface exists to guard against.
+                        </div>
+                    </div>
+                )}
+                <div ref={containerRef} style={{ flex: 1, overflow: "hidden", position: "relative", display: mode === "graph" ? undefined : "none" }} onWheel={onWheel}>
                     <svg ref={svgRef} width="100%" height="100%" onPointerDown={onBackgroundDrag} style={{ cursor: "grab" }}>
                         <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
                             {TIER_NAME.map((name, i) => (

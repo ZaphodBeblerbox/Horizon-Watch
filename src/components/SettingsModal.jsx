@@ -3,6 +3,7 @@ import API_BASE from "../apiBase.js"
 import { getCurrentUser } from "../state/authStore.js"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
 import { LAYER_GROUPS } from "./layerRailConfig.js"
+import { listSessions, listViews, deleteSession, deleteView, viewExtraLabels } from "../state/sessionStore.js"
 import { KEYBOARD_SHORTCUTS } from "../data/keyboardShortcuts.js"
 import PushNotificationToggle from "./PushNotificationToggle.jsx"
 import ThemeControl from "./ThemeControl.jsx"
@@ -375,13 +376,99 @@ function AboutSection() {
     )
 }
 
+// §20 lists General · Tutorial · Shortcuts · Sessions & views · Alert rules ·
+// Export · Distribution · Mail & calendar · Users & roles.
+//
+// The sections below are the ones with REAL controls behind them. The spec's
+// remaining names are deliberately absent rather than present and empty: this
+// app already removed a pair of Forge selects that configured an icon nothing
+// rendered, on the principle that a control which changes nothing is worse
+// than an absent one — a settings dialog full of inert panes is that mistake
+// at the scale of a whole surface.
+//
+// "Shortcuts" takes the spec's name over the old "Keyboard", and
+// "Sessions & views" is added because that state is real, server-persisted,
+// and had no management surface anywhere.
+/**
+ * §20's "Sessions & views" — the desk state that is real and server-persisted
+ * and until now had nowhere to be managed from. Deleting is the only action
+ * here on purpose: creating a session or a view is something you do from the
+ * surface it describes, where you can see what you are capturing.
+ */
+function SessionsSection() {
+    const [sessions, setSessions] = useState(null)
+    const [busy, setBusy] = useState(null)
+
+    const load = useCallback(() => {
+        listSessions()
+            .then(async (rows) => {
+                const list = Array.isArray(rows) ? rows : []
+                const withViews = await Promise.all(list.map(async (s) => {
+                    try { return { ...s, views: await listViews(s.session_id) } }
+                    catch { return { ...s, views: [] } }
+                }))
+                setSessions(withViews)
+            })
+            .catch(() => setSessions([]))
+    }, [])
+    useEffect(() => { load() }, [load])
+
+    const removeSession = (id) => {
+        setBusy(id)
+        deleteSession(id).then(load).catch(() => {}).finally(() => setBusy(null))
+    }
+    const removeView = (sid, vid) => {
+        setBusy(vid)
+        deleteView(sid, vid).then(load).catch(() => {}).finally(() => setBusy(null))
+    }
+
+    if (sessions === null) return <div className="risknote">Reading sessions…</div>
+    if (!sessions.length) return <div className="risknote">No saved sessions yet.</div>
+
+    return (
+        <div>
+            <p className="risknote" style={{ padding: "0 0 8px" }}>
+                A session is the whole desk; a view is a named set of filters inside one.
+                Deleting a session deletes the views inside it.
+            </p>
+            {sessions.map((s) => (
+                <div key={s.session_id} style={{ borderBottom: "1px solid var(--line-soft)", padding: "6px 0" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>{s.name}</span>
+                        <span style={{ font: "9.5px var(--mono)", color: "var(--txt-4)" }}>
+                            {(s.views || []).length} view{(s.views || []).length === 1 ? "" : "s"}
+                        </span>
+                        <button type="button" disabled={busy === s.session_id}
+                                onClick={() => removeSession(s.session_id)}
+                                style={{ background: "none", border: 0, color: "var(--txt-4)", cursor: "pointer" }}>✕</button>
+                    </div>
+                    {(s.views || []).map((v) => (
+                        <div key={v.view_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 2px 12px" }}>
+                            <span style={{ flex: 1, font: "400 11px var(--font)", color: "var(--txt-3)" }}>
+                                {v.name}
+                                {viewExtraLabels(v).map((l) => (
+                                    <span key={l} style={{ font: "9.5px var(--mono)", color: "var(--txt-4)" }}> · {l}</span>
+                                ))}
+                            </span>
+                            <button type="button" disabled={busy === v.view_id}
+                                    onClick={() => removeView(s.session_id, v.view_id)}
+                                    style={{ background: "none", border: 0, color: "var(--txt-4)", cursor: "pointer" }}>✕</button>
+                        </div>
+                    ))}
+                </div>
+            ))}
+        </div>
+    )
+}
+
 const SECTIONS = [
     { key: "general", label: "General" },
     { key: "mapLayers", label: "Map & layers" },
     { key: "alerts", label: "Alerts" },
+    { key: "sessions", label: "Sessions & views" },
     { key: "sources", label: "Sources" },
     { key: "briefing", label: "Briefing" },
-    { key: "keyboard", label: "Keyboard" },
+    { key: "keyboard", label: "Shortcuts" },
     { key: "about", label: "About" },
 ]
 
@@ -441,6 +528,7 @@ export default function SettingsModal({ onClose, onOpenSources }) {
                         {active === "sources" && <SourcesSection />}
                         {active === "briefing" && <BriefingSection settings={settings} />}
                         {active === "keyboard" && <KeyboardSection />}
+                        {active === "sessions" && <SessionsSection />}
                         {active === "about" && <AboutSection />}
                     </div>
                 </div>

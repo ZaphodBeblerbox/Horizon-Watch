@@ -21254,6 +21254,44 @@ def _coverage_sync(window_days: int) -> dict:
         )
 
 
+def _provenance_matrix_sync() -> dict:
+    """PARALLAX §17.3's Provenance layer, counted over real rows.
+
+    Two columns, never one: origin_class is an evidence judgement,
+    licence_tier is a legal one. Rows carrying neither are reported as
+    `untraceable` rather than bucketed somewhere convenient — under rule 3 an
+    untraceable row is a defect, and hiding it in a cell makes it invisible.
+    """
+    from sqlalchemy import func
+    from database import Alert, GeoConfirmedPlacemark, SentinelDetection, get_db
+
+    matrix: dict = {c: {t: 0 for t in ("T1", "T2", "T3", "T4")} for c in ("A", "B", "C", "D")}
+    tables = []
+    with get_db() as db:
+        for label, model in (("alerts", Alert),
+                             ("geoconfirmed_placemarks", GeoConfirmedPlacemark),
+                             ("sentinel_detections", SentinelDetection)):
+            total = db.query(model).count()
+            untraceable = 0
+            rows = db.query(model.origin_class, model.licence_tier,
+                            func.count()).group_by(model.origin_class, model.licence_tier).all()
+            for oc, lt, n in rows:
+                oc = (oc or "").upper().strip()
+                lt = (lt or "").upper().strip()
+                if oc in matrix and lt in matrix[oc]:
+                    matrix[oc][lt] += n
+                else:
+                    untraceable += n
+            tables.append({"table": label, "rows": total, "untraceable": untraceable})
+
+    return {"matrix": matrix, "tables": tables}
+
+
+@app.get("/api/ontology/provenance-matrix")
+async def api_provenance_matrix():
+    return await asyncio.to_thread(_provenance_matrix_sync)
+
+
 @app.get("/api/coverage/cells")
 async def api_coverage_cells(window_days: int = 30):
     """PARALLAX §13 — which modalities actually reach each 10 degree cell.

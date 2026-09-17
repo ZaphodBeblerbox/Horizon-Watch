@@ -229,3 +229,39 @@ def get_histogram(
         "bucket": bucket_size,
         "buckets": buckets,
     }
+
+
+@router.get("/orbat")
+def get_orbat(
+    theatre: str | None = Query(None, description="Theatre slug(s), comma-separated. Omit for all."),
+    limit: int = Query(4000, ge=1, le=20000),
+):
+    """PARALLAX §17.1 — the stored GeoConfirmed order of battle.
+
+    Returns the real nodes only. The spec's ISO roster and its HOLLOW
+    countries ("absence of evidence is a state worth showing, not a country
+    worth hiding") are assembled client-side, because the roster is a
+    constant and what this endpoint knows is which of it we actually hold.
+    """
+    from database import GeoConfirmedOrbatNode, get_db
+
+    theatres = _parse_theatres(theatre)
+    with get_db() as db:
+        q = db.query(GeoConfirmedOrbatNode).filter(GeoConfirmedOrbatNode.is_deleted.is_(False))
+        if theatres:
+            q = q.filter(GeoConfirmedOrbatNode.theatre_slug.in_(theatres))
+        rows = q.limit(limit).all()
+        nodes = [{
+            "node_id": r.id,
+            "theatre_slug": r.theatre_slug,
+            "name": r.name,
+            "parent_id": r.parent_id,
+            "structure_path": r.structure_path,
+            "disbanded": bool(r.is_disbanded),
+        } for r in rows]
+
+        counts = {}
+        for n in nodes:
+            counts[n["theatre_slug"]] = counts.get(n["theatre_slug"], 0) + 1
+
+    return {"theatre": theatre, "returned": len(nodes), "by_theatre": counts, "nodes": nodes}
