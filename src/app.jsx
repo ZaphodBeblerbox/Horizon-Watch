@@ -970,8 +970,9 @@ export default function App() {
         return () => window.removeEventListener("keydown", handler)
     }, [paletteOpen, openTab])
 
-    // Real, destination-neutral navigation event (see
-    // src/globe/GlobeStrategicZoneTooltip.jsx's "Manage in Sources" action) —
+    // Real, destination-neutral navigation event (introduced for the strategic
+    // zone tooltip's "Manage in Sources" action; that layer is gone, the event
+    // is still what every other surface navigates with) —
     // replaces the old akili:open-forge/akili:forge-nav pair now that Forge
     // is no longer a primary-nav destination.
     useEffect(() => {

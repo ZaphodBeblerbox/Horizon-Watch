@@ -854,7 +854,7 @@ export default function Situation({ onOpenDossier }) {
                         alertsEnabled={groupsOn.alerts}
                         cablesEnabled={groupsOn.maritime} chokepointsEnabled={groupsOn.maritime}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}
-                        strategicZonesEnabled={groupsOn.zones} eezEnabled={groupsOn.zones}
+                        eezEnabled={groupsOn.zones}
                         /* Context layers — separate from event domains, per build spec v2 §4.2 */
                         graticuleEnabled={contextOn.graticule}
                         cityLabelsEnabled={contextOn.labels}

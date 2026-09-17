@@ -25,7 +25,6 @@ import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
 import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
-import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
 import GlobeCameraLayer         from "../globe/GlobeCameraLayer.jsx"
 import ScaleBar                 from "./ScaleBar.jsx"
 import CoordinateReadout        from "./CoordinateReadout.jsx"
@@ -103,7 +102,6 @@ export default function GlobeView({
     eezEnabled       = false,
     cablesEnabled    = false,
     chokepointsEnabled = false,
-    strategicZonesEnabled = false,
     eventsEnabled    = true,
     // GeoConfirmed conflict-event pins (GlobeGeoConfirmedLayer.jsx) — the
     // precise replacement for raw RSS/news map points now that
@@ -852,7 +850,6 @@ export default function GlobeView({
                 <GlobeGraticuleLayer      enabled={graticuleEnabled} />
 
                 {/* ── Point / entity layers ───────────────────────────────────── */}
-                <GlobeStrategicZonesLayer enabled={strategicZonesEnabled} />
                 <GlobeChokepointsLayer  enabled={chokepointsEnabled} />
                 <GlobeGeoConfirmedLayer
                     enabled={geoConfirmedEnabled}

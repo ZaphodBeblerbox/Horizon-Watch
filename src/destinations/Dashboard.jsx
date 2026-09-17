@@ -325,7 +325,6 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
                         airportsEnabled={layerOn(activeLayers, "airports")}
                         infraEnabled={layerOn(activeLayers, "oim")}
                         eezEnabled={layerOn(activeLayers, "eez")}
-                        strategicZonesEnabled={layerOn(activeLayers, "showStrategicZones")}
                         cityLabelsEnabled={layerOn(activeLayers, "cityLabels")}
                         nauticalEnabled={layerOn(activeLayers, "shippingLanes")}
                         satelliteEnabled={layerOn(activeLayers, "satellite")}

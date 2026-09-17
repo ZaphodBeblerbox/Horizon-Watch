@@ -32,9 +32,10 @@ import path from "node:path"
 // guard that enforced something the design never asked for.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// GlobeSurgeLayer.jsx was removed with the old surge layer; the two
-// remaining map-surface files are the ones that still paint tooltips.
-const FILES = ["GlobePopup.jsx", "GlobeStrategicZoneTooltip.jsx"]
+// GlobeSurgeLayer.jsx went with the old surge layer and
+// GlobeStrategicZoneTooltip.jsx with the conflict zones; GlobePopup is the
+// one map surface still painting a floating shell.
+const FILES = ["GlobePopup.jsx"]
 
 describe("map hover-callout/tooltip surface tokens (static source guard)", () => {
     for (const file of FILES) {

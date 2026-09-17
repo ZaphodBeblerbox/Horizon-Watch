@@ -21,8 +21,8 @@
  *   - the "akili:fly-to" window event (real; GlobeView.jsx has listened to
  *     it since before this feature — used by TopBar/GlobalSearch)
  *   - each entity layer's own real click-popup state (GlobePopup.jsx's
- *     entityStore-backed popup, GlobeStrategicZonesLayer's zone tooltip,
- *     GlobeSurgeLayer's surge popup) — each layer now also answers a small
+ *     entityStore-backed popup; the strategic-zone and surge popups that
+ *     also answered these have since been removed) — each layer answers a small
  *     new deep-link event that does exactly what a real click on that same
  *     entity would do, added alongside this module.
  *
