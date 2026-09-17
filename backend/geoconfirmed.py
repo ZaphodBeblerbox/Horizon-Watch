@@ -589,7 +589,8 @@ def sync_ontology_from_geoconfirmed(db, *, placemark_window_days: int = 90) -> d
 
         event_id = f"geoconfirmed_{p.id}"
         nodes_by_id[event_id] = {
-            "id": event_id, "type": "event", "label": p.name or p.id,
+            # §A3 — the composed title, never the publication date.
+            "id": event_id, "type": "event", "label": p.title or p.id,
             "lat": p.latitude, "lng": p.longitude, "source": "geoconfirmed",
             "description": (p.description or "")[:280],
         }
@@ -817,7 +818,9 @@ def feed_surge_engine(db, *, window_days: int = 7) -> dict:
         _country_resolved = _plus_code_country(p.plus_code)
         country = _country_resolved[1] if _country_resolved else p.theatre_slug
         location_name = _plus_code_location(p.plus_code) or p.theatre_slug
-        title = p.name or (p.description or "")[:100] or "GeoConfirmed event"
+        # §A3 — the ontology/risk feed reads the composed title too, so a
+        # country's risk contribution is not scored against a date string.
+        title = p.title or (p.description or "")[:100] or "GeoConfirmed event"
         record = {
             "article_type": "conflict",
             "location_country": country,

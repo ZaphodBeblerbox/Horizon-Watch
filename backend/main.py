@@ -6767,7 +6767,16 @@ def _build_surface_pool() -> list:
                     if apply_geo_gate and not geo_gate_passes(float(p.latitude), float(p.longitude), _ACTIVE_PROFILE):
                         continue
                     location = _plus_code_location(p.plus_code) or p.theatre_slug or "Unknown"
-                    headline = p.name or p.description or "GeoConfirmed event"
+                    # §A3's server-side note: the composed title is part of
+                    # the record, so it is what search indexes, what the
+                    # briefing quotes and what a notification carries — "all
+                    # three must agree, and they only can if the title is
+                    # written once at ingest". `p.name` is GeoConfirmed's
+                    # publication DATE and always won this expression, so
+                    # every surface fed by /api/surface was still showing
+                    # "17 SEP 2026" long after the placemark itself carried a
+                    # real sentence.
+                    headline = p.title or p.description or "GeoConfirmed event"
                     context = p.description or ""
                     from exposure_index import classify_severity_deterministic as _csd
                     tier = _csd(headline, p.latitude, p.longitude) or "elevated"
@@ -7202,11 +7211,13 @@ async def _startup_snapshot_prefill() -> None:
                 out = []
                 for p in rows:
                     from exposure_index import classify_severity_deterministic as _csd, _SEV_RANK as _sr
-                    sev = _csd(p.description or p.name or "", p.latitude, p.longitude) or "medium"
+                    # Severity is classified from PROSE. p.name is a date,
+                    # which carries no severity signal at all.
+                    sev = _csd(p.description or p.title or "", p.latitude, p.longitude) or "medium"
                     tier = {"critical": 1, "high": 2, "medium": 3, "moderate": 3, "low": 4}.get(sev, 3)
                     out.append({
                         "id": p.id, "lat": p.latitude, "lon": p.longitude,
-                        "title": (p.name or p.description or "")[:150],
+                        "title": (p.title or p.description or "")[:150],
                         "domain": "NEWS", "relevance": _sr.get(sev, 2) * 25,
                         "tier": tier,
                         "ingested_at": p.date.isoformat() if p.date else "",
