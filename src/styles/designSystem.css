@@ -902,3 +902,94 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack
 }
 .seg.onmode button + button { border-left: 1px solid var(--line); }
 .seg.onmode button[aria-pressed="true"] { background: var(--bg-3); color: var(--txt); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §S2 the Inbox — a table, because triage is comparison
+   ═══════════════════════════════════════════════════════════════════════ */
+.inboxview {
+    display: grid; grid-template-columns: 250px 1fr 312px;
+    height: 100%; min-height: 0; background: var(--bg-0);
+}
+.inboxview > .pane {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    border-right: 1px solid var(--line);
+}
+.inboxview > .pane:last-child { border-right: 0; border-left: 1px solid var(--line); }
+.inboxview .panehead {
+    display: flex; align-items: center; gap: 8px; height: 30px; flex: none;
+    padding: 0 10px; border-bottom: 1px solid var(--line); background: var(--bg-2);
+}
+.inboxview .panehead h3 { margin: 0; font: 600 12px var(--font); color: var(--txt-2); }
+.inboxview .panehead .right { margin-left: auto; }
+.inboxview .scroll { flex: 1; min-height: 0; overflow: auto; }
+.inboxview .toolbar {
+    display: flex; align-items: center; gap: 8px; flex: none;
+    height: 34px; padding: 0 10px; border-bottom: 1px solid var(--line); background: var(--bg-1);
+}
+.inboxview .toolbar .sp { flex: 1; }
+.inboxview .seg { display: inline-flex; border: 1px solid var(--line); }
+.inboxview .seg button {
+    height: 22px; padding: 0 9px; font: 400 10.5px var(--font);
+    background: var(--bg-1); color: var(--txt-3); border: 0; cursor: pointer;
+}
+.inboxview .seg button + button { border-left: 1px solid var(--line); }
+.inboxview .seg button[aria-pressed="true"] { background: var(--bg-3); color: var(--txt); }
+
+table.grid { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+table.grid thead th {
+    position: sticky; top: 0; z-index: 2; background: var(--bg-2); text-align: left;
+    padding: 0 9px; height: 25px; font-size: 11px; color: var(--txt-3); font-weight: 600;
+    border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; user-select: none;
+}
+table.grid thead th:hover { color: var(--txt); }
+table.grid thead th .ar { color: var(--txt-2); font-size: 8px; margin-left: 3px; }
+table.grid tbody td {
+    padding: 5px 9px; border-bottom: 1px solid var(--line-soft);
+    vertical-align: middle; white-space: nowrap;
+}
+table.grid tbody tr { cursor: pointer; }
+table.grid tbody tr:hover td { background: var(--bg-2); }
+table.grid tbody tr[aria-selected="true"] td { background: var(--bg-3); }
+/* Acknowledged rows dim — EXCEPT time and severity. You still need to scan
+   *when* and *how bad* across handled items; dimming those removes the row
+   from the comparison entirely rather than de-emphasising it. */
+table.grid tbody tr.ack td:not(.keep) { opacity: .55; }
+/* The table-layout trick that makes one cell truncate while the fixed
+   columns hold. Without it long titles push the whole table wide. */
+td.title { max-width: 1px; width: 46%; }
+td.title div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.grid .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.grid .mono { font-family: var(--mono); font-size: 11px; }
+table.grid .dim { color: var(--txt-4); }
+
+.conf {
+    display: flex; align-items: center; gap: 6px; font-family: var(--mono);
+    font-size: 10.5px; color: var(--txt-2); min-width: 62px;
+}
+.sev { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; text-transform: capitalize; }
+.sev .dia { width: 7px; height: 7px; transform: rotate(45deg); flex: none; }
+.bar { display: block; flex: 1; height: 5px; background: var(--bg-3); min-width: 24px; }
+.bar > i { display: block; height: 100%; }
+.tag {
+    display: inline-block; font: 9.5px var(--mono); text-transform: uppercase; letter-spacing: .05em;
+    padding: 1px 5px; border: 1px solid var(--line); color: var(--txt-3); background: var(--bg-2);
+}
+.tag.red { color: var(--red); border-color: var(--red); margin-right: 6px; }
+
+.distrow {
+    display: grid; grid-template-columns: 7px 1fr 56px 22px; gap: 8px; align-items: center;
+    width: 100%; text-align: left; padding: 4px 9px; background: none; border: 0;
+    cursor: pointer; color: inherit; font-family: var(--font);
+}
+.distrow:hover { background: var(--bg-2); }
+.distrow[aria-pressed="true"] { background: var(--acc-dim); }
+.distrow .n { font-size: 12.5px; color: var(--txt-2); text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.distrow .c { font: 10.5px var(--mono); color: var(--txt-4); text-align: right; }
+.inboxview .tipl { display: block; padding: 8px 9px 4px; }
+
+.inboxempty {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 34px 18px; text-align: center;
+}
+.inboxempty b { font-size: 12.5px; font-weight: 600; color: var(--txt-2); }
+.inboxempty span { font-size: 11.5px; color: var(--txt-4); }

@@ -56,7 +56,7 @@ const MODE_STORAGE_KEY = "akili-mode-v1"
 import MapControlStack from "./components/MapControlStack.jsx"
 import { DESTINATION_KEYS } from "./data/destinations.js"
 import { summarizeHealth } from "./utils/systemHealth.js"
-import WatchlistsPage from "./components/WatchlistsPage.jsx"
+import Inbox from "./destinations/Inbox.jsx"
 import Dashboard from "./destinations/Dashboard.jsx"
 import Sources from "./destinations/Sources.jsx"
 import AICouncil from "./destinations/AICouncil.jsx"
@@ -1358,14 +1358,14 @@ export default function App() {
                     </div>
                 )}
 
+                {/* §S2 — the Inbox. This slot rendered WatchlistsPage, which is
+                    why the spec recorded the module as built:false: "a console
+                    whose primary queue is a placeholder is a demo." The tab
+                    type stays "watchlists" because handlers across this file
+                    key off it; what renders is the real queue. */}
                 {tabs.some(t => t.type === "watchlists") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "watchlists" ? "flex" : "none", flexDirection: "column" }}>
-                        <WatchlistsPage
-                            items={notifItems}
-                            readIds={readIds}
-                            onMarkRead={handleMarkRead}
-                            onSelectEntity={handleWatchlistSelectEntity}
-                        />
+                        <Inbox />
                     </div>
                 )}
 
