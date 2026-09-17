@@ -38,10 +38,14 @@
 // applied below regardless.
 export const MODULES = [
     { key: "situation", label: "Situation", icon: "i-globe",   built: true, set: "watch" },
-    { key: "inbox",     label: "Inbox",     icon: "i-inbox",   built: false, set: "watch" },
+    { key: "inbox",     label: "Inbox",     icon: "i-inbox",   built: true, set: "watch" },
     { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: true, set: "watch" },
     { key: "analytics", label: "Analytics", icon: "i-chart",   built: true, set: "watch" },
-    { key: "generate",  label: "Generate",  icon: "i-spark", built: true, set: "watch" },
+    // Hidden on purpose (PARALLAX spec §1.3): Generate is the second face of
+    // Briefings, reached by a `read | generate` control inside the Briefings
+    // toolbar — not a rail entry. It stays in MODULES so the command palette
+    // and openTab() can still reach it; `hidden` only removes the rail button.
+    { key: "generate",  label: "Generate",  icon: "i-spark",   built: true, set: "watch", hidden: true },
     { key: "replay",    label: "Replay",    icon: "i-clock",    built: true, set: "watch" },
     { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: true, set: "watch" },
     { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: true, set: "watch" },
@@ -55,8 +59,12 @@ export const MODULES = [
     { key: "team",      label: "Team",      icon: "i-team",    built: true, set: "work" },
 ]
 
-export const WATCH_MODULES = MODULES.filter((m) => m.set === "watch")
-export const WORK_MODULES = MODULES.filter((m) => m.set === "work")
+// `hidden` modules draw no rail button and are reached from inside another
+// surface (PARALLAX spec §1.3). They remain in MODULES so every other
+// consumer — the command palette, openTab(), keyboard shortcuts — still
+// resolves them.
+export const WATCH_MODULES = MODULES.filter((m) => m.set === "watch" && !m.hidden)
+export const WORK_MODULES = MODULES.filter((m) => m.set === "work" && !m.hidden)
 
 export const MODULE_KEYS = MODULES.map((m) => m.key)
 export const MODULE_BY_KEY = Object.fromEntries(MODULES.map((m) => [m.key, m]))

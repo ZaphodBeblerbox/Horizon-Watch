@@ -1118,7 +1118,7 @@ export default function App() {
                         onClose={closeTab}
                         onOpenPalette={() => setPaletteOpen(true)}
                         liveFeedCount={Array.isArray(healthData?.data_sources) ? healthData.data_sources.filter(s => s.status === "ok").length : null}
-                        sessionControl={<SessionControl />}
+                        sessionControl={<SessionControl mode={mode} onSetMode={setMode} />}
                     />
                 </>
             )}

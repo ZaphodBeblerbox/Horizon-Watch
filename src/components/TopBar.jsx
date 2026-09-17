@@ -85,8 +85,12 @@ export default function TopBar({
                 </div>
             </div>
 
-            {/* Module rail — real set filtered by mode (§7.1): exactly 9 in
-                Watch, exactly 4 in Workstation. */}
+            {/* Module rail — real set filtered by mode, with `hidden` modules
+                excluded (PARALLAX spec §1.3). 8 in Watch, 4 in Workstation
+                today; the spec's fifth work module, Register (asset
+                register), has no destination in this codebase yet, so it is
+                deliberately absent rather than a rail button pointing at
+                nothing. */}
             <div style={{ display: "flex", alignItems: "stretch" }}>
                 {railModules.map((m) => {
                     const active = activeModule === m.key
@@ -132,19 +136,14 @@ export default function TopBar({
                 flex: 1, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10,
                 padding: "0 12px", borderLeft: "1px solid var(--line)",
             }}>
-                {onToggleMode && (
-                    <button
-                        onClick={onToggleMode}
-                        title={`Switch to ${mode === "work" ? "Watch" : "Workstation"} mode (W)`}
-                        style={{
-                            font: "700 10px var(--mono)", padding: "3px 8px", borderRadius: "var(--r)",
-                            background: "var(--bg-3)", color: "var(--txt-2)", border: "1px solid var(--line)",
-                            cursor: "pointer", letterSpacing: "0.04em",
-                        }}
-                    >
-                        {mode === "work" ? "WORK" : "WATCH"}
-                    </button>
-                )}
+                {/* The standalone WATCH/WORK button that sat here is gone
+                    (PARALLAX spec §1.2, and §21's checklist: "the top-right
+                    button is gone"). A button among the tools implied
+                    Workstation was a destination alongside them; it is not —
+                    it replaces the entire rail. The control now lives in the
+                    session popover at the left end of the tab strip, beside
+                    the tabs, which are also workspace-scoped. The `W`
+                    keyboard shortcut still toggles it. */}
                 <button
                     onClick={onOpenPalette}
                     title="New tab"

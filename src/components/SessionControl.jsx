@@ -21,7 +21,7 @@ function sessionSummary(s) {
     return `${s.time_window} · ${layerCount} layer${layerCount === 1 ? "" : "s"} · ${s.projection || "world"}`
 }
 
-export default function SessionControl() {
+export default function SessionControl({ mode = "watch", onSetMode = null }) {
     const [open, setOpen] = useState(false)
     const [active, setActive] = useState(getActiveSession())
     const [views, setViews] = useState(getActiveViews())
@@ -114,10 +114,14 @@ export default function SessionControl() {
                     font: "600 12px var(--font)", overflow: "hidden", textOverflow: "ellipsis",
                     whiteSpace: "nowrap", maxWidth: 110,
                 }}>{active?.name || "Session"}</span>
+                {/* Reflects real mode state. Previously hardcoded to WATCH
+                    because Workstation mode did not exist; it does now, and a
+                    chip that always says WATCH while the rail shows work
+                    modules is worse than no chip. */}
                 <span style={{
                     font: "700 9px var(--mono)", padding: "1px 5px", borderRadius: "var(--r)",
                     background: "var(--bg-3)", color: "var(--txt-3)", letterSpacing: "0.03em",
-                }}>WATCH</span>
+                }}>{mode === "work" ? "WORK" : "WATCH"}</span>
                 <span style={{ fontSize: 9, color: "var(--txt-3)", flexShrink: 0 }}>▾</span>
             </button>
 
@@ -131,6 +135,44 @@ export default function SessionControl() {
                         maxHeight: 420, overflowY: "auto",
                     }}
                 >
+                    {/* Mode switch (PARALLAX spec §1.2). Workstation is a
+                        session MODE, not a destination: it replaces the whole
+                        rail rather than sitting alongside the other tools. It
+                        therefore belongs beside the tabs, which are also
+                        workspace-scoped, and says "this changes what workspace
+                        you are in" — which is what it does. The standalone
+                        top-right button this replaces implied the opposite. */}
+                    {onSetMode && (
+                        <div className="modeswitch" style={{
+                            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1,
+                            background: "var(--line-soft)", borderBottom: "1px solid var(--line)",
+                        }}>
+                            {[
+                                { key: "watch", icon: "i-globe", label: "Watch", sub: "Analysis and reporting" },
+                                { key: "work", icon: "i-work", label: "Workstation", sub: "Casework, mail and assignment" },
+                            ].map((m) => (
+                                <button
+                                    key={m.key}
+                                    data-mode={m.key}
+                                    aria-pressed={mode === m.key}
+                                    onClick={() => { onSetMode(m.key); setOpen(false) }}
+                                    style={{
+                                        display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2,
+                                        padding: "8px 10px", border: "none", cursor: "pointer", textAlign: "left",
+                                        background: mode === m.key ? "var(--bg-3)" : "var(--bg-2)",
+                                        color: mode === m.key ? "var(--txt)" : "var(--txt-3)",
+                                    }}
+                                >
+                                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                        <svg className="icon sm" style={{ width: 13, height: 13 }}><use href={`#${m.icon}`} /></svg>
+                                        <b style={{ font: "600 11.5px var(--font)" }}>{m.label}</b>
+                                    </span>
+                                    <em style={{ font: "400 10px var(--font)", color: "var(--txt-4)", fontStyle: "normal" }}>{m.sub}</em>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
                     <div style={{
                         padding: "8px 12px", borderBottom: "1px solid var(--line)",
                         display: "flex", justifyContent: "space-between", alignItems: "center",
