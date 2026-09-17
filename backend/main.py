@@ -21199,6 +21199,69 @@ def _backfill_geoconfirmed_titles_sync(batch: int, passes: int) -> dict:
     return result
 
 
+# ── Retiring the pre-addendum alert families ─────────────────────────────
+# The old fusion, surge, sanctioned-vessel and military-flight alerts were
+# written before the addendum's logic existed: no composed titles, no
+# relevance gate, and typed by a producer key alert_writer never read (which
+# is why 54,483 of them say "unknown"). They were drawn on the map as one
+# marker per row, which in practice meant several thousand sanctioned-vessel
+# dots the moment the Alerts layer was switched on.
+#
+# These are the stored alert_type values being retired. Written out rather
+# than matched by prefix so retiring a family is a deliberate edit, and so
+# this list can be read against the table without running anything.
+_RETIRED_ALERT_TYPES = (
+    "Sanctioned Vessel",
+    "Sanctioned Vessel (Possible)",
+    "military_aircraft",
+    "surge_velocity_spike",
+    "surge_volume_surge",
+    "unknown",
+)
+
+
+def _purge_retired_alerts_sync(dry_run: bool) -> dict:
+    """Delete the retired families, counting first so the caller can see the
+    size of the thing before it happens.
+
+    `geoconfirmed_event` is deliberately NOT retired: those rows carry the
+    §A3 composed titles already and are the only alert family that was
+    rewritten rather than replaced.
+    """
+    from database import Alert, get_db
+
+    with get_db() as db:
+        counts = {}
+        for t in _RETIRED_ALERT_TYPES:
+            counts[t] = db.query(Alert).filter(Alert.alert_type == t).count()
+        total = sum(counts.values())
+        if dry_run:
+            return {"dry_run": True, "would_delete": total, "by_type": counts}
+        deleted = (db.query(Alert)
+                     .filter(Alert.alert_type.in_(_RETIRED_ALERT_TYPES))
+                     .delete(synchronize_session=False))
+        db.commit()
+    return {"dry_run": False, "deleted": deleted, "by_type": counts}
+
+
+@app.post("/api/admin/purge-retired-alerts")
+async def api_purge_retired_alerts(dry_run: bool = True, current_user=None):
+    """Delete the pre-addendum alert families.
+
+    Defaults to dry_run=True. This removes tens of thousands of rows and there
+    is no undo, so the destructive form has to be asked for explicitly rather
+    than being what happens if a parameter is forgotten.
+
+    Sanctioned-vessel alerts regenerate on their own: the live AIS sanctions
+    check (_check_sanctions_on_update_sync) already writes through
+    notification_context, so hulls seen after this purge come back with real
+    headlines and a relevance gate. Military-flight alerts do NOT regenerate
+    with new logic yet — that detector has not been rewritten, so its rows
+    simply stop existing until it is.
+    """
+    return await asyncio.to_thread(_purge_retired_alerts_sync, bool(dry_run))
+
+
 @app.post("/api/admin/backfill-geoconfirmed-titles")
 async def api_backfill_geoconfirmed_titles(
     batch: int = 2000, passes: int = 40, current_user=None,

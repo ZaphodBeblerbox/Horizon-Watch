@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import PipelineCanvas, { TYPE_COLORS, STATUS_DOT } from "./forge/PipelineCanvas.jsx"
-import { ALERT_ICONS, NEWS_PATTERN_ICON_KEYS } from "../constants/alertIcons.js"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import ForceGraph from "./forge/ForceGraph.jsx"
 import OntologyCountryGraph from "./forge/OntologyCountryGraph.jsx"
@@ -429,13 +428,6 @@ function ConnModal({ rules, editConn, defaultFrom, defaultTo, onClose, onSaved }
                             <label style={lbl}>Escalated severity</label>
                             <select style={{ ...inp, marginBottom: 0 }} value={escSev} onChange={e => setEscSev(e.target.value)}>
                                 {["info", "low", "medium", "high", "critical"].map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                        </div>
-                        <div style={{ flex: 1 }}>
-                            <label style={lbl}>Escalated icon</label>
-                            <select style={{ ...inp, marginBottom: 0 }} value={escIcon} onChange={e => setEscIcon(e.target.value)}>
-                                <option value="">Default</option>
-                                {Object.keys(ALERT_ICONS).map(k => <option key={k} value={k}>{ALERT_ICONS[k].label}</option>)}
                             </select>
                         </div>
                     </div>
@@ -3698,14 +3690,10 @@ function CreateRuleModal({ source, onClose, onCreated }) {
                     )
                 )}
 
-                {isDbRule && !isNewsRule && fld("Alert Icon (optional)", (
-                    <select value={iconType} onChange={e => setIconType(e.target.value)} style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}>
-                        <option value="">Default for rule type</option>
-                        {Object.entries(ALERT_ICONS).filter(([key]) => !NEWS_PATTERN_ICON_KEYS.has(key)).map(([key, def]) => (
-                            <option key={key} value={key}>{def.label}</option>
-                        ))}
-                    </select>
-                ))}
+                {/* The "Alert Icon" select that sat here chose an ALERT_ICONS
+                    key, and the only thing that ever rendered one was
+                    GlobeAlertsLayer. That layer and that table are both gone,
+                    so the control configured nothing. */}
 
                 <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 16 }}>
                     <button onClick={onClose} style={ghostBtn}>Cancel</button>

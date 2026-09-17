@@ -602,12 +602,16 @@
            instead of landing on top of its controls — a constant offset rots
            the moment the strip changes height.
 
-           These match nothing until the Situation module introduces
-           #view-map / #gcstrip, which is deliberate: an inert rule costs
-           nothing, whereas discovering later that --strip-h was never raised
-           is the exact failure the spec calls out. */
-        html:has(#view-map.active) { --strip-h: 98px; }
-        html:has(#view-map.active #gcstrip:not(.hidden)) { --strip-h: 176px; }
+           These were written against #view-map.active, which NO ELEMENT IN
+           THIS APP EVER CARRIED — so --strip-h stayed 0 and every consumer
+           quietly behaved as though there were no strip at all: the
+           notification stack and toasts sat on the strip's controls, and the
+           Layers/Inspector panes ran the full height of the view straight
+           over it. That is the exact failure the note here predicted, found
+           the moment §11's strip became a real element. Keyed off #timestrip
+           and #gcstrip, which do exist. */
+        html:has(#timestrip) { --strip-h: 98px; }
+        html:has(#gcstrip:not(.hidden)) { --strip-h: 176px; }
 
         /* ── Real Settings round, General section: density ─────────────────
            A genuine second value set on the exact spacing tokens the whole

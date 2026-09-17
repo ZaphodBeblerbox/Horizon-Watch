@@ -126,7 +126,7 @@ function loadTabsFromStorage() {
 // ── Workspace helpers ─────────────────────────────────────────────────────────
 
 function newWorkspace(name) {
-    return { id: crypto.randomUUID(), name, center: [20, 0], zoom: 2, layers: { unifiedEvents: true, forgeAlerts: true } }
+    return { id: crypto.randomUUID(), name, center: [20, 0], zoom: 2, layers: { unifiedEvents: true } }
 }
 
 // Ensure unifiedEvents is enabled on all existing workspaces that predate 3D-only mode.

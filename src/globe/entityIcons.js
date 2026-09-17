@@ -41,10 +41,12 @@ export const ENTITY_ICON_COMPONENT = {
     // the raw, imprecisely-geocoded RSS points that diamond represents, and
     // reusing the same shape would visually re-conflate the two.
     geoconfirmed: Crosshair,
-    // "fusion" is a real, still-used entity kind (backend /api/fusions
-    // multi-domain correlated intelligence events — see GlobeAlertsLayer.jsx's
-    // fusionIcon() — plus DirectorBar's own logo mark and ForceGraph's
-    // fusion_event graph nodes). markerRenderer.js gave it a bespoke
+    // "fusion" here is the GRAPH/UI glyph — DirectorBar's logo mark and
+    // ForceGraph's fusion_event nodes. It is NOT the map mark: §A8's fusion
+    // point on the globe is the sprite's #i-fusion (three sourced lines
+    // converging on a ringed point), drawn by GlobeDerivedAlertsLayer. The
+    // old GlobeAlertsLayer fusionIcon() that used to share this glyph is
+    // gone with that layer. markerRenderer.js gave it a bespoke
     // spark/cross glyph; the new outline set has no dedicated symbol, so this
     // reuses the same Sparkles glyph Icon.jsx's "aiCouncil" UI-chrome icon
     // already uses for "AI-synthesized insight" — a real, already-established
@@ -283,12 +285,14 @@ export function getGeoConfirmedMarkerDataUri({ color, invertColor = false, size 
 const GRAPH_NODE_ENTITY = {
     vessel:         "vessel",
     aircraft:       "aircraft",
+    // Graph-node kinds, not map markers. The map's own surge and fusion
+    // marks are §A8's, drawn by GlobeDerivedAlertsLayer from the sprite.
     alert:          "alert",
     surge:          "alert",
     // Real backend fusion events — see the `fusion` entry in
     // ENTITY_ICON_COMPONENT above.
     fusion_event:   "fusion",
-    // News-derived pattern assessments (ALERT_ICONS-keyed) — real, distinct
+    // News-derived pattern assessments — real, distinct
     // from raw AIS/ADSB alerts, so they get the news glyph rather than the
     // generic alert triangle (mirrors src/inspector/adapters.js's own
     // domain-based split for real alert records).

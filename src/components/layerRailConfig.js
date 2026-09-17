@@ -60,7 +60,13 @@ export const LAYER_GROUPS = [
         label: "Alerts",
         crossDomain: true,
         layers: [
-            { key: "forgeAlerts", label: "Forge Alerts", hint: "Rule-triggered — AIS, ADS-B & News", defaultOn: true },
+            // "Forge Alerts" used to be the only entry here and drew a marker
+            // per row of the alerts table — in practice several thousand
+            // sanctioned-vessel dots. It is replaced by the two DERIVED
+            // findings, which is the whole point of the addendum: an arrival
+            // is a fact and belongs in the tray, a surge and a fusion point
+            // are statements that something changed and belong on the map.
+            { key: "derivedAlerts", label: "Surge & fusion", hint: "Derived findings — evaluated at the playhead", defaultOn: true },
         ],
     },
 ]

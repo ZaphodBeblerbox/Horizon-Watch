@@ -73,7 +73,7 @@ function layerOn(active, key) {
 // workspace defaults (src/app.jsx's <GlobeView> mount: aisVessels/adsb off
 // by default there, but this destination's whole point is "show me what's
 // happening", so this destination's own separate default turns them on).
-const WINDOWED_DEFAULT_LAYERS = { aisVessels: true, adsb: true, unifiedEvents: true, forgeAlerts: true }
+const WINDOWED_DEFAULT_LAYERS = { aisVessels: true, adsb: true, unifiedEvents: true }
 
 // Canonical operational view defaults (UI correction pass, Part 4/5) — only
 // applied while the map is in `fullscreen`, keyed by the exact real layer
@@ -318,7 +318,6 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
                         eventsEnabled={layerOn(activeLayers, "unifiedEvents")}
                         precisionEventsEnabled={layerOn(activeLayers, "precisionEvents")}
                         eventsMinRelevance={activeLayers?.eventsMinRelevance ?? 0}
-                        alertsEnabled={layerOn(activeLayers, "forgeAlerts")}
                         portsEnabled={layerOn(activeLayers, "ports")}
                         cablesEnabled={layerOn(activeLayers, "cables")}
                         chokepointsEnabled={layerOn(activeLayers, "chokepoints")}

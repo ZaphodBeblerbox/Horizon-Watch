@@ -22,7 +22,6 @@ import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import GlobeAnnotationLayer     from "../globe/GlobeAnnotationLayer.jsx"
 import GlobeReplayLayer         from "../globe/GlobeReplayLayer.jsx"
-import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
 import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
@@ -146,7 +145,7 @@ export default function GlobeView({
     // same real time-window/severity-floor selector Situation.jsx's own
     // header/legend/histogram counts already use (src/lib/
     // signalVisibility.js), now forwarded to every real "signal" layer
-    // below (GlobeAlertsLayer, GlobeGeoConfirmedLayer).
+    // below (GlobeGeoConfirmedLayer, GlobeDerivedAlertsLayer).
     // null (the default) means "no window/floor passed" — every existing
     // caller that doesn't pass these (Dashboard.jsx, MapTab.jsx) keeps its
     // current unfiltered behavior unchanged. Deliberately NOT applied to
@@ -181,7 +180,6 @@ export default function GlobeView({
     airportsEnabled = false,
     portsEnabled    = false,
     // Forge alerts/rules on the globe
-    alertsEnabled = false,
     eventsMinRelevance = 4,
     precisionEventsEnabled = true,
     autoModeEnabled = false,
@@ -896,7 +894,6 @@ export default function GlobeView({
                 <GlobePortLayer    enabled={portsEnabled}    viewBounds={viewBounds} />
 
                 {/* ── Forge alerts layer ──────────────────────────────────────── */}
-                <GlobeAlertsLayer enabled={alertsEnabled} viewBounds={viewBounds} windowHours={signalWindowHours} maxRank={signalMaxRank} />
 
                 {/* ── Live CCTV camera feeds ───────────────────────────────────── */}
                 {cctvEnabled && <GlobeCameraLayer />}

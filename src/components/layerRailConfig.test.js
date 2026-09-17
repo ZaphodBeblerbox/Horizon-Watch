@@ -9,7 +9,7 @@ describe("LAYER_GROUPS", () => {
     it("covers every real layer key from the pre-rebuild LayersPanel exactly once", () => {
         const expectedKeys = [
             "satellite", "shippingLanes", "oim", "adsb", "aisVessels", "eez", "cityLabels",
-            "forgeAlerts", "precisionEvents", "unifiedEvents",
+            "derivedAlerts", "precisionEvents", "unifiedEvents",
             "chokepoints", "cables", "cctvFeeds", "airports", "ports",
             "aisHeatmap", "adsbHeatmap",
         ]
@@ -18,10 +18,12 @@ describe("LAYER_GROUPS", () => {
         expect(actualKeys.length).toBe(new Set(actualKeys).size) // no duplicates across groups
     })
 
-    it("puts the cross-domain Forge Alerts layer in its own flagged group, not a single domain", () => {
+    it("puts the cross-domain alerts layer in its own flagged group, not a single domain", () => {
         const alertsGroup = LAYER_GROUPS.find(g => g.key === "alerts")
         expect(alertsGroup.crossDomain).toBe(true)
-        expect(alertsGroup.layers.map(l => l.key)).toEqual(["forgeAlerts"])
+        // "forgeAlerts" drew a marker per alerts-table row — several thousand
+        // sanctioned-vessel dots. The derived surge/fusion findings replace it.
+        expect(alertsGroup.layers.map(l => l.key)).toEqual(["derivedAlerts"])
     })
 })
 

@@ -48,8 +48,12 @@
 
 /* Minimized-panel restore rail — a slim labeled strip replacing a fully
    slid-out panel, per §4.6's .panetab. */
+/* A minimised rail ends at the strip for the same reason an open one does
+   (§1.5) — otherwise the strip loses width to it the moment a pane is
+   collapsed, which is the opposite of what collapsing is for. */
 .panetab {
     width: 30px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    margin-bottom: var(--strip-h, 0px);
     background: var(--bg-2); border: 1px solid var(--line); cursor: pointer;
     writing-mode: vertical-rl; font: 400 11px var(--font); color: var(--txt-3); letter-spacing: .02em;
 }

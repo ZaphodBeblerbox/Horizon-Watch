@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Entity } from "resium"
+import { Entity, useCesium } from "resium"
 import {
     Cartesian3, Cartesian2, Color, HeightReference,
     PolygonHierarchy, ClassificationType,
@@ -8,6 +8,7 @@ import {
 import API_BASE from "../apiBase.js"
 import { getEntityMarkerDataUri } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { showTip, hideTip } from "./mapTip.js"
 
 // Chokepoints previously had no point marker at all — just the polygon +
 // text label below, which disappears at typical zoomed-out camera heights.
@@ -25,6 +26,38 @@ function getChokeIcon() {
 
 export default function GlobeChokepointsLayer({ enabled }) {
     const [data, setData] = useState([])
+    const { viewer } = useCesium()
+
+    /**
+     * The hover callout, in the shared §6/§A9 style rather than the bespoke
+     * box this layer never had. §14's point about these is that the location
+     * is not the intelligence — "Bab el-Mandeb" is a place, "Cape reroute
+     * adds 9-14 days" is what an analyst needs — so the strategic description
+     * leads, and the live match count sits under it as the reason this
+     * chokepoint is worth looking at right now.
+     */
+    const tipFor = (c, mv) => {
+        const rect = viewer?.scene?.canvas?.getBoundingClientRect?.()
+        if (!rect || !mv?.endPosition) return
+        showTip(
+            <>
+                <div className="tipk">
+                    <svg><use href="#i-anchor" /></svg><span>Chokepoint</span>
+                    {c.current_status ? <em>{c.current_status}</em> : null}
+                </div>
+                <b>{c.name}</b>
+                {c.strategic_description ? <p className="tipp">{c.strategic_description}</p> : null}
+                {Number.isFinite(c.match_count) && (
+                    <div className="tipm">
+                        <div><b>{c.match_count}</b><span>recent mentions</span></div>
+                        <div><b>{(c.monitored_keywords || []).length}</b><span>watched terms</span></div>
+                        <div><b>{(c.recent_headlines || []).length}</b><span>headlines</span></div>
+                    </div>
+                )}
+            </>,
+            rect.left + mv.endPosition.x, rect.top + mv.endPosition.y,
+        )
+    }
 
     useEffect(() => {
         if (!enabled) return
@@ -73,6 +106,8 @@ export default function GlobeChokepointsLayer({ enabled }) {
                         id={entityId}
                         key={entityId}
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
+                        onMouseMove={(_m, mv) => tipFor(c, mv)}
+                        onMouseLeave={hideTip}
                         billboard={{
                             image:           getChokeIcon(),
                             width:           26,

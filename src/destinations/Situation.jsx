@@ -274,7 +274,7 @@ export default function Situation({ onOpenDossier }) {
     // layer toggles, and keep their own sensible defaults since they don't
     // clutter an empty map on their own.
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
-    const [contextOn, setContextOn] = useState({ graticule: false, flows: false, aois: false, labels: false })
+    const [contextOn, setContextOn] = useState({ chokepoints: true, risk: false, graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
     const [exportOpen, setExportOpen] = useState(false)
     // Imagery/detection top-bar entry point — real audit (Part 0) confirmed
@@ -441,7 +441,7 @@ export default function Situation({ onOpenDossier }) {
         const rows = sortRowsBySeverity(buildWatchQueueRows(merged))
         // The one real shared window/severity-floor decision (src/lib/
         // signalVisibility.js) — the map's own "signal" layers
-        // (GlobeAlertsLayer/GlobeSurgeLayer/GlobeGeoConfirmedLayer) now
+        // (GlobeGeoConfirmedLayer/GlobeDerivedAlertsLayer) now
         // call the exact same function over their own raw data, real
         // root-cause fix for the map previously ignoring both dimensions
         // entirely rather than a second, ad-hoc filter added there.
@@ -560,10 +560,14 @@ export default function Situation({ onOpenDossier }) {
     // longer needs a flex-reflow at all — the map is already full-bleed
     // underneath at all times, so minimizing an overlay pane just reveals
     // more of the real map that was already there.
+    // §1.5 — "The rails end above the strip. They must not overlap it —
+    // that is what starved the archive chart to 33px." Both panes stop where
+    // the time strip starts, so the strip is never underneath them and is
+    // never covered; --strip-h tracks which face the strip is showing.
     const leftPaneStyle = {
-        position: "absolute", left: 0, top: 0, bottom: 0, zIndex: 3,
+        position: "absolute", left: 0, top: 0, bottom: "var(--strip-h, 0px)", zIndex: 3,
         width: "var(--pane-l)", borderRight: "1px solid var(--line)",
-        display: "flex", flexDirection: "column", overflowY: "auto",
+        display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(-14px)",
         opacity: entered ? 1 : 0,
     }
@@ -574,9 +578,9 @@ export default function Situation({ onOpenDossier }) {
         // this is also now the Inspector's real width when a map marker is
         // clicked (see the pane content below), so one token now drives
         // Layers, this pane's default view, AND the marker-click Inspector.
-        position: "absolute", right: 0, top: 0, bottom: 0, zIndex: 3,
+        position: "absolute", right: 0, top: 0, bottom: "var(--strip-h, 0px)", zIndex: 3,
         width: "var(--pane-r)", borderLeft: "1px solid var(--line)",
-        display: "flex", flexDirection: "column", minHeight: 0,
+        display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(14px)",
         opacity: entered ? 1 : 0,
     }
@@ -609,12 +613,12 @@ export default function Situation({ onOpenDossier }) {
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span role="button" tabIndex={0} onClick={() => {
                             setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))
-                            setContextOn({ graticule: true, flows: true, aois: true, labels: true })
+                            setContextOn({ chokepoints: true, risk: true, graticule: true, flows: true, aois: true, labels: true })
                             setTracksOn({ vessels: true, aircraft: true, sanctionedOnly: false, ports: true })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>all</span>
                         <span role="button" tabIndex={0} onClick={() => {
                             setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
-                            setContextOn({ graticule: false, flows: false, aois: false, labels: false })
+                            setContextOn({ chokepoints: false, risk: false, graticule: false, flows: false, aois: false, labels: false })
                             setTracksOn({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
                         <button onClick={() => setLeftMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
@@ -645,6 +649,14 @@ export default function Situation({ onOpenDossier }) {
                 <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Context layers</div>
                     {[
+                        // Chokepoints were bundled onto the Maritime domain
+                        // toggle, so they could not be seen without every
+                        // vessel signal with them. They are context, not a
+                        // signal domain — §14 keeps them on by default because
+                        // "is this event on a corridor" is a question almost
+                        // every other layer raises.
+                        ["chokepoints", "Chokepoints"],
+                        ["risk", "Country risk index"],
                         ["graticule", "Graticule 10°"],
                         ["flows", "Trade & energy flows"],
                         ["aois", "Areas of interest"],
@@ -684,7 +696,7 @@ export default function Situation({ onOpenDossier }) {
                     </div>
                 </div>
 
-                <RiskIndexPanel />
+                {contextOn.risk && <RiskIndexPanel />}
 
                 <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 8 }}>Time window</div>
@@ -860,8 +872,7 @@ export default function Situation({ onOpenDossier }) {
                         signalWindowHours={windowHours} signalMaxRank={maxRank}
                         dockExternally
                         onInspectorPopupChange={handleInspectorPopupChange}
-                        alertsEnabled={groupsOn.alerts}
-                        cablesEnabled={groupsOn.maritime} chokepointsEnabled={groupsOn.maritime}
+                        cablesEnabled={groupsOn.maritime} chokepointsEnabled={contextOn.chokepoints}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}
                         eezEnabled={groupsOn.zones}
                         /* Context layers — separate from event domains, per build spec v2 §4.2 */
