@@ -6,6 +6,7 @@ import {
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { getAircraftMarkerDataUri } from "./vesselAircraftGlyphs.js"
+import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { acClassify } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
@@ -30,6 +31,12 @@ function drCalc(lat, lon, track, gs, dt) {
 const DESKTOP_ADSB_CAP = 150
 
 export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos }) {
+    // §7's shading is a neutral overlay burned into the glyph image, and a
+    // data URI cannot read a CSS variable — so the theme has to reach the
+    // renderer as a value, and the glyph must be rebuilt when it turns.
+    const [theme, setTheme] = useState(getRenderedTheme)
+    useEffect(() => subscribeRenderedTheme(setTheme), [])
+
     const drBaseRef = useRef({})
     const rawRef    = useRef([])
     const [smooth, setSmooth] = useState([])
@@ -148,7 +155,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 // now also wired into the globe billboard itself).
                 const watchlisted = !!(icao && watchlistedIcaos?.has(String(icao).toUpperCase()))
                 const classification = acClassify(ac)
-                const icon = getAircraftMarkerDataUri({ watchlisted, classification, size: BILLBOARD_SIZE })
+                const icon = getAircraftMarkerDataUri({ watchlisted, classification, size: BILLBOARD_SIZE, theme })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
                 const position = Cartesian3.fromDegrees(lon, lat, altM)

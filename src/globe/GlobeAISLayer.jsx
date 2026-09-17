@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color, HeightReference,
@@ -7,6 +7,7 @@ import {
 } from "cesium"
 import { vesselShipType } from "./iconUtils.js"
 import { getVesselMarkerDataUri } from "./vesselAircraftGlyphs.js"
+import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
 import { clusterTracks } from "./trackClustering.js"
@@ -18,6 +19,12 @@ const aisLat = (v) => v.lat
 const aisLon = (v) => v.lon ?? v.lng
 
 export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) {
+    // §7's shading is a neutral overlay burned into the glyph image, and a
+    // data URI cannot read a CSS variable — so the theme has to reach the
+    // renderer as a value, and the glyph must be rebuilt when it turns.
+    const [theme, setTheme] = useState(getRenderedTheme)
+    useEffect(() => subscribeRenderedTheme(setTheme), [])
+
     const { filtered, clusters } = useMemo(() => {
         if (!vessels?.length) return { filtered: [], clusters: [] }
         if (isMobile) {
@@ -84,7 +91,7 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                 // side in backend/main.py's _check_sanctions_on_update()).
                 const mmsiStr = v.mmsi != null ? String(v.mmsi) : null
                 const sanctioned = !!(mmsiStr && sanctionedMmsis?.confirmed?.has(mmsiStr))
-                const icon = getVesselMarkerDataUri({ sanctioned, size: BILLBOARD_SIZE })
+                const icon = getVesselMarkerDataUri({ sanctioned, size: BILLBOARD_SIZE, theme })
 
                 const hdg = isFinite(Number(v.heading)) && Number(v.heading) !== 511
                     ? Number(v.heading)
