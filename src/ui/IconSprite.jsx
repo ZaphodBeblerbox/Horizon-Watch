@@ -118,6 +118,28 @@ const SPRITE = `
 <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 14.4A8.6 8.6 0 019.6 4 8.6 8.6 0 1020 14.4z"/></symbol>
 <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 14a4 4 0 010-5.7l2.8-2.8a4 4 0 015.7 5.7l-1.4 1.4"/><path d="M14 10a4 4 0 010 5.7l-2.8 2.8a4 4 0 01-5.7-5.7l1.4-1.4"/></symbol>
 
+<!-- PARALLAX addendum §A2 — three marks for what an alert IS, not what it is
+     about. Stroke 1.45, the addendum's own weight.
+
+     These three carry stroke-linecap/linejoin where the addendum specifies
+     them, which is the one place the "NO stroke-linecap" convention above
+     bends: a tick with square terminals reads as a broken line, and the
+     fusion mark's three converging leaders need round ends to read as
+     sourced lines rather than as a cut-off triangle. The addendum writes
+     them explicitly in its own markup, so this is the spec's call, not a
+     local one.
+
+       i-confirm  a location diamond with a tick through it. Geolocated AND
+                  verified — the two things separating a confirmation from a
+                  press mention.
+       i-surge    ascending bars under a rising trend line with an arrowhead.
+                  Volume, and a direction.
+       i-fusion   three sourced lines converging on one ringed point. The
+                  mark IS the definition, and the tick count is the finding. -->
+<symbol id="i-confirm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linejoin="round"><path d="M12 2.9 L19.6 12 L12 21.1 L4.4 12 Z"/><path d="M8.6 11.9l2.5 2.5 4.4-4.9" stroke-linecap="round"/></symbol>
+<symbol id="i-surge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"><path d="M3.6 19.4h16.8"/><path d="M6.6 19.4v-3.1M10.2 19.4v-5.6M13.8 19.4v-8.4M17.4 19.4v-4.2"/><path d="M5.2 9.4 L9.4 5.6 L13.2 8.2 L19 3.6" stroke-width="1.3"/><path d="M15.4 3.5h3.8v3.7" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+<symbol id="i-fusion" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"><path d="M3.4 4.6 L9.9 10.6M20.6 4.6 L14.1 10.6M12 20.8v-4.4"/><circle cx="3.4" cy="4.6" r="1.5"/><circle cx="20.6" cy="4.6" r="1.5"/><circle cx="12" cy="20.8" r="1.5"/><circle cx="12" cy="13.4" r="2.9" stroke-width="1.6"/></symbol>
+
 <!-- Aliases for existing callers. One mark per concept: these reference the
      spec symbol rather than drawing a second, slightly different version. -->
 <symbol id="i-settings" viewBox="0 0 24 24"><use href="#i-gear"/></symbol>

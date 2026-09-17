@@ -16,13 +16,17 @@
  */
 
 export const KIND = {
-    signal:   { icon: "i-bell",  name: "Signal" },
-    escalate: { icon: "i-up",    name: "Escalation" },
-    assign:   { icon: "i-work",  name: "Assigned to you" },
-    rfi:      { icon: "i-rfi",   name: "RFI" },
-    detector: { icon: "i-scan",  name: "Detector" },
-    feed:     { icon: "i-feed",  name: "Feed health" },
-    system:   { icon: "i-gear",  name: "System" },
+    signal:   { icon: "i-bell",    name: "Signal" },
+    escalate: { icon: "i-up",      name: "Escalation" },
+    assign:   { icon: "i-work",    name: "Assigned to you" },
+    rfi:      { icon: "i-rfi",     name: "RFI" },
+    // PARALLAX addendum §A2. Each says what the alert IS, not what it is about.
+    confirm:  { icon: "i-confirm", name: "Confirmed" },
+    surge:    { icon: "i-surge",   name: "Surge" },
+    fusion:   { icon: "i-fusion",  name: "Fusion point" },
+    detector: { icon: "i-scan",    name: "Detector" },
+    feed:     { icon: "i-feed",    name: "Feed health" },
+    system:   { icon: "i-gear",    name: "System" },
 }
 
 /** Display severity vocabulary — the same four the diamond uses everywhere. */
@@ -55,10 +59,23 @@ export function getNotifications() { return snapshot() }
 /**
  * The rule, in code. Muting silences CARDS only — the tray keeps filling,
  * because muting is a statement about interruption, not about relevance.
+ *
+ * PARALLAX addendum §A2 adds `surge` and `fusion`, and pointedly does NOT add
+ * `confirm`. That asymmetry is the whole addendum in one line: an arrival is a
+ * FACT and belongs in the tray, while a surge and a fusion point are both
+ * statements that something CHANGED — a change in attention and a change in
+ * the world respectively — and a change is the only thing worth taking
+ * someone's attention for.
+ *
+ * Adding `confirm` here would card every confirmation that lands, which trains
+ * people to dismiss without reading and then loses the fusion point in the
+ * noise it made itself.
  */
 export function interrupts(n) {
     if (state.muted) return false
-    return n.sev === "critical" || n.kind === "escalate" || n.kind === "assign" || n.kind === "rfi"
+    return n.sev === "critical"
+        || n.kind === "escalate" || n.kind === "assign" || n.kind === "rfi"
+        || n.kind === "surge" || n.kind === "fusion"
 }
 
 export function setMuted(v) {
