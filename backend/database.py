@@ -1307,6 +1307,20 @@ class GeoConfirmedPlacemark(Base):
     orbat_node_id       = Column(Integer, nullable=True, index=True)  # real GeoConfirmed ORBAT node id, if present
     orbat_unit_name     = Column(String, nullable=True)       # denormalized for display without a join
     status              = Column(String, nullable=False, default="active", index=True)  # active|removed — soft-delete only
+    # PARALLAX addendum §A3 — the composed title, written ONCE at ingest so
+    # that search, the briefing and the notification all quote the same
+    # string. `name` above stays exactly as GeoConfirmed sent it (the
+    # publication date, for ~99% of rows); this is the sentence a human
+    # reads. Null only for a row ingested before this column existed, until
+    # the §A3 backfill or its next re-sync reaches it — never defaulted to
+    # the date, which is the defect the column exists to remove.
+    title               = Column(Text, nullable=True)
+    # Derived from the source's own description text (geoconfirmed_title.py).
+    # Null is a real answer: an uncategorised placemark still plots, searches
+    # and counts toward a fusion point, and is excluded only from the
+    # per-category surge baselines of §A5, where a guessed label would
+    # manufacture a trend nobody reported.
+    category            = Column(String, nullable=True, index=True)
     detail_fetched_at   = Column(DateTime, nullable=True)     # last time the expensive detail endpoint actually ran
     ingested_at         = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at          = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -1742,6 +1756,25 @@ def migrate_db():
             if col not in al_existing:
                 cur.execute(f'ALTER TABLE alerts ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] alerts: added column {col}')
+
+    # geoconfirmed_placemarks composed-title columns (PARALLAX addendum §A3).
+    # Added to a table that already holds ~74,700 rows in deployed databases,
+    # so create_all() below will not add them — and they are left NULL here
+    # rather than backfilled inline, because composing 74,700 titles inside
+    # the migration would block startup. backfill_geoconfirmed_titles() does
+    # it in bounded batches.
+    gc_new_cols = [
+        ('title',    'TEXT'),
+        ('category', 'TEXT'),
+    ]
+    if 'geoconfirmed_placemarks' in tables:
+        gc_existing = [row[1] for row in cur.execute('PRAGMA table_info(geoconfirmed_placemarks)').fetchall()]
+        for col, typ in gc_new_cols:
+            if col not in gc_existing:
+                cur.execute(f'ALTER TABLE geoconfirmed_placemarks ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] geoconfirmed_placemarks: added column {col}')
+        if 'category' not in gc_existing:
+            cur.execute('CREATE INDEX IF NOT EXISTS ix_gc_category ON geoconfirmed_placemarks (category)')
 
     # ontology_claims validity-window columns (added after the table already
     # existed in deployed databases — create_all() below only creates missing

@@ -298,6 +298,7 @@ from routers import forge as _forge_router
 from routers import signals_export as _signals_export_router
 from routers import geoconfirmed as _geoconfirmed_router
 from routers import risk_index as _risk_index_router
+from routers import alerts_derived as _alerts_derived_router   # PARALLAX addendum §A12
 app.include_router(_intel_router.router)
 app.include_router(_briefings_router.router)
 app.include_router(_infra_router.router)
@@ -307,6 +308,7 @@ app.include_router(_forge_router.router)
 app.include_router(_signals_export_router.router)
 app.include_router(_geoconfirmed_router.router)
 app.include_router(_risk_index_router.router)
+app.include_router(_alerts_derived_router.router)
 
 # ── Optional fastapi-cache2 response caching ──────────────────────────────────
 try:
@@ -8419,12 +8421,20 @@ def _check_sanctions_on_update_sync(vessel: dict) -> None:
     confirmed   = result["status"] == "confirmed"
     explanation = sanctions_loader.get_sanction_explanation(hit)
 
+    # The title is built from the four facts that make a sanctions hit
+    # actionable — what, where, whose flag, on whose authority — rather than
+    # "SANCTIONED: NAUTILUS detected", which names a hull nobody recognises
+    # and discards the geography and the authorities that were already in
+    # hand at this line. See notification_context.
+    import notification_context as _nc
+    _place = _nc.describe_place(vessel.get("lat"), vessel.get("lon"))
+
     if confirmed:
         alert_type      = "Sanctioned Vessel"
-        title           = f"⚠ SANCTIONED: {vessel_name} detected"
-        message         = (
-            f"Sanctioned vessel {vessel_name} (MMSI {mmsi}) detected. "
-            f"Listed by: {', '.join(explanation['sanction_lists'][:2])}."
+        title, message  = _nc.sanctioned_vessel_headline(
+            vessel_name=vessel_name, mmsi=mmsi,
+            flag=hit.get("flag"), sanction_lists=explanation["sanction_lists"],
+            place=_place, confirmed=True,
         )
         severity        = "critical"
         confidence      = 0.95
@@ -8436,7 +8446,11 @@ def _check_sanctions_on_update_sync(vessel: dict) -> None:
         # different, innocent vessel. Downgrade instead of claiming a
         # confirmed sanctions match we can't actually stand behind.
         alert_type      = "Sanctioned Vessel (Possible)"
-        title           = f"⚠ Possible sanctions match (needs review): {vessel_name}"
+        title, _built   = _nc.sanctioned_vessel_headline(
+            vessel_name=vessel_name, mmsi=mmsi,
+            flag=hit.get("flag"), sanction_lists=explanation["sanction_lists"],
+            place=_place, confirmed=False,
+        )
         message         = (
             f"{vessel_name} (MMSI {mmsi}) — MMSI/IMO matches a sanctioned-vessel "
             f"record ({', '.join(explanation['sanction_lists'][:2])}), but the "
@@ -11046,6 +11060,105 @@ def _purge_older_than(model, ts_col, cutoff, deadline, label: str) -> int:
         total += len(ids)
         time.sleep(0.3)
     return total
+
+
+# ── One-off repair of alerts written before the key-name fixes ─────────────
+# An audit on 2026-09-17 found 302,284 of 346,570 active alerts unusable:
+# lon NULL, title empty, and 290,119 typed "unknown". The cause was three
+# producer key names write_alert() never read (see alert_writer.py). New
+# alerts are correct from that fix onward; these settings repair the rows
+# already on disk.
+#
+# Batched, budgeted, and OPT-IN, for the reason recorded in _purge_older_than:
+# SQLite has one writer and AIS ingest never stops, so a bulk UPDATE over
+# 302k rows holds the write lock long enough to fail every other write with
+# "database is locked" — which is exactly how a cleanup job took production
+# down on 2026-09-16. Never run at startup.
+ALERT_BACKFILL_ENABLED  = os.getenv("ALERT_BACKFILL_ENABLED", "0") == "1"
+ALERT_BACKFILL_BUDGET_S = int(os.getenv("ALERT_BACKFILL_BUDGET_S", "300"))
+ALERT_BACKFILL_BATCH    = int(os.getenv("ALERT_BACKFILL_BATCH", "500"))
+
+
+def _backfill_alert_context_once(budget_s: int | None = None) -> dict:
+    """Repair lon / alert_type / title on existing alerts from their own
+    raw_json. Idempotent: a row is only selected while it still looks broken,
+    so a killed pass is simply resumed by the next one and a completed pass
+    finds nothing. Runs in a worker thread, never on the event loop."""
+    import notification_context as _nc
+    from sqlalchemy import or_ as _or_
+    from database import Alert as _A, get_db as _gdb
+
+    deadline = time.monotonic() + (budget_s or ALERT_BACKFILL_BUDGET_S)
+    stats = {"scanned": 0, "lon": 0, "alert_type": 0, "title": 0, "batches": 0}
+
+    while time.monotonic() < deadline:
+        try:
+            with _gdb() as db:
+                rows = (db.query(_A)
+                        .filter(_or_(_A.lon.is_(None), _A.title == "",
+                                     _A.title.is_(None), _A.alert_type == "unknown"))
+                        .limit(ALERT_BACKFILL_BATCH).all())
+                if not rows:
+                    break
+                changed = 0
+                for r in rows:
+                    stats["scanned"] += 1
+                    try:
+                        raw = _nc._unwrap_raw(r.raw_json)
+                    except Exception:
+                        raw = {}
+
+                    # Mark every scanned row as visited even when nothing can
+                    # be recovered, or the same unrecoverable rows are
+                    # re-selected forever and the pass never advances.
+                    if r.lon is None:
+                        _lat, _lon = _nc._coords(
+                            {"lat": r.lat, "lon": None}, raw)
+                        lon = _float(_lon)
+                        r.lon = lon
+                        if lon is not None:
+                            stats["lon"] += 1
+                            changed += 1
+
+                    if (r.alert_type or "unknown") == "unknown":
+                        kind = _nc._kind_of({"alert_type": None}, raw)
+                        if kind:
+                            r.alert_type = kind
+                            stats["alert_type"] += 1
+                            changed += 1
+
+                    if _nc.is_dateish_title(r.title):
+                        try:
+                            built = _nc.headline({
+                                "alert_type": r.alert_type, "title": r.title,
+                                "lat": r.lat, "lon": r.lon, "region": r.region,
+                                "country_code": r.country_code,
+                                "entity_id": r.entity_id, "entity_name": r.entity_name,
+                                "severity": r.severity, "raw_json": r.raw_json,
+                            })
+                        except Exception:
+                            built = None
+                        if built and built != r.title:
+                            r.title = built
+                            stats["title"] += 1
+                            changed += 1
+
+                    # Unrecoverable: no longitude anywhere and nothing to say.
+                    # Park it so the selector stops returning it.
+                    if r.lon is None and not (r.title or "").strip():
+                        r.title = f"{r.alert_type or 'Signal'} (no location reported)"
+
+                db.commit()
+                stats["batches"] += 1
+                if changed == 0 and len(rows) < ALERT_BACKFILL_BATCH:
+                    break
+        except Exception as e:
+            print(f"[alert-backfill] batch error: {e}")
+            break
+        time.sleep(0.3)      # let the AIS writer have the lock back
+
+    print(f"[alert-backfill] {stats}")
+    return stats
 
 
 def _run_retention_once() -> dict:
@@ -21048,6 +21161,148 @@ def api_get_alerts(
         ]
 
 
+@app.post("/api/admin/backfill-alert-context")
+async def api_backfill_alert_context(budget_s: int = 120, current_user=None):
+    """Repair alerts written before the write_alert() key-name fixes.
+
+    Opt-in and time-boxed by design. Call it repeatedly — each pass picks up
+    where the last stopped, and a pass that finds nothing left to repair is
+    the signal that the backfill is complete. Runs in a worker thread so the
+    event loop keeps serving while SQLite's single writer is busy.
+    """
+    if not ALERT_BACKFILL_ENABLED:
+        raise HTTPException(
+            status_code=409,
+            detail="Set ALERT_BACKFILL_ENABLED=1 to run this. It writes to a "
+                   "table AIS ingest is also writing to; run it deliberately, "
+                   "not by accident.",
+        )
+    budget = max(10, min(int(budget_s), 600))
+    return await asyncio.to_thread(_backfill_alert_context_once, budget)
+
+
+def _backfill_geoconfirmed_titles_sync(batch: int, passes: int) -> dict:
+    """Drive geoconfirmed.backfill_geoconfirmed_titles to completion in
+    bounded batches (PARALLAX addendum §A3)."""
+    import geoconfirmed as _gc
+    from database import get_db
+
+    composed = 0
+    result = {"composed": 0, "remaining": None, "complete": False}
+    for _ in range(max(1, passes)):
+        with get_db() as db:
+            result = _gc.backfill_geoconfirmed_titles(db, limit=batch)
+        composed += result["composed"]
+        if result["complete"] or result["composed"] == 0:
+            break
+    result["composed"] = composed
+    return result
+
+
+@app.post("/api/admin/backfill-geoconfirmed-titles")
+async def api_backfill_geoconfirmed_titles(
+    batch: int = 2000, passes: int = 40, current_user=None,
+):
+    """PARALLAX addendum §A3 — compose and store titles for the placemarks
+    that predate the `title` column.
+
+    Every active placemark in this database is named by its publication date
+    ("17 SEP 2026"), which is a filing reference, not a title. This writes
+    the real sentence — already present in each record's own description —
+    into the column that search, the briefing and the notification all read.
+
+    Idempotent and resumable: only NULL/empty titles are touched, so it can
+    be run again after a partial pass without rewriting anything.
+    """
+    batch = max(100, min(int(batch), 10000))
+    passes = max(1, min(int(passes), 200))
+    return await asyncio.to_thread(_backfill_geoconfirmed_titles_sync, batch, passes)
+
+
+@app.get("/api/notifications")
+def api_get_notifications(
+    limit: int = 60,
+    hours: int = 48,
+    include_silent: bool = False,
+    current_user=None,
+):
+    """Alerts that have earned an interruption, with titles a human can read.
+
+    This is deliberately NOT a second alerts feed. /api/alerts returns the
+    record — every row, unfiltered, which is what the map and the analytics
+    surfaces need. This returns the much smaller set that should reach a
+    person, and says why each one qualified.
+
+    The two questions are answered separately and both answers travel with
+    the row: `title` is the rebuilt, contextual headline (never an MMSI or a
+    bare date), and `reason` states which relevance gate fired. An analyst
+    who disagrees with a notification can therefore see the rule that
+    produced it rather than guessing.
+
+    `include_silent=true` returns everything with `notify` set per row, which
+    is how you inspect what the filter is holding back without having to
+    trust that it is holding back the right things.
+
+    Measured against real production traffic (2,589 alerts over the three
+    days to 2026-09-17): 863 alerts/day in, 142 notifications/day out.
+    """
+    import notification_context as _nc
+    from database import Alert as _A, get_db as _gdb
+    from datetime import datetime as _dt, timedelta as _td
+
+    cutoff = _dt.utcnow() - _td(hours=max(1, min(hours, 24 * 30)))
+    # Scan a bounded window newest-first and stop once enough have qualified.
+    # Unbounded scans over a 346k-row table are how this app has previously
+    # put blocking work on the event loop; the cap is the point.
+    scan_cap = max(limit * 40, 2000)
+
+    with _gdb() as db:
+        rows = (
+            db.query(_A)
+            .filter(_A.status == "active", _A.created_at >= cutoff)
+            .order_by(_A.created_at.desc())
+            .limit(scan_cap)
+            .all()
+        )
+
+    out = []
+    for r in rows:
+        item = {
+            "alert_id": r.alert_id, "alert_type": r.alert_type, "source": r.source,
+            "title": r.title, "severity": r.severity, "lat": r.lat, "lon": r.lon,
+            "region": r.region, "country_code": r.country_code,
+            "entity_id": r.entity_id, "entity_name": r.entity_name,
+            "raw_json": r.raw_json,
+        }
+        try:
+            verdict = _nc.notification_relevance(item)
+            headline = _nc.headline(item)
+        except Exception as ex:                 # never let one bad row 500 the tray
+            logger.debug("[notifications] %s: %s", r.alert_id, ex)
+            verdict, headline = {"notify": False, "sev": "low", "reason": "unreadable"}, r.title
+
+        if not verdict["notify"] and not include_silent:
+            continue
+        out.append({
+            "id": r.alert_id,
+            "title": headline,
+            "sev": verdict["sev"],
+            "reason": verdict["reason"],
+            "notify": verdict["notify"],
+            "kind": _nc.notification_kind(r.alert_type),
+            "alert_type": r.alert_type,
+            "source": r.source,
+            "lat": r.lat, "lon": r.lon,
+            "region": r.region,
+            "entity_id": r.entity_id, "entity_name": r.entity_name,
+            "origin_class": r.origin_class, "licence_tier": r.licence_tier,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 @app.get("/api/alerts/{alert_id}")
 def api_get_alert(alert_id: str, current_user=None):
     from database import Alert as _AlertModel, get_db as _gdb_api
@@ -22083,7 +22338,10 @@ def _user_to_dict(u) -> dict:
         "title": u.title,
         "team_id": u.team_id,
         "capability_role": u.capability_role,
-        "theme": u.theme or "dark",
+        # Auto is the default: a console that opens dark at midday reads as
+        # broken to someone who has never touched the setting. "dark" here
+        # was a stored-value fallback, not a considered default.
+        "theme": u.theme or "auto",
         "settings": u.settings or {},
     }
 

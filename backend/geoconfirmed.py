@@ -41,6 +41,7 @@ import urllib.request
 from typing import Optional
 
 import country_registry
+import geoconfirmed_title as _gct   # PARALLAX addendum §A3 — title composed at ingest
 
 GEOCONFIRMED_BASE = "https://geoconfirmed.org"
 HEADERS = {"User-Agent": "NaginiIngest/1.0"}
@@ -217,6 +218,20 @@ def upsert_theatre_placemarks(theatre_slug: str, db, *, since_days: int = 90,
         faction_name = detail.get("faction")
         fcolor = faction_colors.get(faction_name) if faction_name else None
 
+        # PARALLAX addendum §A3 — compose the title HERE, at ingest, not at
+        # render time in each of the three surfaces that show it. A title
+        # composed per-surface is a title three surfaces eventually disagree
+        # about; this one string is what search indexes, what the briefing
+        # quotes and what a notification carries.
+        _cat = _gct.derive_category(detail.get("description"), detail.get("name"))
+        _c = _plus_code_country(detail.get("plusCode"))
+        _title = _gct.compose_title(
+            name=detail.get("name"), description=detail.get("description"),
+            location=_plus_code_location(detail.get("plusCode")),
+            country=(_c[1] if _c else None),
+            theatre_slug=theatre_slug, category=_cat,
+        )
+
         if row:
             row.name = detail.get("name")
             row.description = detail.get("description")
@@ -235,6 +250,8 @@ def upsert_theatre_placemarks(theatre_slug: str, db, *, since_days: int = 90,
             row.plus_code = detail.get("plusCode")
             row.orbat_node_id = orbat_id
             row.orbat_unit_name = orbat_name
+            row.title = _title
+            row.category = _cat
             row.status = "active"
             row.detail_fetched_at = now
             row.updated_at = now
@@ -252,6 +269,7 @@ def upsert_theatre_placemarks(theatre_slug: str, db, *, since_days: int = 90,
                 origin=detail.get("origin"), original_source=detail.get("originalSource"),
                 geolocation_source=detail.get("geolocation"), plus_code=detail.get("plusCode"),
                 orbat_node_id=orbat_id, orbat_unit_name=orbat_name,
+                title=_title, category=_cat,
                 status="active", detail_fetched_at=now,
             ))
             inserted += 1
@@ -721,7 +739,28 @@ def write_geoconfirmed_alerts(db, *, window_days: int = 90) -> dict:
     written = skipped = 0
     for p in rows:
         alert_id = f"GC-{p.id}"
-        title = p.name or (p.description or "")[:80] or "GeoConfirmed event"
+        # p.name is GeoConfirmed's publication DATE, not a description, so
+        # `p.name or ...` always won and 3,305 alerts shipped titled
+        # "02 SEP 2026" while the real prose sat unread in p.description.
+        #
+        # PARALLAX addendum §A3: the title is composed at INGEST and stored on
+        # the placemark. Read it; do not recompose it here. Two call sites
+        # each composing their own is how the alert, the search hit and the
+        # briefing line end up three different sentences about one event.
+        # The inline composition is the fallback for a row the §A3 backfill
+        # has not reached yet, and it writes its result back so the next
+        # reader gets the stored one.
+        _country = _plus_code_country(p.plus_code)
+        title = (p.title or "").strip()
+        if not title:
+            title = _gct.compose_title(
+                name=p.name, description=p.description,
+                location=_plus_code_location(p.plus_code),
+                country=(_country[1] if _country else None),
+                theatre_slug=p.theatre_slug,
+                category=_gct.derive_category(p.description, p.name),
+            )
+            p.title = title
         severity = _csd(p.description or title, p.latitude, p.longitude) or "medium"
         region = _plus_code_location(p.plus_code) or p.theatre_slug
         result = _m.write_alert({
@@ -732,7 +771,7 @@ def write_geoconfirmed_alerts(db, *, window_days: int = 90) -> dict:
             "severity": severity,
             "lat": p.latitude, "lon": p.longitude,
             "region": region,
-            "country_code": None,
+            "country_code": (_country[0] if _country else None),
             "entity_type": "geoconfirmed_placemark",
             "entity_id": p.id,
             "entity_name": p.orbat_unit_name,
@@ -862,3 +901,51 @@ if __name__ == "__main__":
     Base.metadata.create_all(bind=engine)
     stats = run_ingest()
     print(json.dumps(stats, indent=2, default=str))
+
+
+def backfill_geoconfirmed_titles(db, *, limit: int = 5000) -> dict:
+    """PARALLAX addendum §A3 — compose and store titles for placemarks that
+    predate the `title` column.
+
+    Bounded by `limit` and called repeatedly rather than run as one sweep:
+    74,675 rows of regex work on the request thread is exactly the kind of
+    blocking loop that takes the whole event loop down with it (see the
+    AIS-loitering freeze). Returns what it did so a caller can drive it to
+    completion.
+
+    Idempotent: only rows with a NULL/empty title are touched, so re-running
+    it never rewrites a title an operator or a later sync already fixed.
+    """
+    from database import GeoConfirmedPlacemark
+    from sqlalchemy import or_
+
+    rows = (db.query(GeoConfirmedPlacemark)
+              .filter(or_(GeoConfirmedPlacemark.title.is_(None),
+                          GeoConfirmedPlacemark.title == ""))
+              .limit(limit).all())
+    done = 0
+    for p in rows:
+        try:
+            cat = _gct.derive_category(p.description, p.name)
+            c = _plus_code_country(p.plus_code)
+            p.title = _gct.compose_title(
+                name=p.name, description=p.description,
+                location=_plus_code_location(p.plus_code),
+                country=(c[1] if c else None),
+                theatre_slug=p.theatre_slug, category=cat,
+            )
+            p.category = cat
+            done += 1
+        except Exception as e:
+            # One malformed row must not abort the batch — the remaining
+            # rows still get real titles, and this one is retried next pass
+            # because its title is still NULL.
+            print(f"[geoconfirmed-title-backfill] {p.id}: {e}")
+    if done:
+        db.commit()
+
+    remaining = (db.query(GeoConfirmedPlacemark)
+                   .filter(or_(GeoConfirmedPlacemark.title.is_(None),
+                               GeoConfirmedPlacemark.title == ""))
+                   .count())
+    return {"composed": done, "remaining": remaining, "complete": remaining == 0}

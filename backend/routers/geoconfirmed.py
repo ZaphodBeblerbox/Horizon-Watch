@@ -56,8 +56,23 @@ def get_placemarks(
             "id": r.id,
             "theatre_slug": r.theatre_slug,
             "name": r.name,
+            # PARALLAX addendum §A3. `title` is the composed sentence stored
+            # at ingest and is what every surface must display; `name` is
+            # kept only because it is GeoConfirmed's own field and the
+            # inspector cites it as provenance. `date_label` is the date,
+            # demoted to metadata where it belongs — a client that wants to
+            # show the date shows this, and never the title.
+            #
+            # The fallback is r.name ONLY for a row the §A3 backfill has not
+            # reached; it is deliberately not silent, because a date leaking
+            # into this field is the defect, and `title_composed` lets a
+            # caller (and the acceptance check) tell the two apart.
+            "title": (r.title or r.name or "").strip() or None,
+            "title_composed": bool(r.title),
+            "category": r.category,
             "description": r.description,
             "date": r.date.isoformat() if r.date else None,
+            "date_label": r.date.date().isoformat() if r.date else None,
             "date_precision": r.date_precision,
             "lat": r.latitude,
             "lon": r.longitude,

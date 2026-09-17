@@ -78,14 +78,67 @@ def write_alert(alert_dict: dict) -> Optional[str]:
         # honestly unclassified rather than guessed at.
         origin_class, licence_tier = provenance_for_alert_source(source)
 
+        # ── Key-name fallbacks ────────────────────────────────────────
+        # Not cosmetic. A 2026-09 audit of 346,570 active alerts found 87% of
+        # the table unusable because three producer key names were never
+        # read here:
+        #
+        #   * the AIS and ADS-B detectors emit "lng", not "lon"  → 302,284
+        #     rows stored lon = NULL, i.e. unplottable and unplaceable by any
+        #     geographic rule, while the real longitude sat in raw_json.
+        #   * those detectors type their output with "rule_name"/
+        #     "rule_trigger", not "alert_type"  → 290,119 rows typed
+        #     "unknown" that are really AIS_DARK_SHIP (286,436),
+        #     AIS_POSITION_JUMP (2,430) and AIS_LOITERING_NEAR_CABLE (1,237).
+        #   * they put their prose in "message", not "title"  → 302,274 rows
+        #     with an empty title.
+        #
+        # Every fallback is additive and ordered so an explicit key always
+        # wins; a producer that already sets the canonical name is unaffected.
+        alert_type = str(
+            alert_dict.get("alert_type")
+            or alert_dict.get("type")
+            or alert_dict.get("rule_name")
+            or alert_dict.get("rule_trigger")
+            or "unknown"
+        )
+        lat = _float(alert_dict.get("lat"))
+        lon = _float(alert_dict.get("lon"))
+        if lon is None:
+            lon = _float(alert_dict.get("lng"))
+        if lon is None:
+            lon = _float(alert_dict.get("longitude"))
+        if lat is None:
+            lat = _float(alert_dict.get("latitude"))
+
+        title = str(
+            alert_dict.get("title") or alert_dict.get("headline") or ""
+        ).strip()
+
+        # Last resort only: a title that is empty, or that is nothing but a
+        # publication date (GeoConfirmed's placemark names are dates — 3,305
+        # alerts titled "02 SEP 2026"), is replaced by a sentence built from
+        # the facts the alert already carries. An informative title is never
+        # touched.
+        try:
+            import notification_context as _nc
+            if _nc.is_dateish_title(title):
+                built = _nc.headline({**alert_dict, "alert_type": alert_type,
+                                      "title": title, "lat": lat, "lon": lon,
+                                      "raw": alert_dict})
+                if built:
+                    title = built
+        except Exception as _e:
+            print(f"[alert-writer] headline build skipped: {_e}")
+
         row = Alert(
             alert_id        = alert_id,
             source          = source,
-            alert_type      = str(alert_dict.get("alert_type") or alert_dict.get("type") or "unknown"),
-            title           = str(alert_dict.get("title") or alert_dict.get("headline") or ""),
+            alert_type      = alert_type,
+            title           = title,
             severity        = str(alert_dict.get("severity") or "medium"),
-            lat             = _float(alert_dict.get("lat")),
-            lon             = _float(alert_dict.get("lon")),
+            lat             = lat,
+            lon             = lon,
             region          = region,
             country_code    = alert_dict.get("country_code") or None,
             entity_type     = alert_dict.get("entity_type") or None,
