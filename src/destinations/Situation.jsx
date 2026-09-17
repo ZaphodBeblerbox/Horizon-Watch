@@ -23,6 +23,7 @@ import GlobeView from "../components/GlobeView.jsx"
 import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
 import MapMeta from "../components/MapMeta.jsx"
+import MapTip from "../components/MapTip.jsx"
 import { LAYER_GROUPS } from "../components/layerRailConfig.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { summarizeHealth } from "../utils/systemHealth.js"
@@ -921,6 +922,9 @@ export default function Situation({ onOpenDossier }) {
                     />
                     <MapChrome basemap={{ value: basemap, onChange: setBasemap }} />
                     <MapMeta />
+                    {/* §6 — the ONE map tooltip. Mounted here, driven by any
+                        layer through mapTip.js; no layer renders its own. */}
+                    <MapTip />
                     {/* The severity legend used to float here, bottom-right —
                         per the map-overlay-geometry table it does not belong
                         on the map surface at all; it now lives inside the

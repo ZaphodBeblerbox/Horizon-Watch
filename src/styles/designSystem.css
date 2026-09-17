@@ -542,3 +542,42 @@ html:not(:has(#view-map.active)) #notifstack { right: 12px; }
     border: 1px solid var(--txt-3); border-top: 0;
     transition: width 120ms linear;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §6 map tooltip — one element, every layer
+   ═══════════════════════════════════════════════════════════════════════
+   Spec §6 gives this `background: var(--tip-bg)` with
+   `backdrop-filter: blur(14px) saturate(120%)`. Solid here, on the same
+   standing instruction that makes §10's chrome and the notification tray
+   solid — and enforced, not just asserted: mapSurfaceTokens.test.js fails
+   any map surface that carries a backdrop blur.
+
+   position:fixed, because the placement in mapTip.js is computed from CLIENT
+   coordinates against the viewport. Making it absolute would silently
+   reinterpret those against #mapwrap's padding box and put the card a pane's
+   width away from the cursor.
+   ------------------------------------------------------------------- */
+#maptip {
+    position: fixed; z-index: 60; pointer-events: none;
+    background: var(--map-tooltip-bg);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r, 2px);
+    padding: 6px 9px; max-width: 252px;
+    box-shadow: var(--shadow);
+    opacity: 0; transform: translateY(2px);
+    transition: opacity .12s linear, transform .12s var(--ease);
+}
+#maptip.show { opacity: 1; transform: none; }
+#maptip b {
+    display: block; font-size: 12px; margin-bottom: 2px; font-weight: 600;
+    color: var(--txt);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#maptip .lbl {
+    display: block; font: 10px var(--mono); color: var(--txt-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* A tooltip is a hover affordance and there is no hover on a touch screen;
+   showing it there means a card that appears on tap and never clears. */
+@media (hover: none) { #maptip { display: none; } }

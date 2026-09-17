@@ -1,3 +1,4 @@
+import { showTip, hideTip } from "./mapTip.js"
 import { useState, useEffect, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useCesium, Entity } from "resium"
@@ -175,7 +176,6 @@ export default function GlobeCameraLayer() {
     const { viewer } = useCesium()
 
     const [hoveredId,    setHoveredId]    = useState(null)
-    const [tooltip,      setTooltip]      = useState(null) // { camera, x, y }
     const [popup,        setPopup]        = useState(null) // { camera }
     const [popupPos,     setPopupPos]     = useState({ x: 0, y: 0 })
     const [fullscreen,   setFullscreen]   = useState(false)
@@ -229,12 +229,24 @@ export default function GlobeCameraLayer() {
                 const cam = camerasById.get(id.slice("camera-".length))
                 if (cam) {
                     setHoveredId(cam.id)
-                    setTooltip({ camera: cam, x: move.endPosition.x, y: move.endPosition.y })
+                    // §6 — the one shared #maptip, not a card of our own.
+                    // Cesium gives canvas-relative coords; the shared tip
+                    // places against the viewport.
+                    const rc = viewer.scene.canvas.getBoundingClientRect()
+                    showTip(
+                        <>
+                            <b>{cam.name}</b>
+                            <span className="lbl">{cam.location}</span>
+                            <span className="lbl">Click to view</span>
+                        </>,
+                        rc.left + move.endPosition.x,
+                        rc.top + move.endPosition.y,
+                    )
                     return
                 }
             }
             setHoveredId(null)
-            setTooltip(null)
+            hideTip()
         }, ScreenSpaceEventType.MOUSE_MOVE)
 
         handler.setInputAction((click) => {
@@ -243,7 +255,7 @@ export default function GlobeCameraLayer() {
             if (typeof id === "string" && id.startsWith("camera-")) {
                 const cam = camerasById.get(id.slice("camera-".length))
                 if (cam) {
-                    setTooltip(null)
+                    hideTip()
                     setPopup({ camera: cam })
                 }
             }
@@ -278,12 +290,6 @@ export default function GlobeCameraLayer() {
     const canvas = viewer?.scene?.canvas
     const rect   = canvas?.getBoundingClientRect?.() ?? { left: 0, top: 0 }
 
-    let tooltipStyle = null
-    if (tooltip) {
-        const left = Math.min(rect.left + tooltip.x + 14, (window.innerWidth || 1200) - 200)
-        const top  = Math.max(rect.top + tooltip.y - 48, 8)
-        tooltipStyle = { left, top }
-    }
 
     let popupStyle = null
     if (popup) {
@@ -344,33 +350,6 @@ export default function GlobeCameraLayer() {
                         }
                     `}</style>
 
-                    {tooltip && (
-                        <div style={{
-                            position:     "fixed",
-                            left:         tooltipStyle.left,
-                            top:          tooltipStyle.top,
-                            zIndex:       10010,
-                            background:   PANEL_BG,
-                            border:       BORDER,
-                            borderRadius: 0,
-                            padding:      "8px 10px",
-                            fontFamily:   FONT,
-                            color:        TEXT_COLOR,
-                            pointerEvents: "none",
-                            maxWidth:     220,
-                        }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-                                {tooltip.camera.name}
-                                <TypeBadge type={tooltip.camera.type} />
-                            </div>
-                            <div style={{ fontSize: 10, color: ACCENT, marginBottom: 4 }}>
-                                {tooltip.camera.location}
-                            </div>
-                            <div style={{ fontSize: 10, color: "#9AA4B5", fontStyle: "italic" }}>
-                                Click to view
-                            </div>
-                        </div>
-                    )}
 
                     {popup && (
                         <>

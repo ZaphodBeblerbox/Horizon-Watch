@@ -5,6 +5,8 @@ import {
     Cartographic, Math as CesiumMath, Cartesian2,
 } from "cesium"
 import { getEntity } from "./entityStore.js"
+import { showTip, hideTip } from "./mapTip.js"
+import { TipLines } from "../components/MapTip.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import { normalizeEntity } from "../inspector/adapters.js"
 import API_BASE                  from "../apiBase.js"
@@ -57,8 +59,10 @@ export default function GlobePopup({
     onInspectorPopupChange = null,
 }) {
     const [popup,   setPopup]   = useState(null)
-    const [tooltip, setTooltip] = useState(null)  // { title, subtitle, position, x, y }
     const hoveredIdRef = useRef(null)
+    // The rendered node for the currently hovered entity, so moving the
+    // pointer within one entity repositions the card without rebuilding it.
+    const tipContentRef = useRef(null)
     const handlerRef = useRef(null)
 
     // Reports whether THIS GlobePopup instance's own real docked
@@ -125,7 +129,7 @@ export default function GlobePopup({
     // so `popup` state would otherwise silently persist across a nav-away-
     // and-back — confirmed real gap, fixed here.
     useEffect(() => {
-        if (!isVisible) { setPopup(null); setTooltip(null); hoveredIdRef.current = null }
+        if (!isVisible) { setPopup(null); hideTip(); hoveredIdRef.current = null }
     }, [isVisible])
 
     useEffect(() => {
@@ -149,29 +153,35 @@ export default function GlobePopup({
                         // Only re-run normalizeEntity when the hovered entity
                         // actually changes, not on every mousemove pixel while
                         // still hovering the same one.
+                        // Cesium reports canvas-relative coordinates; §6's
+                        // placement is against the viewport, so the canvas
+                        // offset has to be added or the card lands a pane's
+                        // width away from the cursor.
+                        const rect = viewer.scene.canvas.getBoundingClientRect()
+                        const cx = rect.left + move.endPosition.x
+                        const cy = rect.top + move.endPosition.y
                         if (hoveredIdRef.current !== entityId) {
                             hoveredIdRef.current = entityId
                             const normalized = normalizeEntity(stored.type, stored.data)
-                            setTooltip({
-                                title: normalized.identity.title,
-                                subtitle: normalized.identity.subtitle,
-                                position: (normalized.attributes || []).find(a => a.label === "Position")?.value || null,
-                                x: move.endPosition.x,
-                                y: move.endPosition.y,
-                            })
-                        } else {
-                            setTooltip(prev => prev ? { ...prev, x: move.endPosition.x, y: move.endPosition.y } : prev)
+                            const pos = (normalized.attributes || []).find(a => a.label === "Position")?.value || null
+                            tipContentRef.current = (
+                                <TipLines
+                                    title={normalized.identity.title}
+                                    lines={[normalized.identity.subtitle, pos]}
+                                />
+                            )
                         }
+                        showTip(tipContentRef.current, cx, cy)
                         return
                     }
                 }
                 hoveredIdRef.current = null
-                setTooltip(null)
+                hideTip()
             }, ScreenSpaceEventType.MOUSE_MOVE)
 
             // ── Click popup ──────────────────────────────────────────────────
             handler.setInputAction(async (click) => {
-                setTooltip(null)
+                hideTip()
                 hoveredIdRef.current = null
 
                 // Primary pick; if it misses, search a ring of nearby pixels
@@ -387,58 +397,6 @@ export default function GlobePopup({
 
     return (
         <>
-            {/* Map hover-callout card — full UI rebuild spec section 9. Real
-                glass round: this used to read --bg-card-translucent, a
-                legacy token an earlier round deliberately repointed at a
-                flat, opaque --bg-2 ("translucency is gone this round" —
-                index.html's own comment on that token) — a real, explicit
-                reversal of an even earlier decision, now itself reversed
-                again by direct instruction: every map hover-callout must
-                carry the same real glass treatment as Inspector/Layers and
-                the GeoConfirmed timeline panel. Switched to the one real
-                shared map-hover-callout recipe (--map-tooltip-bg + blur(20px)
-                saturate(1.4)) rather than mutating --bg-card-translucent
-                itself, since Dashboard.jsx and Sources.jsx also read that
-                token and are not in scope for this change. Only one ever
-                visible (this component has exactly one `tooltip` state
-                slot); a full click always replaces it with the full docked
-                inspector (see the click handler above, which clears this
-                first). */}
-            {tooltip && (
-                <div
-                    style={{
-                        position:      "absolute",
-                        left:          Math.min(tooltip.x + 14, (window.innerWidth || 1200) - 240),
-                        top:           Math.max(Math.min(tooltip.y - 36, (window.innerHeight || 800) - 100 - (isMob ? 56 : 16)), 56),
-                        zIndex:        10001,
-                        width:         "min(220px, calc(100vw - 32px))",
-                        background:    "var(--map-tooltip-bg)",
-                        border:        "1px solid var(--border-strong)",
-                        borderRadius:  "var(--radius-md)",
-                        boxShadow:     "var(--shadow-callout)",
-                        padding:       "10px 12px",
-                        pointerEvents: "none",
-                        fontFamily:    "var(--font-sans)",
-                    }}
-                >
-                    <div style={{
-                        fontSize: "var(--text-callout-title)", fontWeight: "var(--weight-semibold)",
-                        color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}>
-                        {tooltip.title}
-                    </div>
-                    {tooltip.subtitle && (
-                        <div style={{ fontSize: "var(--text-chip)", color: "var(--text-secondary)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                            {tooltip.subtitle}
-                        </div>
-                    )}
-                    {tooltip.position && (
-                        <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-callout-meta)", color: "var(--text-secondary)", marginTop: 4 }}>
-                            {tooltip.position}
-                        </div>
-                    )}
-                </div>
-            )}
 
             {/* Unified inspector — fixed docked panel, positions itself.
                 Keyed by entityId so switching to a genuinely different
