@@ -24,6 +24,7 @@ export default function TopBar({
     mode = "watch",
     onToggleMode = null,
     onOpenSettings = null,
+    onOpenTray = null,
 }) {
     // Mode, not modules (§7.1) — the rendered rail set is filtered off one
     // real registry field (data/modules.js's `set`), re-derived fresh every
@@ -154,15 +155,30 @@ export default function TopBar({
                 >
                     <svg className="icon sm"><use href="#i-plus" /></svg>
                 </button>
+                {/* The bell is the notification TRAY trigger (spec §1.1), not
+                    a second route into the Inbox — the rail already goes
+                    there, and two controls for one destination is how a bell
+                    ends up meaning nothing. The tray is the record of what
+                    arrived; the Inbox is the working surface. */}
                 <button
-                    onClick={() => onSelectModule("inbox")}
-                    title="Alerts"
+                    onClick={() => (onOpenTray ? onOpenTray() : onSelectModule("inbox"))}
+                    title="Notifications"
+                    aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
                     style={{
+                        position: "relative",
                         width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
                         background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
                     }}
                 >
                     <svg className="icon sm"><use href="#i-bell" /></svg>
+                    {unreadCount > 0 && (
+                        <span className="nbadge" style={{
+                            position: "absolute", top: 1, right: 0, minWidth: 13, height: 13,
+                            padding: "0 3px", background: "var(--red)", color: "#fff",
+                            font: "9px var(--mono)", display: "grid", placeItems: "center",
+                            borderRadius: 7,
+                        }}>{unreadCount > 99 ? "99+" : unreadCount}</span>
+                    )}
                 </button>
                 <button
                     onClick={toggleFullscreen}

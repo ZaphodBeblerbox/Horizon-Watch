@@ -5,6 +5,9 @@ import IconSprite from "./ui/IconSprite.jsx"
 import TopBar from "./components/TopBar.jsx"
 import TabStrip from "./components/TabStrip.jsx"
 import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayManager.js"
+import NotificationStack from "./components/NotificationStack.jsx"
+import NotificationTray from "./components/NotificationTray.jsx"
+import { pushNotification, unreadCount as notifUnread, subscribeNotifications } from "./state/notificationStore.js"
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
@@ -501,6 +504,42 @@ export default function App() {
     )
     const unreadCount = notifItems.filter(i => !readIds.has(i.id)).length
 
+    // Feed real arrivals into the notification store (PARALLAX spec §5).
+    // Only signals that appear AFTER the first load raise anything: on mount
+    // the existing backlog is recorded silently, because replaying a hundred
+    // historical criticals as cards on every page load is precisely the
+    // "shouts at every event" failure the rule exists to prevent.
+    const notifSeenRef = useRef(null)
+    useEffect(() => {
+        if (!notifItems.length) return
+        if (notifSeenRef.current === null) {
+            notifSeenRef.current = new Set(notifItems.map((i) => i.id))
+            return
+        }
+        const seen = notifSeenRef.current
+        for (const i of notifItems) {
+            if (seen.has(i.id)) continue
+            seen.add(i.id)
+            // severity_tier (surface pool) and severity (fusion) are the two
+            // real vocabularies in this merged shape; map both onto the four
+            // display tokens the diamond uses.
+            const raw = String(i.severity_tier || i.severity || "").toLowerCase()
+            const sev = raw === "critical" ? "critical"
+                : (raw === "significant" || raw === "high") ? "high"
+                : (raw === "elevated" || raw === "medium" || raw === "moderate") ? "moderate"
+                : "low"
+            pushNotification({
+                id: i.id,
+                sev,
+                kind: i.domain_count > 1 || i.fusion_id ? "escalate" : "signal",
+                title: i.headline || i.title || i.event_title || "Signal",
+                sub: [i.location || i.location_name, i.source || i.source_name].filter(Boolean).join(" · "),
+                ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
+                ts: Date.parse(i.ingested_at || i.created_at || "") || Date.now(),
+            })
+        }
+    }, [notifItems])
+
     const handleMarkRead = useCallback((id) => {
         setReadIds(prev => {
             const next = new Set(prev)
@@ -560,10 +599,20 @@ export default function App() {
     // panels come to stack. Both flags are derived from the single registry,
     // so opening either one necessarily closes the other and there is no
     // state in which both are true. Escape is handled inside the manager.
+    const [trayOpen, setTrayOpen] = useState(false)
     useEffect(() => subscribeOverlay((cur) => {
         setPaletteOpen(cur === "overlay:palette")
         setSettingsOpen(cur === "overlay:settings")
+        setTrayOpen(cur === "overlay:tray")
     }), [])
+
+    // Live unread count comes from the notification store, which is the one
+    // record of what actually arrived.
+    const [notifUnreadCount, setNotifUnreadCount] = useState(0)
+    useEffect(() => subscribeNotifications(() => setNotifUnreadCount(notifUnread())), [])
+    const markNotificationRead = useCallback((id) => {
+        import("./state/notificationStore.js").then((m) => m.markRead(id))
+    }, [])
 
     useEffect(() => {
         if (!profile) return
@@ -1146,6 +1195,7 @@ export default function App() {
                         mode={mode}
                         onToggleMode={() => setMode(mode === "work" ? "watch" : "work")}
                         onOpenSettings={() => openOverlay("overlay:settings")}
+                        onOpenTray={() => openOverlay("overlay:tray")}
                     />
                     <TabStrip
                         tabs={tabs}
@@ -1159,6 +1209,21 @@ export default function App() {
                 </>
             )}
             <ToastHost />
+            <NotificationStack
+                onOpen={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
+                    openTab("situation")
+                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
+                } }}
+                onAcknowledge={(n) => markNotificationRead(n.id)}
+            />
+            <NotificationTray
+                open={trayOpen}
+                onClose={() => closeOverlay("overlay:tray")}
+                onOpenItem={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
+                    openTab("situation")
+                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
+                } }}
+            />
             <CommandPalette
                 open={paletteOpen}
                 onClose={() => closeOverlay("overlay:palette")}
