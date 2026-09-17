@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest"
 import {
     getVesselMarkerDataUri, getAircraftMarkerDataUri,
-    AIRCRAFT_TYPE_COLOR, __shapes,
+    AIRCRAFT_TYPE_COLOR, VESSEL_TYPE_COLOR, __shapes,
 } from "./vesselAircraftGlyphs.js"
+
+const require_glyphs = () => ({ VESSEL_TYPE_COLOR })
 
 const svg = (uri) => decodeURIComponent(uri.replace(/^data:image\/svg\+xml;charset=utf-8,/, ""))
 
@@ -65,6 +67,36 @@ describe("theme", () => {
 
     it("falls back to dark for an unknown theme rather than rendering colourless", () => {
         expect(svg(getVesselMarkerDataUri({ theme: "nonsense" }))).toContain("#7fa8c9")
+    })
+})
+
+describe("vessel trade colour is state, not decoration (§7 rule 2)", () => {
+    it("tints a hull by its real ship type", () => {
+        const { VESSEL_TYPE_COLOR } = require_glyphs()
+        for (const [k, hex] of Object.entries(VESSEL_TYPE_COLOR)) {
+            expect(svg(getVesselMarkerDataUri({ shipType: k }))).toContain(hex)
+        }
+    })
+
+    it("does not put a naval hull in the sanctioned red", () => {
+        const { VESSEL_TYPE_COLOR: V } = require_glyphs()
+        expect(V.military.toLowerCase()).not.toBe("#c4453c")
+        // military means the same thing on both kinds
+        expect(V.military).toBe(AIRCRAFT_TYPE_COLOR.military)
+    })
+
+    it("sanctioned overrides the trade colour — flagged outranks tanker", () => {
+        const s = svg(getVesselMarkerDataUri({ sanctioned: true, shipType: "tanker" }))
+        expect(s).toContain("#c4453c")
+        expect(s).not.toContain("#f59e0b")
+    })
+
+    it("an unclassified hull follows the THEME's vessel colour, not a pinned hex", () => {
+        // A named trade is categorical and reads on either ground; "no
+        // category" has nothing to signal, so it must not be the one thing on
+        // the map ignoring the palette.
+        expect(svg(getVesselMarkerDataUri({ shipType: "nonsense" }))).toContain("#7fa8c9")
+        expect(svg(getVesselMarkerDataUri({ shipType: "nonsense", theme: "light" }))).toContain("#37719f")
     })
 })
 

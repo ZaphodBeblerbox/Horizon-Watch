@@ -589,15 +589,18 @@ html:not(:has(#view-map.active)) #notifstack { right: 12px; }
 /* ═══════════════════════════════════════════════════════════════════════
    §11 the time strip — two faces, one element
    ═══════════════════════════════════════════════════════════════════════
-   176 = 26 head + 26 time cursor + 122 content + borders. Undersize it and
-   the category chips bleed onto the time cursor — #timecursor is a FLEX
-   SIBLING of #gcstrip, not an overlay.
+   §11 sizes these 98 / 176, where 176 = 26 head + 26 time cursor + 122
+   content. The time cursor draws nothing in this build, so its 26px is
+   returned to the map rather than reserved for it: 76 / 150, with the head
+   and the 122px of archive content both intact. The spec's warning still
+   binds — undersize the CONTENT and the category chips collide with what is
+   above them.
    ------------------------------------------------------------------- */
 .timestrip {
-    flex: none; height: 98px; border-top: 1px solid var(--line);
+    flex: none; height: 76px; border-top: 1px solid var(--line);
     background: var(--bg-1); display: flex; flex-direction: column;
 }
-.timestrip:has(#gcstrip:not(.hidden)) { height: 176px; max-height: 38vh; }
+.timestrip:has(#gcstrip:not(.hidden)) { height: 150px; max-height: 34vh; }
 .timestrip .head {
     display: flex; align-items: center; gap: 10px; padding: 0 9px; height: 26px;
     border-bottom: 1px solid var(--line-soft); flex: none;
@@ -691,8 +694,6 @@ html:not(:has(#view-map.active)) #notifstack { right: 12px; }
 .gccat.on { opacity: 1; color: var(--txt-2); border-color: var(--line-strong); background: var(--bg-2); }
 .gcmeta { margin-left: auto; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.timecursor { flex: none; height: 26px; border-top: 1px solid var(--line-soft); }
-.timestrip:not(:has(#gcstrip:not(.hidden))) .timecursor { display: none; }
 
 /* ═══════════════════════════════════════════════════════════════════════
    §15 risk index — weights, ranking, breakdown

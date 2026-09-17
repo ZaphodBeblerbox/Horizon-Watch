@@ -98,3 +98,17 @@ describe("clicking a derived mark opens the inspector", () => {
         expect(popup).toMatch(/"fusion"/)
     })
 })
+
+describe("no cluster markers on the track layers", () => {
+    it("neither track layer renders a numbered blob", () => {
+        // A cluster marker is not a vessel or an aircraft: it cannot be
+        // inspected, and at the densities that produced one it covered the
+        // very tracks it was summarising.
+        const fs = require("fs"), p = require("path")
+        for (const f of ["GlobeAISLayer.jsx", "GlobeADSBLayer.jsx"]) {
+            const src = fs.readFileSync(p.join(__dirname, f), "utf8")
+            expect(src, `${f} must not cluster`).not.toMatch(/clusterTracks/)
+            expect(src, `${f} must not render clusters`).not.toMatch(/\{clusters\.map\(/)
+        }
+    })
+})

@@ -318,7 +318,11 @@ export default function TimeStrip({
                 )}
             </div>
 
-            <div className="timecursor" id="timecursor" />
+            {/* §11's DOM also carries a #timecursor band between the faces and
+                the bottom edge. It is absent here: in this build it drew
+                nothing at all, so it was 26px of empty strip covering 26px of
+                map. Its height is returned to the strip's total rather than
+                kept as a reservation for a thing that does not exist. */}
         </div>
     )
 }

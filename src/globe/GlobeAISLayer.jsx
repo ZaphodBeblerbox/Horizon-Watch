@@ -10,7 +10,6 @@ import { getVesselMarkerDataUri } from "./vesselAircraftGlyphs.js"
 import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
-import { clusterTracks } from "./trackClustering.js"
 
 const BILLBOARD_SIZE = 26
 
@@ -25,17 +24,17 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
     const [theme, setTheme] = useState(getRenderedTheme)
     useEffect(() => subscribeRenderedTheme(setTheme), [])
 
-    const { filtered, clusters } = useMemo(() => {
-        if (!vessels?.length) return { filtered: [], clusters: [] }
+    const { filtered } = useMemo(() => {
+        if (!vessels?.length) return { filtered: [] }
         if (isMobile) {
             const priority = (v) => {
                 const t = vesselShipType(v)
                 return t === "cargo" || t === "tanker" ? 0 : t === "passenger" ? 1 : 2
             }
-            return { filtered: [...vessels].sort((a, b) => priority(a) - priority(b)).slice(0, AIS_CAP), clusters: [] }
+            return { filtered: [...vessels].sort((a, b) => priority(a) - priority(b)).slice(0, AIS_CAP) }
         }
         const valid = vessels.filter(v => v.lat != null && (v.lon ?? v.lng) != null)
-        if (valid.length <= DESKTOP_AIS_CAP) return { filtered: valid, clusters: [] }
+        if (valid.length <= DESKTOP_AIS_CAP) return { filtered: valid }
         const centerLat = viewBounds ? (viewBounds.south + viewBounds.north) / 2 : 0
         const centerLng = viewBounds ? (viewBounds.west  + viewBounds.east)  / 2 : 0
         const sorted = [...valid].sort((a, b) => {
@@ -43,13 +42,12 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
             const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.lng) - centerLng)
             return da - db
         })
-        // Real clustering above the cap — dense-cell groups get one real
-        // cluster marker (with a real count) instead of the excess vessels
-        // simply vanishing from render past DESKTOP_AIS_CAP.
-        const { individual, clusters: dense } = clusterTracks(sorted, {
-            getLat: aisLat, getLon: aisLon, viewBounds, maxIndividual: DESKTOP_AIS_CAP,
-        })
-        return { filtered: individual.slice(0, DESKTOP_AIS_CAP), clusters: dense }
+        // Above the cap the nearest vessels to the view centre are drawn and
+        // the rest are not. The cluster markers that used to stand in for the
+        // remainder are gone: a numbered blob is not a vessel, it cannot be
+        // inspected, and at these densities it covered the hulls it was
+        // summarising.
+        return { filtered: sorted.slice(0, DESKTOP_AIS_CAP) }
     }, [vessels, viewBounds])
 
     useEffect(() => {
@@ -64,22 +62,9 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
         return () => ids.forEach(deleteEntity)
     }, [filtered])
 
-    if (!filtered.length && !clusters.length) return null
+    if (!filtered.length) return null
     return (
         <>
-            {clusters.map((c, i) => (
-                <Entity
-                    key={`ais-cluster-${i}`}
-                    position={Cartesian3.fromDegrees(c.lon, c.lat, 0)}
-                    point={{ pixelSize: 16, color: Color.fromCssColorString("#0ea5e9").withAlpha(0.55), outlineColor: Color.WHITE, outlineWidth: 1, heightReference: HeightReference.CLAMP_TO_GROUND }}
-                    label={{
-                        text: String(c.count),
-                        font: "11px Arial", fillColor: Color.WHITE,
-                        outlineColor: Color.fromCssColorString("#0F1721"), outlineWidth: 2, style: 2,
-                        distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
-                    }}
-                />
-            ))}
             {filtered.map(v => {
                 if (v.lat == null || v.lon == null || !isFinite(v.lat) || !isFinite(v.lon)) return null
 
@@ -91,7 +76,7 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                 // side in backend/main.py's _check_sanctions_on_update()).
                 const mmsiStr = v.mmsi != null ? String(v.mmsi) : null
                 const sanctioned = !!(mmsiStr && sanctionedMmsis?.confirmed?.has(mmsiStr))
-                const icon = getVesselMarkerDataUri({ sanctioned, size: BILLBOARD_SIZE, theme })
+                const icon = getVesselMarkerDataUri({ sanctioned, shipType: vesselShipType(v), size: BILLBOARD_SIZE, theme })
 
                 const hdg = isFinite(Number(v.heading)) && Number(v.heading) !== 511
                     ? Number(v.heading)

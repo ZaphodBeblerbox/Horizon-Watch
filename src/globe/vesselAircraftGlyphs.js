@@ -90,8 +90,37 @@ export const VESSEL_COLOR = PALETTE.dark.vessel
 export const VESSEL_SANCTIONED_COLOR = PALETTE.dark.sanctioned
 export const AIRCRAFT_WATCHLISTED_COLOR = PALETTE.dark.watch
 
-// Real classification tint — see departure 3 in the header. Deliberately
-// excludes blue, which the globe already spends on vessels and water.
+// Real classification tint for BOTH kinds — §7 rule 2, "colour is state,
+// never decoration". A hull's trade and an airframe's class are exactly that:
+// a tanker and a trawler in the same strait are not the same fact, and a
+// single blue for everything afloat throws that away.
+//
+// The vessel hues are iconUtils.js's VESSEL_COLORS, which has been defined in
+// this codebase all along with nothing reading it. Sanctioned still overrides
+// the trade colour, and watchlisted still overrides the airframe class —
+// "this one is flagged" outranks "this one is a tanker".
+export const VESSEL_TYPE_COLOR = {
+    tanker:    "#f59e0b",
+    cargo:     "#14b8a6",
+    container: "#06b6d4",
+    // NOT red. iconUtils.js's table had military hulls at #ef4444, which is
+    // within a few percent of the sanctioned red — a naval vessel and a
+    // sanctioned hull would have been the same mark to the eye, and
+    // "sanctioned" is the more urgent state and owns red across this app.
+    // Purple is what military ALREADY means on the aircraft side, so one
+    // colour now reads "military" whether it floats or flies.
+    military:  "#C084FC",
+    passenger: "#3b82f6",
+    fishing:   "#84cc16",
+    // No entry for "other" on purpose. The named trades are categorical hues
+    // and are the same on paper as on the dark ground; an UNCLASSIFIED hull
+    // has no category to signal, so it falls back to the theme's own vessel
+    // colour below. Pinning a hex here put the dark-theme blue on the light
+    // theme — a hull that was the only thing on the map not following the
+    // palette.
+}
+
+// Deliberately excludes blue, which the globe already spends on vessels.
 export const AIRCRAFT_TYPE_COLOR = {
     military: "#C084FC",
     helicopter: "#FB923C",
@@ -139,9 +168,11 @@ function cached(key, make) {
     return _cache.get(key)
 }
 
-export function getVesselMarkerDataUri({ sanctioned = false, size = 26, theme = "dark" } = {}) {
+export function getVesselMarkerDataUri({
+    sanctioned = false, shipType = "other", size = 26, theme = "dark",
+} = {}) {
     const p = PALETTE[theme] || PALETTE.dark
-    const fill = sanctioned ? p.sanctioned : p.vessel
+    const fill = sanctioned ? p.sanctioned : (VESSEL_TYPE_COLOR[shipType] || p.vessel)
     return cached(`v:${fill}:${theme}:${size}`, () => glyphSvg(SHIP, fill, theme, size, 10.5))
 }
 
