@@ -93,7 +93,7 @@
 .phone-shell.map-active .m-header,
 .phone-shell.map-active .m-tabbar {
     position: absolute; left: 0; right: 0; z-index: 70; height: auto;
-    background: var(--pane-glass-bg); backdrop-filter: blur(16px) saturate(115%); -webkit-backdrop-filter: blur(16px) saturate(115%);
+    background: var(--pane-glass-bg);
     border-color: var(--akili-glass-border);
 }
 .phone-shell.map-active .m-header { top: 0; padding-top: env(safe-area-inset-top, 0px); height: calc(52px + env(safe-area-inset-top, 0px)); }

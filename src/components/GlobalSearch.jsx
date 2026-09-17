@@ -227,9 +227,7 @@ export default function GlobalSearch({ onResult, apiBase = API_BASE }) {
         >
             {/* Unified panel card */}
             <div style={{
-                background:           "rgba(8, 16, 38, 0.96)",
-                backdropFilter:       "blur(14px)",
-                WebkitBackdropFilter: "blur(14px)",
+                background:           "rgb(8, 16, 38)",
                 border:               `1px solid ${borderColor}`,
                 borderRadius:         8,
                 overflow:             "hidden",

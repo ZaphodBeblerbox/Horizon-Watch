@@ -3,48 +3,57 @@ import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 
-// Real, permanent regression guard for the map hover-callout/tooltip glass
-// treatment (urgent glass-sweep round). These three real, live floating
-// elements (GlobePopup's hover-callout + click popup,
-// GlobeStrategicZoneTooltip, GlobeSurgeLayer's SurgePopup) only ever
-// render when the analyst hovers/clicks a real entity positioned by
-// Cesium's own 3D projection — there is no reliable, deterministic way to
-// force that interaction in headless Playwright without seeding a fixed
-// camera position + real entity and reading back Cesium's own
-// scene.cartesianToCanvasCoordinates() projection, which would be a
-// second, parallel, much more fragile test mechanism than the thing it's
-// testing. So this is a real, still-genuinely-useful STATIC source check
-// (not a live getComputedStyle assertion, unlike tests/e2e/theming.spec.js's
-// Playwright checks for the panes/panels that ARE reliably triggerable).
+// Regression guard for the map hover-callout/tooltip SURFACE treatment.
 //
-// Deliberately a positive-only check (file must reference the real shared
-// --map-tooltip-bg token + a real backdrop-filter blur) rather than also
-// asserting "no hardcoded color anywhere in the file" — these files
-// legitimately have plenty of small hardcoded accent colors on internal
-// badges/borders/progress-bars (the spec's own "shell only, never on
-// interactive content inside" rule), so a blanket hardcoded-color ban
-// would false-positive against those. The positive check alone still
-// genuinely distinguishes the real pre-fix state from the real post-fix
-// state: before this round, none of these three files referenced
-// --map-tooltip-bg anywhere at all (confirmed via git history — they used
-// #0F1721 / rgba(10,18,35,...) / rgba(10,18,35,...) literals with no
-// token reference), so this check would have failed loudly against that
-// real historical code.
+// This file was previously mapGlassTokens.test.js and asserted the opposite
+// of what it asserts now: that each of these three floating elements carried
+// a real backdrop-filter blur. That was a correct guard for the design it was
+// written against — the shells were deliberately translucent glass over the
+// globe. The design has since changed: every panel, popup and tooltip in the
+// app is opaque, because translucent shells over a moving 3D map made the
+// text underneath them unreadable and the shells themselves hard to locate.
+//
+// The test is inverted rather than deleted. What made the original guard
+// worth having still holds: these three elements only render when the analyst
+// hovers or clicks a real entity positioned by Cesium's own 3D projection, so
+// there is no reliable way to force that interaction in headless Playwright
+// without seeding a fixed camera and reading back
+// scene.cartesianToCanvasCoordinates() — a second, far more fragile test
+// mechanism than the thing being tested. A static source check is still the
+// right tool; only the property it checks for has flipped.
+//
+// Deliberately narrow: it checks the shared --map-tooltip-bg token is used
+// on the shell and that no blur has crept back. It does NOT ban rgba() inside
+// these files. A first draft of this guard did, and it failed immediately and
+// correctly — these files legitimately use rgba() for progress-bar tracks, a
+// round close button, and severity badge tints, none of which are shells and
+// all of which are meant to tint what they sit on (the spec's "shell only,
+// never on interactive content inside" rule). Banning them would have been a
+// guard that enforced something the design never asked for.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const FILES = ["GlobePopup.jsx", "GlobeStrategicZoneTooltip.jsx", "GlobeSurgeLayer.jsx"]
+// GlobeSurgeLayer.jsx was removed with the old surge layer; the two
+// remaining map-surface files are the ones that still paint tooltips.
+const FILES = ["GlobePopup.jsx", "GlobeStrategicZoneTooltip.jsx"]
 
-describe("map hover-callout/tooltip glass tokens (static source guard)", () => {
+describe("map hover-callout/tooltip surface tokens (static source guard)", () => {
     for (const file of FILES) {
         const src = readFileSync(path.join(__dirname, file), "utf8")
 
-        it(`${file} references the real shared --map-tooltip-bg glass token`, () => {
-            expect(src.includes('"var(--map-tooltip-bg)"'), `${file} must reference the real shared var(--map-tooltip-bg) token on its floating-shell background`).toBe(true)
+        it(`${file} references the shared --map-tooltip-bg surface token`, () => {
+            expect(
+                src.includes('"var(--map-tooltip-bg)"'),
+                `${file} must reference the shared var(--map-tooltip-bg) token on its floating-shell background`,
+            ).toBe(true)
         })
 
-        it(`${file} carries a real backdrop-filter blur (with a Safari prefix) alongside that token`, () => {
-            expect(/backdropFilter:\s*"blur\(/.test(src), `${file} must set a real backdropFilter: "blur(...)" (glass treatment)`).toBe(true)
-            expect(/WebkitBackdropFilter:\s*"blur\(/.test(src), `${file} must also set WebkitBackdropFilter for Safari`).toBe(true)
+        it(`${file} carries no backdrop blur — these shells are opaque`, () => {
+            expect(
+                /backdropFilter/i.test(src),
+                `${file} must not set backdropFilter: floating shells over the globe are opaque, ` +
+                `so text under them stays readable and the shell edge stays findable`,
+            ).toBe(false)
         })
+
     }
 })

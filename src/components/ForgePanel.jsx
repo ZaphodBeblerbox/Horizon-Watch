@@ -1389,7 +1389,7 @@ function ForgeLandingNav({ brainStatus, onNavigate, onPipeline }) {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10, marginBottom: 16 }}>
                 {FORGE_NAV.map(({ ws, label, color, desc }) => (
                     <button key={ws} onClick={() => onNavigate(ws)} style={{
-                        background: "rgba(17,24,39,0.7)", border: `1px solid rgba(255,255,255,0.05)`,
+                        background: "rgb(17, 24, 39)", border: `1px solid rgba(255,255,255,0.05)`,
                         borderLeft: `3px solid ${color}`, borderRadius: 6,
                         padding: "12px 14px", textAlign: "left", cursor: "pointer",
                         transition: "background 0.15s",
@@ -2426,7 +2426,7 @@ function StrategicZonesWorkspace() {
             </div>
 
             {creating && (
-                <div style={{ background: "rgba(17,24,39,0.8)", border: "1px solid rgba(255,59,48,0.2)", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                <div style={{ background: "rgb(17, 24, 39)", border: "1px solid rgba(255,59,48,0.2)", borderRadius: 8, padding: 16, marginBottom: 16 }}>
                     <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>New Strategic Zone</div>
                     {[
                         { key: "name",              label: "Name",        type: "text"  },
@@ -2436,21 +2436,21 @@ function StrategicZonesWorkspace() {
                         <div key={key} style={{ marginBottom: 8 }}>
                             <div style={{ color: "#64748b", fontSize: 11, marginBottom: 3 }}>{label}</div>
                             <input type={type} value={newZone[key]} onChange={e => setNewZone(z => ({ ...z, [key]: e.target.value }))}
-                                style={{ width: "100%", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }} />
+                                style={{ width: "100%", background: "rgb(30, 41, 59)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }} />
                         </div>
                     ))}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                         <div>
                             <div style={{ color: "#64748b", fontSize: 11, marginBottom: 3 }}>Type</div>
                             <select value={newZone.zone_type} onChange={e => setNewZone(z => ({ ...z, zone_type: e.target.value }))}
-                                style={{ width: "100%", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }}>
+                                style={{ width: "100%", background: "rgb(30, 41, 59)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }}>
                                 {Object.entries(ZONE_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                             </select>
                         </div>
                         <div>
                             <div style={{ color: "#64748b", fontSize: 11, marginBottom: 3 }}>Severity</div>
                             <select value={newZone.severity_baseline} onChange={e => setNewZone(z => ({ ...z, severity_baseline: e.target.value }))}
-                                style={{ width: "100%", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }}>
+                                style={{ width: "100%", background: "rgb(30, 41, 59)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 12 }}>
                                 {["critical","high","medium","low"].map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                         </div>
@@ -2459,7 +2459,7 @@ function StrategicZonesWorkspace() {
                         <div style={{ color: "#64748b", fontSize: 11, marginBottom: 3 }}>Coordinates (JSON array of [lon,lat] pairs)</div>
                         <textarea value={coordStr} onChange={e => setCoordStr(e.target.value)} rows={3}
                             placeholder='[[lon1,lat1],[lon2,lat2],...]'
-                            style={{ width: "100%", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 11, resize: "vertical", fontFamily: "monospace" }} />
+                            style={{ width: "100%", background: "rgb(30, 41, 59)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "5px 8px", color: "#e2e8f0", fontSize: 11, resize: "vertical", fontFamily: "monospace" }} />
                     </div>
                     {saveErr && <div style={{ color: "#FF3B30", fontSize: 11, marginBottom: 8 }}>{saveErr}</div>}
                     <button onClick={handleCreate} style={{
@@ -2492,7 +2492,7 @@ function StrategicZonesWorkspace() {
                         </div>
                         {zlist.map(z => (
                             <div key={z.zone_id} style={{
-                                background: "rgba(17,24,39,0.7)", border: `1px solid rgba(255,255,255,0.06)`,
+                                background: "rgb(17, 24, 39)", border: `1px solid rgba(255,255,255,0.06)`,
                                 borderLeft: `3px solid ${z.colour || "#FF9500"}`, borderRadius: 5,
                                 padding: "9px 12px", marginBottom: 6,
                                 opacity: z.enabled ? 1 : 0.45,
@@ -5075,7 +5075,7 @@ function NewsReviewCard({ item, onLabel }) {
                 <span style={{ fontSize: 10, color: "#64748b" }}>{item.source || "Unknown"}</span>
                 {item.published && <span style={{ fontSize: 10, color: "#475569" }}>{new Date(item.published).toLocaleDateString()}</span>}
                 <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 8, background: `${sc}18`, color: sc, fontWeight: 700 }}>{(item.severity_tier || "low").toUpperCase()}</span>
-                {item.event_type && <span style={{ fontSize: 10, color: "#94a3b8", padding: "1px 6px", borderRadius: 8, background: "rgba(30,41,59,0.7)" }}>{item.event_type}</span>}
+                {item.event_type && <span style={{ fontSize: 10, color: "#94a3b8", padding: "1px 6px", borderRadius: 8, background: "rgb(30, 41, 59)" }}>{item.event_type}</span>}
             </div>
             {showAdj && (
                 <div style={{ marginBottom: 10, padding: 10, background: "rgba(30,41,59,0.5)", borderRadius: 4, border: "1px solid rgba(148,163,184,0.08)" }}>
@@ -6723,7 +6723,7 @@ function ForgeMobileView({ onClose }) {
                             const sev = (a.severity || "info").toLowerCase()
                             const sevColor = sev === "critical" ? "#ef4444" : sev === "high" ? "#f59e0b" : sev === "medium" ? "#60a5fa" : "#22c55e"
                             return (
-                                <div key={a._idx ?? i} style={{ background: "rgba(17,24,39,0.7)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${sevColor}` }}>
+                                <div key={a._idx ?? i} style={{ background: "rgb(17, 24, 39)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${sevColor}` }}>
                                     <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{a.type || a.rule_name || "Alert"}</div>
                                     <div style={{ color: "#64748b", fontSize: 10 }}>{a.summary || a.message || "—"}</div>
                                     <div style={{ color: "#334155", fontSize: 9, marginTop: 3 }}>{a.timestamp ? new Date(a.timestamp).toLocaleString("en-GB", { hour12: false, dateStyle: "short", timeStyle: "short" }) : ""}</div>
@@ -6735,7 +6735,7 @@ function ForgeMobileView({ onClose }) {
                     rules.length === 0
                         ? <div style={{ color: "#475569", fontSize: 12, padding: 16, textAlign: "center" }}>No rules configured</div>
                         : rules.map(r => (
-                            <div key={r.id} style={{ background: "rgba(17,24,39,0.7)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${r.enabled ? "#4A9EE0" : "#1e293b"}` }}>
+                            <div key={r.id} style={{ background: "rgb(17, 24, 39)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${r.enabled ? "#4A9EE0" : "#1e293b"}` }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                     <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{r.name}</span>
                                     <span style={{ color: r.enabled ? "#22c55e" : "#475569", fontSize: 9 }}>{r.enabled ? "ON" : "OFF"}</span>
@@ -6748,7 +6748,7 @@ function ForgeMobileView({ onClose }) {
                     zones.length === 0
                         ? <div style={{ color: "#475569", fontSize: 12, padding: 16, textAlign: "center" }}>No surveillance zones</div>
                         : zones.map(z => (
-                            <div key={z.system_id} style={{ background: "rgba(17,24,39,0.7)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${z.is_active ? "#4A9EE0" : "#1e293b"}` }}>
+                            <div key={z.system_id} style={{ background: "rgb(17, 24, 39)", borderRadius: 6, padding: "8px 10px", marginBottom: 6, borderLeft: `3px solid ${z.is_active ? "#4A9EE0" : "#1e293b"}` }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                     <span style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{z.name}</span>
                                     <span style={{ color: z.is_active ? "#22c55e" : "#475569", fontSize: 9 }}>{z.is_active ? "ACTIVE" : "PAUSED"}</span>

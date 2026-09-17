@@ -27,9 +27,7 @@ export default function WelcomeBackModal({ user, onDismiss, onReadBriefing, onVi
             padding:        16,
         }}>
             <div style={{
-                background:      "rgba(10,14,20,0.97)",
-                backdropFilter:  "blur(24px)",
-                WebkitBackdropFilter: "blur(24px)",
+                background:      "rgb(10, 14, 20)",
                 border:          "1px solid rgba(255,255,255,0.08)",
                 borderRadius:    10,
                 width:           "100%",

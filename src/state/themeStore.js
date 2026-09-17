@@ -40,10 +40,14 @@ let themeMode = (() => {
         const m = localStorage.getItem(MODE_CACHE_KEY)
         if (m === "light" || m === "dark" || m === "auto") return m
     } catch { /* private mode / storage blocked */ }
-    // No mode mirror yet (a device that predates Auto mode) — the existing
-    // rendered light/dark mirror is the best honest guess until
-    // reconcileTheme() corrects it against the real per-user server value.
-    return renderedTheme
+    // No mode mirror yet — a new device, a cleared browser, or a device
+    // predating Auto mode. Auto is the default: it tracks the sun, so it is
+    // right at every hour rather than right half the time. Previously this
+    // returned whatever happened to be painted, which on a first visit is
+    // always "dark" — i.e. the default was dark by accident of the paint
+    // bootstrap rather than by decision. reconcileTheme() still corrects
+    // this against the real per-user server value once the session resolves.
+    return "auto"
 })()
 let blend = renderedTheme === "light" ? 1 : 0
 let elevationDeg = null

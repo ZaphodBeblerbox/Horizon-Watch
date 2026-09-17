@@ -16,9 +16,7 @@ export { PROFILE_KEY } from "../constants/profile.js"
 // ── Shared styles ──────────────────────────────────────────────────────────────
 
 const GLASS = {
-    background:           "rgba(10,10,10,0.96)",
-    backdropFilter:       "blur(24px)",
-    WebkitBackdropFilter: "blur(24px)",
+    background:           "rgb(10, 10, 10)",
 }
 
 const THRESHOLD_LABELS = [

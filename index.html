@@ -20,8 +20,28 @@
         // user changed it elsewhere.
         (function () {
             try {
-                if (localStorage.getItem("hw-theme-cache") === "light") {
+                var themeCache = localStorage.getItem("hw-theme-cache")
+                if (themeCache === "light") {
                     document.documentElement.setAttribute("data-theme", "light")
+                } else if (themeCache !== "dark") {
+                    // No mirror at all — a first visit, or cleared storage.
+                    // The default mode is Auto, which follows the sun, so the
+                    // first paint must not be unconditionally dark: opening a
+                    // console in dark mode at midday reads as broken.
+                    //
+                    // Local clock hour only. This runs before any script has
+                    // loaded, so there is no geolocation and no solar maths
+                    // available yet — and neither belongs in a blocking paint
+                    // bootstrap. It is a coarse guess for ONE frame:
+                    // themeStore's real solarElevationDeg() calculation, with
+                    // the user's actual coordinates, replaces it as soon as
+                    // the app mounts. Being wrong here costs a single frame
+                    // near dawn or dusk; being unconditionally dark cost
+                    // every daytime first visit.
+                    var h = new Date().getHours()
+                    if (h >= 7 && h < 19) {
+                        document.documentElement.setAttribute("data-theme", "light")
+                    }
                 }
                 // Real Settings round, General section — density is the
                 // same real per-user, server-persisted mechanism (see
@@ -160,8 +180,8 @@
                Real dark-theme tint kept as the previous literal values;
                a real, distinct light-theme tint is defined below (never
                the dark theme's translucent black reused — see index.css). */
-            --pane-glass-bg:     rgba(26, 31, 37, .72);
-            --akili-glass-bg:    rgba(14, 20, 32, 0.88);
+            --pane-glass-bg:     #1c2127;   /* solid: was rgba(26,31,37,.72) — same colour, no transparency */
+            --akili-glass-bg:    #171b20;   /* solid: matches --bg-0 */
             --akili-glass-border: rgba(255, 255, 255, 0.07);
 
             /* ── Real map-overlay tooltip tokens (Parallax theming pass) —
@@ -172,7 +192,7 @@
                different real hues today, not consolidated into one — a
                real, separate design decision from this pass's scope) —
                just tokenized so they're themeable, not decorative/hardcoded. */
-            --map-tooltip-bg:      rgba(10, 14, 20, 0.92);
+            --map-tooltip-bg:      #22282f; /* solid: matches --bg-2 (floating card over the map) */
             --map-tooltip-text:    #e2e8f0;
             --map-tooltip-text-strong: #f0f4f8;
             --map-tooltip-border:  rgba(255, 255, 255, 0.12);
@@ -270,7 +290,7 @@
             /* Tooltips are frosted, never opaque: on a map the thing under
                the cursor is the thing being asked about, and an opaque card
                answers the question by hiding the subject. */
-            --tip-bg:rgba(26,32,38,.82);
+            --tip-bg:#22282f;
             --tip-line:rgba(190,205,220,.20);
 
             /* Declared at :root deliberately. Scoped to .panes it is
@@ -512,7 +532,7 @@
             --tr25:rgba(50,102,164,.34);--tr26:rgba(173,50,41,.14);--tr27:rgba(173,50,41,.16);--tr28:rgba(50,102,164,.12);--tr29:rgba(50,102,164,.07);--tr30:rgba(40,104,174,.06);
             --tr31:rgba(146,99,23,.12);
 
-            --tip-bg:rgba(250,246,238,.84);
+            --tip-bg:#f9f5ec;
             --tip-line:rgba(96,84,64,.24);
 
             /* derived from the semantic tokens above — kept equal to them
@@ -537,13 +557,13 @@
             /* ── Glass panes — a real, distinct light-theme tint, never
                the dark theme's translucent black reused (that would read
                muddy on a warm-paper ground) ──────────────────────────── */
-            --pane-glass-bg:      rgba(245, 240, 230, .74);
-            --akili-glass-bg:     rgba(245, 240, 230, .82);
+            --pane-glass-bg:      #f4efe5; /* solid: matches --bg-1 */
+            --akili-glass-bg:     #f4efe5; /* solid: matches --bg-1 */
             --akili-glass-border: rgba(70, 60, 45, 0.10);
 
             /* ── Map overlay tooltips — same real per-type accent hues,
                real light backing/border/text ────────────────────────── */
-            --map-tooltip-bg:      rgba(245, 240, 230, 0.94);
+            --map-tooltip-bg:      #f9f5ec; /* solid: matches --bg-2 */
             --map-tooltip-text:    #262019;
             --map-tooltip-text-strong: #14110c;
             --map-tooltip-border:  rgba(70, 60, 45, 0.16);

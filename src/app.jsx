@@ -177,8 +177,6 @@ const PANEL_STYLE = {
     flexShrink:  0,
     height:      "100%",
     background:  "var(--pane-glass-bg)",
-    backdropFilter: "blur(20px) saturate(1.3)",
-    WebkitBackdropFilter: "blur(20px) saturate(1.3)",
     borderLeft:  "1px solid var(--acc-line)",
     overflowY:   "auto",
     boxSizing:   "border-box",
@@ -504,41 +502,61 @@ export default function App() {
     )
     const unreadCount = notifItems.filter(i => !readIds.has(i.id)).length
 
-    // Feed real arrivals into the notification store (PARALLAX spec §5).
+    // ── What actually becomes a notification ─────────────────────────────
+    // Source of truth is /api/notifications, NOT the surface pool. The
+    // backend already answers the two questions this surface needs — is this
+    // worth interrupting someone for, and what does it say in English — and
+    // answering them here instead would mean reimplementing geography,
+    // sanctions authorities and arrival tracking in the browser, against
+    // data the browser does not have.
+    //
+    // The endpoint returns the filtered set only: ~150/day out of ~860
+    // alerts/day, each already carrying a rebuilt title (never an MMSI, never
+    // a bare date) and the `reason` its relevance rule fired on. The surface
+    // pool stays exactly where it was — it feeds the Inbox, which is the
+    // working record and is meant to hold everything.
+    const [notifFeed, setNotifFeed] = useState([])
+    useEffect(() => {
+        if (!profile) return
+        let cancelled = false
+        const load = () => fetch(`${API}/api/notifications?limit=60&hours=48`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && Array.isArray(d)) setNotifFeed(d) })
+            .catch(() => {})
+        load()
+        const t = setInterval(load, 45000)
+        return () => { cancelled = true; clearInterval(t) }
+    }, [profile])
+
     // Only signals that appear AFTER the first load raise anything: on mount
     // the existing backlog is recorded silently, because replaying a hundred
     // historical criticals as cards on every page load is precisely the
     // "shouts at every event" failure the rule exists to prevent.
     const notifSeenRef = useRef(null)
     useEffect(() => {
-        if (!notifItems.length) return
+        if (!notifFeed.length) return
         if (notifSeenRef.current === null) {
-            notifSeenRef.current = new Set(notifItems.map((i) => i.id))
+            notifSeenRef.current = new Set(notifFeed.map((i) => i.id))
             return
         }
         const seen = notifSeenRef.current
-        for (const i of notifItems) {
+        for (const i of notifFeed) {
             if (seen.has(i.id)) continue
             seen.add(i.id)
-            // severity_tier (surface pool) and severity (fusion) are the two
-            // real vocabularies in this merged shape; map both onto the four
-            // display tokens the diamond uses.
-            const raw = String(i.severity_tier || i.severity || "").toLowerCase()
-            const sev = raw === "critical" ? "critical"
-                : (raw === "significant" || raw === "high") ? "high"
-                : (raw === "elevated" || raw === "medium" || raw === "moderate") ? "moderate"
-                : "low"
             pushNotification({
                 id: i.id,
-                sev,
-                kind: i.domain_count > 1 || i.fusion_id ? "escalate" : "signal",
-                title: i.headline || i.title || i.event_title || "Signal",
-                sub: [i.location || i.location_name, i.source || i.source_name].filter(Boolean).join(" · "),
+                sev: i.sev || "moderate",
+                kind: i.kind || "signal",
+                title: i.title || "Signal",
+                // The reason is the whole point of showing it: an analyst who
+                // disagrees with a notification can see the rule that raised
+                // it rather than guessing at one.
+                sub: [i.reason, i.region].filter(Boolean).join(" · "),
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
-                ts: Date.parse(i.ingested_at || i.created_at || "") || Date.now(),
+                ts: Date.parse(i.created_at || "") || Date.now(),
             })
         }
-    }, [notifItems])
+    }, [notifFeed])
 
     const handleMarkRead = useCallback((id) => {
         setReadIds(prev => {
@@ -1165,8 +1183,6 @@ export default function App() {
         bottom:      56,
         zIndex:      1500,
         background:  "var(--pane-glass-bg)",
-        backdropFilter: "blur(20px) saturate(1.3)",
-        WebkitBackdropFilter: "blur(20px) saturate(1.3)",
         overflowY:   "auto",
         boxSizing:   "border-box",
         fontFamily:  "system-ui, -apple-system, sans-serif",
@@ -1524,7 +1540,7 @@ export default function App() {
                         top:            12,
                         right:          12,
                         zIndex:         2100,
-                        background:     "rgba(8,12,22,0.88)",
+                        background:     "rgb(8, 12, 22)",
                         border:         "1px solid rgba(255,255,255,0.15)",
                         borderRadius:   6,
                         color:          "rgba(232,237,242,0.8)",
@@ -1533,8 +1549,6 @@ export default function App() {
                         letterSpacing:  "0.06em",
                         padding:        "6px 12px",
                         cursor:         "pointer",
-                        backdropFilter: "blur(10px)",
-                        WebkitBackdropFilter: "blur(10px)",
                         display:        "flex",
                         alignItems:     "center",
                         gap:            6,

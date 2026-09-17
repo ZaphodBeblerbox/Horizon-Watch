@@ -130,8 +130,6 @@ function Tooltip({ zone, x, y, visible, onClose }) {
                 // flipped with theme); now the one shared real map-hover-
                 // callout recipe (index.html's --map-tooltip-bg).
                 background:      "var(--map-tooltip-bg)",
-                backdropFilter:  "blur(20px) saturate(1.4)",
-                WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                 border:          "var(--elevation-2)",
                 borderRadius:    12,
                 overflow:        "hidden",
@@ -235,7 +233,7 @@ function Tooltip({ zone, x, y, visible, onClose }) {
             </div>
 
             {/* Tab bar */}
-            <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(10,18,35,0.6)" }}>
+            <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgb(10, 18, 35)" }}>
                 {["overview", "foresight"].map(tab => (
                     <button key={tab} onClick={() => setActiveTab(tab)} style={{
                         flex: 1, padding: "8px 0",

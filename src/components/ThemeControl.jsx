@@ -163,7 +163,6 @@ export default function ThemeControl({ inline = false }) {
                 <div style={{
                     position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 2000,
                     width: 200, background: "var(--map-tooltip-bg)",
-                    backdropFilter: "blur(20px) saturate(1.4)", WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                     border: "1px solid var(--border-strong)", borderRadius: "var(--radius-md)",
                     overflow: "hidden", padding: 4,
                 }}>

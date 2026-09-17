@@ -2,8 +2,7 @@ import { useState, useRef, useEffect } from "react"
 import { TV_CHANNELS } from "./tvchannels.js"
 
 const GLASS = {
-    background: "rgba(13,17,28,0.96)",
-    backdropFilter: "blur(12px)",
+    background: "rgb(13, 17, 28)",
     border: "1px solid rgba(255,255,255,0.10)",
     borderRadius: 12,
     color: "#fff",

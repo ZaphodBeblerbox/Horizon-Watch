@@ -53,7 +53,6 @@ export const LAYER_GROUPS = [
         layers: [
             { key: "eez", label: "Exclusive Economic Zones", hint: "200 nm maritime boundaries" },
             { key: "showStrategicZones", label: "Strategic Zones", hint: "Conflict zones · nuclear corridors" },
-            { key: "threatHeatmap", label: "Threat Heatmap", hint: "Regional threat levels — hourly", defaultOn: true },
             { key: "cityLabels", label: "City Labels", hint: null },
         ],
     },

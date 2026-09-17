@@ -67,9 +67,7 @@ export default function BottomSheet({
                     right:            0,
                     bottom:           56,   // above BottomNav
                     maxHeight:        maxHeight(),
-                    background:       "rgba(6,13,26,0.98)",
-                    backdropFilter:   "blur(20px)",
-                    WebkitBackdropFilter: "blur(20px)",
+                    background:       "rgb(6, 13, 26)",
                     borderRadius:     "18px 18px 0 0",
                     borderTop:        "1px solid rgba(255,255,255,0.12)",
                     borderLeft:       "1px solid rgba(255,255,255,0.06)",

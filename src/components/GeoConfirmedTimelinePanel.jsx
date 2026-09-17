@@ -202,7 +202,7 @@ export default function GeoConfirmedTimelinePanel({ theatres, onTheatresChange, 
             // never under it, only in the real space between both
             // sidebars.
             position: "absolute", left: leftInset, right: rightInset, bottom: 0, zIndex: 5,
-            background: "var(--pane-glass-bg)", backdropFilter: "blur(16px) saturate(115%)", WebkitBackdropFilter: "blur(16px) saturate(115%)",
+            background: "var(--pane-glass-bg)",
             borderTop: "1px solid var(--line)", padding: "8px 12px 10px", display: "flex", flexDirection: "column", gap: 6,
         }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>

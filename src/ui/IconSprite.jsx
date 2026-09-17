@@ -45,6 +45,8 @@ const SPRITE = `
 <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="7.5" y="5.5" width="3.4" height="13"/><rect x="13.1" y="5.5" width="3.4" height="13"/></symbol>
 <symbol id="i-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/></symbol>
 <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 4h16v16H4zM4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16"/></symbol>
+<symbol id="i-risk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3.6 16.6a9 9 0 0116.8 0"/><path d="M12 16.6L16.6 9.9"/><circle cx="12" cy="16.6" r="1.25"/><path d="M4.6 12.4l1.5.6M12 7.2V5.6M19.4 12.4l-1.5.6"/></symbol>
+<symbol id="i-label" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M3.8 11.2V4.6h6.6l9 9-6.6 6.6-9-9z"/><circle cx="7.6" cy="8.4" r="1.35"/></symbol>
 <symbol id="i-reset" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12a8 8 0 1114 5.3"/><path d="M4 6.5V12h5.5"/></symbol>
 <symbol id="i-add-brief" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3h8l4 4v8"/><path d="M14 3v4h4M6 3v18h6"/><path d="M16 17.5h6M19 14.5v6"/></symbol>
 <symbol id="i-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 21V4M6 4h11l-2 4 2 4H6"/></symbol>

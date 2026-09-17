@@ -20,7 +20,9 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import GlobeView from "../components/GlobeView.jsx"
-import MapControlStack from "../components/MapControlStack.jsx"
+import MapAnnobar from "../components/MapAnnobar.jsx"
+import MapChrome from "../components/MapChrome.jsx"
+import MapMeta from "../components/MapMeta.jsx"
 import { LAYER_GROUPS } from "../components/layerRailConfig.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { summarizeHealth } from "../utils/systemHealth.js"
@@ -71,6 +73,14 @@ const ANNOTATION_TOOLS = [
     { key: "area", label: "Area", icon: "i-poly" },
     { key: "measure", label: "Measure", icon: "i-measure" },
 ]
+// §10.1 names the four map tools select / measure / pin / poly. GlobeView's
+// annotation layer has always spoken select / measure / marker / area, and it
+// is the thing that actually draws. Rather than rename working draw code to
+// match a label, the spec's names live in the DOM and are translated here at
+// the single boundary where the two vocabularies meet.
+const SPEC_TO_TOOL = { select: "select", measure: "measure", pin: "marker", poly: "area" }
+const TOOL_TO_SPEC = { select: "select", measure: "measure", marker: "pin", area: "poly", route: "select" }
+
 // Quick-layer buttons — the same real groupsOn state the Layers pane's own
 // domain rows use (one shared toggle, never a second independent list).
 // Nuclear-option production-stability round: the Sentinel/Copernicus
@@ -255,7 +265,7 @@ export default function Situation({ onOpenDossier }) {
     // layer toggles, and keep their own sensible defaults since they don't
     // clutter an empty map on their own.
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
-    const [contextOn, setContextOn] = useState({ risk: false, graticule: false, flows: false, aois: false, labels: false })
+    const [contextOn, setContextOn] = useState({ graticule: false, flows: false, aois: false, labels: false })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
     const [exportOpen, setExportOpen] = useState(false)
     // Imagery/detection top-bar entry point — real audit (Part 0) confirmed
@@ -596,12 +606,12 @@ export default function Situation({ onOpenDossier }) {
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span role="button" tabIndex={0} onClick={() => {
                             setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))
-                            setContextOn({ risk: true, graticule: true, flows: true, aois: true, labels: true })
+                            setContextOn({ graticule: true, flows: true, aois: true, labels: true })
                             setTracksOn({ vessels: true, aircraft: true, sanctionedOnly: false, ports: true })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>all</span>
                         <span role="button" tabIndex={0} onClick={() => {
                             setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
-                            setContextOn({ risk: false, graticule: false, flows: false, aois: false, labels: false })
+                            setContextOn({ graticule: false, flows: false, aois: false, labels: false })
                             setTracksOn({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
                         <button onClick={() => setLeftMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
@@ -632,7 +642,6 @@ export default function Situation({ onOpenDossier }) {
                 <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Context layers</div>
                     {[
-                        ["risk", "Country risk index"],
                         ["graticule", "Graticule 10°"],
                         ["flows", "Trade & energy flows"],
                         ["aois", "Areas of interest"],
@@ -756,28 +765,14 @@ export default function Situation({ onOpenDossier }) {
                         </span>
                     )}
 
-                    {/* Annotation toolbar — §3. select/marker/route/area/measure,
-                        in that order, sharing this row's flat-icon-button
-                        treatment (no separately-boxed group). */}
-                    <div style={{ display: "flex", alignItems: "center", flex: "none" }}>
-                        {ANNOTATION_TOOLS.map((t, i) => (
-                            <button
-                                key={t.key}
-                                onClick={() => setAnnotationTool(t.key)}
-                                title={t.label}
-                                aria-pressed={annotationTool === t.key}
-                                style={{
-                                    flex: "none", whiteSpace: "nowrap", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
-                                    background: annotationTool === t.key ? "var(--bg-4)" : "none", border: "none",
-                                    borderRight: i < ANNOTATION_TOOLS.length - 1 ? "1px solid var(--line-soft)" : "none",
-                                    cursor: "pointer", color: annotationTool === t.key ? "var(--txt)" : "var(--txt-3)",
-                                }}
-                            >
-                                <svg className="icon sm"><use href={`#${t.icon}`} /></svg>
-                            </button>
-                        ))}
-                    </div>
-
+                    {/* The annotation toolbar that used to sit in this band has
+                        moved onto the map itself, as PARALLAX §10.1's vertical
+                        `.annobar` (top-left, 28px buttons). The earlier comment
+                        here asserted these controls must "never float on the map
+                        surface" — true when the side panes were translucent
+                        overlays a floating control could end up unreachable
+                        under, but the panes are opaque grid columns now and §10
+                        is explicit about the placement. */}
                     {/* Quick-layer buttons — immediately next to the annotation
                         toolbar, same shared groupsOn state the Layers pane's
                         domain rows use (one real toggle, never a duplicate). */}
@@ -801,36 +796,9 @@ export default function Situation({ onOpenDossier }) {
                     </div>
 
                     <div style={{ flex: 1 }} />
-                    {/* Real Imagery/detection entry point — the one real
-                        top-bar imagery icon now (the old, visually-identical
-                        "activate all satellite imagery" quick-layer icon is
-                        removed, see QUICK_LAYERS above). Opens a real docked
-                        sidebar (ImagerySidebar.jsx) to draw a shape, pick a
-                        sensor + cloud/date filter, receive a real scene, and
-                        run real detection — all rendered directly on this
-                        globe, not inside the sidebar.
-                        Nuclear-option production-stability round: disabled
-                        (grayed out, not removed) rather than shown live and
-                        erroring — the real backend kill switch
-                        (SENTINEL_IMAGERY_ENABLED, backend/main.py) defaults
-                        this same feature off in production right now.
-                        SENTINEL_IMAGERY_ENABLED here mirrors that default;
-                        flip both back together once production stability is
-                        independently reconfirmed. */}
-                    <button
-                        onClick={() => SENTINEL_IMAGERY_ENABLED && (imageryPanelOpen ? closeImageryPanel() : setImageryPanelOpen(true))}
-                        disabled={!SENTINEL_IMAGERY_ENABLED}
-                        title={SENTINEL_IMAGERY_ENABLED ? "Imagery & detection — load Sentinel scenes and run object detection" : "Imagery & detection — temporarily disabled (production stability)"}
-                        aria-pressed={imageryPanelOpen}
-                        style={{
-                            flex: "none", whiteSpace: "nowrap", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
-                            background: imageryPanelOpen ? "var(--bg-4)" : "none", border: "1px solid var(--line-soft)", borderRadius: 3,
-                            cursor: SENTINEL_IMAGERY_ENABLED ? "pointer" : "not-allowed", opacity: SENTINEL_IMAGERY_ENABLED ? 1 : 0.4,
-                            color: imageryPanelOpen ? "var(--txt)" : "var(--txt-3)",
-                        }}
-                    >
-                        <svg className="icon sm"><use href="#i-sat" /></svg>
-                    </button>
+                    {/* The imagery entry point is now the single `#t-imagery`
+                        control in `.annobar` — §10.1 calls out by name that
+                        there must be ONE imagery icon, not two. */}
                     <button
                         onClick={() => setExportOpen(true)}
                         title="Export signals for a time period (CSV/PDF)"
@@ -852,7 +820,16 @@ export default function Situation({ onOpenDossier }) {
                         ))}
                     </div>
                 </div>
-                <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                <div style={{
+                    flex: 1, minHeight: 0, position: "relative",
+                    // The map chrome positions itself against the VISIBLE map,
+                    // not the canvas — the panes overlay the canvas, so without
+                    // these the annobar lands on top of the Layers pane and the
+                    // scale bar disappears underneath it. Same real widths the
+                    // GlobeView insets below already use.
+                    "--map-inset-l": leftMin ? "0px" : "250px",
+                    "--map-inset-r": `${activeRightOverlayWidth || 0}px`,
+                }}>
                     {/* Event domains — real signal/alert visualization, per group.
                         Fixed a real bug here: precisionEventsEnabled defaults to
                         true INSIDE GlobeView itself when omitted, so News being
@@ -879,7 +856,6 @@ export default function Situation({ onOpenDossier }) {
                         satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}
                         strategicZonesEnabled={groupsOn.zones} eezEnabled={groupsOn.zones}
                         /* Context layers — separate from event domains, per build spec v2 §4.2 */
-                        threatHeatmapEnabled={contextOn.risk}
                         graticuleEnabled={contextOn.graticule}
                         cityLabelsEnabled={contextOn.labels}
                         /* Live tracks — real raw position rendering, independent of the
@@ -906,7 +882,45 @@ export default function Situation({ onOpenDossier }) {
                         onOverwatchPolygon={handleImageryPolygon}
                         overwatchSentinelOverlay={imageryScene ? { image_b64: imageryScene.image_b64_composited, bounds: imageryScene.bounds } : null}
                     />
-                    <MapControlStack onFullscreen={() => {}} basemap={{ value: basemap, onChange: setBasemap }} rightInset={activeRightOverlayWidth} />
+                    {/* §10.1 / §10.2 / §10 `.mapmeta` — the map's own chrome,
+                        inside the map container so it is positioned against the
+                        canvas rather than the screen. Replaces MapControlStack's
+                        lower-right 32px stack, which predates these tokens and
+                        put zoom in a different corner from the spec.
+
+                        Tool vocabulary is translated at this boundary: §10 names
+                        the tools select/measure/pin/poly, while GlobeView's
+                        annotation layer has always spoken select/measure/marker/
+                        area. The spec's ids are what appear in the DOM; the
+                        existing layer keeps its own vocabulary rather than being
+                        renamed underneath working draw code. */}
+                    <MapAnnobar
+                        tool={TOOL_TO_SPEC[annotationTool] || "select"}
+                        onToolChange={(k) => setAnnotationTool(SPEC_TO_TOOL[k] || "select")}
+                        toggles={{
+                            imagery: imageryPanelOpen,
+                            grat: contextOn.graticule,
+                            label: contextOn.labels,
+                        }}
+                        disabledToggles={{ imagery: !SENTINEL_IMAGERY_ENABLED }}
+                        onToggle={(k) => {
+                            if (k === "imagery") {
+                                if (!SENTINEL_IMAGERY_ENABLED) return
+                                imageryPanelOpen ? closeImageryPanel() : setImageryPanelOpen(true)
+                                return
+                            }
+                            // Explicit map, no fallthrough default: "risk" used
+                            // to be the default arm, so an unrecognised key
+                            // silently toggled the risk layer. With that layer
+                            // gone the same shape would write a field nothing
+                            // reads, which is a toggle that appears to work.
+                            const field = k === "grat" ? "graticule" : k === "label" ? "labels" : null
+                            if (!field) return
+                            setContextOn((p) => ({ ...p, [field]: !p[field] }))
+                        }}
+                    />
+                    <MapChrome basemap={{ value: basemap, onChange: setBasemap }} />
+                    <MapMeta />
                     {/* The severity legend used to float here, bottom-right —
                         per the map-overlay-geometry table it does not belong
                         on the map surface at all; it now lives inside the

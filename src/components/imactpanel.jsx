@@ -23,8 +23,7 @@ export default function ImpactPanel({ analysis, event, loading, onClose, onAnaly
         <div style={{
             width: 320,
             flexShrink: 0,
-            background: "rgba(255,255,255,0.7)",
-            backdropFilter: "blur(12px)",
+            background: "rgb(255, 255, 255)",
             borderLeft: "1px solid rgba(0,0,0,0.10)",
             display: "flex",
             alignItems: "center",
@@ -44,8 +43,7 @@ export default function ImpactPanel({ analysis, event, loading, onClose, onAnaly
         <div style={{
             width: 320,
             flexShrink: 0,
-            background: "rgba(255,255,255,0.7)",
-            backdropFilter: "blur(12px)",
+            background: "rgb(255, 255, 255)",
             borderLeft: "1px solid rgba(0,0,0,0.10)",
             display: "flex",
             flexDirection: "column",

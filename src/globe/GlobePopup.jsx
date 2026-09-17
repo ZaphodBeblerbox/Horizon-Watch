@@ -10,13 +10,13 @@ import { normalizeEntity } from "../inspector/adapters.js"
 import API_BASE                  from "../apiBase.js"
 
 // Entity types InspectorPanel (Round 2's unified detail panel) renders
-// directly. "threat_region" keeps its own bespoke popup below — it has a
-// real async "explain" fetch (region threat-matrix narrative) that isn't
-// part of InspectorPanel's generic entity model, and folding it in would
-// mean either losing that feature or building new inspector machinery just
-// for one entity type; "html" is the raw Cesium entity-description fallback
-// for entities with no registered type at all, which was never a
-// bespoke *component* to begin with.
+// directly. "html" — the raw Cesium entity-description fallback for
+// entities with no registered type at all — is the one remaining floating
+// popup; it was never a bespoke *component* to begin with.
+//
+// "threat_region" used to be the other one. Its bespoke popup went with
+// GlobeThreatHeatmapLayer, the only thing that ever registered an entity of
+// that type.
 export const INSPECTOR_TYPES = new Set([
     "aircraft", "vessel", "event", "eez", "cable", "infra", "heatmap_cell",
     "alert", "assessment", "fusion", "airport", "port",
@@ -24,7 +24,6 @@ export const INSPECTOR_TYPES = new Set([
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
-const THREAT_COLORS = { critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e" }
 function sigColor(sig) {
     const s = (sig || "").toLowerCase()
     if (s.includes("ais") || s.includes("vessel") || s.includes("maritime")) return "#0ea5e9"
@@ -34,90 +33,6 @@ function sigColor(sig) {
     if (s.includes("fusion")) return "#8b5cf6"
     return "#64748b"
 }
-function ThreatRegionPopup({ data, onClose }) {
-    const [explain,   setExplain]   = useState(null)
-    const [expLoad,   setExpLoad]   = useState(false)
-    const lvl   = (data.threat_level || "low").toLowerCase()
-    const col   = THREAT_COLORS[lvl] || "#64748b"
-    const score = Math.round(data.threat_score ?? 0)
-    const trend = data.trend || ""
-    const trendArrow = trend === "escalating" ? "▲" : trend === "de-escalating" ? "▼" : "→"
-    const trendCol   = trend === "escalating" ? "#ef4444" : trend === "de-escalating" ? "#22c55e" : "#94a3b8"
-
-    const loadExplain = () => {
-        if (explain || expLoad) return
-        setExpLoad(true)
-        fetch(`${API_BASE}/api/analytics/threat-matrix/${encodeURIComponent(data.region_name)}/explain`)
-            .then(r => r.ok ? r.json() : null)
-            .then(d => { setExplain(d); setExpLoad(false) })
-            .catch(() => setExpLoad(false))
-    }
-
-    return (
-        <div style={{ fontFamily: "system-ui, sans-serif" }}>
-            {/* Header */}
-            <div style={{ padding: "10px 12px 8px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div>
-                    <div style={{ display: "inline-block", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, marginBottom: 5, background: col + "22", color: col, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                        {lvl}
-                    </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#e2e8f0" }}>{data.region_name}</div>
-                </div>
-                <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, padding: 0 }}>✕</button>
-            </div>
-            {/* Body */}
-            <div style={{ padding: "10px 12px" }}>
-                {/* Score bar */}
-                <div style={{ marginBottom: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>
-                        <span>Threat Score</span>
-                        <span style={{ color: col, fontWeight: 700 }}>{score} / 100</span>
-                    </div>
-                    <div style={{ height: 5, background: "rgba(255,255,255,0.08)", borderRadius: 3, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(90deg, #1d4ed8, ${col})`, borderRadius: 3, transition: "width 0.5s ease" }} />
-                    </div>
-                </div>
-                {/* Trend + counts */}
-                <div style={{ display: "flex", gap: 10, marginBottom: 10, fontSize: 10, color: "#94a3b8" }}>
-                    <span style={{ color: trendCol }}>{trendArrow} {trend || "stable"}</span>
-                    {data.alert_count > 0 && <span>{data.alert_count} alert{data.alert_count !== 1 ? "s" : ""}</span>}
-                    {data.fusion_count > 0 && <span style={{ color: "#a78bfa" }}>{data.fusion_count} fusion</span>}
-                </div>
-                {/* Signals */}
-                {(data.signals || []).length > 0 && (
-                    <div style={{ marginBottom: 10 }}>
-                        <div style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Active signals</div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                            {data.signals.slice(0, 6).map((sig, i) => (
-                                <span key={i} style={{
-                                    fontSize: 9, padding: "2px 6px", borderRadius: 3,
-                                    background: sigColor(sig) + "1a", color: sigColor(sig), fontWeight: 600,
-                                }}>{sig}</span>
-                            ))}
-                        </div>
-                    </div>
-                )}
-                {/* Explain section */}
-                {!explain && (
-                    <button onClick={loadExplain} disabled={expLoad} style={{
-                        width: "100%", padding: "5px 0", borderRadius: 5,
-                        background: "rgba(56,139,255,0.12)", border: "1px solid rgba(56,139,255,0.25)",
-                        color: "#60a5fa", fontSize: 10, cursor: expLoad ? "default" : "pointer",
-                        fontFamily: "inherit",
-                    }}>
-                        {expLoad ? "Loading…" : "View details →"}
-                    </button>
-                )}
-                {explain && (
-                    <div style={{ marginTop: 8, fontSize: 10, color: "rgba(203,213,225,0.8)", lineHeight: 1.5, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>
-                        {explain.narrative || `${data.region_name} threat analysis`}
-                    </div>
-                )}
-            </div>
-        </div>
-    )
-}
-
 // UI correction pass, Part 3.1: the master spec's map hover-callout card
 // (section 9) was never actually built — this hover mechanism only ever
 // showed a bare name label, and only for 2 entity types (eez/cable). Now
@@ -392,7 +307,7 @@ export default function GlobePopup({
     // InspectorPanel is a fixed docked panel and ignores popup.x/y entirely.
     useEffect(() => {
         if (!popup?.entityId) return
-        if (popup.type !== "threat_region" && popup.type !== "html") return
+        if (popup.type !== "html") return
         const viewer = viewerRef.current?.cesiumElement
         if (!viewer) return
         const entity = viewer.entities.getById(popup.entityId)
@@ -498,8 +413,6 @@ export default function GlobePopup({
                         zIndex:        10001,
                         width:         "min(220px, calc(100vw - 32px))",
                         background:    "var(--map-tooltip-bg)",
-                        backdropFilter: "blur(20px) saturate(1.4)",
-                        WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                         border:        "1px solid var(--border-strong)",
                         borderRadius:  "var(--radius-md)",
                         boxShadow:     "var(--shadow-callout)",
@@ -567,37 +480,29 @@ export default function GlobePopup({
                         maxHeight:     520,
                         overflowY:     "auto",
                         background:    "var(--map-tooltip-bg)",
-                        backdropFilter: "blur(20px) saturate(1.4)",
-                        WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                         border:        "var(--elevation-2)",
                         borderRadius:  8,
                         pointerEvents: "auto",
                     }}
                 >
-                    {popup.type === "threat_region" ? (
-                        <ThreatRegionPopup data={popup.data} onClose={handleClose} />
-                    ) : (
-                        <>
-                            <button
-                                onClick={handleClose}
-                                style={{
-                                    position:   "absolute",
-                                    top:        6,
-                                    right:      8,
-                                    background: "transparent",
-                                    border:     "none",
-                                    color:      "#9AA4B5",
-                                    cursor:     "pointer",
-                                    fontSize:   18,
-                                    lineHeight: 1,
-                                    zIndex:     1,
-                                    padding:    0,
-                                }}
-                            >×</button>
-                            {/* eslint-disable-next-line react/no-danger */}
-                            <div dangerouslySetInnerHTML={{ __html: popup.html }} />
-                        </>
-                    )}
+                    <button
+                        onClick={handleClose}
+                        style={{
+                            position:   "absolute",
+                            top:        6,
+                            right:      8,
+                            background: "transparent",
+                            border:     "none",
+                            color:      "#9AA4B5",
+                            cursor:     "pointer",
+                            fontSize:   18,
+                            lineHeight: 1,
+                            zIndex:     1,
+                            padding:    0,
+                        }}
+                    >×</button>
+                    {/* eslint-disable-next-line react/no-danger */}
+                    <div dangerouslySetInnerHTML={{ __html: popup.html }} />
                 </div>
             )}
         </>

@@ -1,9 +1,7 @@
 import { useState } from "react"
 
 const GLASS_DARK = {
-    background:          "rgba(10,14,20,0.82)",
-    backdropFilter:      "blur(16px)",
-    WebkitBackdropFilter: "blur(16px)",
+    background:          "rgb(10, 14, 20)",
     border:              "var(--elevation-1)",
 }
 

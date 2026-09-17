@@ -84,8 +84,6 @@ const DEFAULT_DOCK_STYLE = {
     flexDirection: "column",
     overflow: "hidden",
     background: "var(--map-tooltip-bg)",
-    backdropFilter: "blur(20px) saturate(1.4)",
-    WebkitBackdropFilter: "blur(20px) saturate(1.4)",
     borderLeft: "1px solid var(--border)",
 }
 

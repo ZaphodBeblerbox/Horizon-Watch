@@ -560,7 +560,6 @@ export default function ForceGraph({ onNodeClick }) {
                             background: on ? "rgba(56,139,255,0.32)" : "rgba(6,11,24,0.78)",
                             color:      on ? "#88c8ff" : "rgba(148,163,184,0.5)",
                             outline:    on ? "1px solid rgba(56,139,255,0.35)" : "none",
-                            backdropFilter: "blur(6px)",
                             transition: "all 0.15s",
                         }}>{g.label}</button>
                     )
@@ -570,7 +569,6 @@ export default function ForceGraph({ onNodeClick }) {
                     fontSize: 10, fontWeight: 600, cursor: "pointer",
                     background: showAll ? "rgba(148,163,184,0.22)" : "rgba(6,11,24,0.78)",
                     color:      showAll ? "#cbd5e1" : "rgba(148,163,184,0.5)",
-                    backdropFilter: "blur(6px)",
                     transition: "all 0.15s",
                 }}>All</button>
             </div>
@@ -578,7 +576,7 @@ export default function ForceGraph({ onNodeClick }) {
             {/* Node count badge */}
             <div style={{
                 position: "absolute", top: 10, right: detailNode ? 336 : 10,
-                background: "rgba(6,11,24,0.75)", backdropFilter: "blur(6px)",
+                background: "rgb(6, 11, 24)",
                 border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6,
                 padding: "3px 8px", fontSize: 10, color: "rgba(148,163,184,0.7)",
                 pointerEvents: "none", transition: "right 0.3s",
@@ -606,8 +604,7 @@ export default function ForceGraph({ onNodeClick }) {
                 width:      detailNode ? 320 : 0,
                 overflow:   "hidden",
                 transition: "width 0.3s ease",
-                background: "rgba(4,8,20,0.92)",
-                backdropFilter: "blur(16px)",
+                background: "rgb(4, 8, 20)",
                 borderLeft: detailNode ? "1px solid rgba(255,255,255,0.07)" : "none",
                 display: "flex", flexDirection: "column",
             }}>

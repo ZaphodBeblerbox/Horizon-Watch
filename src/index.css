@@ -55,7 +55,6 @@ body {
     border: 1px solid var(--akili-border) !important;
     background: var(--akili-panel-blur) !important;
     color: var(--akili-text-primary) !important;
-    backdrop-filter: blur(8px);
 }
 
 .leaflet-popup-content-wrapper {
@@ -63,7 +62,6 @@ body {
     border: var(--elevation-2) !important;
     background: var(--akili-panel) !important;
     color: var(--akili-text-primary) !important;
-    backdrop-filter: blur(16px) !important;
 }
 
 .leaflet-popup-tip-container {
@@ -90,7 +88,6 @@ body {
     border-radius: 8px !important;
     padding: 0 !important;
     overflow: hidden !important;
-    backdrop-filter: blur(20px) !important;
 }
 .vessel-popup .leaflet-popup-content {
     margin: 0 !important;
@@ -166,8 +163,6 @@ textarea::placeholder {
 /* ── Akili glass panel utility ──────────────────────────────────────────── */
 .akili-glass {
     background: var(--akili-glass-bg);
-    backdrop-filter: blur(20px) saturate(1.4);
-    -webkit-backdrop-filter: blur(20px) saturate(1.4);
     border: 1px solid var(--akili-glass-border);
     border-radius: 4px;
 }

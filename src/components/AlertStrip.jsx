@@ -48,8 +48,6 @@ export default function AlertStrip({ events, onClose }) {
             position: "fixed",
             bottom: 0, left: 0, right: 0,
             background: "var(--akili-panel)",
-            backdropFilter: "blur(14px)",
-            WebkitBackdropFilter: "blur(14px)",
             borderTop: "1px solid rgba(239,68,68,0.28)",
             padding: "8px 14px",
             zIndex: 999,

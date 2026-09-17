@@ -80,7 +80,6 @@ function getMarkerOpacity(a) {
     return 0.5
 }
 
-const FUSION_SCALE = { critical: 1.8, high: 1.5, medium: 1.2 }
 
 function isDarkShip(a) {
     return a.alert_category === "AIS_DARK_SHIP" ||
@@ -128,24 +127,13 @@ function filterAlert(a, sanctionedMmsiSet) {
     return true
 }
 
-// Fusion events are multi-domain correlations, not identity-bearing
-// contacts — the real "fusion" entity glyph (see src/globe/entityIcons.js),
-// carrying the established fusion accent colour (#BF5AF2, same one
-// ALERT_ICONS.FUSION_EVENT and GlobeAlertPopup's SRC_COLOR.FUSION already
-// use) as the glyph tint, with a pulse ring for higher-severity fusions.
-function fusionIcon(severity) {
-    const size = severity === "critical" ? 64 : severity === "high" ? 56 : 48
-    return getEntityMarkerDataUri({
-        entityType: "fusion",
-        color:      "#BF5AF2",
-        pulse:      severity === "critical" || severity === "high",
-        size,
-    })
-}
+// The fusion-event markers this layer used to draw (#BF5AF2 sparkle glyphs
+// fetched from /api/fusions) have been removed. Fusion is now a derived
+// finding computed at the playhead — see backend/alerts_derived.py and the
+// PARALLAX addendum §A6 — rather than a marker per stored fusion_events row.
 
 export default function GlobeAlertsLayer({ enabled, viewBounds, windowHours = null, maxRank = null }) {
     const [alerts,           setAlerts]           = useState([])
-    const [fusions,          setFusions]          = useState([])
     const [sanctionedMmsiSet, setSanctionedMmsiSet] = useState(new Set())
 
     // Fetch cycle runs on mount and never stops — decoupled from enabled.
@@ -160,12 +148,6 @@ export default function GlobeAlertsLayer({ enabled, viewBounds, windowHours = nu
                 .then(d => { if (!cancelled) setAlerts(safeArray(d)) })
                 .catch(() => {})
 
-        const loadFusions = () =>
-            fetch(`${API_BASE}/api/fusions?status=active`, { headers: forgeHeaders() })
-                .then(r => r.ok ? r.json() : [])
-                .then(d => { if (!cancelled) setFusions(safeArray(d)) })
-                .catch(() => {})
-
         // Sanctions MMSI set — fetched once on mount, never on interval ticks
         fetch(`${API_BASE}/api/sanctions/mmsi-list`, { headers: forgeHeaders() })
             .then(r => r.ok ? r.json() : [])
@@ -175,8 +157,8 @@ export default function GlobeAlertsLayer({ enabled, viewBounds, windowHours = nu
             })
             .catch(() => console.warn("[GlobeAlertsLayer] sanctions mmsi-list fetch failed"))
 
-        loadAlerts(); loadFusions()
-        const iv = setInterval(() => { loadAlerts(); loadFusions() }, 30_000)
+        loadAlerts()
+        const iv = setInterval(loadAlerts, 30_000)
         return () => { cancelled = true; clearInterval(iv) }
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -232,17 +214,6 @@ export default function GlobeAlertsLayer({ enabled, viewBounds, windowHours = nu
         return () => ids.forEach(deleteEntity)
     }, [alerts])
 
-    useEffect(() => {
-        if (!fusions.length) return
-        const ids = []
-        fusions.forEach(f => {
-            const id = `fusion-${f.fusion_id}`
-            setEntity(id, "fusion", f)
-            ids.push(id)
-        })
-        return () => ids.forEach(deleteEntity)
-    }, [fusions])
-
     // enabled controls visibility only — fetch cycle runs regardless.
     // Real root-cause fix: the Time window/severity-floor selector never
     // reached this layer before — it now applies the exact same real
@@ -268,13 +239,6 @@ export default function GlobeAlertsLayer({ enabled, viewBounds, windowHours = nu
         // label), so even 2-3 close together still visually stack.
         clusterMinSize: 2,
     })
-    const visibleFusions = (enabled ? fusions : []).filter(f =>
-        f.lat != null && f.lon != null && isFinite(Number(f.lat)) && f.marker_visible !== false &&
-        isSignalVisible(
-            { ageHours: ageHoursSince(f.created_at, _nowMs), severityRank: rankForRawSeverity(f.severity) },
-            { windowHours, maxRank },
-        )
-    )
 
     return (
         <>
@@ -360,36 +324,6 @@ export default function GlobeAlertsLayer({ enabled, viewBounds, windowHours = nu
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 8_000_000),
                             disableDepthTestDistance: Number.POSITIVE_INFINITY,
                         } : undefined}
-                    />
-                )
-            })}
-            {visibleFusions.map(f => {
-                // visibleFusions is already null-filtered above (f.lat/f.lon
-                // != null), but converting through Number() before an
-                // isFinite check is the same real footgun fixed elsewhere in
-                // this file (Number(null) === 0, a fabricated-looking valid
-                // coordinate) — kept null-safe here too for consistency.
-                if (f.lat == null || f.lon == null) return null
-                const lat = Number(f.lat)
-                const lon = Number(f.lon)
-                if (!isFinite(lat) || !isFinite(lon)) return null
-                const sev   = f.severity || "medium"
-                const scale = FUSION_SCALE[sev] || 1.2
-                const sz    = Math.round(56 * scale)
-                const icon  = fusionIcon(sev)
-                return (
-                    <Entity
-                        id={`fusion-${f.fusion_id}`}
-                        key={f.fusion_id}
-                        position={Cartesian3.fromDegrees(lon, lat, 0)}
-                        billboard={{
-                            image:           icon,
-                            width:           sz,
-                            height:          sz,
-                            heightReference: HeightReference.CLAMP_TO_GROUND,
-                                                        distanceDisplayCondition: new DistanceDisplayCondition(0, 25_000_000),
-                            eyeOffset: new (Cartesian3)(0, 0, -80),
-                        }}
                     />
                 )
             })}

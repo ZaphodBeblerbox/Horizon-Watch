@@ -206,7 +206,7 @@ export default function MobileNewsFeed({ tab = "world" }) {
         </div>
 
         {/* Counter */}
-        <div style={{ position:"absolute", top:20, right:12, color:"rgba(255,255,255,0.6)", fontSize:12, fontWeight:600, background:"rgba(0,0,0,0.35)", backdropFilter:"blur(8px)", WebkitBackdropFilter:"blur(8px)", padding:"3px 9px", borderRadius:10, zIndex:10 }}>
+        <div style={{ position:"absolute", top:20, right:12, color:"rgba(255,255,255,0.6)", fontSize:12, fontWeight:600, background:"rgba(0,0,0,0.35)", padding:"3px 9px", borderRadius:10, zIndex:10 }}>
           {idx + 1} / {articles.length}
         </div>
 
@@ -249,7 +249,7 @@ export default function MobileNewsFeed({ tab = "world" }) {
           {/* Read button */}
           <a
             href={a.link} target="_blank" rel="noopener noreferrer"
-            style={{ display:"block", padding:"12px 20px", borderRadius:100, background:"rgba(0,170,255,0.88)", color:"white", textDecoration:"none", fontWeight:600, fontSize:14, textAlign:"center" }}
+            style={{ display:"block", padding:"12px 20px", borderRadius:100, background:"rgb(0, 170, 255)", color:"white", textDecoration:"none", fontWeight:600, fontSize:14, textAlign:"center" }}
           >
             Read Article
           </a>

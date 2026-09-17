@@ -1,8 +1,9 @@
 import "../cesiumConfig.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
-import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, EllipsoidTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference } from "cesium"
+import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, EllipsoidTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference, Cartographic, EllipsoidGeodesic, ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium"
 import { publishCameraState } from "../globe/cameraState.js"
+import { publishCursor, publishScale, getScale, scaleFor, zoomLabelFor } from "../globe/mapReadout.js"
 import "cesium/Build/Cesium/Widgets/widgets.css"
 import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
@@ -21,12 +22,10 @@ import GlobePopup               from "../globe/GlobePopup.jsx"
 import GlobeAnnotationLayer     from "../globe/GlobeAnnotationLayer.jsx"
 import GlobeReplayLayer         from "../globe/GlobeReplayLayer.jsx"
 import GlobeAlertsLayer         from "../globe/GlobeAlertsLayer.jsx"
-import GlobeThreatHeatmapLayer  from "../globe/GlobeThreatHeatmapLayer.jsx"
 import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import GlobeStrategicZonesLayer from "../globe/GlobeStrategicZonesLayer.jsx"
-import GlobeSurgeLayer          from "../globe/GlobeSurgeLayer.jsx"
 import GlobeCameraLayer         from "../globe/GlobeCameraLayer.jsx"
 import ScaleBar                 from "./ScaleBar.jsx"
 import CoordinateReadout        from "./CoordinateReadout.jsx"
@@ -111,10 +110,10 @@ export default function GlobeView({
     // GlobeEventsLayer is no longer mounted below. A separate prop, not a
     // reuse of eventsEnabled/precisionEventsEnabled: those two remain wired
     // for callers that still pass them (Dashboard.jsx, MapTab.jsx) but no
-    // longer drive any visible layer here — GlobeSurgeLayer is the only
-    // other real consumer of eventsEnabled, and is unrelated to raw news
-    // points (it visualizes news-VOLUME surge anomalies from its own
-    // /api/surge/events fetch, not individual articles).
+    // longer drive any visible layer here: GlobeSurgeLayer, the last
+    // consumer of eventsEnabled, has been removed along with the threat
+    // heatmap — see the PARALLAX addendum, which replaces both with the
+    // §A5/§A6 derived marks.
     geoConfirmedEnabled = false,
     // Historic-timeline round — the panel's real theatre multi-select and
     // scrub-slider position, forwarded straight through to
@@ -146,7 +145,7 @@ export default function GlobeView({
     // same real time-window/severity-floor selector Situation.jsx's own
     // header/legend/histogram counts already use (src/lib/
     // signalVisibility.js), now forwarded to every real "signal" layer
-    // below (GlobeAlertsLayer, GlobeSurgeLayer, GlobeGeoConfirmedLayer).
+    // below (GlobeAlertsLayer, GlobeGeoConfirmedLayer).
     // null (the default) means "no window/floor passed" — every existing
     // caller that doesn't pass these (Dashboard.jsx, MapTab.jsx) keeps its
     // current unfiltered behavior unchanged. Deliberately NOT applied to
@@ -182,7 +181,6 @@ export default function GlobeView({
     portsEnabled    = false,
     // Forge alerts/rules on the globe
     alertsEnabled = false,
-    threatHeatmapEnabled = false,
     eventsMinRelevance = 4,
     precisionEventsEnabled = true,
     autoModeEnabled = false,
@@ -398,6 +396,131 @@ export default function GlobeView({
         return () => {
             window.removeEventListener("akili:zoom-in", zoomIn)
             window.removeEventListener("akili:zoom-out", zoomOut)
+        }
+    }, [])
+
+    // ── Map readout: cursor position and the MEASURED scale bar (§8) ──────
+    // The scale bar is measured, not derived from a zoom level: it picks two
+    // screen points 120px apart either side of centre, inverts both onto the
+    // ellipsoid, and asks for the real geodesic distance between them. That
+    // is the only way the bar stays honest on a globe, where a pixel is
+    // worth different distances at the equator and near the poles, and where
+    // an oblique camera makes the top of the screen further away than the
+    // bottom.
+    //
+    // Per the spec's Cesium translation table: pickEllipsoid replaces
+    // invertScreen and returns undefined off-globe, so both picks are
+    // null-checked before use; EllipsoidGeodesic.surfaceDistance replaces
+    // geoDistance and is already in metres, so there is no radius multiply.
+    useEffect(() => {
+        let handler = null
+        let raf = 0
+        let cleanup = null
+
+        const attach = () => {
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer || viewer.isDestroyed?.()) {
+                raf = requestAnimationFrame(attach)
+                return
+            }
+
+            const measure = () => {
+                if (viewer.isDestroyed?.()) return
+                const canvas = viewer.scene?.canvas
+                if (!canvas) return
+                // 0x0 is the normal resting state of an inactive tab: every
+                // view root in this shell stays mounted and collapses when it
+                // is not the active tab, so the Cesium canvas really is
+                // zero-sized then and a pick would be meaningless.
+                const w = canvas.clientWidth
+                const h = canvas.clientHeight
+                if (!w || !h) return
+
+                const carto = viewer.camera.positionCartographic
+                const span = 120
+                const a = viewer.camera.pickEllipsoid(new Cartesian2(w / 2 - span / 2, h / 2))
+                const b = viewer.camera.pickEllipsoid(new Cartesian2(w / 2 + span / 2, h / 2))
+                if (!a || !b) {
+                    // Off-globe (looking past the limb). The zoom readout is
+                    // still true — it is camera height, not a projection —
+                    // so publish that and drop only the bar.
+                    publishScale({ px: 0, label: "—", zoomLabel: zoomLabelFor(carto.height) })
+                    return
+                }
+                const ca = Cartographic.fromCartesian(a)
+                const cb = Cartographic.fromCartesian(b)
+                const metres = new EllipsoidGeodesic(ca, cb).surfaceDistance
+                const s = scaleFor(metres / span)
+                publishScale({
+                    px: s ? s.px : 0,
+                    label: s ? s.label : "—",
+                    zoomLabel: zoomLabelFor(carto.height),
+                })
+            }
+
+            // Cursor. Throttled to one frame: a mousemove listener that sets
+            // React state on every pointer event repaints the whole readout
+            // hundreds of times a second for a four-decimal number nobody can
+            // read that fast.
+            let pending = null
+            let tick = 0
+            const flush = () => {
+                tick = 0
+                if (!pending || viewer.isDestroyed?.()) return
+                const picked = viewer.camera.pickEllipsoid(pending)
+                if (!picked) { publishCursor(null); return }
+                const c = Cartographic.fromCartesian(picked)
+                publishCursor({
+                    lat: CesiumMath.toDegrees(c.latitude),
+                    lon: CesiumMath.toDegrees(c.longitude),
+                })
+            }
+
+            handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
+            handler.setInputAction((movement) => {
+                pending = movement.endPosition
+                if (!tick) tick = requestAnimationFrame(flush)
+            }, ScreenSpaceEventType.MOUSE_MOVE)
+
+            // Keeping the readout current cannot depend on camera.moveEnd
+            // here, and this is not a guess — the top of this file already
+            // documents it: this viewer runs Cesium's on-demand render mode
+            // (scene.requestRenderMode = true, set further down), and with no
+            // render loop advancing frames, moveEnd does not reliably fire.
+            // The existing akili:fly-to handler works around exactly this by
+            // forcing continuous rendering for the duration of a flight.
+            //
+            // Measuring is far too cheap to need that treatment: two
+            // pickEllipsoid calls and one geodesic, at 1Hz. So this polls on a
+            // plain interval and additionally listens to moveEnd for the cases
+            // where it does fire (a real drag, which renders). Earlier attempts
+            // that relied on moveEnd alone, on scene.postRender (stops firing
+            // once the scene settles), or on a bounded start-up poll (expired
+            // while the canvas was still 0-sized on a cold load) each left the
+            // scale bar reading "—" indefinitely.
+            const poll = setInterval(measure, 1000)
+            measure()
+            viewer.camera.moveEnd.addEventListener(measure)
+            const onResize = () => measure()
+            window.addEventListener("resize", onResize)
+
+            cleanup = () => {
+                window.removeEventListener("resize", onResize)
+                if (tick) cancelAnimationFrame(tick)
+                clearInterval(poll)
+                if (!viewer.isDestroyed?.()) viewer.camera.moveEnd.removeEventListener(measure)
+                // Same destroyed-viewer guard the camera listener above uses:
+                // this cleanup can run after an unrelated render error has
+                // already torn the Viewer subtree down.
+                if (handler && !handler.isDestroyed?.()) handler.destroy()
+                handler = null
+            }
+        }
+
+        attach()
+        return () => {
+            if (raf) cancelAnimationFrame(raf)
+            cleanup?.()
         }
     }, [])
 
@@ -738,7 +861,6 @@ export default function GlobeView({
                     endDate={geoConfirmedEndDate}
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
-                <GlobeSurgeLayer        enabled={eventsEnabled} windowHours={signalWindowHours} maxRank={signalMaxRank} />
                 {cityLabelsEnabled && (
                     <ImageryLayer imageryProvider={esriLabelsProvider} alpha={1.0} maximumTerrainLevel={19} />
                 )}
@@ -768,9 +890,6 @@ export default function GlobeView({
 
                 {/* ── Forge alerts layer ──────────────────────────────────────── */}
                 <GlobeAlertsLayer enabled={alertsEnabled} viewBounds={viewBounds} windowHours={signalWindowHours} maxRank={signalMaxRank} />
-
-                {/* ── Threat heatmap layer ─────────────────────────────────────── */}
-                <GlobeThreatHeatmapLayer enabled={threatHeatmapEnabled} />
 
                 {/* ── Live CCTV camera feeds ───────────────────────────────────── */}
                 {cctvEnabled && <GlobeCameraLayer />}

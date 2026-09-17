@@ -105,8 +105,6 @@ export default function FlyoutMenu({ icon, buttonText, label, title, align = "ri
                     [align === "right" ? "right" : "left"]: 0,
                     width: panelWidth, zIndex: 2000,
                     background: "var(--map-tooltip-bg)",
-                    backdropFilter: "blur(20px) saturate(1.4)",
-                    WebkitBackdropFilter: "blur(20px) saturate(1.4)",
                     border: "1px solid var(--border-strong)",
                     borderRadius: "var(--radius-md)", overflow: "hidden",
                     maxHeight: "70vh", overflowY: "auto",

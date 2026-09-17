@@ -102,7 +102,7 @@ function ArticleCard({ a, borderOverride, onSelect }) {
             style={{
                 display:       "flex",
                 flexDirection: "column",
-                background:    "rgba(30,41,59,0.6)",
+                background:    "rgb(30, 41, 59)",
                 border:        `1px solid ${border}`,
                 borderRadius:  8,
                 overflow:      "hidden",
@@ -144,7 +144,7 @@ function ArticleCard({ a, borderOverride, onSelect }) {
                         position:      "absolute",
                         top:           8,
                         left:          8,
-                        background:    "rgba(15,23,42,0.88)",
+                        background:    "rgb(15, 23, 42)",
                         padding:       "3px 7px",
                         borderRadius:  3,
                         fontSize:      9,
@@ -355,7 +355,7 @@ function MobileNewsCard({ a }) {
                     width:          72,
                     height:         72,
                     borderRadius:   6,
-                    background:     "rgba(30,41,59,0.8)",
+                    background:     "rgb(30, 41, 59)",
                     flexShrink:     0,
                     display:        "flex",
                     alignItems:     "center",
@@ -421,7 +421,7 @@ function PanelFeaturedCard({ a, accentColor = "rgba(239,68,68,0.3)" }) {
                 borderRadius: 10,
                 overflow:     "hidden",
                 border:       `1px solid ${border}`,
-                background:   "rgba(30,41,59,0.8)",
+                background:   "rgb(30, 41, 59)",
                 cursor:       href ? "pointer" : "default",
                 transition:   "border-color 0.15s",
             }}
@@ -454,7 +454,7 @@ function PanelFeaturedCard({ a, accentColor = "rgba(239,68,68,0.3)" }) {
                 {src && (
                     <span style={{
                         position: "absolute", bottom: 12, left: 12,
-                        background: "rgba(15,23,42,0.88)", padding: "3px 7px",
+                        background: "rgb(15, 23, 42)", padding: "3px 7px",
                         borderRadius: 3, fontSize: 9, color: "rgba(255,255,255,0.5)", fontWeight: 600,
                     }}>{src}</span>
                 )}
@@ -637,7 +637,7 @@ function MarketsPanel() {
                             flexShrink:   0,
                             width:        148,
                             padding:      "12px 14px",
-                            background:   "rgba(30,41,59,0.7)",
+                            background:   "rgb(30, 41, 59)",
                             border:       `1px solid ${pos ? "rgba(74,222,128,0.2)" : "rgba(248,113,113,0.2)"}`,
                             borderRadius: 8,
                         }}>
@@ -861,7 +861,7 @@ export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenI
                     borderRadius: 10,
                     overflow:     "hidden",
                     border:       `1px solid ${tier ? tierCol + "44" : "rgba(239,68,68,0.3)"}`,
-                    background:   "rgba(30,41,59,0.8)",
+                    background:   "rgb(30, 41, 59)",
                     cursor:       href ? "pointer" : "default",
                     transition:   "border-color 0.15s",
                 }}
@@ -1054,8 +1054,6 @@ export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenI
                             width: 34px; height: 34px;
                             border-radius: 50%;
                             background: rgba(0,0,0,0.55);
-                            backdrop-filter: blur(12px);
-                            -webkit-backdrop-filter: blur(12px);
                             border: 1px solid rgba(255,255,255,0.14);
                             color: white;
                             font-size: 16px;
@@ -1088,8 +1086,6 @@ export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenI
                             padding: 5px 11px;
                             border-radius: 100px;
                             background: rgba(0,0,0,0.42);
-                            backdrop-filter: blur(8px);
-                            -webkit-backdrop-filter: blur(8px);
                             border: 1px solid rgba(255,255,255,0.1);
                             color: rgba(255,255,255,0.65);
                             font-size: 11px;
@@ -1138,8 +1134,7 @@ export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenI
                 display:       "flex",
                 flexDirection: "column",
                 height:        "100%",
-                background:    "rgba(6,14,45,0.97)",
-                backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+                background:    "rgb(6, 14, 45)",
                 color:         "#e2e8f0",
                 fontFamily:    "Inter, system-ui, -apple-system, sans-serif",
                 overflow:      "hidden",
@@ -1147,7 +1142,7 @@ export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenI
                 {/* Header */}
                 <div style={{
                     flexShrink:   0,
-                    background:   "rgba(5,12,38,0.98)",
+                    background:   "rgb(5, 12, 38)",
                     borderBottom: "1px solid rgba(56,189,248,0.1)",
                 }}>
                     {/* Title row */}
@@ -1227,7 +1222,7 @@ export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenI
                 {/* Collapsible TV player */}
                 <div style={{
                     flexShrink:   0,
-                    background:   "rgba(5,12,38,0.7)",
+                    background:   "rgb(5, 12, 38)",
                     borderBottom: "1px solid rgba(56,189,248,0.08)",
                 }}>
                     <div
@@ -1284,8 +1279,7 @@ export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenI
             display:       "flex",
             flexDirection: "column",
             height:        "100%",
-            background:    "rgba(6,14,45,0.97)",
-            backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+            background:    "rgb(6, 14, 45)",
             color:         "#e2e8f0",
             fontFamily:    "Inter, system-ui, -apple-system, sans-serif",
             overflow:      "hidden",
@@ -1294,7 +1288,7 @@ export default function NewsPage({ onClose, onJumpToLocation = () => {}, onOpenI
             <div style={{
                 flexShrink:   0,
                 height:       52,
-                background:   "rgba(5,12,38,0.98)",
+                background:   "rgb(5, 12, 38)",
                 borderBottom: "1px solid rgba(56,189,248,0.2)",
                 display:      "flex",
                 alignItems:   "center",

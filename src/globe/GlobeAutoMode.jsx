@@ -125,7 +125,7 @@ export default function GlobeAutoMode({ enabled }) {
                     color:          'rgba(0,212,255,0.75)',
                     fontFamily:     '"IBM Plex Mono", monospace',
                     fontSize:       11,
-                    background:     'rgba(5,10,20,0.88)',
+                    background:     'rgb(5, 10, 20)',
                     padding:        '8px 14px',
                     borderRadius:   4,
                     border:         '1px solid rgba(0,212,255,0.2)',

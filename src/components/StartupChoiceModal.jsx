@@ -3,7 +3,7 @@ export default function StartupChoiceModal({ onChoice }) {
         <div style={{
             position:       "fixed",
             inset:          0,
-            background:     "rgba(15,23,42,0.97)",
+            background:     "rgb(15, 23, 42)",
             display:        "flex",
             alignItems:     "center",
             justifyContent: "center",
@@ -11,9 +11,7 @@ export default function StartupChoiceModal({ onChoice }) {
             fontFamily:     "Inter, system-ui, -apple-system, sans-serif",
         }}>
             <div style={{
-                background:      "rgba(30,41,59,0.9)",
-                backdropFilter:  "blur(16px)",
-                WebkitBackdropFilter: "blur(16px)",
+                background:      "rgb(30, 41, 59)",
                 border:          "1px solid rgba(56,189,248,0.2)",
                 borderRadius:    12,
                 padding:         "40px 36px",

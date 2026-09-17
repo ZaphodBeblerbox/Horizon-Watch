@@ -32,12 +32,9 @@ export default function StartupModal({ onDismiss, onReadBriefing, onViewAlerts }
             alignItems: "center",
             justifyContent: "center",
             zIndex:     10000,
-            backdropFilter: "blur(4px)",
         }}>
             <div style={{
-                background:    "rgba(15,23,42,0.96)",
-                backdropFilter: "blur(16px)",
-                WebkitBackdropFilter: "blur(16px)",
+                background:    "rgb(15, 23, 42)",
                 border:        "1px solid rgba(56,189,248,0.25)",
                 borderRadius:  12,
                 padding:       "32px 28px 24px",

@@ -2,11 +2,14 @@ import { describe, it, expect } from "vitest"
 import { LAYER_GROUPS, isLayerOn, countActive, clampOpacity } from "./layerRailConfig.js"
 
 describe("LAYER_GROUPS", () => {
+    // "threatHeatmap" is deliberately absent: GlobeThreatHeatmapLayer was
+    // removed (hardcoded region rectangles plus a dot per active alert), so
+    // the rail must not offer a layer that nothing renders.
     it("covers every real layer key from the pre-rebuild LayersPanel exactly once", () => {
         const expectedKeys = [
             "satellite", "shippingLanes", "oim", "adsb", "aisVessels", "eez", "cityLabels",
             "forgeAlerts", "precisionEvents", "unifiedEvents", "showStrategicZones",
-            "chokepoints", "cables", "threatHeatmap", "cctvFeeds", "airports", "ports",
+            "chokepoints", "cables", "cctvFeeds", "airports", "ports",
             "aisHeatmap", "adsbHeatmap",
         ]
         const actualKeys = LAYER_GROUPS.flatMap(g => g.layers.map(l => l.key))
