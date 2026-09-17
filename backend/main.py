@@ -21033,6 +21033,15 @@ def api_get_alerts(
                 "zone_ids":    r.zone_ids, "tags": r.tags, "status": r.status,
                 "created_at":  r.created_at.isoformat() if r.created_at else None,
                 "expires_at":  r.expires_at.isoformat() if r.expires_at else None,
+                # Provenance travels with the record, as two independent
+                # fields: origin_class answers "how good is this evidence",
+                # licence_tier answers "may this reach a client". They are
+                # real columns on Alert and were simply never returned, so
+                # any surface showing an alert could not state where it came
+                # from. Null stays null — deliberately not defaulted, since a
+                # guessed provenance is worse than a missing one.
+                "origin_class": r.origin_class,
+                "licence_tier": r.licence_tier,
                 "explanation": _get_alert_explanation(r.alert_type, r.title),
             }
             for r in rows
