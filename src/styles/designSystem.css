@@ -42,8 +42,6 @@
    removing a class that carries its own animation. */
 .pane-glass {
     background: var(--pane-glass-bg);
-    -webkit-backdrop-filter: blur(16px) saturate(115%);
-    backdrop-filter: blur(16px) saturate(115%);
     animation: none;
     transition: transform .24s var(--ease), opacity .18s linear, width .24s var(--ease);
 }
@@ -402,8 +400,8 @@ html:not(:has(#view-map.active)) #notifstack { right: 12px; }
 .ncard {
     display: block;
     width: min(326px, calc(100vw - var(--pane-l) - var(--pane-r) - 28px));
-    pointer-events: auto; background: var(--tr15);
-    backdrop-filter: blur(18px) saturate(120%);
+    /* Solid for the same reason as .notiftray — --tr15 is rgba .9. */
+    pointer-events: auto; background: var(--bg-2);
     border: 1px solid var(--line-strong); box-shadow: var(--shadow);
     opacity: 0; transform: translateX(14px);
     transition: opacity .22s var(--ease), transform .22s var(--ease);
@@ -435,8 +433,9 @@ html:not(:has(#view-map.active)) #notifstack { right: 12px; }
 .notiftray {
     position: fixed; top: var(--top); right: 0; bottom: var(--status);
     width: 352px; max-width: 92vw; z-index: 86;
-    display: flex; flex-direction: column; background: var(--tr0);
-    backdrop-filter: blur(18px) saturate(115%);
+    /* Solid, not --tr0 (rgba .72): the tray sits over the globe, and a
+       72%-opaque panel let the map read straight through the alert text. */
+    display: flex; flex-direction: column; background: var(--bg-1);
     border-left: 1px solid var(--line-strong);
     transform: translateX(100%); transition: transform .22s var(--ease);
 }
@@ -461,3 +460,85 @@ html:not(:has(#view-map.active)) #notifstack { right: 12px; }
 }
 /* Unread reads as a surface state, not as a dot. */
 .nrow.un { background: var(--acc-dim); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §10 map chrome — annobar, nav cluster, readout
+   ═══════════════════════════════════════════════════════════════════════
+   Spec §10.1 gives these buttons `background: var(--tr15)` with
+   `backdrop-filter: blur(14px)` — glass over the globe. That is overridden
+   here on a direct instruction to make every surface in this app solid, so
+   the fill is --bg-2 and there is no blur. Everything else (28px box, 13px
+   icon, the .on treatment using --bg-4 and --line-strong) is the spec's.
+   ------------------------------------------------------------------- */
+
+/* The map canvas is full-bleed: the Layers and Inspector panes are absolute
+   overlays ON it, not flex siblings, so a control at left:10px lands on top of
+   the left pane rather than on the map. §8's own `.mapmeta` rule answers this
+   with `left: calc(var(--pane-l) + 12px)`; the same idea generalised here as
+   --map-inset-l / --map-inset-r, which the host sets from its real pane widths
+   (and to 0 when a pane is minimised). Default 0 so a map with no panes is
+   unaffected. */
+.annobar {
+    position: absolute; top: 10px; z-index: 3;
+    left: calc(var(--map-inset-l, 0px) + 10px);
+    display: flex; flex-direction: column; gap: 4px;
+}
+.annobar .annosep {
+    display: block; height: 1px; margin: 3px 2px;
+    background: var(--line); border: 0;
+}
+.mapbtn, .tool {
+    width: 28px; height: 28px; display: grid; place-items: center;
+    background: var(--bg-2); border: 1px solid var(--line);
+    color: var(--txt-3); cursor: pointer; padding: 0;
+    transition: background 100ms linear, color 100ms linear;
+}
+.mapbtn:hover, .tool:hover { background: var(--bg-3); color: var(--txt); }
+.mapbtn.on, .tool.on {
+    color: var(--txt); background: var(--bg-4); border-color: var(--line-strong);
+}
+.mapbtn:disabled, .tool:disabled { opacity: .4; cursor: not-allowed; }
+.mapbtn svg, .tool svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.tool.hidden { display: none; }
+
+/* §10.2 — nav cluster, top-right. Horizontal, so the zoom readout can sit
+   between the + and − where it belongs rather than below both. */
+.mapchrome {
+    position: absolute; top: 10px; z-index: 3;
+    right: calc(var(--map-inset-r, 0px) + 10px);
+    display: flex; align-items: center; gap: 4px;
+}
+.mapchrome .navz {
+    height: 28px; min-width: 62px; padding: 0 7px;
+    display: grid; place-items: center;
+    background: var(--bg-2); border: 1px solid var(--line);
+    font: 10px var(--mono); color: var(--txt-2); white-space: nowrap;
+}
+.mapchrome .compass {
+    width: 28px; height: 28px; display: grid; place-items: center;
+    background: var(--bg-2); border: 1px solid var(--line);
+    color: var(--txt-3); cursor: pointer; padding: 0;
+}
+.mapchrome .compass:hover { color: var(--txt); background: var(--bg-3); }
+.mapchrome .compass svg {
+    width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5;
+    transition: transform 160ms var(--ease);
+}
+
+/* §8 / §10 — the measured scale bar and cursor readout, bottom-left.
+   `left` clears the left pane; the host sets --pane-l. */
+.mapmeta {
+    position: absolute; bottom: 11px; z-index: 2;
+    left: calc(var(--map-inset-l, 0px) + 12px);
+    display: flex; flex-direction: column; gap: 4px;
+    font: 10px var(--mono); color: var(--txt-3);
+    pointer-events: none; text-shadow: 0 1px 2px var(--tr7);
+}
+.mapmeta .coord { color: var(--txt-2); font-size: 11px; letter-spacing: .02em; }
+.mapmeta .coord b { font-weight: 600; color: var(--txt); }
+.scalebar { display: flex; align-items: center; gap: 6px; }
+.scalebar i {
+    display: block; height: 5px; width: 78px;
+    border: 1px solid var(--txt-3); border-top: 0;
+    transition: width 120ms linear;
+}
