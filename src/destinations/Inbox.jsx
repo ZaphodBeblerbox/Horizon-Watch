@@ -238,7 +238,7 @@ export default function Inbox() {
                     // so it needs the timestamp and the tier, not a colour.
                     context={rows.filter((r) => r.id !== sel && r.row?.lat != null)
                                  .map((r) => ({ id: r.id, lat: r.row.lat, lon: r.row.lon, ts: r.ts, severity: r.sev, title: r.title }))}
-                    context="signal"
+                    framing="signal"
                     label={selected ? String(selected.title).slice(0, 26) : ""}
                     title="Locator"
                     subtitle={selected ? "" : "no signal selected"}

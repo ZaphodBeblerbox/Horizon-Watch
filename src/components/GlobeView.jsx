@@ -9,6 +9,7 @@ import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, openSeaMap
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
+import GlobeRiskChoroplethLayer from "../globe/GlobeRiskChoroplethLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
 import GlobeGraticuleLayer      from "../globe/GlobeGraticuleLayer.jsx"
@@ -102,6 +103,7 @@ export default function GlobeView({
     aisEnabled       = false,
     eezEnabled       = false,
     cablesEnabled    = false,
+    riskEnabled      = false,
     chokepointsEnabled = false,
     eventsEnabled    = true,
     // GeoConfirmed conflict-event pins (GlobeGeoConfirmedLayer.jsx) — the
@@ -849,6 +851,8 @@ export default function GlobeView({
                 )}
 
                 {/* ── GeoJSON line layers ─────────────────────────────────────── */}
+                {/* Country risk, filled by severity — see riskChoropleth.js */}
+                <GlobeRiskChoroplethLayer enabled={riskEnabled} />
                 <GlobeEEZLayer            enabled={eezEnabled} />
                 <GlobeCablesLayer         enabled={cablesEnabled} />
                 <GlobeGraticuleLayer      enabled={graticuleEnabled} />

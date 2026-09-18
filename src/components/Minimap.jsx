@@ -106,7 +106,9 @@ export default function Minimap({
     // §M6/§M7 — the host supplies BOTH the framing context and its own
     // window. Replay's 72h is not the inspector's, and reading a global here
     // would make the same marker burn differently on two screens.
-    context: framingContext = "signal",
+    // NOT named `context`: that is already this component's array of nearby
+    // records, and a second prop of the same name silently replaces it.
+    framing = "signal",
     span,
     windowMs = 72 * 3_600_000,
     now = Date.now(),
@@ -122,7 +124,7 @@ export default function Minimap({
     useEffect(() => { let off = false; loadLand().then((p) => { if (!off) setLand(p) }); return () => { off = true } }, [])
 
     const hasFocus = Number.isFinite(focus?.lat) && Number.isFinite(focus?.lon)
-    const effSpan = span ?? spanFor(framingContext)
+    const effSpan = span ?? spanFor(framing)
     const project = useMemo(
         () => makeProjection(hasFocus ? focus.lon : 0, hasFocus ? focus.lat : 20, hasFocus ? effSpan : 170, W, height),
         [hasFocus, focus?.lat, focus?.lon, effSpan, height],
@@ -142,8 +144,13 @@ export default function Minimap({
     // §M4.3 — coldest first. SVG has no z-index; paint order IS depth, so the
     // hottest marker is drawn last and can never be occluded.
     const painted = useMemo(
+        // Array.isArray, not `|| []`: a non-array prop (a string, an object
+        // from an API that changed shape) passes the || check and then
+        // throws on .filter, which took the whole console down once. A
+        // locator must never be able to do that — it is a reference panel.
         () => sortColdestFirst(
-            (context || []).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon)),
+            (Array.isArray(context) ? context : [])
+                .filter((c) => c && Number.isFinite(c.lat) && Number.isFinite(c.lon)),
             now, windowMs,
         ),
         [context, now, windowMs],

@@ -934,6 +934,7 @@ export default function Situation({ onOpenDossier }) {
                         dockExternally
                         onInspectorPopupChange={handleInspectorPopupChange}
                         cablesEnabled={infraOn.cables} chokepointsEnabled={infraOn.chokepoints}
+                        riskEnabled={contextOn.risk}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={infraOn.power}
                         nauticalEnabled={infraOn.nautical}
                         eezEnabled={groupsOn.zones}

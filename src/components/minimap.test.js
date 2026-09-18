@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest"
+import { readFileSync } from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
 import {
     makeProjection, easeOut, DEFAULT_SPAN, MINIMAP_HEIGHT,
     CONTEXT_SIZE, SUBJECT_SIZE, PING_DELAYS, PING_MS,
@@ -100,5 +103,31 @@ describe("one locator, every surface", () => {
         }
         walk(root)
         expect(offenders).toEqual([])
+    })
+})
+
+describe("a locator must never be able to crash the console", () => {
+    const src = readFileSync(
+        path.join(path.dirname(fileURLToPath(import.meta.url)), "Minimap.jsx"), "utf8",
+    )
+
+    it("does not take a second prop named `context`", () => {
+        // This shipped: a new framing prop was also called `context`, so the
+        // host's `context={array}` was replaced by `context="signal"` and
+        // `.filter` threw on a string — white screen, production.
+        const propBlock = src.slice(src.indexOf("export default function"), src.indexOf("const effSpan"))
+        const declarations = propBlock.match(/^\s*context\b/gm) || []
+        expect(declarations).toHaveLength(1)
+        expect(src).toMatch(/\n\s*framing = "signal",/)
+    })
+
+    it("guards with Array.isArray, not a falsy check", () => {
+        // `(context || [])` passes a string straight through to .filter.
+        expect(src).toMatch(/Array\.isArray\(context\) \? context : \[\]/)
+        expect(src).not.toMatch(/\(context \|\| \[\]\)\.filter/)
+    })
+
+    it("tolerates a null entry in the array", () => {
+        expect(src).toMatch(/\.filter\(\(c\) => c &&/)
     })
 })
