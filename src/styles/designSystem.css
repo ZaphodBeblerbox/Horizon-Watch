@@ -1070,3 +1070,27 @@ table.grid .dim { color: var(--txt-4); }
     margin: 0; padding: 7px 9px; border-top: 1px solid var(--line-soft);
     font: 400 10.5px var(--font); line-height: 1.45; color: var(--txt-4);
 }
+
+/* §M4 — the heat ramp's own tokens, and the legend that makes it readable. */
+:root { --mm-ember: #8a4a3a; --mm-hot: #ff6b52; }
+[data-theme="light"] { --mm-ember: #9a4b33; --mm-hot: #d8341c; }
+
+/* §M4.4 — the subject's label sits over land and must stay legible. */
+.mm-sub {
+    font-family: var(--mono); font-size: 9px; fill: var(--txt);
+    paint-order: stroke; stroke: var(--bg-0); stroke-width: 2.4px;
+}
+.mm-grat { fill: none; stroke: var(--line-soft); stroke-width: .4; vector-effect: non-scaling-stroke; opacity: .5; }
+
+/* §M4.5 — "A heat ramp with no key is a decorative gradient. Two words is
+   the whole cost of making it readable." */
+.mmleg {
+    position: absolute; left: 8px; right: 8px; bottom: 6px; z-index: 2;
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 8.5px; color: var(--txt-4); pointer-events: none;
+}
+.mmgrad {
+    flex: 1; height: 3px;
+    background: linear-gradient(90deg,
+        var(--steel), var(--mm-ember), var(--amber), var(--red), var(--mm-hot));
+}

@@ -31,6 +31,11 @@ const blendListeners = new Set()
 const locationListeners = new Set()
 
 function readRenderedFromDOM() {
+    // Guarded because this runs at MODULE LOAD, and anything that imports a
+    // component which imports this store is then unusable outside a browser —
+    // which is every unit test in this project, since vitest runs in "node"
+    // here. Dark is the app's default theme, so it is the honest fallback.
+    if (typeof document === "undefined") return "dark"
     return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark"
 }
 

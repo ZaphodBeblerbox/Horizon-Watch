@@ -24,10 +24,17 @@
  * pixel of this map is ~1.8° of longitude, so finer data is invisible).
  */
 import { useEffect, useMemo, useRef, useState } from "react"
+import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
+import {
+    heat, buildRamp, heatSize, heatOpacity, sortColdestFirst, spanFor, DEFAULT_SPAN as SPAN,
+} from "./minimapHeat.js"
 
-export const DEFAULT_SPAN = 26          // §S3.5's default framing, in degrees
+// §M6 — the span now comes from the host's context (see spanFor), never a
+// constant in this file.
+export { DEFAULT_SPAN, spanFor } from "./minimapHeat.js"
 export const MINIMAP_HEIGHT = 196
-// §S3.5's marker sizes: context 6px, subject 10px.
+// §M4.4 — the subject is fixed at 10px and off the ramp. Context markers
+// are sized by heat (4.4 → 8.6px), so CONTEXT_SIZE is the cold floor.
 export const CONTEXT_SIZE = 6
 export const SUBJECT_SIZE = 10
 // Two staggered pings, 0ms and 480ms, cubic ease-out over 1.5s.
@@ -65,14 +72,23 @@ export function makeProjection(lon, lat, span, w, h) {
     ]
 }
 
-/** cubic ease-out, §S3.5's own easing. */
+const prefersReducedMotion = () => {
+    try {
+        return typeof window !== "undefined" && window.matchMedia
+            ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : false
+    } catch { return false }
+}
+
+/** cubic ease-out, §M5's own easing. */
 export const easeOut = (f) => 1 - Math.pow(1 - f, 3)
 
-function Diamond({ x, y, size, color, opacity = 1 }) {
+function Diamond({ x, y, size, color, opacity = 1, children = null }) {
     const h = size / 2
     return (
         <rect className="mm-ev" x={x - h} y={y - h} width={size} height={size}
-              transform={`rotate(45 ${x} ${y})`} fill={color} opacity={opacity} />
+              transform={`rotate(45 ${x} ${y})`} fill={color} opacity={opacity}>
+            {children ? <title>{children}</title> : null}
+        </rect>
     )
 }
 
@@ -87,7 +103,13 @@ export default function Minimap({
     context = [],
     label = "",
     color = "var(--red)",
-    span = DEFAULT_SPAN,
+    // §M6/§M7 — the host supplies BOTH the framing context and its own
+    // window. Replay's 72h is not the inspector's, and reading a global here
+    // would make the same marker burn differently on two screens.
+    context: framingContext = "signal",
+    span,
+    windowMs = 72 * 3_600_000,
+    now = Date.now(),
     height = MINIMAP_HEIGHT,
     title = "Locator",
     subtitle = "",
@@ -100,9 +122,31 @@ export default function Minimap({
     useEffect(() => { let off = false; loadLand().then((p) => { if (!off) setLand(p) }); return () => { off = true } }, [])
 
     const hasFocus = Number.isFinite(focus?.lat) && Number.isFinite(focus?.lon)
+    const effSpan = span ?? spanFor(framingContext)
     const project = useMemo(
-        () => makeProjection(hasFocus ? focus.lon : 0, hasFocus ? focus.lat : 20, hasFocus ? span : 170, W, height),
-        [hasFocus, focus?.lat, focus?.lon, span, height],
+        () => makeProjection(hasFocus ? focus.lon : 0, hasFocus ? focus.lat : 20, hasFocus ? effSpan : 170, W, height),
+        [hasFocus, focus?.lat, focus?.lon, effSpan, height],
+    )
+
+    // §M4.2 — resolve the ramp's tokens at theme change and memoise. Reading
+    // them once at module load would freeze the dark palette into the light
+    // theme; hardcoding the hex would do the same permanently.
+    const [theme, setTheme] = useState(getRenderedTheme)
+    useEffect(() => subscribeRenderedTheme(setTheme), [])
+    const ramp = useMemo(() => {
+        const cs = typeof window !== "undefined" ? getComputedStyle(document.documentElement) : null
+        const tok = (n) => (cs ? cs.getPropertyValue(n).trim() : "")
+        return buildRamp([tok("--steel"), tok("--mm-ember"), tok("--amber"), tok("--red"), tok("--mm-hot")])
+    }, [theme])
+
+    // §M4.3 — coldest first. SVG has no z-index; paint order IS depth, so the
+    // hottest marker is drawn last and can never be occluded.
+    const painted = useMemo(
+        () => sortColdestFirst(
+            (context || []).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon)),
+            now, windowMs,
+        ),
+        [context, now, windowMs],
     )
 
     // §S3.5 — "two staggered pings (0ms and 480ms, cubic ease-out over 1.5s)
@@ -138,20 +182,34 @@ export default function Minimap({
                           d={"M" + poly.map(([x, y]) => project(x, y).map((n) => n.toFixed(1)).join(",")).join("L") + "Z"} />
                 ))}
 
-                {hasFocus && context.map((c, i) => {
-                    if (!Number.isFinite(c.lat) || !Number.isFinite(c.lon)) return null
+                {hasFocus && painted.map((c, i) => {
                     const q = project(c.lon, c.lat)
-                    // 6px context, 10px subject: size is the hierarchy.
-                    // A second glyph SHAPE would imply a second kind of thing.
-                    return <Diamond key={i} x={q[0]} y={q[1]} size={CONTEXT_SIZE} color={c.color || "var(--steel)"} opacity={0.8} />
+                    const h = heat(c.ts, c.severity, now, windowMs)
+                    // §M4.3 — colour, size and opacity ALL follow heat. Not
+                    // redundancy: legibility insurance for a colour-blind
+                    // analyst, a projector, and 60% browser zoom.
+                    return (
+                        <Diamond key={c.id ?? i} x={q[0]} y={q[1]}
+                                 size={heatSize(h)} color={ramp(h)} opacity={heatOpacity(h)}>
+                            {c.title ? `${c.title}` : null}
+                        </Diamond>
+                    )
                 })}
 
-                {p && pings.map((ping) => (
-                    <circle key={ping.delay} className="mm-ping" cx={p[0]} cy={p[1]} r={ping.r} strokeOpacity={ping.o} />
-                ))}
+                {/* §M5 — two staggered pings, or a static ring when motion is
+                    not wanted: the affordance is "look here", and a ring does
+                    that without moving. */}
+                {p && (prefersReducedMotion()
+                    ? <circle className="mm-ping" cx={p[0]} cy={p[1]} r={12} strokeWidth={1.5} />
+                    : pings.map((ping) => (
+                        <circle key={ping.delay} className="mm-ping" cx={p[0]} cy={p[1]} r={ping.r} strokeOpacity={ping.o} />
+                    )))}
 
                 {p && <Diamond x={p[0]} y={p[1]} size={SUBJECT_SIZE} color={color} />}
-                {p && label && <text className="mm-lbl" x={p[0] + 10} y={p[1] + 3}>{label}</text>}
+                {/* §M4.4 — the subject is NOT on the ramp. It is the answer, not a
+                    candidate: putting it on the ramp would render an old
+                    low-severity subject cooler than its own context. */}
+                {p && label && <text className="mm-sub" x={p[0] + 10} y={p[1] + 3}>{label}</text>}
 
                 {!hasFocus && (
                     <text x={W / 2} y={height / 2} textAnchor="middle" className="mm-lbl">
@@ -159,6 +217,10 @@ export default function Minimap({
                     </text>
                 )}
             </svg>
+            {/* §M4.5 — "A heat ramp with no key is a decorative gradient." */}
+            {hasFocus && painted.length > 0 && (
+                <div className="mmleg"><span>older</span><i className="mmgrad" /><span>newest critical</span></div>
+            )}
             <div className="mmhead">
                 <b>{title}</b>
                 {subtitle ? <span style={{ marginLeft: "auto" }}>{subtitle}</span> : null}

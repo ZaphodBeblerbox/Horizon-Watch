@@ -234,8 +234,11 @@ export default function Inbox() {
                     what is near it", answered without a camera move. */}
                 <Minimap
                     focus={selected?.row?.lat != null ? { lat: selected.row.lat, lon: selected.row.lon } : null}
+                    // §M4 — the locator paints by heat (severity × recency),
+                    // so it needs the timestamp and the tier, not a colour.
                     context={rows.filter((r) => r.id !== sel && r.row?.lat != null)
-                                 .map((r) => ({ lat: r.row.lat, lon: r.row.lon, color: SEV_COLOR[r.sev] }))}
+                                 .map((r) => ({ id: r.id, lat: r.row.lat, lon: r.row.lon, ts: r.ts, severity: r.sev, title: r.title }))}
+                    context="signal"
                     label={selected ? String(selected.title).slice(0, 26) : ""}
                     title="Locator"
                     subtitle={selected ? "" : "no signal selected"}
