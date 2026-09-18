@@ -183,6 +183,20 @@ export default function Replay({ isVisible = true }) {
                     <span style={{ marginLeft: "auto", font: "400 11.5px var(--mono)", color: "var(--txt-2)" }}>{fmtCursorLabel(cursorMs)}</span>
                 </div>
 
+                {/* §S3.1 / part 3 §26 — "Keep that sentence in the UI. Two time
+                    scrubbers in one product will be confused for each other
+                    unless the difference is stated where they live."
+
+                    The archive scrubber in Situation's time strip and this
+                    lane chart look alike and answer opposite questions, and
+                    the gap between them is itself the finding — a signal
+                    learned three days after it happened is a reporting
+                    failure that neither surface shows on its own. */}
+                <p className="replaynote">
+                    Replay shows <b>when you learned things</b>. The archive strip on Situation
+                    shows <b>when they happened</b>. A gap between the two is the finding.
+                </p>
+
                 {/* Ruler + lanes */}
                 {t0 == null ? (
                     <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--txt-4)", font: "400 12px var(--font)" }}>

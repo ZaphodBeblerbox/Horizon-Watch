@@ -1017,3 +1017,11 @@ table.grid .dim { color: var(--txt-4); }
 .mm-lbl { font-family: var(--mono); font-size: 9px; fill: var(--txt-3); }
 
 @media (prefers-reduced-motion: reduce) { .mm-ping { display: none; } }
+
+/* §S3.1 — the sentence that keeps Replay and the archive scrubber apart. */
+.replaynote {
+    margin: 0; flex: none; padding: 6px 10px;
+    border-bottom: 1px solid var(--line-soft); background: var(--bg-1);
+    font: 400 11px var(--font); line-height: 1.45; color: var(--txt-4);
+}
+.replaynote b { font-weight: 600; color: var(--txt-3); }
