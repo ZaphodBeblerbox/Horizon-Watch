@@ -486,7 +486,11 @@ export default function InspectorPanel({
                             style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }}
                         />
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
-                            {[media.photographer && `Photo: ${media.photographer}`, media.sourceLabel].filter(Boolean).join(" · ")}
+                            {[media.photographer && `Photo: ${media.photographer}`].filter(Boolean).join(" · ")}
+                            {media.linkUrl ? (
+                                <> · <a href={media.linkUrl} target="_blank" rel="noreferrer"
+                                        style={{ color: "var(--text-dim)" }}>{media.sourceLabel}</a></>
+                            ) : media.sourceLabel ? ` · ${media.sourceLabel}` : null}
                         </div>
                     </div>
                 )}

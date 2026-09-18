@@ -97,10 +97,19 @@ describe("adaptAircraft", () => {
     })
 
     it("carries a real reference photo (GET /api/aviation/photo/{icao24}) as media when one exists", () => {
-        const ac = { flight: "AFR816", photo_url: "https://www.planespotters.net/photo/1903521/...", photographer: "Gerrit Griem" }
+        // photo_url is the PAGE; thumbnail_url is the image. This test used
+        // to assert the page went into photoUrl, which is what shipped and
+        // is exactly why the photo rendered broken.
+        const ac = {
+            flight: "AFR816",
+            photo_url: "https://www.planespotters.net/photo/1903521/...",
+            thumbnail_url: "https://t.plnspttrs.net/12345/1903521_abc_280.jpg",
+            photographer: "Gerrit Griem",
+        }
         const result = adaptAircraft(ac)
         expect(result.media).toEqual({
-            photoUrl: ac.photo_url, photographer: "Gerrit Griem", sourceLabel: "Planespotters.net",
+            photoUrl: ac.thumbnail_url, linkUrl: ac.photo_url,
+            photographer: "Gerrit Griem", sourceLabel: "Planespotters.net",
         })
     })
 
@@ -303,5 +312,64 @@ describe("the entity id is not the ICAO24", () => {
         // A ship photo from Wikimedia is the vessel class, or that ship on
         // another day — it is not this contact, now.
         expect(src).toMatch(/Reference image ·/)
+    })
+})
+
+describe("ports and airports are real records, not just a type name", () => {
+    it("names an airport and carries its codes", () => {
+        // The API returned the whole record all along; there was no adapter,
+        // so it fell through to adaptGeneric and the panel showed the bare
+        // word "airport".
+        const out = normalizeEntity("airport", {
+            airport_name: "Amsterdam Airport Schiphol", icao_code: "EHAM", iata_code: "AMS",
+            airport_type: "large_airport", municipality: "Amsterdam", country_name: "Netherlands",
+            elevation_ft: -11, system_id: "ARPT-14755", lat: 52.3086, lon: 4.76389,
+        })
+        expect(out.identity.title).toBe("Amsterdam Airport Schiphol")
+        expect(out.identity.subtitle).toContain("EHAM / AMS")
+        expect(out.identity.kindLabel).toBe("large airport")
+        const labels = out.attributes.map((a) => a.label)
+        expect(labels).toEqual(expect.arrayContaining(["ICAO", "IATA", "Country"]))
+        expect(out.actions.canJumpToLocation).toBe(true)
+    })
+
+    it("names a port", () => {
+        const out = normalizeEntity("port", {
+            port_name: "Rotterdam", locode: "NLRTM", country_name: "Netherlands",
+            harbor_type: "Coastal Natural", system_id: "PRT-1", lat: 51.95, lon: 4.14,
+        })
+        expect(out.identity.title).toBe("Rotterdam")
+        expect(out.identity.subtitle).toContain("NLRTM")
+    })
+
+    it("omits fields the record does not have rather than inventing them", () => {
+        const out = normalizeEntity("airport", { airport_name: "Somewhere Field" })
+        expect(out.identity.title).toBe("Somewhere Field")
+        expect(out.attributes.every((a) => a.value != null && a.value !== "")).toBe(true)
+        expect(out.actions.canJumpToLocation).toBe(false)
+    })
+})
+
+describe("the aircraft photo URL", () => {
+    it("uses the image, not the HTML page", () => {
+        // Planespotters returns photo_url as the PAGE for the photo, which
+        // can never load in an <img>. That is why the photo rendered broken
+        // even after the ICAO24 lookup was fixed.
+        const out = normalizeEntity("aircraft", {
+            icao24: "4b1805",
+            photo_url: "https://www.planespotters.net/photo/1951141/hb-jcn-swiss",
+            thumbnail_url: "https://t.plnspttrs.net/31699/1951141_8ac3b77dfd_280.jpg",
+            photographer: "Joost Alexander",
+        })
+        expect(out.media.photoUrl).toMatch(/\.jpg$/)
+        expect(out.media.photoUrl).not.toMatch(/planespotters\.net\/photo/)
+        expect(out.media.linkUrl).toMatch(/planespotters\.net\/photo/)
+    })
+
+    it("shows nothing when there is no image, rather than a broken one", () => {
+        const out = normalizeEntity("aircraft", {
+            icao24: "471f56", photo_url: null, thumbnail_url: null,
+        })
+        expect(out.media).toBeNull()
     })
 })

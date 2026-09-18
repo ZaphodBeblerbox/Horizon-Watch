@@ -30,11 +30,15 @@ BRIEFING = "briefing"
 
 # The council (report_council.py) reviews a drafted briefing's own claims
 # against its own snapshot and flags overstatement. It runs on briefing
-# content and nothing else, so it stays on — as a separate purpose, so it
-# can be switched off on its own.
+# content only, but it is a SECOND model call per report on top of the draft,
+# and it is off by default: with credit scarce, the draft itself is what
+# earns the spend. submit-for-review still advances the report — the council
+# is bypassed, not failed, and says so in the bypass reason.
+#
+#     HW_LLM_PURPOSES=briefing,council   turns it back on
 COUNCIL = "council"
 
-_DEFAULT_ALLOWED = frozenset({BRIEFING, COUNCIL})
+_DEFAULT_ALLOWED = frozenset({BRIEFING})
 
 # Everything that exists and is currently off, named so the audit is
 # readable rather than implicit in what is missing.

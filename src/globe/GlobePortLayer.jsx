@@ -54,7 +54,12 @@ export default function GlobePortLayer({ enabled, viewBounds }) {
         const ids = []
         ports.forEach(f => {
             const id = `port-${f.properties?.system_id}`
-            setEntity(id, "port", f)
+            // The GeoJSON WRAPPER was being registered, so the inspector saw
+            // {type, geometry, properties} and no name — which is why a
+            // clicked port showed nothing but the word "port". Flatten the
+            // properties and carry the coordinates alongside them.
+            const [lon, lat] = f.geometry?.coordinates || []
+            setEntity(id, "port", { ...(f.properties || {}), lat, lon })
             ids.push(id)
         })
         return () => ids.forEach(deleteEntity)

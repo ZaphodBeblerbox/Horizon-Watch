@@ -60,7 +60,12 @@ export default function GlobeAirportLayer({ enabled, viewBounds }) {
         const ids = []
         airports.forEach(f => {
             const id = `airport-${f.properties?.system_id}`
-            setEntity(id, "airport", f)
+            // The GeoJSON WRAPPER was being registered, so the inspector saw
+            // {type, geometry, properties} and no name — which is why a
+            // clicked airport showed nothing but the word "airport". Flatten the
+            // properties and carry the coordinates alongside them.
+            const [lon, lat] = f.geometry?.coordinates || []
+            setEntity(id, "airport", { ...(f.properties || {}), lat, lon })
             ids.push(id)
         })
         return () => ids.forEach(deleteEntity)

@@ -187,8 +187,15 @@ export function adaptAircraft(data = {}) {
         // — shown only when a real photo exists for this real aircraft; never a
         // placeholder or stock image. Not AI-derived: this is a real photo lookup
         // keyed by ICAO24, same as the route/registration lookup above.
-        media: data.photo_url ? {
-            photoUrl: data.photo_url,
+        // THE IMAGE IS thumbnail_url, NOT photo_url. Planespotters returns
+        // photo_url as the HTML PAGE for the photo
+        // (planespotters.net/photo/1951141/hb-jcn-swiss-...), which can never
+        // load in an <img>. That is why aircraft photos rendered as a broken
+        // image even once the ICAO24 lookup was fixed. The page URL is still
+        // worth keeping — as a link, which is what it is.
+        media: data.thumbnail_url ? {
+            photoUrl: data.thumbnail_url,
+            linkUrl: data.photo_url || null,
             photographer: data.photographer || null,
             sourceLabel: "Planespotters.net",
         } : null,
@@ -499,6 +506,53 @@ export function adaptGeneric(data = {}, entityType) {
     }
 }
 
+/**
+ * Ports and airports had NO adapter, so they fell through to adaptGeneric and
+ * the inspector showed the bare word "port" or "airport" over an empty panel
+ * — while the API had been returning the full record all along.
+ */
+function adaptAirport(data) {
+    const name = data.airport_name || data.name || data.ident || "Airport"
+    const codes = [data.icao_code, data.iata_code].filter(Boolean).join(" / ")
+    const point = pointOf(data)
+    return {
+        identity: {
+            title: name,
+            subtitle: [codes, data.municipality, data.country_name].filter(Boolean).join(" · ") || null,
+            kindLabel: (data.airport_type || "airport").replace(/_/g, " "),
+        },
+        attributes: [
+            ["ICAO", data.icao_code], ["IATA", data.iata_code],
+            ["Type", (data.airport_type || "").replace(/_/g, " ")],
+            ["Municipality", data.municipality], ["Country", data.country_name],
+            ["Elevation", data.elevation_ft != null ? `${data.elevation_ft} ft` : null],
+            ["Identifier", data.ident], ["Record", data.system_id],
+        ].filter(([, v]) => v != null && v !== "").map(([k, v]) => ({ label: k, value: String(v) })),
+        provenance: extractProvenance(data),
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
+function adaptPort(data) {
+    const name = data.port_name || data.name || data.portname || "Port"
+    return {
+        identity: {
+            title: name,
+            subtitle: [data.locode || data.un_locode, data.country_name || data.country]
+                .filter(Boolean).join(" · ") || null,
+            kindLabel: data.harbor_type || data.port_type || "port",
+        },
+        attributes: [
+            ["UN/LOCODE", data.locode || data.un_locode], ["Country", data.country_name || data.country],
+            ["Harbour type", data.harbor_type], ["Harbour size", data.harbor_size],
+            ["Max draught", data.max_draught != null ? `${data.max_draught} m` : null],
+            ["Berths", data.berths], ["Record", data.system_id],
+        ].filter(([, v]) => v != null && v !== "").map(([k, v]) => ({ label: k, value: String(v) })),
+        provenance: extractProvenance(data),
+        actions: { canJumpToLocation: !!pointOf(data) },
+    }
+}
+
 // ── dispatch ───────────────────────────────────────────────────────────────────
 
 const ADAPTERS = {
@@ -513,6 +567,8 @@ const ADAPTERS = {
     geoconfirmed: adaptGeoConfirmed,
     infra: adaptInfrastructure,
     infrastructure: adaptInfrastructure,
+    airport: adaptAirport,
+    port: adaptPort,
 }
 
 /**
