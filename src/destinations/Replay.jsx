@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { replayOnMap } from "../services/replayOnMap.js"
-import LocatorMiniMap from "../globe/LocatorMiniMap.jsx"
+import Minimap from "../components/Minimap.jsx"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 
 const API = API_BASE
@@ -279,7 +279,13 @@ export default function Replay({ isVisible = true }) {
             {/* Right pane */}
             <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto", padding: 12 }}>
                 <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                    <LocatorMiniMap focus={minimapFocus} context={minimapContext} height={196} />
+                    <Minimap
+                        focus={minimapFocus}
+                        context={minimapContext}
+                        label={selected?.title ? String(selected.title).slice(0, 28) : ""}
+                        title="Locator"
+                        subtitle={selected ? "" : "no signal selected"}
+                    />
                 </div>
 
                 {selected ? (

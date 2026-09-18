@@ -20,6 +20,7 @@ import { safeArray } from "../utils/safeArray.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { buildWatchQueueRows } from "./dashboardLogic.js"
 import InspectorPanel from "../components/InspectorPanel.jsx"
+import Minimap from "../components/Minimap.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import {
@@ -228,6 +229,17 @@ export default function Inbox() {
                                 }))}>show on map →</button>
                     </div>
                 </div>
+                {/* §S3.5's locator, the same component Replay and the
+                    briefing reader use — "where in the world is this, and
+                    what is near it", answered without a camera move. */}
+                <Minimap
+                    focus={selected?.row?.lat != null ? { lat: selected.row.lat, lon: selected.row.lon } : null}
+                    context={rows.filter((r) => r.id !== sel && r.row?.lat != null)
+                                 .map((r) => ({ lat: r.row.lat, lon: r.row.lon, color: SEV_COLOR[r.sev] }))}
+                    label={selected ? String(selected.title).slice(0, 26) : ""}
+                    title="Locator"
+                    subtitle={selected ? "" : "no signal selected"}
+                />
                 <div className="scroll" id="inbox-detail">
                     {!selected ? (
                         <div className="inboxempty"><b>Nothing selected</b><span>Pick a row to read it.</span></div>

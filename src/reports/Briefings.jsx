@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import { getReportBundle, patchReport, listReports } from "./reportApi.js"
 import DocumentRenderer, { allEvidenceClaims, buildRegionDistribution } from "./DocumentRenderer.jsx"
-import LocatorMiniMap from "../globe/LocatorMiniMap.jsx"
+import Minimap from "../components/Minimap.jsx"
 import { replayOnMap } from "../services/replayOnMap.js"
 
 const WALKTHROUGH_INTERVAL_MS = 3600
@@ -358,9 +358,12 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, isVisi
 
             {/* Right — minimap + reference detail */}
             <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto" }}>
-                <LocatorMiniMap
-                    focus={activeRecord?.lat != null ? activeRecord : null} context={evidenceClaims} height={196}
+                <Minimap
+                    focus={activeRecord?.lat != null ? activeRecord : null}
+                    context={evidenceClaims}
                     span={MINIMAP_SPAN[activeRecord?.kind] || undefined}
+                    label={activeRecord?.title ? String(activeRecord.title).slice(0, 28) : ""}
+                    title="Locator"
                 />
                 <div style={{ padding: 12 }}>
                     <ReferencePane record={activeRecord} documentClaims={evidenceClaims} onSelectRef={activateReference} />
