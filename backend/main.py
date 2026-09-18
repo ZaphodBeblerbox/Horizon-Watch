@@ -304,6 +304,9 @@ from routers import alerts_derived as _alerts_derived_router   # PARALLAX addend
 app.include_router(_intel_router.router)
 app.include_router(_briefings_router.router)
 app.include_router(_infra_router.router)
+# The FollowTheMoney entity graph — see ftm.py for why this model.
+import routers.graph as _graph_router
+app.include_router(_graph_router.router)
 app.include_router(_tile_proxy_router.router)
 app.include_router(_analytics_router.router)
 app.include_router(_forge_router.router)
