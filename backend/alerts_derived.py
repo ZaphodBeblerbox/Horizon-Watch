@@ -314,10 +314,21 @@ def ontology_record(finding: dict) -> dict:
     chain with it. `source_ref` is the list of contributing ids, so the
     finding can always be resolved back to the records that made it.
 
-    origin_class 'D': computed by this system from records it holds, not
-    reported by anybody. That is a different epistemic status from a
-    GeoConfirmed placemark ('B') and is recorded as such rather than being
-    quietly promoted to the class of its inputs.
+    origin_class 'D' — and D on THIS app's scale (provenance.py) means OPEN
+    REPORTING: press and social, fast, cheap, weak. That is the right class
+    for these two findings and not a filing convenience:
+
+      * a surge is a statement about REPORTING VOLUME. It says coverage rose,
+        which is a claim about the press, so the class of the press is the
+        class of the claim.
+      * a fusion point is only ever as strong as its weakest contributing
+        modality, because its whole assertion is that independent kinds
+        AGREE. One of those kinds is routinely the news layer.
+
+    Deliberately NOT promoted to the 'B' of the GeoConfirmed placemarks it
+    counts: the placemark is a registry record of an event, the surge is an
+    inference about how much was written. Different claims, different
+    classes.
     """
     if finding.get("kind") == "surge":
         refs = [r.get("id") for r in finding.get("rows", []) if r.get("id")]

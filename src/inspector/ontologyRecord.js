@@ -17,19 +17,40 @@
  * them loses the ability to answer either question.
  */
 
-/** What each origin class actually asserts, so the tag is not just a letter. */
+/**
+ * What each class actually asserts, so the tag is not just a letter.
+ *
+ * ⚠ THESE MIRROR backend/provenance.py AND MUST NOT DRIFT FROM IT. That
+ * module is the single source of truth for the mapping, and this block is
+ * the only place an analyst ever reads the meaning — a definition that
+ * disagrees with the backend is worse than no definition, because it is
+ * confident and wrong in the one panel whose whole job is traceability.
+ * ontologyRecord.test.js pins these against provenance.py's own docstring.
+ *
+ * An earlier version of this file had C as "analyst-produced" and D as
+ * "derived by this system", which inverted the evidence scale: D is the
+ * WEAKEST class, and telling someone a class-D row was computed in-house
+ * would invite them to trust it more, not less.
+ */
 export const ORIGIN_CLASS = {
-    A: "Instrument — direct sensor observation",
-    B: "Registry — an actively-maintained body of record",
-    C: "Analyst — produced by a human in this system",
-    D: "Derived — computed by this system from records it holds",
+    A: "Primary instrument — sensor output, unmediated",
+    B: "Authoritative registry — a real body of record",
+    C: "Commercial redistribution — cleaned and resold; provenance survives, the raw data does not",
+    D: "Open reporting — press and social; fast, cheap, weak",
 }
 
+/**
+ * The legal axis, independent of the evidence one. T4 is the whole reason
+ * they are two fields: excellent evidence that is ILLEGAL in a paid
+ * deliverable. An ADS-B feed can be class-A instrument data and T4 at once,
+ * and merging the axes would make it "legal by accident" to ship
+ * research-licensed data to a paying client.
+ */
 export const LICENCE_TIER = {
-    T1: "Unrestricted",
-    T2: "Informs only — never shipped to a client",
-    T3: "Derived metrics may ship; the underlying records may not",
-    T4: "Internal only",
+    T1: "Client-deliverable — may be quoted, charted and shipped verbatim",
+    T2: "Internal only — may inform a conclusion, never leaves the building",
+    T3: "Derived metrics only — counts, indices and deltas may ship; the records may not",
+    T4: "Research / non-commercial — excellent evidence, illegal in a paid deliverable",
 }
 
 const firstOf = (data, keys) => {
