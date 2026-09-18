@@ -1,3 +1,5 @@
+import { useState, useMemo } from "react"
+import { classifyAll, summarise, ageLabel, STATE } from "../lib/feedHealth.js"
 import { useBriefingCount } from "../state/briefingBasket.js"
 
 function Cell({ label, value, mono = true }) {
@@ -28,6 +30,13 @@ function Cell({ label, value, mono = true }) {
  */
 export default function StatusBar({ health, taskCount = null }) {
     const briefingCount = useBriefingCount()
+    const [feedsOpen, setFeedsOpen] = useState(false)
+
+    // §33.3 — each adapter reports live | degraded | stale(age) | off, and a
+    // stale feed's detectors are SUSPENDED rather than left firing on old
+    // data. "The smallest piece of work in the whole spec with the largest
+    // effect on whether analysts trust the system."
+    const feeds = useMemo(() => summarise(classifyAll(health?.data_sources)), [health])
 
     const backendStatus = health?.backend?.status
     const connectionLabel = backendStatus === "ok" ? "Connected" : backendStatus === "degraded" ? "Degraded" : backendStatus === "error" ? "Down" : "—"
@@ -48,6 +57,20 @@ export default function StatusBar({ health, taskCount = null }) {
             <Cell label="Connection" value={connectionLabel} mono={false} />
             {dataVolume != null && <Cell label="Data volume" value={dataVolume.toLocaleString()} />}
             {typeof pingMs === "number" && <Cell label="Latency" value={`${pingMs.toFixed(0)}ms`} />}
+            {feeds.total > 0 && (
+                <button type="button" className="feedcell" onClick={() => setFeedsOpen((v) => !v)}
+                        aria-expanded={feedsOpen}
+                        title="Feed health — click for the per-adapter state">
+                    <span className="lbl">Feeds</span>
+                    <span className="v">
+                        <i className="dia" style={{ background: STATE[feeds.worst].color }} />
+                        {feeds.counts.live}/{feeds.total} live
+                        {feeds.suspended.length > 0 && (
+                            <em>· {feeds.suspended.length} suspended</em>
+                        )}
+                    </span>
+                </button>
+            )}
             {taskCount != null && <Cell label="Tasks" value={taskCount} />}
             <div style={{ flex: 1 }} />
             <Cell label="Briefing basket" value={briefingCount} />
@@ -56,6 +79,31 @@ export default function StatusBar({ health, taskCount = null }) {
                     Parallax v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "—"}
                 </span>
             </div>
+
+            {feedsOpen && (
+                <div className="feedpop" role="dialog" aria-label="Feed health">
+                    <div className="feedpop-head">
+                        <b>Feed health</b>
+                        <button type="button" onClick={() => setFeedsOpen(false)}>✕</button>
+                    </div>
+                    {classifyAll(health?.data_sources).map(({ source, state }) => (
+                        <div key={source.id} className="feedrow">
+                            <i className="dia" style={{ background: state.color }} />
+                            <span className="n">{source.name || source.id}</span>
+                            <span className="s" style={{ color: state.color }}>
+                                {state.key === "stale" ? `stale(${ageLabel(state.age)})` : state.label}
+                            </span>
+                        </div>
+                    ))}
+                    {feeds.suspended.length > 0 && (
+                        <p className="feednote">
+                            {feeds.suspended.length} feed{feeds.suspended.length === 1 ? "" : "s"} suspended.
+                            Detectors built on {feeds.suspended.length === 1 ? "it" : "them"} are not firing —
+                            what those layers do not show may simply be unreported, not absent.
+                        </p>
+                    )}
+                </div>
+            )}
         </div>
     )
 }

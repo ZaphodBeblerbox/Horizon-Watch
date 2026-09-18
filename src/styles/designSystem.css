@@ -1025,3 +1025,48 @@ table.grid .dim { color: var(--txt-4); }
     font: 400 11px var(--font); line-height: 1.45; color: var(--txt-4);
 }
 .replaynote b { font-weight: 600; color: var(--txt-3); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §33.3 feed health — live | degraded | stale(age) | off
+   ═══════════════════════════════════════════════════════════════════════
+   "A detector whose feed is stale is suspended, not left firing on old
+   data, and the suspension is visible." A console that keeps drawing a
+   layer from a feed that stopped four hours ago is asserting something it
+   has no evidence for. */
+.feedcell {
+    display: flex; flex-direction: column; justify-content: center; gap: 1px;
+    padding: 0 10px; border-right: 1px solid var(--line); flex-shrink: 0;
+    background: none; border-top: 0; border-bottom: 0; border-left: 0;
+    cursor: pointer; text-align: left; font-family: var(--font);
+}
+.feedcell:hover { background: var(--bg-3); }
+.feedcell .lbl { font: 400 9px var(--font); color: var(--txt-4); letter-spacing: .04em; }
+.feedcell .v { display: flex; align-items: center; gap: 5px; font: 400 11px var(--mono); color: var(--txt-2); }
+.feedcell .v .dia { width: 6px; height: 6px; transform: rotate(45deg); flex: none; }
+.feedcell .v em { font-style: normal; color: var(--amber); }
+
+.feedpop {
+    position: fixed; right: 10px; bottom: calc(var(--status) + 6px); z-index: 95;
+    width: 300px; max-height: 60vh; overflow: auto;
+    background: var(--bg-1); border: 1px solid var(--line-strong); box-shadow: var(--shadow);
+}
+.feedpop-head {
+    display: flex; align-items: center; padding: 7px 9px;
+    border-bottom: 1px solid var(--line); background: var(--bg-2);
+}
+.feedpop-head b { font: 600 11.5px var(--font); color: var(--txt); }
+.feedpop-head button {
+    margin-left: auto; background: none; border: 0; color: var(--txt-4);
+    cursor: pointer; font-size: 12px;
+}
+.feedrow { display: grid; grid-template-columns: 7px 1fr auto; gap: 7px; align-items: center; padding: 4px 9px; }
+.feedrow .dia { width: 6px; height: 6px; transform: rotate(45deg); }
+.feedrow .n {
+    font: 400 11.5px var(--font); color: var(--txt-2); min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.feedrow .s { font: 9.5px var(--mono); text-transform: uppercase; letter-spacing: .05em; }
+.feednote {
+    margin: 0; padding: 7px 9px; border-top: 1px solid var(--line-soft);
+    font: 400 10.5px var(--font); line-height: 1.45; color: var(--txt-4);
+}
