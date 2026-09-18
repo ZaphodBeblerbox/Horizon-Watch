@@ -120,7 +120,11 @@ export function runTaskAction(taskId, path, body) {
         // 240s is above what a full draft takes, not a guess at the ceiling:
         // the alternative is a timeout that reports failure for work that
         // actually succeeded, which is the worst of both.
-        _timeout: path === "/draft" ? 240000 : 60000,
+        // A researched narrative draft measured 255s end to end against the
+        // live API — web search plus ~1,100 words of prose. 240s cut that off
+        // mid-flight. 600s is above the observed range with real margin; the
+        // seven-stage progress list is what tells the analyst it is alive.
+        _timeout: path === "/draft" ? 600000 : 60000,
     }).then(asJson)
 }
 

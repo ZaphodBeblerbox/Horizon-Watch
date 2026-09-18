@@ -26,8 +26,9 @@ _API = open(os.path.join(os.path.dirname(__file__), "..", "src", "reports", "rep
 
 def test_the_draft_call_is_not_on_the_default_timeout():
     """A model call on a 30s budget reports failure for work that succeeded —
-    the worst of both."""
-    assert re.search(r'_timeout:\s*path === "/draft" \? 240000', _API)
+    the worst of both. A researched narrative draft measured 255s live, so the
+    first raise to 240s was still under it."""
+    assert re.search(r'_timeout:\s*path === "/draft" \? 600000', _API)
 
 
 def test_a_drafting_task_with_real_work_returns_it():

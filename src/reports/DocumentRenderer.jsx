@@ -247,6 +247,59 @@ export default function DocumentRenderer({ report, sections, mode = "read", xref
                 mode={mode} keyJudgments={report?.key_judgments} onEditKeyJudgments={onEditKeyJudgments} candidates={candidates}
             />
             {narrative.second_para && <XrefText text={narrative.second_para} candidates={candidates} style={{ marginTop: -14 }} />}
+
+            {/* THE REPORT ITSELF — continuous analytical prose.
+                The signals are reference points; this is the argument built
+                on them. Every paragraph runs through XrefText, so a vessel,
+                port, cable or zone named in the prose is a live link into the
+                record, which is what makes the document interactive rather
+                than merely readable. */}
+            {(narrative.sections || []).map((sec, i) => (
+                <section key={sec.key || i} style={{ marginTop: 22 }}>
+                    {sec.heading && (
+                        <h3 style={{ font: "600 14px var(--font)", color: "var(--txt)", margin: "0 0 8px" }}>
+                            {sec.heading}
+                        </h3>
+                    )}
+                    {(sec.paragraphs || []).map((para, j) => (
+                        <XrefText key={j} text={para} candidates={candidates}
+                                  style={{ marginBottom: 10, lineHeight: 1.62 }} />
+                    ))}
+                    {sec.implication && (
+                        <div style={{
+                            borderLeft: "2px solid var(--amber)", padding: "7px 0 7px 11px",
+                            background: "var(--bg-2)", marginTop: 4,
+                        }}>
+                            <div style={{ font: "600 9.5px var(--font)", color: "var(--txt-3)",
+                                          textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 3 }}>
+                                What this means
+                            </div>
+                            <XrefText as="span" text={sec.implication} candidates={candidates} />
+                        </div>
+                    )}
+                </section>
+            ))}
+
+            {/* Open sources consulted, listed separately from the cited
+                evidence. A reader must be able to tell what the system
+                OBSERVED from what the analyst READ. */}
+            {(narrative.web_sources || []).length > 0 && (
+                <section style={{ marginTop: 24 }}>
+                    <h3 style={{ font: "600 12px var(--font)", color: "var(--txt-3)", textTransform: "uppercase",
+                                 letterSpacing: ".05em", margin: "0 0 7px" }}>
+                        Open sources consulted ({narrative.web_sources.length})
+                    </h3>
+                    <ol style={{ margin: 0, paddingLeft: 18 }}>
+                        {narrative.web_sources.slice(0, 40).map((src, i) => (
+                            <li key={i} style={{ font: "400 11.5px var(--font)", color: "var(--txt-3)", marginBottom: 3 }}>
+                                <a href={src.url} target="_blank" rel="noreferrer" style={{ color: "var(--acc-hi)" }}>
+                                    {src.title || src.url}
+                                </a>
+                            </li>
+                        ))}
+                    </ol>
+                </section>
+            )}
             {narrative.bottom_line && (
                 <div style={{ background: "var(--bg-2)", borderLeft: "3px solid var(--acc-hi)", padding: "8px 12px", margin: "10px 0 20px", fontWeight: 600 }}>
                     Bottom line. <XrefText as="span" text={narrative.bottom_line} candidates={candidates} />

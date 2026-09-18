@@ -18671,6 +18671,16 @@ async def start_report_task_draft(task_id: str, request: Request):
                 claims = _validate_claims(ai_draft_result.get("claims") or [])
                 key_judgments = key_judgments or ai_draft_result.get("key_judgments")
                 narrative = narrative or ai_draft_result.get("narrative")
+                # The prose the reader actually reads, and the open sources
+                # behind it. Carried on the narrative blob rather than a new
+                # column so the reader, print layout and deck all reach it
+                # through the one object they already read.
+                if isinstance(narrative, dict):
+                    narrative = {
+                        **narrative,
+                        "sections": ai_draft_result.get("sections") or [],
+                        "web_sources": ai_draft_result.get("web_sources") or [],
+                    }
             else:
                 # Real, honest degradation — no client configured, or the
                 # call failed. An empty shell (today's pre-existing

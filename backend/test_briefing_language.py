@@ -181,17 +181,33 @@ class _Usage:
 class _Resp:
     def __init__(self, text): self.content = [_Block(text)]; self.usage = _Usage()
 
+class _Stream:
+    """The call is STREAMED now (the SDK refuses a non-streaming request whose
+    ceiling could run past ten minutes), so the stub has to be a context
+    manager too."""
+    def __init__(self, resp): self._resp = resp
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def get_final_message(self): return self._resp
+
+
 class _Messages:
     def __init__(self, outer): self._outer = outer
-    def create(self, **kw):
+    def _record(self, kw):
         self._outer.prompt = kw["messages"][0]["content"]
         self._outer.system = kw.get("system", "")
+        self._outer.tools = kw.get("tools")
+    def create(self, **kw):
+        self._record(kw)
         return _Resp(self._outer.reply)
+    def stream(self, **kw):
+        self._record(kw)
+        return _Stream(_Resp(self._outer.reply))
 
 class StubClient:
     """Stands in for Anthropic so the whole loop is exercised: prompt built,
     response parsed, claims validated against real ids."""
-    def __init__(self, reply): self.reply = reply; self.prompt = None; self.system = None
+    def __init__(self, reply): self.reply = reply; self.prompt = None; self.system = None; self.tools = None
     @property
     def messages(self): return _Messages(self)
 
@@ -210,6 +226,9 @@ def _german_reply(item_id=_REAL_ID):
         "claims": [{"section": "maritime_activity",
                     "text": "[GEMELDET] AIS-Ausfall in der Ostsee, wahrscheinlich (55-80 %), Konfidenz mittel.",
                     "cite_section": "ais_anomalies", "item_id": item_id}],
+        "sections": [{"key": "maritime_activity", "heading": "AIS-Ausfall in der Ostsee",
+                      "paragraphs": ["Ein Schiff meldete seit 163 Minuten keine Position."],
+                      "implication": "Die Ostsee-Zufahrten sind betroffen."}],
         "second_para": "Der Vorgang betrifft die Ostsee-Zufahrten.",
         "bottom_line": "Ein AIS-Ausfall allein trägt keine Bewertung.",
         "warnings": ["Weitere Ausfälle im selben Seegebiet"],
@@ -262,12 +281,12 @@ def test_no_client_degrades_honestly_rather_than_inventing():
 
 
 def test_the_token_ceiling_is_large_enough_for_a_real_snapshot():
-    """6000 truncated the reply mid-JSON on a real global snapshot, and the
+    """6000, then 16000, truncated the reply mid-JSON on a real global snapshot, and the
     parser then reported "could not parse model response" — which pointed at
     the parser rather than the budget, and is why briefings came back empty."""
     src = open(os.path.join(os.path.dirname(__file__), "report_draft.py"), encoding="utf-8").read()
-    assert "max_tokens=16000" in src
-    assert "max_tokens=6000" not in src
+    assert '"max_tokens": 32000' in src
+    assert "6000" not in src.split("create_kwargs")[1][:400]
 
 
 def test_a_truncated_reply_says_it_was_truncated():
@@ -284,3 +303,36 @@ def test_the_failure_reason_reaches_the_operator():
                encoding="utf-8").read()
     assert "draftRes.ai_draft_reason" in gen
     assert "draft not usable" in gen
+
+
+def test_citation_markup_never_reaches_the_reader():
+    """Claude marks web-sourced sentences with its own tags:
+        (cite index="22-9">Pskov is surrounded by NATO members</cite>
+    Useful signal, unreadable in a deliverable. A client-facing report cannot
+    ship with tag soup mid-sentence."""
+    out = rd.strip_cite_markup(
+        '[FACT] Pskov matters because (cite index="22-9">it borders Estonia and Latvia</cite> , '
+        'and its airfield is a target.')
+    assert "cite index" not in out and "</cite>" not in out
+    assert "it borders Estonia and Latvia, and its airfield" in out
+
+
+def test_the_report_asks_for_prose_not_a_list():
+    src = open(os.path.join(os.path.dirname(__file__), "report_draft.py"), encoding="utf-8").read()
+    assert "continuous analytical prose" in src.lower()
+    assert "REFERENCE POINTS, not the content" in src
+    # and an implication sentence per section, or the section is dropped
+    assert '"implication"' in src
+
+
+def test_research_is_on_and_can_be_switched_off():
+    src = open(os.path.join(os.path.dirname(__file__), "report_draft.py"), encoding="utf-8").read()
+    assert "web_search_20250305" in src
+    assert "research: bool = True" in src
+    assert "if research:" in src
+
+
+def test_a_section_with_no_paragraphs_is_dropped():
+    """A section that cannot say anything is filler, not a section."""
+    src = open(os.path.join(os.path.dirname(__file__), "report_draft.py"), encoding="utf-8").read()
+    assert "if not paras:" in src and "continue" in src

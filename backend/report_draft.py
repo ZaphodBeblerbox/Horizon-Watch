@@ -27,6 +27,21 @@ import report_language
 
 _STRIP_MD = re.compile(r"```(?:json)?\s*|\s*```")
 
+# Claude marks web-sourced sentences with its own citation tags:
+#   (cite index="22-9">the region of Pskov is surrounded by NATO members</cite>
+# Useful signal, unreadable in a deliverable. The TEXT is kept and the markup
+# removed — a client-facing report cannot ship with tag soup in the middle of
+# a sentence, and the sources are already listed separately.
+_CITE_TAG = re.compile(r'\(?\s*cite\s+index\s*=\s*"[^"]*"\s*>|</cite>\s*\)?', re.I)
+
+
+def strip_cite_markup(text: str) -> str:
+    if not isinstance(text, str):
+        return text
+    out = _CITE_TAG.sub("", text)
+    out = re.sub(r"\s+([,.;:])", r"\1", out)   # tag removal can orphan punctuation
+    return re.sub(r"[ \t]{2,}", " ", out).strip()
+
 
 def _extract_json(text: str):
     try:
@@ -291,7 +306,14 @@ def _sections_block(sections) -> str:
 
 
 _SYSTEM = (
-    "You are an intelligence analyst drafting a structured situation report from a real, "
+    "You are an intelligence analyst writing a client-facing situation report. You write "
+    "CONTINUOUS ANALYTICAL PROSE — the register of a professional intelligence product, flat "
+    "and precise, hedged exactly where the evidence is thin and unhedged where it is not. "
+    "Never bullet-point what should be argued. Never write a sentence that only restates a "
+    "data field. You are given real, verified signals as the evidence base and you may search "
+    "the open web for the context that makes them meaningful; keep the two clearly separated "
+    "at all times, because a reader must always be able to tell what you OBSERVED from what "
+    "you READ and what you CONCLUDED. "
     "pre-assembled intelligence picture. You are given real, already-selected and ranked "
     "candidate items per category, each with a real item_id — you may ONLY cite an item_id "
     "you were actually given, never invent one. If a category's candidate list says none are "
@@ -307,7 +329,8 @@ _EMPTY_NOTE = "No signals were selected for this cycle."
 
 def generate_draft(snapshot_content: dict, focus: str | None, region_label: str | None, client, usage_tracker_mod,
                     force_empty: bool = False, standing_instruction: str | None = None,
-                    language: str | None = None, sections: list | None = None) -> dict:
+                    language: str | None = None, sections: list | None = None,
+                    research: bool = True) -> dict:
     """Draft key_judgments + claims from a real ReportSnapshot's content.
 
     Returns {"status": "ok", "key_judgments": str, "claims": [...], "narrative": {...}}
@@ -380,39 +403,60 @@ Statistics: {json.dumps(stats)}
 {f"REAL ONTOLOGY CONTEXT (real cable/port/strategic-zone names already linked to the items above — mention naturally in prose where relevant; this is context, not a new citable category, so still cite only the real item_ids above): {', '.join(ontology_names)}" if ontology_names else ""}
 {f"Standing instruction from the requesting analyst (apply it, but never let it override the no-fabrication rules above): {standing_instruction.strip()}" if standing_instruction and standing_instruction.strip() else ""}
 
-Write:
-1. key_judgments: 3-7 high-confidence bullet-point sentences, most important first,
-   covering the real traffic volume context above plus the most significant real items
-   across all categories. Plain sentences separated by newlines, no markdown bullets.
-2. claims: one claim per genuinely significant real candidate item you want to highlight
-   (do not force one for every single item if there are many similar ones — pick the
-   real, significant ones). Also include ONE claim per category that has NO real
-   candidates, with an honest "no significant activity" text and citation omitted
-   (see below).
+Write a REAL INTELLIGENCE REPORT — continuous analytical prose, not a list of
+findings. The signals above are REFERENCE POINTS, not the content: they are what
+you can prove, and the report is the argument you build on them. A reader should
+be able to read it start to finish and understand the situation, not decode a
+table.
 
-3. second_para: one supporting paragraph (2-4 sentences) giving real context behind
-   the key judgements above — quantify only what the evidence/statistics state.
-4. bottom_line: one single sentence, the single most important takeaway for a reader
-   who reads nothing else. If nothing here rises to that level, say so honestly
-   (e.g. "No single development in this window meets the bar for a bottom-line call.").
-5. warnings: a real list of short indicator/warning strings grounded in the evidence
-   above (empty list if genuinely none warrant flagging — never invent one to fill it).
-6. actions: a real list of [text, owner, by] triples — recommended actions, a
-   plausible real owner role (e.g. "Duty analyst", "Fleet security"), and a relative
-   deadline like "D+2" — grounded in the evidence above (empty list if none warrant it).
+Each section is two to four paragraphs of flowing text. Explain what is
+happening, why these signals appear together, what is driving them, and what it
+would take to change the picture. Bring in the real-world context you find
+through search — the political, military, commercial and regulatory background
+that makes these signals mean something — and name that context explicitly
+rather than alluding to it. A paragraph that only restates a signal's own summary
+line is wasted; the signal is already in the evidence table.
+
+ONLY write a section for a category that actually has evidence above. A category
+whose candidate list says none are available gets NO section — say so once in a
+claim and move on. Writing three paragraphs about the absence of imagery
+detections pads the report and buries the categories that matter.
+
+End every section with an IMPLICATION sentence naming a concrete consequence — a
+place, an asset, a route, a decision, a group of people. If you cannot write that
+sentence for a section, the section does not belong in the report and you should
+leave it out.
+
+Use search freely for background, recent developments, and anything that helps
+you explain what the signals mean. Distinguish clearly between what the EVIDENCE
+shows (cite the item_id) and what OPEN SOURCES say (name the outlet or
+publication). Never blur the two: the whole value of this product is that a
+reader can tell which is which.
 
 Return ONLY this JSON shape:
 {{
-  "key_judgments": "...",
+  "key_judgments": "3-7 sentences, most important first, each marked and carrying a probability band and confidence. Plain sentences separated by newlines, no markdown bullets.",
+  "sections": [
+    {{"key": "maritime_activity",
+      "heading": "a real, specific heading — not the section name",
+      "paragraphs": ["first paragraph of real analysis", "second paragraph", "third"],
+      "implication": "one sentence naming a concrete consequence"}}
+  ],
   "claims": [
     {{"section": "maritime_activity", "text": "...", "cite_section": "ais_anomalies", "item_id": "..."}},
     {{"section": "imagery_detection", "text": "No significant imagery-detection activity identified in this window.", "cite_section": null, "item_id": null}}
   ],
-  "second_para": "...",
-  "bottom_line": "...",
-  "warnings": ["...", "..."],
-  "actions": [["...", "...", "D+2"], ["...", "...", "D+7"]]
+  "second_para": "one supporting paragraph of real context behind the key judgements",
+  "bottom_line": "the single most important takeaway, one sentence",
+  "warnings": ["short indicator/warning strings grounded in the evidence or your research"],
+  "actions": [["what to do", "a plausible owner role", "D+2"]]
 }}
+
+`sections` is the report a person reads. `claims` is the citation backbone
+underneath it — one claim per genuinely significant real item you relied on,
+each tied to a real item_id, plus one honest "no significant activity" claim
+for any category with no real candidates. Both are required: prose without
+citations is an essay, and citations without prose are a spreadsheet.
 """
 
     try:
@@ -427,16 +471,54 @@ Return ONLY this JSON shape:
         #
         # The model also emits a thinking block before the answer, and that
         # comes out of the same allowance.
-        resp = client.messages.create(
-            model="claude-sonnet-5", max_tokens=16000,
-            system=_SYSTEM, messages=[{"role": "user", "content": user}],
-        )
-        text = None
+        # WEB SEARCH. The signals say what happened; they do not say what it
+        # means. A dark-ship cluster in the Danish Straits is a fact — that it
+        # coincides with a sanctions package taking effect is the reason an
+        # analyst cares, and that context is not in any feed this system owns.
+        #
+        # The model cites what it finds, and those sources come back in
+        # `web_sources` so the report can show its reading as well as its
+        # observations.
+        create_kwargs = {
+            "model": "claude-sonnet-5", "max_tokens": 32000,
+            "system": _SYSTEM, "messages": [{"role": "user", "content": user}],
+        }
+        if research:
+            create_kwargs["tools"] = [{
+                "type": "web_search_20250305", "name": "web_search", "max_uses": 8,
+            }]
+        # STREAMED, because the SDK refuses a non-streaming request whose
+        # token ceiling could take it past ten minutes — and with search plus
+        # a full narrative, this one can. The stream is accumulated rather
+        # than surfaced token-by-token: the caller is a synchronous endpoint,
+        # and the seven-stage progress list is what the analyst watches.
+        with client.messages.stream(**create_kwargs) as stream:
+            resp = stream.get_final_message()
+        # EVERY text block, not the first. With web search enabled the reply
+        # is a sequence — server_tool_use, web_search_tool_result, then
+        # several text blocks — and the JSON lands in the last of them. The
+        # old `break` would have read a sentence of prose and called it
+        # malformed.
+        parts, sources = [], []
         for block in resp.content or []:
-            if getattr(block, "type", None) == "text":
-                text = block.text
-                break
-        text = text or ""
+            btype = getattr(block, "type", None)
+            if btype == "text":
+                parts.append(block.text or "")
+                for cit in (getattr(block, "citations", None) or []):
+                    url = getattr(cit, "url", None)
+                    if url:
+                        sources.append({"title": getattr(cit, "title", None) or url, "url": url})
+            elif btype == "web_search_tool_result":
+                for item in (getattr(block, "content", None) or []):
+                    url = getattr(item, "url", None)
+                    if url:
+                        sources.append({"title": getattr(item, "title", None) or url, "url": url})
+        text = "\n".join(parts)
+        # de-duplicate, keeping first appearance
+        seen, web_sources = set(), []
+        for src in sources:
+            if src["url"] not in seen:
+                seen.add(src["url"]); web_sources.append(src)
         if usage_tracker_mod is not None:
             usage_tracker_mod.record_call(
                 getattr(resp.usage, "input_tokens", 0), getattr(resp.usage, "output_tokens", 0),
@@ -448,7 +530,7 @@ Return ONLY this JSON shape:
             # the parser for a truncation problem.
             if getattr(resp, "stop_reason", None) == "max_tokens":
                 return {"status": "error",
-                        "reason": (f"the model's reply hit the {16000}-token ceiling and stopped "
+                        "reason": (f"the model's reply hit the {32000}-token ceiling and stopped "
                                    f"mid-answer, so there was no complete JSON to read — "
                                    f"narrow the evidence set or the section list and retry"),
                         "raw": text[-800:]}
@@ -502,11 +584,31 @@ Return ONLY this JSON shape:
 
     narrative = _narrative_with_fallback(parsed, claims, stats, traffic)
 
+    # The prose the reader reads. Kept only where a section has real
+    # paragraphs AND the implication sentence the prompt demands — a section
+    # that cannot name a concrete consequence is not a section, it is filler.
+    narrative_sections = []
+    for sec in (parsed.get("sections") or []):
+        if not isinstance(sec, dict):
+            continue
+        paras = [strip_cite_markup(p) for p in (sec.get("paragraphs") or []) if isinstance(p, str) and p.strip()]
+        paras = [p for p in paras if p]
+        if not paras:
+            continue
+        narrative_sections.append({
+            "key": sec.get("key"),
+            "heading": strip_cite_markup(sec.get("heading") or "") or None,
+            "paragraphs": paras,
+            "implication": strip_cite_markup(sec.get("implication") or "") or None,
+        })
+
     return {
         "status": "ok",
         "key_judgments": key_judgments,
         "claims": claims,
         "narrative": narrative,
+        "sections": narrative_sections,
+        "web_sources": web_sources,
     }
 
 
