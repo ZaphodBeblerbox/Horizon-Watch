@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
-import { getEntityMarkerDataUri } from "./entityIcons.js"
+import { infraGlyphUri } from "./infraGlyphs.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
 // Airports are real, non-flagged aviation infrastructure. The new outline-
@@ -12,8 +12,12 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 // for InspectorPanel — same real distinction, same resolution, applied
 // consistently here). Importance tier is still conveyed via size (ICON_SIZE
 // below), unchanged from before.
-function getIcon() {
-    return getEntityMarkerDataUri({ entityType: "facility", size: 32 })
+// §I6.2 — one runway, two threshold bars, a terminal set clear of the strip.
+// Never a plane: "a plane on the ground must not be the same mark as a plane
+// in the air — that is a different object with different consequences." On a
+// map already showing live ADS-B, that is not a style preference.
+function getIcon(airportType, theme = "dark") {
+    return infraGlyphUri("airport", { theme, size: ICON_SIZE[airportType] || 20 })
 }
 
 // Icon size varies by airport importance

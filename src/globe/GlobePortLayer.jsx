@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
-import { getEntityMarkerDataUri } from "./entityIcons.js"
+import { infraGlyphUri } from "./infraGlyphs.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
 // Ports are real, non-flagged maritime infrastructure — same shared
@@ -11,8 +11,11 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 // real infrastructure sub-type to entityType "facility"). Importance tier
 // (Very Large/Large/Medium/Small) is still conveyed via size (ICON_SIZE
 // below), unchanged from before.
-function getIcon(portSize) {
-    return getEntityMarkerDataUri({ entityType: "facility", size: 32 })
+// §I6.1 — a portal crane on a quay, with the boom overhanging the water.
+// Previously a generic lucide "facility" block, which said "a building is
+// here" about a container terminal.
+function getIcon(portSize, state = "nominal", theme = "dark") {
+    return infraGlyphUri("port", { state, theme, size: ICON_SIZE[portSize] || 22 })
 }
 
 const ICON_SIZE = {
