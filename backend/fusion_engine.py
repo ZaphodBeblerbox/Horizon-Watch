@@ -1,3 +1,4 @@
+import llm_gate
 """
 fusion_engine.py — Multi-domain signal correlation and fusion.
 
@@ -475,7 +476,7 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
     "second if relevant"
   ]
 }}"""
-            client = anthropic.Anthropic()
+            client = llm_gate.get_client("fusion_narrative")
 
             def _call_and_parse():
                 msg = client.messages.create(
@@ -518,7 +519,7 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                     f"signals/facts given above: {violations}. Regenerate using ONLY the facts given above — "
                     f"do not name any entity, place, or figure not listed there."
                 )
-                client = anthropic.Anthropic()
+                client = llm_gate.get_client("fusion_narrative")
                 title, subtitle, narrative, key_signals, threat_indicators = _call_and_parse()
                 ok2, violations2 = self._validate_narrative(
                     narrative, key_signals, threat_indicators, signals, domains, location_name, shared_entity_names)

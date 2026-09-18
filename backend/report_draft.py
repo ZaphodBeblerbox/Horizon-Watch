@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import re
 
+import report_language
+
 
 _STRIP_MD = re.compile(r"```(?:json)?\s*|\s*```")
 
@@ -61,6 +63,14 @@ _ITEM_ID_FIELD = {
     "strategic_zones": "zone_id", "top_articles": "url", "foresight_risks": "zone",
 }
 
+# Fields that carry an item's OWN time, place and basis. None of these
+# reached the prompt before: the model was asked to draft a dated situation
+# report from evidence with no dates, no coordinates and no statement of
+# which detector fired. It could only write vaguely, because vague was all
+# it had.
+_ITEM_TIME_FIELDS = ("created_at", "ts", "timestamp", "published_at", "detected_at", "time_window")
+_ITEM_PLACE_FIELDS = ("location_name", "location", "nearest_port", "zone", "region")
+
 _ITEM_LABEL_FIELDS = {
     "ais_anomalies": ("location_name", "summary"),
     "adsb_anomalies": ("location_name", "summary"),
@@ -74,25 +84,116 @@ _ITEM_LABEL_FIELDS = {
 }
 
 
+def _iso_day(value) -> str | None:
+    """A date the model can actually write into a sentence."""
+    if not value:
+        return None
+    text = str(value)
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})", text)
+    if m:
+        return f"{m.group(3)}{_MONTHS[int(m.group(2)) - 1]} {m.group(4)}{m.group(5)}Z"
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if m:
+        return f"{m.group(3)}{_MONTHS[int(m.group(2)) - 1]}"
+    return text[:40] or None
+
+
+_MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+
+_RULE_NAMEISH = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
+
+
+def _first(item: dict, fields) -> str | None:
+    for f in fields:
+        v = item.get(f)
+        if v:
+            return str(v)
+    return None
+
+
+def _place(item: dict) -> str | None:
+    """A place a sentence can actually name.
+
+    AIS anomaly rows carry the DETECTOR NAME in location_name — the real
+    value there is "AIS_DARK_SHIP", not a port. Passing that through as a
+    location makes the model write "a vessel off AIS_DARK_SHIP", which is
+    both wrong and obviously machine-generated. An identifier-shaped value
+    is not a place, so fall through to coordinates instead.
+    """
+    value = _first(item, _ITEM_PLACE_FIELDS)
+    if not value:
+        return None
+    if _RULE_NAMEISH.match(value.strip()):
+        return None
+    if value.strip() == str(item.get("rule_name") or "").strip():
+        return None
+    return value
+
+
+def _corroboration(item: dict) -> int | None:
+    """How many INDEPENDENT modalities stand behind this item.
+
+    This is the two-source test the whole product is built on, and it was
+    never shown to the drafting model — so a fusion of four modalities and a
+    single unconfirmed report read identically in the prompt and could be
+    written up with identical confidence.
+    """
+    doms = item.get("domains")
+    if isinstance(doms, (list, tuple, set)):
+        return len({str(d) for d in doms if d}) or None
+    sigs = item.get("key_signals")
+    if isinstance(sigs, (list, tuple)) and sigs:
+        kinds = {str(s.get("domain") or s.get("type") or "") for s in sigs if isinstance(s, dict)}
+        kinds.discard("")
+        return len(kinds) or None
+    return None
+
+
 def _candidate_items(snapshot_content: dict, cite_sections: list[str], limit: int = 12) -> list[dict]:
     """Real, citable candidate items for one or more snapshot sections, each
     tagged with its real section + item_id so the model can only ever cite
-    something that is actually there."""
+    something that is actually there.
+
+    Each candidate also carries its own WHEN, WHERE, BASIS and PROVENANCE
+    where the real item has them. Those fields exist on every snapshot item
+    and used to be dropped on the floor here.
+    """
     out = []
     for section in cite_sections:
         id_field = _ITEM_ID_FIELD[section]
         label_fields = _ITEM_LABEL_FIELDS[section]
-        for item in (snapshot_content.get(section) or [])[:limit]:
+        available = snapshot_content.get(section) or []
+        for item in available[:limit]:
             item_id = item.get(id_field)
             if not item_id:
                 continue
+            lat, lon = item.get("lat"), item.get("lon")
+            coords = None
+            if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+                coords = f"{abs(lat):.2f}{'N' if lat >= 0 else 'S'} {abs(lon):.2f}{'E' if lon >= 0 else 'W'}"
             out.append({
                 "cite_section": section,
                 "item_id": str(item_id),
+                "title": item.get("title") or item.get("headline") or item.get("name"),
+                "when": _iso_day(_first(item, _ITEM_TIME_FIELDS)),
+                "where": _place(item),
+                "coords": coords,
+                # What actually fired. "AIS_DARK_SHIP" is a claim a reader can
+                # weigh; "an anomaly" is not.
+                "basis": item.get("rule_name") or item.get("detector") or item.get("kind"),
+                "modality": item.get("domain") or item.get("modality"),
+                "corroboration": _corroboration(item),
+                "origin_class": item.get("origin_class"),
+                "licence_tier": item.get("licence_tier"),
                 "summary": {k: item.get(k) for k in label_fields if item.get(k)},
                 "severity": item.get("severity"), "confidence": item.get("confidence"),
                 "relevance_score": item.get("relevance_score"),
             })
+        # Truncation is stated, not silent: the model needs to know it is
+        # looking at a sample, or it will write "the only activity observed".
+        if len(available) > limit and out:
+            out[-1]["_truncated_from"] = len(available)
     return out
 
 
@@ -120,17 +221,73 @@ def _format_candidates(candidates: list[dict]) -> str:
     if not candidates:
         return "(none — genuinely nothing real available for this category right now)"
     lines = []
+    truncated = None
     for c in candidates:
-        bits = [f"item_id={c['item_id']}", f"cite_section={c['cite_section']}"]
+        truncated = c.get("_truncated_from") or truncated
+        head = [f"item_id={c['item_id']}", f"cite_section={c['cite_section']}"]
+        if c.get("when"):
+            head.append(f"when={c['when']}")
+        if c.get("where"):
+            head.append(f"where={c['where']}")
+        elif c.get("coords"):
+            head.append(f"at={c['coords']}")
         if c.get("severity"):
-            bits.append(f"severity={c['severity']}")
+            head.append(f"severity={c['severity']}")
         if c.get("confidence") is not None:
-            bits.append(f"confidence={c['confidence']}")
+            head.append(f"confidence={c['confidence']}")
         if c.get("relevance_score") is not None:
-            bits.append(f"relevance={c['relevance_score']}")
-        summary = " | ".join(f"{k}: {v}" for k, v in c["summary"].items())
-        lines.append(f"  - [{', '.join(bits)}] {summary}")
+            head.append(f"relevance={c['relevance_score']}")
+        if c.get("basis"):
+            head.append(f"basis={c['basis']}")
+        if c.get("modality"):
+            head.append(f"modality={c['modality']}")
+        if c.get("corroboration"):
+            head.append(f"independent_modalities={c['corroboration']}")
+        # Two axes, never collapsed into one field.
+        if c.get("origin_class"):
+            head.append(f"origin_class={c['origin_class']}")
+        if c.get("licence_tier"):
+            head.append(f"licence_tier={c['licence_tier']}")
+        title = c.get("title")
+        summary = " | ".join(f"{k}: {v}" for k, v in (c.get("summary") or {}).items())
+        body = " — ".join(x for x in (title, summary) if x)
+        lines.append(f"  - [{', '.join(head)}] {body}")
+    if truncated:
+        lines.append(f"  (showing the top {len(candidates)} of {truncated} real items in this "
+                     f"category — do not write as though these were the only ones)")
     return "\n".join(lines)
+
+
+# §S4.3's document sections. The analyst ticks these in Generate; before
+# this they were collected in the UI and never sent anywhere, so turning
+# "Recommended actions" off changed nothing about what came back.
+_DOC_SECTION_LABELS = {
+    "executive_judgement": "an executive judgement",
+    "signal_assessment": "a signal-by-signal assessment",
+    "exposure_impact": "exposure and continuity impact",
+    "indicators_warnings": "indicators and warnings",
+    "recommended_actions": "recommended actions",
+    "sourcing_method": "sourcing and method",
+}
+
+
+def _sections_block(sections) -> str:
+    if not sections:
+        return ""
+    keep = [s for s in sections if s in _DOC_SECTION_LABELS]
+    if not keep or len(keep) == len(_DOC_SECTION_LABELS):
+        return ""
+    drop = [k for k in _DOC_SECTION_LABELS if k not in keep]
+    out = ("The analyst has chosen which sections this document contains. Include: "
+           + ", ".join(_DOC_SECTION_LABELS[k] for k in keep) + ".")
+    if "indicators_warnings" in drop:
+        out += " Return an EMPTY warnings list."
+    if "recommended_actions" in drop:
+        out += " Return an EMPTY actions list."
+    if "sourcing_method" in drop:
+        out += (" The analyst has switched off the sourcing and method section; still cite "
+                "item_ids exactly as required, since citations are how claims are validated.")
+    return out
 
 
 _SYSTEM = (
@@ -149,7 +306,8 @@ _EMPTY_NOTE = "No signals were selected for this cycle."
 
 
 def generate_draft(snapshot_content: dict, focus: str | None, region_label: str | None, client, usage_tracker_mod,
-                    force_empty: bool = False, standing_instruction: str | None = None) -> dict:
+                    force_empty: bool = False, standing_instruction: str | None = None,
+                    language: str | None = None, sections: list | None = None) -> dict:
     """Draft key_judgments + claims from a real ReportSnapshot's content.
 
     Returns {"status": "ok", "key_judgments": str, "claims": [...], "narrative": {...}}
@@ -216,6 +374,9 @@ REAL, PRE-RANKED CANDIDATE ITEMS PER SECTION (cite ONLY these item_ids):
 {_format_candidates(per_section_candidates['outlook_watch'])}
 
 Statistics: {json.dumps(stats)}
+
+{report_language.prompt_block(language)}
+{_sections_block(sections)}
 {f"REAL ONTOLOGY CONTEXT (real cable/port/strategic-zone names already linked to the items above — mention naturally in prose where relevant; this is context, not a new citable category, so still cite only the real item_ids above): {', '.join(ontology_names)}" if ontology_names else ""}
 {f"Standing instruction from the requesting analyst (apply it, but never let it override the no-fabrication rules above): {standing_instruction.strip()}" if standing_instruction and standing_instruction.strip() else ""}
 

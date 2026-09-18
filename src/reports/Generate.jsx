@@ -33,6 +33,17 @@ const HORIZON_HOURS = { "7d": 168, "30d": 720, "90d": 2160 }
  * "Sourcing and method is a section, and it defaults on. A brief that cannot
  * say where it came from is not shorter, it is weaker."
  */
+/**
+ * The deliverable's language. The evidence stays in its canonical form —
+ * only the prose the reader sees is translated (see backend/report_language.py,
+ * which explains why that boundary matters).
+ */
+const LANGUAGES = [
+    { key: "en", label: "English" },
+    { key: "de", label: "Deutsch" },
+    { key: "fr", label: "Français" },
+]
+
 const DOC_SECTIONS = [
     { key: "executive_judgement", label: "Executive judgement" },
     { key: "signal_assessment", label: "Signal-by-signal assessment" },
@@ -101,6 +112,7 @@ export default function Generate({ onOpenTab }) {
     const [sectionsOn, setSectionsOn] = useState(() => Object.fromEntries(SECTION_TOGGLES.map((s) => [s.key, true])))
     // Every document section on by default — "Sourcing and method" included,
     // which §S4.3 calls out by name.
+    const [language, setLanguage] = useState("en")
     const [docSectionsOn, setDocSectionsOn] = useState(() => Object.fromEntries(DOC_SECTIONS.map((s) => [s.key, true])))
     const [watchZoneId, setWatchZoneId] = useState("")
     const [watchZones, setWatchZones] = useState([])
@@ -242,7 +254,7 @@ export default function Generate({ onOpenTab }) {
             const t4 = nowMs()
             setStepStatus(4, "running")
             if (isEmpty) appendLog(logLine(`evidence=0 signals · generating without evidence, by analyst choice`))
-            else appendLog(logLine(`evidence=${checked.length} signals`))
+            else appendLog(logLine(`evidence=${checked.length} signals · language=<i>${language}</i>`))
             const includedItemIds = {}
             for (const it of checked) { (includedItemIds[it.snapSection] ||= []).push(it.id) }
             const draftBody = {
@@ -256,6 +268,7 @@ export default function Generate({ onOpenTab }) {
                 scope: scope || undefined, audience, horizon,
                 // §S4.3 — which sections the document should contain.
                 sections: DOC_SECTIONS.filter((d) => docSectionsOn[d.key]).map((d) => d.key),
+                language,
             }
             const draftRes = await runTaskAction(task.task_id, "/draft", draftBody)
             setStepStatus(4, "done", nowMs() - t4)
@@ -320,6 +333,14 @@ export default function Generate({ onOpenTab }) {
                         <option value="">Global overview</option>
                         {watchZones.map((z) => <option key={z.system_id} value={z.system_id}>{z.name}</option>)}
                     </select>
+                </div>
+                <div className="field"><label>Language</label>
+                    <div className="seg">
+                        {LANGUAGES.map((l) => (
+                            <button key={l.key} aria-pressed={language === l.key}
+                                    onClick={() => setLanguage(l.key)}>{l.label}</button>
+                        ))}
+                    </div>
                 </div>
                 <div className="field"><label>Audience</label><input className="input" value={audience} onChange={(e) => setAudience(e.target.value)} /></div>
                 <div className="field"><label>Forecast horizon</label>

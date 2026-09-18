@@ -10,6 +10,8 @@ foresight_engine.py — Claude-powered escalation foresight per strategic zone.
 """
 from __future__ import annotations
 
+import llm_gate
+
 import json
 import re
 import datetime
@@ -29,7 +31,7 @@ _client: Optional[anthropic.Anthropic] = None
 def _get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()
+        _client = llm_gate.get_client("foresight")
     return _client
 
 

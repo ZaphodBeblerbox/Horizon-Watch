@@ -114,6 +114,8 @@ from article_extract import get_article_preview
 from article_intelligence import analyse_article
 import relevance_embedding
 import usage_tracker
+# The briefing's output language (en|de|fr) — see report_language.py.
+import report_language
 from classifier import classify_event
 import event_store as es
 import event_bridge
@@ -363,7 +365,25 @@ _api_key = os.getenv("ANTHROPIC_API_KEY")
 if not _api_key:
     print("[startup] WARNING: ANTHROPIC_API_KEY is not set — /analyse will return an error until a key is provided.")
 
-client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
+# The model is used for BRIEFING GENERATION and nothing else — see
+# llm_gate.py for the policy and how to re-enable a purpose.
+#
+# `client` is the module-global that ~16 call sites in this file share
+# (marker enrichment, area/route/event analysis, chat, imagery reasoning,
+# threat-matrix explanations). It is now gated, so by default it is None and
+# every one of those paths degrades to its real non-model behaviour — which
+# they all already handle, because running without an ANTHROPIC_API_KEY has
+# always been a supported state.
+#
+# The briefing keeps its own client. Sharing one global was exactly what made
+# "turn the model off everywhere except the briefing" impossible to express.
+import llm_gate
+
+client = llm_gate.get_client("marker_enrich", _api_key)
+briefing_client = llm_gate.get_client(llm_gate.BRIEFING, _api_key)
+if _api_key and client is None:
+    print(f"[startup] LLM gate: model calls restricted to {sorted(llm_gate.allowed_purposes())} "
+          f"— non-briefing Claude features are inactive (set HW_LLM_PURPOSES to change)")
 
 CLAUDE_BUDGET_USD             = float(os.getenv("CLAUDE_BUDGET_USD",             "10.0"))
 # Default lives ONCE in usage_tracker.py (article_intelligence.py imports the same
@@ -18578,9 +18598,14 @@ async def start_report_task_draft(task_id: str, request: Request):
             ai_draft_result = _draft.generate_draft(
                 snapshot_content=snapshot_content, focus=row.focus,
                 region_label=", ".join(_task_region_list(row)) if isinstance(_task_region_list(row), list) else None,
-                client=client, usage_tracker_mod=usage_tracker,
+                client=briefing_client, usage_tracker_mod=usage_tracker,
                 force_empty=bool(body.get("force_empty")),
                 standing_instruction=body.get("standing_instruction"),
+                # The deliverable's language, and which document sections the
+                # analyst actually asked for. Both were collected in Generate
+                # and thrown away at this boundary.
+                language=body.get("language"),
+                sections=body.get("sections"),
             )
             if ai_draft_result.get("status") == "ok":
                 claims = _validate_claims(ai_draft_result.get("claims") or [])
@@ -18611,6 +18636,7 @@ async def start_report_task_draft(task_id: str, request: Request):
             scope=body.get("scope") or row.focus,
             audience=body.get("audience"),
             horizon=body.get("horizon"),
+            language=report_language.normalise(body.get("language")),
             key_judgments=key_judgments,
             claims_json=_json.dumps(claims), status="draft",
             narrative_json=_json.dumps(narrative) if narrative is not None else None,
@@ -18851,7 +18877,8 @@ def submit_report_for_review(report_id: str):
         try:
             findings = _council.run_council(
                 report_title=row.title, key_judgments=row.key_judgments, claims=claims,
-                snapshot_content=snapshot_content, client=client, usage_tracker_mod=usage_tracker, db=db,
+                snapshot_content=snapshot_content, client=llm_gate.get_client(llm_gate.COUNCIL, _api_key),
+                usage_tracker_mod=usage_tracker, db=db,
             )
         except Exception as council_exc:
             logger.exception(f"[submit_for_review] run_council() raised for {report_id} — bypassing council, report still advances to in_review")

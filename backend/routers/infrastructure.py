@@ -362,6 +362,14 @@ Keep total response under 500 tokens."""
 
 Keep total response under 450 tokens."""
 
+    # Model calls are restricted to briefing generation (llm_gate.py). Say so
+    # plainly rather than surfacing an AttributeError from a None client.
+    if getattr(_m, "client", None) is None:
+        return {"error": "Infrastructure analysis is inactive: model calls are currently "
+                         "restricted to briefing generation.",
+                "wikipedia": wikipedia_summary,
+                "nearby_conflict_count": len(nearby_conflicts),
+                "nearby_news_count": len(nearby_news), "cached": False}
     try:
         message = _m.client.messages.create(
             model="claude-sonnet-4-20250514",

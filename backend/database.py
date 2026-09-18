@@ -1507,6 +1507,11 @@ class Report(Base):
     scope         = Column(String, nullable=True)
     audience      = Column(String, nullable=True)
     horizon       = Column(String, nullable=True)
+    # The deliverable's language (en|de|fr). Persisted so the reader, the
+    # print layout and the deck all render the same document rather than
+    # each re-deciding, and so a report opened next week still reads in the
+    # language it was written in.
+    language      = Column(String, nullable=True)
 
     # The Generate/Briefings rebuild's extra drafted narrative — a second
     # supporting paragraph, a one-line "Bottom line." callout, indicators/
@@ -1822,7 +1827,8 @@ def migrate_db():
             cur.execute('ALTER TABLE reports ADD COLUMN exposure_json TEXT')
             print('[db-migrate] reports: added column exposure_json')
         # V3 Phase 2 — real scope/audience/horizon, see Report's own docstring.
-        for _col in ('scope', 'audience', 'horizon'):
+        # 'language' joins them: the deliverable's output language (en|de|fr).
+        for _col in ('scope', 'audience', 'horizon', 'language'):
             if _col not in rp_existing:
                 cur.execute(f'ALTER TABLE reports ADD COLUMN {_col} TEXT')
                 print(f'[db-migrate] reports: added column {_col}')

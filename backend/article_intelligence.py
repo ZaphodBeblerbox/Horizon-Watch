@@ -6,6 +6,8 @@ article_type, tier (1-4), event_title, icon_type, has_image, is_breaking,
 and context_summary.
 """
 from __future__ import annotations
+
+import llm_gate
 import json
 import re
 
@@ -118,7 +120,7 @@ def analyse_article(
             print(f"[article-intelligence] Daily cap ${_daily_cap} hit "
                   f"(${_today_cost:.3f}) — returning fallback")
             return dict(_FALLBACK)
-        client = anthropic.Anthropic()
+        client = llm_gate.get_client("article_intelligence")
         clean_body = re.sub(r"<[^>]+>", "", body or "")[:600]
         user = _USER_TMPL.format(
             title=title or "",

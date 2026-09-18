@@ -346,6 +346,14 @@ async def _process_document_upload(filepath: str, description: str,
     }
 
     entities_raw, relationships_raw = [], []
+    # See llm_gate.py — extraction is off while model calls are restricted to
+    # briefing generation. Returning empty sets is the honest result: Forge
+    # already refuses to store anything it cannot cite, and zero extracted
+    # entities is exactly that, rather than a 500.
+    if getattr(_m, "client", None) is None:
+        return {"status": "inactive", "reason": "model calls are currently restricted to "
+                                                "briefing generation",
+                "entities": [], "relationships": []}
     try:
         resp = _m.client.messages.create(
             model="claude-sonnet-4-20250514",

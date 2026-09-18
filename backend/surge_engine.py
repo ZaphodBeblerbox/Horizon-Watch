@@ -1,3 +1,4 @@
+import llm_gate
 """
 surge_engine.py — Article surge detection.
 
@@ -58,7 +59,7 @@ def _generate_surge_explanation(keyword: str, evidence_titles: list[str]) -> dic
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             return {}
-        client = _ant.Anthropic(api_key=api_key)
+        client = llm_gate.get_client("surge_headline", api_key)
         sample = "\n".join(f"- {t}" for t in evidence_titles[:6])
         prompt = (
             f'Multiple news headlines contain the keyword "{keyword}". '
