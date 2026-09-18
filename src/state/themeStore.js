@@ -375,7 +375,20 @@ export async function setThemeMode(mode) {
  * the mirror already matches and this is a no-op. */
 export function reconcileTheme(user) {
     if (hasPendingLocalWrite) return // a fresher local change is still round-tripping — never stomp it with this stale read
-    const real = user?.theme === "auto" ? "auto" : (user?.theme === "light" ? "light" : "dark")
+    // AUTO IS THE DEFAULT, and absence of a stored theme is not a preference.
+    //
+    // This previously read `=== "light" ? "light" : "dark"`, so any user whose
+    // theme column was NULL — 7 of the 9 accounts in this database — was
+    // resolved to a HELD dark mode the moment their profile loaded, silently
+    // switching the sky clock off for them. §4.2 names this exact failure:
+    // "A legacy binary theme value is not a decision to stop following
+    // daylight. Reading one as a held mode silently disables the whole
+    // feature."
+    //
+    // Only an explicit light or dark is a decision. Everything else follows
+    // the sun.
+    const t = user?.theme
+    const real = t === "light" ? "light" : t === "dark" ? "dark" : "auto"
     if (real === themeMode) return
     themeMode = real
     try { localStorage.setItem(MODE_CACHE_KEY, real) } catch { /* private mode */ }

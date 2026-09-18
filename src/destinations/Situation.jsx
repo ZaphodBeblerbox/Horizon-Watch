@@ -81,6 +81,19 @@ const ANNOTATION_TOOLS = [
 // is the thing that actually draws. Rather than rename working draw code to
 // match a label, the spec's names live in the DOM and are translated here at
 // the single boundary where the two vocabularies meet.
+/**
+ * §L5's infrastructure layers, with §L2's `<em>` sub-line stating each one's
+ * epistemic status rather than leaving the analyst to assume.
+ */
+const INFRA_LAYERS = [
+    { key: "chokepoints", label: "Chokepoints", note: "With substitution cost", color: "var(--red)" },
+    { key: "ports", label: "Ports & terminals", note: "Positions real; congestion not yet derived", color: "var(--acc-hi)" },
+    { key: "airfields", label: "Airports & airfields", note: "OurAirports, full roster", color: "var(--steel)" },
+    { key: "cables", label: "Submarine cables", note: "Indicative trunk routes, not survey data", color: "var(--acc-hi)" },
+    { key: "power", label: "Power grid", note: "OpenInfraMap raster, community-maintained", color: "var(--amber)" },
+    { key: "nautical", label: "Nautical chart", note: "OpenSeaMap raster overlay", color: "var(--green)" },
+]
+
 const SPEC_TO_TOOL = { select: "select", measure: "measure", pin: "marker", poly: "area" }
 const TOOL_TO_SPEC = { select: "select", measure: "measure", marker: "pin", area: "poly", route: "select" }
 
@@ -275,8 +288,23 @@ export default function Situation({ onOpenDossier }) {
     // layer toggles, and keep their own sensible defaults since they don't
     // clutter an empty map on their own.
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
-    const [contextOn, setContextOn] = useState({ chokepoints: true, risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
-    const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
+    const [contextOn, setContextOn] = useState({ risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+    /**
+     * PARALLAX layers addendum §L5 — Global infrastructure is its OWN group.
+     *
+     * These layers were riding event-domain toggles that have nothing to do
+     * with them: submarine cables were switched by "Maritime" (the vessel
+     * SIGNAL domain) and the OpenInfraMap power grid by "Imagery", so you
+     * could not see a cable without every maritime signal, or the grid
+     * without the satellite raster. Ports and airports shared a single track
+     * toggle. Infrastructure is context you reach for deliberately, not a
+     * by-product of another question.
+     */
+    const [infraOn, setInfraOn] = useState({
+        cables: false, chokepoints: true, ports: true, airfields: true,
+        power: false, nautical: false,
+    })
+    const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false })
     const [exportOpen, setExportOpen] = useState(false)
     // Imagery/detection top-bar entry point — real audit (Part 0) confirmed
     // no draw-to-scan tool existed in this top bar at all (the old
@@ -614,13 +642,15 @@ export default function Situation({ onOpenDossier }) {
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span role="button" tabIndex={0} onClick={() => {
                             setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, true])))
-                            setContextOn({ chokepoints: true, risk: true, coverage: true, graticule: true, flows: true, aois: true, labels: true })
-                            setTracksOn({ vessels: true, aircraft: true, sanctionedOnly: false, ports: true })
+                            setContextOn({ risk: true, coverage: true, graticule: true, flows: true, aois: true, labels: true })
+                            setInfraOn({ cables: true, chokepoints: true, ports: true, airfields: true, power: true, nautical: true })
+                            setTracksOn({ vessels: true, aircraft: true, sanctionedOnly: false })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>all</span>
                         <span role="button" tabIndex={0} onClick={() => {
                             setGroupsOn(Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
-                            setContextOn({ chokepoints: false, risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
-                            setTracksOn({ vessels: false, aircraft: false, sanctionedOnly: false, ports: false })
+                            setContextOn({ risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+                            setInfraOn({ cables: false, chokepoints: false, ports: false, airfields: false, power: false, nautical: false })
+                            setTracksOn({ vessels: false, aircraft: false, sanctionedOnly: false })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
                         <button onClick={() => setLeftMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
                             <svg className="icon sm"><use href="#i-collapse-l" /></svg>
@@ -650,13 +680,6 @@ export default function Situation({ onOpenDossier }) {
                 <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Context layers</div>
                     {[
-                        // Chokepoints were bundled onto the Maritime domain
-                        // toggle, so they could not be seen without every
-                        // vessel signal with them. They are context, not a
-                        // signal domain — §14 keeps them on by default because
-                        // "is this event on a corridor" is a question almost
-                        // every other layer raises.
-                        ["chokepoints", "Chokepoints"],
                         ["risk", "Country risk index"],
                         ["graticule", "Graticule 10°"],
                         ["flows", "Trade & energy flows"],
@@ -697,6 +720,30 @@ export default function Situation({ onOpenDossier }) {
                     </div>
                 </div>
 
+                {/* §L5 — Global infrastructure. Each row carries an
+                    epistemic sub-line (§L2): "the cheapest honesty mechanism
+                    in the product, and it costs one line per row." */}
+                <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
+                    <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
+                        Global infrastructure
+                        <span style={{ float: "right", font: "10px var(--mono)", color: "var(--txt-4)" }}>
+                            {Object.values(infraOn).filter(Boolean).length}/{Object.keys(infraOn).length}
+                        </span>
+                    </div>
+                    {INFRA_LAYERS.map((l) => (
+                        <button key={l.key} type="button" className="layer"
+                                aria-pressed={!!infraOn[l.key]}
+                                onClick={() => setInfraOn((p) => ({ ...p, [l.key]: !p[l.key] }))}>
+                            <i className="sw" style={{ background: l.color }} />
+                            <span className="n">{l.label}<em>{l.note}</em></span>
+                            <span className="c" />
+                            <span className="eye">
+                                <svg className="icon sm"><use href={infraOn[l.key] ? "#i-eye" : "#i-eye-off"} /></svg>
+                            </span>
+                        </button>
+                    ))}
+                </div>
+
                 {contextOn.risk && <RiskIndexPanel />}
 
                 {/* §13 — seventh in §10.3's pane order. Its own on/off lives
@@ -726,7 +773,9 @@ export default function Situation({ onOpenDossier }) {
                         ["vessels", "Vessels (AIS)", trackCounts.vessels],
                         ["aircraft", "Aircraft (ADS-B)", trackCounts.aircraft],
                         ["sanctionedOnly", "Sanctioned/watchlisted only", trackCounts.sanctioned],
-                        ["ports", "Ports & airports", null],
+                        // "Ports & airports" moved to Global infrastructure
+                        // (§L5) and split in two. They are fixed facilities,
+                        // not live tracks, and they were sharing one switch.
                     ].map(([key, label, count]) => (
                         <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
                             <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>{label}</span>
@@ -884,8 +933,9 @@ export default function Situation({ onOpenDossier }) {
                         signalWindowHours={windowHours} signalMaxRank={maxRank}
                         dockExternally
                         onInspectorPopupChange={handleInspectorPopupChange}
-                        cablesEnabled={groupsOn.maritime} chokepointsEnabled={contextOn.chokepoints}
-                        satelliteEnabled={groupsOn.imagery} infraEnabled={groupsOn.imagery}
+                        cablesEnabled={infraOn.cables} chokepointsEnabled={infraOn.chokepoints}
+                        satelliteEnabled={groupsOn.imagery} infraEnabled={infraOn.power}
+                        nauticalEnabled={infraOn.nautical}
                         eezEnabled={groupsOn.zones}
                         /* Context layers — separate from event domains, per build spec v2 §4.2 */
                         graticuleEnabled={contextOn.graticule}
@@ -895,7 +945,7 @@ export default function Situation({ onOpenDossier }) {
                            without its live position, and vice versa). All off by
                            default per §1. */
                         aisEnabled={tracksOn.vessels} adsbEnabled={tracksOn.aircraft}
-                        portsEnabled={tracksOn.ports} airportsEnabled={tracksOn.ports}
+                        portsEnabled={infraOn.ports} airportsEnabled={infraOn.airfields}
                         annotationTool={annotationTool}
                         basemap={basemap}
                         /* Real Imagery/detection draw + overlay + detection

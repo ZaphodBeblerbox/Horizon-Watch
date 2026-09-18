@@ -1094,3 +1094,24 @@ table.grid .dim { color: var(--txt-4); }
     background: linear-gradient(90deg,
         var(--steel), var(--mm-ember), var(--amber), var(--red), var(--mm-hot));
 }
+
+/* §L2 — the one layer row component. Do not hand-roll variants. */
+.layer {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 7px;
+    align-items: center; padding: 5px 12px; cursor: pointer; width: 100%;
+    text-align: left; background: none; border: 0; color: inherit; font-family: var(--font);
+}
+.layer:hover { background: var(--bg-2); }
+.layer[aria-pressed="false"] { opacity: .45; }
+.layer.unavailable { opacity: .34; cursor: default; }
+.layer .sw { width: 8px; height: 8px; transform: rotate(45deg); flex: none; }
+.layer .n { font-size: 12px; color: var(--txt-2); min-width: 0; }
+/* Where a layer states its epistemic status — "Indicative trunk routes",
+   "AIS-derived, 4h lag". The cheapest honesty mechanism in the product. */
+.layer .n em {
+    display: block; font-style: normal; font-size: 10px; color: var(--txt-4);
+    margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.layer .c { font: 10px var(--mono); color: var(--txt-4); }
+.layer .eye { width: 19px; height: 19px; display: grid; place-items: center; color: var(--txt-4); }
+.layer .eye:hover { color: var(--txt-2); }
