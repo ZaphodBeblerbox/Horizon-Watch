@@ -110,6 +110,17 @@ export function runTaskAction(taskId, path, body) {
     return apiFetch(`/api/reports/tasks/${taskId}${path}`, {
         method: "POST",
         body: JSON.stringify(body || {}),
+        // /draft makes a REAL MODEL CALL — the longest request in the
+        // product by a wide margin. It was running on apiFetch's 30s
+        // default, so a normal generation timed out in the browser while the
+        // server carried on, finished the report and left the task in
+        // "drafting"; every retry then hit the status guard and the task was
+        // wedged with a finished report nobody could see.
+        //
+        // 240s is above what a full draft takes, not a guess at the ceiling:
+        // the alternative is a timeout that reports failure for work that
+        // actually succeeded, which is the worst of both.
+        _timeout: path === "/draft" ? 240000 : 60000,
     }).then(asJson)
 }
 

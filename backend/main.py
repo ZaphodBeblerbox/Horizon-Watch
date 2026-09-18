@@ -18576,7 +18576,52 @@ async def start_report_task_draft(task_id: str, request: Request):
         if not row:
             raise HTTPException(404, "Task not found")
         if row.status != "ready_to_draft":
-            raise HTTPException(409, f"only ready_to_draft tasks can start drafting (this one is {row.status})")
+            # A TASK STUCK IN "drafting" IS RECOVERABLE.
+            #
+            # Drafting makes a real model call that routinely outlives the
+            # browser's request timeout. When that happened the server kept
+            # going, finished the report and set status=drafting — but the
+            # client never saw the response, and every retry then hit this
+            # guard. One slow call wedged the task permanently, with the
+            # finished report sitting in the database, invisible.
+            #
+            # If the work is already done, hand back what was produced: the
+            # request is the same request, and the caller losing the reply is
+            # not a reason to refuse it a second time.
+            if row.status == "drafting" and row.report_id:
+                existing = db.query(Report).filter(Report.report_id == row.report_id).first()
+                # Only hand back real work. An EMPTY SHELL — no claims and no
+                # key judgements — is what this endpoint produces when the
+                # model call fails (no credit, an outage, a parse failure):
+                # it degrades honestly rather than fabricating, but returning
+                # that husk as "your briefing" would be worse than the error
+                # it replaces. In that case the task is reset and the analyst
+                # gets a real second attempt.
+                if existing and existing.status == "draft":
+                    has_content = bool(_json.loads(existing.claims_json or "[]")) or bool(existing.key_judgments)
+                    if has_content:
+                        out = _task_to_dict(row, db)
+                        out["report_id"] = existing.report_id
+                        out["ai_draft_status"] = "recovered"
+                        out["ai_draft_reason"] = ("this task was already drafted — returning the "
+                                                  "report the earlier request produced")
+                        return out
+                    db.delete(existing)
+                    row.report_id = None
+                    row.status = "ready_to_draft"
+                    db.commit()
+                elif existing is None:
+                    row.report_id = None
+                    row.status = "ready_to_draft"
+                    db.commit()
+            # Drafting but with nothing to show for it: the call died before
+            # it wrote anything, so let the analyst try again rather than
+            # stranding the task.
+            if row.status == "drafting" and not row.report_id:
+                row.status = "ready_to_draft"
+                db.commit()
+            elif row.status != "ready_to_draft":
+                raise HTTPException(409, f"only ready_to_draft tasks can start drafting (this one is {row.status})")
         snap = db.query(ReportSnapshot).filter(ReportSnapshot.snapshot_id == row.snapshot_id).first()
         if not row.snapshot_id or not snap:
             raise HTTPException(500, f"task's snapshot {row.snapshot_id} no longer exists")
