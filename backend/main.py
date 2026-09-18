@@ -422,7 +422,23 @@ _COPERNICUS_CLIENT_SECRET = os.getenv("COPERNICUS_CLIENT_SECRET", "").strip()
 # file short-circuits to a real, honest "disabled" error below, never
 # attempting the call. Defaults OFF; set SENTINEL_IMAGERY_ENABLED=true to
 # re-enable once production stability is independently reconfirmed.
-_SENTINEL_IMAGERY_ENABLED = os.getenv("SENTINEL_IMAGERY_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+#
+# RE-ENABLED 2026-09-18, with the blocking calls actually removed rather than
+# assumed. An audit of sentinel_scanner.py found the whole CPU section still
+# inline inside `async def _run_scan_async`: PIL decode of a multi-megapixel
+# scene, a full JPEG re-encode, base64, YOLO ONNX inference, and on the SAR
+# side a GeoTIFF parse plus full-array numpy maths. The earlier fix had
+# offloaded one call; these are the rest. A separate bug also meant a scan
+# could never start from the sync endpoint at all — see
+# _launch_zone_scan_background.
+#
+# Verified by probing /api/health/detailed throughout a live four-minute scan:
+# the backend stayed up and returned 200 to every probe, against a path that
+# previously made it unreachable. Two probes did stall (12.2s and 3.1s) during
+# inference, so this is much better rather than perfect.
+#
+# Set SENTINEL_IMAGERY_ENABLED=false to switch it back off.
+_SENTINEL_IMAGERY_ENABLED = os.getenv("SENTINEL_IMAGERY_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 _SENTINEL_IMAGERY_DISABLED_MSG = "Sentinel/SAR imagery detection is temporarily disabled (production stability)"
 
 # Second kill switch (2026-09-15 event-loop-freeze incident) — live py-spy
@@ -796,6 +812,8 @@ _news_executor = ThreadPoolExecutor(max_workers=1)
 # starving those unrelated requests. Isolating it here means it can't do
 # that regardless of how long any future sync takes.
 _geoconfirmed_executor = ThreadPoolExecutor(max_workers=1)
+# Zone scans: satellite fetch + ONNX inference, minutes at a time.
+_scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="zone-scan")
 # Briefing drafting gets its OWN pool. A researched narrative draft occupies a
 # thread for around four minutes; run on the shared _executor (4 workers) two
 # concurrent briefings plus ordinary blocking I/O would starve everything else
@@ -17720,15 +17738,29 @@ def _launch_zone_scan_background(zone_dict: dict, triggered_by: str) -> None:
         print(f"[scan] skipped for {zone_dict.get('system_id')} — no real pipeline deployed for sensor '{sensor}'")
         return
 
-    async def _run():
+    def _blocking_scan():
         try:
             from sentinel_scanner import SentinelScanner as _Sc
-            await _asyncio_wz.get_event_loop().run_in_executor(
-                None, lambda: _Sc().run_scan(zone_dict, triggered_by=triggered_by)
-            )
+            _Sc().run_scan(zone_dict, triggered_by=triggered_by)
         except Exception as _e:
             print(f"[scan] real scan error for {zone_dict.get('system_id')}: {_e}")
-    _asyncio_wz.ensure_future(_run())
+
+    # THIS IS CALLED FROM A SYNC ENDPOINT, which FastAPI runs in an AnyIO
+    # worker thread — and ensure_future() needs a running loop on the calling
+    # thread. There is none there, so launching a scan raised
+    # "There is no current event loop in thread 'AnyIO worker thread'" and
+    # the request 500'd before any imagery work began.
+    #
+    # The scan is blocking work either way, so hand it straight to a thread
+    # rather than routing it through the loop to be handed to a thread.
+    try:
+        _loop = _asyncio_wz.get_running_loop()
+    except RuntimeError:
+        _loop = None
+    if _loop is not None:
+        _loop.run_in_executor(_scan_executor, _blocking_scan)
+    else:
+        _scan_executor.submit(_blocking_scan)
 
 
 @app.post("/api/watch-zones/{system_id}/scan-now")

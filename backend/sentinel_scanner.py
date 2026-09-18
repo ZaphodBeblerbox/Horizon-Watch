@@ -53,6 +53,81 @@ import uuid
 _IMPLEMENTED_TASKS = {"ship_detection", "vessel_cluster_detection"}
 
 
+
+# ── CPU work belongs off the event loop ──────────────────────────────────
+#
+# This module was the leading suspect for a confirmed production event-loop
+# freeze, and the kill switch in main.py exists because of it. The reason is
+# here: a scan decodes a Sentinel scene, re-encodes it to JPEG, base64s it and
+# then runs YOLO ONNX inference — tens of seconds of pure CPU — and all of it
+# ran inline inside `async def _run_scan_async`. For that whole time the
+# single-threaded asyncio loop serves nothing, which is what "everything 502s
+# at once" looks like from outside.
+#
+# An earlier fix offloaded ONE call in this path. These are the rest.
+import asyncio as _asyncio
+from concurrent.futures import ThreadPoolExecutor as _TPE
+
+# One worker: imagery inference is CPU-bound and memory-hungry, and a second
+# concurrent ONNX session on the same box buys contention rather than
+# throughput. Scans queue instead of competing.
+_CPU_POOL = _TPE(max_workers=1, thread_name_prefix="imagery-cpu")
+
+
+async def _off_loop(fn, *args, **kwargs):
+    """Run blocking CPU work in the imagery pool, never on the event loop.
+
+    get_running_loop(), not get_event_loop(): a scan can be driven from a
+    sync endpoint, which FastAPI runs in an AnyIO worker thread where there
+    is no current loop at all — get_event_loop() raises "There is no current
+    event loop in thread 'AnyIO worker thread'" and takes the scan with it.
+
+    And when there genuinely is no running loop we are ALREADY off the main
+    thread, so the work can just run here: offloading exists to protect the
+    event loop, and in that case there is no event loop to protect.
+    """
+    import functools
+    call = functools.partial(fn, *args, **kwargs)
+    try:
+        loop = _asyncio.get_running_loop()
+    except RuntimeError:
+        return call()
+    return await loop.run_in_executor(_CPU_POOL, call)
+
+
+def _sar_preview_b64(tiff_bytes: bytes, sar_detector, np) -> str:
+    """Build the SAR preview JPEG.
+
+    Parses a GeoTIFF, runs full-array numpy maths over both polarisation
+    bands, then JPEG-encodes and base64s the result — all CPU-bound, and all
+    of it was running on the event loop.
+    """
+    import base64
+    from PIL import Image as _PILImage
+    prep = sar_detector.preprocess_raw_geotiff_bytes(tiff_bytes)
+    vh, vv = prep["array"][0].astype(np.float32), prep["array"][1].astype(np.float32)
+    ratio = np.clip(vh - vv + 128, 0, 255).astype(np.uint8)
+    preview = np.stack([vv.astype(np.uint8), vh.astype(np.uint8), ratio], axis=-1)
+    buf = io.BytesIO()
+    _PILImage.fromarray(preview, mode="RGB").save(buf, format="JPEG", quality=87)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _decode_and_encode(image_bytes: bytes):
+    """Decode the fetched scene and produce the stored JPEG in one hop.
+
+    Both halves are CPU-bound and were inline: PIL decode of a multi-megapixel
+    scene, then a full JPEG re-encode at quality 87, then base64 over the
+    result.
+    """
+    import base64
+    from PIL import Image
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=87)
+    return img, base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 class SentinelScanner:
     def run_scan(self, zone_dict: dict, triggered_by: str = "schedule") -> dict:
         """Synchronous entry point — called via loop.run_in_executor() from main.py.
@@ -277,20 +352,14 @@ class SentinelScanner:
             return {"status": "error", "error_message": f"image fetch failed: {img_result['error']}", **base_meta}
 
         try:
-            from PIL import Image
-            tc_image = Image.open(io.BytesIO(img_result["image_bytes"])).convert("RGB")
+            tc_image, image_b64 = await _off_loop(_decode_and_encode, img_result["image_bytes"])
         except Exception as e:
             return {"status": "error", "error_message": f"could not decode fetched image: {e}", **base_meta}
 
         images = {"true_colour": tc_image}
-
         # Persist the real fetched crop (base64) — the Imagery page's
-        # comparison view needs an actual image to render; nothing
-        # previously stored the fetched bytes anywhere.
-        import base64
-        jpeg_buf = io.BytesIO()
-        tc_image.save(jpeg_buf, format="JPEG", quality=87)
-        base_meta["image_b64"] = base64.b64encode(jpeg_buf.getvalue()).decode("ascii")
+        # comparison view needs an actual image to render.
+        base_meta["image_b64"] = image_b64
 
         # -- 3. Run real detection tasks --
         by_type: dict = {}
@@ -308,14 +377,14 @@ class SentinelScanner:
                     "error_message": "ONNX model (yolov8n-obb.onnx) failed to load - cannot run ship_detection",
                     **base_meta,
                 }
-            ships = sentinel_ml.run_ship_detection(images, ml_bbox, zone_baseline)
+            ships = await _off_loop(sentinel_ml.run_ship_detection, images, ml_bbox, zone_baseline)
             all_detections.extend(ships)
             by_type["vessel"] = len(ships)
             if any(d.get("alert_tier") == "immediate" for d in ships):
                 alert_fired = True
 
             if "vessel_cluster_detection" in run_tasks:
-                clusters = sentinel_ml.run_vessel_cluster_detection(ships, ml_bbox)
+                clusters = await _off_loop(sentinel_ml.run_vessel_cluster_detection, ships, ml_bbox)
                 all_detections.extend(clusters)
                 by_type["vessel_cluster"] = len(clusters)
                 if any(d.get("alert_tier") == "immediate" for d in clusters):
@@ -373,7 +442,7 @@ class SentinelScanner:
         }
 
         try:
-            sar_dets = sar_detector.run_sar_ship_detection_from_geotiff_bytes(tiff_bytes)
+            sar_dets = await _off_loop(sar_detector.run_sar_ship_detection_from_geotiff_bytes, tiff_bytes)
         except sar_detector.SarDetectorError as e:
             return {"status": "error", "error_message": f"SAR detection failed: {e}", **base_meta}
         except Exception as e:
@@ -386,14 +455,7 @@ class SentinelScanner:
         # real SAR visual convention.
         try:
             import numpy as np
-            from PIL import Image as _PILImage
-            prep = sar_detector.preprocess_raw_geotiff_bytes(tiff_bytes)
-            vh, vv = prep["array"][0].astype(np.float32), prep["array"][1].astype(np.float32)
-            ratio = np.clip(vh - vv + 128, 0, 255).astype(np.uint8)
-            preview = np.stack([vv.astype(np.uint8), vh.astype(np.uint8), ratio], axis=-1)
-            buf = io.BytesIO()
-            _PILImage.fromarray(preview, mode="RGB").save(buf, format="JPEG", quality=87)
-            base_meta["image_b64"] = base64.b64encode(buf.getvalue()).decode("ascii")
+            base_meta["image_b64"] = await _off_loop(_sar_preview_b64, tiff_bytes, sar_detector, np)
         except Exception as e:
             print(f"[sentinel-scanner] SAR preview image generation failed (non-fatal): {e}")
 
