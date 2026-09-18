@@ -793,6 +793,12 @@ _news_executor = ThreadPoolExecutor(max_workers=1)
 # starving those unrelated requests. Isolating it here means it can't do
 # that regardless of how long any future sync takes.
 _geoconfirmed_executor = ThreadPoolExecutor(max_workers=1)
+# Briefing drafting gets its OWN pool. A researched narrative draft occupies a
+# thread for around four minutes; run on the shared _executor (4 workers) two
+# concurrent briefings plus ordinary blocking I/O would starve everything else
+# that needs it. Two workers: enough that a second analyst is not queued behind
+# the first, few enough that the model spend stays visible.
+_briefing_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="briefing")
 _NEWS_STORE_MAX_ARTICLES = 2000
 _NEWS_WINDOW_HOURS = 168
 _NEWS_MARKER_WINDOW_HOURS = 168
@@ -18655,17 +18661,32 @@ async def start_report_task_draft(task_id: str, request: Request):
                         snapshot_content[section] = [
                             it for it in snapshot_content[section] if str(it.get(id_field[section])) in keep
                         ]
-            ai_draft_result = _draft.generate_draft(
-                snapshot_content=snapshot_content, focus=row.focus,
-                region_label=", ".join(_task_region_list(row)) if isinstance(_task_region_list(row), list) else None,
-                client=briefing_client, usage_tracker_mod=usage_tracker,
-                force_empty=bool(body.get("force_empty")),
-                standing_instruction=body.get("standing_instruction"),
-                # The deliverable's language, and which document sections the
-                # analyst actually asked for. Both were collected in Generate
-                # and thrown away at this boundary.
-                language=body.get("language"),
-                sections=body.get("sections"),
+            # OFF THE EVENT LOOP. generate_draft makes a blocking, streamed
+            # HTTP call that now runs for around four minutes — web search
+            # plus a full narrative. Called directly from this async endpoint
+            # it stopped the entire backend for that whole time: every other
+            # request simply queued behind it, which is why the very next call
+            # after a SUCCESSFUL draft came back as "Request timed out".
+            #
+            # It was always wrong to call it inline; at twenty seconds it was
+            # survivable, and at four minutes it is not.
+            import functools as _ft
+            _loop = asyncio.get_event_loop()
+            ai_draft_result = await _loop.run_in_executor(
+                _briefing_executor,
+                _ft.partial(
+                    _draft.generate_draft,
+                    snapshot_content=snapshot_content, focus=row.focus,
+                    region_label=", ".join(_task_region_list(row)) if isinstance(_task_region_list(row), list) else None,
+                    client=briefing_client, usage_tracker_mod=usage_tracker,
+                    force_empty=bool(body.get("force_empty")),
+                    standing_instruction=body.get("standing_instruction"),
+                    # The deliverable's language, and which document sections
+                    # the analyst actually asked for. Both were collected in
+                    # Generate and thrown away at this boundary.
+                    language=body.get("language"),
+                    sections=body.get("sections"),
+                ),
             )
             if ai_draft_result.get("status") == "ok":
                 claims = _validate_claims(ai_draft_result.get("claims") or [])

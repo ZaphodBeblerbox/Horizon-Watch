@@ -57,3 +57,25 @@ def test_other_statuses_are_still_refused():
     silently redrafted."""
     assert 'elif row.status != "ready_to_draft":' in _MAIN
     assert "only ready_to_draft tasks can start drafting" in _MAIN
+
+
+def test_drafting_does_not_run_on_the_event_loop():
+    """The symptom was a SUCCESSFUL draft followed immediately by a timeout:
+
+        drafted 4 sections · ai_draft_status=ok
+        error — Request timed out — check your connection
+
+    generate_draft makes a blocking, streamed HTTP call that now runs for
+    around four minutes. Called inline from an async endpoint it stopped the
+    whole backend for that time, and the next request simply queued behind it.
+    """
+    assert "run_in_executor(" in _MAIN
+    assert "_briefing_executor" in _MAIN
+    # and the call itself is awaited, not invoked inline
+    assert "ai_draft_result = await _loop.run_in_executor(" in _MAIN
+
+
+def test_briefing_drafting_has_its_own_thread_pool():
+    """On the shared 4-worker pool, two concurrent briefings plus ordinary
+    blocking I/O would starve everything else that needs it."""
+    assert 'ThreadPoolExecutor(max_workers=2, thread_name_prefix="briefing")' in _MAIN
