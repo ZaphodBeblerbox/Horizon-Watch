@@ -144,10 +144,13 @@ def test_dropping_sourcing_keeps_citations():
 
 
 # ── the gate ─────────────────────────────────────────────────────────────
-def test_only_briefing_and_council_by_default(monkeypatch):
+def test_only_briefing_by_default(monkeypatch):
+    """The council is off too: it is a SECOND model call per report on top of
+    the draft, and with credit scarce the draft is what earns the spend."""
     monkeypatch.delenv("HW_LLM_PURPOSES", raising=False)
-    assert llm_gate.allowed_purposes() == frozenset({"briefing", "council"})
-    for off in ("fusion_narrative", "chat", "imagery", "article_intelligence", "forge"):
+    assert llm_gate.allowed_purposes() == frozenset({"briefing"})
+    for off in ("council", "fusion_narrative", "chat", "imagery",
+                "article_intelligence", "forge"):
         assert not llm_gate.is_enabled(off), off
 
 
