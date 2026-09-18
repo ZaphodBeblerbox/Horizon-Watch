@@ -1115,3 +1115,16 @@ table.grid .dim { color: var(--txt-4); }
 .layer .c { font: 10px var(--mono); color: var(--txt-4); }
 .layer .eye { width: 19px; height: 19px; display: grid; place-items: center; color: var(--txt-4); }
 .layer .eye:hover { color: var(--txt-2); }
+
+/* Locator place names. Country labels sit under city labels in weight:
+   a country is orientation, a city is a landmark. */
+.mm-country {
+    font-family: var(--font); font-size: 8.5px; fill: var(--txt-4);
+    letter-spacing: .04em; text-transform: uppercase; pointer-events: none;
+    paint-order: stroke; stroke: var(--bg-0); stroke-width: 2.2px;
+}
+.mm-city {
+    font-family: var(--mono); font-size: 8px; fill: var(--txt-3);
+    pointer-events: none; paint-order: stroke; stroke: var(--bg-0); stroke-width: 2.2px;
+}
+.mm-city-dot { fill: var(--txt-4); pointer-events: none; }

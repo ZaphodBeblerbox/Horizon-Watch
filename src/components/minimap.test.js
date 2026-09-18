@@ -4,7 +4,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import {
     makeProjection, easeOut, DEFAULT_SPAN, MINIMAP_HEIGHT,
-    CONTEXT_SIZE, SUBJECT_SIZE, PING_DELAYS, PING_MS,
+    CONTEXT_SIZE, SUBJECT_SIZE, PING_DELAYS, PING_MS, labelPlan,
 } from "./Minimap.jsx"
 
 const W = 300, H = 196
@@ -129,5 +129,59 @@ describe("a locator must never be able to crash the console", () => {
 
     it("tolerates a null entry in the array", () => {
         expect(src).toMatch(/\.filter\(\(c\) => c &&/)
+    })
+})
+
+describe("the basemap is a map, not a tile grid", () => {
+    it("is no longer snapped to whole degrees", async () => {
+        // The old asset carried q=1.0: every coastline point on a whole
+        // degree. At a 26-degree span across ~300px that is an 11px step,
+        // which is why it read as a block map.
+        const land = JSON.parse(readFileSync(
+            path.join(path.dirname(fileURLToPath(import.meta.url)), "../../public/data/world-land.json"), "utf8"))
+        expect(land.q).toBeUndefined()
+        expect(land.polygons.length).toBeGreaterThan(500)
+        const pts = land.polygons.flat().slice(0, 4000)
+        const fractional = pts.filter(([x, y]) => x % 1 !== 0 || y % 1 !== 0)
+        expect(fractional.length / pts.length).toBeGreaterThan(0.9)
+    })
+
+    it("ships country label anchors", () => {
+        const land = JSON.parse(readFileSync(
+            path.join(path.dirname(fileURLToPath(import.meta.url)), "../../public/data/world-land.json"), "utf8"))
+        expect(land.labels.length).toBeGreaterThan(100)
+        const ua = land.labels.find((l) => l.a2 === "UA")
+        expect(ua).toBeTruthy()
+        expect(ua.c[0]).toBeGreaterThan(22); expect(ua.c[0]).toBeLessThan(40)
+        expect(ua.c[1]).toBeGreaterThan(44); expect(ua.c[1]).toBeLessThan(53)
+    })
+
+    it("ships city labels with sane coordinates", () => {
+        const cities = JSON.parse(readFileSync(
+            path.join(path.dirname(fileURLToPath(import.meta.url)), "../../public/data/world-cities.json"), "utf8"))
+        expect(cities.length).toBeGreaterThan(100)
+        expect(cities.every((c) => c.y >= -90 && c.y <= 90 && c.x >= -180 && c.x <= 180)).toBe(true)
+        const rotterdam = cities.find((c) => c.n === "Rotterdam")
+        expect(rotterdam.y).toBeCloseTo(51.92, 1)
+        expect(rotterdam.x).toBeCloseTo(4.48, 1)
+    })
+})
+
+describe("labels appear as the frame has room for them", () => {
+    it("shows fewer, larger countries as the span widens", () => {
+        // Labelling every country in frame stacks NORWAY/SWEDEN/ESTONIA into
+        // an unreadable smear.
+        expect(labelPlan(46).minCountryArea).toBeGreaterThan(labelPlan(26).minCountryArea)
+        expect(labelPlan(26).minCountryArea).toBeGreaterThan(labelPlan(8).minCountryArea)
+    })
+
+    it("drops country names when the frame is tighter than a country", () => {
+        expect(labelPlan(8).countries).toBe(false)
+        expect(labelPlan(26).countries).toBe(true)
+    })
+
+    it("admits more cities as it closes in", () => {
+        expect(labelPlan(46).cityRank).toBeLessThan(labelPlan(8).cityRank)
+        expect(labelPlan(8).cities).toBe(true)
     })
 })

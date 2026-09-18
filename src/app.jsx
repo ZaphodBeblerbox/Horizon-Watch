@@ -1353,7 +1353,7 @@ export default function App() {
                         ) : printReportId ? (
                             <PrintLayout reportId={printReportId} onBack={() => setPrintReportId(null)} onOpenDeck={(id) => { setPrintReportId(null); setDeckReportId(id) }} />
                         ) : (
-                            <Briefings initialReportId={briefingsInitialId} onPrint={(id) => setPrintReportId(id)} onOpenDeck={(id) => setDeckReportId(id)} isVisible={activeTabType === "briefings"} />
+                            <Briefings initialReportId={briefingsInitialId} onPrint={(id) => setPrintReportId(id)} onOpenDeck={(id) => setDeckReportId(id)} onOpenGenerate={() => openTab("generate")} isVisible={activeTabType === "briefings"} />
                         )}
                     </div>
                 )}

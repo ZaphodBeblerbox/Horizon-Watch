@@ -136,7 +136,7 @@ function buildRecordLookup(xrefIndex, evidenceClaims, regionNames) {
     return map
 }
 
-export default function Briefings({ initialReportId, onPrint, onOpenDeck, isVisible = true }) {
+export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpenGenerate, isVisible = true }) {
     const [reports, setReports] = useState([])
     const [reportId, setReportId] = useState(initialReportId || null)
     const [report, setReport] = useState(null)
@@ -299,7 +299,23 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, isVisi
         <div data-testid="view-root-briefings" style={{ display: "grid", gridTemplateColumns: "236px 1fr 336px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             {/* Left — register + reference index */}
             <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 10 }}>
-                <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Briefings</div>
+                {/* §S4.1 — "Briefings owns both faces." Dossiers, Ontology and
+                    Imagery each had a route into Generate; the surface the
+                    briefings actually live on did not, so the only way in was
+                    a tab that had to already be open. It sits in the header
+                    rather than the document toolbar because that toolbar only
+                    renders once a briefing is selected — on an empty register
+                    there was no route at all, which is exactly when you most
+                    need one. */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span style={{ font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Briefings</span>
+                    <button className="btn sm" data-testid="briefings-generate" onClick={() => onOpenGenerate?.()}>generate</button>
+                </div>
+                {reports.length === 0 && (
+                    <div style={{ font: "400 11.5px var(--font)", color: "var(--txt-4)", padding: "6px 2px" }}>
+                        No briefings yet. Generate writes one from the signals you select.
+                    </div>
+                )}
                 {reports.map((r) => (
                     <div key={r.report_id} role="button" onClick={() => setReportId(r.report_id)}
                         style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: r.report_id === reportId ? "var(--bg-2)" : "transparent" }}>
@@ -340,6 +356,7 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, isVisi
                             <div className="seg">
                                 <button aria-pressed={mode === "read"} onClick={() => setMode("read")}>read</button>
                                 <button aria-pressed={mode === "edit"} disabled={!editable} onClick={() => setMode("edit")} title={!editable ? `Only draft reports can be edited (this one is ${report.status})` : ""}>edit</button>
+                                <button aria-pressed={false} onClick={() => onOpenGenerate?.()}>generate</button>
                             </div>
                             {mode === "edit" && <button className="btn sm" onClick={saveNow}>{dirty ? "save draft*" : "save draft"}</button>}
                             <button className="btn sm" onClick={() => onPrint?.(reportId)}>print / pdf</button>

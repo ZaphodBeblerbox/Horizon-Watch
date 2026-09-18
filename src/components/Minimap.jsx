@@ -46,12 +46,47 @@ export const PING_MS = 1500
 let _landPromise = null
 function loadLand() {
     if (!_landPromise) {
-        _landPromise = fetch(`${import.meta.env.BASE_URL || "/"}data/world-land.json`)
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => d?.polygons || [])
-            .catch(() => [])
+        const base = import.meta.env.BASE_URL || "/"
+        _landPromise = Promise.all([
+            fetch(`${base}data/world-land.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+            fetch(`${base}data/world-cities.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        ]).then(([land, cities]) => ({
+            polygons: land?.polygons || [],
+            countries: land?.labels || [],
+            cities: Array.isArray(cities) ? cities : [],
+        })).catch(() => ({ polygons: [], countries: [], cities: [] }))
     }
     return _landPromise
+}
+
+/**
+ * Which labels a span has room for.
+ *
+ * A locator showing every city at every zoom is unreadable, and one showing
+ * none is a shape with no place names — the first question ("where in the
+ * world is this?") goes unanswered. So labels appear as there is room:
+ * countries when the frame is wide enough to hold a country, cities as it
+ * closes in.
+ */
+export function labelPlan(span) {
+    return {
+        countries: span >= 12,
+        /**
+         * A country is labelled only when it is big enough ON SCREEN to hold
+         * the label. Labelling every country in frame at a wide span stacks
+         * NORWAY/SWEDEN/ESTONIA/LATVIA into an unreadable smear — and the
+         * small ones are exactly the labels a reader does not need when
+         * looking at half a continent.
+         *
+         * Threshold scales with span squared because that is how on-screen
+         * area scales: the same country occupies a quarter of the frame when
+         * the span doubles.
+         */
+        minCountryArea: span * span * 0.016,
+        // rank 1 cities from ~40 deg, 2 from ~18, 3 only close in
+        cityRank: span > 40 ? 1 : span > 18 ? 2 : 3,
+        cities: span <= 60,
+    }
 }
 
 /** §S3.5's `focus(lon, lat, spanDeg)` — fitExtent over a span-degree box. */
@@ -116,18 +151,63 @@ export default function Minimap({
     title = "Locator",
     subtitle = "",
 }) {
-    const [land, setLand] = useState([])
+    const [land, setLand] = useState({ polygons: [], countries: [], cities: [] })
     const [pings, setPings] = useState([])
     const timers = useRef([])
     const W = 300
 
-    useEffect(() => { let off = false; loadLand().then((p) => { if (!off) setLand(p) }); return () => { off = true } }, [])
+    useEffect(() => { let off = false; loadLand().then((d) => { if (!off) setLand(d) }); return () => { off = true } }, [])
 
     const hasFocus = Number.isFinite(focus?.lat) && Number.isFinite(focus?.lon)
-    const effSpan = span ?? spanFor(framing)
+    const targetSpan = span ?? spanFor(framing)
+
+    /**
+     * SMOOTH ZOOM. The framing used to snap: selecting a different signal
+     * replaced the projection outright, so the map cut from one view to
+     * another and you lost track of where you had been looking. Easing the
+     * span and the centre over ~420ms keeps that thread — the eye follows
+     * the movement and arrives oriented, which is the whole job of a
+     * locator.
+     *
+     * Interpolating the span GEOMETRICALLY (not linearly) is what makes it
+     * read as a zoom: scale is multiplicative, so a linear walk from 46 to 8
+     * crawls at the start and lurches at the end.
+     */
+    const [view, setView] = useState({ lon: focus?.lon ?? 0, lat: focus?.lat ?? 20, span: targetSpan })
+    // Declared before the effect that reads it: the effect body only runs
+    // after render so the old ordering happened to work, which is not a
+    // reason to keep it.
+    const viewRef = useRef(view)
+    viewRef.current = view
+    const rafRef = useRef(0)
+    useEffect(() => {
+        if (!hasFocus) return
+        const from = viewRef.current
+        const to = { lon: focus.lon, lat: focus.lat, span: targetSpan }
+        const far = Math.abs(from.lon - to.lon) > 90 || Math.abs(from.lat - to.lat) > 60
+        // A jump across the world is not a zoom; animating it sends the map
+        // sliding through places that have nothing to do with either end.
+        if (far || prefersReducedMotion()) { setView(to); return }
+        const t0 = performance.now(), DUR = 420
+        cancelAnimationFrame(rafRef.current)
+        const tick = (now_) => {
+            const f = Math.min(1, (now_ - t0) / DUR)
+            const e = easeOut(f)
+            setView({
+                lon: from.lon + (to.lon - from.lon) * e,
+                lat: from.lat + (to.lat - from.lat) * e,
+                span: from.span * Math.pow(to.span / from.span, e),
+            })
+            if (f < 1) rafRef.current = requestAnimationFrame(tick)
+        }
+        rafRef.current = requestAnimationFrame(tick)
+        return () => cancelAnimationFrame(rafRef.current)
+    }, [hasFocus, focus?.lon, focus?.lat, targetSpan]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const effSpan = hasFocus ? view.span : targetSpan
     const project = useMemo(
-        () => makeProjection(hasFocus ? focus.lon : 0, hasFocus ? focus.lat : 20, hasFocus ? effSpan : 170, W, height),
-        [hasFocus, focus?.lat, focus?.lon, effSpan, height],
+        () => makeProjection(hasFocus ? view.lon : 0, hasFocus ? view.lat : 20, hasFocus ? effSpan : 170, W, height),
+        [hasFocus, view.lat, view.lon, effSpan, height],
     )
 
     // §M4.2 — resolve the ramp's tokens at theme change and memoise. Reading
@@ -179,15 +259,39 @@ export default function Minimap({
         return () => timers.current.forEach(clearTimeout)
     }, [hasFocus, focus?.lat, focus?.lon])
 
+    const plan = labelPlan(hasFocus ? effSpan : 170)
     const p = hasFocus ? project(focus.lon, focus.lat) : null
 
     return (
         <div className="minimap" style={{ height }}>
             <svg viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none">
-                {land.map((poly, i) => (
+                {land.polygons.map((poly, i) => (
                     <path key={i} className="mm-land"
                           d={"M" + poly.map(([x, y]) => project(x, y).map((n) => n.toFixed(1)).join(",")).join("L") + "Z"} />
                 ))}
+
+                {/* Place names, as the frame has room for them. Without these
+                    the locator is a shape, and "where in the world is this?"
+                    — the first question it exists to answer — goes unanswered. */}
+                {plan.countries && land.countries.filter((c) => c.r >= plan.minCountryArea).map((c) => {
+                    const q = project(c.c[0], c.c[1])
+                    if (q[0] < 8 || q[0] > W - 8 || q[1] < 10 || q[1] > height - 10) return null
+                    return (
+                        <text key={c.a2 || c.n} className="mm-country" x={q[0]} y={q[1]} textAnchor="middle">
+                            {c.n}
+                        </text>
+                    )
+                })}
+                {plan.cities && land.cities.filter((c) => c.r <= plan.cityRank).map((c) => {
+                    const q = project(c.x, c.y)
+                    if (q[0] < 4 || q[0] > W - 4 || q[1] < 6 || q[1] > height - 6) return null
+                    return (
+                        <g key={c.n}>
+                            <circle className="mm-city-dot" cx={q[0]} cy={q[1]} r={1.3} />
+                            <text className="mm-city" x={q[0] + 3.5} y={q[1] + 2.6}>{c.n}</text>
+                        </g>
+                    )
+                })}
 
                 {hasFocus && painted.map((c, i) => {
                     const q = project(c.lon, c.lat)
