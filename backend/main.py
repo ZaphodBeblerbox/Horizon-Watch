@@ -3471,6 +3471,21 @@ async def aviation_photo(icao24: str):
     return data
 
 
+@app.get("/api/reference-image")
+async def reference_image(name: str, kind: str = "port"):
+    """A reference photograph of a real named place or ship, from Wikimedia.
+
+    Serves ports, airports and named vessels. Returns available=false with a
+    reason rather than a placeholder: "no photograph found" is a true and
+    useful answer, a stock picture of some other port is not.
+    """
+    if kind not in ("port", "airport", "vessel"):
+        raise HTTPException(400, "kind must be port, airport or vessel")
+    from services.wikimedia_image_service import get_image as _wiki_image
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _wiki_image, name, kind)
+
+
 @app.get("/api/vessel/photo/{mmsi}")
 async def vessel_photo(mmsi: str):
     """Return vessel photo availability and URLs from MarineTraffic CDN.

@@ -259,10 +259,16 @@ export default function InspectorPanel({
     useEffect(() => {
         setAircraftInfo(null)
         if (entityType !== "aircraft" || !entityId) return
+        // THE ENTITY ID IS NOT THE ICAO24. GlobeADSBLayer registers each
+        // aircraft as `adsb-<icao24>` to namespace it in the entity store, so
+        // these lookups were asking Planespotters and hexdb for an airframe
+        // called "adsb-4b1805" and getting nothing back — which is why the
+        // exact-airframe photo quietly stopped appearing.
+        const icao24 = String(entityId).replace(/^adsb-/i, "")
         let cancelled = false
         Promise.all([
-            fetch(`${API_BASE}/api/aviation/route/${encodeURIComponent(entityId)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-            fetch(`${API_BASE}/api/aviation/photo/${encodeURIComponent(entityId)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+            fetch(`${API_BASE}/api/aviation/route/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+            fetch(`${API_BASE}/api/aviation/photo/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
         ]).then(([route, photo]) => {
             if (cancelled) return
             const merged = { ...route, ...photo }
@@ -271,6 +277,51 @@ export default function InspectorPanel({
         })
         return () => { cancelled = true }
     }, [entityType, entityId])
+
+    /**
+     * Vessel reference photo. There was no photo lookup for ships at all in
+     * the inspector, and the backend's only source — MarineTraffic's photo
+     * CDN — now times out on every request, so it would not have worked if
+     * there had been. Wikimedia covers named vessels; a ship with no name in
+     * the AIS record cannot be looked up by anything, and says so.
+     */
+    const [vesselPhoto, setVesselPhoto] = useState(null)
+    useEffect(() => {
+        setVesselPhoto(null)
+        if (entityType !== "vessel") return
+        const shipName = data?.name || data?.shipname || data?.vessel_name
+        if (!shipName) return
+        let cancelled = false
+        fetch(`${API_BASE}/api/reference-image?kind=vessel&name=${encodeURIComponent(shipName)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && d?.available) setVesselPhoto(d) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    /**
+     * Port and airport photographs.
+     *
+     * A picture of a terminal answers "what am I looking at" faster than any
+     * table — berth layout, crane count, storage yard, runway configuration.
+     * Nothing in the console showed one.
+     *
+     * The image is never generated and never a stock placeholder: it is a
+     * real photograph of that named facility from Wikimedia, or nothing.
+     */
+    const [facilityPhoto, setFacilityPhoto] = useState(null)
+    useEffect(() => {
+        setFacilityPhoto(null)
+        if (entityType !== "port" && entityType !== "airport") return
+        const facility = data?.name || data?.port_name || data?.iata || data?.icao
+        if (!facility) return
+        let cancelled = false
+        fetch(`${API_BASE}/api/reference-image?kind=${entityType}&name=${encodeURIComponent(facility)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && d?.available) setFacilityPhoto(d) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // aircraftInfo fills gaps only — spread first so any real field the raw
     // ADS-B `data` already carries (e.g. a live-feed registration) always
@@ -394,8 +445,39 @@ export default function InspectorPanel({
 
             {/* Body */}
             <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-3) var(--space-4)" }}>
-                {/* Real reference photo (aircraft only, only when one really
-                    exists for this aircraft — see adaptAircraft's `media`) */}
+                {/* Reference photo. Aircraft carry the EXACT airframe from
+                    Planespotters by ICAO24; vessels fall back to Wikimedia by
+                    ship name, which is the vessel CLASS or that ship on
+                    another day — so it is labelled as a reference image and
+                    never presented as current imagery of this contact. */}
+                {!media?.photoUrl && facilityPhoto?.thumbnail_url && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <img src={facilityPhoto.thumbnail_url} alt={facilityPhoto.title || identity.title}
+                             loading="lazy"
+                             style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }} />
+                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
+                            Reference image · {facilityPhoto.title}
+                            {facilityPhoto.page_url && (
+                                <> · <a href={facilityPhoto.page_url} target="_blank" rel="noreferrer"
+                                        style={{ color: "var(--text-dim)" }}>Wikimedia</a></>
+                            )}
+                        </div>
+                    </div>
+                )}
+                {!media?.photoUrl && !facilityPhoto && vesselPhoto?.thumbnail_url && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <img src={vesselPhoto.thumbnail_url} alt={vesselPhoto.title || identity.title}
+                             loading="lazy"
+                             style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }} />
+                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
+                            Reference image · {vesselPhoto.title}
+                            {vesselPhoto.page_url && (
+                                <> · <a href={vesselPhoto.page_url} target="_blank" rel="noreferrer"
+                                        style={{ color: "var(--text-dim)" }}>Wikimedia</a></>
+                            )}
+                        </div>
+                    </div>
+                )}
                 {media?.photoUrl && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
                         <img

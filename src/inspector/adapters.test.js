@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest"
+import { readFileSync } from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
 import {
     normalizeEntity,
     adaptVessel,
@@ -274,5 +277,31 @@ describe("normalizeEntity — dispatch", () => {
             const result = normalizeEntity(type, {})
             expect(typeof result.actions.canJumpToLocation).toBe("boolean")
         }
+    })
+})
+
+describe("the entity id is not the ICAO24", () => {
+    const src = readFileSync(
+        path.join(path.dirname(fileURLToPath(import.meta.url)), "../components/InspectorPanel.jsx"), "utf8")
+
+    it("strips the adsb- prefix before asking Planespotters", () => {
+        // GlobeADSBLayer registers `adsb-<icao24>` to namespace the entity
+        // store, so the photo and route lookups were asking for an airframe
+        // called "adsb-4b1805" — which is why the exact-airframe photo
+        // quietly stopped appearing.
+        expect(src).toMatch(/replace\(\/\^adsb-\/i, ""\)/)
+        expect(src).not.toMatch(/aviation\/photo\/\$\{encodeURIComponent\(entityId\)\}/)
+        expect(src).not.toMatch(/aviation\/route\/\$\{encodeURIComponent\(entityId\)\}/)
+    })
+
+    it("looks up vessels and facilities by name, which is what Wikimedia keys on", () => {
+        expect(src).toMatch(/kind=vessel&name=/)
+        expect(src).toMatch(/kind=\$\{entityType\}&name=/)
+    })
+
+    it("labels a Wikimedia picture as a reference image, not current imagery", () => {
+        // A ship photo from Wikimedia is the vessel class, or that ship on
+        // another day — it is not this contact, now.
+        expect(src).toMatch(/Reference image ·/)
     })
 })
