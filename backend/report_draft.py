@@ -416,8 +416,19 @@ Return ONLY this JSON shape:
 """
 
     try:
+        # 6000 WAS NOT ENOUGH AND THE FAILURE LOOKED LIKE A PARSE BUG.
+        #
+        # A real global snapshot asks for key judgements, one claim per
+        # significant item across seven categories, two narrative paragraphs,
+        # warnings and actions. The reply ran to the 6000-token ceiling,
+        # stopped mid-JSON, and _extract_json then reported "could not parse
+        # model response" — which pointed at the parser rather than at the
+        # budget, and was the reason briefings came back empty.
+        #
+        # The model also emits a thinking block before the answer, and that
+        # comes out of the same allowance.
         resp = client.messages.create(
-            model="claude-sonnet-5", max_tokens=6000,
+            model="claude-sonnet-5", max_tokens=16000,
             system=_SYSTEM, messages=[{"role": "user", "content": user}],
         )
         text = None
@@ -433,7 +444,18 @@ Return ONLY this JSON shape:
             )
         parsed = _extract_json(text)
         if not isinstance(parsed, dict) or "claims" not in parsed:
-            return {"status": "error", "reason": "could not parse model response", "raw": text[:800]}
+            # Say WHICH failure this is. "Could not parse" sent us looking at
+            # the parser for a truncation problem.
+            if getattr(resp, "stop_reason", None) == "max_tokens":
+                return {"status": "error",
+                        "reason": (f"the model's reply hit the {16000}-token ceiling and stopped "
+                                   f"mid-answer, so there was no complete JSON to read — "
+                                   f"narrow the evidence set or the section list and retry"),
+                        "raw": text[-800:]}
+            return {"status": "error",
+                    "reason": f"could not parse model response (stop_reason="
+                              f"{getattr(resp, 'stop_reason', 'unknown')}, {len(text)} chars)",
+                    "raw": text[:800]}
     except Exception as ex:
         return {"status": "error", "reason": str(ex)}
 

@@ -259,3 +259,28 @@ def test_no_client_degrades_honestly_rather_than_inventing():
                             client=None, usage_tracker_mod=None, language="de")
     assert res["status"] in ("skipped", "error")
     assert not res.get("claims")
+
+
+def test_the_token_ceiling_is_large_enough_for_a_real_snapshot():
+    """6000 truncated the reply mid-JSON on a real global snapshot, and the
+    parser then reported "could not parse model response" — which pointed at
+    the parser rather than the budget, and is why briefings came back empty."""
+    src = open(os.path.join(os.path.dirname(__file__), "report_draft.py"), encoding="utf-8").read()
+    assert "max_tokens=16000" in src
+    assert "max_tokens=6000" not in src
+
+
+def test_a_truncated_reply_says_it_was_truncated():
+    """Naming the wrong failure costs a debugging cycle every time."""
+    src = open(os.path.join(os.path.dirname(__file__), "report_draft.py"), encoding="utf-8").read()
+    assert 'stop_reason", None) == "max_tokens"' in src
+    assert "stopped" in src and "mid-answer" in src
+
+
+def test_the_failure_reason_reaches_the_operator():
+    """ai_draft_reason was returned by the endpoint and never rendered, so a
+    failure showed as "ai_draft_status=error" and nothing else."""
+    gen = open(os.path.join(os.path.dirname(__file__), "..", "src", "reports", "Generate.jsx"),
+               encoding="utf-8").read()
+    assert "draftRes.ai_draft_reason" in gen
+    assert "draft not usable" in gen

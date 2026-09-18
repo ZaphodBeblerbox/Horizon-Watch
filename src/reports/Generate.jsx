@@ -274,6 +274,14 @@ export default function Generate({ onOpenTab }) {
             setStepStatus(4, "done", nowMs() - t4)
             const nSections = new Set(checked.map((i) => i.section)).size
             appendLog(logLine(`drafted ${nSections} section${nSections === 1 ? "" : "s"} · ai_draft_status=<i>${draftRes.ai_draft_status || "n/a"}</i>`))
+            // The REASON was already coming back from the endpoint and was
+            // never shown: "ai_draft_status=error" with nothing after it sent
+            // us hunting for a network fault when the model had actually
+            // replied and been truncated. A failure that does not say why is
+            // a failure you debug twice.
+            if (draftRes.ai_draft_status && draftRes.ai_draft_status !== "ok" && draftRes.ai_draft_reason) {
+                appendLog(logLine(`<u>draft not usable</u> — ${String(draftRes.ai_draft_reason).slice(0, 300)}`))
+            }
 
             // Step 6 — Style pass: a real client-side lint over the drafted
             // report (em-dash / hedge-phrase / word-count check), not a
