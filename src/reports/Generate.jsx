@@ -25,6 +25,23 @@ import { getSettings } from "../state/settingsStore.js"
 const HORIZONS = [{ key: "7d", label: "7d" }, { key: "30d", label: "30d" }, { key: "90d", label: "90d" }]
 const HORIZON_HOURS = { "7d": 168, "30d": 720, "90d": 2160 }
 
+/**
+ * §S4.3's document sections — what the brief CONTAINS, as distinct from
+ * EVIDENCE_DOMAINS below, which is what it may be written from. Two different
+ * questions that were sharing one word.
+ *
+ * "Sourcing and method is a section, and it defaults on. A brief that cannot
+ * say where it came from is not shorter, it is weaker."
+ */
+const DOC_SECTIONS = [
+    { key: "executive_judgement", label: "Executive judgement" },
+    { key: "signal_assessment", label: "Signal-by-signal assessment" },
+    { key: "exposure_impact", label: "Exposure and continuity impact" },
+    { key: "indicators_warnings", label: "Indicators and warnings" },
+    { key: "recommended_actions", label: "Recommended actions" },
+    { key: "sourcing_method", label: "Sourcing and method" },
+]
+
 const SECTION_TOGGLES = [
     { key: "maritime_activity", label: "Maritime activity" },
     { key: "aerial_activity", label: "Aerial activity" },
@@ -82,6 +99,9 @@ export default function Generate({ onOpenTab }) {
     )
     const [standingInstruction, setStandingInstruction] = useState("")
     const [sectionsOn, setSectionsOn] = useState(() => Object.fromEntries(SECTION_TOGGLES.map((s) => [s.key, true])))
+    // Every document section on by default — "Sourcing and method" included,
+    // which §S4.3 calls out by name.
+    const [docSectionsOn, setDocSectionsOn] = useState(() => Object.fromEntries(DOC_SECTIONS.map((s) => [s.key, true])))
     const [watchZoneId, setWatchZoneId] = useState("")
     const [watchZones, setWatchZones] = useState([])
 
@@ -124,6 +144,30 @@ export default function Generate({ onOpenTab }) {
     }
 
     const items = buildEvidenceItems(corpus?.snapshotContent, sectionsOn)
+
+    // §S4.4 — "The briefing basket PRE-SELECTS into it, so 'add to basket'
+    // from anywhere in the console lands here."
+    //
+    // getBriefingItems was imported and never called: the basket count was
+    // displayed beside an evidence set it had no effect on, so every "add to
+    // basket" in the product — the Inbox's brief button, the inspector, a
+    // notification card — was a dead end that looked like it worked.
+    const basketApplied = useRef(false)
+    useEffect(() => {
+        if (basketApplied.current || !items.length) return
+        const ids = new Set(getBriefingItems().map((b) => String(b.id)))
+        if (!ids.size) return
+        const hits = items.filter((it) => ids.has(String(it.id)))
+        if (hits.length) {
+            // Start from nothing selected, then select exactly the basket:
+            // the analyst put those there deliberately, and silently adding
+            // the rest of the corpus to their choice would be the opposite of
+            // what the basket is for.
+            setSelected(Object.fromEntries(items.map((it) => [it.key, hits.includes(it)])))
+            appendLog(logLine(`briefing basket applied · <i>${hits.length}</i> of ${ids.size} item(s) matched this corpus`))
+        }
+        basketApplied.current = true
+    }, [items])
     const evCountLive = items.filter((it) => selected[it.key] !== false).length
     useEffect(() => { if (evCountLive > 0) setEmptyOverride(false) }, [evCountLive])
 
@@ -210,6 +254,8 @@ export default function Generate({ onOpenTab }) {
                 // the Report row itself (backend/database.py's Report model)
                 // instead of being lost after generation.
                 scope: scope || undefined, audience, horizon,
+                // §S4.3 — which sections the document should contain.
+                sections: DOC_SECTIONS.filter((d) => docSectionsOn[d.key]).map((d) => d.key),
             }
             const draftRes = await runTaskAction(task.task_id, "/draft", draftBody)
             setStepStatus(4, "done", nowMs() - t4)
@@ -279,7 +325,28 @@ export default function Generate({ onOpenTab }) {
                 <div className="field"><label>Forecast horizon</label>
                     <div className="seg">{HORIZONS.map((h) => <button key={h.key} aria-pressed={horizon === h.key} onClick={() => setHorizon(h.key)}>{h.label}</button>)}</div>
                 </div>
+                {/* §S4.3's document sections — what the brief CONTAINS. */}
                 <div className="field"><label>Sections</label>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {DOC_SECTIONS.map((d) => (
+                            <label key={d.key} style={{ display: "flex", alignItems: "center", gap: 7, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
+                                <input type="checkbox" className="check" checked={docSectionsOn[d.key]}
+                                       onChange={() => setDocSectionsOn((p) => ({ ...p, [d.key]: !p[d.key] }))} />
+                                {d.label}
+                            </label>
+                        ))}
+                    </div>
+                    {!docSectionsOn.sourcing_method && (
+                        <span className="fieldnote" style={{ color: "var(--amber)" }}>
+                            Without “Sourcing and method” the brief cannot say where it came from.
+                            That does not make it shorter, it makes it weaker.
+                        </span>
+                    )}
+                </div>
+
+                {/* Distinct question: what it may be written FROM. These used
+                    to share the word "Sections" with the block above. */}
+                <div className="field"><label>Evidence domains</label>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {SECTION_TOGGLES.map((s) => (
                             <label key={s.key} style={{ display: "flex", alignItems: "center", gap: 7, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
