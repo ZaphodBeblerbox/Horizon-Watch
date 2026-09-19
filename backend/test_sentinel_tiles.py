@@ -27,31 +27,27 @@ def test_small_aoi_is_a_single_native_resolution_tile():
     assert plan.tiles[0].m_per_px == pytest.approx(10.0, rel=0.05)
 
 
-def test_the_zone_that_collapsed_to_97m_is_transformed_at_the_default_budget():
+def test_the_zone_that_collapsed_to_97m_now_scans_at_native_resolution():
     """The headline regression. One thumbnail gave ZONE-001 97 m/px.
 
-    At the DEFAULT budget the grid gives 18.2 m/px — a 5.3x improvement, not
-    native, because covering 199 x 111 km at 10 m/px needs 60 separate API
-    requests and the default deliberately does not spend that unasked. What
-    matters is that the trade is recorded rather than hidden."""
+    By explicit product decision there is no tile cap: a large area takes
+    longer rather than arriving blurred. So the default must be NATIVE, not
+    a compromise."""
     plan = st.plan_tiles(ZONE_001)
     assert plan.refused is None, plan.refused
     assert plan.count > 1, "a 199km zone cannot be one native-resolution tile"
-    worst = max(t.m_per_px for t in plan.tiles)
-    assert worst < 25.0, f"worst tile is {worst:.1f} m/px — barely better than the 97 m/px it replaced"
-    assert worst < 97.0 / 3, "improvement is too small to change what is detectable"
-    assert plan.degraded_to_m_per_px is not None, (
-        "coarsened below native without recording it — the exact dishonesty "
-        "the single-image path was guilty of"
-    )
+    assert plan.degraded_to_m_per_px is None, "coarsened the scan despite no cap"
+    assert max(t.m_per_px for t in plan.tiles) == pytest.approx(10.0, rel=0.05)
 
 
-def test_native_resolution_is_reachable_when_the_budget_allows_it():
-    """The ceiling is quota, not capability: given the requests, the grid
-    delivers the sensor's own resolution."""
-    plan = st.plan_tiles(ZONE_001, max_tiles=60)
-    assert plan.refused is None
-    assert plan.degraded_to_m_per_px is None, "still degraded despite an adequate budget"
+def test_a_large_area_is_never_silently_capped():
+    """A cap trades away the one thing the scan exists to produce. Whatever
+    the size, the answer is more tiles and more time — not less resolution."""
+    huge = {"west": 50.0, "south": 20.0, "east": 60.0, "north": 30.0}
+    plan = st.plan_tiles(huge)
+    assert plan.refused is None, "refused an area instead of taking longer over it"
+    assert plan.degraded_to_m_per_px is None
+    assert plan.count > 1000, "suspiciously few tiles for 1.1M km²"
     assert max(t.m_per_px for t in plan.tiles) == pytest.approx(10.0, rel=0.05)
 
 
@@ -60,12 +56,34 @@ def test_a_100m_ship_stops_being_a_single_pixel():
     at all. One pixel is not a detection problem, it is an absence of data."""
     old_m_per_px = 97.0                     # measured from the single-image path
     assert 100 / old_m_per_px < 1.5         # was ~1 pixel: undetectable by anything
+    now_px = 100 / max(t.m_per_px for t in st.plan_tiles(ZONE_001).tiles)
+    assert now_px == pytest.approx(10.0, rel=0.05)
 
-    default_px = 100 / max(t.m_per_px for t in st.plan_tiles(ZONE_001).tiles)
-    assert default_px > 5                   # 5.5px: detectable
 
-    native_px = 100 / max(t.m_per_px for t in st.plan_tiles(ZONE_001, max_tiles=60).tiles)
-    assert native_px == pytest.approx(10.0, rel=0.05)
+def test_the_plan_states_its_cost_before_anything_is_fetched():
+    """With no cap, cost is the user's decision — so it has to be visible
+    BEFORE the scan, in requests and in wall-clock, not discovered halfway."""
+    plan = st.plan_tiles(ZONE_001)
+    assert plan.api_requests == plan.count
+    assert plan.estimated_seconds > 0
+    line = plan.describe()
+    assert "API request" in line
+    assert "km²" in line
+    assert "m/px" in line
+
+
+def test_the_estimate_is_expressed_in_minutes_when_it_runs_long():
+    """'1200s' is not a number anyone can act on."""
+    huge = {"west": 50.0, "south": 20.0, "east": 60.0, "north": 30.0}
+    assert "min" in st.plan_tiles(huge).describe()
+
+
+def test_an_explicit_cap_still_works_for_a_caller_that_wants_a_preview():
+    """Removing the default is not removing the capability."""
+    plan = st.plan_tiles(ZONE_001, max_tiles=24, allow_degrade=True)
+    assert plan.count <= 24
+    assert plan.degraded_to_m_per_px is not None, "capped without recording the trade"
+    assert "coarsened" in plan.describe()
 
 
 def test_no_tile_exceeds_the_api_request_ceiling():
@@ -103,12 +121,11 @@ def test_tiles_do_not_overlap():
         assert a.east == pytest.approx(b.west), "columns must abut exactly"
 
 
-def test_an_unaffordable_area_degrades_deliberately_and_says_so():
-    """The old behaviour silently produced a thumbnail and reported findings
-    as though resolution were fine. Trading resolution is acceptable; hiding
-    that it was traded is not."""
+def test_an_explicitly_capped_scan_degrades_deliberately_and_says_so():
+    """Capping is now opt-in, but when a caller does opt in the trade must
+    still be recorded. Trading resolution is acceptable; hiding it is not."""
     huge = {"west": 50.0, "south": 20.0, "east": 60.0, "north": 30.0}
-    plan = st.plan_tiles(huge, max_tiles=24)
+    plan = st.plan_tiles(huge, max_tiles=24, allow_degrade=True)
     if plan.refused is None:
         assert plan.degraded_to_m_per_px is not None, (
             "coarsened the scan without recording that it did"
@@ -126,9 +143,9 @@ def test_refusal_carries_the_numbers_when_degrading_is_not_allowed():
     assert "tiles" in plan.refused and "budget" in plan.refused
 
 
-def test_budget_is_never_exceeded():
+def test_an_explicit_budget_is_never_exceeded():
     for max_tiles in (1, 4, 12, 24):
-        plan = st.plan_tiles(ZONE_001, max_tiles=max_tiles)
+        plan = st.plan_tiles(ZONE_001, max_tiles=max_tiles, allow_degrade=True)
         if plan.refused is None:
             assert plan.count <= max_tiles
 
@@ -324,7 +341,7 @@ def test_a_refused_plan_never_pretends_to_scan():
 
 def test_the_result_states_the_resolution_it_actually_achieved():
     """The UI has to be able to say 'scanned at 18 m/px, not native'."""
-    plan = st.plan_tiles(ZONE_001)
+    plan = st.plan_tiles(ZONE_001, max_tiles=24, allow_degrade=True)
 
     async def fetch(tile):
         return {"image": "ok"}
@@ -335,3 +352,98 @@ def test_the_result_states_the_resolution_it_actually_achieved():
     out = _run(st.run_tiled_scan(plan, fetch_tile=fetch, detect_tile=detect))
     assert out["m_per_px"] > 0
     assert out["degraded"] is True
+
+
+# ── progress reporting ────────────────────────────────────────────────────
+#
+# With no tile cap a scan can legitimately run for minutes, so a bar is not
+# cosmetic: a long operation with no progress is indistinguishable from a
+# hung one.
+
+import imagery_runtime as ir
+
+
+def test_progress_is_registered_before_the_first_tile_is_fetched():
+    """A scan that shows nothing until its first tile finishes looks hung
+    for the whole of that first tile."""
+    plan = _plan2()
+    seen = {}
+
+    async def fetch(tile):
+        seen.setdefault("at_first_fetch", ir.progress("job-a"))
+        return {"image": "ok"}
+
+    async def detect(image, bbox):
+        return []
+
+    _run(st.run_tiled_scan(plan, fetch_tile=fetch, detect_tile=detect, job_id="job-a"))
+    assert seen["at_first_fetch"] is not None, "no bar existed during the first fetch"
+    assert seen["at_first_fetch"]["total"] == plan.count
+    assert seen["at_first_fetch"]["done"] == 0
+
+
+def test_progress_advances_and_completes():
+    plan = _plan2()
+
+    async def fetch(tile):
+        return {"image": "ok"}
+
+    async def detect(image, bbox):
+        return [{"centroid_lat": bbox["min_lat"], "centroid_lon": bbox["min_lon"],
+                 "confidence": 0.8, "object_type": "vessel"}]
+
+    _run(st.run_tiled_scan(plan, fetch_tile=fetch, detect_tile=detect, job_id="job-b"))
+    p = ir.progress("job-b")
+    assert p["finished"] is True
+    assert p["done"] == p["total"] == plan.count
+    assert p["fraction"] == 1.0
+    assert p["detections"] >= 1
+
+
+def test_a_failing_tile_still_advances_the_bar():
+    """Freezing the bar on the one tile that broke is the least useful
+    moment to stop reporting."""
+    plan = _plan2()
+
+    async def fetch(tile):
+        return {"error": "Copernicus 502"}
+
+    async def detect(image, bbox):
+        return []
+
+    _run(st.run_tiled_scan(plan, fetch_tile=fetch, detect_tile=detect, job_id="job-c"))
+    p = ir.progress("job-c")
+    assert p["done"] == plan.count, "the bar stalled on a failed tile"
+
+
+def test_eta_comes_from_observed_rate_not_the_upfront_guess():
+    """The plan's estimate is right at step zero and wrong at step forty."""
+    plan = st.plan_tiles(ZONE_001)
+    ir.start_progress("job-d", plan.count, label="x")
+    ir.update_progress("job-d", 1)
+    p = ir.progress("job-d")
+    assert p["eta_s"] is not None
+    assert p["elapsed_s"] >= 0
+    ir.finish_progress("job-d")
+    assert ir.progress("job-d")["eta_s"] is None, "still predicting a finished job"
+
+
+def test_live_jobs_are_visible_in_pool_status():
+    """The health endpoint is where an operator looks first."""
+    ir.start_progress("job-e", 10, label="tiled scan")
+    try:
+        jobs = ir.status()["jobs"]
+        assert any(j["job_id"] == "job-e" for j in jobs)
+    finally:
+        ir.finish_progress("job-e")
+    assert all(j["job_id"] != "job-e" for j in ir.status()["jobs"]), (
+        "a finished job is still shown as live"
+    )
+
+
+def test_finished_progress_is_eventually_cleared():
+    """The registry must not grow for the life of the process."""
+    ir.start_progress("job-f", 1, label="x")
+    ir.finish_progress("job-f")
+    ir.clear_finished_progress(older_than_s=-1)
+    assert ir.progress("job-f") is None

@@ -12954,7 +12954,24 @@ async def _get_copernicus_access_token(client_h: httpx.AsyncClient) -> tuple[Opt
 
 
 def _normalise_satellite_items(data: dict, source_label: str) -> list[dict]:
-    seen_tiles: dict = {}  # tile_id → item, keep most recent per granule
+    """Normalise Earth Search sentinel-2-l2a features into scene records.
+
+    DEDUPLICATION IS PER TILE **PER DATE**, not per tile. It used to key on
+    the MGRS tile_id alone and keep only the first (most recent) scene for
+    each, which silently collapsed an entire history into one entry: a live
+    query for this AOI over 180 days returned 87 scenes across 43 distinct
+    dates, and this function handed back 2 — one per grid tile.
+
+    That was invisible while the only consumer wanted "the latest scene",
+    which is still items[0] since the STAC response is sorted desc. It made
+    everything else impossible: the date picker had nothing to pick from,
+    and comparing two dates — the basis of change detection — could not be
+    expressed at all.
+
+    A granule is still deduplicated within a date, so overlapping
+    re-processings of the same pass do not appear twice.
+    """
+    seen_tiles: dict = {}  # (tile_id, date) → item, most recent kept
     for feature in data.get("features", []):
         props = feature.get("properties", {})
         assets = feature.get("assets", {})
@@ -12992,9 +13009,14 @@ def _normalise_satellite_items(data: dict, source_label: str) -> list[dict]:
             "thumbnail": thumbnail,
             "visual_href": visual_href,
         }
-        if tile_id not in seen_tiles:
-            seen_tiles[tile_id] = item
-    return list(seen_tiles.values())
+        day = (props.get("datetime") or "")[:10]
+        key = (tile_id, day)
+        if key not in seen_tiles:
+            seen_tiles[key] = item
+    # Most recent first — sentinel_scanner takes items[0] as "the current
+    # scene" and relies on this ordering.
+    return sorted(seen_tiles.values(),
+                  key=lambda i: (i.get("datetime") or ""), reverse=True)
 
 
 def _normalise_sentinel1_items(data: dict, source_label: str) -> list[dict]:
@@ -13853,23 +13875,34 @@ async def sentinel_dates(request: Request):
         if None in (west, east, south, north):
             return JSONResponse({"error": "bounds required"}, status_code=400)
 
-        items, err = await _satellite_search_impl(
+        # _satellite_search_impl returns a DICT ({"items": [...], "error": ...}).
+        # This unpacked it as a 2-tuple, so every call raised "too many values
+        # to unpack (expected 2)" and the endpoint answered 500 with that
+        # message. The date picker this feeds has therefore never worked, and
+        # comparing two dates — the whole basis of change detection in the UI
+        # — was unreachable from the interface.
+        search = await _satellite_search_impl(
             bbox=[west, south, east, north],
             max_cloud=max_cloud,
             days_back=days_back,
         )
-        if err:
-            return JSONResponse({"error": err}, status_code=500)
+        if search.get("error"):
+            return JSONResponse({"error": search["error"]}, status_code=500)
 
         seen = set(); dates = []
-        for it in (items or []):
+        for it in (search.get("items") or []):
             dt = (it.get("datetime") or "")[:10]
             cc = it.get("cloud_cover")
             if dt and dt not in seen:
                 seen.add(dt)
                 dates.append({"date": dt, "cloud_cover": round(cc, 1) if cc is not None else None})
-        dates = sorted(dates, key=lambda d: d["date"], reverse=True)[:10]
-        return JSONResponse({"dates": dates})
+        # Limit raised from 10: comparison needs a real history to pick from,
+        # and 10 scenes is under two months of Sentinel-2 revisits.
+        limit = max(1, min(int(body.get("limit", 60)), 200))
+        dates = sorted(dates, key=lambda d: d["date"], reverse=True)[:limit]
+        return JSONResponse({"dates": dates, "count": len(dates),
+                             "searched_days_back": days_back,
+                             "max_cloud": max_cloud})
     except Exception as e:
         print(f"[sentinel/dates] error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)

@@ -102,24 +102,60 @@ class TilePlan:
     def count(self) -> int:
         return len(self.tiles)
 
+    @property
+    def api_requests(self) -> int:
+        """One Sentinel Hub Process API request per tile. This is the number
+        that costs quota, so it is the number worth showing."""
+        return len(self.tiles)
+
+    @property
+    def estimated_seconds(self) -> float:
+        """Rough wall-clock, for a progress bar's initial estimate.
+
+        Calibrated from a real run: one 1207x1336 tile over Khor Fakkan took
+        4.0s end to end including fetch, decode and detection. Tiles are
+        serialised through the single imagery worker, so cost is linear in
+        tile count rather than parallel. Deliberately an over-estimate:
+        a bar that finishes early is better than one that stalls at 99%.
+        """
+        return round(len(self.tiles) * 4.5, 1)
+
+    def describe(self) -> str:
+        """One line a UI can show before committing to the scan."""
+        if self.refused:
+            return self.refused
+        res = f"{self.m_per_px:.0f} m/px"
+        if self.degraded_to_m_per_px:
+            res += f" (coarsened from {NATIVE_M_PER_PX:.0f} m/px to fit a budget)"
+        mins = self.estimated_seconds / 60.0
+        eta = (f"{self.estimated_seconds:.0f}s" if self.estimated_seconds < 90
+               else f"about {mins:.0f} min")
+        return (f"{self.count} tile(s) ({self.cols}x{self.rows}) covering "
+                f"{self.area_km2:,.0f} km² at {res} — {self.api_requests} API "
+                f"request(s), roughly {eta}")
+
 
 def plan_tiles(bounds: dict, *, target_m_per_px: float = NATIVE_M_PER_PX,
-               tile_px: int = TILE_PX, max_tiles: int = 24,
-               allow_degrade: bool = True) -> TilePlan:
-    """Cover `bounds` with native-resolution tiles, or explain why not.
+               tile_px: int = TILE_PX, max_tiles: int | None = None,
+               allow_degrade: bool = False) -> TilePlan:
+    """Cover `bounds` with native-resolution tiles.
 
-    `max_tiles` is a quota budget, not a performance guess: each tile is one
-    Sentinel Hub Process API request. 24 tiles at 2048px/10m covers roughly
-    a 100 x 100 km area, which is larger than any AOI a human draws to look
-    at something specific.
+    NO TILE CAP BY DEFAULT, by explicit product decision (2026-09-19): a big
+    area should take longer, not arrive blurred. A cap silently trades away
+    the thing the scan exists to produce — resolution — and the whole reason
+    this module was written is that the old single-image path did exactly
+    that. A slow scan with a progress bar is a scan; a fast one that cannot
+    resolve a ship is not.
 
-    When an AOI needs more tiles than the budget allows there are two honest
-    options and one dishonest one. The dishonest one is what the old code
-    did: quietly render the whole area into one thumbnail and report
-    detections as though the resolution were fine. Instead this either
-    coarsens the resolution DELIBERATELY and records that it did
-    (`degraded_to_m_per_px`, so the UI can say so), or refuses outright with
-    the numbers when even that will not fit.
+    So `max_tiles` defaults to None (unlimited) and `allow_degrade` to False.
+    Both remain available for a caller that would genuinely rather have a
+    coarse answer now — a preview, say — but neither is the default.
+
+    What replaces the cap is COST, MADE VISIBLE. Each tile is one Sentinel
+    Hub Process API request, so a plan reports how many requests and roughly
+    how long it will take before anything is fetched. The caller can then
+    show it, or think again, with real numbers rather than a policy someone
+    guessed at.
     """
     west, south = float(bounds["west"]), float(bounds["south"])
     east, north = float(bounds["east"]), float(bounds["north"])
@@ -141,7 +177,7 @@ def plan_tiles(bounds: dict, *, target_m_per_px: float = NATIVE_M_PER_PX,
                 max(1, math.ceil(height_m / span_m)))
 
     cols, rows = grid_for(mpp)
-    if cols * rows > max_tiles:
+    if max_tiles is not None and cols * rows > max_tiles:
         if not allow_degrade:
             return TilePlan(
                 cols=cols, rows=rows, m_per_px=mpp, area_km2=area_km2,
@@ -157,7 +193,7 @@ def plan_tiles(bounds: dict, *, target_m_per_px: float = NATIVE_M_PER_PX,
         overshoot = (cols * rows) / max_tiles
         mpp = mpp * math.sqrt(overshoot)
         cols, rows = grid_for(mpp)
-        while cols * rows > max_tiles and mpp < 200:
+        while cols * rows > max_tiles and mpp < 200:  # noqa: has max_tiles
             mpp *= 1.15
             cols, rows = grid_for(mpp)
         if cols * rows > max_tiles:
@@ -256,8 +292,20 @@ def merge_detections(detections: list[dict], *, radius_m: float = 60.0) -> list[
 # with no detections, duplicates on a seam) are all about bookkeeping rather
 # than about imagery.
 
+def _advance(job_id, done, detections):
+    """Advance the bar. A failed tile still advances it — a bar that freezes
+    on the one tile that broke is the least useful moment to stop reporting."""
+    if not job_id:
+        return
+    try:
+        import imagery_runtime as _ir
+        _ir.update_progress(job_id, done, detections=detections)
+    except Exception:
+        pass
+
+
 async def run_tiled_scan(plan: "TilePlan", *, fetch_tile, detect_tile,
-                         on_progress=None) -> dict:
+                         on_progress=None, job_id: str | None = None) -> dict:
     """Fetch and detect over every tile in `plan`, then merge.
 
     `fetch_tile(tile) -> dict` must return {"image": <decoded image>} or
@@ -273,6 +321,16 @@ async def run_tiled_scan(plan: "TilePlan", *, fetch_tile, detect_tile,
         return {"status": "error", "error_message": plan.refused,
                 "detections": [], "tiles_total": 0, "tiles_ok": 0}
 
+    # Register the bar before the first fetch: a scan that shows nothing for
+    # its first tile looks hung, and with no tile cap a legitimate scan can
+    # run for minutes.
+    if job_id:
+        try:
+            import imagery_runtime as _ir
+            _ir.start_progress(job_id, len(plan.tiles), label=plan.describe())
+        except Exception:
+            pass
+
     detections: list[dict] = []
     failed: list[dict] = []
     ok = 0
@@ -285,6 +343,7 @@ async def run_tiled_scan(plan: "TilePlan", *, fetch_tile, detect_tile,
         if not got or got.get("error"):
             failed.append({"ix": tile.ix, "iy": tile.iy,
                            "reason": (got or {}).get("error", "no image returned")})
+            _advance(job_id, i + 1, len(detections))
             continue
         bbox = {"min_lon": tile.west, "min_lat": tile.south,
                 "max_lon": tile.east, "max_lat": tile.north}
@@ -293,6 +352,7 @@ async def run_tiled_scan(plan: "TilePlan", *, fetch_tile, detect_tile,
         except Exception as e:                      # noqa: BLE001
             failed.append({"ix": tile.ix, "iy": tile.iy,
                            "reason": f"detection failed: {type(e).__name__}: {e}"})
+            _advance(job_id, i + 1, len(detections))
             continue
         for d in found:
             d.setdefault("tile", {"ix": tile.ix, "iy": tile.iy})
@@ -300,6 +360,19 @@ async def run_tiled_scan(plan: "TilePlan", *, fetch_tile, detect_tile,
         ok += 1
         if on_progress:
             on_progress(i + 1, len(plan.tiles), len(detections))
+        if job_id:
+            try:
+                import imagery_runtime as _ir
+                _ir.update_progress(job_id, i + 1, detections=len(detections))
+            except Exception:
+                pass
+
+    if job_id:
+        try:
+            import imagery_runtime as _ir
+            _ir.finish_progress(job_id, note=f"{ok}/{len(plan.tiles)} tiles")
+        except Exception:
+            pass
 
     merged = merge_detections(detections)
     coverage = ok / len(plan.tiles) if plan.tiles else 0.0

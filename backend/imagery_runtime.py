@@ -74,6 +74,13 @@ _pending = 0            # submitted-but-not-finished jobs (running + waiting)
 _current: str | None = None
 _started_at: float | None = None
 
+# PROGRESS. Scans are uncapped by design, so one can legitimately run for
+# minutes — a zone-sized AOI is 60 tiles at roughly 4.5s each. A long
+# operation with no progress is indistinguishable from a hung one, and this
+# codebase has already learned that rendering "no information" the same as
+# "nothing happening" is how features quietly appear broken.
+_progress: dict[str, dict] = {}
+
 
 class ImageryBusy(RuntimeError):
     """The imagery pool is saturated. A real, reportable condition — not a bug."""
@@ -83,9 +90,77 @@ class ImageryTimeout(RuntimeError):
     """A job exceeded its deadline. The thread may still be running."""
 
 
+def start_progress(job_id: str, total: int, *, label: str = "") -> None:
+    """Register a multi-step job so a UI can draw a bar for it."""
+    with _lock:
+        _progress[job_id] = {
+            "job_id": job_id, "label": label,
+            "done": 0, "total": max(0, int(total)),
+            "detections": 0, "started_at": time.monotonic(),
+            "finished": False, "note": None,
+        }
+
+
+def update_progress(job_id: str, done: int, *, detections: int | None = None,
+                    note: str | None = None) -> None:
+    with _lock:
+        p = _progress.get(job_id)
+        if not p:
+            return
+        p["done"] = int(done)
+        if detections is not None:
+            p["detections"] = int(detections)
+        if note is not None:
+            p["note"] = note
+
+
+def finish_progress(job_id: str, *, note: str | None = None) -> None:
+    with _lock:
+        p = _progress.get(job_id)
+        if p:
+            p["finished"] = True
+            p["done"] = p["total"]
+            if note is not None:
+                p["note"] = note
+
+
+def _render_progress(p: dict) -> dict:
+    elapsed = time.monotonic() - p["started_at"]
+    frac = (p["done"] / p["total"]) if p["total"] else 0.0
+    # Remaining time from OBSERVED rate, not from the up-front guess: the
+    # estimate a plan made before fetching is the right thing to show at
+    # step zero and the wrong thing to keep showing at step forty.
+    eta = None
+    if p["done"] > 0 and not p["finished"]:
+        eta = round((elapsed / p["done"]) * (p["total"] - p["done"]), 1)
+    return {**{k: v for k, v in p.items() if k != "started_at"},
+            "fraction": round(frac, 3),
+            "elapsed_s": round(elapsed, 1),
+            "eta_s": eta}
+
+
+def progress(job_id: str | None = None):
+    """Progress for one job, or every live job."""
+    with _lock:
+        if job_id is not None:
+            p = _progress.get(job_id)
+            return _render_progress(p) if p else None
+        return [_render_progress(p) for p in _progress.values()]
+
+
+def clear_finished_progress(older_than_s: float = 300.0) -> None:
+    """Drop finished jobs so the registry cannot grow without bound."""
+    now = time.monotonic()
+    with _lock:
+        for k in [k for k, p in _progress.items()
+                  if p["finished"] and now - p["started_at"] > older_than_s]:
+            del _progress[k]
+
+
 def status() -> dict:
     """What the pool is doing right now — for /api/health/detailed and the UI."""
     with _lock:
+        live = [_render_progress(p) for p in _progress.values() if not p["finished"]]
         return {
             "workers": _MAX_WORKERS,
             "pending": _pending,
@@ -93,6 +168,7 @@ def status() -> dict:
             "busy": _pending > 0,
             "current": _current,
             "running_for_s": round(time.monotonic() - _started_at, 1) if _started_at else None,
+            "jobs": live,
         }
 
 
