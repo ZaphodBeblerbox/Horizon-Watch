@@ -48,7 +48,8 @@ export const ViewerViewContext = createContext({ scale: 1, tx: 0, ty: 0, frameW:
 export const useViewerView = () => useContext(ViewerViewContext)
 
 const ZoomPanViewer = forwardRef(function ZoomPanViewer(
-    { src, alt = "scene", children, overlay = null, onBackgroundClick, minHeight = 320, footer = null }, ref,
+    { src, alt = "scene", children, overlay = null, onBackgroundClick,
+      minHeight = 320, fill = false, footer = null }, ref,
 ) {
     const frameRef = useRef(null)
     const [view, setView] = useState(IDENTITY)
@@ -146,7 +147,15 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
     const zoomed = view.scale > MIN_SCALE
 
     return (
-        <div style={{ position: "relative", width: "100%", minHeight, overflow: "hidden", background: "var(--bg-0)" }}>
+        <div style={fill
+            // `fill` makes the viewer take its parent's box instead of a
+            // fixed height. With a fixed minHeight a large scene rendered
+            // small inside a much larger pane, which is the opposite of
+            // what a 10 m/px fetch is for.
+            ? { position: "relative", width: "100%", height: "100%",
+                minHeight: 0, overflow: "hidden", background: "var(--bg-0)" }
+            : { position: "relative", width: "100%", minHeight,
+                overflow: "hidden", background: "var(--bg-0)" }}>
             <div
                 ref={frameRef}
                 onPointerDown={onPointerDown}
@@ -155,7 +164,8 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
                 onPointerCancel={onPointerUp}
                 onDoubleClick={reset}
                 style={{
-                    position: "relative", width: "100%", height: "100%", minHeight,
+                    position: "relative", width: "100%", height: "100%",
+                    minHeight: fill ? 0 : minHeight,
                     overflow: "hidden", touchAction: "none",
                     cursor: dragging ? "grabbing" : zoomed ? "grab" : "default",
                 }}

@@ -87,9 +87,6 @@ export default function ImagerySidebar({
     detections, onDetectionsChange,
 }) {
     const [sensor, setSensor] = useState("sentinel2_optical")
-    const [superres, setSuperres] = useState(false)
-    const [superresReady, setSuperresReady] = useState(false)
-    const [superresNote, setSuperresNote] = useState("checking super-resolution availability…")
     const [maxCloud, setMaxCloud] = useState(20)
     const [daysBack, setDaysBack] = useState(30)
     const [exactDate, setExactDate] = useState("")
@@ -118,24 +115,6 @@ export default function ImagerySidebar({
             .catch(() => { if (!cancelled) setPasses(null) })
         return () => { cancelled = true }
     }, [drawn, maxCloud, daysBack])
-
-    // Whether super-resolution can actually run. A toggle that silently
-    // does nothing is worse than one that explains why it is unavailable.
-    useEffect(() => {
-        let cancelled = false
-        fetch(`${API}/api/imagery/superres/status`)
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => {
-                if (cancelled || !d) return
-                setSuperresReady(Boolean(d.available))
-                setSuperresNote(d.available
-                    ? "Satlas ESRGAN, 4× (10 m/px → ~2.5 m/px). Generated detail: "
-                      + "sharpens what a sensor found, never a finding on its own."
-                    : (d.reason || "super-resolution unavailable"))
-            })
-            .catch(() => { if (!cancelled) setSuperresNote("could not reach the backend") })
-        return () => { cancelled = true }
-    }, [])
 
     const loadAreas = useCallback(() => {
         fetch(`${API}/api/imagery/aois`)
@@ -213,7 +192,7 @@ export default function ImagerySidebar({
             const body = sens === "sentinel1_sar"
                 ? { bounds, sensor: sens, capture_timestamp: scene?.capture_timestamp }
                 : { bounds, sensor: sens, image_b64: scene?.image_b64 || undefined,
-                    superres, max_cloud: maxCloud, days_back: daysBack }
+                    max_cloud: maxCloud, days_back: daysBack }
             const res = await fetch(`${API}/api/imagery/detect-scene`, {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
@@ -225,9 +204,7 @@ export default function ImagerySidebar({
             // Say when a count came from generated pixels. A number that
             // looks like an observation and is not is the one thing this
             // must never do silently.
-            toast(`${dets.length} detection${dets.length === 1 ? "" : "s"}`
-                  + (data.superres ? " — on SUPER-RESOLVED imagery (candidates, not observations)" : ""),
-                  {})
+            toast(`${dets.length} detection${dets.length === 1 ? "" : "s"}`, {})
         } catch (e) {
             toast("Real detection failed", { icon: "i-alert" })
         } finally {
@@ -492,19 +469,6 @@ export default function ImagerySidebar({
                                 : toast("Draw an area first — detection needs a footprint", { icon: "i-alert" }))}>
                         {busy.detecting ? "detecting…" : "run detection"}
                     </button>
-                    {/* SATLAS super-resolution, opt-in and never automatic.
-                        It is generative: it invents plausible detail from
-                        the same Sentinel pixels, so it sharpens what another
-                        sensor found and may not originate a finding. The
-                        label says which, rather than leaving the reader to
-                        assume the extra detail was observed. */}
-                    <label className="lbl" title={superresNote}
-                           style={{ display: "flex", alignItems: "center", gap: 4, opacity: superresReady ? 1 : 0.5 }}>
-                        <input type="checkbox" className="check" checked={superres}
-                               disabled={!superresReady || busy.detecting}
-                               onChange={(e) => setSuperres(e.target.checked)} />
-                        SATLAS 4×
-                    </label>
                 </div>
             )}
         </div>

@@ -282,7 +282,7 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                 ref={viewerRef}
                 src={curSrc}
                 alt="current scene"
-                minHeight={fullscreen ? "88vh" : 420}
+                fill
                 onBackgroundClick={() => onSelectDet && onSelectDet(null)}
                 overlay={
                     <ScreenBoxes changes={showBoxes ? changes : []} selectedDet={selectedDet}

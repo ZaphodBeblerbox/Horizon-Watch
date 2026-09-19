@@ -142,14 +142,6 @@ export default function Imagery({ onOpenGenerate }) {
     // a choice of date.
     const [dates, setDates] = useState([])
     const [scanDate, setScanDate] = useState("")
-    const [superres, setSuperres] = useState(false)
-    // The super-resolved render of the CURRENT scene, keyed by scan so a
-    // scene switch cannot leave the previous scene's sharpened image on
-    // screen — which would be showing one place while labelled another.
-    const [srImage, setSrImage] = useState(null)   // {scanId, b64, note}
-    const [srBusy, setSrBusy] = useState(false)
-    const [superresReady, setSuperresReady] = useState(false)
-    const [superresNote, setSuperresNote] = useState("")
     const [tiledJob, setTiledJob] = useState(null)
     const [tiledResult, setTiledResult] = useState(null)
     const viewerRef = useRef(null)
@@ -248,20 +240,6 @@ export default function Imagery({ onOpenGenerate }) {
     }, [aois])
 
     useEffect(() => {
-        let cancelled = false
-        fetch(`${API_BASE}/api/imagery/superres/status`, { credentials: "include" })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => {
-                if (cancelled || !d) return
-                setSuperresReady(Boolean(d.available))
-                setSuperresNote(d.available
-                    ? "Satlas ESRGAN 4× (10 m/px → ~2.5 m/px). Generated detail — sharpens a finding, never originates one."
-                    : (d.reason || "unavailable"))
-            }).catch(() => {})
-        return () => { cancelled = true }
-    }, [])
-
-    useEffect(() => {
         setDates([]); setScanDate("")
         if (!selectedAoi?.bbox) return
         const b = selectedAoi.bbox
@@ -325,12 +303,17 @@ export default function Imagery({ onOpenGenerate }) {
     // requests and several minutes.
     async function runTiledScan() {
         if (!selectedAoi || tiledJob) return
+        // A SAR region runs the SAR detector, which is the zone scan path —
+        // the tiled scan is Sentinel-2 optical. Sending it there anyway
+        // produced an optical result labelled as the region's sensor.
+        if (selectedAoi.sensor_preference === "sentinel1_sar") { reRunDetection(); return }
         const b = selectedAoi.bbox
         const bounds = { west: b.min_lon, south: b.min_lat, east: b.max_lon, north: b.max_lat }
         const est = await fetch(`${API_BASE}/api/imagery/scan-tiled`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             credentials: "include",
-            body: JSON.stringify({ bounds, estimate_only: true }),
+            body: JSON.stringify({ bounds, estimate_only: true,
+                                   sensor: selectedAoi.sensor_preference }),
         }).then((r) => r.json()).catch(() => null)
         if (!est || est.error) { toast(est?.error || "Could not plan a scan for this area", {}); return }
         if (est.api_requests > 8 &&
@@ -341,7 +324,7 @@ export default function Imagery({ onOpenGenerate }) {
             credentials: "include",
             body: JSON.stringify({ bounds, date: scanDate || null,
                                    system_id: selectedAoi.system_id,
-                                   superres }),
+                                   sensor: selectedAoi.sensor_preference }),
         }).then((r) => r.json()).catch(() => null)
         if (!started || started.error) { toast(started?.error || "Scan could not be started", {}); return }
         setTiledResult(null)
@@ -376,6 +359,26 @@ export default function Imagery({ onOpenGenerate }) {
     // the list reloaded but selectedAoi still pointed at the dead row, and
     // loadAois only auto-selects when nothing is selected. It looked as
     // though the delete had failed.
+    // Delete from the list, with the same warning the editor gives: this
+    // takes the area's whole scan history, which is the baseline every
+    // future change comparison runs against.
+    function deleteAoi(a) {
+        if (!window.confirm(
+            `Delete "${a.name}" (${a.system_id})?\n\n` +
+            `This also deletes every scan of this area and all their detections, ` +
+            `permanently. Change detection has no baseline afterwards.`
+        )) return
+        fetch(`${API_BASE}/api/watch-zones/${a.system_id}`, {
+            method: "DELETE", credentials: "include",
+        })
+            .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+            .then(() => {
+                if (selectedAoi?.system_id === a.system_id) onAoiDeleted()
+                else { loadAois(); toast(`${a.system_id} deleted`, { icon: "i-check" }) }
+            })
+            .catch((e) => toast(`Could not delete ${a.system_id}: ${e.message}`, { icon: "i-alert" }))
+    }
+
     function onAoiDeleted() {
         setSelectedAoi(null)
         setScenes([])
@@ -386,51 +389,6 @@ export default function Imagery({ onOpenGenerate }) {
         loadAois()
         toast("Observation area deleted", { icon: "i-check" })
     }
-
-    // Turning SATLAS on has to change the PICTURE, not only what the
-    // detector was fed. Wired to detection alone, the toggle changed the
-    // numbers and left the image identical, which reads as doing nothing.
-    useEffect(() => {
-        if (!superres) { setSrImage(null); return }
-        if (!scene?.image_b64 || !selectedScanId) return
-        if (srImage?.scanId === selectedScanId) return
-        let cancelled = false
-        setSrBusy(true)
-        // Background job, then poll. The model runs at its 32px training
-        // chip, so a scene is minutes of CPU — held open, the request is
-        // killed by a platform proxy and the work is lost.
-        ;(async () => {
-            try {
-                const start = await fetch(`${API_BASE}/api/imagery/superres/image`, {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    credentials: "include",
-                    body: JSON.stringify({ image_b64: scene.image_b64 }),
-                }).then((r) => r.json())
-                if (start.error) throw new Error(start.error)
-
-                for (let i = 0; i < 600 && !cancelled; i++) {
-                    await new Promise((r) => setTimeout(r, 2000))
-                    const d = await fetch(
-                        `${API_BASE}/api/imagery/superres/image/${start.job_id}`,
-                        { credentials: "include" }).then((r) => r.json())
-                    if (cancelled) return
-                    if (d.status === "running") continue
-                    if (d.status === "error" || d.error) throw new Error(d.error || "failed")
-                    setSrImage({ scanId: selectedScanId, b64: d.image_b64, note: d.note,
-                                 size: d.output_size, capped: d.source_capped_to_px })
-                    return
-                }
-            } catch (e) {
-                if (!cancelled) {
-                    toast(`Super-resolution: ${e.message}`, { icon: "i-alert" })
-                    setSuperres(false)
-                }
-            } finally {
-                if (!cancelled) setSrBusy(false)
-            }
-        })()
-        return () => { cancelled = true }
-    }, [superres, scene, selectedScanId, srImage?.scanId])
 
     async function createDrawnArea({ name, sensor, cadence, aoiClass }) {
         const polygon = boundsToPolygon(drawnBounds)
@@ -532,29 +490,27 @@ export default function Imagery({ onOpenGenerate }) {
         }))
 
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "250px 1fr 330px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "210px 1fr 280px", height: "100%", minHeight: 0, overflow: "hidden", background: "var(--bg-0)" }}>
             {/* Left — observation areas */}
-            <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
-                <button className="btn sm" style={{ width: "100%" }}
-                    onClick={() => { setDrawActive((v) => !v); setDrawnBounds(null) }}
-                    title="Drag a box on the map below to define a new observation region">
-                    {drawActive ? "cancel drawing" : "+ draw observation area"}
-                </button>
-                {drawActive && !drawnBounds ? (
-                    <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
-                        click one corner on the map, then the opposite corner
-                    </div>
-                ) : null}
-                {drawnBounds ? (
-                    <NewAreaForm bounds={drawnBounds}
-                        onCancel={() => { setDrawnBounds(null); setDrawActive(false) }}
-                        onCreate={createDrawnArea} />
-                ) : null}
-
+            <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto",
+                          overflowX: "hidden", padding: 8, display: "flex",
+                          flexDirection: "column", gap: 10, minWidth: 0 }}>
+                {/* No drawing here. This page is for LOOKING at what has
+                    been scanned; creating an area is a different job and
+                    already works in Sources, where the map is the size of
+                    the window rather than a 200px thumbnail. */}
                 <div className="field"><label>Scope (country code)</label>
-                    <div style={{ display: "flex", gap: 6 }}>
-                        <input className="input" style={{ flex: 1 }} value={scopeCountry} onChange={(e) => setScopeCountry(e.target.value)} placeholder="e.g. US" />
-                        <button className="btn sm" onClick={proposeCoverage}>propose</button>
+                    {/* minWidth:0 is the fix. A flex item will not shrink
+                        below its intrinsic content width without it, so the
+                        input held its size and pushed "propose" out of the
+                        column entirely. */}
+                    <div style={{ display: "flex", gap: 4, minWidth: 0 }}>
+                        <input className="input" style={{ flex: "1 1 auto", minWidth: 0 }}
+                            value={scopeCountry} onChange={(e) => setScopeCountry(e.target.value)}
+                            placeholder="e.g. US" />
+                        <button className="btn sm" style={{ flex: "0 0 auto" }}
+                            title="Propose watch areas for this country"
+                            onClick={proposeCoverage}>propose</button>
                     </div>
                 </div>
                 <div>
@@ -562,9 +518,19 @@ export default function Imagery({ onOpenGenerate }) {
                     {aois.map((a) => (
                         <div key={a.system_id} role="button" onClick={() => setSelectedAoi(a)}
                             style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: selectedAoi?.system_id === a.system_id ? "var(--bg-2)" : "transparent", opacity: a.status === "proposed" ? 0.55 : 1 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                <svg className="icon sm"><use href={`#${AOI_CLASS_ICON[a.aoi_class] || "i-pin"}`} /></svg>
-                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>{a.name}</span>
+                            {/* Delete lives on the row. It used to be only
+                                in the right-hand editor, which is a long way
+                                from the list you are looking at when you
+                                decide an area should go. */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                                <svg className="icon sm" style={{ flex: "0 0 auto" }}><use href={`#${AOI_CLASS_ICON[a.aoi_class] || "i-pin"}`} /></svg>
+                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)",
+                                               flex: "1 1 auto", minWidth: 0, overflow: "hidden",
+                                               textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
+                                <button className="btn ghost sm" title={`Delete ${a.system_id} and all its scans`}
+                                    style={{ flex: "0 0 auto", height: 17, padding: "0 4px",
+                                             fontSize: 11, color: "var(--txt-4)" }}
+                                    onClick={(e) => { e.stopPropagation(); deleteAoi(a) }}>×</button>
                             </div>
                             <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}>{a.system_id} · {a.aoi_class} · {(a.bbox.max_lon - a.bbox.min_lon).toFixed(1)}°</div>
                             <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-3)" }}>{a.status === "proposed" ? "proposed" : `every ${a.scan_interval_hours}h`}</div>
@@ -604,8 +570,17 @@ export default function Imagery({ onOpenGenerate }) {
                 no separate "big image" viewer to keep in sync. */}
             <div style={fullscreen
                 ? { position: "fixed", inset: 0, zIndex: 50, background: "var(--bg-0)", display: "flex", flexDirection: "column" }
-                : { display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <div style={{ height: 32, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 10, padding: "0 10px" }}>
+                // Flex, not a fixed grid-row template: the number of
+                // children here varies (progress bar, result strip, scene
+                // scrubber all come and go), so a template with a hardcoded
+                // row count puts the image in an `auto` row and it collapses
+                // to zero height. Measured: 1094x0.
+                : { display: "flex", flexDirection: "column",
+                    minWidth: 0, minHeight: 0, overflow: "hidden" }}>
+                <div style={{ minHeight: 32, flexShrink: 0, background: "var(--bg-2)",
+                              borderBottom: "1px solid var(--line)", display: "flex",
+                              alignItems: "center", gap: 6, padding: "4px 8px",
+                              flexWrap: "wrap" }}>
                     <span style={{ font: "400 11px var(--mono)", color: "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {scene ? `${scene.scan.scan_id.slice(0, 8)} · ${scene.zone.name} · ${fmtDate(scene.reference_date)} → ${fmtDate(scene.scan.image_timestamp_utc)} · ${SENSOR_LABEL[scene.zone.sensor_preference] || "Sentinel-2 · optical 10m"}` : "No scene selected"}
                     </span>
@@ -628,7 +603,7 @@ export default function Imagery({ onOpenGenerate }) {
                         left rail's "re-run detection" button — one real detector-
                         invocation entry point, not a second implementation. */}
                     <button className="btn sm" disabled={!selectedAoi || running} onClick={reRunDetection}>
-                        {running ? "running…" : "run detection now"}
+                        {running ? "…" : "detect"}
                     </button>
                     {/* Native-resolution tiled scan. Distinct from the button
                         above, which runs the zone's configured single-image
@@ -648,7 +623,8 @@ export default function Imagery({ onOpenGenerate }) {
                         title={dates.length
                             ? "Which pass to scan — cloud cover in brackets"
                             : "No scene dates loaded for this area"}
-                        style={{ height: 24, maxWidth: 190 }}>
+                        style={{ height: 21, maxWidth: 132, fontSize: 11.5,
+                                 textOverflow: "ellipsis" }}>
                         <option value="">
                             {dates.length ? `latest pass (${dates.length} available)` : "no dates"}
                         </option>
@@ -658,50 +634,20 @@ export default function Imagery({ onOpenGenerate }) {
                             </option>
                         ))}
                     </select>
-                    {/* SATLAS super-resolution. Opt-in and never automatic:
-                        it is generative, so it invents plausible detail from
-                        the same Sentinel pixels it was given. It makes a
-                        scene legible; it is not a second observation. */}
-                    <label title={superresNote}
-                        style={{ display: "flex", alignItems: "center", gap: 4,
-                                 font: "400 11px var(--font)",
-                                 color: superresReady ? "var(--txt-2)" : "var(--txt-4)",
-                                 opacity: superresReady ? 1 : 0.55 }}>
-                        <input type="checkbox" className="check" checked={superres}
-                            disabled={!superresReady || !!tiledJob}
-                            onChange={(e) => setSuperres(e.target.checked)} />
-                        SATLAS 4×
-                    </label>
                     <button className="btn sm" disabled={!selectedAoi || !!tiledJob} onClick={runTiledScan}
                         title="Cover this area at the sensor's native resolution (shows the cost first)">
-                        {tiledJob ? "scanning…" : scanDate ? `scan ${scanDate}` : "native-res scan"}
+                        {tiledJob ? "…" : "scan"}
                     </button>
-                    <button className="btn sm" onClick={raiseSignal}>raise signal</button>
-                    <button className="btn sm" onClick={addToBriefingScene}>add to briefing</button>
+                    <button className="btn sm" title="Raise a signal from this scene" onClick={raiseSignal}>signal</button>
+                    <button className="btn sm" title="Add this scene to the briefing basket" onClick={addToBriefingScene}>brief</button>
                     <button className="btn sm" disabled={!scene || scene.scan.status !== "completed"}
                         title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen — inspect this scan at full size"}
                         aria-pressed={fullscreen} onClick={() => setFullscreen((v) => !v)}>
-                        {fullscreen ? "exit fullscreen" : "fullscreen"}
+                        {fullscreen ? "exit" : "full"}
                     </button>
                 </div>
 
                 <ScanProgress jobId={tiledJob} onDone={onTiledDone} />
-
-                {/* Never let generated pixels pass as observation. */}
-                {srBusy ? (
-                    <div style={{ padding: "5px 10px", borderBottom: "1px solid var(--bdr)",
-                                  font: "400 10px var(--mono)", color: "var(--txt-dim)" }}>
-                        super-resolving this scene at 4× — this takes a while on CPU…
-                    </div>
-                ) : (superres && srImage?.scanId === selectedScanId) ? (
-                    <div style={{ padding: "5px 10px", borderBottom: "1px solid var(--bdr)",
-                                  font: "400 10px var(--mono)", color: "var(--sev-high)" }}>
-                        SATLAS 4× · {srImage.size?.join("×")}px · ~2.5 m/px ·
-                        {" "}GENERATED DETAIL from the same Sentinel pixels — sharper to look at,
-                        not a second observation
-                        {srImage.capped ? ` · source capped to ${srImage.capped}px` : ""}
-                    </div>
-                ) : null}
 
                 {/* The result of a native-res scan, stated with its own
                     qualifications. Coverage below 100% is reported because
@@ -720,17 +666,22 @@ export default function Imagery({ onOpenGenerate }) {
 
                 <SceneScrubber scenes={scenes} selectedScanId={selectedScanId} onSelect={setSelectedScanId} currentInstrument={scene?.scan?.instrument} />
 
-                <div style={{ flex: 1, overflow: "auto", padding: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {/* The image takes every pixel the toolbar and strips do not.
+                    It used to be centred inside a padded flex box with the
+                    viewer capped at 420px, so a 2048px scene rendered small
+                    in a large empty pane — the resolution the tiling exists
+                    to produce, thrown away at the last step. minHeight:0 is
+                    what actually lets a grid row shrink-to-fit and therefore
+                    grow. */}
+                <div style={{ flex: "1 1 auto", minHeight: 0, minWidth: 0,
+                              overflow: "hidden", padding: 8, display: "flex",
+                              alignItems: "stretch", justifyContent: "stretch" }}>
                     {!scene ? (
                         <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Select an area with a real completed scene.</div>
                     ) : scene.scan.status !== "completed" ? (
                         <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Not yet detected for this scene — run "re-run detection" to call the real detector.</div>
                     ) : (
-                        <SceneComparison
-                            scene={(superres && srImage?.scanId === selectedScanId)
-                                ? { ...scene, image_b64: srImage.b64 }
-                                : scene}
-                            view={view} showBoxes={showBoxes} changes={visibleChanges}
+                        <SceneComparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
                             swipePos={swipePos} onSwipeDrag={onSwipeDrag} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
                             clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet}
                             fullscreen={fullscreen} viewerRef={viewerRef} />
@@ -753,12 +704,34 @@ export default function Imagery({ onOpenGenerate }) {
                         <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
                             Where
                         </div>
+                        {/* key forces a remount on area change so the ping
+                            animation replays — it is the "look here" cue, and
+                            it only fires on mount. span overrides the shared
+                            default of 26°, which frames half a region when the
+                            subject is a port; sized to the area itself with a
+                            floor so a tiny AOI is not framed at street level.
+                            Passed as props rather than changed in Minimap, so
+                            Inbox and Replay are untouched. */}
                         <Minimap
+                            key={selectedAoi.system_id}
                             focus={{
                                 lat: (selectedAoi.bbox.min_lat + selectedAoi.bbox.max_lat) / 2,
                                 lon: (selectedAoi.bbox.min_lon + selectedAoi.bbox.max_lon) / 2,
                             }}
+                            // Floor of 3°, not tighter. The locator's
+                            // basemap is simplified to ~0.06° (that is the
+                            // fix for the old "Minecraft" coastline), so
+                            // below roughly 2° there is no geometry left to
+                            // draw and the pane renders as a grey blob —
+                            // zoomed in on nothing. 3° still frames a port
+                            // and its coast recognisably.
+                            span={Math.max(
+                                3,
+                                Math.max(selectedAoi.bbox.max_lon - selectedAoi.bbox.min_lon,
+                                         selectedAoi.bbox.max_lat - selectedAoi.bbox.min_lat) * 10,
+                            )}
                             label={selectedAoi.name}
+                            title="Where this was scanned"
                             color="var(--acc-hi)"
                         />
                     </div>

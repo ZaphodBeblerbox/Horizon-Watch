@@ -170,14 +170,11 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                 .toString().replace(/_/g, " ")
             const _conf = typeof det.confidence === "number"
                 ? ` ${Math.round(det.confidence * 100)}%` : ""
-            // Generated detail is marked, so a candidate is never read as
-            // an observation.
-            const _prov = det.provenance === "superres" ? " ~SR" : ""
             added.push(viewer.entities.add({
                 id: `ow-box-label-${Math.random()}`,
                 position: positions[0],
                 label: {
-                    text: `${_tag}${_conf}${_prov}`,
+                    text: `${_tag}${_conf}`,
                     font: "11px monospace",
                     fillColor: color,
                     outlineColor: Color.BLACK.withAlpha(0.85),
