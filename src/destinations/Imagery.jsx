@@ -142,6 +142,14 @@ export default function Imagery({ onOpenGenerate }) {
     // a choice of date.
     const [dates, setDates] = useState([])
     const [scanDate, setScanDate] = useState("")
+    const [superres, setSuperres] = useState(false)
+    // The super-resolved render of the CURRENT scene, keyed by scan so a
+    // scene switch cannot leave the previous scene's sharpened image on
+    // screen — which would be showing one place while labelled another.
+    const [srImage, setSrImage] = useState(null)   // {scanId, b64, note}
+    const [srBusy, setSrBusy] = useState(false)
+    const [superresReady, setSuperresReady] = useState(false)
+    const [superresNote, setSuperresNote] = useState("")
     const [tiledJob, setTiledJob] = useState(null)
     const [tiledResult, setTiledResult] = useState(null)
     const viewerRef = useRef(null)
@@ -240,6 +248,20 @@ export default function Imagery({ onOpenGenerate }) {
     }, [aois])
 
     useEffect(() => {
+        let cancelled = false
+        fetch(`${API_BASE}/api/imagery/superres/status`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                if (cancelled || !d) return
+                setSuperresReady(Boolean(d.available))
+                setSuperresNote(d.available
+                    ? "Satlas ESRGAN 4× (10 m/px → ~2.5 m/px). Generated detail — sharpens a finding, never originates one."
+                    : (d.reason || "unavailable"))
+            }).catch(() => {})
+        return () => { cancelled = true }
+    }, [])
+
+    useEffect(() => {
         setDates([]); setScanDate("")
         if (!selectedAoi?.bbox) return
         const b = selectedAoi.bbox
@@ -318,7 +340,8 @@ export default function Imagery({ onOpenGenerate }) {
             method: "POST", headers: { "Content-Type": "application/json" },
             credentials: "include",
             body: JSON.stringify({ bounds, date: scanDate || null,
-                                   system_id: selectedAoi.system_id }),
+                                   system_id: selectedAoi.system_id,
+                                   superres }),
         }).then((r) => r.json()).catch(() => null)
         if (!started || started.error) { toast(started?.error || "Scan could not be started", {}); return }
         setTiledResult(null)
@@ -363,6 +386,51 @@ export default function Imagery({ onOpenGenerate }) {
         loadAois()
         toast("Observation area deleted", { icon: "i-check" })
     }
+
+    // Turning SATLAS on has to change the PICTURE, not only what the
+    // detector was fed. Wired to detection alone, the toggle changed the
+    // numbers and left the image identical, which reads as doing nothing.
+    useEffect(() => {
+        if (!superres) { setSrImage(null); return }
+        if (!scene?.image_b64 || !selectedScanId) return
+        if (srImage?.scanId === selectedScanId) return
+        let cancelled = false
+        setSrBusy(true)
+        // Background job, then poll. The model runs at its 32px training
+        // chip, so a scene is minutes of CPU — held open, the request is
+        // killed by a platform proxy and the work is lost.
+        ;(async () => {
+            try {
+                const start = await fetch(`${API_BASE}/api/imagery/superres/image`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ image_b64: scene.image_b64 }),
+                }).then((r) => r.json())
+                if (start.error) throw new Error(start.error)
+
+                for (let i = 0; i < 600 && !cancelled; i++) {
+                    await new Promise((r) => setTimeout(r, 2000))
+                    const d = await fetch(
+                        `${API_BASE}/api/imagery/superres/image/${start.job_id}`,
+                        { credentials: "include" }).then((r) => r.json())
+                    if (cancelled) return
+                    if (d.status === "running") continue
+                    if (d.status === "error" || d.error) throw new Error(d.error || "failed")
+                    setSrImage({ scanId: selectedScanId, b64: d.image_b64, note: d.note,
+                                 size: d.output_size, capped: d.source_capped_to_px })
+                    return
+                }
+            } catch (e) {
+                if (!cancelled) {
+                    toast(`Super-resolution: ${e.message}`, { icon: "i-alert" })
+                    setSuperres(false)
+                }
+            } finally {
+                if (!cancelled) setSrBusy(false)
+            }
+        })()
+        return () => { cancelled = true }
+    }, [superres, scene, selectedScanId, srImage?.scanId])
 
     async function createDrawnArea({ name, sensor, cadence, aoiClass }) {
         const polygon = boundsToPolygon(drawnBounds)
@@ -590,6 +658,20 @@ export default function Imagery({ onOpenGenerate }) {
                             </option>
                         ))}
                     </select>
+                    {/* SATLAS super-resolution. Opt-in and never automatic:
+                        it is generative, so it invents plausible detail from
+                        the same Sentinel pixels it was given. It makes a
+                        scene legible; it is not a second observation. */}
+                    <label title={superresNote}
+                        style={{ display: "flex", alignItems: "center", gap: 4,
+                                 font: "400 11px var(--font)",
+                                 color: superresReady ? "var(--txt-2)" : "var(--txt-4)",
+                                 opacity: superresReady ? 1 : 0.55 }}>
+                        <input type="checkbox" className="check" checked={superres}
+                            disabled={!superresReady || !!tiledJob}
+                            onChange={(e) => setSuperres(e.target.checked)} />
+                        SATLAS 4×
+                    </label>
                     <button className="btn sm" disabled={!selectedAoi || !!tiledJob} onClick={runTiledScan}
                         title="Cover this area at the sensor's native resolution (shows the cost first)">
                         {tiledJob ? "scanning…" : scanDate ? `scan ${scanDate}` : "native-res scan"}
@@ -604,6 +686,22 @@ export default function Imagery({ onOpenGenerate }) {
                 </div>
 
                 <ScanProgress jobId={tiledJob} onDone={onTiledDone} />
+
+                {/* Never let generated pixels pass as observation. */}
+                {srBusy ? (
+                    <div style={{ padding: "5px 10px", borderBottom: "1px solid var(--bdr)",
+                                  font: "400 10px var(--mono)", color: "var(--txt-dim)" }}>
+                        super-resolving this scene at 4× — this takes a while on CPU…
+                    </div>
+                ) : (superres && srImage?.scanId === selectedScanId) ? (
+                    <div style={{ padding: "5px 10px", borderBottom: "1px solid var(--bdr)",
+                                  font: "400 10px var(--mono)", color: "var(--sev-high)" }}>
+                        SATLAS 4× · {srImage.size?.join("×")}px · ~2.5 m/px ·
+                        {" "}GENERATED DETAIL from the same Sentinel pixels — sharper to look at,
+                        not a second observation
+                        {srImage.capped ? ` · source capped to ${srImage.capped}px` : ""}
+                    </div>
+                ) : null}
 
                 {/* The result of a native-res scan, stated with its own
                     qualifications. Coverage below 100% is reported because
@@ -628,7 +726,11 @@ export default function Imagery({ onOpenGenerate }) {
                     ) : scene.scan.status !== "completed" ? (
                         <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Not yet detected for this scene — run "re-run detection" to call the real detector.</div>
                     ) : (
-                        <SceneComparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
+                        <SceneComparison
+                            scene={(superres && srImage?.scanId === selectedScanId)
+                                ? { ...scene, image_b64: srImage.b64 }
+                                : scene}
+                            view={view} showBoxes={showBoxes} changes={visibleChanges}
                             swipePos={swipePos} onSwipeDrag={onSwipeDrag} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
                             clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet}
                             fullscreen={fullscreen} viewerRef={viewerRef} />

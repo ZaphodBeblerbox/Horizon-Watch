@@ -14081,6 +14081,162 @@ def imagery_scan_tiled_result(job_id: str):
     return out
 
 
+@app.post("/api/imagery/superres/image")
+async def imagery_superres_image(request: Request):
+    """Return a 4x super-resolved version of a scene, for LOOKING at.
+
+    Separate from detection on purpose. The toggle used to affect only what
+    the detector was fed, so turning it on changed the numbers and left the
+    picture exactly as it was — which reads as the feature doing nothing.
+    Seeing the sharper image is most of the value: a jetty, a tank farm or a
+    vehicle park becomes legible at 2.5 m/px in a way it is not at 10.
+
+    The result is generated detail, not observation, and the response says
+    so every time rather than trusting the caller to remember.
+    """
+    import satlas_superres as _sr
+    body = await request.json()
+    image_b64 = body.get("image_b64") or ""
+    bounds = body.get("bounds")
+
+    if not _sr.weights_present():
+        return JSONResponse(
+            {"error": "super-resolution weights are not downloaded yet (~128MB, one time)"},
+            status_code=503)
+
+    if not image_b64:
+        if not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
+            return JSONResponse({"error": "image_b64 or bounds required"}, status_code=400)
+        got = await _fetch_sentinel_image_bytes(
+            bounds, image_type="true-colour",
+            max_cloud=int(body.get("max_cloud", 40)),
+            days_back=int(body.get("days_back", 30)),
+            date_str=body.get("date"))
+        if got.get("error"):
+            return JSONResponse({"error": got["error"]}, status_code=502)
+        image_b64 = _b64mod.b64encode(got["image_bytes"]).decode()
+
+    # Slow is acceptable; being killed mid-flight is not. The cap is now
+    # generous because this runs as a background job rather than inside the
+    # request, so a platform proxy timeout can no longer truncate it.
+    MAX_SRC_PX = int(os.getenv("SUPERRES_MAX_SRC_PX", "1024"))
+
+    def _work(_b64_in):
+        import base64 as _b
+        from PIL import Image as _I
+        img = _I.open(_io.BytesIO(_b.b64decode(_b64_in))).convert("RGB")
+        src_w, src_h = img.size
+        capped = False
+        if max(src_w, src_h) > MAX_SRC_PX:
+            img.thumbnail((MAX_SRC_PX, MAX_SRC_PX), _I.LANCZOS)
+            capped = True
+        up = _sr.upscale(img)
+        buf = _io.BytesIO()
+        up.save(buf, format="JPEG", quality=88)
+        return {
+            "image_b64": _b.b64encode(buf.getvalue()).decode(),
+            "source_size": [src_w, src_h],
+            "output_size": list(up.size),
+            "source_capped_to_px": MAX_SRC_PX if capped else None,
+        }
+
+    # A BACKGROUND JOB, not a long request.
+    #
+    # The model must run at its 32px training chip, so a source image costs
+    # roughly (px/24)^2 forward passes — 128px is ~23s on CPU and 1024px is
+    # many minutes. Held open, that request is killed by a platform proxy
+    # long before it finishes, and the work is thrown away with it. Handing
+    # back a job id means the scan survives however long it takes, and the
+    # CPU still goes through the one imagery pool so it cannot starve the
+    # app while it runs.
+    job_id = f"sr-{uuid.uuid4().hex[:12]}"
+
+    async def _run():
+        _imagery_rt.start_progress(job_id, 1, label="super-resolving scene")
+        try:
+            out = await _imagery_rt.run_cpu(_work, image_b64,
+                                            label="superres-image", timeout=3600)
+            out["scale"] = _sr.SCALE
+            out["provenance"] = "superres"
+            out["status"] = "completed"
+            out["note"] = ("Generated detail from Allen AI's Satlas ESRGAN, derived "
+                           "from the same Sentinel-2 pixels — sharper to look at, not "
+                           "a second observation. Do not read new objects from it alone.")
+            _SUPERRES_RESULTS[job_id] = out
+        except Exception as e:                              # noqa: BLE001
+            # Recorded as the job's result. A background job that dies
+            # silently is indistinguishable from one still running.
+            _SUPERRES_RESULTS[job_id] = {"status": "error",
+                                         "error": f"{type(e).__name__}: {e}"}
+            print(f"[superres] job {job_id} failed: {e}")
+        finally:
+            _imagery_rt.finish_progress(job_id)
+            for k in list(_SUPERRES_RESULTS)[:-10]:
+                _SUPERRES_RESULTS.pop(k, None)
+
+    asyncio.create_task(_run())
+    return {"job_id": job_id, "status": "running",
+            "note": "super-resolution runs in the background; poll "
+                    "/api/imagery/superres/image/{job_id}"}
+
+
+_SUPERRES_RESULTS: dict = {}
+
+
+@app.get("/api/imagery/superres/image/{job_id}")
+def imagery_superres_image_result(job_id: str):
+    out = _SUPERRES_RESULTS.get(job_id)
+    if out is None:
+        p = _imagery_rt.progress(job_id)
+        if p and not p.get("finished"):
+            return {"status": "running", "job_id": job_id,
+                    "elapsed_s": p.get("elapsed_s")}
+        return JSONResponse({"status": "unknown", "error": "no such job"}, status_code=404)
+    return out
+
+
+@app.get("/api/imagery/superres/status")
+def imagery_superres_status():
+    """Whether super-resolution can actually run, so the UI can say why not.
+
+    A button that silently does nothing is worse than one that explains it
+    is unavailable — the weights are a 128MB download that has to happen
+    once before anything works.
+    """
+    import satlas_superres as _sr
+    st = _sr.status()
+    # Every precondition, named. "Unavailable" with no reason is the kind of
+    # dead control that gets reported as a bug months later.
+    if not st.get("torch_available"):
+        st["available"] = False
+        st["reason"] = ("PyTorch is not installed in this environment — "
+                        "super-resolution and the SAR vessel detector both need it")
+    elif not st["weights_present"]:
+        st["available"] = False
+        st["reason"] = "model weights not downloaded yet (~128MB, one time)"
+    elif (st.get("free_memory_mb") is not None
+          and st["free_memory_mb"] < st["min_free_memory_mb"]):
+        st["available"] = False
+        st["reason"] = (f"only {st['free_memory_mb']:.0f}MB free, "
+                        f"{st['min_free_memory_mb']:.0f}MB needed to load the model")
+    else:
+        st["available"] = True
+        st["reason"] = None
+    return st
+
+
+@app.post("/api/imagery/superres/fetch-weights")
+async def imagery_superres_fetch_weights():
+    """Download the weights on demand, off the event loop."""
+    import satlas_superres as _sr
+    try:
+        p = await _imagery_rt.run_cpu(_sr.ensure_weights, label="superres-weights",
+                                      timeout=1800)
+        return {"ok": True, "path": str(p), **_sr.status()}
+    except Exception as e:                                  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+
+
 @app.get("/api/imagery/progress")
 def imagery_progress(job_id: str | None = None):
     """Live progress for imagery scans.
@@ -18173,22 +18329,62 @@ async def api_imagery_detect_scene(request: Request):
     # sentinel2_optical -- detect on the exact bytes already displayed
     image_b64 = body.get("image_b64", "")
     if not image_b64:
-        return JSONResponse({"error": "image_b64 required for optical detection"}, status_code=400)
+        # FETCH IT OURSELVES. This used to refuse outright, so detection was
+        # only possible after a separate "load image" step — the UI could
+        # load a scene and nothing else. Running a detection is the point;
+        # needing to have already fetched the pixels is an implementation
+        # detail of how the panel happened to be built.
+        _auto = await _fetch_sentinel_image_bytes(
+            {"west": west, "south": south, "east": east, "north": north},
+            image_type="true-colour",
+            max_cloud=int(body.get("max_cloud", 40)),
+            days_back=int(body.get("days_back", 30)),
+            date_str=body.get("date"),
+        )
+        if _auto.get("error"):
+            return JSONResponse({"error": f"no image for this area: {_auto['error']}"},
+                                status_code=502)
+        image_b64 = _b64mod.b64encode(_auto["image_bytes"]).decode()
     if "," in image_b64:
         image_b64 = image_b64.split(",", 1)[1]
     import sentinel_ml
     bbox = {"min_lat": south, "max_lat": north, "min_lon": west, "max_lon": east}
+    want_superres = bool(body.get("superres"))
 
-    def _decode_then_detect(_b64_str, _bbox):
-        """Decode and detect together on the imagery pool — decoding a
-        multi-megapixel scene on the event loop is itself a stall."""
+    def _decode_then_detect(_b64_str, _bbox, _superres):
+        """Decode, optionally super-resolve, and detect — all on the imagery
+        pool. Decoding a multi-megapixel scene on the event loop is itself a
+        stall, and ESRGAN inference is far worse."""
         import base64 as _b64m
         from PIL import Image as _PILImage
         img = _PILImage.open(_io.BytesIO(_b64m.b64decode(_b64_str))).convert("RGB")
-        return sentinel_ml.run_ship_detection({"true_colour": img}, _bbox)
+
+        used_sr = False
+        if _superres:
+            import satlas_superres as _sr
+            # 4x Sentinel-2, roughly 10 m/px -> 2.5 m/px. The detector then
+            # sees an object at four times the pixel size, which is the
+            # difference between a vessel being 3 px and 12 px.
+            img = _sr.upscale(img)
+            used_sr = True
+
+        # Every class, not only ships: the fourteen others were detected and
+        # discarded for as long as this endpoint has existed.
+        dets = sentinel_ml.run_object_detection({"true_colour": img}, _bbox)
+        for d in dets:
+            # PROVENANCE. A detection made on generated pixels is a
+            # candidate, not a finding: ESRGAN invents plausible detail, and
+            # that detail derives from the SAME photons Sentinel already
+            # reported, so it is not a second witness. Marked so nothing
+            # downstream can mistake it for one.
+            d["provenance"] = "superres" if used_sr else "sentinel2_optical"
+            d["corroborated"] = False
+        return dets
 
     raw_dets = await _imagery_rt.run_cpu(
-        _decode_then_detect, image_b64, bbox, label="sentinel-ship-detect",
+        _decode_then_detect, image_b64, bbox, want_superres,
+        label="superres-detect" if want_superres else "sentinel-detect",
+        timeout=1800 if want_superres else None,
     )
 
     detections = []
@@ -18198,14 +18394,35 @@ async def api_imagery_detect_scene(request: Request):
         if geo and geo.get("coordinates"):
             ring = geo["coordinates"][0][:-1]  # drop closing duplicate vertex
             corners = [[lat_, lon_] for lon_, lat_ in ring]
+        # "category" was hardcoded to "Vessel" here. That was harmless while
+        # this endpoint only ran the ship detector; now that it runs all
+        # fifteen DOTA classes it would label a storage tank, an aircraft or
+        # a truck as a vessel on the globe — a confident, specific, wrong
+        # answer, which is worse than no label.
+        obj_type = d.get("object_type") or "object"
         detections.append({
             "corners": corners,
             "center": [d["centroid_lat"], d["centroid_lon"]],
-            "category": "Vessel",
+            "object_type": obj_type,
+            "category": obj_type.replace("_", " ").title(),
+            "label": obj_type.replace("_", " "),
             "confidence": d["confidence"],
+            "provenance": d.get("provenance", "sentinel2_optical"),
+            "corroborated": bool(d.get("corroborated", False)),
             "attributes": _json.loads(d["attributes"]) if d.get("attributes") else {},
         })
-    return JSONResponse({"detections": detections, "sensor": sensor, "model": "yolov8n-obb (DOTA)"})
+    return JSONResponse({
+        "detections": detections, "sensor": sensor,
+        "model": "yolov8n-obb (DOTA)",
+        "superres": bool(body.get("superres")),
+        # Said plainly, so a caller cannot present generated detail as
+        # observation without having been told.
+        "provenance_note": (
+            "detections were made on SUPER-RESOLVED imagery — generated detail, "
+            "derived from the same Sentinel-2 pixels, so not an independent "
+            "observation; treat as candidates until a second sensor agrees"
+            if body.get("superres") else None),
+    })
 
 
 @app.post("/api/imagery/detections/{detection_id}/confirm")

@@ -103,3 +103,17 @@ wasabi==1.1.3
 weasel==0.4.3
 wrapt==2.1.1
 rapidfuzz==3.14.6
+
+# ── PyTorch, CPU-only ─────────────────────────────────────────────────────
+# Required by sar_detector.py (AllenAI Sentinel-1 vessel model) and
+# satlas_superres.py (Satlas ESRGAN). Both import it lazily inside their
+# functions, so the app boots and every other feature works without it —
+# which is exactly why its absence went unnoticed: torch was NEVER declared
+# here, so on Railway the SAR detector has been failing at call time with an
+# ImportError while the service looked healthy.
+#
+# The CPU index is deliberate. The default PyPI wheel pulls CUDA runtimes
+# that are hundreds of megabytes of dead weight on a CPU-only container and
+# make the image slow to build and heavy to boot.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu

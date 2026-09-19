@@ -335,3 +335,47 @@ def test_detection_ids_stay_readable():
     i = sentinel_ml._next_det_id()
     assert i.startswith("DET-")
     assert len(i) <= 20
+
+
+# ── super-resolution, deployment safety ───────────────────────────────────
+
+def test_superres_weights_live_on_the_data_volume():
+    """On Railway the app directory is ephemeral and DATA_DIR is the
+    persistent volume. Writing 128MB of weights beside the source means
+    re-downloading them after every deploy and filling a container disk
+    that was never sized for it."""
+    import satlas_superres as sr
+    assert "model_weights" in str(sr.WEIGHTS_DIR)
+    assert str(sr.WEIGHTS_DIR).startswith(str(sr._DATA_DIR))
+
+
+def test_superres_is_opt_in():
+    """It is generative. It is never silently on."""
+    import satlas_superres as sr
+    assert sr.enabled() is False or os.getenv("SATLAS_SUPERRES_ENABLED")
+
+
+def test_superres_status_never_raises_or_downloads():
+    """The UI calls this on every page load; it must be cheap and safe even
+    with no weights, no torch and no network."""
+    import satlas_superres as sr
+    st = sr.status()
+    for k in ("enabled", "torch_available", "weights_present", "scale", "loaded"):
+        assert k in st
+    assert st["scale"] == 4
+
+
+def test_superres_runs_at_the_training_chip_size():
+    """Not a performance knob, a correctness one: at 256px this model
+    returns striped noise that still passes every structural check — the
+    weights load strictly and the output is exactly 4x. Only the pixels
+    show it. 32px is what it was trained on."""
+    import inspect
+
+    import satlas_superres as sr
+    sig = inspect.signature(sr.upscale)
+    assert sig.parameters["chip"].default == 32
+    assert sig.parameters["overlap"].default > 0, (
+        "chips must overlap, or each one's slightly different brightness "
+        "leaves a visible grid across the scene"
+    )

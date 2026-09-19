@@ -3,9 +3,9 @@
 import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import {
-    Cartesian3, Rectangle, Color, PolygonHierarchy,
+    Cartesian2, Cartesian3, Rectangle, Color, PolygonHierarchy,
     SingleTileImageryProvider, ColorMaterialProperty,
-    ClassificationType,
+    ClassificationType, LabelStyle, DistanceDisplayCondition,
 } from "cesium"
 
 const CATEGORY_COLORS = {
@@ -162,6 +162,35 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                     height: 0,
                 },
             }))
+            // THE TAG. A box with no label says something is there but not
+            // what, which is the half of a detection that makes it usable —
+            // and with all fifteen DOTA classes now running, "a box" could
+            // be a vessel, an aircraft, a storage tank or a truck.
+            const _tag = (det.label || det.object_type || det.category || "object")
+                .toString().replace(/_/g, " ")
+            const _conf = typeof det.confidence === "number"
+                ? ` ${Math.round(det.confidence * 100)}%` : ""
+            // Generated detail is marked, so a candidate is never read as
+            // an observation.
+            const _prov = det.provenance === "superres" ? " ~SR" : ""
+            added.push(viewer.entities.add({
+                id: `ow-box-label-${Math.random()}`,
+                position: positions[0],
+                label: {
+                    text: `${_tag}${_conf}${_prov}`,
+                    font: "11px monospace",
+                    fillColor: color,
+                    outlineColor: Color.BLACK.withAlpha(0.85),
+                    outlineWidth: 2.5,
+                    style: LabelStyle.FILL_AND_OUTLINE,
+                    pixelOffset: new Cartesian2(0, -12),
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    // Hide when the camera is far out, or a busy scene turns
+                    // into a wall of overlapping text.
+                    distanceDisplayCondition: new DistanceDisplayCondition(0, 2.0e6),
+                },
+            }))
+
             // A real outline entity too — PolygonGraphics.outline is drawn
             // thin/unreliable on some terrain-clamped ground primitives, so
             // a dedicated polyline guarantees the box edge stays visible.

@@ -87,6 +87,9 @@ export default function ImagerySidebar({
     detections, onDetectionsChange,
 }) {
     const [sensor, setSensor] = useState("sentinel2_optical")
+    const [superres, setSuperres] = useState(false)
+    const [superresReady, setSuperresReady] = useState(false)
+    const [superresNote, setSuperresNote] = useState("checking super-resolution availability…")
     const [maxCloud, setMaxCloud] = useState(20)
     const [daysBack, setDaysBack] = useState(30)
     const [exactDate, setExactDate] = useState("")
@@ -115,6 +118,24 @@ export default function ImagerySidebar({
             .catch(() => { if (!cancelled) setPasses(null) })
         return () => { cancelled = true }
     }, [drawn, maxCloud, daysBack])
+
+    // Whether super-resolution can actually run. A toggle that silently
+    // does nothing is worse than one that explains why it is unavailable.
+    useEffect(() => {
+        let cancelled = false
+        fetch(`${API}/api/imagery/superres/status`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                if (cancelled || !d) return
+                setSuperresReady(Boolean(d.available))
+                setSuperresNote(d.available
+                    ? "Satlas ESRGAN, 4× (10 m/px → ~2.5 m/px). Generated detail: "
+                      + "sharpens what a sensor found, never a finding on its own."
+                    : (d.reason || "super-resolution unavailable"))
+            })
+            .catch(() => { if (!cancelled) setSuperresNote("could not reach the backend") })
+        return () => { cancelled = true }
+    }, [])
 
     const loadAreas = useCallback(() => {
         fetch(`${API}/api/imagery/aois`)
@@ -182,12 +203,17 @@ export default function ImagerySidebar({
     }
 
     async function detectOnScene() {
-        if (!scene) return
+        if (!scene && !drawn) return
         setBusy((b) => ({ ...b, detecting: true }))
         try {
-            const body = scene.sensor === "sentinel1_sar"
-                ? { bounds: scene.bounds, sensor: scene.sensor, capture_timestamp: scene.capture_timestamp }
-                : { bounds: scene.bounds, sensor: scene.sensor, image_b64: scene.image_b64 }
+            // Fall back to the drawn footprint when no scene has been
+            // loaded — the backend fetches the pixels in that case.
+            const bounds = scene?.bounds || drawn?.bounds
+            const sens = scene?.sensor || sensor
+            const body = sens === "sentinel1_sar"
+                ? { bounds, sensor: sens, capture_timestamp: scene?.capture_timestamp }
+                : { bounds, sensor: sens, image_b64: scene?.image_b64 || undefined,
+                    superres, max_cloud: maxCloud, days_back: daysBack }
             const res = await fetch(`${API}/api/imagery/detect-scene`, {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
@@ -196,7 +222,12 @@ export default function ImagerySidebar({
             if (!res.ok || data.error) { toast(data.error || "Real detection failed", { icon: "i-alert" }); return }
             const dets = data.detections || []
             onDetectionsChange(dets)
-            toast(`${dets.length} real detection${dets.length === 1 ? "" : "s"}`, {})
+            // Say when a count came from generated pixels. A number that
+            // looks like an observation and is not is the one thing this
+            // must never do silently.
+            toast(`${dets.length} detection${dets.length === 1 ? "" : "s"}`
+                  + (data.superres ? " — on SUPER-RESOLVED imagery (candidates, not observations)" : ""),
+                  {})
         } catch (e) {
             toast("Real detection failed", { icon: "i-alert" })
         } finally {
@@ -449,11 +480,31 @@ export default function ImagerySidebar({
                             onClick={() => (drawn ? saveArea() : toast("Draw an area first — there is nothing to save", { icon: "i-alert" }))}>
                         {busy.saving ? "saving…" : "save area"}
                     </button>
-                    {scene && (
-                        <button className="btn sm" disabled={busy.detecting} onClick={detectOnScene}>
-                            {busy.detecting ? "detecting…" : "detect"}
-                        </button>
-                    )}
+                    {/* DETECT WITHOUT LOADING FIRST. This button only
+                        existed once a scene had been fetched, so the panel
+                        could load an image and nothing else — running a
+                        detection is the point, and having already fetched
+                        the pixels is an implementation detail. The endpoint
+                        now fetches them itself when they are missing. */}
+                    <button className="btn sm" disabled={busy.detecting}
+                            onClick={() => (drawn || scene
+                                ? detectOnScene()
+                                : toast("Draw an area first — detection needs a footprint", { icon: "i-alert" }))}>
+                        {busy.detecting ? "detecting…" : "run detection"}
+                    </button>
+                    {/* SATLAS super-resolution, opt-in and never automatic.
+                        It is generative: it invents plausible detail from
+                        the same Sentinel pixels, so it sharpens what another
+                        sensor found and may not originate a finding. The
+                        label says which, rather than leaving the reader to
+                        assume the extra detail was observed. */}
+                    <label className="lbl" title={superresNote}
+                           style={{ display: "flex", alignItems: "center", gap: 4, opacity: superresReady ? 1 : 0.5 }}>
+                        <input type="checkbox" className="check" checked={superres}
+                               disabled={!superresReady || busy.detecting}
+                               onChange={(e) => setSuperres(e.target.checked)} />
+                        SATLAS 4×
+                    </label>
                 </div>
             )}
         </div>
