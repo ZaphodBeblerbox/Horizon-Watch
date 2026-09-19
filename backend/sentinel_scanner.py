@@ -66,33 +66,34 @@ _IMPLEMENTED_TASKS = {"ship_detection", "vessel_cluster_detection"}
 #
 # An earlier fix offloaded ONE call in this path. These are the rest.
 import asyncio as _asyncio
-from concurrent.futures import ThreadPoolExecutor as _TPE
 
-# One worker: imagery inference is CPU-bound and memory-hungry, and a second
-# concurrent ONNX session on the same box buys contention rather than
-# throughput. Scans queue instead of competing.
-_CPU_POOL = _TPE(max_workers=1, thread_name_prefix="imagery-cpu")
+# The pool now lives in imagery_runtime, shared with every other imagery CPU
+# path in the backend (Overwatch/Esri inference, SAR detection, optical
+# detection). Previously this module owned a private single-worker pool while
+# main.py handed its inference to the DEFAULT executor — so "one worker" was
+# true per-module and false for the process: a zone scan and an Overwatch
+# scan could still run at once and contend for the same cores. One pool for
+# the whole process is the only version of that guarantee that holds.
+import imagery_runtime as _imagery_rt
 
 
 async def _off_loop(fn, *args, **kwargs):
-    """Run blocking CPU work in the imagery pool, never on the event loop.
+    """Run blocking CPU work in the shared imagery pool, never on the event loop.
 
     get_running_loop(), not get_event_loop(): a scan can be driven from a
     sync endpoint, which FastAPI runs in an AnyIO worker thread where there
     is no current loop at all — get_event_loop() raises "There is no current
     event loop in thread 'AnyIO worker thread'" and takes the scan with it.
 
-    And when there genuinely is no running loop we are ALREADY off the main
-    thread, so the work can just run here: offloading exists to protect the
-    event loop, and in that case there is no event loop to protect.
+    With no running loop we are already off the main thread, but we still go
+    through the pool rather than running inline: admission control and the
+    one-at-a-time guarantee are the point, not merely leaving the loop alone.
     """
-    import functools
-    call = functools.partial(fn, *args, **kwargs)
     try:
-        loop = _asyncio.get_running_loop()
+        _asyncio.get_running_loop()
     except RuntimeError:
-        return call()
-    return await loop.run_in_executor(_CPU_POOL, call)
+        return _imagery_rt.run_cpu_blocking(fn, *args, label="zone-scan", **kwargs)
+    return await _imagery_rt.run_cpu(fn, *args, label="zone-scan", **kwargs)
 
 
 def _sar_preview_b64(tiff_bytes: bytes, sar_detector, np) -> str:

@@ -294,6 +294,7 @@ def _cached_json_response(key: str, data_func, max_age: int = 3600):
 # ── Routers ───────────────────────────────────────────────────────────────────
 from routers import intelligence as _intel_router, briefings as _briefings_router
 from routers import infrastructure as _infra_router
+import imagery_runtime as _imagery_rt
 from routers import tile_proxy as _tile_proxy_router
 from routers import analytics as _analytics_router
 from routers import forge as _forge_router
@@ -1439,6 +1440,12 @@ def get_health_detailed():
         },
         "data_sources": sources,
         "claude_usage": usage,
+        # Imagery is the one subsystem that can legitimately occupy a core for
+        # minutes. Reporting it here means a slow scan reads as "busy with
+        # <job> for 90s" rather than as an unexplained degradation — absence
+        # of an explanation is how "we have no data" gets mistaken for
+        # "nothing is happening".
+        "imagery_pool": _imagery_rt.status(),
     }
 
 
@@ -10092,6 +10099,20 @@ def get_weekly_snapshots(weeks: int = Query(12), user=None):
 
 # ── Overwatch: satellite imagery object detection (ONNX — no torch/CUDA) ──────
 
+# Cores ONNX inference may use. Deliberately NOT all of them: the event loop
+# runs on the main thread and needs one, and the health endpoint has to stay
+# answerable while a scan runs. Two cores held back was the smallest reserve
+# that kept probes responsive in testing.
+_IMAGERY_ONNX_THREADS = max(1, int(os.getenv("IMAGERY_ONNX_THREADS", "0"))
+                            or max(1, (os.cpu_count() or 4) - 2))
+_IMAGERY_TILE_FETCHERS = max(2, int(os.getenv("IMAGERY_TILE_FETCHERS", "6")))
+
+# Largest stitched image an Esri scan may build, in pixels. Held well under
+# PIL's 179MP decompression-bomb ceiling: a stitch near that limit is ~1.8GB
+# of RGB and stalls the process through memory pressure alone, whatever
+# thread it runs on.
+_IMAGERY_MAX_STITCH_PX = max(1_000_000, int(os.getenv("IMAGERY_MAX_STITCH_PX", str(80_000_000))))
+
 _OW_DOTA_CLASSES = [
     "plane","ship","storage-tank","baseball-diamond","tennis-court",
     "basketball-court","ground-track-field","harbor","bridge",
@@ -10157,7 +10178,20 @@ _ort_sessions     = {}
 _ort_session_lock = threading.Lock()
 
 def _release_ort_session(model_key="dota"):
-    """Release ONNX session from RAM after use. Re-enabled by setting ONNX_PERSIST=True."""
+    """Drop the ONNX session from RAM.
+
+    This is the other half of the caching decision and the two disagreed:
+    _get_ort_session was changed to reuse a loaded session, but this was
+    still called unconditionally after every scan and deleted it again, so
+    the cache never survived a single scan. Measured effect of the reload:
+    the model init landed inside the scan window and showed up as a 3.5s
+    event-loop stall that disappeared once the session genuinely persisted.
+
+    Now both halves read the same switch. Releasing is opt-in via
+    ONNX_NO_PERSIST, for a deployment where the resident model matters more
+    than the reload cost."""
+    if not os.getenv("ONNX_NO_PERSIST"):
+        return
     import gc
     with _ort_session_lock:
         if model_key in _ort_sessions:
@@ -10166,8 +10200,12 @@ def _release_ort_session(model_key="dota"):
 
 def _get_ort_session(model_key="dota"):
     with _ort_session_lock:
-        # Only return cached session if ONNX_PERSIST env flag is set
-        if os.getenv("ONNX_PERSIST") and model_key in _ort_sessions:
+        # Reuse the loaded session by default. Previously this was gated
+        # behind ONNX_PERSIST, so the default path re-read and re-initialised
+        # the model from disk on EVERY scan — seconds of GIL-holding work
+        # repeated for no benefit. Set ONNX_NO_PERSIST=1 to go back to
+        # per-scan loading if a memory ceiling ever makes that necessary.
+        if model_key in _ort_sessions and not os.getenv("ONNX_NO_PERSIST"):
             return _ort_sessions[model_key]
         try:
             import onnxruntime as ort
@@ -10197,9 +10235,24 @@ def _get_ort_session(model_key="dota"):
             else:
                 fname = "yolov8n.onnx"
                 path  = str(BASE_DIR / fname)
-            sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+            # THREAD BUDGET. Left at ONNX Runtime's defaults, an inference
+            # session claims one intra-op thread PER CORE. On an 8-core box
+            # that means every core is saturated by the model and the main
+            # Python thread — the one running the asyncio loop — cannot get
+            # scheduled. Measured here: health probes stalled 8.0s during a
+            # real scan even after the work was correctly moved off the loop
+            # onto a dedicated pool. Moving work off the event loop does not
+            # help if the work then takes every core; the loop needs a core,
+            # not merely a different thread.
+            _so = ort.SessionOptions()
+            _so.intra_op_num_threads = _IMAGERY_ONNX_THREADS
+            _so.inter_op_num_threads = 1
+            _so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            sess = ort.InferenceSession(path, sess_options=_so,
+                                        providers=["CPUExecutionProvider"])
             _ort_sessions[model_key] = sess
-            print(f"[overwatch] loaded {fname} (model_key={model_key})")
+            print(f"[overwatch] loaded {fname} (model_key={model_key}, "
+                  f"intra_op_threads={_IMAGERY_ONNX_THREADS}/{os.cpu_count()})")
         except Exception as e:
             print(f"[overwatch] session load failed ({model_key}): {e}")
             _ort_sessions[model_key] = None
@@ -10248,6 +10301,7 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     import numpy as np
     from PIL import Image
 
+    _t_start = time.monotonic()
     north, south, east, west = bounds["north"], bounds["south"], bounds["east"], bounds["west"]
     TILE_SZ  = 256
     is_dota  = model_key in ("dota", "dota-v2")
@@ -10265,16 +10319,54 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
     y_min, y_max = min(y_min, y_max), max(y_min, y_max)
 
     tile_count = (x_max - x_min + 1) * (y_max - y_min + 1)
-    if tile_count > 10000:
-        return {"error": f"Area too large ({tile_count} tiles). Draw a smaller region.", "count": 0, "detections": []}
-    if tile_count > 1000:
-        print(f"[overwatch] large area: {tile_count} tiles — this will take several minutes")
+
+    # BUDGET IN PIXELS, BEFORE FETCHING ANYTHING.
+    #
+    # The previous guard allowed 10,000 tiles, which is 655 MEGAPIXELS once
+    # stitched — well past PIL's own 179MP decompression-bomb ceiling. So the
+    # limit sat above the point where the operation cannot succeed at all.
+    # Measured: a zoom-17 request spent 312 seconds fetching thousands of
+    # tiles, stitched a 600MP image, was refused by PIL, and returned zero
+    # detections. The same 1.8GB stitch stalled the event loop for 13.5s
+    # through sheer memory pressure.
+    #
+    # Refusing up front costs the user a re-draw. Refusing after five minutes
+    # costs them five minutes and tells them nothing they could act on.
+    est_px = ((x_max - x_min + 1) * TILE_SZ) * ((y_max - y_min + 1) * TILE_SZ)
+    if est_px > _IMAGERY_MAX_STITCH_PX:
+        # Say what would fit, so the message is actionable rather than "no".
+        max_tiles = max(1, int(_IMAGERY_MAX_STITCH_PX // (TILE_SZ * TILE_SZ)))
+        deg_per_tile = 360.0 / (2 ** zoom)
+        max_span_deg = (max_tiles ** 0.5) * deg_per_tile
+        km_per_deg = 111.0 * max(0.05, math.cos(math.radians((north + south) / 2)))
+        suggest_zoom = zoom
+        while suggest_zoom > 10 and est_px / (4 ** (zoom - suggest_zoom)) > _IMAGERY_MAX_STITCH_PX:
+            suggest_zoom -= 1
+        return {
+            "error": (
+                f"Area too large at zoom {zoom}: {tile_count} tiles would stitch to "
+                f"{est_px/1e6:.0f} megapixels (budget {_IMAGERY_MAX_STITCH_PX/1e6:.0f}MP). "
+                f"At this zoom the largest workable box is about "
+                f"{max_span_deg * km_per_deg:.0f}km across — either draw smaller, "
+                f"or use zoom {suggest_zoom}, which covers the same ground at lower detail."
+            ),
+            "count": 0, "detections": [],
+            "budget": {"tiles": tile_count, "megapixels": round(est_px / 1e6, 1),
+                       "max_megapixels": round(_IMAGERY_MAX_STITCH_PX / 1e6, 1),
+                       "suggested_zoom": suggest_zoom},
+        }
+    if tile_count > 400:
+        print(f"[overwatch] large area: {tile_count} tiles / {est_px/1e6:.0f}MP — this will take a while")
 
     stitch_w = (x_max - x_min + 1) * TILE_SZ
     stitch_h = (y_max - y_min + 1) * TILE_SZ
     stitched  = Image.new("RGB", (stitch_w, stitch_h))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+    # 16 threads here was not a network-concurrency choice in practice: each
+    # one PIL-decodes its tile on return, and PNG decode holds the GIL. The
+    # fetch is I/O-bound enough that a smaller pool costs little wall-clock
+    # while leaving the interpreter available to the event loop.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_IMAGERY_TILE_FETCHERS) as pool:
         futs = {pool.submit(_fetch_esri_tile, zoom, x, y): (x, y)
                 for x in range(x_min, x_max + 1) for y in range(y_min, y_max + 1)}
         for fut, (x, y) in futs.items():
@@ -10293,15 +10385,39 @@ def _run_overwatch_inference(bounds, zoom, confidence, enhance=False, model_key=
 
     cropped = stitched.crop((cx1, cy1, cx2, cy2))
     img_w, img_h = cropped.size
-    print(f"[overwatch] crop → {img_w}×{img_h}px zoom={zoom} model={model_key}")
+    _t_fetch = time.monotonic() - _t_start
+    print(f"[overwatch] crop → {img_w}×{img_h}px zoom={zoom} model={model_key} "
+          f"(fetch+stitch {_t_fetch:.1f}s)")
 
     # ── Tiled ONNX inference (delegates to shared helper) ────────────────────
+    _t_inf = time.monotonic()
     result = _run_inference_on_image(cropped, bounds, confidence, enhance, model_key)
+    # Phase timings, kept permanently: when a scan is slow, "which half" is
+    # the first question, and guessing it from wall-clock alone wasted a
+    # measurement cycle during this work.
+    result["timing_s"] = {"fetch_stitch": round(_t_fetch, 1),
+                          "inference": round(time.monotonic() - _t_inf, 1)}
+    print(f"[overwatch] inference {result['timing_s']['inference']:.1f}s "
+          f"→ {result.get('count', 0)} detections")
     import gc
     del stitched, cropped
     gc.collect()
     result["zoom_used"] = int(zoom)
     return result
+
+
+def _decode_and_infer(image_b64: str, bounds, confidence, enhance=False,
+                      model_key="dota", keep_px=False):
+    """Decode a caller-supplied image and run inference — BOTH on the imagery
+    pool. Base64-decoding and PIL-decoding a multi-megapixel scene is itself
+    CPU-bound work measured in seconds; doing it in the endpoint coroutine
+    before handing off to the pool would block the event loop for exactly the
+    kind of interval this whole module exists to eliminate."""
+    import base64 as _b64m
+    from PIL import Image
+    img = Image.open(_io.BytesIO(_b64m.b64decode(image_b64))).convert("RGB")
+    print(f"[overwatch/detect-image] {img.size[0]}x{img.size[1]}px model={model_key} conf={confidence}")
+    return _run_inference_on_image(img, bounds, confidence, enhance, model_key, keep_px)
 
 
 def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_key="dota", keep_px=False):
@@ -10617,11 +10733,19 @@ async def overwatch_detect(request: Request):
         if not bounds or not all(k in bounds for k in ("north", "south", "east", "west")):
             return JSONResponse({"error": "bounds {north,south,east,west} required", "count": 0, "detections": []})
         zoom = max(10, min(zoom, 18))
-        import functools
-        loop   = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, functools.partial(_run_overwatch_inference, bounds, zoom, confidence, enhance, model_key)
-        )
+        # Imagery CPU work goes to the dedicated single-worker pool, never to
+        # the default executor — that one is shared with every sync endpoint
+        # in the app, and a large Esri scan running there starves all of them.
+        try:
+            result = await _imagery_rt.run_cpu(
+                _run_overwatch_inference, bounds, zoom, confidence, enhance, model_key,
+                label=f"overwatch:{model_key}:z{zoom}",
+            )
+        except _imagery_rt.ImageryBusy as busy:
+            return JSONResponse({"error": str(busy), "count": 0, "detections": [], "busy": True},
+                                status_code=429)
+        except _imagery_rt.ImageryTimeout as slow:
+            return JSONResponse({"error": str(slow), "count": 0, "detections": []}, status_code=504)
         return JSONResponse(result)
     except Exception as e:
         print(f"[overwatch] endpoint error: {e}")
@@ -10649,15 +10773,16 @@ async def overwatch_detect_image(request: Request):
         if "," in image_b64:
             image_b64 = image_b64.split(",", 1)[1]
 
-        from PIL import Image
-        img_bytes = _b64.b64decode(image_b64)
-        cropped   = Image.open(_io.BytesIO(img_bytes)).convert("RGB")
-        print(f"[overwatch/detect-image] {cropped.size[0]}×{cropped.size[1]}px model={model_key} conf={confidence}")
-
-        loop   = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, functools.partial(_run_inference_on_image, cropped, bounds, confidence, enhance, model_key)
-        )
+        try:
+            result = await _imagery_rt.run_cpu(
+                _decode_and_infer, image_b64, bounds, confidence, enhance, model_key,
+                label=f"overwatch-image:{model_key}",
+            )
+        except _imagery_rt.ImageryBusy as busy:
+            return JSONResponse({"error": str(busy), "count": 0, "detections": [], "busy": True},
+                                status_code=429)
+        except _imagery_rt.ImageryTimeout as slow:
+            return JSONResponse({"error": str(slow), "count": 0, "detections": []}, status_code=504)
         result["zoom_used"] = None   # no tile zoom — image supplied directly
         return JSONResponse(result)
     except Exception as e:
@@ -17705,8 +17830,9 @@ async def api_imagery_detect_scene(request: Request):
         # FUSION event-loop-blocking fix.
         loop = asyncio.get_event_loop()
         try:
-            sar_dets = await loop.run_in_executor(
-                None, functools.partial(sar_detector.run_sar_ship_detection_from_geotiff_bytes, raw["image_bytes"])
+            sar_dets = await _imagery_rt.run_cpu(
+                sar_detector.run_sar_ship_detection_from_geotiff_bytes, raw["image_bytes"],
+                label="sar-vessel-detect",
             )
         except sar_detector.SarDetectorError as e:
             return JSONResponse({"error": f"SAR detection failed: {e}"}, status_code=502)
@@ -17739,13 +17865,19 @@ async def api_imagery_detect_scene(request: Request):
         return JSONResponse({"error": "image_b64 required for optical detection"}, status_code=400)
     if "," in image_b64:
         image_b64 = image_b64.split(",", 1)[1]
-    from PIL import Image as _PILImage
     import sentinel_ml
-    tc_image = _PILImage.open(_io.BytesIO(_b64.b64decode(image_b64))).convert("RGB")
     bbox = {"min_lat": south, "max_lat": north, "min_lon": west, "max_lon": east}
-    loop = asyncio.get_event_loop()
-    raw_dets = await loop.run_in_executor(
-        None, functools.partial(sentinel_ml.run_ship_detection, {"true_colour": tc_image}, bbox)
+
+    def _decode_then_detect(_b64_str, _bbox):
+        """Decode and detect together on the imagery pool — decoding a
+        multi-megapixel scene on the event loop is itself a stall."""
+        import base64 as _b64m
+        from PIL import Image as _PILImage
+        img = _PILImage.open(_io.BytesIO(_b64m.b64decode(_b64_str))).convert("RGB")
+        return sentinel_ml.run_ship_detection({"true_colour": img}, _bbox)
+
+    raw_dets = await _imagery_rt.run_cpu(
+        _decode_then_detect, image_b64, bbox, label="sentinel-ship-detect",
     )
 
     detections = []
