@@ -1447,6 +1447,12 @@ def get_health_detailed():
         # of an explanation is how "we have no data" gets mistaken for
         # "nothing is happening".
         "imagery_pool": _imagery_rt.status(),
+        # Whether the imagery feature is on, so the UI does not have to keep
+        # its own copy of this switch. It did, hardcoded, and the two drifted:
+        # the backend was re-enabled while the Situation toggle stayed dead,
+        # so the entry point looked permanently broken with nothing in the
+        # logs to explain it.
+        "imagery_enabled": bool(_SENTINEL_IMAGERY_ENABLED),
     }
 
 

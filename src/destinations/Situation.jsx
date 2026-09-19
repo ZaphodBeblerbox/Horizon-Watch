@@ -99,15 +99,29 @@ const TOOL_TO_SPEC = { select: "select", measure: "measure", marker: "pin", area
 
 // Quick-layer buttons — the same real groupsOn state the Layers pane's own
 // domain rows use (one shared toggle, never a second independent list).
-// Nuclear-option production-stability round: the Sentinel/Copernicus
-// imagery-detection feature (PR #64/#66/#69) is the leading suspect for a
-// real, confirmed production event-loop freeze. Mirrors the real backend
-// kill switch (SENTINEL_IMAGERY_ENABLED, backend/main.py, also defaulted
-// off) — every backend route this entry point calls already short-
-// circuits to a real 503, so this just keeps the UI from showing a
-// button that would only ever error. Flip both back together once
-// production stability is independently reconfirmed.
-const SENTINEL_IMAGERY_ENABLED = false
+// The imagery kill switch, from the production event-loop freeze.
+//
+// This used to be a hardcoded `false` mirroring the backend switch, with a
+// note to "flip both back together". They were not: the backend was
+// re-enabled and this stayed dead, so the Situation imagery toggle sat
+// permanently disabled with nothing in any log to explain why. Two copies
+// of one fact drift, and the drift is silent.
+//
+// So it is no longer a copy. The backend reports whether imagery is on and
+// the UI asks. Default false, because a control that errors is worse than
+// one that is honestly unavailable while we do not yet know.
+function useImageryEnabled() {
+    const [enabled, setEnabled] = useState(false)
+    useEffect(() => {
+        let cancelled = false
+        fetch(`${API_BASE}/api/health/detailed`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (!cancelled && d) setEnabled(Boolean(d.imagery_enabled)) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [])
+    return enabled
+}
 
 // The "activate all satellite imagery" quick-layer button (key: "imagery",
 // icon: i-sat) that used to live here is removed this round — it was a
@@ -312,6 +326,7 @@ export default function Situation({ onOpenDossier }) {
     // base satellite overlay's visibility — it never opened anything; that
     // button is now removed from QUICK_LAYERS below, leaving this as the
     // one real top-bar imagery/detection entry point).
+    const imageryEnabled = useImageryEnabled()
     const [imageryPanelOpen, setImageryPanelOpen] = useState(false)
     // Round 2 UX correction of PR #64 — the drawn shape, loaded scene
     // overlay, and detections all live here (not inside the sidebar
@@ -985,10 +1000,10 @@ export default function Situation({ onOpenDossier }) {
                             grat: contextOn.graticule,
                             label: contextOn.labels,
                         }}
-                        disabledToggles={{ imagery: !SENTINEL_IMAGERY_ENABLED }}
+                        disabledToggles={{ imagery: !imageryEnabled }}
                         onToggle={(k) => {
                             if (k === "imagery") {
-                                if (!SENTINEL_IMAGERY_ENABLED) return
+                                if (!imageryEnabled) return
                                 imageryPanelOpen ? closeImageryPanel() : setImageryPanelOpen(true)
                                 return
                             }

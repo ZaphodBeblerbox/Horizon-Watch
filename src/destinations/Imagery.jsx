@@ -6,6 +6,7 @@ import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, SceneScrubber, SceneComparison } from "../components/imagery/sceneComparison.jsx"
 import ScanProgress from "../components/imagery/ScanProgress.jsx"
 import AoiMiniMap from "./AoiMiniMap.jsx"
+import Minimap from "../components/Minimap.jsx"
 import { boundsToPolygon } from "./sourcesLogic.js"
 
 // Imagery — page-by-page rebuild, Part B. A UI over the real, already-
@@ -106,7 +107,11 @@ export default function Imagery({ onOpenGenerate }) {
     const [scenes, setScenes] = useState([])
     const [selectedScanId, setSelectedScanId] = useState(null)
     const [scene, setScene] = useState(null)
-    const [view, setView] = useState("split")
+    // The big scene, zoomable, is the default. Comparison is a deliberate
+    // choice, not the resting state: a tiled scan is tens of megapixels and
+    // splitting the pane in two halves the resolution you can actually
+    // inspect, which is the whole point of fetching it at 10 m/px.
+    const [view, setView] = useState("after")
     const [showBoxes, setShowBoxes] = useState(true)
     // Real fullscreen toggle for the scene/detection image itself — the
     // comparison view's images were capped at a small fixed size
@@ -342,6 +347,21 @@ export default function Imagery({ onOpenGenerate }) {
         const cov = Math.round((out.coverage_fraction ?? 1) * 100)
         toast(`${out.detections?.length ?? 0} detection(s) at ${out.m_per_px} m/px` +
               (cov < 100 ? ` — ${cov}% of the area covered, ${out.tiles_failed?.length || 0} tile(s) failed` : ""), {})
+    }
+
+    // Deleting left the panel showing the region it had just removed:
+    // the list reloaded but selectedAoi still pointed at the dead row, and
+    // loadAois only auto-selects when nothing is selected. It looked as
+    // though the delete had failed.
+    function onAoiDeleted() {
+        setSelectedAoi(null)
+        setScenes([])
+        setSelectedScanId(null)
+        setScene(null)
+        setSelectedDet(null)
+        setTiledResult(null)
+        loadAois()
+        toast("Observation area deleted", { icon: "i-check" })
     }
 
     async function createDrawnArea({ name, sensor, cadence, aoiClass }) {
@@ -618,50 +638,27 @@ export default function Imagery({ onOpenGenerate }) {
 
             {/* Right — AOI editor + detections */}
             <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto", padding: 12 }}>
-                {selectedAoi && <AoiEditor aoi={selectedAoi} onSaved={loadAois} onAccept={() => acceptAoi(selectedAoi)} onLocate={() => locate(selectedAoi)} onDeleted={loadAois} />}
-                {/* Where the detections ARE.
-                    This is what a scan leaves behind once its image has aged
-                    out: only the newest two scenes per region keep pixels,
-                    but every detection survives as a type, a confidence and
-                    a coordinate. Without somewhere to plot them, an older
-                    scan reads as "nothing was found" when in fact it found
-                    plenty and we simply stopped keeping the picture. */}
-                {(selectedAoi || drawActive) && (
+                {selectedAoi && <AoiEditor aoi={selectedAoi} onSaved={loadAois} onAccept={() => acceptAoi(selectedAoi)} onLocate={() => locate(selectedAoi)} onDeleted={onAoiDeleted} />}
+                {/* WHERE THIS SCAN WAS RUN — nothing more.
+                    The same locator the Inbox shows for a signal, answering
+                    "where in the world is this" without a camera move. It
+                    briefly plotted every detection as a point, which
+                    duplicated the detection list and competed with the image
+                    for the job of showing what was found. The image does
+                    that; this says where. */}
+                {selectedAoi && (
                     <div style={{ marginTop: 16 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                            <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
-                                Where
-                            </div>
-                            {scene && !scene.image_b64 ? (
-                                <span style={{ font: "400 9px var(--mono)", color: "var(--txt-4)" }}>
-                                    image retired · detections kept
-                                </span>
-                            ) : null}
+                        <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
+                            Where
                         </div>
-                        {mapDetections.length ? (
-                            // The mini-map draws its own scale bar at its
-                            // bottom edge and it overflows the container, so
-                            // a legend placed directly underneath collides
-                            // with it. Putting the legend ABOVE the map is
-                            // the fix that does not depend on guessing how
-                            // far that overflow reaches.
-                            <div style={{ marginBottom: 3, font: "400 9px var(--mono)", color: "var(--txt-4)" }}>
-                                {mapDetections.length} plotted · orange new · red gone · blue moved
-                            </div>
-                        ) : null}
-                        <div style={{ height: 200, border: "1px solid var(--line)", position: "relative", marginBottom: 20 }}>
-                            <AoiMiniMap
-                                zones={selectedAoi ? [selectedAoi] : []}
-                                selectedZoneId={selectedAoi?.system_id || null}
-                                flyToZoneId={drawActive ? null : selectedAoi.system_id}
-                                drawActive={drawActive}
-                                onDrawComplete={(b) => setDrawnBounds(b)}
-                                detections={drawActive ? [] : mapDetections}
-                                selectedDetectionId={selectedDet?.id}
-                                onSelectDetection={(id) =>
-                                    focusDetection(visibleChanges.find((c) => c.id === id) || null)}
-                            />
-                        </div>
+                        <Minimap
+                            focus={{
+                                lat: (selectedAoi.bbox.min_lat + selectedAoi.bbox.max_lat) / 2,
+                                lon: (selectedAoi.bbox.min_lon + selectedAoi.bbox.max_lon) / 2,
+                            }}
+                            label={selectedAoi.name}
+                            color="var(--acc-hi)"
+                        />
                     </div>
                 )}
 
@@ -735,7 +732,24 @@ function AoiEditor({ aoi, onSaved, onAccept, onLocate, onDeleted }) {
         }).then(() => onSaved())
     }
     function del() {
-        fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, { method: "DELETE" }).then(() => onDeleted())
+        // Irreversible, and it takes the region's whole scan history with
+        // it — including the detections that are the baseline every future
+        // change comparison runs against. Worth one sentence of warning
+        // that says what is actually lost, rather than "are you sure?".
+        if (!window.confirm(
+            `Delete "${aoi.name}" (${aoi.system_id})?\n\n` +
+            `This also deletes every scan of this area and all their ` +
+            `detections, permanently. Change detection has no baseline ` +
+            `to compare against afterwards.`
+        )) return
+        fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, {
+            method: "DELETE", credentials: "include",
+        })
+            .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+            .then((d) => onDeleted(d))
+            // A delete that fails silently leaves the region on screen and
+            // the person assuming it worked.
+            .catch((e) => toast(`Could not delete ${aoi.system_id}: ${e.message}`, { icon: "i-alert" }))
     }
 
     return (

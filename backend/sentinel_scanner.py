@@ -429,13 +429,26 @@ class SentinelScanner:
             "image_age_hours": image_age_hours,
         }
 
-        if not run_tasks:
-            return {
-                "status": "error",
-                "error_message": f"none of this zone's requested ml_tasks are implemented yet "
-                                  f"(requested={requested_tasks}, implemented={sorted(_IMPLEMENTED_TASKS)})",
-                **base_meta,
-            }
+        # NO ml_tasks IS NOT A FAILURE ANY MORE.
+        #
+        # This used to abort the scan outright when a zone requested no
+        # implemented task, which made sense when ship_detection was the
+        # only thing the scanner could do. It is now wrong: the tiled pass
+        # below runs the full fifteen-class detector regardless, so a zone
+        # with no tasks would have found storage tanks, aircraft, vehicles
+        # and harbour structure — and was told instead that nothing was
+        # implemented. A region created through any form that does not send
+        # ml_tasks (Sources' "New Watch Area" does not) could therefore
+        # never produce a single detection, and said so in a message that
+        # pointed at the wrong cause.
+        #
+        # Only a zone that asked for a task we genuinely cannot run is worth
+        # reporting on, and that is a note on the result, not a failure.
+        if requested_tasks and not run_tasks:
+            skipped_tasks.append(
+                f"none of the requested tasks are implemented "
+                f"(requested={requested_tasks}, implemented={sorted(_IMPLEMENTED_TASKS)}) — "
+                f"the general object detector still ran")
 
         # -- 2. Fetch the scene AT NATIVE RESOLUTION --
         #
