@@ -108,6 +108,20 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
         // eslint-disable-next-line react-hooks/rules-of-hooks
         const z = useViewerScale() || 1
         const k = 1 / z
+
+        // DECLUTTER. On a dense SAR scene every box carrying a caption
+        // produces an unreadable mass of overlapping text that hides the
+        // imagery underneath — observed on a real scan with ~40 detections.
+        //
+        // A caption earns its place when the object is big enough on screen
+        // to look at. Since box width is a fraction of the frame, that
+        // fraction times the zoom IS the on-screen share, so labels reveal
+        // themselves naturally as the person zooms in and the boxes spread
+        // apart. The selected detection is always labelled: it is the one
+        // the person asked about.
+        const LABEL_MIN_SHARE = 0.05
+        const labelled = (c) =>
+            selectedDet?.id === c.id || (c.bbox?.[2] || 0) * z >= LABEL_MIN_SHARE
         return changes.map((c) => (
             <div key={c.id} role="button" onClick={(e) => { e.stopPropagation(); onSelectDet(c) }}
                 title={`${c.label} · ${Math.round(c.conf * 100)}%`}
@@ -119,17 +133,16 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                     background: selectedDet?.id === c.id ? "rgba(95,149,208,0.12)" : "transparent", cursor: "pointer",
                 }}
             >
-                <span style={{
-                    position: "absolute", top: `${-14 * k}px`, left: 0,
-                    font: `400 ${(9 * k).toFixed(3)}px var(--mono)`,
-                    color: "var(--txt)", background: "var(--bg-0)",
-                    padding: `0 ${(2 * k).toFixed(3)}px`, whiteSpace: "nowrap",
-                    // Below ~5px on screen a caption is unreadable clutter;
-                    // the box itself still marks the object.
-                    display: 9 * k * z < 5 ? "none" : "block",
-                }}>
-                    {c.id.slice(0, 8)} · {Math.round(c.conf * 100)}%
-                </span>
+                {labelled(c) ? (
+                    <span style={{
+                        position: "absolute", top: `${-14 * k}px`, left: 0,
+                        font: `400 ${(9 * k).toFixed(3)}px var(--mono)`,
+                        color: "var(--txt)", background: "var(--bg-0)",
+                        padding: `0 ${(2 * k).toFixed(3)}px`, whiteSpace: "nowrap",
+                    }}>
+                        {c.id.slice(0, 8)} · {Math.round(c.conf * 100)}%
+                    </span>
+                ) : null}
             </div>
         ))
     }

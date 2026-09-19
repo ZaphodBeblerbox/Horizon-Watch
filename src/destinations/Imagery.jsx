@@ -4,6 +4,7 @@ import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, SceneScrubber, SceneComparison } from "../components/imagery/sceneComparison.jsx"
+import ScanProgress from "../components/imagery/ScanProgress.jsx"
 
 // Imagery — page-by-page rebuild, Part B. A UI over the real, already-
 // existing Sentinel scanner pipeline (backend/sentinel_scanner.py, real
@@ -62,6 +63,11 @@ export default function Imagery({ onOpenGenerate }) {
     const [scopeCountry, setScopeCountry] = useState("")
     const [running, setRunning] = useState(false)
     const [selectedDet, setSelectedDet] = useState(null)
+    // Native-resolution tiled scan: a job id to follow, and the cost of the
+    // plan so the person sees what a scan will spend BEFORE it spends it.
+    const [tiledJob, setTiledJob] = useState(null)
+    const [tiledResult, setTiledResult] = useState(null)
+    const viewerRef = useRef(null)
     const clipRef = useRef(null)
     const fadeRef = useRef(null)
 
@@ -135,6 +141,48 @@ export default function Imagery({ onOpenGenerate }) {
             }
         }
         setRunning(false)
+    }
+
+    // Run the AOI at the sensor's own resolution rather than as one
+    // downsampled thumbnail. Uncapped by design, so the cost is shown and
+    // confirmed rather than quietly spent: a zone-sized area is 60 API
+    // requests and several minutes.
+    async function runTiledScan() {
+        if (!selectedAoi || tiledJob) return
+        const b = selectedAoi.bbox
+        const bounds = { west: b.min_lon, south: b.min_lat, east: b.max_lon, north: b.max_lat }
+        const est = await fetch(`${API_BASE}/api/imagery/scan-tiled`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ bounds, estimate_only: true }),
+        }).then((r) => r.json()).catch(() => null)
+        if (!est || est.error) { toast(est?.error || "Could not plan a scan for this area", {}); return }
+        if (est.api_requests > 8 &&
+            !window.confirm(`${est.describe}\n\nRun it?`)) return
+
+        const started = await fetch(`${API_BASE}/api/imagery/scan-tiled`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ bounds }),
+        }).then((r) => r.json()).catch(() => null)
+        if (!started || started.error) { toast(started?.error || "Scan could not be started", {}); return }
+        setTiledResult(null)
+        setTiledJob(started.job_id)
+    }
+
+    async function onTiledDone(jobId) {
+        const out = await fetch(`${API_BASE}/api/imagery/scan-tiled/${jobId}`, { credentials: "include" })
+            .then((r) => r.json()).catch(() => null)
+        setTiledJob(null)
+        if (!out) return
+        setTiledResult(out)
+        if (out.status === "error") { toast(out.error_message || "Scan failed", {}); return }
+        // Partial coverage is a real qualification on the result, not a
+        // detail to bury: "nothing there" and "never looked there" must not
+        // read the same.
+        const cov = Math.round((out.coverage_fraction ?? 1) * 100)
+        toast(`${out.detections?.length ?? 0} detection(s) at ${out.m_per_px} m/px` +
+              (cov < 100 ? ` — ${cov}% of the area covered, ${out.tiles_failed?.length || 0} tile(s) failed` : ""), {})
     }
 
     function proposeCoverage() {
@@ -283,6 +331,15 @@ export default function Imagery({ onOpenGenerate }) {
                     <button className="btn sm" disabled={!selectedAoi || running} onClick={reRunDetection}>
                         {running ? "running…" : "run detection now"}
                     </button>
+                    {/* Native-resolution tiled scan. Distinct from the button
+                        above, which runs the zone's configured single-image
+                        scan: this one covers the AOI at the sensor's own
+                        10 m/px in a grid, which is the difference between a
+                        100m vessel being one pixel and being ten. */}
+                    <button className="btn sm" disabled={!selectedAoi || !!tiledJob} onClick={runTiledScan}
+                        title="Cover this area at the sensor's native resolution (shows the cost first)">
+                        {tiledJob ? "scanning…" : "native-res scan"}
+                    </button>
                     <button className="btn sm" onClick={raiseSignal}>raise signal</button>
                     <button className="btn sm" onClick={addToBriefingScene}>add to briefing</button>
                     <button className="btn sm" disabled={!scene || scene.scan.status !== "completed"}
@@ -291,6 +348,23 @@ export default function Imagery({ onOpenGenerate }) {
                         {fullscreen ? "exit fullscreen" : "fullscreen"}
                     </button>
                 </div>
+
+                <ScanProgress jobId={tiledJob} onDone={onTiledDone} />
+
+                {/* The result of a native-res scan, stated with its own
+                    qualifications. Coverage below 100% is reported because
+                    an unscanned corner must not read as an empty one. */}
+                {tiledResult && tiledResult.status === "completed" ? (
+                    <div style={{ padding: "5px 10px", borderBottom: "1px solid var(--bdr)",
+                                  font: "400 10px var(--mono)", color: "var(--txt-dim)" }}>
+                        native-res scan · {tiledResult.detections?.length ?? 0} detection(s) ·{" "}
+                        {tiledResult.m_per_px} m/px{tiledResult.degraded ? " (coarsened)" : ""} ·{" "}
+                        {Math.round((tiledResult.coverage_fraction ?? 1) * 100)}% of the area covered
+                        {tiledResult.tiles_failed?.length
+                            ? ` · ${tiledResult.tiles_failed.length} tile(s) failed`
+                            : ""}
+                    </div>
+                ) : null}
 
                 <SceneScrubber scenes={scenes} selectedScanId={selectedScanId} onSelect={setSelectedScanId} currentInstrument={scene?.scan?.instrument} />
 
@@ -303,7 +377,7 @@ export default function Imagery({ onOpenGenerate }) {
                         <SceneComparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
                             swipePos={swipePos} onSwipeDrag={onSwipeDrag} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
                             clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet}
-                            fullscreen={fullscreen} />
+                            fullscreen={fullscreen} viewerRef={viewerRef} />
                     )}
                 </div>
             </div>

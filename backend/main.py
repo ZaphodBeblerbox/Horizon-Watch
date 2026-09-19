@@ -13861,6 +13861,137 @@ async def sentinel_sar_imagery(request: Request):
         return JSONResponse({"error": str(e)})
 
 
+# ── tiled native-resolution scan ─────────────────────────────────────────
+#
+# The endpoint that makes the tiling reachable. It returns a job id
+# immediately rather than holding the request open: an uncapped scan of a
+# zone-sized AOI is minutes of real work, and a client that has to keep an
+# HTTP connection open for it will time out long before the answer exists.
+_TILED_RESULTS: dict = {}
+_TILED_RESULTS_MAX = 50
+
+
+async def _run_tiled_scan_job(job_id: str, bounds: dict, sensor: str,
+                              date_str: str | None, confidence: float,
+                              include_low_value: bool) -> None:
+    import io as _tio
+    import sentinel_ml as _sml
+    import sentinel_tiles as _stiles
+    from PIL import Image as _TImage
+
+    plan = _stiles.plan_tiles(bounds)
+    _TILED_RESULTS[job_id] = {"job_id": job_id, "status": "running",
+                              "plan": plan.describe(), "tiles": plan.count,
+                              "m_per_px": round(plan.m_per_px, 1)}
+
+    async def fetch(tile):
+        r = await _fetch_sentinel_image_bytes(
+            tile.bounds, image_type="true-colour", max_cloud=40, days_back=30,
+            date_str=date_str, width=tile.width_px, height=tile.height_px)
+        if r.get("error"):
+            return {"error": r["error"]}
+        img = await _imagery_rt.run_cpu(
+            lambda b: _TImage.open(_tio.BytesIO(b)).convert("RGB"),
+            r["image_bytes"], label=f"decode:{job_id[:8]}")
+        return {"image": img}
+
+    async def detect(img, bbox):
+        return await _imagery_rt.run_cpu(
+            _sml.run_object_detection, {"true_colour": img}, bbox,
+            confidence=confidence, include_low_value=include_low_value,
+            label=f"detect:{job_id[:8]}")
+
+    try:
+        out = await _stiles.run_tiled_scan(plan, fetch_tile=fetch,
+                                           detect_tile=detect, job_id=job_id)
+        out.update({"job_id": job_id, "bounds": bounds, "sensor": sensor,
+                    "date": date_str, "plan": plan.describe()})
+        _TILED_RESULTS[job_id] = out
+    except Exception as e:                                  # noqa: BLE001
+        # A swallowed exception in a background imagery job is how a whole
+        # feature silently stops working. Record it as the job's result so
+        # the caller sees a reason rather than a job that never completes.
+        print(f"[tiled-scan] job {job_id} failed: {type(e).__name__}: {e}")
+        _TILED_RESULTS[job_id] = {"job_id": job_id, "status": "error",
+                                  "error_message": f"{type(e).__name__}: {e}",
+                                  "detections": []}
+        try:
+            _imagery_rt.finish_progress(job_id, note="failed")
+        except Exception:
+            pass
+    # Bound the store so a long-lived process cannot accumulate scans.
+    if len(_TILED_RESULTS) > _TILED_RESULTS_MAX:
+        for k in list(_TILED_RESULTS)[:-_TILED_RESULTS_MAX]:
+            _TILED_RESULTS.pop(k, None)
+
+
+@app.post("/api/imagery/scan-tiled")
+async def imagery_scan_tiled(request: Request):
+    """Start a native-resolution tiled scan. Returns a job id at once."""
+    body = await request.json()
+    bounds = body.get("bounds") or {}
+    if not all(k in bounds for k in ("north", "south", "east", "west")):
+        return JSONResponse({"error": "bounds {north,south,east,west} required"}, status_code=400)
+
+    import sentinel_tiles as _stiles
+    plan = _stiles.plan_tiles(bounds)
+    if plan.refused:
+        return JSONResponse({"error": plan.refused}, status_code=400)
+
+    # Cost is reported, never silently spent: an uncapped scan can be
+    # thousands of API requests, and that is the caller's decision to make
+    # with the real numbers in front of them.
+    if body.get("estimate_only"):
+        return {"estimate_only": True, "tiles": plan.count,
+                "api_requests": plan.api_requests,
+                "estimated_seconds": plan.estimated_seconds,
+                "m_per_px": round(plan.m_per_px, 1),
+                "area_km2": round(plan.area_km2, 1),
+                "describe": plan.describe()}
+
+    job_id = f"scan-{uuid.uuid4().hex[:12]}"
+    asyncio.create_task(_run_tiled_scan_job(
+        job_id, bounds, body.get("sensor", "sentinel2_optical"),
+        body.get("date"), float(body.get("confidence", 0.25)),
+        bool(body.get("include_low_value", False)),
+    ))
+    return {"job_id": job_id, "tiles": plan.count,
+            "api_requests": plan.api_requests,
+            "estimated_seconds": plan.estimated_seconds,
+            "m_per_px": round(plan.m_per_px, 1),
+            "describe": plan.describe()}
+
+
+@app.get("/api/imagery/scan-tiled/{job_id}")
+def imagery_scan_tiled_result(job_id: str):
+    out = _TILED_RESULTS.get(job_id)
+    if out is None:
+        return JSONResponse({"error": "unknown job id"}, status_code=404)
+    return out
+
+
+@app.get("/api/imagery/progress")
+def imagery_progress(job_id: str | None = None):
+    """Live progress for imagery scans.
+
+    Scans are uncapped by design, so a zone-sized AOI is 60 tiles and several
+    minutes of real work. Without this a long scan is indistinguishable from
+    a hung one, and the only honest way to show a bar is to report what the
+    worker is actually doing rather than animate a guess.
+    """
+    _imagery_rt.clear_finished_progress()
+    if job_id:
+        p = _imagery_rt.progress(job_id)
+        if p is None:
+            # A job that has finished and been cleared is not an error, and
+            # it is not "still running" either. Say which.
+            return JSONResponse({"job_id": job_id, "known": False,
+                                 "detail": "no such job in flight — it has finished or was never started"},
+                                status_code=404)
+        return {"known": True, **p}
+    return {"pool": _imagery_rt.status(), "jobs": _imagery_rt.progress()}
+
+
 @app.post("/api/sentinel/dates")
 async def sentinel_dates(request: Request):
     """Return available Sentinel-2 scene dates for a bounding box (STAC search)."""
