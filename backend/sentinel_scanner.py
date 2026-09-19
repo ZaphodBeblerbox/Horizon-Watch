@@ -229,6 +229,48 @@ class SentinelScanner:
                         matched_to_ais=bool(det.get("matched_to_ais", False)),
                     ))
 
+                db.flush()   # detections must exist before they can be compared
+
+                # WHAT CHANGED SINCE LAST TIME. Without this a recurring scan
+                # produces a fresh pile of "info" detections every cycle and
+                # never a finding: "27 vessels" is not intelligence, "3 that
+                # were not there yesterday" is. Compared against this zone's
+                # own previous scan of the SAME instrument, because optical
+                # and SAR do not see the same things and their difference is
+                # not a change on the ground.
+                change = None
+                try:
+                    import scan_storage as _storage
+                    change = _storage.apply_change_detection(
+                        db, zone_id, scan_id,
+                        instrument=result.get("instrument", "OPTICAL"),
+                        m_per_px=float((result.get("result_summary") or {}).get("m_per_px") or 10.0)
+                        if isinstance(result.get("result_summary"), dict) else 10.0,
+                    )
+                    print(f"[sentinel-scanner] change vs {change.get('compared_to') or 'no baseline'}: "
+                          f"{change['headline']}")
+                except Exception as _ce:
+                    # Never let the comparison take the scan down with it —
+                    # the detections are real and worth keeping even if the
+                    # diff failed. But say so: a silently skipped comparison
+                    # would look exactly like "nothing changed".
+                    print(f"[sentinel-scanner] change detection failed for {scan_id}: "
+                          f"{type(_ce).__name__}: {_ce}")
+
+                # IMAGES AGE OUT, DETECTIONS DO NOT. A scene is megabytes; a
+                # detection is a type, a confidence and a coordinate. Older
+                # scans keep every object they found — so they still plot on
+                # the minimap and still serve as a baseline — but stop
+                # holding pixels no one is going to look at again.
+                try:
+                    import scan_storage as _storage2
+                    pruned = _storage2.prune_scan_images(db, zone_id)
+                    if pruned["pruned"]:
+                        print(f"[sentinel-scanner] retired {len(pruned['pruned'])} scan image(s), "
+                              f"freed {pruned['freed_mb']} MB (detections kept)")
+                except Exception as _pe:
+                    print(f"[sentinel-scanner] image retention failed for zone={system_id}: {_pe}")
+
                 # Advance the zone's schedule on every attempt (success or error) so the
                 # 15-minute scheduler loop respects scan_interval_hours instead of
                 # re-triggering this zone on every tick forever.
@@ -251,13 +293,46 @@ class SentinelScanner:
             # 'SAT-TASK', through the same write_alert() funnel every other
             # real alert path uses — not a parallel/fake notification.
             try:
-                qualifying = [d for d in detections if d.get("severity") in ("critical", "high") or d.get("alert_tier") == "immediate"]
-                if qualifying:
+                # ALERT ON THE CHANGE, NOT ON THE CENSUS.
+                #
+                # This used to raise one alert per high-severity detection,
+                # which on a busy port means the same moored ships reported
+                # every cycle for ever. What an analyst needs to be told is
+                # what is DIFFERENT, and told in a sentence that carries its
+                # own relevance: never a bare count or a bare identifier.
+                zone_label = (zone_dict.get("name") or system_id)
+                if change and not change.get("baseline") and change["severity"] not in ("info",):
+                    anchor = (change["summary"].get("new") and
+                              next((d for d in detections
+                                    if (d.get("attributes") or "").find('"change_type": "new"') >= 0), None))
+                    anchor = anchor or (detections[0] if detections else {})
                     import main as _m
-                    for d in qualifying[:5]:  # cap — one scan shouldn't flood the Inbox
+                    _m.write_alert({
+                        "source": "SAT-TASK",
+                        "alert_type": "Imagery change",
+                        # e.g. "2 vessels appeared; 1 storage tank no longer
+                        # present — Khor Fakkan". A person can act on that
+                        # without opening anything.
+                        "title": f"{change['headline']} — {zone_label}",
+                        "severity": change["severity"],
+                        "lat": anchor.get("centroid_lat"), "lon": anchor.get("centroid_lon"),
+                        "entity_type": anchor.get("object_type"), "region": None,
+                        "raw_json": {"scan_id": scan_id, "zone_id": system_id,
+                                     "change": change, "compared_to": change.get("compared_to")},
+                    })
+                elif change is None:
+                    # No comparison was possible, so fall back to the old
+                    # per-detection behaviour rather than going silent — a
+                    # failed diff must not swallow a critical detection.
+                    qualifying = [d for d in detections
+                                  if d.get("severity") in ("critical", "high")
+                                  or d.get("alert_tier") == "immediate"]
+                    import main as _m
+                    for d in qualifying[:5]:   # one scan must not flood the Inbox
                         _m.write_alert({
                             "source": "SAT-TASK", "alert_type": f"Sentinel {d.get('object_type', 'detection')}",
-                            "title": f"⚠ Sentinel scan: {d.get('object_type', 'object')} detected in {system_id}",
+                            "title": f"⚠ {d.get('object_type', 'object')} detected in {zone_label} "
+                                     f"(no baseline to compare against)",
                             "severity": d.get("severity", "medium"),
                             "lat": d.get("centroid_lat"), "lon": d.get("centroid_lon"),
                             "entity_type": d.get("object_type"), "region": None,
@@ -346,7 +421,47 @@ class SentinelScanner:
                 **base_meta,
             }
 
-        # -- 2. Fetch the real true-colour image for the exact zone bbox --
+        # -- 2. Fetch the scene AT NATIVE RESOLUTION --
+        #
+        # This used to render the whole zone into ONE image of at most
+        # 2048px a side, so ground resolution collapsed as the area grew:
+        # a 199km zone arrived at 97 m/px, where a 100m vessel is a single
+        # pixel and no model can find it. A recurring scan is the case that
+        # matters most for this — it is the one that runs unattended — so it
+        # covers the zone with a grid of native-resolution tiles, the same
+        # planner the manual scan endpoint uses.
+        #
+        # The single large image is still fetched afterwards, at display
+        # size, because the comparison view needs something to show. It is
+        # no longer what the detector is given.
+        import sentinel_tiles as _stiles
+        plan = _stiles.plan_tiles(bounds_wsen)
+        tiled_out = None
+        if not plan.refused:
+            from PIL import Image as _SImage
+            import io as _sio
+
+            async def _fetch_tile(tile):
+                r = await _fetch_sentinel_image_bytes(
+                    tile.bounds, image_type="true-colour", max_cloud=20, days_back=30,
+                    width=tile.width_px, height=tile.height_px)
+                if r.get("error"):
+                    return {"error": r["error"]}
+                img = await _off_loop(lambda b: _SImage.open(_sio.BytesIO(b)).convert("RGB"),
+                                      r["image_bytes"])
+                return {"image": img}
+
+            async def _detect_tile(img, bbox):
+                return await _off_loop(sentinel_ml.run_object_detection,
+                                       {"true_colour": img}, bbox)
+
+            # system_id is a local of run_scan(), not of this coroutine.
+            _sid = zone_dict.get("system_id") or f"zone-{zone_dict.get('id')}"
+            print(f"[sentinel-scanner] {_sid}: {plan.describe()}")
+            tiled_out = await _stiles.run_tiled_scan(
+                plan, fetch_tile=_fetch_tile, detect_tile=_detect_tile,
+                job_id=f"zone-{_sid}")
+
         img_result = await _fetch_sentinel_image_bytes(bounds_wsen, image_type="true-colour",
                                                          max_cloud=20, days_back=30)
         if img_result.get("error"):
@@ -366,6 +481,24 @@ class SentinelScanner:
         by_type: dict = {}
         all_detections: list = []
         alert_fired = False
+
+        # Multi-class results from the tiled pass. run_ship_detection below
+        # still runs for its vessel-specific baseline/tiering logic, which
+        # nothing else reproduces; the tiled pass adds the FOURTEEN OTHER
+        # DOTA classes that used to be detected and discarded — aircraft,
+        # storage tanks, harbour structure, vehicles.
+        if tiled_out and tiled_out.get("status") == "completed":
+            extra = [d for d in tiled_out["detections"] if d.get("object_type") != "vessel"]
+            all_detections.extend(extra)
+            for d in extra:
+                by_type[d["object_type"]] = by_type.get(d["object_type"], 0) + 1
+            base_meta["m_per_px"] = tiled_out["m_per_px"]
+            base_meta["coverage_fraction"] = tiled_out["coverage_fraction"]
+        elif tiled_out:
+            # Say it rather than quietly returning fewer object types.
+            skipped_tasks.append(
+                f"native-resolution pass failed ({tiled_out.get('error_message')}) — "
+                f"only the vessel detector ran")
 
         if "ship_detection" in run_tasks:
             # run_ship_detection() returns [] both when the OBB model failed to load AND when it
@@ -395,6 +528,12 @@ class SentinelScanner:
             skipped_tasks.append("vessel_cluster_detection (requires ship_detection to also be enabled)")
 
         result_summary = {"by_type": by_type, "total_detections": len(all_detections)}
+        if tiled_out:
+            result_summary["m_per_px"] = tiled_out.get("m_per_px")
+            result_summary["tiles"] = f"{tiled_out.get('tiles_ok')}/{tiled_out.get('tiles_total')}"
+            result_summary["coverage_fraction"] = tiled_out.get("coverage_fraction")
+            if tiled_out.get("degraded"):
+                result_summary["resolution_note"] = "coarsened below native to fit a budget"
         if skipped_tasks:
             result_summary["not_implemented_or_skipped"] = skipped_tasks
 

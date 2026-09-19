@@ -5,6 +5,7 @@ import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, SceneScrubber, SceneComparison } from "../components/imagery/sceneComparison.jsx"
 import ScanProgress from "../components/imagery/ScanProgress.jsx"
+import AoiMiniMap from "./AoiMiniMap.jsx"
 
 // Imagery — page-by-page rebuild, Part B. A UI over the real, already-
 // existing Sentinel scanner pipeline (backend/sentinel_scanner.py, real
@@ -30,6 +31,10 @@ import ScanProgress from "../components/imagery/ScanProgress.jsx"
 // entry point) — this file no longer defines its own copy.
 
 const CADENCES = ["daily", "3-day", "weekly", "monthly", "on demand"]
+
+// Object types are stored as schema keys. A person reads "storage tank";
+// "storage_tank" is an implementation detail leaking into a deliverable.
+const readable = (t) => (t || "object").replace(/_/g, " ")
 
 export default function Imagery({ onOpenGenerate }) {
     const [aois, setAois] = useState([])
@@ -248,6 +253,18 @@ export default function Imagery({ onOpenGenerate }) {
     const changes = (scene?.changes || []).filter((c) => c.conf >= confFloor && kinds[c.type] !== false && !(c.type === "removed" && !kinds.removed))
     const visibleChanges = changes.filter((c) => !(c.suppressed && c.reviewed_status === "pending"))
 
+    // One source for the map, the list and the image overlay. Deriving the
+    // map from a second query would let the three disagree about what was
+    // found, which is worse than not having a map.
+    const mapDetections = visibleChanges
+        .filter((c) => c.lat != null && c.lon != null)
+        .map((c) => ({
+            detection_id: c.id, centroid_lat: c.lat, centroid_lon: c.lon,
+            object_type: c.label, confidence: c.conf,
+            change_type: c.type === "existing" ? "persisted"
+                : c.type === "removed" ? "gone" : c.type,
+        }))
+
     return (
         <div style={{ display: "grid", gridTemplateColumns: "250px 1fr 330px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             {/* Left — observation areas */}
@@ -385,6 +402,46 @@ export default function Imagery({ onOpenGenerate }) {
             {/* Right — AOI editor + detections */}
             <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto", padding: 12 }}>
                 {selectedAoi && <AoiEditor aoi={selectedAoi} onSaved={loadAois} onAccept={() => acceptAoi(selectedAoi)} onLocate={() => locate(selectedAoi)} onDeleted={loadAois} />}
+                {/* Where the detections ARE.
+                    This is what a scan leaves behind once its image has aged
+                    out: only the newest two scenes per region keep pixels,
+                    but every detection survives as a type, a confidence and
+                    a coordinate. Without somewhere to plot them, an older
+                    scan reads as "nothing was found" when in fact it found
+                    plenty and we simply stopped keeping the picture. */}
+                {selectedAoi && (
+                    <div style={{ marginTop: 16 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                            <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
+                                Where
+                            </div>
+                            {scene && !scene.image_b64 ? (
+                                <span style={{ font: "400 9px var(--mono)", color: "var(--txt-4)" }}>
+                                    image retired · detections kept
+                                </span>
+                            ) : null}
+                        </div>
+                        <div style={{ height: 200, border: "1px solid var(--line)", position: "relative" }}>
+                            <AoiMiniMap
+                                zones={[selectedAoi]}
+                                selectedZoneId={selectedAoi.system_id}
+                                flyToZoneId={selectedAoi.system_id}
+                                detections={mapDetections}
+                                selectedDetectionId={selectedDet?.id}
+                                onSelectDetection={(id) =>
+                                    setSelectedDet(visibleChanges.find((c) => c.id === id) || null)}
+                            />
+                        </div>
+                        {mapDetections.length ? (
+                            // marginTop clears the mini-map's own scale bar,
+                            // which is drawn inside the map at its bottom edge.
+                            <div style={{ marginTop: 18, font: "400 9px var(--mono)", color: "var(--txt-4)" }}>
+                                {mapDetections.length} plotted · orange new · red gone · blue moved
+                            </div>
+                        ) : null}
+                    </div>
+                )}
+
                 <div style={{ marginTop: 16 }}>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Detections</div>
                     {!scene || visibleChanges.length === 0 ? (
@@ -393,7 +450,7 @@ export default function Imagery({ onOpenGenerate }) {
                         <div key={c.id} role="button" onClick={() => setSelectedDet(c)}
                             style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: selectedDet?.id === c.id ? "var(--bg-2)" : "transparent" }}>
                             <div style={{ display: "flex", justifyContent: "space-between" }}>
-                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>{c.label} · {c.type}</span>
+                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>{readable(c.label)} · {c.type}</span>
                                 <span style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{Math.round(c.conf * 100)}%</span>
                             </div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>

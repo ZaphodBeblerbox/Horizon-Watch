@@ -80,6 +80,16 @@ export default function AoiMiniMap({
     zones = [], selectedZoneId = null, onSelectZone,
     pulsingIds = null, drawActive = false, onDrawComplete,
     flyToZoneId = null, lockActive = false, lockBounds = null,
+    // Opt-in (Imagery page): plot individual detections as points.
+    //
+    // This is what a scan LEAVES BEHIND once its image has aged out. A
+    // scene is megabytes and only the newest two per region keep their
+    // pixels; the detections survive for ever as a type, a confidence and
+    // a coordinate. Without somewhere to draw them, an older scan would
+    // read as "nothing was found" when in fact it found plenty and we
+    // simply stopped keeping the picture. Callers that pass neither prop
+    // (Dashboard, Sources) are unaffected.
+    detections = null, selectedDetectionId = null, onSelectDetection,
 }) {
     const containerRef = useRef(null)
     const viewerRef     = useRef(null)
@@ -217,6 +227,77 @@ export default function AoiMiniMap({
             }
         })
     }, [zones, selectedZoneId, pulsingIds, ready])
+
+    // ── Detection points (opt-in — see the `detections` prop) ───────────
+    const detEntitiesRef = useRef(new Map())
+    useEffect(() => {
+        if (!ready) return
+        const viewer = viewerRef.current
+        if (!viewer || viewer.isDestroyed()) return
+
+        import("cesium").then(({ Cartesian3, Color, NearFarScalar }) => {
+            if (!viewerRef.current || viewerRef.current.isDestroyed()) return
+            const live = new Set()
+
+            // Colour carries the finding, not the object: what matters about
+            // a detection on a repeat scan is whether it is new, gone or
+            // simply still there.
+            const COLOUR = {
+                new: "#e8a33d", gone: "#d4553f", moved: "#5f95d0",
+                persisted: "#6f8fa8", baseline: "#6f8fa8", unconfirmed: "#4a5a66",
+            }
+
+            for (const d of (detections || [])) {
+                const id = d.detection_id || d.id
+                if (id == null || d.centroid_lat == null || d.centroid_lon == null) continue
+                live.add(id)
+                const kind = d.change_type || "persisted"
+                const isSel = id === selectedDetectionId
+                const col = Color.fromCssColorString(COLOUR[kind] || COLOUR.persisted)
+                let ent = detEntitiesRef.current.get(id)
+                const pos = Cartesian3.fromDegrees(d.centroid_lon, d.centroid_lat)
+                if (!ent) {
+                    ent = viewer.entities.add({
+                        id: `det:${id}`,
+                        position: pos,
+                        point: {
+                            pixelSize: isSel ? 11 : 7,
+                            color: col.withAlpha(kind === "unconfirmed" ? 0.45 : 0.95),
+                            outlineColor: isSel ? Color.WHITE : col.withAlpha(0.5),
+                            outlineWidth: isSel ? 2 : 1,
+                            // Points must not swell into blobs when the
+                            // camera comes in close.
+                            scaleByDistance: new NearFarScalar(1.0e3, 1.0, 8.0e6, 0.4),
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        },
+                        // The hover text is the sentence the product promises:
+                        // never a bare identifier, always what and where.
+                        name: `${(d.object_type || "object").replace(/_/g, " ")} at `
+                              + `${Number(d.centroid_lat).toFixed(4)}, ${Number(d.centroid_lon).toFixed(4)}`
+                              + (d.confidence != null ? ` · ${Math.round(d.confidence * 100)}%` : "")
+                              + (d.change_type ? ` · ${d.change_type}` : ""),
+                    })
+                    detEntitiesRef.current.set(id, ent)
+                } else {
+                    ent.position = pos
+                    ent.point.pixelSize = isSel ? 11 : 7
+                    ent.point.color = col.withAlpha(kind === "unconfirmed" ? 0.45 : 0.95)
+                    ent.point.outlineColor = isSel ? Color.WHITE : col.withAlpha(0.5)
+                    ent.point.outlineWidth = isSel ? 2 : 1
+                }
+            }
+
+            // Drop points for detections no longer in the set, or a scan
+            // switch would leave the previous scan's objects on the map and
+            // silently overstate what is there.
+            for (const [id, ent] of detEntitiesRef.current.entries()) {
+                if (!live.has(id)) {
+                    try { viewer.entities.remove(ent) } catch (_e) {}
+                    detEntitiesRef.current.delete(id)
+                }
+            }
+        })
+    }, [detections, selectedDetectionId, ready])
 
     // ── Fly-to-zone (opt-in — see file header comment) ──────────────────
     useEffect(() => {
