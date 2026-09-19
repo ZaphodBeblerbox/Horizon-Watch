@@ -10816,9 +10816,85 @@ async def _sentinel_zone_scheduler_loop():
                 print(f"[sentinel-scheduler] Scan triggered for zone {zd['system_id']} ({zd['name']})")
                 _launch_zone_scan_background(zd, "schedule")
 
+            # ── FIRMS: a fire is a reason to look ────────────────────────
+            #
+            # A thermal hotspot says SOMETHING IS BURNING; only a picture says
+            # what. So a credible fire inside a watch zone tasks imagery over
+            # that zone ahead of its next scheduled pass.
+            #
+            # Scoped to the user's OWN zones rather than polled globally,
+            # which is both the relevance test and the quota guard: FIRMS
+            # reports tens of thousands of detections a day worldwide, nearly
+            # all of them agricultural burning, and tasking imagery on all of
+            # them would exhaust Copernicus inside a day.
+            try:
+                await _firms_trigger_pass()
+            except Exception as _fe:
+                print(f"[firms] trigger pass failed: {_fe}")
+
         except Exception as _sched_e:
             print(f"[sentinel-scheduler] loop error: {_sched_e}")
             await _asyncio_sched.sleep(60)
+
+
+# Locations FIRMS has already caused us to scan, so a nightly gas flare at a
+# refinery does not re-task imagery every single night for ever.
+_FIRMS_RECENT: list[dict] = []
+_FIRMS_RECENT_MAX = 500
+
+
+async def _firms_trigger_pass() -> None:
+    """Poll FIRMS over each enabled watch zone and scan the ones that are alight."""
+    import firms as _firms
+    if not _firms.available():
+        return          # no key configured; the feed simply is not running
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return          # nothing to task; do not burn the FIRMS quota either
+
+    from database import WatchZone, get_db as _gdb_firms
+    loop = _asyncio_sched.get_running_loop()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now - timedelta(hours=_firms.REPEAT_SUPPRESS_HOURS)
+    global _FIRMS_RECENT
+    _FIRMS_RECENT = [p for p in _FIRMS_RECENT if p.get("at", now) >= cutoff]
+
+    with _gdb_firms() as _db:
+        zones = (_db.query(WatchZone)
+                 .filter(WatchZone.enabled == True)  # noqa: E712
+                 .all())
+        zone_data = [{
+            "id": z.id, "system_id": z.system_id, "name": z.name,
+            "bbox_min_lon": z.bbox_min_lon, "bbox_min_lat": z.bbox_min_lat,
+            "bbox_max_lon": z.bbox_max_lon, "bbox_max_lat": z.bbox_max_lat,
+            "ml_tasks": z.ml_tasks, "scan_interval_hours": z.scan_interval_hours,
+            "alert_threshold": z.alert_threshold,
+            "sensor_preference": getattr(z, "sensor_preference", None) or "sentinel2_optical",
+        } for z in zones
+            if None not in (z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat)]
+
+    for zd in zone_data:
+        bbox = (zd["bbox_min_lon"], zd["bbox_min_lat"], zd["bbox_max_lon"], zd["bbox_max_lat"])
+        # Network call, off the event loop.
+        result = await loop.run_in_executor(_executor, lambda b=bbox: _firms.fetch_area(b, days=1))
+        if result.get("status") != "ok" or not result.get("fires"):
+            continue
+        centre = {"lat": (bbox[1] + bbox[3]) / 2, "lon": (bbox[0] + bbox[2]) / 2,
+                  "label": zd["name"], "system_id": zd["system_id"]}
+        # A fire anywhere in the zone is relevant BY CONSTRUCTION — the zone
+        # is the analyst's own statement of what they care about. The radius
+        # is sized to the zone rather than a fixed 5km.
+        span_km = _firms.haversine_km(bbox[1], bbox[0], bbox[3], bbox[2])
+        hits = _firms.triggers(result["fires"], [centre], _FIRMS_RECENT,
+                               radius_km=max(_firms.RELEVANCE_RADIUS_KM, span_km))
+        if not hits:
+            continue
+        top = hits[0]
+        print(f"[firms] {len(hits)} credible fire(s) in {zd['system_id']} — "
+              f"strongest {top.get('frp')}MW at {top['lat']:.3f},{top['lon']:.3f}; tasking imagery")
+        for h in hits[:20]:
+            _FIRMS_RECENT.append({"lat": h["lat"], "lon": h["lon"], "at": now})
+        del _FIRMS_RECENT[:-_FIRMS_RECENT_MAX]
+        _launch_zone_scan_background(zd, "firms_fire")
 
 
 def _auto_ingest() -> None:

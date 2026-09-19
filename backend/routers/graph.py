@@ -123,3 +123,45 @@ def review_queue(limit: int = Query(50, le=500)):
             "items": [{"local_id": r["local_id"], "ftm_id": r["ftm_id"], "caption": r["caption"],
                        "method": r["method"], "score": r["score"], "evidence": r["evidence"],
                        "topics": json.loads(r["topics_json"] or "[]")} for r in rows]}
+
+
+# ── FIRMS: active fires as a scan trigger ────────────────────────────────
+@router.get("/api/firms/status")
+def firms_status():
+    """Is the fire feed running, and what would it do?"""
+    import firms
+    return {
+        "available": firms.available(),
+        "reason": None if firms.available() else
+                  "no FIRMS_MAP_KEY set — a free key comes from "
+                  "https://firms.modaps.eosdis.nasa.gov/api/map_key/",
+        "source": firms.DEFAULT_SOURCE,
+        "sources": list(firms.SOURCES),
+        "relevance_radius_km": firms.RELEVANCE_RADIUS_KM,
+        "repeat_suppress_hours": firms.REPEAT_SUPPRESS_HOURS,
+        "min_brightness_k": firms.MIN_BRIGHTNESS_K,
+    }
+
+
+@router.get("/api/firms/fires")
+def firms_fires(west: float, south: float, east: float, north: float,
+                days: int = Query(1, ge=1, le=10)):
+    """Active fires in a bbox, with which ones would earn a satellite tasking.
+
+    Returns every credible detection AND the subset that would trigger, so the
+    filtering is inspectable rather than something the scheduler does silently.
+    """
+    import firms
+    res = firms.fetch_area((west, south, east, north), days=days)
+    if res.get("status") != "ok":
+        return {**res, "credible": [], "would_trigger": []}
+    credible = [f for f in res["fires"] if firms.is_credible(f)]
+    centre = {"lat": (south + north) / 2, "lon": (west + east) / 2, "label": "bbox centre"}
+    span = firms.haversine_km(south, west, north, east)
+    return {
+        "status": "ok", "source": res.get("source"),
+        "total": len(res["fires"]), "credible": len(credible),
+        "fires": credible[:500],
+        "would_trigger": firms.triggers(res["fires"], [centre], [],
+                                        radius_km=max(firms.RELEVANCE_RADIUS_KM, span))[:100],
+    }
