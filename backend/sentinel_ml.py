@@ -822,3 +822,140 @@ BAND_REQUIREMENTS: dict = {
     "nir":         "false-colour",     # B08/B04/B03
     "nbr_pair":    "false-colour",     # repurpose false-colour as B08 proxy
 }
+
+
+# ── multi-class detection ─────────────────────────────────────────────────
+#
+# WHY THIS EXISTS. run_ship_detection() above runs the full 15-class DOTA
+# model and then throws 14 of the classes away:
+#
+#     raw = [d for d in result["detections"] if d.get("class") == "ship"]
+#
+# The planes, storage tanks, harbours, bridges and vehicles were detected on
+# every scan since the OBB switch and discarded at that line. The targets the
+# product actually wants — aircraft on an airfield, new storage capacity at a
+# terminal, vehicle concentrations — were already being found and dropped.
+#
+# This keeps them. run_ship_detection is left untouched: it carries vessel
+# specific baseline/tiering logic, and quietly widening what it returns would
+# change the meaning of every existing vessel alert.
+
+# DOTA class -> the object_type stored on a SentinelDetection row.
+_DOTA_OBJECT_TYPE = {
+    "ship":               "vessel",
+    "harbor":             "port_infrastructure",
+    "plane":              "aircraft",
+    "helicopter":         "aircraft",
+    "storage-tank":       "storage_tank",
+    "bridge":             "bridge",
+    "large-vehicle":      "vehicle",      # a truck or bus, NOT a vessel
+    "small-vehicle":      "vehicle",
+    "roundabout":         "road_feature",
+    "container-crane":    "port_infrastructure",
+    "airport":            "airfield",
+    "helipad":            "airfield",
+    # The sports/recreation classes are real DOTA outputs but carry no
+    # intelligence value here. Mapped, not dropped, so a caller can filter
+    # them deliberately rather than wonder where they went.
+    "baseball-diamond":   "recreation",
+    "tennis-court":       "recreation",
+    "basketball-court":   "recreation",
+    "ground-track-field": "recreation",
+    "soccer-ball-field":  "recreation",
+    "swimming-pool":      "recreation",
+}
+
+# Classes that are noise for this product unless explicitly requested.
+LOW_VALUE_TYPES = {"recreation", "road_feature"}
+
+
+def run_object_detection(images: dict, bbox: dict, *,
+                         confidence: float = 0.25,
+                         include_low_value: bool = False,
+                         instrument: str = "OPTICAL") -> list:
+    """Detect every DOTA class over one image, not just ships.
+
+    Returns SentinelDetection-shaped dicts. Severity is deliberately left at
+    "info"/"silent": what makes an object notable is whether it is NEW or
+    GONE relative to the last scan of the same area, which this function
+    cannot know from a single image. Assigning severity here would mean
+    inventing significance from one observation.
+    """
+    tc = images.get("true_colour")
+    if tc is None:
+        return []
+
+    img_w, img_h = tc.size
+    res_m = _pixel_resolution_m(bbox, img_w, img_h)
+
+    try:
+        from main import _run_inference_on_image
+    except ImportError:
+        from backend.main import _run_inference_on_image
+
+    bounds_nsew = {
+        "north": bbox["max_lat"], "south": bbox["min_lat"],
+        "east":  bbox["max_lon"], "west":  bbox["min_lon"],
+    }
+    result = _run_inference_on_image(
+        tc, bounds_nsew, confidence=confidence, enhance=False,
+        model_key="dota", keep_px=True,
+    )
+
+    out = []
+    for r in (result.get("detections") or []):
+        cls = r.get("class")
+        obj_type = _DOTA_OBJECT_TYPE.get(cls)
+        if obj_type is None:
+            continue
+        if obj_type in LOW_VALUE_TYPES and not include_low_value:
+            continue
+
+        corners = r.get("corners") or []
+        center  = r.get("center") or [0.0, 0.0]
+        lat, lon = float(center[0]), float(center[1])
+
+        geo_poly = None
+        est_len = est_wid = area_m2 = angle_deg = None
+        if len(corners) == 4:
+            ring = [[float(c[1]), float(c[0])] for c in corners]
+            ring.append(ring[0])
+            geo_poly = {"type": "Polygon", "coordinates": [ring]}
+            side_a = _haversine_m(corners[0][0], corners[0][1], corners[1][0], corners[1][1])
+            side_b = _haversine_m(corners[1][0], corners[1][1], corners[2][0], corners[2][1])
+            est_len = round(max(side_a, side_b), 1)
+            est_wid = round(min(side_a, side_b), 1)
+            area_m2 = round(side_a * side_b, 1)
+            dy = corners[1][0] - corners[0][0]
+            dx = corners[1][1] - corners[0][1]
+            angle_deg = round(math.degrees(math.atan2(dy, dx)) % 180, 1)
+
+        px = r.get("_px")
+        out.append({
+            "detection_id":   _next_det_id(),
+            "object_type":    obj_type,
+            "instrument":     instrument,
+            "confidence":     round(float(r.get("confidence", 0.0)), 3),
+            "centroid_lat":   round(lat, 6),
+            "centroid_lon":   round(lon, 6),
+            "geo_geometry":   json.dumps(geo_poly) if geo_poly else None,
+            "area_m2":        area_m2,
+            "severity":       "info",
+            "alert_tier":     "silent",
+            "matched_to_ais": False,
+            "attributes":     json.dumps({
+                "pixel_bbox": ({"x_min": px[0], "y_min": px[1], "x_max": px[2], "y_max": px[3]}
+                               if px else None),
+                "estimated_length_m": est_len,
+                "estimated_width_m":  est_wid,
+                "pixel_resolution_m": round(res_m, 2),
+                # How far a centroid could really be from the truth. Reporting
+                # a 6-decimal coordinate from a 20 m/px image without this
+                # would imply a precision the sensor does not have.
+                "geolocation_uncertainty_m": round(res_m * 1.5, 1),
+                "yolo_class":  cls,
+                "obb_angle_deg": angle_deg,
+                "model": "yolov8n-obb (DOTA)",
+            }),
+        })
+    return out

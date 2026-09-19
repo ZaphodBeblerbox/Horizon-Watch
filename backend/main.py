@@ -10639,7 +10639,13 @@ def _convert_overwatch_detections(raw_dets: list, band_type: str = "TRUE_COLOR")
     import json as _j, math as _m
 
     _DOTA_TO_TYPE = {
-        "ship": "vessel", "large-vehicle": "vessel", "small-vehicle": "vehicle",
+        # "large-vehicle" mapped to "vessel" here until 2026-09-19. DOTA's
+        # large-vehicle is a truck or bus; the label map above this file's
+        # inference code has always called it Heavy Vehicle. The effect was
+        # that every heavy road vehicle in a scan was stored and reported as
+        # a SHIP — which matters most exactly where vehicles matter, since a
+        # convoy would have been filed as a fleet.
+        "ship": "vessel", "large-vehicle": "vehicle", "small-vehicle": "vehicle",
         "plane": "aircraft", "helicopter": "aircraft",
         "storage-tank": "infrastructure_change", "swimming-pool": "infrastructure_change",
         "harbor": "infrastructure_change", "bridge": "infrastructure_change",
