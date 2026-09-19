@@ -298,3 +298,40 @@ def test_pruning_one_region_leaves_another_alone(db):
     z2_imgs = [s for s in db.query(database.SentinelScan)
                .filter(database.SentinelScan.zone_id == z2.id).all() if s.image_b64]
     assert len(z2_imgs) == 4, "pruning one region touched another"
+
+
+# ── detection ids ─────────────────────────────────────────────────────────
+
+def test_detection_ids_survive_a_restart():
+    """detection_id is UNIQUE in the database and used to be a plain
+    in-process counter, so it restarted at DET-000001 every time the backend
+    did. The second run of any scan then collided on its first detection and
+    the entire insert was rejected — the scan's findings were computed and
+    thrown away, reported only as an IntegrityError.
+
+    Simulating the restart by resetting the counter is the whole point: the
+    id must not depend on process lifetime.
+    """
+    import sentinel_ml
+
+    first = [sentinel_ml._next_det_id() for _ in range(5)]
+    sentinel_ml._det_counter = 0            # a fresh process
+    second = [sentinel_ml._next_det_id() for _ in range(5)]
+
+    assert not (set(first) & set(second)), (
+        "detection ids repeat after a restart, so a re-scan cannot be saved"
+    )
+
+
+def test_detection_ids_are_unique_within_a_run():
+    import sentinel_ml
+    ids = [sentinel_ml._next_det_id() for _ in range(500)]
+    assert len(set(ids)) == 500
+
+
+def test_detection_ids_stay_readable():
+    """They appear in the UI and in alerts, so they cannot become opaque."""
+    import sentinel_ml
+    i = sentinel_ml._next_det_id()
+    assert i.startswith("DET-")
+    assert len(i) <= 20

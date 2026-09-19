@@ -17,6 +17,7 @@ Pixel-to-WGS84 affine transform:
 
 import os
 import json
+import uuid
 import math
 import datetime
 import threading
@@ -93,10 +94,23 @@ _det_counter_lock = threading.Lock()
 
 
 def _next_det_id() -> str:
+    """A detection id that is unique across processes and restarts.
+
+    This was a plain in-process counter producing DET-000001 upward, which
+    restarts from one every time the backend does. detection_id is UNIQUE in
+    the database, so the second run of any scan collided on its first
+    detection and the whole insert was rejected — observed as
+    "UNIQUE constraint failed: sentinel_detections.detection_id" with the
+    scan's findings computed and then thrown away.
+
+    The counter is kept for readable ordering within one run and a short
+    random suffix makes the id globally unique.
+    """
     global _det_counter
     with _det_counter_lock:
         _det_counter += 1
-        return f"DET-{_det_counter:06d}"
+        n = _det_counter
+    return f"DET-{n:06d}-{uuid.uuid4().hex[:6]}"
 
 
 # ── Alert tier / severity helpers ──────────────────────────────────────────────

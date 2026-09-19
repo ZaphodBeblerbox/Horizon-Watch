@@ -182,6 +182,18 @@ class SentinelScanner:
 
         try:
             with get_db() as db:
+                # THE ZONE MAY BE GONE. Creating a region launches a scan in
+                # the background; if the region is deleted while that scan is
+                # still running, writing its result here resurrects a row
+                # pointing at a zone that no longer exists. Observed: three
+                # orphaned scans left behind by a create-then-delete test.
+                # Orphans are invisible in every UI (which filters by zone)
+                # but keep counting in totals and in retention.
+                if db.query(WatchZone).filter(WatchZone.id == zone_id).first() is None:
+                    print(f"[sentinel-scanner] zone {system_id} was deleted while its scan ran — "
+                          f"discarding {len(detections)} detection(s) rather than orphaning them")
+                    return {"scan_id": scan_id, "status": "discarded_zone_deleted"}
+
                 scan_row = SentinelScan(
                     scan_id=scan_id,
                     zone_id=zone_id,

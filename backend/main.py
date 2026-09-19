@@ -18,6 +18,7 @@ import time as time_module
 import time
 import asyncio
 import threading
+import base64 as _b64mod
 import json as _json
 import csv as _csv
 import io as _io
@@ -13871,9 +13872,67 @@ _TILED_RESULTS: dict = {}
 _TILED_RESULTS_MAX = 50
 
 
+def _persist_tiled_scan(zone_id: int, out: dict, date_str: str | None,
+                        display_b64: str | None = None) -> str:
+    """Write a tiled scan and its detections as a real scan row.
+
+    Runs the same change detection and image retention the scheduled scanner
+    does, so a manual scan of a chosen date is a first-class member of the
+    region's history rather than a parallel kind of result.
+    """
+    import datetime as _dtp
+    import uuid as _uidp
+
+    from database import SentinelScan, SentinelDetection, get_db as _gdbp
+    import scan_storage as _storep
+
+    scan_id = str(_uidp.uuid4())
+    with _gdbp() as db:
+        db.add(SentinelScan(
+            scan_id=scan_id, zone_id=zone_id, triggered_by="manual-tiled",
+            status=out.get("status", "completed"),
+            created_at=_dtp.datetime.utcnow(), completed_at=_dtp.datetime.utcnow(),
+            image_timestamp_utc=(_dtp.datetime.fromisoformat(date_str) if date_str else None),
+            instrument="OPTICAL",
+            image_b64=display_b64,
+            result_summary=_json.dumps({
+                "total_detections": len(out.get("detections") or []),
+                "m_per_px": out.get("m_per_px"),
+                "tiles": f"{out.get('tiles_ok')}/{out.get('tiles_total')}",
+                "coverage_fraction": out.get("coverage_fraction"),
+            }),
+            error_message=out.get("error_message"),
+        ))
+        for d in (out.get("detections") or []):
+            db.add(SentinelDetection(
+                detection_id=d.get("detection_id") or f"DET-{_uidp.uuid4().hex[:12]}",
+                scan_id=scan_id, zone_id=zone_id,
+                instrument=d.get("instrument", "OPTICAL"),
+                object_type=d["object_type"], confidence=d["confidence"],
+                centroid_lat=d["centroid_lat"], centroid_lon=d["centroid_lon"],
+                geo_geometry=d.get("geo_geometry"), area_m2=d.get("area_m2"),
+                severity=d.get("severity", "info"), alert_tier=d.get("alert_tier", "silent"),
+                attributes=d.get("attributes"),
+            ))
+        db.flush()
+        try:
+            out["change"] = _storep.apply_change_detection(
+                db, zone_id, scan_id, instrument="OPTICAL",
+                m_per_px=float(out.get("m_per_px") or 10.0))
+        except Exception as _ce:
+            print(f"[tiled-scan] change detection failed for {scan_id}: {_ce}")
+        try:
+            _storep.prune_scan_images(db, zone_id)
+        except Exception as _re:
+            print(f"[tiled-scan] retention failed for zone {zone_id}: {_re}")
+        db.commit()
+    return scan_id
+
+
 async def _run_tiled_scan_job(job_id: str, bounds: dict, sensor: str,
                               date_str: str | None, confidence: float,
-                              include_low_value: bool) -> None:
+                              include_low_value: bool,
+                              zone_id: int | None = None) -> None:
     import io as _tio
     import sentinel_ml as _sml
     import sentinel_tiles as _stiles
@@ -13906,6 +13965,42 @@ async def _run_tiled_scan_job(job_id: str, bounds: dict, sensor: str,
                                            detect_tile=detect, job_id=job_id)
         out.update({"job_id": job_id, "bounds": bounds, "sensor": sensor,
                     "date": date_str, "plan": plan.describe()})
+
+        # A DISPLAY IMAGE. The tiles are fetched at native resolution for
+        # the detector and discarded; without a single rendered scene there
+        # is nothing for the comparison view to show, so a date scanned
+        # through the picker would arrive invisible — which defeats the
+        # point of being able to choose a date at all.
+        display_b64 = None
+        if zone_id is not None and out.get("status") == "completed":
+            try:
+                disp = await _fetch_sentinel_image_bytes(
+                    bounds, image_type="true-colour", max_cloud=40,
+                    days_back=30, date_str=date_str)
+                if not disp.get("error"):
+                    display_b64 = await _imagery_rt.run_cpu(
+                        lambda b: _b64mod.b64encode(b).decode(),
+                        disp["image_bytes"], label="display-encode")
+            except Exception as _de:                        # noqa: BLE001
+                print(f"[tiled-scan] {job_id}: no display image ({_de})")
+
+        # PERSIST, when the scan belongs to a region.
+        #
+        # Until now a native-resolution scan lived only in memory: its
+        # findings vanished on restart, never appeared in the region's scene
+        # history, and could not be compared against anything. That made the
+        # good path — native resolution, all fifteen classes — the one whose
+        # results did not last, while the old downsampled path was the only
+        # one that produced a durable record.
+        if zone_id is not None:
+            try:
+                out["scan_id"] = await _imagery_rt.run_cpu(
+                    _persist_tiled_scan, zone_id, out, date_str, display_b64,
+                    label=f"persist:{job_id[:8]}")
+            except Exception as _pe:                        # noqa: BLE001
+                out["persist_error"] = f"{type(_pe).__name__}: {_pe}"
+                print(f"[tiled-scan] {job_id}: results computed but NOT saved: {_pe}")
+
         _TILED_RESULTS[job_id] = out
     except Exception as e:                                  # noqa: BLE001
         # A swallowed exception in a background imagery job is how a whole
@@ -13949,11 +14044,21 @@ async def imagery_scan_tiled(request: Request):
                 "area_km2": round(plan.area_km2, 1),
                 "describe": plan.describe()}
 
+    # A scan tied to a region becomes part of its history; a scan of a
+    # free-drawn box is a one-off look and is not persisted.
+    zone_id = None
+    if body.get("system_id"):
+        from database import WatchZone as _WZt, get_db as _gdbt
+        with _gdbt() as _dbt:
+            _z = _dbt.query(_WZt).filter(_WZt.system_id == body["system_id"]).first()
+            zone_id = _z.id if _z else None
+
     job_id = f"scan-{uuid.uuid4().hex[:12]}"
     asyncio.create_task(_run_tiled_scan_job(
         job_id, bounds, body.get("sensor", "sentinel2_optical"),
         body.get("date"), float(body.get("confidence", 0.25)),
         bool(body.get("include_low_value", False)),
+        zone_id,
     ))
     return {"job_id": job_id, "tiles": plan.count,
             "api_requests": plan.api_requests,

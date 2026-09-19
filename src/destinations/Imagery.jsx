@@ -131,6 +131,12 @@ export default function Imagery({ onOpenGenerate }) {
     const [selectedDet, setSelectedDet] = useState(null)
     // Native-resolution tiled scan: a job id to follow, and the cost of the
     // plan so the person sees what a scan will spend BEFORE it spends it.
+    // Available scene dates for the selected area. The endpoint that serves
+    // these was returning a 500 until this round, and before that collapsed
+    // an entire history to one entry, so nothing has ever been able to offer
+    // a choice of date.
+    const [dates, setDates] = useState([])
+    const [scanDate, setScanDate] = useState("")
     const [tiledJob, setTiledJob] = useState(null)
     const [tiledResult, setTiledResult] = useState(null)
     const viewerRef = useRef(null)
@@ -228,6 +234,24 @@ export default function Imagery({ onOpenGenerate }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [aois])
 
+    useEffect(() => {
+        setDates([]); setScanDate("")
+        if (!selectedAoi?.bbox) return
+        const b = selectedAoi.bbox
+        let cancelled = false
+        fetch(`${API_BASE}/api/sentinel/dates`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+                bounds: { west: b.min_lon, south: b.min_lat, east: b.max_lon, north: b.max_lat },
+                max_cloud: 60, days_back: 180,
+            }),
+        }).then((r) => (r.ok ? r.json() : null))
+          .then((d) => { if (!cancelled) setDates(Array.isArray(d?.dates) ? d.dates : []) })
+          .catch(() => { if (!cancelled) setDates([]) })
+        return () => { cancelled = true }
+    }, [selectedAoi])
+
     // The scene arrives asynchronously after the deep link resolves, so the
     // focus has to wait for it rather than firing into an empty viewer.
     useEffect(() => {
@@ -288,7 +312,8 @@ export default function Imagery({ onOpenGenerate }) {
         const started = await fetch(`${API_BASE}/api/imagery/scan-tiled`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             credentials: "include",
-            body: JSON.stringify({ bounds }),
+            body: JSON.stringify({ bounds, date: scanDate || null,
+                                   system_id: selectedAoi.system_id }),
         }).then((r) => r.json()).catch(() => null)
         if (!started || started.error) { toast(started?.error || "Scan could not be started", {}); return }
         setTiledResult(null)
@@ -305,6 +330,15 @@ export default function Imagery({ onOpenGenerate }) {
         // Partial coverage is a real qualification on the result, not a
         // detail to bury: "nothing there" and "never looked there" must not
         // read the same.
+        // The scan is now part of the region's history, so the scene list
+        // has to pick it up — otherwise the date just scanned is invisible
+        // and cannot be compared against anything.
+        if (out.scan_id && selectedAoi) {
+            const rows = await fetch(`${API_BASE}/api/watch-zones/${selectedAoi.system_id}/scans`,
+                                     { credentials: "include" })
+                .then((r) => r.json()).catch(() => null)
+            if (Array.isArray(rows)) { setScenes(rows); setSelectedScanId(out.scan_id) }
+        }
         const cov = Math.round((out.coverage_fraction ?? 1) * 100)
         toast(`${out.detections?.length ?? 0} detection(s) at ${out.m_per_px} m/px` +
               (cov < 100 ? ` — ${cov}% of the area covered, ${out.tiles_failed?.length || 0} tile(s) failed` : ""), {})
@@ -513,9 +547,32 @@ export default function Imagery({ onOpenGenerate }) {
                         scan: this one covers the AOI at the sensor's own
                         10 m/px in a grid, which is the difference between a
                         100m vessel being one pixel and being ten. */}
+                    {/* WHICH DAY. Comparing two dates is the basis of every
+                        change finding, and until this round the picker was
+                        unreachable: the endpoint 500'd on every call, and
+                        beneath that the search collapsed 43 distinct dates
+                        into one. Cloud cover is shown per date because on an
+                        optical sensor it decides whether a scene is worth
+                        scanning at all. */}
+                    <select className="input sm" value={scanDate}
+                        disabled={!dates.length || !!tiledJob}
+                        onChange={(e) => setScanDate(e.target.value)}
+                        title={dates.length
+                            ? "Which pass to scan — cloud cover in brackets"
+                            : "No scene dates loaded for this area"}
+                        style={{ height: 24, maxWidth: 190 }}>
+                        <option value="">
+                            {dates.length ? `latest pass (${dates.length} available)` : "no dates"}
+                        </option>
+                        {dates.map((d) => (
+                            <option key={d.date} value={d.date}>
+                                {d.date}{d.cloud_cover != null ? ` · ${Math.round(d.cloud_cover)}% cloud` : ""}
+                            </option>
+                        ))}
+                    </select>
                     <button className="btn sm" disabled={!selectedAoi || !!tiledJob} onClick={runTiledScan}
                         title="Cover this area at the sensor's native resolution (shows the cost first)">
-                        {tiledJob ? "scanning…" : "native-res scan"}
+                        {tiledJob ? "scanning…" : scanDate ? `scan ${scanDate}` : "native-res scan"}
                     </button>
                     <button className="btn sm" onClick={raiseSignal}>raise signal</button>
                     <button className="btn sm" onClick={addToBriefingScene}>add to briefing</button>
