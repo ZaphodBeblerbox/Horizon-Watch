@@ -6,6 +6,7 @@ import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, SceneScrubber, SceneComparison } from "../components/imagery/sceneComparison.jsx"
 import ScanProgress from "../components/imagery/ScanProgress.jsx"
 import AoiMiniMap from "./AoiMiniMap.jsx"
+import { boundsToPolygon } from "./sourcesLogic.js"
 
 // Imagery — page-by-page rebuild, Part B. A UI over the real, already-
 // existing Sentinel scanner pipeline (backend/sentinel_scanner.py, real
@@ -35,6 +36,66 @@ const CADENCES = ["daily", "3-day", "weekly", "monthly", "on demand"]
 // Object types are stored as schema keys. A person reads "storage tank";
 // "storage_tank" is an implementation detail leaking into a deliverable.
 const readable = (t) => (t || "object").replace(/_/g, " ")
+
+/**
+ * NewAreaForm — name the drawn box and say how it should be watched.
+ *
+ * Sensor is chosen HERE rather than defaulted, because it is the decision
+ * that determines what the region can ever detect: optical sees what a
+ * thing is and fails under cloud and at night; SAR sees through both and
+ * cannot tell you what it found. Burying that behind a default would make
+ * a region quietly unable to answer the question it was drawn for.
+ */
+function NewAreaForm({ bounds, onCancel, onCreate }) {
+    const [name, setName] = useState("")
+    const [sensor, setSensor] = useState("sentinel2_optical")
+    const [cadence, setCadence] = useState(24)
+    const [aoiClass, setAoiClass] = useState("custom")
+    const [busy, setBusy] = useState(false)
+
+    // What was actually drawn, in units a person can sanity-check before
+    // committing to a recurring scan of it.
+    const midLat = (bounds.north + bounds.south) / 2
+    const kmW = Math.abs(bounds.east - bounds.west) * 111.32 * Math.cos((midLat * Math.PI) / 180)
+    const kmH = Math.abs(bounds.north - bounds.south) * 111.32
+    const areaKm2 = Math.round(kmW * kmH)
+    // One Sentinel Hub request per 2048px tile at 10 m/px.
+    const tiles = Math.max(1, Math.ceil(kmW / 20.48) * Math.ceil(kmH / 20.48))
+
+    return (
+        <div style={{ border: "1px solid var(--line)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ font: "600 11px var(--font)", color: "var(--txt-2)" }}>New observation area</div>
+            <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
+                {kmW.toFixed(1)} × {kmH.toFixed(1)} km · {areaKm2.toLocaleString()} km²<br />
+                ≈ {tiles} API request{tiles === 1 ? "" : "s"} per scan at native 10 m/px
+            </div>
+            <input className="input sm" placeholder="Name (e.g. Kharg Island terminal)"
+                value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+            <select className="input sm" value={sensor} onChange={(e) => setSensor(e.target.value)}>
+                {SENSOR_OPTIONS.filter((o) => o.real).map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+            </select>
+            <select className="input sm" value={aoiClass} onChange={(e) => setAoiClass(e.target.value)}>
+                {AOI_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <label style={{ font: "400 10px var(--font)", color: "var(--txt-3)" }}>
+                Re-scan every
+                <input className="input sm" type="number" min={1} value={cadence}
+                    onChange={(e) => setCadence(e.target.value)}
+                    style={{ width: 60, marginLeft: 6 }} /> h
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn sm" disabled={busy || !name.trim()}
+                    onClick={async () => { setBusy(true); try { await onCreate({ name, sensor, cadence, aoiClass }) } finally { setBusy(false) } }}>
+                    {busy ? "creating…" : "create"}
+                </button>
+                <button className="btn sm" onClick={onCancel}>cancel</button>
+            </div>
+        </div>
+    )
+}
+
 
 export default function Imagery({ onOpenGenerate }) {
     const [aois, setAois] = useState([])
@@ -73,6 +134,11 @@ export default function Imagery({ onOpenGenerate }) {
     const [tiledJob, setTiledJob] = useState(null)
     const [tiledResult, setTiledResult] = useState(null)
     const viewerRef = useRef(null)
+    // Draw a new observation region directly here. Until now a region could
+    // only be created from Sources or over the API, which made the Imagery
+    // page read-only for the one thing it exists to do.
+    const [drawActive, setDrawActive] = useState(false)
+    const [drawnBounds, setDrawnBounds] = useState(null)
     const clipRef = useRef(null)
     const fadeRef = useRef(null)
 
@@ -190,6 +256,30 @@ export default function Imagery({ onOpenGenerate }) {
               (cov < 100 ? ` — ${cov}% of the area covered, ${out.tiles_failed?.length || 0} tile(s) failed` : ""), {})
     }
 
+    async function createDrawnArea({ name, sensor, cadence, aoiClass }) {
+        const polygon = boundsToPolygon(drawnBounds)
+        if (!name.trim() || !polygon) { toast("Give the area a name first", {}); return }
+        const res = await fetch(`${API_BASE}/api/watch-zones`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+                name: name.trim(), polygon_geojson: polygon,
+                aoi_class: aoiClass, sensor_preference: sensor,
+                scan_interval_hours: Number(cadence),
+                // A region drawn by hand is one the analyst wants looked at,
+                // so it scans for vessels by default rather than arriving
+                // inert with no tasks and silently never producing anything.
+                ml_tasks: ["ship_detection"],
+            }),
+        })
+        const d = await res.json().catch(() => null)
+        if (!res.ok) { toast(d?.detail || "Could not create the area", {}); return }
+        setDrawnBounds(null); setDrawActive(false)
+        toast(`${d.system_id} created — ${SENSOR_LABEL[sensor] || sensor}, every ${cadence}h`, { icon: "i-check" })
+        loadAois()
+        setSelectedAoi(d)
+    }
+
     function proposeCoverage() {
         if (!scopeCountry.trim()) { toast("Enter a country code first", {}); return }
         fetch(`${API_BASE}/api/imagery/propose-coverage`, {
@@ -269,6 +359,22 @@ export default function Imagery({ onOpenGenerate }) {
         <div style={{ display: "grid", gridTemplateColumns: "250px 1fr 330px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
             {/* Left — observation areas */}
             <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                <button className="btn sm" style={{ width: "100%" }}
+                    onClick={() => { setDrawActive((v) => !v); setDrawnBounds(null) }}
+                    title="Drag a box on the map below to define a new observation region">
+                    {drawActive ? "cancel drawing" : "+ draw observation area"}
+                </button>
+                {drawActive && !drawnBounds ? (
+                    <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
+                        click one corner on the map, then the opposite corner
+                    </div>
+                ) : null}
+                {drawnBounds ? (
+                    <NewAreaForm bounds={drawnBounds}
+                        onCancel={() => { setDrawnBounds(null); setDrawActive(false) }}
+                        onCreate={createDrawnArea} />
+                ) : null}
+
                 <div className="field"><label>Scope (country code)</label>
                     <div style={{ display: "flex", gap: 6 }}>
                         <input className="input" style={{ flex: 1 }} value={scopeCountry} onChange={(e) => setScopeCountry(e.target.value)} placeholder="e.g. US" />
@@ -409,7 +515,7 @@ export default function Imagery({ onOpenGenerate }) {
                     a coordinate. Without somewhere to plot them, an older
                     scan reads as "nothing was found" when in fact it found
                     plenty and we simply stopped keeping the picture. */}
-                {selectedAoi && (
+                {(selectedAoi || drawActive) && (
                     <div style={{ marginTop: 16 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                             <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
@@ -423,10 +529,12 @@ export default function Imagery({ onOpenGenerate }) {
                         </div>
                         <div style={{ height: 200, border: "1px solid var(--line)", position: "relative" }}>
                             <AoiMiniMap
-                                zones={[selectedAoi]}
-                                selectedZoneId={selectedAoi.system_id}
-                                flyToZoneId={selectedAoi.system_id}
-                                detections={mapDetections}
+                                zones={selectedAoi ? [selectedAoi] : []}
+                                selectedZoneId={selectedAoi?.system_id || null}
+                                flyToZoneId={drawActive ? null : selectedAoi.system_id}
+                                drawActive={drawActive}
+                                onDrawComplete={(b) => setDrawnBounds(b)}
+                                detections={drawActive ? [] : mapDetections}
                                 selectedDetectionId={selectedDet?.id}
                                 onSelectDetection={(id) =>
                                     setSelectedDet(visibleChanges.find((c) => c.id === id) || null)}

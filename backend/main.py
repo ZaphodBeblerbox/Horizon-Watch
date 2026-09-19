@@ -17311,6 +17311,33 @@ def api_watch_zones_create(body: dict):
 
     scan_interval = int(body.get("scan_interval_hours", 24))
     ml_tasks      = body.get("ml_tasks", [])
+
+    # SENSOR AND CLASS WERE ACCEPTED AND DISCARDED.
+    #
+    # This endpoint read neither, so every region created through any UI was
+    # silently Sentinel-2 optical and class "custom" whatever the caller
+    # chose — and the response then ECHOED BACK the default as though the
+    # choice had been honoured, which is why it survived: the caller was
+    # told "sentinel2_optical" and had no way to tell that was a default
+    # rather than a confirmation. Sensor is the decision that determines
+    # what a region can ever detect (optical sees what a thing is and fails
+    # under cloud and at night; SAR sees through both and cannot say what it
+    # found), so dropping it makes a region quietly unable to answer the
+    # question it was drawn for.
+    #
+    # Only deployed sensors are accepted. A region pinned to a sensor this
+    # backend cannot fetch would fail on every scheduled scan, and the
+    # honest moment to refuse that is at creation.
+    sensor = (body.get("sensor_preference") or "sentinel2_optical").strip()
+    if sensor not in ("sentinel2_optical", "sentinel1_sar"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"sensor_preference must be one of sentinel2_optical, "
+                   f"sentinel1_sar — got {sensor!r}. Commercial sensors are "
+                   f"not deployed on this backend.",
+        )
+    aoi_class = (body.get("aoi_class") or "custom").strip()
+
     now           = _dt_wz.datetime.utcnow()
     next_scan     = now + _dt_wz.timedelta(hours=scan_interval)
 
@@ -17334,6 +17361,9 @@ def api_watch_zones_create(body: dict):
             ml_tasks            = _json_wz.dumps(ml_tasks),
             alert_threshold     = body.get("alert_threshold", "both"),
             zone_metadata       = _json_wz.dumps(body.get("metadata", {})),
+            sensor_preference   = sensor,
+            aoi_class           = aoi_class,
+            status              = body.get("status", "active"),
         )
         db.add(zone)
         db.flush()
