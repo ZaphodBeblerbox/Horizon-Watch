@@ -17,7 +17,7 @@
 // real, selectable, persisted choices (an analyst's stated intent is never
 // silently dropped), but a real scan attempt against one of them is
 // honestly rejected server-side.
-import ZoomPanViewer, { DetectionArrow, useViewerScale } from "./ZoomPanViewer.jsx"
+import ZoomPanViewer, { DetectionArrow, useViewerScale, useViewerView } from "./ZoomPanViewer.jsx"
 
 export const SENSOR_OPTIONS = [
     { value: "sentinel2_optical", label: "Sentinel-2 · optical 10m", real: true },
@@ -90,6 +90,99 @@ export function EmptyFrame() {
 // Real before/after/swipe comparison view with detection boxes — renders
 // actual base64 scene imagery (scene.image_b64/reference_image_b64), never
 // placeholder art.
+
+/**
+ * ScreenBoxes — detection boxes drawn OUTSIDE the zoom transform.
+ *
+ * Positions come from the view (`tx + scale * x * frameW`), so the boxes
+ * still sit exactly on their objects, but their strokes and labels are
+ * ordinary screen pixels and keep a constant weight at any zoom. Counter-
+ * scaling inside the transform cannot achieve this: the browser rounds a
+ * sub-pixel outline up to 1px before magnifying it, which at 15x produced a
+ * 15px slab over the imagery.
+ */
+export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrowLabel }) {
+    const { scale, tx, ty, frameW, frameH } = useViewerView()
+    if (!frameW || !frameH) return null
+
+    const toScreen = (b) => ({
+        x: tx + scale * b[0] * frameW,
+        y: ty + scale * b[1] * frameH,
+        w: scale * b[2] * frameW,
+        h: scale * b[3] * frameH,
+    })
+    const strokeFor = (c) => (c.type === "new" ? "var(--sev-high)"
+        : c.type === "removed" ? "var(--sev-critical)" : "var(--acc-hi)")
+
+    // A caption earns its place by on-screen size; on a dense scene every
+    // box carrying one is an unreadable mass over the imagery.
+    const LABEL_MIN_PX = 44
+
+    return (
+        <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+            {changes.map((c) => {
+                if (!c.bbox) return null
+                const r = toScreen(c.bbox)
+                // Nothing offscreen, and nothing so small it is invisible.
+                if (r.x + r.w < 0 || r.y + r.h < 0 || r.x > frameW || r.y > frameH) return null
+                const isSel = selectedDet?.id === c.id
+                const w = Math.max(r.w, 3), h = Math.max(r.h, 3)
+                return (
+                    <g key={c.id}>
+                        <rect x={r.x} y={r.y} width={w} height={h}
+                            fill={isSel ? "rgba(95,149,208,0.12)" : "transparent"}
+                            stroke={strokeFor(c)} strokeWidth={isSel ? 2 : 1.2}
+                            strokeDasharray={c.type === "removed" ? "4 3" : undefined}
+                            style={{ pointerEvents: "auto", cursor: "pointer" }}
+                            onClick={(e) => { e.stopPropagation(); onSelectDet && onSelectDet(c) }}>
+                            <title>{`${c.label} · ${Math.round(c.conf * 100)}%`}</title>
+                        </rect>
+                        {isSel || w >= LABEL_MIN_PX ? (
+                            <text x={r.x} y={r.y - 3}
+                                style={{ font: "400 9px var(--mono)", fill: "var(--txt)" }}>
+                                {`${c.id.slice(0, 8)} · ${Math.round(c.conf * 100)}%`}
+                            </text>
+                        ) : null}
+                    </g>
+                )
+            })}
+            {arrowFor ? (() => {
+                const r = toScreen([arrowFor.x, arrowFor.y, arrowFor.w, arrowFor.h])
+                const cx = r.x + r.w / 2, cy = r.y + r.h / 2
+                // Approach from whichever side has room in the FRAME, so the
+                // arrow never points in from outside the visible area.
+                const room = { left: r.x, right: frameW - (r.x + r.w), top: r.y, bottom: frameH - (r.y + r.h) }
+                const side = Object.keys(room).reduce((a, b) => (room[b] > room[a] ? b : a))
+                const L = 70
+                const tail = { left: { x: r.x - L, y: cy }, right: { x: r.x + r.w + L, y: cy },
+                               top: { x: cx, y: r.y - L }, bottom: { x: cx, y: r.y + r.h + L } }[side]
+                const head = { left: { x: r.x - 4, y: cy }, right: { x: r.x + r.w + 4, y: cy },
+                               top: { x: cx, y: r.y - 4 }, bottom: { x: cx, y: r.y + r.h + 4 } }[side]
+                return (
+                    <g>
+                        <defs>
+                            <marker id="det-arrow-head" markerWidth="7" markerHeight="7"
+                                    refX="6" refY="3.5" orient="auto">
+                                <path d="M0,0 L7,3.5 L0,7 z" fill="var(--acc-hi)" />
+                            </marker>
+                        </defs>
+                        <line x1={tail.x} y1={tail.y} x2={head.x} y2={head.y}
+                              stroke="var(--acc-hi)" strokeWidth={2}
+                              markerEnd="url(#det-arrow-head)" />
+                        {arrowLabel ? (
+                            <text x={tail.x} y={tail.y - 6}
+                                textAnchor={side === "right" ? "start" : side === "left" ? "end" : "middle"}
+                                style={{ font: "500 11px var(--mono)", fill: "var(--acc-hi)" }}>
+                                {arrowLabel}
+                            </text>
+                        ) : null}
+                    </g>
+                )
+            })() : null}
+        </svg>
+    )
+}
+
 export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true }) {
     const refSrc = scene.reference_image_b64 ? `data:image/jpeg;base64,${scene.reference_image_b64}` : null
     const curSrc = scene.image_b64 ? `data:image/jpeg;base64,${scene.image_b64}` : null
@@ -122,15 +215,40 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
         const LABEL_MIN_SHARE = 0.05
         const labelled = (c) =>
             selectedDet?.id === c.id || (c.bbox?.[2] || 0) * z >= LABEL_MIN_SHARE
-        return changes.map((c) => (
+        const strokeFor = (c) => (c.type === "new" ? "var(--sev-high)"
+            : c.type === "removed" ? "var(--sev-critical)" : "var(--acc-hi)")
+
+        return (<>
+            {/* OUTLINES AS SVG, not CSS outline.
+                A CSS outline-width below 1px is rounded UP to 1px by the
+                browser BEFORE the container's transform magnifies it, so at
+                15x a correctly counter-scaled 0.08px border rendered as a
+                15px slab that buried the imagery. Observed in the browser;
+                the arithmetic had been right. vector-effect keeps the stroke
+                at a constant device width at any zoom, which is what it
+                exists for. */}
+            <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true"
+                style={{ position: "absolute", inset: 0, width: "100%", height: "100%",
+                         pointerEvents: "none", overflow: "visible" }}>
+                {changes.map((c) => (
+                    <rect key={`r-${c.id}`}
+                        x={c.bbox[0]} y={c.bbox[1]} width={c.bbox[2]} height={c.bbox[3]}
+                        fill={selectedDet?.id === c.id ? "rgba(95,149,208,0.12)" : "none"}
+                        stroke={strokeFor(c)}
+                        strokeWidth={selectedDet?.id === c.id ? 2 : 1.2}
+                        strokeDasharray={c.type === "removed" ? "4 3" : undefined}
+                        vectorEffect="non-scaling-stroke" />
+                ))}
+            </svg>
+            {changes.map((c) => (
             <div key={c.id} role="button" onClick={(e) => { e.stopPropagation(); onSelectDet(c) }}
                 title={`${c.label} · ${Math.round(c.conf * 100)}%`}
                 style={{
                     position: "absolute", left: `${c.bbox[0] * 100}%`, top: `${c.bbox[1] * 100}%`,
-                    width: `${c.bbox[2] * 100}%`, height: `${c.bbox[3] * 100}%`, minWidth: 10, minHeight: 10,
-                    outline: `${(1.2 * k).toFixed(3)}px ${c.type === "removed" ? "dashed" : "solid"} ${c.type === "new" ? "var(--sev-high)" : c.type === "removed" ? "var(--sev-critical)" : "var(--acc-hi)"}`,
-                    outlineOffset: 0,
-                    background: selectedDet?.id === c.id ? "rgba(95,149,208,0.12)" : "transparent", cursor: "pointer",
+                    width: `${c.bbox[2] * 100}%`, height: `${c.bbox[3] * 100}%`,
+                    // No visible border here — the SVG above draws it. This
+                    // element is the click target and the label's anchor.
+                    background: "transparent", cursor: "pointer",
                 }}
             >
                 {labelled(c) ? (
@@ -144,7 +262,8 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                     </span>
                 ) : null}
             </div>
-        ))
+            ))}
+        </>)
     }
 
     if (view === "after") {
@@ -165,13 +284,12 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                 alt="current scene"
                 minHeight={fullscreen ? "88vh" : 420}
                 onBackgroundClick={() => onSelectDet && onSelectDet(null)}
-            >
-                <Boxes />
-                {showArrow && sel
-                    ? <DetectionArrow box={sel} scale={viewerRef?.current?.scale || 1}
-                                      label={selectedDet.label} />
-                    : null}
-            </ZoomPanViewer>
+                overlay={
+                    <ScreenBoxes changes={showBoxes ? changes : []} selectedDet={selectedDet}
+                                 onSelectDet={onSelectDet} arrowFor={showArrow ? sel : null}
+                                 arrowLabel={selectedDet?.label} />
+                }
+            />
         )
     }
     if (view === "swipe") {

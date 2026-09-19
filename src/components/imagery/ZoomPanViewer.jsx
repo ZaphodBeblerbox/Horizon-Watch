@@ -30,11 +30,29 @@ import { zoomAbout, clampPan, focusOnBox, scaleToFit, arrowFor, IDENTITY, MIN_SC
 export const ViewerScaleContext = createContext(1)
 export const useViewerScale = () => useContext(ViewerScaleContext)
 
+/**
+ * The full view, for overlays drawn OUTSIDE the transform.
+ *
+ * Counter-scaling inside the transformed container does not work, and the
+ * reason is worth recording: a CSS outline-width below 1px is rounded up to
+ * 1px by the browser BEFORE the transform magnifies it, so at 15x a
+ * correctly counter-scaled 0.08px border rendered as a 15px slab.
+ * `vector-effect="non-scaling-stroke"` does not rescue it either — that
+ * cancels an SVG's own viewBox scaling, not an ancestor CSS transform.
+ *
+ * So annotations that must keep a constant on-screen weight are rendered in
+ * an untransformed layer and positioned from this view instead: a point at
+ * image fraction `x` sits at `tx + scale * x * frameW`.
+ */
+export const ViewerViewContext = createContext({ scale: 1, tx: 0, ty: 0, frameW: 0, frameH: 0 })
+export const useViewerView = () => useContext(ViewerViewContext)
+
 const ZoomPanViewer = forwardRef(function ZoomPanViewer(
-    { src, alt = "scene", children, onBackgroundClick, minHeight = 320, footer = null }, ref,
+    { src, alt = "scene", children, overlay = null, onBackgroundClick, minHeight = 320, footer = null }, ref,
 ) {
     const frameRef = useRef(null)
     const [view, setView] = useState(IDENTITY)
+    const [frame, setFrame] = useState({ w: 0, h: 0 })
     const [dragging, setDragging] = useState(false)
     const dragFrom = useRef(null)
 
@@ -44,6 +62,19 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
     }
 
     const reset = useCallback(() => setView(IDENTITY), [])
+
+    // Overlays are positioned in frame pixels, so they need the frame's real
+    // size — and need it to follow a resize, or every annotation drifts off
+    // its object the moment the pane changes width.
+    useEffect(() => {
+        const el = frameRef.current
+        if (!el) return
+        const measure = () => setFrame({ w: el.clientWidth, h: el.clientHeight })
+        measure()
+        const ro = new ResizeObserver(measure)
+        ro.observe(el)
+        return () => ro.disconnect()
+    }, [])
 
     useImperativeHandle(ref, () => ({
         reset,
@@ -143,6 +174,18 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
                         {children}
                     </ViewerScaleContext.Provider>
                 </div>
+
+                {/* Annotations that must keep a constant on-screen weight.
+                    Outside the transform, positioned from the view. */}
+                {overlay ? (
+                    <ViewerViewContext.Provider
+                        value={{ scale: view.scale, tx: view.tx, ty: view.ty,
+                                 frameW: frame.w, frameH: frame.h }}>
+                        <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                            {overlay}
+                        </div>
+                    </ViewerViewContext.Provider>
+                ) : null}
             </div>
 
             {/* Zoom readout and reset. Without a visible level, a person who

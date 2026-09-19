@@ -35,6 +35,24 @@ const SEV_FLOORS = [
     { key: "elevated", label: "elevated+" },
 ]
 
+/**
+ * Which imagery scene, if any, a signal points at.
+ *
+ * Returns null for everything else, so the action is absent rather than
+ * present-and-broken — a button that opens nothing teaches people to
+ * distrust the ones that work.
+ */
+export function imageryTarget(signal) {
+    const raw = signal?.row?.raw_json || signal?.raw?.raw_json || signal?.raw || null
+    const src = signal?.source || signal?.raw?.source
+    if (src !== "SAT-TASK" || !raw) return null
+    const detail = {}
+    if (raw.detection_id) detail.detectionId = raw.detection_id
+    if (raw.scan_id) detail.scanId = raw.scan_id
+    if (raw.zone_id) detail.systemId = raw.zone_id
+    return (detail.detectionId || detail.scanId) ? detail : null
+}
+
 export default function Inbox() {
     const [items, setItems] = useState([])
     const [fusions, setFusions] = useState([])
@@ -223,6 +241,17 @@ export default function Inbox() {
                 <div className="panehead">
                     <h3>Signal detail</h3>
                     <div className="right">
+                        {/* An imagery finding has a picture behind it. "Show
+                            on map" answers where; this answers what it
+                            actually looked like, landing on the detected
+                            object itself rather than on a scene full of
+                            boxes with no indication which one is meant. */}
+                        {imageryTarget(selected) ? (
+                            <button className="btn ghost sm"
+                                    onClick={() => window.dispatchEvent(new CustomEvent("akili:imagery-open-scene", {
+                                        detail: imageryTarget(selected),
+                                    }))}>open imagery →</button>
+                        ) : null}
                         <button className="btn ghost sm" disabled={!selected?.row?.lat}
                                 onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", {
                                     detail: { lat: selected.row.lat, lon: selected.row.lon },

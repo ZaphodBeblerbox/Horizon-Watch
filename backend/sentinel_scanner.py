@@ -317,7 +317,11 @@ class SentinelScanner:
                         "severity": change["severity"],
                         "lat": anchor.get("centroid_lat"), "lon": anchor.get("centroid_lon"),
                         "entity_type": anchor.get("object_type"), "region": None,
+                        # Carry the anchor detection so the Inbox can land the
+                        # reader ON the object rather than on a scene with
+                        # forty boxes and no indication which one is meant.
                         "raw_json": {"scan_id": scan_id, "zone_id": system_id,
+                                     "detection_id": anchor.get("detection_id"),
                                      "change": change, "compared_to": change.get("compared_to")},
                     })
                 elif change is None:

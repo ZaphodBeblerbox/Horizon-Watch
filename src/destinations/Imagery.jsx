@@ -143,6 +143,7 @@ export default function Imagery({ onOpenGenerate }) {
     const fadeRef = useRef(null)
 
     const pendingLocateRef = useRef(null) // {systemId, scanId} awaiting AOI load
+    const pendingFocusRef = useRef(null)  // detection_id to centre once the scene arrives
 
     useEffect(() => { loadAois() }, [])
     function loadAois() {
@@ -172,16 +173,50 @@ export default function Imagery({ onOpenGenerate }) {
         fetch(`${API_BASE}/api/imagery/scenes/${selectedScanId}`).then((r) => r.json()).then(setScene)
     }, [selectedScanId])
 
+    // "Show me this one." Selecting a detection has to actually take the
+    // person to it: a 4-pixel object inside a 40-megapixel scene is not
+    // findable by being told it is highlighted somewhere. Switches to the
+    // single-scene view because that is the one that can zoom, centres the
+    // object, and the arrow follows from selectedDet.
+    const focusDetection = useCallback((c) => {
+        setSelectedDet(c || null)
+        if (!c?.bbox) return
+        setView("after")
+        // The viewer only exists once that view has rendered.
+        requestAnimationFrame(() => {
+            viewerRef.current?.focus({ x: c.bbox[0], y: c.bbox[1], w: c.bbox[2], h: c.bbox[3] })
+        })
+    }, [])
+
     // Real deep-link entry point — the Briefings reader's "open change
     // detection" xref action jumps here with a real detection_id; resolve
     // its real (system_id, scan_id) and select both, the same state a
     // direct click through aois/scenes would land on.
     useEffect(() => {
         const handler = (e) => {
-            const detectionId = e.detail?.detectionId
+            const { detectionId, scanId, systemId } = e.detail || {}
+
+            // An alert may know the scene without knowing which object
+            // anchored it. Open the scene anyway rather than refusing: "we
+            // cannot take you to the exact box" is not a reason to withhold
+            // the picture.
+            if (!detectionId && scanId) {
+                if (systemId) {
+                    const match = aois.find((r) => r.system_id === systemId)
+                    if (match) setSelectedAoi(match)
+                    else pendingLocateRef.current = { systemId, scanId }
+                }
+                setSelectedScanId(scanId)
+                return
+            }
             if (!detectionId) return
             fetch(`${API_BASE}/api/imagery/detections/${detectionId}/locate`).then((r) => (r.ok ? r.json() : null)).then((loc) => {
                 if (!loc) return
+                // Remember WHICH detection, not just which scene. A
+                // notification that says "vessel detected at Khor Fakkan"
+                // and then drops the reader into a scene with forty boxes
+                // has made them do the search again by hand.
+                pendingFocusRef.current = detectionId
                 if (!aois.length) { pendingLocateRef.current = { systemId: loc.system_id, scanId: loc.scan_id }; return }
                 const match = aois.find((r) => r.system_id === loc.system_id)
                 if (match) setSelectedAoi(match)
@@ -192,6 +227,25 @@ export default function Imagery({ onOpenGenerate }) {
         return () => window.removeEventListener("akili:imagery-open-scene", handler)
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [aois])
+
+    // The scene arrives asynchronously after the deep link resolves, so the
+    // focus has to wait for it rather than firing into an empty viewer.
+    useEffect(() => {
+        const want = pendingFocusRef.current
+        if (!want || !scene) return
+        const target = (scene.changes || []).find(
+            (c) => c.id === want || c.id === `removed-${want}`)
+        if (!target) {
+            // The detection did not survive into this scene's view — say so
+            // rather than silently landing on the scene with nothing
+            // selected, which reads as "we found nothing here".
+            pendingFocusRef.current = null
+            toast("That detection is no longer part of this scene's results", {})
+            return
+        }
+        pendingFocusRef.current = null
+        focusDetection(target)
+    }, [scene, focusDetection])
 
     async function reRunDetection() {
         if (!selectedAoi || running) return
@@ -527,7 +581,18 @@ export default function Imagery({ onOpenGenerate }) {
                                 </span>
                             ) : null}
                         </div>
-                        <div style={{ height: 200, border: "1px solid var(--line)", position: "relative" }}>
+                        {mapDetections.length ? (
+                            // The mini-map draws its own scale bar at its
+                            // bottom edge and it overflows the container, so
+                            // a legend placed directly underneath collides
+                            // with it. Putting the legend ABOVE the map is
+                            // the fix that does not depend on guessing how
+                            // far that overflow reaches.
+                            <div style={{ marginBottom: 3, font: "400 9px var(--mono)", color: "var(--txt-4)" }}>
+                                {mapDetections.length} plotted · orange new · red gone · blue moved
+                            </div>
+                        ) : null}
+                        <div style={{ height: 200, border: "1px solid var(--line)", position: "relative", marginBottom: 20 }}>
                             <AoiMiniMap
                                 zones={selectedAoi ? [selectedAoi] : []}
                                 selectedZoneId={selectedAoi?.system_id || null}
@@ -537,16 +602,9 @@ export default function Imagery({ onOpenGenerate }) {
                                 detections={drawActive ? [] : mapDetections}
                                 selectedDetectionId={selectedDet?.id}
                                 onSelectDetection={(id) =>
-                                    setSelectedDet(visibleChanges.find((c) => c.id === id) || null)}
+                                    focusDetection(visibleChanges.find((c) => c.id === id) || null)}
                             />
                         </div>
-                        {mapDetections.length ? (
-                            // marginTop clears the mini-map's own scale bar,
-                            // which is drawn inside the map at its bottom edge.
-                            <div style={{ marginTop: 18, font: "400 9px var(--mono)", color: "var(--txt-4)" }}>
-                                {mapDetections.length} plotted · orange new · red gone · blue moved
-                            </div>
-                        ) : null}
                     </div>
                 )}
 
@@ -555,7 +613,7 @@ export default function Imagery({ onOpenGenerate }) {
                     {!scene || visibleChanges.length === 0 ? (
                         <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>{scene?.scan?.status === "completed" ? "No detections in this scene." : "Not yet detected."}</div>
                     ) : visibleChanges.map((c) => (
-                        <div key={c.id} role="button" onClick={() => setSelectedDet(c)}
+                        <div key={c.id} role="button" onClick={() => focusDetection(c)}
                             style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: selectedDet?.id === c.id ? "var(--bg-2)" : "transparent" }}>
                             <div style={{ display: "flex", justifyContent: "space-between" }}>
                                 <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>{readable(c.label)} · {c.type}</span>
