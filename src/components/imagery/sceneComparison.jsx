@@ -17,6 +17,8 @@
 // real, selectable, persisted choices (an analyst's stated intent is never
 // silently dropped), but a real scan attempt against one of them is
 // honestly rejected server-side.
+import ZoomPanViewer, { DetectionArrow, useViewerScale } from "./ZoomPanViewer.jsx"
+
 export const SENSOR_OPTIONS = [
     { value: "sentinel2_optical", label: "Sentinel-2 · optical 10m", real: true },
     { value: "sentinel1_sar",     label: "Sentinel-1 · SAR 20m",     real: true },
@@ -88,7 +90,7 @@ export function EmptyFrame() {
 // Real before/after/swipe comparison view with detection boxes — renders
 // actual base64 scene imagery (scene.image_b64/reference_image_b64), never
 // placeholder art.
-export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false }) {
+export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true }) {
     const refSrc = scene.reference_image_b64 ? `data:image/jpeg;base64,${scene.reference_image_b64}` : null
     const curSrc = scene.image_b64 ? `data:image/jpeg;base64,${scene.image_b64}` : null
     // Real size caps — fullscreen genuinely renders the same real image
@@ -99,17 +101,33 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
 
     function Boxes() {
         if (!showBoxes) return null
+        // Counter-scale so outlines and labels keep a constant ON-SCREEN
+        // size however far the image is zoomed. Without this the transform
+        // multiplies them too: at 8.7x a 9px caption renders at 78px and the
+        // labels cover the scene they are annotating.
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const z = useViewerScale() || 1
+        const k = 1 / z
         return changes.map((c) => (
             <div key={c.id} role="button" onClick={(e) => { e.stopPropagation(); onSelectDet(c) }}
                 title={`${c.label} · ${Math.round(c.conf * 100)}%`}
                 style={{
                     position: "absolute", left: `${c.bbox[0] * 100}%`, top: `${c.bbox[1] * 100}%`,
                     width: `${c.bbox[2] * 100}%`, height: `${c.bbox[3] * 100}%`, minWidth: 10, minHeight: 10,
-                    outline: `1.2px ${c.type === "removed" ? "dashed" : "solid"} ${c.type === "new" ? "var(--sev-high)" : c.type === "removed" ? "var(--sev-critical)" : "var(--acc-hi)"}`,
+                    outline: `${(1.2 * k).toFixed(3)}px ${c.type === "removed" ? "dashed" : "solid"} ${c.type === "new" ? "var(--sev-high)" : c.type === "removed" ? "var(--sev-critical)" : "var(--acc-hi)"}`,
+                    outlineOffset: 0,
                     background: selectedDet?.id === c.id ? "rgba(95,149,208,0.12)" : "transparent", cursor: "pointer",
                 }}
             >
-                <span style={{ position: "absolute", top: -14, left: 0, font: "400 9px var(--mono)", color: "var(--txt)", background: "var(--bg-0)", padding: "0 2px", whiteSpace: "nowrap" }}>
+                <span style={{
+                    position: "absolute", top: `${-14 * k}px`, left: 0,
+                    font: `400 ${(9 * k).toFixed(3)}px var(--mono)`,
+                    color: "var(--txt)", background: "var(--bg-0)",
+                    padding: `0 ${(2 * k).toFixed(3)}px`, whiteSpace: "nowrap",
+                    // Below ~5px on screen a caption is unreadable clutter;
+                    // the box itself still marks the object.
+                    display: 9 * k * z < 5 ? "none" : "block",
+                }}>
                     {c.id.slice(0, 8)} · {Math.round(c.conf * 100)}%
                 </span>
             </div>
@@ -117,11 +135,30 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
     }
 
     if (view === "after") {
+        // The single-scene view is where a scan is actually inspected, so it
+        // is the one that must be zoomable: a tiled scan is tens of
+        // megapixels and a 100m vessel is about one screen pixel when the
+        // whole scene is fitted to a pane. The detection boxes are
+        // percentage-positioned inside the same transformed stack, so they
+        // stay welded to their objects at every zoom level.
+        if (!curSrc) return <EmptyFrame />
+        const sel = selectedDet && selectedDet.bbox
+            ? { x: selectedDet.bbox[0], y: selectedDet.bbox[1], w: selectedDet.bbox[2], h: selectedDet.bbox[3] }
+            : null
         return (
-            <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%" }}>
-                {curSrc ? <img src={curSrc} alt="current scene" style={{ display: "block", maxWidth: "100%", maxHeight: soloMaxH }} /> : <EmptyFrame />}
+            <ZoomPanViewer
+                ref={viewerRef}
+                src={curSrc}
+                alt="current scene"
+                minHeight={fullscreen ? "88vh" : 420}
+                onBackgroundClick={() => onSelectDet && onSelectDet(null)}
+            >
                 <Boxes />
-            </div>
+                {showArrow && sel
+                    ? <DetectionArrow box={sel} scale={viewerRef?.current?.scale || 1}
+                                      label={selectedDet.label} />
+                    : null}
+            </ZoomPanViewer>
         )
     }
     if (view === "swipe") {
