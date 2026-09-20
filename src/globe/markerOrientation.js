@@ -28,7 +28,7 @@ import { Cartesian3, Math as CesiumMath } from "cesium"
  * position off the coast of Ghana. Dropping the marker is right;
  * drawing a fleet at Null Island is not.
  */
-function coord(v) {
+export function coord(v) {
     if (typeof v === "number") return Number.isFinite(v) ? v : null
     if (typeof v === "string" && v.trim() !== "") {
         const n = Number(v)

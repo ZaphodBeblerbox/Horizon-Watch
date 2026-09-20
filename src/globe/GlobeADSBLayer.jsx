@@ -11,23 +11,13 @@ import { acClassify } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { safeCartesian, billboardRotation } from "./markerOrientation.js"
+import { deadReckon } from "./deadReckon.js"
 import useCameraHeading from "./useCameraHeading.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
 const adsbLon = (ac) => ac.lon ?? ac.longitude
 
 const BILLBOARD_SIZE = 26
-
-function drCalc(lat, lon, track, gs, dt) {
-    if (!gs || gs < 10) return [lat, lon]
-    const dist = gs * 0.514444 * dt
-    const R = 6371000, d = dist / R, θ = track * Math.PI / 180
-    const φ1 = lat * Math.PI / 180, λ1 = lon * Math.PI / 180
-    const sinφ2 = Math.sin(φ1) * Math.cos(d) + Math.cos(φ1) * Math.sin(d) * Math.cos(θ)
-    const φ2 = Math.asin(sinφ2)
-    const λ2 = λ1 + Math.atan2(Math.sin(θ) * Math.sin(d) * Math.cos(φ1), Math.cos(d) - Math.sin(φ1) * sinφ2)
-    return [φ2 * 180 / Math.PI, λ2 * 180 / Math.PI]
-}
 
 // See GlobeAISLayer: the old 150 capped the sky far below what the
 // feed and the backend already provide. Labels stop at 1,500km.
@@ -60,22 +50,15 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
         setSmooth(aircraft ?? [])
     }, [aircraft])
 
-    useEffect(() => {
-        const iv = setInterval(() => {
-            if (!rawRef.current.length) return
-            const now = Date.now()
-            setSmooth(rawRef.current.map(ac => {
-                const icao = ac.icao ?? ac.icao24 ?? ""
-                const base = drBaseRef.current[icao]
-                if (!base) return ac
-                const dt = (now - base.ts) / 1000
-                if (dt < 0.1 || dt > 30) return ac
-                const [lat, lon] = drCalc(base.lat, base.lon, base.track, base.gs, dt)
-                return { ...ac, lat, lon }
-            }))
-        }, 100)
-        return () => clearInterval(iv)
-    }, [])
+    // NO 100ms SMOOTHING TIMER. It used to rebuild the whole aircraft
+    // array with new objects and setState ten times a second, which
+    // invalidated the memo below, re-sorted it, and re-rendered one
+    // React component per aircraft — around 24,000 renders a second
+    // once the cap was lifted to thousands, to move markers a few
+    // metres each. Dead reckoning now happens inside the position
+    // callback Cesium already evaluates per frame, which costs a
+    // little arithmetic per aircraft, needs no timer at all, and is
+    // smooth at the display's refresh rate instead of stepping at 10Hz.
 
     const { filtered } = useMemo(() => {
         if (!smooth?.length) return { filtered: [] }
@@ -134,10 +117,22 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 // isFinite check never protected anything), and a raise
                 // inside render unmounts the entire globe rather than
                 // dropping one aircraft.
-                const position = safeCartesian(lon, lat, altM)
-                if (!position) return null
+                const reported = safeCartesian(lon, lat, altM)
+                if (!reported) return null
+
+                // Dead reckoned at draw time from the last real report,
+                // so the marker moves smoothly between position updates
+                // without any of it passing through React. Falls back to
+                // the reported position whenever extrapolating would be
+                // dishonest — not moving, or coasting too long.
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
+
+                const position = new CallbackProperty(() => {
+                    const dr = deadReckon(drBaseRef.current[icao], Date.now())
+                    if (!dr) return reported
+                    return safeCartesian(dr.lon, dr.lat, altM) || reported
+                }, false)
 
                 // Fidelity pass, build spec v2 §7 — real triangle glyph,
                 // amber when this real icao matches a real "Military
