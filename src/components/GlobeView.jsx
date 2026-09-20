@@ -20,6 +20,7 @@ import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
 import GlobeWarMapLayer          from "../globe/GlobeWarMapLayer.jsx"
+import GlobeFacilitiesLayer      from "../globe/GlobeFacilitiesLayer.jsx"
 import GlobeFiresLayer           from "../globe/GlobeFiresLayer.jsx"
 import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
@@ -127,6 +128,7 @@ export default function GlobeView({
     frontlinesEnabled = false,
     warmapTheatres = [],
     frontlinesAt = null,
+    facilitiesEnabled = false,
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
     firesEnabled = false,
@@ -882,6 +884,7 @@ export default function GlobeView({
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
+                <GlobeFacilitiesLayer enabled={facilitiesEnabled} />
                 {warmapTheatres.map((k) => (
                     <GlobeWarMapLayer key={k} theatre={k} enabled />
                 ))}

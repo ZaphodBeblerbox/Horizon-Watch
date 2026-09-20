@@ -14,7 +14,7 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "country_risk", "eez", "event", "frontline", "fusion", "fusion_member",
             "gdelt_event", "geoconfirmed", "heatmap_cell", "infra", "port",
             "sentinel_detection", "surge", "thermal_anomaly", "vessel",
-            "warmap_area",
+            "facility_osm", "warmap_area",
         ].sort())
     })
 

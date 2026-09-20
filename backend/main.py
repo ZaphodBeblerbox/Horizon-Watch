@@ -3603,6 +3603,96 @@ def api_frontline_theatres():
     return {"theatres": out}
 
 
+@app.get("/api/facilities")
+def api_facilities(category: str | None = None, zone_id: str | None = None,
+                   limit: int = 4000):
+    """Military, medical and security facilities, as entities.
+
+    Served from the ontology rather than Overpass: these are ingested on
+    a background pass so a map pan never waits on OpenStreetMap.
+    """
+    import infra_entities as _ie
+    import json as _j
+    from database import OntologyEntity, get_db as _gdb
+    wanted = ([_ie.ENTITY_TYPE[category]] if category in _ie.ENTITY_TYPE
+              else list(_ie.ENTITY_TYPE.values()))
+    out = []
+    with _gdb() as db:
+        q = db.query(OntologyEntity).filter(OntologyEntity.entity_type.in_(wanted))
+        if zone_id:
+            q = q.filter(OntologyEntity.region_id == zone_id)
+        for r in q.limit(max(1, min(limit, 20000))).all():
+            try:
+                meta = _j.loads(r.entity_metadata or "{}")
+            except Exception:                               # noqa: BLE001
+                meta = {}
+            if meta.get("lat") is None or meta.get("lon") is None:
+                continue
+            out.append({"system_id": r.system_id, "name": r.name,
+                        "entity_type": r.entity_type, "kind": r.infra_type,
+                        "zone_id": r.region_id,
+                        "lat": meta["lat"], "lon": meta["lon"],
+                        "operator": meta.get("operator"),
+                        "named": meta.get("named", True),
+                        "source": meta.get("source"),
+                        "source_url": meta.get("source_url")})
+    from collections import Counter as _C
+    return {"facilities": out, "count": len(out),
+            "by_kind": dict(_C(f["kind"] for f in out).most_common(15)),
+            "caveat": _ie.CAVEAT}
+
+
+@app.post("/api/facilities/ingest")
+async def api_facilities_ingest(zone_id: str | None = None):
+    """Pull facilities for one strategic zone, or the next unfilled one."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_frontline_executor, _ingest_facilities_zone, zone_id)
+
+
+def _ingest_facilities_zone(zone_id: str | None = None) -> dict:
+    """Fetch and persist one zone's facilities. Never raises."""
+    import infra_entities as _ie
+    from database import StrategicZone, get_db as _gdb
+    try:
+        with _gdb() as db:
+            q = db.query(StrategicZone)
+            if zone_id:
+                q = q.filter(StrategicZone.zone_id == zone_id)
+            zones = q.all()
+            picked = None
+            for z in zones:
+                if None in (z.bbox_min_lat, z.bbox_min_lon,
+                            z.bbox_max_lat, z.bbox_max_lon):
+                    continue
+                picked = z
+                if zone_id:
+                    break
+                # Without an explicit zone, take the first not yet ingested.
+                from database import OntologyEntity
+                done = (db.query(OntologyEntity)
+                          .filter(OntologyEntity.region_id == z.zone_id)
+                          .first())
+                if not done:
+                    break
+                picked = None
+            if picked is None:
+                return {"status": "nothing to do", "zone_id": None}
+            bbox = (picked.bbox_min_lat, picked.bbox_min_lon,
+                    picked.bbox_max_lat, picked.bbox_max_lon)
+            zid, zname = picked.zone_id, picked.name
+    except Exception as ex:                                 # noqa: BLE001
+        return {"status": "error", "error": f"{type(ex).__name__}: {ex}"}
+
+    got = _ie.fetch_zone(bbox, zone_id=zid)
+    if not got.get("available"):
+        return {"status": "empty", "zone_id": zid, "zone": zname,
+                "error": got.get("error")}
+    res = _ie.persist(_ie.to_ontology_rows(got["facilities"]))
+    return {"status": "ok", "zone_id": zid, "zone": zname,
+            "found": got["count"], "capped": got.get("capped"),
+            "by_kind": got.get("by_kind"), **res}
+
+
 @app.get("/api/frontlines/timeline")
 async def api_frontlines_timeline(limit: int = 200):
     """The dates the Ukraine slider may stop on.
@@ -12315,6 +12405,7 @@ async def startup_event():
     asyncio.create_task(_gdacs_loop())
     asyncio.create_task(_gdelt_loop())
     asyncio.create_task(_frontline_change_loop())
+    asyncio.create_task(_facilities_ingest_loop())
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
@@ -12684,6 +12775,29 @@ async def _gdacs_loop():
 # A FusionEvent only actually forms once >=2 distinct domains converge at the
 # same geo key within fusion's rolling window — that correlation logic lives
 # entirely in fusion_engine.py and is untouched here.
+async def _facilities_ingest_loop():
+    """Fill in military, medical and security facilities, one zone a pass.
+
+    Overpass is a shared free service and a 300 km² zone is a heavy
+    query, so this goes slowly and deliberately: one zone every ten
+    minutes until every strategic zone has been covered, then it idles.
+    """
+    await asyncio.sleep(150)
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            res = await loop.run_in_executor(_frontline_executor,
+                                             _ingest_facilities_zone, None)
+            if res.get("status") == "nothing to do":
+                await asyncio.sleep(24 * 3600)
+                continue
+            print(f"[facilities] {res.get('zone')}: found {res.get('found')} "
+                  f"wrote {res.get('written')} ({res.get('by_kind')})")
+        except Exception as ex:                             # noqa: BLE001
+            print(f"[facilities] ingest failed: {type(ex).__name__}: {ex}")
+        await asyncio.sleep(600)
+
+
 async def _frontline_change_loop():
     """Keep the frontline-change caches warm.
 

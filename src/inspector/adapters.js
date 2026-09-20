@@ -850,6 +850,39 @@ export function adaptWarmapArea(data = {}) {
     }
 }
 
+// ── a mapped facility ────────────────────────────────────────────────────
+
+export function adaptFacilityOsm(data = {}) {
+    const m = data.meta || {}
+    const point = pointOf(data)
+    return {
+        identity: {
+            title: data.name || "Facility",
+            subtitle: m.kind || m.category || null,
+            entityType: "facility_osm",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes: compact([
+            attr("Type", m.kind),
+            attr("Category", m.category),
+            attr("Operator", m.operator),
+            attr("Inside zone", m.zone),
+            attr("Location", point ? fmtCoord(point.lat, point.lon) : null),
+            m.named === false
+                ? attr("Name", "not mapped — labelled by type") : null,
+            // THE ABSENCE CAVEAT, which matters more here than the
+            // presence one: a planner reading an empty area as "no
+            // medical capacity" would be badly wrong.
+            attr("Completeness", "OpenStreetMap, crowd-mapped — a missing "
+                + "facility means nobody mapped it, not that none exists"),
+            attr("Source", m.source_url),
+        ]),
+        provenance: { feed: m.source || "OpenStreetMap", ingestedAt: null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -871,6 +904,7 @@ const ADAPTERS = {
     frontline: adaptFrontline,
     surge: adaptSurge,
     warmap_area: adaptWarmapArea,
+    facility_osm: adaptFacilityOsm,
 }
 
 /**

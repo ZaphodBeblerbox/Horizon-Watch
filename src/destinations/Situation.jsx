@@ -354,7 +354,7 @@ export default function Situation({ onOpenDossier }) {
     // would bury the rest of the map.
     const [theatresOn, setTheatresOn] = useState({ ukraine: true })
     const [frontlineTheatres, setFrontlineTheatres] = useState([])
-    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, facilities: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     // The Ukraine time slider. `null` means live; any other value is a
     // published snapshot date. Index rather than date so the control is
     // evenly spaced in SNAPSHOTS, which is what exists, rather than in
@@ -806,6 +806,9 @@ export default function Situation({ onOpenDossier }) {
                     <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Context layers</div>
                     {[
                         ["risk", "Country risk index"],
+                        // Bases, hospitals, police. Context rather than
+                        // findings, so off by default and near-zoom only.
+                        ["facilities", "Bases, hospitals, police"],
                         ["graticule", "Graticule 10°"],
                         ["flows", "Trade & energy flows"],
                         ["aois", "Areas of interest"],
@@ -1146,6 +1149,7 @@ export default function Situation({ onOpenDossier }) {
                         riskEnabled={contextOn.risk}
                         frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
                         frontlinesAt={frontlinesAt}
+                        facilitiesEnabled={contextOn.facilities}
                         warmapTheatres={contextOn.frontlines
                             ? frontlineTheatres
                                 .filter((t) => t.kind === "points" && theatresOn[t.key])

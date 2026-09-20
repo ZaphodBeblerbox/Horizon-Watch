@@ -35,7 +35,7 @@ export const INSPECTOR_TYPES = new Set([
     // Found by the registration-site test below, not by a bug report:
     // the choropleth has been registering full risk decompositions
     // that no click could ever reach.
-    "country_risk", "frontline", "warmap_area",
+    "country_risk", "frontline", "warmap_area", "facility_osm",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
