@@ -18,6 +18,10 @@ describe("LAYER_GROUPS", () => {
             // found the building in the video. Listed here so the guard keeps
             // doing its job — it exists to catch keys that appear by accident.
             "gdeltEvents",
+            // Also deliberate: FIRMS thermal anomalies are what task
+            // imagery, and the feed has been running for weeks with no way
+            // to see its own output.
+            "fires",
         ]
         const actualKeys = LAYER_GROUPS.flatMap(g => g.layers.map(l => l.key))
         expect(new Set(actualKeys)).toEqual(new Set(expectedKeys))

@@ -336,6 +336,10 @@ export default function Situation({ onOpenDossier }) {
     // Default OFF. Machine-coded pins are opt-in: the reader should choose
     // to accept them, not discover them mixed in with verified events.
     const [gdeltOn, setGdeltOn] = useState(false)
+    // Default ON: a thermal anomaly is a real instrument reading and it is
+    // what decides where imagery gets tasked, so hiding it by default
+    // conceals the system's own reasoning.
+    const [firesOn, setFiresOn] = useState(true)
     const [contextOn, setContextOn] = useState({ risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     /**
      * PARALLAX layers addendum §L5 — Global infrastructure is its OWN group.
@@ -721,6 +725,13 @@ export default function Situation({ onOpenDossier }) {
                     {LAYER_GROUPS.map((g) => (
                         <Fragment key={g.key}>
                             <DomainRow group={g} count={domainCounts[g.key]} on={groupsOn[g.key]} onToggle={() => setGroupsOn((p) => ({ ...p, [g.key]: !p[g.key] }))} />
+                            {g.key === "imagery" && (
+                                <SubLayerRow
+                                    label="Thermal Anomalies"
+                                    hint="NASA FIRMS — the feed that tasks imagery. A gas flare, burning stubble and a strike look identical to the instrument."
+                                    on={firesOn} parentOn={groupsOn.imagery}
+                                    onToggle={() => setFiresOn((v) => !v)} />
+                            )}
                             {g.key === "news" && (
                                 <SubLayerRow
                                     label="GDELT Events"
@@ -978,6 +989,7 @@ export default function Situation({ onOpenDossier }) {
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
                         geoConfirmedEnabled={groupsOn.news}
                         gdeltEnabled={groupsOn.news && gdeltOn}
+                        firesEnabled={groupsOn.imagery && firesOn}
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
                         derivedAlertsEnabled={groupsOn.alerts}

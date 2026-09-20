@@ -50,6 +50,9 @@ export const LAYER_GROUPS = [
             { key: "shippingLanes", label: "Nautical Chart", hint: "OpenSeaMap vector overlay" },
             { key: "oim", label: "Infrastructure", hint: "OpenInfraMap — power, telecoms, pipelines" },
             { key: "cctvFeeds", label: "CCTV Feeds", hint: "2 real public webcams + local detection" },
+            // Thermal anomalies belong with the sensors, not with reporting:
+            // FIRMS is an instrument reading, and it is what tasks imagery.
+            { key: "fires", label: "Thermal Anomalies", hint: "NASA FIRMS VIIRS/MODIS — a flare, stubble and a strike look identical" },
         ],
     },
     {

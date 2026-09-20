@@ -14633,6 +14633,45 @@ def ontology_claims(limit: int = 100, status: str | None = None):
         }
 
 
+@app.get("/api/fires")
+def api_fires(hours: int = 72, limit: int = 1000):
+    """Thermal hotspots this system has seen, with why they mattered.
+
+    They used to exist only in an in-memory suppression list, so there was
+    nothing to draw and nothing to review. A fire that was seen and
+    deliberately not acted on is a different record from one that was never
+    seen, and only a persisted store can tell those apart.
+    """
+    import datetime as _dtf
+    from database import FireDetection, get_db as _gdf
+
+    since = _dtf.datetime.utcnow() - _dtf.timedelta(hours=hours)
+    with _gdf() as db:
+        rows = (db.query(FireDetection)
+                  .filter(FireDetection.acquired_at >= since)
+                  .order_by(FireDetection.acquired_at.desc())
+                  .limit(max(1, min(limit, 5000))).all())
+    return {
+        "fires": [{
+            "id": f.fire_id, "lat": f.lat, "lon": f.lon,
+            "brightness_k": f.brightness_k, "frp": f.frp,
+            "confidence": f.confidence, "satellite": f.satellite,
+            "instrument": f.instrument, "source": f.source,
+            "acquired_at": f.acquired_at.isoformat() if f.acquired_at else None,
+            "zone": f.zone_system_id,
+            "triggered_scan": bool(f.triggered_scan),
+            # A thermal anomaly is not a fire report. VIIRS sees gas flares,
+            # burning stubble and industrial heat identically, so the label
+            # says what the instrument measured, not what it means.
+            "label": (f"thermal anomaly {f.brightness_k:.0f}K"
+                      if f.brightness_k else "thermal anomaly"),
+        } for f in rows],
+        "count": len(rows),
+        "note": ("VIIRS/MODIS thermal anomalies — a gas flare, burning "
+                 "stubble and a strike look identical to the instrument"),
+    }
+
+
 @app.get("/api/corroborate")
 def api_corroborate(hours: int = 72, radius_km: float = 5.0,
                     window_hours: float = 36.0, min_modalities: int = 2,
