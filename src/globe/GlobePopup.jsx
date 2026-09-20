@@ -70,8 +70,18 @@ export default function GlobePopup({
     // byte-for-byte unchanged until they're each deliberately migrated.
     dockExternally = false,
     onInspectorPopupChange = null,
+    // Which contact is selected, so the caller can draw its full track.
+    // Reported rather than drawn here: this component owns the popup, and
+    // a track is map geometry that belongs beside the other layers.
+    onSelectionChange = null,
 }) {
     const [popup,   setPopup]   = useState(null)
+    useEffect(() => {
+        if (!onSelectionChange) return
+        onSelectionChange(popup?.entityId
+            ? { id: popup.entityId, kind: popup.type }
+            : null)
+    }, [popup?.entityId, popup?.type]) // eslint-disable-line react-hooks/exhaustive-deps
     const hoveredIdRef = useRef(null)
     // The rendered node for the currently hovered entity, so moving the
     // pointer within one entity repositions the card without rebuilding it.

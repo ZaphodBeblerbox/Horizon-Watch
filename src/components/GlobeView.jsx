@@ -9,6 +9,7 @@ import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, openSeaMap
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
+import GlobeSelectedTrackLayer  from "../globe/GlobeSelectedTrackLayer.jsx"
 import GlobeRiskChoroplethLayer from "../globe/GlobeRiskChoroplethLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
@@ -222,6 +223,9 @@ export default function GlobeView({
     const [watchlistedIcaos, setWatchlistedIcaos] = useState(new Set())
     const [aircraft, setAircraft] = useState([])
     const [viewBounds, setViewBounds] = useState(null)
+    // The one contact whose full track is drawn. Clicking a vessel or an
+    // aircraft is a request to follow it, not just to read its card.
+    const [selectedContact, setSelectedContact] = useState(null)
     const [webglLost, setWebglLost] = useState(false)
     const [cesiumViewer, setCesiumViewer] = useState(null)
 
@@ -241,7 +245,14 @@ export default function GlobeView({
         const tryExpose = () => {
             if (cancelled) return
             const v = viewerRef.current?.cesiumElement || null
-            if (v) { setCesiumViewer(v); return }
+            if (v) {
+                setCesiumViewer(v)
+                // Dev-only handle. Verifying that a layer RENDERS means
+                // clicking a specific contact, and without the viewer a
+                // test can only stab blindly at the canvas and miss.
+                if (import.meta.env.DEV) window.__viewer = v
+                return
+            }
             if (attempts++ < 20) setTimeout(tryExpose, 250)
         }
         tryExpose()
@@ -912,6 +923,10 @@ export default function GlobeView({
                 {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} watchlistedIcaos={watchlistedIcaos} />}
                 <GlobeTrackLayer aisEnabled={aisEnabled} adsbEnabled={adsbEnabled}
                                  vessels={vessels} aircraft={aircraft} />
+                {/* The clicked contact's whole recent path — aircraft at
+                    their real altitude, which is where the shape of a
+                    hold or a descent actually lives. */}
+                <GlobeSelectedTrackLayer selected={selectedContact} />
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />
@@ -945,7 +960,8 @@ export default function GlobeView({
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} onInspectorOpenChange={onInspectorOpenChange}
-                dockExternally={dockExternally} onInspectorPopupChange={onInspectorPopupChange} />
+                dockExternally={dockExternally} onInspectorPopupChange={onInspectorPopupChange}
+                onSelectionChange={setSelectedContact} />
 
             {/* Real annotation drawing (select/marker/route/area/measure) —
                 same real viewerRef pattern as GlobePopup above. */}
