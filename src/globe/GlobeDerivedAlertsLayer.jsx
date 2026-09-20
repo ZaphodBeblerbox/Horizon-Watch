@@ -17,6 +17,7 @@
  * would be a cobweb over the geography they exist to explain.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
+import { safeDegreesArray } from "./trackPoints.js"
 import { Entity, useCesium } from "resium"
 import {
     Cartesian3, Color, CallbackProperty, HeightReference,
@@ -225,9 +226,13 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                                   : ""),
                 },
             })
-            ds.entities.add({
+            // A ground-clamped line built from an unchecked coordinate is
+            // how the whole globe stops rendering: NaN in, and Cesium
+            // throws out of extractHeights inside the render loop.
+            const threadCoords = safeDegreesArray([[f.lon, f.lat], [i.lon, i.lat]])
+            if (threadCoords) ds.entities.add({
                 polyline: {
-                    positions: Cartesian3.fromDegreesArray([f.lon, f.lat, i.lon, i.lat]),
+                    positions: Cartesian3.fromDegreesArray(threadCoords),
                     width: 1.5,
                     material: new PolylineDashMaterialProperty({ color: RED.withAlpha(0.75), dashLength: 6 }),
                     clampToGround: true,
@@ -379,11 +384,13 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                 tickBearings(f.mods.length).map((b, i) => {
                     const a = offset(f.lat, f.lon, b, TICK_OUTER_M)
                     const z = offset(f.lat, f.lon, b, TICK_INNER_M)
+                    const tick = safeDegreesArray([[a.lon, a.lat], [z.lon, z.lat]])
+                    if (!tick) return null
                     return (
                         <Entity
                             key={`${f.id}-tick-${i}`}
                             polyline={{
-                                positions: Cartesian3.fromDegreesArray([a.lon, a.lat, z.lon, z.lat]),
+                                positions: Cartesian3.fromDegreesArray(tick),
                                 width: 2, material: RED, clampToGround: true,
                                 // The ticks are drawn on the region ring, so
                                 // they vanish with it rather than hanging in

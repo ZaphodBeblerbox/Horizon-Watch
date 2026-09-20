@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react"
+import { usablePoints, vertexHeight } from "./trackPoints.js"
 import { Entity } from "resium"
 import { Cartesian3, Color, PolylineDashMaterialProperty, ColorMaterialProperty } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -94,7 +95,14 @@ export default function GlobeTrackLayer({ aisEnabled = false, adsbEnabled = fals
         <>
             {[...vesselTracks.entries()].map(([mmsi, points]) => {
                 if (points.length < 2) return null
-                const positions = Cartesian3.fromDegreesArray(points.flatMap(p => [p.lon, p.lat]))
+                // VALIDATED FIRST. fromDegreesArray does not check its
+                // input, so one null coordinate becomes a NaN cartesian
+                // and the ground clamp below then throws inside the
+                // render loop — which stops Cesium rendering the entire
+                // globe, not just this track.
+                const pts = usablePoints(points)
+                if (pts.length < 2) return null
+                const positions = Cartesian3.fromDegreesArray(pts.flatMap(p => [p.lon, p.lat]))
                 return (
                     <Entity
                         key={`track-ais-${mmsi}`}
@@ -110,8 +118,10 @@ export default function GlobeTrackLayer({ aisEnabled = false, adsbEnabled = fals
             })}
             {[...aircraftTracks.entries()].map(([icao, points]) => {
                 if (points.length < 2) return null
+                const pts = usablePoints(points)
+                if (pts.length < 2) return null
                 const positions = Cartesian3.fromDegreesArrayHeights(
-                    points.flatMap(p => [p.lon, p.lat, (isFinite(Number(p.altitude)) ? Number(p.altitude) : 0) * 0.3048]),
+                    pts.flatMap(p => [p.lon, p.lat, vertexHeight(p.altitude)]),
                 )
                 return (
                     <Entity
