@@ -601,6 +601,39 @@ class WatchZone(Base):
     sensor_preference   = Column(String, nullable=False, default="sentinel2_optical")
 
 
+class FireDetection(Base):
+    """A NASA FIRMS thermal hotspot, kept.
+
+    These used to live only in an in-memory list used for gas-flare
+    suppression, so a restart forgot every fire the system had ever seen.
+    That made three things impossible: showing fires on the map, reviewing
+    what burned last week, and — the important one — letting a fire
+    corroborate anything, because corroboration needs both observations to
+    still exist at the same moment.
+    """
+    __tablename__ = "fire_detections"
+
+    id            = Column(Integer, primary_key=True)
+    fire_id       = Column(String, unique=True, index=True, nullable=False)
+    lat           = Column(Float, nullable=False, index=True)
+    lon           = Column(Float, nullable=False, index=True)
+    # Brightness temperature in kelvin, and FIRMS' own confidence letter.
+    brightness_k  = Column(Float, nullable=True)
+    confidence    = Column(String, nullable=True)
+    frp           = Column(Float, nullable=True)     # fire radiative power, MW
+    satellite     = Column(String, nullable=True)
+    instrument    = Column(String, nullable=True)
+    source        = Column(String, nullable=True)    # VIIRS_SNPP_NRT etc
+    acquired_at   = Column(DateTime, nullable=True, index=True)
+    # Why this fire mattered, if it did: the zone it fell in and whether it
+    # triggered a scan. A fire that was seen and deliberately not acted on
+    # is a different record from one that was never seen.
+    zone_system_id = Column(String, nullable=True, index=True)
+    triggered_scan = Column(Boolean, default=False)
+    suppressed_as_repeat = Column(Boolean, default=False)
+    created_at    = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
 class SentinelScan(Base):
     __tablename__ = "sentinel_scans"
 

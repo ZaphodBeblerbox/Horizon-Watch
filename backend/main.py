@@ -11029,6 +11029,41 @@ async def _firms_trigger_pass() -> None:
         top = hits[0]
         print(f"[firms] {len(hits)} credible fire(s) in {zd['system_id']} — "
               f"strongest {top.get('frp')}MW at {top['lat']:.3f},{top['lon']:.3f}; tasking imagery")
+
+        # PERSIST THE FIRES. They used to exist only in the in-memory
+        # suppression list, so a restart forgot every fire the system had
+        # ever seen: nothing to draw on the map, nothing to review, and —
+        # the one that matters — nothing for a fire to corroborate with,
+        # because corroboration needs both observations to still exist.
+        try:
+            import hashlib as _hl
+            from database import FireDetection, get_db as _gdbf
+            with _gdbf() as _fdb:
+                for h in hits:
+                    # Stable id from what identifies the observation, so the
+                    # same hotspot re-read from the feed is not stored twice.
+                    fid = _hl.md5(
+                        f"{h['lat']:.5f}|{h['lon']:.5f}|{h.get('acq_date')}|"
+                        f"{h.get('acq_time')}|{h.get('satellite')}".encode()
+                    ).hexdigest()[:20]
+                    if _fdb.query(FireDetection).filter(
+                            FireDetection.fire_id == fid).first():
+                        continue
+                    _fdb.add(FireDetection(
+                        fire_id=fid, lat=h["lat"], lon=h["lon"],
+                        brightness_k=h.get("brightness_k"),
+                        confidence=str(h.get("confidence") or ""),
+                        frp=h.get("frp"), satellite=h.get("satellite"),
+                        instrument=h.get("instrument"),
+                        source=result.get("source"),
+                        acquired_at=_firms.fire_time(h).replace(tzinfo=None)
+                        if _firms.fire_time(h) else now,
+                        zone_system_id=zd["system_id"], triggered_scan=True,
+                    ))
+                _fdb.commit()
+        except Exception as _fe2:
+            print(f"[firms] could not persist fires for {zd['system_id']}: {_fe2}")
+
         for h in hits[:20]:
             _FIRMS_RECENT.append({"lat": h["lat"], "lon": h["lon"], "at": now})
         del _FIRMS_RECENT[:-_FIRMS_RECENT_MAX]
@@ -13677,8 +13712,14 @@ async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
 
     now = datetime.now(timezone.utc)
     time_range = {
-        "from": (now - timedelta(days=max_age_days)).strftime("%Y-%m-%dT00:00:00Z"),
-        "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+        # An EXPLICIT window when given. Change detection needs a
+        # before and an after, and "the last N days ending now" can only
+        # ever express the after — so without this the pre-event stack
+        # could not be fetched at all.
+        "from": (f"{date_from}T00:00:00Z" if date_from
+                 else (now - timedelta(days=max_age_days)).strftime("%Y-%m-%dT00:00:00Z")),
+        "to":   (f"{date_to}T23:59:59Z" if date_to
+                 else now.strftime("%Y-%m-%dT23:59:59Z")),
     }
 
     payload = {
@@ -13763,7 +13804,9 @@ function evaluatePixel(s) {
 
 
 async def _fetch_sentinel1_raw_bands_geotiff(bounds: dict, max_age_days: int = 30,
-                                              width: int | None = None, height: int | None = None) -> dict:
+                                              width: int | None = None, height: int | None = None,
+                                              date_from: str | None = None,
+                                              date_to: str | None = None) -> dict:
     """Real SAR-detection-oriented counterpart to _fetch_sentinel1_image_bytes
     — same real OAuth/Process API plumbing, but returns a real 2-band
     (VH, VV) GeoTIFF of raw digital-number amplitude (no calibration, no
@@ -13790,8 +13833,16 @@ async def _fetch_sentinel1_raw_bands_geotiff(bounds: dict, max_age_days: int = 3
 
     now = datetime.now(timezone.utc)
     time_range = {
-        "from": (now - timedelta(days=max_age_days)).strftime("%Y-%m-%dT00:00:00Z"),
-        "to":   now.strftime("%Y-%m-%dT23:59:59Z"),
+        # An EXPLICIT window when given. Change detection needs a before and
+        # an after, and "the last N days ending now" can only express the
+        # after. This parameter was added to the signature but the body edit
+        # landed on the neighbouring visual-image fetch, so date_from was
+        # ACCEPTED AND IGNORED — every frame in a stack came back
+        # byte-identical and the t-test had zero variance to work with.
+        "from": (f"{date_from}T00:00:00Z" if date_from
+                 else (now - timedelta(days=max_age_days)).strftime("%Y-%m-%dT00:00:00Z")),
+        "to":   (f"{date_to}T23:59:59Z" if date_to
+                 else now.strftime("%Y-%m-%dT23:59:59Z")),
     }
     payload = {
         "input": {
@@ -14131,6 +14182,296 @@ def gdelt_map_points(limit: int = 500):
         # weight as a human-verified GeoConfirmed placemark.
         "provenance": "machine-coded from news wire text (GDELT); "
                       "location is the city named in the article",
+    }
+
+
+_PWTT_RESULTS: dict = {}
+
+
+async def _run_pwtt_job(job_id: str, bounds: dict, pre_end: str, post_end: str,
+                        depth: int, threshold: float, direction: str,
+                        px: int) -> None:
+    """Fetch both Sentinel-1 stacks and run the change detector."""
+    import pwtt as _pwtt
+
+    total = depth * 2
+    _imagery_rt.start_progress(job_id, total, label="Sentinel-1 change detection")
+    done = {"n": 0}
+
+    def bump(*_a):
+        done["n"] += 1
+        _imagery_rt.update_progress(job_id, min(done["n"], total))
+
+    try:
+        # ASK THE CATALOGUE WHICH DATES EXIST.
+        #
+        # A guessed 6-day cadence produced zero usable frames: Sentinel-1's
+        # repeat over a given AOI does not fall on a tidy grid, and a
+        # single-day window that misses a pass returns an all-NaN raster.
+        # Every one of eight guessed dates came back 0% valid. The catalogue
+        # knows the real acquisition dates, so it is asked.
+        search = await _satellite_search_sentinel1_impl(
+            [bounds["west"], bounds["south"], bounds["east"], bounds["north"]],
+            days_back=400)
+        all_dates = sorted({(i.get("datetime") or "")[:10]
+                            for i in (search.get("items") or []) if i.get("datetime")},
+                           reverse=True)
+        if not all_dates:
+            _PWTT_RESULTS[job_id] = {
+                "status": "error",
+                "error": f"no Sentinel-1 acquisitions catalogued for this area "
+                         f"({search.get('error') or 'empty result'})"}
+            return
+
+        # Extra candidates per side, because a partial swath is rejected at
+        # fetch time and the stack still has to reach its depth.
+        want = depth * 2
+        post_dates = [d for d in all_dates if d <= post_end][:want]
+        pre_dates = [d for d in all_dates if d <= pre_end][:want]
+
+        before, pre_used, pre_fail = await _pwtt.fetch_stack(
+            _fetch_sentinel1_raw_bands_geotiff, bounds, pre_dates,
+            width=px, height=px, on_progress=bump, stop_at=depth)
+        after, post_used, post_fail = await _pwtt.fetch_stack(
+            _fetch_sentinel1_raw_bands_geotiff, bounds, post_dates,
+            width=px, height=px, on_progress=bump, stop_at=depth)
+
+        if before is None or after is None:
+            _PWTT_RESULTS[job_id] = {
+                "status": "error",
+                "error": "no Sentinel-1 acquisitions could be fetched for one "
+                         "or both windows",
+                "failures": {"before": pre_fail, "after": post_fail},
+            }
+            return
+
+        # Both stacks must cover the same ground before they can be compared.
+        h = min(before.shape[1], after.shape[1])
+        w = min(before.shape[2], after.shape[2])
+        before, after = before[:, :h, :w], after[:, :h, :w]
+
+        out = await _imagery_rt.run_cpu(
+            _pwtt.detect_change, before, after, bounds,
+            threshold=threshold, direction=direction,
+            label=f"pwtt:{job_id[:8]}", timeout=1800)
+
+        lat_mid = (bounds["north"] + bounds["south"]) / 2
+        width_m = (bounds["east"] - bounds["west"]) * 111320 * math.cos(math.radians(lat_mid))
+        out.update({
+            "status": "completed", "job_id": job_id, "bounds": bounds,
+            "dates_before": pre_used, "dates_after": post_used,
+            "failures": {"before": pre_fail, "after": post_fail},
+            "m_per_px": round(width_m / max(1, w), 1),
+        })
+        _PWTT_RESULTS[job_id] = out
+    except _pwtt.NotEnoughData as e:
+        # Not a crash. The honest answer when the archive is thin.
+        _PWTT_RESULTS[job_id] = {"status": "error", "error": str(e),
+                                 "recoverable": True}
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[pwtt] job {job_id} failed: {type(e).__name__}: {e}")
+        _PWTT_RESULTS[job_id] = {"status": "error",
+                                 "error": f"{type(e).__name__}: {e}"}
+    finally:
+        _imagery_rt.finish_progress(job_id)
+        for k in list(_PWTT_RESULTS)[:-10]:
+            _PWTT_RESULTS.pop(k, None)
+
+
+@app.post("/api/imagery/change-detect")
+async def imagery_change_detect(request: Request):
+    """Sentinel-1 amplitude change detection between two time windows.
+
+    The only route on free imagery to damaged and new infrastructure:
+    neither is a visual property of an object, so no detector can find them
+    — both are properties of a difference.
+
+    A background job, because it is one Sentinel Hub request per acquisition
+    per side (default 12 requests) and a held-open request would be killed
+    by a platform proxy long before it finished.
+    """
+    body = await request.json()
+    bounds = body.get("bounds") or {}
+    if not all(k in bounds for k in ("north", "south", "east", "west")):
+        return JSONResponse({"error": "bounds {north,south,east,west} required"},
+                            status_code=400)
+
+    import datetime as _dtp
+    # Depth is the quota dial: each acquisition is one API request, so a
+    # depth of 6 costs 12 requests. Floored at 3 because below that there is
+    # no variance and the t-test is meaningless.
+    depth = max(3, min(int(body.get("depth", 6)), 12))
+    post_end = body.get("post_end") or _dtp.date.today().isoformat()
+    # The pre-window defaults to ending 90 days back — far enough that a
+    # change inside the post-window is not also present in the baseline,
+    # which would cancel itself out.
+    gap = max(depth * 6 + 14, int(body.get("gap_days", 90)))
+    pre_end = body.get("pre_end") or (
+        _dtp.date.fromisoformat(post_end) - _dtp.timedelta(days=gap)).isoformat()
+
+    threshold = float(body.get("threshold", 1.63))
+    direction = body.get("direction", "both")
+    if direction not in ("both", "increase", "decrease"):
+        return JSONResponse({"error": "direction must be both, increase or decrease"},
+                            status_code=400)
+    px = max(64, min(int(body.get("px", 512)), 1024))
+
+    if body.get("estimate_only"):
+        return {"estimate_only": True, "api_requests": depth * 2,
+                "depth": depth, "pre_end": pre_end, "post_end": post_end,
+                "describe": (f"{depth} acquisitions each side — {depth * 2} Sentinel Hub "
+                             f"requests — comparing the {depth * 6} days before {post_end} "
+                             f"against the same span before {pre_end}")}
+
+    job_id = f"chg-{uuid.uuid4().hex[:12]}"
+    asyncio.create_task(_run_pwtt_job(job_id, bounds, pre_end, post_end,
+                                      depth, threshold, direction, px))
+    return {"job_id": job_id, "status": "running",
+            "api_requests": depth * 2,
+            "pre_end": pre_end, "post_end": post_end,
+            "note": "poll /api/imagery/change-detect/{job_id}"}
+
+
+@app.get("/api/imagery/change-detect/{job_id}")
+def imagery_change_detect_result(job_id: str):
+    out = _PWTT_RESULTS.get(job_id)
+    if out is None:
+        p = _imagery_rt.progress(job_id)
+        if p and not p.get("finished"):
+            return {"status": "running", "job_id": job_id,
+                    "done": p.get("done"), "total": p.get("total"),
+                    "elapsed_s": p.get("elapsed_s"), "eta_s": p.get("eta_s")}
+        return JSONResponse({"status": "unknown", "error": "no such job"},
+                            status_code=404)
+    return out
+
+
+def _gather_observations(hours: int = 72, bbox: list | None = None) -> list[dict]:
+    """Every geolocated observation this system holds, in one shape.
+
+    Deliberately reads the SAME stores the map and the inbox read, rather
+    than a parallel copy. A correlator fed from its own snapshot would
+    eventually disagree with the screen about what exists, and the whole
+    value here is that it is looking at the same world the analyst is.
+    """
+    import datetime as _dtc
+
+    out: list[dict] = []
+    since = _dtc.datetime.now(_dtc.timezone.utc) - _dtc.timedelta(hours=hours)
+
+    def in_box(lat, lon):
+        if not bbox:
+            return True
+        w, s_, e, n = bbox
+        return s_ <= lat <= n and w <= lon <= e
+
+    # GeoConfirmed — human-verified, exact.
+    try:
+        from database import GeoConfirmedPlacemark, get_db as _g
+        with _g() as db:
+            rows = (db.query(GeoConfirmedPlacemark)
+                      .filter(GeoConfirmedPlacemark.date >= since.replace(tzinfo=None))
+                      .limit(4000).all())
+        for r in rows:
+            if r.latitude is None or r.longitude is None:
+                continue
+            if not in_box(r.latitude, r.longitude):
+                continue
+            out.append({"source": "geoconfirmed", "lat": r.latitude, "lon": r.longitude,
+                        "ts": r.date, "label": (r.name or "")[:120],
+                        "url": r.original_source})
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[corroborate] geoconfirmed unavailable: {e}")
+
+    # GDELT — machine-coded, city-level, drawable subset only.
+    try:
+        import gdelt_events as _g2
+        for p in _g2.map_points(_g2.EVENTS_CACHE.get("events", []) or []):
+            if in_box(p["lat"], p["lon"]):
+                out.append({"source": "gdelt", "lat": p["lat"], "lon": p["lon"],
+                            "ts": p.get("date"), "label": p.get("title"),
+                            "url": p.get("source_url")})
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[corroborate] gdelt unavailable: {e}")
+
+    # Imagery detections — what a model saw in a real picture.
+    try:
+        from database import SentinelDetection, SentinelScan, get_db as _g3
+        with _g3() as db:
+            rows = (db.query(SentinelDetection, SentinelScan)
+                      .join(SentinelScan, SentinelScan.scan_id == SentinelDetection.scan_id)
+                      .filter(SentinelScan.created_at >= since.replace(tzinfo=None))
+                      .limit(4000).all())
+        for d, sc in rows:
+            if not in_box(d.centroid_lat, d.centroid_lon):
+                continue
+            out.append({"source": "sar_vessel" if d.instrument == "SAR" else "imagery",
+                        "lat": d.centroid_lat, "lon": d.centroid_lon,
+                        "ts": sc.image_timestamp_utc or sc.created_at,
+                        "label": d.object_type})
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[corroborate] imagery detections unavailable: {e}")
+
+    # FIRMS — thermal, precise, but only ever "hot". Read from the table,
+    # not the in-memory suppression list, so fires survive a restart and can
+    # still corroborate something days later.
+    try:
+        from database import FireDetection, get_db as _g4
+        with _g4() as db:
+            rows = (db.query(FireDetection)
+                      .filter(FireDetection.acquired_at >= since.replace(tzinfo=None))
+                      .limit(4000).all())
+        for f in rows:
+            if in_box(f.lat, f.lon):
+                out.append({"source": "firms", "lat": f.lat, "lon": f.lon,
+                            "ts": f.acquired_at,
+                            "label": f"thermal hotspot {f.brightness_k:.0f}K"
+                                     if f.brightness_k else "thermal hotspot"})
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[corroborate] firms unavailable: {e}")
+
+    return out
+
+
+@app.get("/api/corroborate")
+def api_corroborate(hours: int = 72, radius_km: float = 5.0,
+                    window_hours: float = 36.0, min_modalities: int = 2,
+                    bbox: str | None = None):
+    """Places where more than one kind of source agrees something happened.
+
+    This is the answer to sparsity that does not require a new feed: every
+    source here is individually inadequate in a DIFFERENT way, so their
+    agreement is worth far more than any of them alone. They have all been
+    running for months and have never been compared.
+    """
+    import corroborate as _co
+
+    box = None
+    if bbox:
+        try:
+            box = [float(v) for v in bbox.split(",")]
+            if len(box) != 4:
+                raise ValueError
+        except Exception:
+            return JSONResponse({"error": "bbox must be west,south,east,north"},
+                                status_code=400)
+
+    obs = _gather_observations(hours=hours, bbox=box)
+    clusters = _co.cluster(obs, radius_km=radius_km, window_hours=window_hours)
+    good = _co.corroborated_only(clusters, min_modalities=min_modalities)
+
+    from collections import Counter
+    return {
+        "corroborated": good,
+        "count": len(good),
+        "observations_considered": len(obs),
+        "clusters_total": len(clusters),
+        "by_source": dict(Counter(o["source"] for o in obs)),
+        "window": {"hours": hours, "radius_km": radius_km,
+                   "coincidence_window_hours": window_hours},
+        "note": ("a cluster is a reason to look, not a finding — it says "
+                 "several sources place something at one point in space and "
+                 "time, and names them"),
     }
 
 
