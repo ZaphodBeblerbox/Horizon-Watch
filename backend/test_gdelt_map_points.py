@@ -21,6 +21,10 @@ TITLE = "At least 48 people died in clashes in southern Yemen"
 def ev(**kw):
     base = {
         "id": "1", "pinnable": True, "source_url": ARTICLE, "headline": TITLE,
+        # The headline came from the article, not from this module's CAMEO
+        # fallback. A generated sentence is readable and must still not be
+        # drawn — see test_gdelt_pinnable.py.
+        "headline_is_article": True,
         "lat": 13.0567, "lon": 44.8819, "location": "Lahij, Yemen",
         "event_type": "Fight", "event_root_code": "19", "goldstein": -10.0,
         "avg_tone": -7.3, "mentions": 5, "actor1": "MILITANT", "actor2": "GOVERNMENT",

@@ -60,7 +60,20 @@ KINETIC_ROOT_CODES: frozenset[str] = frozenset({"14", "15", "17", "18", "19", "2
 VERBAL_ROOT_CODES: frozenset[str] = frozenset({"10", "11", "12", "13", "16"})
 
 RELEVANT_ROOT_CODES: frozenset[str] = KINETIC_ROOT_CODES | VERBAL_ROOT_CODES
-GDELT_MIN_SOURCES   = 2        # must appear in at least 2 source documents
+# NumSources CANNOT BE USED AS A CORROBORATION TEST IN THIS FEED, and the
+# cost of assuming otherwise was that the map layer never drew a single
+# pin. Measured against the live 15-minute export: NumSources is 1 for
+# 66 of 66 kinetic rows, because each row is emitted from one source
+# document — the field is structurally constant here, not a signal that
+# happens to be low. Requiring 2 therefore rejected 100% of kinetic
+# events, silently and permanently. The same mistake was found and fixed
+# on the verbal path earlier and left standing on this one.
+#
+# NumMentions is the field that actually varies (1 to 10+ in the same
+# file) and it is what corroboration is read from on both paths now.
+# Kept env-overridable and defaulted to 1 so it is inert rather than
+# removed, because an operator may still want it on a fuller archive.
+GDELT_MIN_SOURCES   = int(os.getenv("GDELT_MIN_SOURCES", "1"))
 # Speech is cheap, so a statement needs corroboration — but it has to be
 # measured with the field that actually carries it. NumSources counts
 # distinct documents WITHIN one 15-minute file and is 1 for roughly 87% of
@@ -70,7 +83,11 @@ GDELT_MIN_SOURCES   = 2        # must appear in at least 2 source documents
 # that is what corroboration means here.
 GDELT_VERBAL_MIN_SOURCES = int(os.getenv("GDELT_VERBAL_MIN_SOURCES", "1"))
 GDELT_VERBAL_MIN_MENTIONS = int(os.getenv("GDELT_VERBAL_MIN_MENTIONS", "3"))
-GDELT_MIN_MENTIONS  = 1        # at least 1 mention
+# The corroboration bar for kinetic events. Three mentions of one coded
+# event is the difference between a story being carried and a single wire
+# item; measured on the live file it keeps 30 of 66 kinetic rows, 21 of
+# which are drawable as pins.
+GDELT_MIN_MENTIONS  = int(os.getenv("GDELT_MIN_MENTIONS", "3"))
 GDELT_GOLDSTEIN_NEG = -3.0     # conflictual threshold (below = relevant)
 GDELT_GOLDSTEIN_POS = 7.0      # high-cooperation threshold (above = relevant)
 
@@ -541,6 +558,14 @@ def _normalize_row(row: list[str], source_url: str, row_index: int) -> dict[str,
     fallback = _readable_fallback(base_event)
     base_event["summary"]  = fallback
     base_event["headline"] = fallback   # overwritten by enrichment if fetch succeeds
+    # Whether the headline is the ARTICLE'S OWN TITLE or a sentence this
+    # module generated from CAMEO codes. Length cannot tell them apart —
+    # "Armed clashes reported involving Police and Cartel in Sydney" is
+    # generated, reads like a headline and clears every readability test,
+    # which is precisely how a map fills with pins that assert something
+    # happened without any journalist having said so. Tracked as a fact
+    # rather than guessed at.
+    base_event["headline_is_article"] = False
 
     return {
         # Normalized frontend-facing fields
@@ -696,6 +721,12 @@ def map_point(ev: dict) -> dict | None:
     if not ev.get("pinnable"):
         return None
     if not is_article_url(ev.get("source_url")):
+        return None
+    # A pin must quote a journalist, not this module. An event whose
+    # headline fetch failed still has a perfectly readable generated
+    # sentence, and drawing it would put a machine's paraphrase on the map
+    # in the voice of a news report.
+    if not ev.get("headline_is_article"):
         return None
     title = (ev.get("headline") or "").strip()
     if not has_readable_title(title):
@@ -946,6 +977,7 @@ async def _enrich_with_headlines(events: list[dict[str, Any]]) -> None:
                     for ev in evs:
                         ev["summary"]  = cached
                         ev["headline"] = cached
+                        ev["headline_is_article"] = True
             else:
                 urls_needed.append(url)
 
@@ -970,6 +1002,7 @@ async def _enrich_with_headlines(events: list[dict[str, Any]]) -> None:
                 for ev in url_to_events.get(url, []):
                     ev["summary"]  = headline
                     ev["headline"] = headline
+                    ev["headline_is_article"] = True
 
     total = len(urls_needed)
     print(f"[gdelt] headline enrichment: fetched {fetched}/{total} new URLs "
