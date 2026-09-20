@@ -3,7 +3,7 @@ import { Entity } from "resium"
 import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getNewsMarkerDataUri, NEWS_MARKER_SIZE } from "./entityIcons.js"
+import { getNewsMarkerDataUri, NEWS_MARKER_SIZE, MARKER_MAX_CAMERA_M } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, EVENTS_CAP } from "./isMobile.js"
 
@@ -154,8 +154,8 @@ export default function GlobeEventsLayer({
 
                 // Tier 2 events hidden below 200km camera altitude (reduces clutter at street level)
                 const ddc = numTier >= 2
-                    ? new DistanceDisplayCondition(200_000, 15_000_000)
-                    : new DistanceDisplayCondition(0, 15_000_000)
+                    ? new DistanceDisplayCondition(200_000, MARKER_MAX_CAMERA_M)
+                    : new DistanceDisplayCondition(0, MARKER_MAX_CAMERA_M)
 
                 return (
                     <Entity

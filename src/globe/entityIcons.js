@@ -223,6 +223,23 @@ export function getEntityMarkerDataUri(opts = {}) {
 // at MARKER_SUPERSAMPLE and lets the GPU downsample — a mark built at
 // exactly its billboard size is half the pixels a HiDPI screen wants, and
 // that is what "low res" looked like.
+/**
+ * How far the camera may be and still see a point marker.
+ *
+ * THE OLD CEILING WAS BELOW THE APP'S OWN DEFAULT VIEW. Every finding
+ * layer used 15,000km, and the World preset in the region bar puts the
+ * camera at 18,000km — so opening the app at its default zoom and turning
+ * a layer on drew absolutely nothing, with no error and a healthy fetch
+ * behind it. Measured by diffing two frames with GDELT off and on at
+ * World: zero pixels changed, with 23 points loaded.
+ *
+ * Set beyond any Earth view this app can produce, so "zoom out" can never
+ * silently empty the map again. Deliberately NOT applied to AIS, where
+ * thousands of vessels at world zoom is a real clutter and performance
+ * problem rather than a bug.
+ */
+export const MARKER_MAX_CAMERA_M = 60_000_000
+
 export const MARK_SIZE = {
     geoconfirmed: 20,
     detection: 18,

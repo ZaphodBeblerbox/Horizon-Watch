@@ -22,7 +22,7 @@ import { Entity } from "resium"
 import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
+import { getShapeMarkerDataUri, MARK_SIZE, MARKER_MAX_CAMERA_M } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
 const MARKER_SIZE = MARK_SIZE.gdelt
@@ -129,7 +129,7 @@ export default function GlobeGdeltLayer({ enabled = false, limit = 500 }) {
                             width: MARKER_SIZE,
                             height: MARKER_SIZE,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, MARKER_MAX_CAMERA_M),
                             eyeOffset: new Cartesian3(0, 0, -50),
                         }}
                     />
