@@ -10979,6 +10979,14 @@ async def _sentinel_zone_scheduler_loop():
             except Exception as _ce2:
                 print(f"[corroborate] trigger pass failed: {_ce2}")
 
+            # ── Radar change, on its own slow cadence. An optical scan says
+            # what is there; only a comparison says what is DIFFERENT, which
+            # is the question a standing watch exists to ask.
+            try:
+                await _change_detect_pass()
+            except Exception as _che:
+                print(f"[change] scheduled pass failed: {_che}")
+
         except Exception as _sched_e:
             print(f"[sentinel-scheduler] loop error: {_sched_e}")
             await _asyncio_sched.sleep(60)
@@ -10996,6 +11004,70 @@ _CORROBORATION_ACTED: list[dict] = []
 _CORROBORATION_ACTED_MAX = 300
 CORROBORATION_SUPPRESS_HOURS = 48
 CORROBORATION_SUPPRESS_KM = 3.0
+
+
+# When each zone last had a radar change pass run over it. Change detection
+# costs 12-18 Sentinel Hub requests, so it runs on its own slow cadence
+# rather than alongside every scheduled optical scan.
+_CHANGE_LAST_RUN: dict = {}
+CHANGE_INTERVAL_DAYS = float(os.getenv("CHANGE_DETECT_INTERVAL_DAYS", "7"))
+CHANGE_MAX_ZONES_PER_PASS = int(os.getenv("CHANGE_DETECT_MAX_ZONES", "2"))
+
+
+async def _change_detect_pass() -> None:
+    """Run radar change detection over watch zones, slowly.
+
+    THIS IS THE "EYES ON THE EARTH" BEHAVIOUR. An optical scan answers what
+    is there now; only a comparison answers what is DIFFERENT, and that is
+    the question a standing watch exists to ask. Until now it ran only when
+    someone pressed a button, which makes it a tool rather than a watch.
+
+    Deliberately slow and capped. Each pass is roughly a dozen Sentinel Hub
+    requests per zone, and structural change is not an hourly phenomenon —
+    a building does not appear between two passes of a satellite. Weekly per
+    zone, at most two zones per tick, so a large watch list degrades into a
+    longer rotation rather than a quota exhaustion.
+    """
+    import datetime as _dtc2
+
+    from database import WatchZone, get_db as _gdbch
+
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return
+
+    now = _dtc2.datetime.now(_dtc2.timezone.utc)
+    with _gdbch() as _db:
+        zones = _db.query(WatchZone).filter(WatchZone.enabled == True).all()  # noqa: E712
+        zone_data = [{
+            "id": z.id, "system_id": z.system_id, "name": z.name,
+            "west": z.bbox_min_lon, "south": z.bbox_min_lat,
+            "east": z.bbox_max_lon, "north": z.bbox_max_lat,
+        } for z in zones
+            if None not in (z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat)]
+
+    due = []
+    for zd in zone_data:
+        last = _CHANGE_LAST_RUN.get(zd["system_id"])
+        if last is None or (now - last).total_seconds() >= CHANGE_INTERVAL_DAYS * 86400:
+            due.append(zd)
+    if not due:
+        return
+
+    # Oldest first, so a long watch list rotates fairly instead of always
+    # servicing whichever zone happens to sort first.
+    due.sort(key=lambda z: _CHANGE_LAST_RUN.get(z["system_id"], _dtc2.datetime.min.replace(tzinfo=_dtc2.timezone.utc)))
+
+    for zd in due[:CHANGE_MAX_ZONES_PER_PASS]:
+        _CHANGE_LAST_RUN[zd["system_id"]] = now
+        bounds = {"west": zd["west"], "south": zd["south"],
+                  "east": zd["east"], "north": zd["north"]}
+        post_end = now.date().isoformat()
+        pre_end = (now.date() - _dtc2.timedelta(days=90)).isoformat()
+        job_id = f"chg-auto-{uuid.uuid4().hex[:8]}"
+        print(f"[change] scheduled radar change pass over {zd['system_id']} "
+              f"({pre_end} → {post_end})")
+        asyncio.create_task(_run_pwtt_job(
+            job_id, bounds, pre_end, post_end, 5, 1.63, "both", 448, zd["id"]))
 
 
 async def _corroboration_trigger_pass() -> None:
