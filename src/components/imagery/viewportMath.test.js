@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
     zoomAbout, clampPan, clampScale, focusOnBox, scaleToFit, arrowFor,
-    IDENTITY, MIN_SCALE, MAX_SCALE,
+    IDENTITY, MIN_SCALE, MAX_SCALE, containRect, boxToFrame,
 } from "./viewportMath.js"
 
 const FRAME = 1000
@@ -149,5 +149,82 @@ describe("the arrow that points at a detection", () => {
         const cx = 0.45, cy = 0.45
         const dist = Math.hypot(a.head.x - cx, a.head.y - cy)
         expect(dist).toBeGreaterThan(0)
+    })
+})
+
+// ── where the image actually is inside the pane ───────────────────────────
+//
+// The reported bug: "the detections aren't aligned with the image". The
+// cause was that the image is drawn with objectFit:contain — which centres
+// it and leaves bars when its aspect ratio differs from the pane — while
+// the overlay mapped box fractions to the PANE. Every box was then off by
+// the width of a bar, and wrongly scaled on top of that.
+
+describe("containRect", () => {
+    it("fills the frame exactly when the aspect ratios match", () => {
+        const r = containRect({ w: 800, h: 600 }, { w: 400, h: 300 })
+        expect(r).toEqual({ imgX: 0, imgY: 0, imgW: 400, imgH: 300 })
+    })
+
+    it("bars a portrait scene left and right in a landscape pane", () => {
+        // 1000x2000 into 800x800 → 400x800, centred: 200px bars either side.
+        const r = containRect({ w: 1000, h: 2000 }, { w: 800, h: 800 })
+        expect(r).toEqual({ imgX: 200, imgY: 0, imgW: 400, imgH: 800 })
+    })
+
+    it("bars a landscape scene top and bottom in a portrait pane", () => {
+        const r = containRect({ w: 2000, h: 1000 }, { w: 800, h: 800 })
+        expect(r).toEqual({ imgX: 0, imgY: 200, imgW: 800, imgH: 400 })
+    })
+
+    it("a centred box stays centred, which the frame mapping also got right", () => {
+        // The bug is invisible at the centre — which is why it survived.
+        const { imgX, imgW } = containRect({ w: 1000, h: 2000 }, { w: 800, h: 800 })
+        expect(imgX + 0.5 * imgW).toBe(400)
+    })
+
+    it("an object at the image's left edge is not at the pane's left edge", () => {
+        // The regression this exists to catch. Mapping fraction 0 to the
+        // frame puts the box 200px left of the object it describes.
+        const { imgX } = containRect({ w: 1000, h: 2000 }, { w: 800, h: 800 })
+        expect(imgX).toBeGreaterThan(0)
+    })
+
+    it("falls back to the whole frame before the image reports its size", () => {
+        // onLoad has not fired yet. The frame is the only guess available,
+        // and it must not produce NaN geometry.
+        expect(containRect({ w: 0, h: 0 }, { w: 800, h: 600 }))
+            .toEqual({ imgX: 0, imgY: 0, imgW: 800, imgH: 600 })
+    })
+
+    it("survives a frame of zero size during layout", () => {
+        const r = containRect({ w: 1000, h: 1000 }, { w: 0, h: 0 })
+        expect(Object.values(r).every(Number.isFinite)).toBe(true)
+    })
+})
+
+describe("boxToFrame", () => {
+    it("is the identity when the image fills the frame", () => {
+        const rect = containRect({ w: 800, h: 600 }, { w: 400, h: 300 })
+        const b = { x: 0.25, y: 0.5, w: 0.1, h: 0.2 }
+        const f = boxToFrame(b, rect, 400, 300)
+        expect([f.x, f.y, f.w, f.h]).toEqual([0.25, 0.5, 0.1, 0.2])
+    })
+
+    it("shrinks a box by the letterbox ratio, so focus zooms correctly", () => {
+        // 1000x2000 in an 800x800 pane: the image is half the pane wide, so
+        // a box spanning a tenth of the image spans a twentieth of the pane.
+        // Zooming as if it were a tenth lands at half the intended scale.
+        const rect = containRect({ w: 1000, h: 2000 }, { w: 800, h: 800 })
+        const f = boxToFrame({ x: 0, y: 0, w: 0.1, h: 0.1 }, rect, 800, 800)
+        expect(f.w).toBeCloseTo(0.05)
+        expect(f.h).toBeCloseTo(0.1)
+        expect(f.x).toBeCloseTo(0.25)   // the 200px bar, as a fraction
+    })
+
+    it("leaves the box alone when the image size is not known yet", () => {
+        const b = { x: 0.3, y: 0.3, w: 0.1, h: 0.1 }
+        expect(boxToFrame(b, { imgX: 0, imgY: 0, imgW: 0, imgH: 0 }, 800, 800)).toBe(b)
+        expect(boxToFrame(b, null, 800, 800)).toBe(b)
     })
 })

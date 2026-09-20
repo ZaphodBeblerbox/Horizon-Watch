@@ -132,14 +132,17 @@ export function EmptyFrame({ reason = "retired", detections = null }) {
  * 15px slab over the imagery.
  */
 export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrowLabel }) {
-    const { scale, tx, ty, frameW, frameH } = useViewerView()
+    const { scale, tx, ty, frameW, frameH, imgX, imgY, imgW, imgH } = useViewerView()
     if (!frameW || !frameH) return null
 
+    // Boxes are fractions OF THE IMAGE, and objectFit:contain letterboxes
+    // the image inside the pane. Mapping them to the pane put every box off
+    // its object by the width of the bars.
     const toScreen = (b) => ({
-        x: tx + scale * b[0] * frameW,
-        y: ty + scale * b[1] * frameH,
-        w: scale * b[2] * frameW,
-        h: scale * b[3] * frameH,
+        x: tx + scale * (imgX + b[0] * imgW),
+        y: ty + scale * (imgY + b[1] * imgH),
+        w: scale * b[2] * imgW,
+        h: scale * b[3] * imgH,
     })
     const strokeFor = (c) => (c.type === "new" ? "var(--sev-high)"
         : c.type === "removed" ? "var(--sev-critical)" : "var(--acc-hi)")

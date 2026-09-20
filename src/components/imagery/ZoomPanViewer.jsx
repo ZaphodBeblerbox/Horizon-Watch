@@ -1,5 +1,8 @@
 import { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef, createContext, useContext } from "react"
-import { zoomAbout, clampPan, focusOnBox, scaleToFit, arrowFor, IDENTITY, MIN_SCALE } from "./viewportMath.js"
+import {
+    zoomAbout, clampPan, focusOnBox, scaleToFit, arrowFor, IDENTITY, MIN_SCALE,
+    containRect, boxToFrame,
+} from "./viewportMath.js"
 
 /**
  * ZoomPanViewer — inspect a scene at full resolution.
@@ -44,8 +47,12 @@ export const useViewerScale = () => useContext(ViewerScaleContext)
  * an untransformed layer and positioned from this view instead: a point at
  * image fraction `x` sits at `tx + scale * x * frameW`.
  */
-export const ViewerViewContext = createContext({ scale: 1, tx: 0, ty: 0, frameW: 0, frameH: 0 })
+export const ViewerViewContext = createContext({
+    scale: 1, tx: 0, ty: 0, frameW: 0, frameH: 0,
+    imgX: 0, imgY: 0, imgW: 0, imgH: 0,
+})
 export const useViewerView = () => useContext(ViewerViewContext)
+
 
 const ZoomPanViewer = forwardRef(function ZoomPanViewer(
     { src, alt = "scene", children, overlay = null, onBackgroundClick,
@@ -61,6 +68,11 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
     const frameRef = useRef(null)
     const [ownView, setOwnView] = useState(IDENTITY)
     const [frame, setFrame] = useState({ w: 0, h: 0 })
+    // The image's own pixel dimensions. Needed because objectFit:contain
+    // LETTERBOXES a scene whose aspect ratio differs from the pane, and an
+    // overlay mapped to the pane instead of to the image sits off its
+    // objects by the width of the bars.
+    const [natural, setNatural] = useState({ w: 0, h: 0 })
 
     const isControlled = controlledView != null && typeof onViewChange === "function"
     const view = isControlled ? controlledView : ownView
@@ -100,10 +112,15 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
         focus(box, { fraction = 0.3 } = {}) {
             if (!box) return
             const { w, h } = frameSize()
-            setView(focusOnBox(box, w, h, scaleToFit(box, fraction)))
+            // In FRAME fractions. The box arrives as a fraction of the
+            // image, and objectFit:contain letterboxes the image inside
+            // the frame — centring on the raw fraction lands beside the
+            // object and zooms by the wrong factor.
+            const b = boxToFrame(box, containRect(natural, { w, h }), w, h)
+            setView(focusOnBox(b, w, h, scaleToFit(b, fraction)))
         },
         get scale() { return view.scale },
-    }), [reset, view.scale])
+    }), [reset, view.scale, natural])
 
     // Wheel zoom. Registered non-passively because preventDefault on a
     // passive listener is ignored, and without it the page scrolls behind
@@ -195,6 +212,10 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
                 }}>
                     {src
                         ? <img src={src} alt={alt} draggable={false}
+                               onLoad={(e) => setNatural({
+                                   w: e.currentTarget.naturalWidth,
+                                   h: e.currentTarget.naturalHeight,
+                               })}
                                style={{ display: "block", width: "100%", height: "100%", objectFit: "contain" }} />
                         : null}
                     <ViewerScaleContext.Provider value={view.scale}>
@@ -207,7 +228,8 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
                 {overlay ? (
                     <ViewerViewContext.Provider
                         value={{ scale: view.scale, tx: view.tx, ty: view.ty,
-                                 frameW: frame.w, frameH: frame.h }}>
+                                 frameW: frame.w, frameH: frame.h,
+                                 ...containRect(natural, frame) }}>
                         <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                             {overlay}
                         </div>

@@ -124,3 +124,56 @@ export const boxToPct = (box) => ({
     left: `${box.x * 100}%`, top: `${box.y * 100}%`,
     width: `${box.w * 100}%`, height: `${box.h * 100}%`,
 })
+
+/**
+ * Where the image actually sits inside the frame.
+ *
+ * objectFit:contain preserves aspect ratio, so a portrait scene in a
+ * landscape pane is drawn with bars either side. An overlay positioned
+ * against the FRAME then sits off every object by the width of those bars
+ * — which is exactly what "the detections aren't aligned with the image"
+ * looks like. Detection boxes are fractions OF THE IMAGE, so they must be
+ * mapped to the image rectangle, not to the pane that contains it.
+ *
+ * Falls back to the whole frame before the image has loaded and reported
+ * its natural size, which is the only case where the two coincide.
+ */
+export function containRect(natural, frame) {
+    const fw = frame?.w || 0
+    const fh = frame?.h || 0
+    const nw = natural?.w || 0
+    const nh = natural?.h || 0
+    if (!fw || !fh || !nw || !nh) {
+        return { imgX: 0, imgY: 0, imgW: fw, imgH: fh }
+    }
+    const scale = Math.min(fw / nw, fh / nh)
+    const w = nw * scale
+    const h = nh * scale
+    return { imgX: (fw - w) / 2, imgY: (fh - h) / 2, imgW: w, imgH: h }
+}
+
+/**
+ * An image-fraction box restated as a frame-fraction box.
+ *
+ * Detection boxes are fractions of the IMAGE. Everything that positions
+ * against the viewport — focusOnBox, scaleToFit, arrowFor — works in
+ * fractions of the FRAME. Those are the same number only when the image
+ * fills the frame exactly, and objectFit:contain guarantees it usually
+ * does not: a portrait scene in a landscape pane is letterboxed, so a box
+ * covering a tenth of the image covers a twentieth of the pane.
+ *
+ * Converting once here means the focus zoom, the centring and the arrow
+ * are all corrected by the single change, rather than each growing its
+ * own copy of the letterbox arithmetic.
+ */
+export function boxToFrame(box, rect, frameW, frameH) {
+    if (!box) return box
+    if (!rect || !frameW || !frameH || !rect.imgW || !rect.imgH) return box
+    return {
+        ...box,
+        x: (rect.imgX + box.x * rect.imgW) / frameW,
+        y: (rect.imgY + box.y * rect.imgH) / frameH,
+        w: (box.w * rect.imgW) / frameW,
+        h: (box.h * rect.imgH) / frameH,
+    }
+}
