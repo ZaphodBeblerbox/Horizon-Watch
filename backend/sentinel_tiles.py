@@ -59,6 +59,48 @@ def m_per_deg_lon(lat: float) -> float:
     return M_PER_DEG_LAT * max(0.01, math.cos(math.radians(lat)))
 
 
+# Measured per 2048px tile; see TilePlan.estimated_seconds.
+FETCH_DECODE_S = 3.3
+# One 1024px inference pass. Measured: a 2048px tile at 1x detect zoom
+# needs 3x3=9 of them and took 1.25s.
+INFERENCE_PASS_S = 1.25 / 9
+MODEL_INPUT_PX = 1024
+
+
+def inference_passes(tile_px: int, zoom: int) -> int:
+    """How many model passes one tile costs at a given detect zoom.
+
+    NOT the zoom squared, which is the tempting shortcut and wrong by
+    nearly a factor of two. The overlap is a fixed fraction of the window,
+    so shrinking the window shrinks the stride with it: a 2048px tile
+    needs 3x3=9 passes at 1x and 7x7=49 at 3x — 5.4x, not 9x. Mirrors
+    _tile_starts in main.py exactly, because an estimate derived from a
+    different rule than the work is a guess wearing a decimal point.
+    """
+    window = max(128, MODEL_INPUT_PX // max(1, zoom))
+    overlap = max(24, int(window * 0.10))
+    stride = window - overlap
+    if tile_px <= window:
+        n = 1
+    else:
+        starts = list(range(0, tile_px - window, stride))
+        if starts[-1] + window < tile_px:
+            starts.append(tile_px - window)
+        n = len(starts)
+    return n * n
+
+
+def detect_seconds_per_tile(tile_px: int = None) -> float:
+    """Detection cost for one tile at the configured detect zoom.
+
+    Reads the same environment dial _run_inference_on_image does, so the
+    two cannot drift into quoting different scans.
+    """
+    import os
+    zoom = max(1, min(int(os.getenv("IMAGERY_DETECT_ZOOM", "3")), 4))
+    return inference_passes(tile_px or TILE_PX, zoom) * INFERENCE_PASS_S
+
+
 @dataclass
 class Tile:
     """One fetchable sub-area of an AOI, at native resolution."""
@@ -112,13 +154,22 @@ class TilePlan:
     def estimated_seconds(self) -> float:
         """Rough wall-clock, for a progress bar's initial estimate.
 
-        Calibrated from a real run: one 1207x1336 tile over Khor Fakkan took
-        4.0s end to end including fetch, decode and detection. Tiles are
-        serialised through the single imagery worker, so cost is linear in
-        tile count rather than parallel. Deliberately an over-estimate:
-        a bar that finishes early is better than one that stalls at 99%.
+        Tiles are serialised through the single imagery worker, so cost is
+        linear in tile count rather than parallel. Deliberately an
+        over-estimate: a bar that finishes early is better than one that
+        stalls at 99%.
+
+        MEASURED, on one 2048px tile, same machine, same weights:
+            fetch + decode        ~3.3s   (unchanged by detect zoom)
+            detection at 1x        1.25s
+            detection at 3x        6.48s
+
+        Detection cost is quadratic in the detect zoom, because the window
+        shrinks in both axes: 3x means 7x7 inference passes per tile where
+        1x needed 3x3. The estimate has to read the same dial the detector
+        does, or a scan quotes four minutes and takes ten.
         """
-        return round(len(self.tiles) * 4.5, 1)
+        return round(len(self.tiles) * (FETCH_DECODE_S + detect_seconds_per_tile(self.tiles[0].width_px if self.tiles else None)), 1)
 
     def describe(self) -> str:
         """One line a UI can show before committing to the scan."""

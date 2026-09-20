@@ -447,3 +447,54 @@ def test_finished_progress_is_eventually_cleared():
     ir.finish_progress("job-f")
     ir.clear_finished_progress(older_than_s=-1)
     assert ir.progress("job-f") is None
+
+
+# ── what a scan will actually cost, at the zoom the detector really uses ──
+#
+# Detection stopped being the cheap part of a tile when the detector began
+# magnifying its crop windows to reach the scale DOTA was trained on. An
+# estimate that did not know about that dial quoted a 110-tile scan at
+# eight minutes when it now takes nineteen.
+
+def test_a_2048px_tile_needs_the_pass_counts_actually_observed():
+    """Measured in the inference log: 3x3 at 1x zoom, 7x7 at 3x."""
+    assert st.inference_passes(2048, 1) == 9
+    assert st.inference_passes(2048, 3) == 49
+
+
+def test_cost_is_not_the_zoom_squared():
+    """The tempting shortcut, wrong by nearly a factor of two. Overlap is a
+    fixed FRACTION of the window, so shrinking the window shrinks the
+    stride with it: 3x costs 5.4x, not 9x."""
+    ratio = st.inference_passes(2048, 3) / st.inference_passes(2048, 1)
+    assert 5.0 < ratio < 6.0
+    assert ratio < 9.0
+
+
+def test_a_tile_smaller_than_the_window_is_a_single_pass():
+    assert st.inference_passes(256, 1) == 1
+
+
+def test_more_zoom_never_costs_less():
+    counts = [st.inference_passes(2048, z) for z in (1, 2, 3, 4)]
+    assert counts == sorted(counts)
+
+
+def test_the_estimate_reads_the_same_dial_the_detector_does(monkeypatch):
+    """An estimate derived from a different rule than the work is a guess
+    wearing a decimal point."""
+    bounds = {"west": 54.0, "south": 24.0, "east": 56.0, "north": 26.0}
+    monkeypatch.setenv("IMAGERY_DETECT_ZOOM", "1")
+    cheap = st.plan_tiles(bounds).estimated_seconds
+    monkeypatch.setenv("IMAGERY_DETECT_ZOOM", "3")
+    dear = st.plan_tiles(bounds).estimated_seconds
+    assert dear > cheap * 1.5
+
+
+def test_the_estimate_scales_with_real_tile_size_not_a_constant():
+    """A part-size edge tile costs less than a full one and the plan should
+    say so, rather than charging every tile the maximum."""
+    small = st.plan_tiles({"west": 55.0, "south": 24.97,
+                           "east": 55.09, "north": 25.035})
+    assert small.count == 1
+    assert small.estimated_seconds < st.FETCH_DECODE_S + st.detect_seconds_per_tile(2048)

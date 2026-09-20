@@ -882,6 +882,56 @@ _DOTA_OBJECT_TYPE = {
 # Classes that are noise for this product unless explicitly requested.
 LOW_VALUE_TYPES = {"recreation", "road_feature"}
 
+# ── objects the world does not contain ───────────────────────────────────
+#
+# A detector fed imagery coarser than it was trained on does not fail by
+# returning nothing. It merges neighbours: at native Sentinel-2 resolution
+# this model reported vessels 915m long — the largest ship ever built is
+# 458m — because it could not resolve individual hulls along a quay and
+# boxed the whole berth as one ship. Feeding it magnified windows mostly
+# fixes that, but a few survive at every scale, and a 915m "vessel" or a
+# 132m "aircraft" is not a low-confidence guess to be weighed. It is a
+# claim about an object that cannot exist, and a reader who spots one
+# stops trusting the other eighty-five.
+#
+# Real upper bounds, chosen against the largest thing of each kind ever
+# built and then given room:
+#   vessel    Seawise Giant, 458m
+#   aircraft  An-225, 84m wingspan 88m
+#   tank      largest crude storage tanks ~100m across
+#   vehicle   a road train, ~55m
+# Lower bounds exist because at 10 m/px anything under ~20m is one or two
+# pixels and cannot be classified, only guessed at.
+PLAUSIBLE_LENGTH_M = {
+    "vessel":      (15.0, 500.0),
+    "aircraft":    (10.0, 100.0),
+    "storage_tank": (8.0, 160.0),
+    "vehicle":      (2.0, 60.0),
+    # harbour/quay/crane and bridges are genuinely large linear features,
+    # so they are bounded loosely — only to catch a box spanning the scene.
+    "port_infrastructure": (10.0, 4000.0),
+    "bridge":              (15.0, 6000.0),
+}
+
+
+def implausible_size(object_type: str, length_m) -> str | None:
+    """Why this object cannot be what it is labelled, or None.
+
+    Returns a REASON rather than a bool so a dropped detection can be
+    logged with its own explanation instead of vanishing.
+    """
+    if length_m is None:
+        return None
+    bounds = PLAUSIBLE_LENGTH_M.get(object_type)
+    if not bounds:
+        return None
+    lo, hi = bounds
+    if length_m > hi:
+        return f"{object_type} {length_m:.0f}m exceeds {hi:.0f}m — merged neighbours"
+    if length_m < lo:
+        return f"{object_type} {length_m:.0f}m below {lo:.0f}m — unresolvable at this scale"
+    return None
+
 
 def run_object_detection(images: dict, bbox: dict, *,
                          confidence: float = 0.25,
@@ -917,6 +967,7 @@ def run_object_detection(images: dict, bbox: dict, *,
     )
 
     out = []
+    dropped: list[str] = []
     for r in (result.get("detections") or []):
         cls = r.get("class")
         obj_type = _DOTA_OBJECT_TYPE.get(cls)
@@ -945,6 +996,12 @@ def run_object_detection(images: dict, bbox: dict, *,
             angle_deg = round(math.degrees(math.atan2(dy, dx)) % 180, 1)
 
         px = r.get("_px")
+        # An impossible object is not a weak detection, it is a wrong one.
+        bad = implausible_size(obj_type, est_len)
+        if bad:
+            dropped.append(bad)
+            continue
+
         out.append({
             "detection_id":   _next_det_id(),
             "object_type":    obj_type,
@@ -972,4 +1029,11 @@ def run_object_detection(images: dict, bbox: dict, *,
                 "model": "yolov8n-obb (DOTA)",
             }),
         })
+    if dropped:
+        # Named, not silently discarded: if this list is ever long, the
+        # scale the detector is being fed is wrong, and that is worth
+        # seeing in the log rather than inferring from a low count.
+        print(f"[sentinel-ml] dropped {len(dropped)} physically impossible "
+              f"detection(s): {'; '.join(dropped[:4])}"
+              + (" …" if len(dropped) > 4 else ""))
     return out

@@ -10446,20 +10446,64 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
         return {"error": f"ONNX session unavailable (model={model_key})", "count": 0, "detections": []}
 
     n_cls   = len(classes)
-    OVERLAP = 100
-    STRIDE  = INPUT_SZ - OVERLAP
+
+    # ── THE DETECTOR WAS BEING SHOWN OBJECTS TOO SMALL TO SEE ────────────
+    #
+    # Reported as "we only detected 7 objects while I test scanned Jebel
+    # Ali port" — one of the largest container ports on earth.
+    #
+    # YOLOv8-OBB on DOTA was trained on aerial imagery where a ship spans
+    # hundreds of pixels. Sentinel-2 is 10 m/px, so a 300m container ship
+    # is 30 pixels and a storage tank is 5 — one to two orders of magnitude
+    # below anything the model saw in training. Feeding it 1024px windows
+    # of native-resolution imagery asks it to find objects at a scale it
+    # has no features for.
+    #
+    # The fix is to crop a SMALLER window and let the existing letterbox
+    # resize magnify it to the model's 1024 input, which is what SAHI does
+    # for small-object detection. Nothing else changes: sc_t is already
+    # computed from the crop size and _unpad already divides it back out,
+    # so the geometry survives untouched.
+    #
+    # MEASURED at Jebel Ali, 907x718 native, same image, same weights:
+    #
+    #   zoom   detections   vessel length median / max   vessel conf
+    #     1x       21            450m / 915m                0.30
+    #     2x       70              -                          -
+    #     3x      108            145m / 257m                0.43
+    #     4x      123              -                          -
+    #
+    # The count is not the interesting part. At 1x the model reports
+    # vessels 915m long — no such ship exists, the largest ever built is
+    # 458m — because it cannot resolve individual hulls and merges a whole
+    # quay into one box. At 3x the size distribution becomes physically
+    # real, and median confidence RISES. Detections invented out of
+    # interpolated texture would do the opposite, which is the check that
+    # separates recovered objects from resampling artefacts.
+    #
+    # 4x buys 14% more detections for 78% more tiles, so 3x is the knee.
+    # The cost is real and quadratic — 9x the inference tiles — which is
+    # why it is a dial and why the tile planner reports it.
+    DETECT_ZOOM = max(1, min(int(os.getenv("IMAGERY_DETECT_ZOOM", "3")), 4))
+    WINDOW  = max(128, INPUT_SZ // DETECT_ZOOM)
+    # Overlap scales with the window, or a 341px window at the old fixed
+    # 100px would overlap by 29% and triple the tile count again.
+    OVERLAP = max(24, int(WINDOW * 0.10))
+    STRIDE  = WINDOW - OVERLAP
 
     def _tile_starts(dim):
-        if dim <= INPUT_SZ:
+        if dim <= WINDOW:
             return [0]
-        starts = list(range(0, dim - INPUT_SZ, STRIDE))
-        if starts[-1] + INPUT_SZ < dim:
-            starts.append(dim - INPUT_SZ)
+        starts = list(range(0, dim - WINDOW, STRIDE))
+        if starts[-1] + WINDOW < dim:
+            starts.append(dim - WINDOW)
         return starts
 
     xs_starts = _tile_starts(img_w)
     ys_starts = _tile_starts(img_h)
-    print(f"[overwatch] tiled: {len(xs_starts)}×{len(ys_starts)}={len(xs_starts)*len(ys_starts)} inference tiles on {img_w}×{img_h}px")
+    print(f"[overwatch] tiled: {len(xs_starts)}×{len(ys_starts)}="
+          f"{len(xs_starts)*len(ys_starts)} inference tiles on {img_w}×{img_h}px "
+          f"(window {WINDOW}px → {INPUT_SZ}px, {DETECT_ZOOM}× detect zoom)")
 
     # pixel → geo helpers (full cropped image coordinate space)
     def px_lat(py): return float(north - (py / img_h) * (north - south))
@@ -10475,8 +10519,8 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
 
     for ty in ys_starts:
         for tx in xs_starts:
-            tw = min(INPUT_SZ, img_w - tx)
-            th = min(INPUT_SZ, img_h - ty)
+            tw = min(WINDOW, img_w - tx)
+            th = min(WINDOW, img_h - ty)
             tile = cropped.crop((tx, ty, tx + tw, ty + th))
 
             sc_t = min(INPUT_SZ / tw, INPUT_SZ / th)
@@ -14484,11 +14528,37 @@ async def _run_pwtt_job(job_id: str, bounds: dict, pre_end: str, post_end: str,
             width=px, height=px, on_progress=bump, stop_at=depth)
 
         if before is None or after is None:
+            # SAY WHY, AND SAY WHICH SIDE. "one or both windows" was
+            # unactionable: it named neither the window nor the reason,
+            # while the reason for every single rejected date was sitting
+            # in `failures` and nothing rendered it. The catalogue had
+            # already found these dates, so the interesting fact is never
+            # "there is no data" — it is that the scenes it listed did not
+            # cover this box, or came back unreadable.
+            def _why(fails):
+                if not fails:
+                    return "no dates attempted"
+                from collections import Counter as _C
+                # Reasons repeat; the count is the diagnosis.
+                tally = _C(str(f.get("reason", "unknown")).split("(")[0].strip()
+                           for f in fails)
+                return "; ".join(f"{r} ×{n}" if n > 1 else r
+                                 for r, n in tally.most_common(3))
+
+            parts = []
+            if before is None:
+                parts.append(f"before {pre_end}: {_why(pre_fail)}")
+            if after is None:
+                parts.append(f"after {post_end}: {_why(post_fail)}")
             _PWTT_RESULTS[job_id] = {
                 "status": "error",
-                "error": "no Sentinel-1 acquisitions could be fetched for one "
-                         "or both windows",
+                "error": ("Sentinel-1 catalogued acquisitions for this area but "
+                          "none could be used — " + " · ".join(parts)
+                          + ". A catalogued scene whose swath misses this box "
+                            "returns an empty raster; a smaller or shifted area "
+                            "usually has coverage."),
                 "failures": {"before": pre_fail, "after": post_fail},
+                "recoverable": True,
             }
             return
 
