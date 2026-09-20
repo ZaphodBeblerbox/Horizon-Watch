@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color, HeightReference,
-    Math as CesiumMath,
+    CallbackProperty,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType } from "./iconUtils.js"
@@ -10,6 +10,8 @@ import { getVesselMarkerDataUri } from "./vesselAircraftGlyphs.js"
 import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
+import { safeCartesian, billboardRotation, vesselHeading } from "./markerOrientation.js"
+import useCameraHeading from "./useCameraHeading.js"
 
 const BILLBOARD_SIZE = 26
 
@@ -23,6 +25,7 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
     // renderer as a value, and the glyph must be rebuilt when it turns.
     const [theme, setTheme] = useState(getRenderedTheme)
     useEffect(() => subscribeRenderedTheme(setTheme), [])
+    const cameraHeading = useCameraHeading()
 
     const { filtered } = useMemo(() => {
         if (!vessels?.length) return { filtered: [] }
@@ -78,11 +81,13 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                 const sanctioned = !!(mmsiStr && sanctionedMmsis?.confirmed?.has(mmsiStr))
                 const icon = getVesselMarkerDataUri({ sanctioned, shipType: vesselShipType(v), size: BILLBOARD_SIZE, theme })
 
-                const hdg = isFinite(Number(v.heading)) && Number(v.heading) !== 511
-                    ? Number(v.heading)
-                    : isFinite(Number(v.cog)) ? Number(v.cog) : 0
+                const hdg = vesselHeading(v) ?? 0
 
-                const position = Cartesian3.fromDegrees(v.lon, v.lat, 0)
+                // Null rather than a throw: Cesium's fromDegrees raises on
+                // a coordinate that is not a number, and a raise here
+                // unmounts the whole globe instead of dropping one hull.
+                const position = safeCartesian(aisLon(v), aisLat(v), 0)
+                if (!position) return null
 
                 return (
                     <Entity
@@ -93,14 +98,27 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                             image:           icon,
                             width:           BILLBOARD_SIZE,
                             height:          BILLBOARD_SIZE,
-                            rotation:        CesiumMath.toRadians(-hdg),
+                            // A TRUE BEARING AT ANY CAMERA ANGLE. Billboard
+                            // rotation is applied in SCREEN space, so a bare
+                            // -heading is only correct while north points up
+                            // the screen; rotate the globe and every hull
+                            // keeps its screen angle while the world turns
+                            // under it. Subtracting the camera's own heading
+                            // each frame pins the bow to the real bearing,
+                            // and because the billboard still faces the
+                            // viewer it stays lying flat on the water rather
+                            // than standing up out of it.
+                            rotation: new CallbackProperty(
+                                () => billboardRotation(hdg, cameraHeading.current), false),
                             alignedAxis:     Cartesian3.ZERO,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             // Stage 1 fidelity — no scaleByDistance on the
                             // glyph itself: marker size must stay constant
                             // regardless of camera distance (was shrinking
                             // to 35% at 3,000km out).
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
+                            // Visible out to a hemisphere view. Capping below that meant
+                            // zooming out to look at a whole ocean emptied it.
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, 60_000_000),
                         }}
                         label={isMobile ? undefined : {
                             text:       v.name || "",

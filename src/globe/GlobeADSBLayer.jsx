@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
-    Math as CesiumMath,
+    CallbackProperty,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { getAircraftMarkerDataUri } from "./vesselAircraftGlyphs.js"
@@ -10,6 +10,8 @@ import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js
 import { acClassify } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
+import { safeCartesian, billboardRotation } from "./markerOrientation.js"
+import useCameraHeading from "./useCameraHeading.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
 const adsbLon = (ac) => ac.lon ?? ac.longitude
@@ -33,6 +35,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
     // §7's shading is a neutral overlay burned into the glyph image, and a
     // data URI cannot read a CSS variable — so the theme has to reach the
     // renderer as a value, and the glyph must be rebuilt when it turns.
+    const cameraHeading = useCameraHeading()
     const [theme, setTheme] = useState(getRenderedTheme)
     useEffect(() => subscribeRenderedTheme(setTheme), [])
 
@@ -117,13 +120,20 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
             {filtered.map(ac => {
                 const lon = ac.lon ?? ac.longitude
                 const lat = ac.lat ?? ac.latitude
-                if (lat == null || lon == null || !isFinite(lat) || !isFinite(lon)) return null
-
                 const alt    = ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0
                 const altNum = isFinite(Number(alt)) ? Number(alt) : 0
                 const altM   = altNum * 0.3048
                 const track  = isFinite(Number(ac.track ?? ac.heading))
                     ? Number(ac.track ?? ac.heading ?? 0) : 0
+
+                // Before any glyph work, and null rather than a throw:
+                // Cesium's fromDegrees raises on a coordinate that is not
+                // a number (a numeric STRING raises too, which is why an
+                // isFinite check never protected anything), and a raise
+                // inside render unmounts the entire globe rather than
+                // dropping one aircraft.
+                const position = safeCartesian(lon, lat, altM)
+                if (!position) return null
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
@@ -141,7 +151,6 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 const icon = getAircraftMarkerDataUri({ watchlisted, classification, size: BILLBOARD_SIZE, theme })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
-                const position = Cartesian3.fromDegrees(lon, lat, altM)
 
                 return (
                     <Entity
@@ -152,12 +161,22 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                             image:           icon,
                             width:           BILLBOARD_SIZE,
                             height:          BILLBOARD_SIZE,
-                            rotation:        CesiumMath.toRadians(-track),
+                            // A TRUE TRACK AT ANY CAMERA ANGLE — see
+                            // markerOrientation.js. Billboard rotation is
+                            // applied in screen space, so a bare -track is
+                            // only right while north points up the screen.
+                            // Subtracting the camera heading each frame keeps
+                            // the nose on the real track, and facing the
+                            // viewer keeps the airframe level with the
+                            // horizon instead of standing on a wingtip.
+                            rotation: new CallbackProperty(
+                                () => billboardRotation(track, cameraHeading.current), false),
                             alignedAxis:     Cartesian3.ZERO,
                             // Stage 1 fidelity — no scaleByDistance on the
                             // glyph itself; constant size regardless of
                             // camera distance.
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 20_000_000),
+                            // Visible out to a hemisphere view, same as vessels.
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, 60_000_000),
                         }}
                         label={isMobile ? undefined : {
                             text:       cs || icao,

@@ -169,7 +169,12 @@ export function adaptAircraft(data = {}) {
         attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
         attr("Heading", fmtDeg(data.track ?? data.heading)),
         attr("Speed", fmtUnit(gs, "kts", 0)),
-        attr("Altitude", isFiniteNum(alt) ? `${Number(alt).toLocaleString()} ft` : null),
+        // "ground" IS the altitude. ADS-B reports the literal string for
+        // an aircraft on the surface — 113 of 724 live aircraft in one
+        // sample — and treating it as unparseable dropped the row
+        // entirely, hiding a fact we actually knew for 16% of traffic.
+        attr("Altitude", isFiniteNum(alt) ? `${Number(alt).toLocaleString()} ft`
+            : (String(alt).trim().toLowerCase() === "ground" ? "On ground" : null)),
         attr("Squawk", data.squawk),
         attr("Origin", data.origin_country),
     ])
