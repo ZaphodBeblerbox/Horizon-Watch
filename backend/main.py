@@ -7233,8 +7233,13 @@ def _build_surface_pool() -> list:
                     "relevance_score": _SEV_WORD_RISK.get(tier, 42),
                     "analysed":        True,
                     "source":          "gdelt",
-                    "published_at":    (pin.get("date") or
-                                        datetime.now(timezone.utc).isoformat()),
+                    # First-seen, not event_date: GDELT dates are
+                    # day-precision, so using them stamped every pin at
+                    # midnight and the freshest thing on the board was
+                    # always hours old.
+                    "published_at":    (pin.get("first_seen_at")
+                                        or pin.get("date")
+                                        or datetime.now(timezone.utc).isoformat()),
                     "url":             pin.get("source_url"),
                     # Never "high": this is a machine reading a wire story,
                     # not a human who found the building in the video.

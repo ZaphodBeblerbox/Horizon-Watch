@@ -660,6 +660,14 @@ def _merge_events(existing: list, incoming: list) -> list:
     Newer wins on a collision, because a re-read of the same event may
     carry an enriched headline the first pass could not fetch.
     """
+    # WHEN WE FIRST SAW IT, which is not the same as when it happened.
+    # GDELT publishes event_date at DAY precision, so every pin arrived
+    # stamped midnight and "newest critical" could never show anything
+    # fresher than sixteen hours old however often the feed refreshed.
+    # The export itself lands every fifteen minutes, so first-seen is a
+    # real and much better measure of freshness — and it is honest about
+    # what it means.
+    now_iso = datetime.now(timezone.utc).isoformat()
     by_id: dict = {}
     for e in existing:
         k = _event_key(e)
@@ -667,8 +675,13 @@ def _merge_events(existing: list, incoming: list) -> list:
             by_id[k] = e
     for e in incoming:
         k = _event_key(e)
-        if k:
-            by_id[k] = e
+        if not k:
+            continue
+        prior = by_id.get(k)
+        # Keep the ORIGINAL first-seen across re-reads: a nightly
+        # re-ingest must not make a three-day-old event look new.
+        e["first_seen_at"] = (prior or {}).get("first_seen_at") or now_iso
+        by_id[k] = e
 
     cutoff = (datetime.now(timezone.utc).date()
               - timedelta(days=RETENTION_DAYS)).isoformat()
@@ -785,6 +798,9 @@ def map_point(ev: dict) -> dict | None:
         "location_name": ev.get("location") or ev.get("location_name") or "",
         "lat": lat, "lon": lon,
         "date": ev.get("event_date") or ev.get("date"),
+        # Day-precision event date above; when this system first saw it
+        # below. The difference is what makes a live feed look live.
+        "first_seen_at": ev.get("first_seen_at"),
         "source_url": ev.get("source_url"),
         "event_type": ev.get("event_type"),
         "goldstein": ev.get("goldstein"),
