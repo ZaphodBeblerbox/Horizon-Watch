@@ -682,7 +682,7 @@ export default function Imagery({ onOpenGenerate }) {
                         <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Not yet detected for this scene — run "re-run detection" to call the real detector.</div>
                     ) : (
                         <SceneComparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
-                            swipePos={swipePos} onSwipeDrag={onSwipeDrag} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
+                            swipePos={swipePos} onSwipePos={setSwipePos} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
                             clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet}
                             fullscreen={fullscreen} viewerRef={viewerRef} />
                     )}

@@ -17,7 +17,9 @@
 // real, selectable, persisted choices (an analyst's stated intent is never
 // silently dropped), but a real scan attempt against one of them is
 // honestly rejected server-side.
+import { useRef, useState } from "react"
 import ZoomPanViewer, { DetectionArrow, useViewerScale, useViewerView } from "./ZoomPanViewer.jsx"
+import { IDENTITY } from "./viewportMath.js"
 
 export const SENSOR_OPTIONS = [
     { value: "sentinel2_optical", label: "Sentinel-2 · optical 10m", real: true },
@@ -83,8 +85,31 @@ export function SceneScrubber({ scenes, selectedScanId, onSelect, currentInstrum
     )
 }
 
-export function EmptyFrame() {
-    return <div style={{ width: 400, height: 300, background: "var(--bg-2)", display: "flex", alignItems: "center", justifyContent: "center", font: "400 11px var(--font)", color: "var(--txt-4)" }}>No real image persisted for this scene</div>
+/**
+ * A frame with no picture, and the reason.
+ *
+ * Only the newest two scenes per region keep their pixels; everything older
+ * keeps its detections. A blank half of a comparison therefore does not mean
+ * "nothing was there" — it means the picture was retired and the numbers
+ * were not. Rendering those two identically is exactly the failure this
+ * codebase keeps finding, so the frame says which it is.
+ */
+export function EmptyFrame({ reason = "retired", detections = null }) {
+    const text = reason === "retired"
+        ? "Image retired — only the newest two scenes per area keep their pixels"
+        : "No image was persisted for this scene"
+    return (
+        <div style={{ width: "100%", height: "100%", minHeight: 160, background: "var(--bg-2)",
+                      display: "flex", flexDirection: "column", alignItems: "center",
+                      justifyContent: "center", gap: 4, padding: 12, textAlign: "center" }}>
+            <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>{text}</div>
+            {detections != null && (
+                <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
+                    {detections} detection{detections === 1 ? "" : "s"} kept — still compared, still on the map
+                </div>
+            )}
+        </div>
+    )
 }
 
 // Real before/after/swipe comparison view with detection boxes — renders
@@ -183,7 +208,127 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
     )
 }
 
-export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true }) {
+
+/** One side of a split comparison. Shares its view with the other side. */
+function SplitPane({ title, src, view, onViewChange, overlay = null }) {
+    return (
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+            <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)",
+                          padding: "2px 4px", flex: "0 0 auto",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {title}
+            </div>
+            <div style={{ flex: "1 1 auto", minHeight: 0, border: "1px solid var(--line)" }}>
+                {src
+                    ? <ZoomPanViewer src={src} alt={title} fill view={view}
+                                     onViewChange={onViewChange} overlay={overlay} />
+                    : <EmptyFrame />}
+            </div>
+        </div>
+    )
+}
+
+/**
+ * The wipe. Drawn outside the transform so the handle and the labels keep a
+ * constant on-screen size, while the clipped image is positioned FROM the
+ * view so it stays locked to the reference underneath it.
+ */
+function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
+                        changes, selectedDet, onSelectDet, arrowFor, arrowLabel,
+                        refDate, curDate }) {
+    const { scale, tx, ty, frameW, frameH } = useViewerView()
+    const rootRef = useRef(null)
+    if (!frameW || !frameH) return null
+    const x = (swipePos / 100) * frameW
+
+    // The drag is measured against THE FRAME, not the handle. The previous
+    // handler took currentTarget's rect, which after the handle became a
+    // real grabbable element would have been 20px wide — every drag would
+    // have jumped the wipe to one edge or the other.
+    function beginDrag(e) {
+        e.preventDefault()
+        e.stopPropagation()
+        const rect = rootRef.current?.getBoundingClientRect()
+        if (!rect || !rect.width) return
+        const apply = (clientX) =>
+            onSwipePos(Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100)))
+        apply(e.clientX)
+        const onMove = (ev) => apply(ev.clientX)
+        const onUp = () => {
+            window.removeEventListener("pointermove", onMove)
+            window.removeEventListener("pointerup", onUp)
+        }
+        window.addEventListener("pointermove", onMove)
+        window.addEventListener("pointerup", onUp)
+    }
+
+    return (
+        <div ref={rootRef} style={{ position: "absolute", inset: 0 }}>
+            {/* The current scene, clipped to the left of the handle and
+                transformed by the SAME view as the reference beneath it. */}
+            {curSrc ? (
+                <div style={{ position: "absolute", inset: 0, overflow: "hidden",
+                              clipPath: `inset(0 ${frameW - x}px 0 0)`,
+                              opacity: fadeOn ? fadeOpacity / 100 : 1 }}>
+                    <div style={{ position: "absolute", inset: 0,
+                                  transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+                                  transformOrigin: "0 0" }}>
+                        <img src={curSrc} alt="current scene" draggable={false}
+                             style={{ display: "block", width: "100%", height: "100%",
+                                      objectFit: "contain" }} />
+                    </div>
+                </div>
+            ) : null}
+
+            <ScreenBoxes changes={changes} selectedDet={selectedDet}
+                         onSelectDet={onSelectDet} arrowFor={arrowFor}
+                         arrowLabel={arrowLabel} />
+
+            {/* A handle, not a hairline. The old 2px divider had nothing to
+                grab and no indication it could be dragged. */}
+            <div
+                onPointerDown={beginDrag}
+                style={{ position: "absolute", top: 0, bottom: 0, left: x - 10, width: 20,
+                         cursor: "ew-resize", pointerEvents: "auto",
+                         display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+                <div style={{ position: "absolute", top: 0, bottom: 0, left: 9, width: 2,
+                              background: "var(--acc-hi)" }} />
+                <div style={{ width: 16, height: 30, borderRadius: 2,
+                              background: "var(--bg-1)", border: "1px solid var(--acc-hi)",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              font: "400 9px var(--mono)", color: "var(--acc-hi)" }}>
+                    ↔
+                </div>
+            </div>
+
+            {/* Which side is which. A wipe with unlabelled halves makes the
+                reader guess which date they are looking at. */}
+            <div style={{ position: "absolute", left: 6, top: 6, font: "400 10px var(--mono)",
+                          color: "var(--txt)", background: "var(--bg-0)", padding: "1px 4px",
+                          opacity: 0.85 }}>{curDate}</div>
+            <div style={{ position: "absolute", right: 6, top: 6, font: "400 10px var(--mono)",
+                          color: "var(--txt)", background: "var(--bg-0)", padding: "1px 4px",
+                          opacity: 0.85 }}>{refDate}</div>
+        </div>
+    )
+}
+
+export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, onSwipePos, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true }) {
+    // One view for both split panes. Held here rather than in either pane,
+    // because the point of a split is that the two sides cannot disagree
+    // about where they are looking.
+    const [splitView, setSplitView] = useState(IDENTITY)
+
+    // The selected detection as a normalised box, for the arrow. Hoisted:
+    // it used to live inside the single-scene branch, so split and swipe
+    // referenced it out of scope and threw "sel is not defined" the moment
+    // either view was opened.
+    const sel = selectedDet && selectedDet.bbox
+        ? { x: selectedDet.bbox[0], y: selectedDet.bbox[1],
+            w: selectedDet.bbox[2], h: selectedDet.bbox[3] }
+        : null
+
     const refSrc = scene.reference_image_b64 ? `data:image/jpeg;base64,${scene.reference_image_b64}` : null
     const curSrc = scene.image_b64 ? `data:image/jpeg;base64,${scene.image_b64}` : null
     // Real size caps — fullscreen genuinely renders the same real image
@@ -274,9 +419,6 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
         // percentage-positioned inside the same transformed stack, so they
         // stay welded to their objects at every zoom level.
         if (!curSrc) return <EmptyFrame />
-        const sel = selectedDet && selectedDet.bbox
-            ? { x: selectedDet.bbox[0], y: selectedDet.bbox[1], w: selectedDet.bbox[2], h: selectedDet.bbox[3] }
-            : null
         return (
             <ZoomPanViewer
                 ref={viewerRef}
@@ -293,30 +435,96 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
         )
     }
     if (view === "swipe") {
-        return (
-            <div style={{ position: "relative", maxWidth: "100%", cursor: "ew-resize" }} onPointerDown={onSwipeDrag}>
-                {refSrc ? <img src={refSrc} alt="reference" style={{ display: "block", maxWidth: "100%", maxHeight: soloMaxH, filter: fadeOn ? "grayscale(.35)" : "none" }} /> : <EmptyFrame />}
-                <div ref={clipRef} style={{ position: "absolute", inset: 0, clipPath: `inset(0 ${100 - swipePos}% 0 0)` }}>
-                    <div ref={fadeRef} style={{ opacity: fadeOn ? fadeOpacity / 100 : 1 }}>
-                        {curSrc ? <img src={curSrc} alt="current" style={{ display: "block", maxWidth: "100%", maxHeight: soloMaxH }} /> : <EmptyFrame />}
-                        <Boxes />
+        // ONE VIEWER, TWO IMAGES, ONE TRANSFORM.
+        //
+        // The old swipe stacked two independently-sized <img> and clipped
+        // the upper one by percentage. Nothing kept them aligned: if the
+        // two scenes differed by a pixel in either dimension, or the pane
+        // resized, the "same" ground sat at different screen positions and
+        // the wipe showed a difference that was not there. And neither
+        // image could be zoomed, so a 10 m/px scan was compared at thumbnail
+        // scale — the one thing a comparison must never do.
+        //
+        // Both images now live inside the same ZoomPanViewer, under the
+        // same transform, so they cannot drift. The wipe is a clip on the
+        // upper one.
+        if (!curSrc && !refSrc) return <EmptyFrame />
+        // A wipe against a retired reference is a wipe against nothing. Say
+        // so rather than revealing an empty half as the handle moves.
+        if (!refSrc) {
+            return (
+                <div style={{ display: "flex", flexDirection: "column", width: "100%",
+                              height: "100%", minHeight: 0 }}>
+                    <div style={{ flex: "0 0 auto", padding: "4px 8px",
+                                  font: "400 10px var(--mono)", color: "var(--txt-4)",
+                                  borderBottom: "1px solid var(--line)" }}>
+                        no reference image to wipe against — showing the current scene
+                    </div>
+                    <div style={{ flex: "1 1 auto", minHeight: 0 }}>
+                        <ZoomPanViewer ref={viewerRef} src={curSrc} alt="current scene" fill
+                            onBackgroundClick={() => onSelectDet && onSelectDet(null)}
+                            overlay={<ScreenBoxes changes={showBoxes ? changes : []}
+                                        selectedDet={selectedDet} onSelectDet={onSelectDet}
+                                        arrowFor={showArrow ? sel : null}
+                                        arrowLabel={selectedDet?.label} />} />
                     </div>
                 </div>
-                <div style={{ position: "absolute", top: 0, bottom: 0, left: `${swipePos}%`, width: 2, background: "var(--acc-hi)" }} />
-            </div>
+            )
+        }
+        return (
+            <ZoomPanViewer
+                ref={viewerRef}
+                src={refSrc}
+                alt="reference scene"
+                fill
+                onBackgroundClick={() => onSelectDet && onSelectDet(null)}
+                overlay={
+                    <SwipeOverlay
+                        curSrc={curSrc}
+                        swipePos={swipePos}
+                        onSwipePos={onSwipePos}
+                        fadeOn={fadeOn}
+                        fadeOpacity={fadeOpacity}
+                        changes={showBoxes ? changes : []}
+                        selectedDet={selectedDet}
+                        onSelectDet={onSelectDet}
+                        arrowFor={showArrow ? sel : null}
+                        arrowLabel={selectedDet?.label}
+                        refDate={fmtDate(scene.reference_date)}
+                        curDate={fmtDate(scene.scan.image_timestamp_utc)}
+                    />
+                }
+            />
         )
     }
+
+    // SPLIT — two panes, ONE view.
+    //
+    // The old split rendered two <img> capped at 420px with no zoom and no
+    // link between them. You could not inspect either, and nothing kept
+    // them on the same ground, so the comparison was decorative. Both panes
+    // now share a single scale and pan: zoom into a quay on the left and the
+    // right is already there.
     return (
-        <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ position: "relative" }}>
-                <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginBottom: 3 }}>Reference · {fmtDate(scene.reference_date)}</div>
-                {refSrc ? <img src={refSrc} alt="reference" style={{ display: "block", maxWidth: splitMaxW, maxHeight: splitMaxH }} /> : <EmptyFrame />}
-            </div>
-            <div style={{ position: "relative" }}>
-                <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginBottom: 3 }}>Current · {fmtDate(scene.scan.image_timestamp_utc)}</div>
-                {curSrc ? <img src={curSrc} alt="current" style={{ display: "block", maxWidth: splitMaxW, maxHeight: splitMaxH }} /> : <EmptyFrame />}
-                <div style={{ position: "absolute", top: 18, left: 0, right: 0, bottom: 0 }}><Boxes /></div>
-            </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6,
+                      width: "100%", height: "100%", minHeight: 0 }}>
+            <SplitPane
+                title={`Reference · ${fmtDate(scene.reference_date)}`}
+                src={refSrc}
+                view={splitView}
+                onViewChange={setSplitView}
+            />
+            <SplitPane
+                title={`Current · ${fmtDate(scene.scan.image_timestamp_utc)}`}
+                src={curSrc}
+                view={splitView}
+                onViewChange={setSplitView}
+                overlay={
+                    <ScreenBoxes changes={showBoxes ? changes : []} selectedDet={selectedDet}
+                                 onSelectDet={onSelectDet} arrowFor={showArrow ? sel : null}
+                                 arrowLabel={selectedDet?.label} />
+                }
+            />
         </div>
     )
 }

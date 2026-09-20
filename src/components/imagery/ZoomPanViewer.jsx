@@ -49,11 +49,28 @@ export const useViewerView = () => useContext(ViewerViewContext)
 
 const ZoomPanViewer = forwardRef(function ZoomPanViewer(
     { src, alt = "scene", children, overlay = null, onBackgroundClick,
-      minHeight = 320, fill = false, footer = null }, ref,
+      minHeight = 320, fill = false, footer = null,
+      // CONTROLLED MODE. When `view`/`onViewChange` are supplied the viewer
+      // stops owning its own zoom and defers to the caller. That is what
+      // makes a comparison honest: two panes driven by ONE view are always
+      // showing the same ground, so a difference on screen is a difference
+      // on the ground rather than an artefact of two independent zooms.
+      view: controlledView = null, onViewChange = null,
+      label = null }, ref,
 ) {
     const frameRef = useRef(null)
-    const [view, setView] = useState(IDENTITY)
+    const [ownView, setOwnView] = useState(IDENTITY)
     const [frame, setFrame] = useState({ w: 0, h: 0 })
+
+    const isControlled = controlledView != null && typeof onViewChange === "function"
+    const view = isControlled ? controlledView : ownView
+    // Accepts the same updater shape as a setState so every call site below
+    // is unchanged whether the viewer owns its view or not.
+    const setView = useCallback((next) => {
+        const resolve = (prev) => (typeof next === "function" ? next(prev) : next)
+        if (isControlled) onViewChange(resolve(controlledView))
+        else setOwnView(resolve)
+    }, [isControlled, onViewChange, controlledView])
     const [dragging, setDragging] = useState(false)
     const dragFrom = useRef(null)
 
