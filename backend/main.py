@@ -14802,6 +14802,89 @@ def ontology_claims(limit: int = 100, status: str | None = None):
         }
 
 
+@app.post("/api/ucdp/ingest")
+async def ucdp_ingest(file: str | None = None):
+    """Load the latest UCDP monthly release — the free conflict baseline.
+
+    Runs the download and parse off the event loop: one file is ~10,000 rows
+    and several megabytes, and parsing it inline would stall every other
+    request for the duration.
+    """
+    import ucdp_ingest as _u
+    from database import UcdpEvent, get_db as _gdbu
+
+    res = await _imagery_rt.run_cpu(_u.fetch_events, file, label="ucdp-ingest",
+                                    timeout=900)
+    if res.get("status") != "ok":
+        return JSONResponse({"error": res.get("error"), "events": 0},
+                            status_code=502)
+
+    written = skipped = 0
+    with _gdbu() as db:
+        known = {r[0] for r in db.query(UcdpEvent.ucdp_id).all()}
+        for e in res["events"]:
+            if e["id"] in known:
+                skipped += 1
+                continue
+            db.add(UcdpEvent(
+                ucdp_id=e["id"], lat=e["lat"], lon=e["lon"], date=e["date"],
+                country=e["country"], adm1=e["adm1"], deaths=e["deaths"],
+                side_a=e["side_a"], side_b=e["side_b"],
+                violence_type=e["violence_type"], conflict_name=e["conflict_name"],
+                where_prec=e["where_prec"], pinnable=e["pinnable"],
+                source_file=res.get("file")))
+            known.add(e["id"])
+            written += 1
+        db.commit()
+        total = db.query(UcdpEvent).count()
+
+    return {"written": written, "skipped": skipped, "total": total,
+            "file": res.get("file"), "latest_event": res.get("latest_event"),
+            "lag_days": res.get("lag_days"), "note": res.get("note")}
+
+
+@app.get("/api/ucdp/baseline")
+def ucdp_baseline(lat: float, lon: float, radius_km: float = 50.0,
+                  months: int = 12):
+    """How violent this place normally is.
+
+    THE POINT OF A BASELINE. "Three fires and a radar change this week"
+    means nothing without knowing whether this district sees four events a
+    month or none. It is the difference between a finding and a Tuesday,
+    and it is the only question a two-month-lagged dataset can honestly
+    answer about the present.
+    """
+    import datetime as _dtu
+
+    import corroborate as _co
+    from database import UcdpEvent, get_db as _gdbu2
+
+    since = (_dtu.date.today() - _dtu.timedelta(days=months * 30)).isoformat()
+    with _gdbu2() as db:
+        rows = (db.query(UcdpEvent)
+                  .filter(UcdpEvent.date >= since).limit(20000).all())
+
+    near = [r for r in rows
+            if _co.haversine_km(lat, lon, r.lat, r.lon) <= radius_km]
+    deaths = sum(r.deaths or 0 for r in near)
+    per_month = len(near) / max(1, months)
+
+    from collections import Counter
+    return {
+        "lat": lat, "lon": lon, "radius_km": radius_km, "months": months,
+        "events": len(near), "deaths": deaths,
+        "events_per_month": round(per_month, 2),
+        "countries": dict(Counter(r.country for r in near).most_common(3)),
+        "top_actors": dict(Counter(
+            r.side_b for r in near if r.side_b and not r.side_b.startswith("XXX")
+        ).most_common(3)),
+        # Said every time. A caller must not read this as current.
+        "as_of": max((r.date for r in near), default=None),
+        "note": ("UCDP lags roughly two months — this is what is NORMAL for "
+                 "this area, not what is happening now"),
+    }
+
+
 @app.get("/api/fires")
 def api_fires(hours: int = 72, limit: int = 1000):
     """Thermal hotspots this system has seen, with why they mattered.
@@ -14867,6 +14950,41 @@ def api_corroborate(hours: int = 72, radius_km: float = 5.0,
     obs = _gather_observations(hours=hours, bbox=box)
     clusters = _co.cluster(obs, radius_km=radius_km, window_hours=window_hours)
     good = _co.corroborated_only(clusters, min_modalities=min_modalities)
+
+    # HOW UNUSUAL IS THIS, HERE.
+    #
+    # "Three sources agree something happened" means one thing in a district
+    # that sees fifteen conflict events a month and quite another in one
+    # that sees none. The baseline is the difference between a finding and a
+    # Tuesday, and it is the only question a two-month-lagged dataset can
+    # honestly answer about the present.
+    try:
+        import datetime as _dtb
+        from database import UcdpEvent, get_db as _gdbb
+        since = (_dtb.date.today() - _dtb.timedelta(days=365)).isoformat()
+        with _gdbb() as _bdb:
+            base_rows = [(r.lat, r.lon, r.deaths or 0)
+                         for r in _bdb.query(UcdpEvent)
+                                      .filter(UcdpEvent.date >= since)
+                                      .limit(20000).all()]
+        for c in good:
+            near = [b for b in base_rows
+                    if _co.haversine_km(c["lat"], c["lon"], b[0], b[1]) <= 50.0]
+            per_month = len(near) / 12.0
+            c["baseline"] = {
+                "events_12mo_within_50km": len(near),
+                "events_per_month": round(per_month, 2),
+                "deaths_12mo": sum(b[2] for b in near),
+                # Words, because a reader should not have to hold a
+                # distribution in their head to interpret a float.
+                "normally": ("routinely violent" if per_month >= 5
+                             else "periodically violent" if per_month >= 1
+                             else "rarely violent" if per_month > 0
+                             else "no recorded conflict activity"),
+                "source": "UCDP, lagged ~2 months",
+            }
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[corroborate] baseline unavailable: {e}")
 
     from collections import Counter
     return {

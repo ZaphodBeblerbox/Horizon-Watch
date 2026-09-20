@@ -105,6 +105,20 @@ export default function CorroboratedPanel({ hours = 168, onFocus = null }) {
                                 {c.lat.toFixed(4)}, {c.lon.toFixed(4)} · {ago(c.last_seen)}
                                 {c.labels?.length ? ` · ${c.labels.slice(0, 3).join(", ")}` : ""}
                             </div>
+                            {/* HOW UNUSUAL THIS IS, HERE. Three sources
+                                agreeing means one thing in a district that
+                                sees fifteen conflict events a month and
+                                quite another in one that sees none — the
+                                difference between a finding and a Tuesday. */}
+                            {c.baseline ? (
+                                <div style={{ marginTop: 2, font: "400 10px var(--mono)",
+                                              color: c.baseline.events_per_month >= 1
+                                                  ? "var(--txt-3)" : "var(--sev-high)" }}>
+                                    normally {c.baseline.normally}
+                                    {" "}({c.baseline.events_per_month}/mo within 50km,
+                                    {" "}UCDP, lagged)
+                                </div>
+                            ) : null}
                             {c.urls?.length ? (
                                 <a href={c.urls[0]} target="_blank" rel="noopener noreferrer"
                                    onClick={(e) => e.stopPropagation()}

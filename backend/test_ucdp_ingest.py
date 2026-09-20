@@ -113,3 +113,22 @@ def test_the_file_chooser_orders_by_version_not_alphabetically():
     names = ["GEDEvent_v26_0_7.csv", "GEDEvent_v26_01_26_06.csv"]
     key = lambda n: [int(x) for x in re.findall(r"\d+", n)] or [0]
     assert sorted(names, key=key)[-1] == "GEDEvent_v26_01_26_06.csv"
+
+
+# ── the baseline is the point ─────────────────────────────────────────────
+
+def test_the_baseline_words_separate_a_finding_from_a_tuesday():
+    """A reader should not have to hold a distribution in their head to
+    interpret a float. Measured on real data: Khor Fakkan 0.08/month,
+    Sana'a 1.25, Kharkiv 15.17 — a 190x spread, so the bands have to fall
+    in sensible places."""
+    def band(per_month):
+        return ("routinely violent" if per_month >= 5
+                else "periodically violent" if per_month >= 1
+                else "rarely violent" if per_month > 0
+                else "no recorded conflict activity")
+
+    assert band(15.17) == "routinely violent"      # Kharkiv
+    assert band(1.25) == "periodically violent"    # Sana'a
+    assert band(0.08) == "rarely violent"          # Khor Fakkan
+    assert band(0.0) == "no recorded conflict activity"

@@ -601,6 +601,41 @@ class WatchZone(Base):
     sensor_preference   = Column(String, nullable=False, default="sentinel2_optical")
 
 
+class UcdpEvent(Base):
+    """A UCDP georeferenced conflict event — the free conflict baseline.
+
+    ACLED is not free. UCDP's bulk CSVs are, with village-level coordinates
+    and day-level dates, and they cover the theatres GeoConfirmed ignores:
+    176 Yemen events in one monthly file against GeoConfirmed's 38 in
+    ninety days.
+
+    It lags roughly 82 days, so it is stored as a BASELINE — what is normal
+    for a district — and never as a report of what happened today. The lag
+    is a property of the data, so the row carries its own date and nothing
+    downstream may present it as current.
+    """
+    __tablename__ = "ucdp_events"
+
+    id             = Column(Integer, primary_key=True)
+    ucdp_id        = Column(String, unique=True, index=True, nullable=False)
+    lat            = Column(Float, nullable=False, index=True)
+    lon            = Column(Float, nullable=False, index=True)
+    date           = Column(String, nullable=False, index=True)   # YYYY-MM-DD
+    country        = Column(String, nullable=True, index=True)
+    adm1           = Column(String, nullable=True, index=True)
+    deaths         = Column(Integer, default=0)
+    side_a         = Column(String, nullable=True)
+    side_b         = Column(String, nullable=True)
+    violence_type  = Column(String, nullable=True)
+    conflict_name  = Column(String, nullable=True)
+    # UCDP's own geocoding precision. 4 and above is "somewhere in this
+    # province", which must never be drawn as a place.
+    where_prec     = Column(String, nullable=True)
+    pinnable       = Column(Boolean, default=False)
+    source_file    = Column(String, nullable=True)
+    created_at     = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class FireDetection(Base):
     """A NASA FIRMS thermal hotspot, kept.
 
