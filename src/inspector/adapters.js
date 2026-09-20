@@ -755,6 +755,9 @@ export function adaptFrontline(data = {}) {
         },
         attributes: compact([
             attr("Status", m.what_it_means || m.status),
+            // Which map this is. A reader scrubbed back three years is
+            // looking at a historical front and must not read it as now.
+            attr("Viewing", m.viewing),
             attr("Assessed", m.drawn_at ? fmtTimestamp(m.drawn_at) : null),
             attr("Freshness", m.freshness),
             // The coverage limit travels with every single area, because a

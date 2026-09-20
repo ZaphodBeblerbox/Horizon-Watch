@@ -95,10 +95,26 @@ def _get(url: str, timeout: int = _TIMEOUT):
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
+# The status token is a LATER INVENTION. Snapshots from 2022 carry no
+# geoJSON.status.* at all — their status lives in the fill colour, with
+# the name in prose ("Звільнено /// Taken back"). Reading only the token
+# meant every historical snapshot parsed as zero occupied territory, so a
+# reader scrubbing the slider back to mid-2022 would have been shown an
+# empty map and could only conclude Russia held nothing. The palette has
+# not changed across the eras, so it is the reliable signal.
+_FILL_STATUS = {
+    "#a52714": "occupied",
+    "#0f9d58": "dismissed",
+    "#bcaaa4": "unknown",
+}
+
+
 def _status_of(feature: dict) -> str | None:
-    name = ((feature.get("properties") or {}).get("name")) or ""
-    m = re.search(r"geoJSON\.status\.(\w+)", name)
-    return m.group(1) if m else None
+    props = feature.get("properties") or {}
+    m = re.search(r"geoJSON\.status\.(\w+)", props.get("name") or "")
+    if m:
+        return m.group(1)
+    return _FILL_STATUS.get(str(props.get("fill") or "").lower())
 
 
 def _english_name(feature: dict) -> str | None:
@@ -117,14 +133,28 @@ def latest_snapshot_id(timeout: int = _TIMEOUT) -> tuple[int | None, str | None]
     return newest.get("id"), (newest.get("updatedAt") or newest.get("datetime"))
 
 
-def fetch(force: bool = False) -> dict:
-    """Current control polygons. Never raises."""
-    hit = _CACHE.get("latest")
+def fetch(force: bool = False, at: str | None = None) -> dict:
+    """Control polygons, now or at a past date. Never raises.
+
+    `at` is an ISO date. DeepStateMap keeps every snapshot it has ever
+    published — 1,763 of them — so asking what the front looked like on a
+    given day is a lookup, not an interpolation. That is what makes a
+    time slider honest here: every position on it is a map somebody
+    actually drew, never a blend of two.
+    """
+    key = f"at:{at}" if at else "latest"
+    hit = _CACHE.get(key)
     if hit and not force and time.time() - hit["ts"] < _CACHE_TTL:
         return hit["data"]
 
     try:
-        snap_id, drawn_at = latest_snapshot_id()
+        if at:
+            import datetime as _dtp
+            target = _dtp.datetime.fromisoformat(str(at)[:10]).replace(
+                tzinfo=_dtp.timezone.utc).timestamp()
+            snap_id, drawn_at = _snapshot_nearest(target)
+        else:
+            snap_id, drawn_at = latest_snapshot_id()
         if snap_id is None:
             raise RuntimeError("no snapshots listed")
         raw = _get(f"{_BASE}/history/{snap_id}/geojson")
@@ -180,7 +210,44 @@ def fetch(force: bool = False) -> dict:
         "stale": False,
         "error": None,
     }
-    _CACHE["latest"] = {"ts": time.time(), "data": data}
+    _CACHE[key] = {"ts": time.time(), "data": data}
+    return data
+
+
+def timeline(limit: int = 400) -> dict:
+    """The dates a slider may stop on.
+
+    Only dates DeepStateMap actually published, so every slider position
+    is a real map. Thinned to at most `limit` evenly-spaced points
+    because 1,763 handles is not a control a person can use, and the
+    oldest and newest are always kept so the ends mean what they say.
+    """
+    hit = _CACHE.get(f"timeline:{limit}")
+    if hit and time.time() - hit["ts"] < _CACHE_TTL:
+        return hit["data"]
+    try:
+        hist = _get(f"{_BASE}/history/public")
+        rows = []
+        for h in hist or []:
+            raw = h.get("updatedAt") or ""
+            if h.get("id") and raw:
+                rows.append({"id": h["id"], "at": raw})
+        rows.sort(key=lambda r: r["at"])
+    except Exception as e:                                  # noqa: BLE001
+        return {"available": False, "error": f"{type(e).__name__}: {e}",
+                "snapshots": []}
+
+    if len(rows) > limit:
+        step = len(rows) / float(limit)
+        thinned = [rows[int(i * step)] for i in range(limit)]
+        if thinned[-1] is not rows[-1]:
+            thinned[-1] = rows[-1]
+        rows = thinned
+
+    data = {"available": bool(rows), "snapshots": rows, "count": len(rows),
+            "theatre": THEATRE, "source": SOURCE, "source_url": SOURCE_URL,
+            "note": "every position is a published snapshot, never an interpolation"}
+    _CACHE[f"timeline:{limit}"] = {"ts": time.time(), "data": data}
     return data
 
 

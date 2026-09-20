@@ -3603,8 +3603,20 @@ def api_frontline_theatres():
     return {"theatres": out}
 
 
+@app.get("/api/frontlines/timeline")
+async def api_frontlines_timeline(limit: int = 200):
+    """The dates the Ukraine slider may stop on.
+
+    Every stop is a snapshot DeepStateMap actually published, so no
+    position on the slider is an interpolation between two maps.
+    """
+    import frontlines as _fl
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_frontline_executor, _fl.timeline, limit)
+
+
 @app.get("/api/frontlines")
-async def api_frontlines(force: bool = False):
+async def api_frontlines(force: bool = False, at: str | None = None):
     """Territorial control polygons for the one theatre a free source covers.
 
     Ukraine only, from DeepStateMap. The coverage limit travels in the
@@ -3614,7 +3626,7 @@ async def api_frontlines(force: bool = False):
     """
     import frontlines as _fl
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _fl.fetch, force)
+    return await loop.run_in_executor(_frontline_executor, _fl.fetch, force, at)
 
 
 @app.get("/api/reference-image")

@@ -38,7 +38,7 @@ const STATUS_STYLE = {
     dismissed: { fill: "#0f9d58", alpha: 0.20, label: "Retaken / withdrawn" },
 }
 
-export default function GlobeFrontlinesLayer({ enabled = false }) {
+export default function GlobeFrontlinesLayer({ enabled = false, at = null }) {
     const { viewer } = useCesium()
     const dsRef = useRef(null)
     const idsRef = useRef([])
@@ -60,7 +60,8 @@ export default function GlobeFrontlinesLayer({ enabled = false }) {
         if (!enabled) { clear(); setMeta(null); return }
 
         const load = () => {
-            fetch(`${API_BASE}/api/frontlines`, { credentials: "include" })
+            fetch(`${API_BASE}/api/frontlines${at ? `?at=${encodeURIComponent(at)}` : ""}`,
+                  { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : null))
                 .then(async (d) => {
                     if (cancelled || !d?.available || !d.geojson?.features?.length) return
@@ -96,6 +97,8 @@ export default function GlobeFrontlinesLayer({ enabled = false }) {
                                 what_it_means: raw.meaning,
                                 theatre: d.theatre,
                                 drawn_at: d.drawn_at,
+                                viewing: at ? `historical — ${String(d.drawn_at).slice(0, 10)}`
+                                            : "current",
                                 source: d.source,
                                 source_url: d.source_url,
                                 coverage: d.coverage_note,
@@ -116,7 +119,7 @@ export default function GlobeFrontlinesLayer({ enabled = false }) {
         load()
         const h = setInterval(load, REFRESH_MS)
         return () => { cancelled = true; clearInterval(h); clear() }
-    }, [viewer, enabled])
+    }, [viewer, enabled, at])
 
     return null
 }

@@ -354,6 +354,23 @@ export default function Situation({ onOpenDossier }) {
     // would bury the rest of the map.
     const [theatresOn, setTheatresOn] = useState({ ukraine: true })
     const [frontlineTheatres, setFrontlineTheatres] = useState([])
+    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+    // The Ukraine time slider. `null` means live; any other value is a
+    // published snapshot date. Index rather than date so the control is
+    // evenly spaced in SNAPSHOTS, which is what exists, rather than in
+    // days, which would put long gaps where nobody drew a map.
+    const [snapshots, setSnapshots] = useState([])
+    const [snapIdx, setSnapIdx] = useState(null)
+    useEffect(() => {
+        if (!contextOn.frontlines) return
+        fetch(`${API_BASE}/api/frontlines/timeline?limit=200`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => setSnapshots(safeArray(d?.snapshots)))
+            .catch(() => {})
+    }, [contextOn.frontlines])
+    const frontlinesAt = (snapIdx == null || !snapshots.length)
+        ? null
+        : String(snapshots[Math.min(snapIdx, snapshots.length - 1)]?.at || "").slice(0, 10)
     useEffect(() => {
         fetch(`${API_BASE}/api/frontlines/theatres`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
@@ -361,7 +378,6 @@ export default function Situation({ onOpenDossier }) {
             .catch(() => {})
     }, [])
 
-    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     /**
      * PARALLAX layers addendum §L5 — Global infrastructure is its OWN group.
      *
@@ -821,7 +837,8 @@ export default function Situation({ onOpenDossier }) {
                         </button>
                     </div>
                     {frontlineTheatres.map((t) => (
-                        <div key={t.key}
+                        <Fragment key={t.key}>
+                        <div
                              title={t.available
                                  ? `${t.label} — ${t.source}`
                                  : `${t.label} — ${t.reason}`}
@@ -855,6 +872,36 @@ export default function Situation({ onOpenDossier }) {
                                 <svg className="icon sm"><use href={theatresOn[t.key] && t.available ? "#i-eye" : "#i-eye-off"} /></svg>
                             </button>
                         </div>
+                        {/* Only Ukraine has a published snapshot history to
+                            scrub through; the wiki theatres have revisions
+                            but not a map per day. */}
+                        {t.key === "ukraine" && contextOn.frontlines && theatresOn.ukraine
+                            && snapshots.length > 1 && (
+                            <div style={{ padding: "2px 12px 8px 27px" }}>
+                                <input
+                                    type="range" min={0} max={snapshots.length - 1}
+                                    value={snapIdx == null ? snapshots.length - 1 : snapIdx}
+                                    onChange={(e) => setSnapIdx(Number(e.target.value))}
+                                    style={{ width: "100%", accentColor: "var(--acc-hi)" }}
+                                    aria-label="Frontline date"
+                                />
+                                <div style={{ display: "flex", justifyContent: "space-between",
+                                              font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
+                                    <span>{String(snapshots[0]?.at || "").slice(0, 10)}</span>
+                                    <span style={{ color: frontlinesAt ? "var(--acc-hi)" : "var(--txt-3)" }}>
+                                        {frontlinesAt || "live"}
+                                    </span>
+                                    <span
+                                        role="button" tabIndex={0}
+                                        onClick={() => setSnapIdx(null)}
+                                        style={{ cursor: "pointer",
+                                                 color: snapIdx == null ? "var(--txt-4)" : "var(--acc-hi)" }}>
+                                        {snapIdx == null ? "now" : "back to now"}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+                        </Fragment>
                     ))}
                     <div
                         role="button" tabIndex={0}
@@ -1098,6 +1145,7 @@ export default function Situation({ onOpenDossier }) {
                         cablesEnabled={infraOn.cables} chokepointsEnabled={infraOn.chokepoints}
                         riskEnabled={contextOn.risk}
                         frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
+                        frontlinesAt={frontlinesAt}
                         warmapTheatres={contextOn.frontlines
                             ? frontlineTheatres
                                 .filter((t) => t.kind === "points" && theatresOn[t.key])
