@@ -741,6 +741,33 @@ export function adaptCountryRisk(data = {}) {
     }
 }
 
+// ── territorial control ──────────────────────────────────────────────────
+
+export function adaptFrontline(data = {}) {
+    const m = data.meta || {}
+    return {
+        identity: {
+            title: data.name || "Control area",
+            subtitle: m.theatre || null,
+            entityType: "frontline",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes: compact([
+            attr("Status", m.what_it_means || m.status),
+            attr("Assessed", m.drawn_at ? fmtTimestamp(m.drawn_at) : null),
+            attr("Freshness", m.freshness),
+            // The coverage limit travels with every single area, because a
+            // reader who sees Ukraine mapped will reasonably assume the
+            // layer is global and read an empty Sudan as a quiet Sudan.
+            attr("Coverage", m.coverage),
+            attr("Source", m.source),
+        ]),
+        provenance: { feed: m.source || "DeepStateMap", ingestedAt: m.drawn_at || null },
+        actions: { canJumpToLocation: false },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -759,6 +786,7 @@ const ADAPTERS = {
     thermal_anomaly: adaptThermalAnomaly,
     fusion_member: adaptFusionMember,
     country_risk: adaptCountryRisk,
+    frontline: adaptFrontline,
 }
 
 /**

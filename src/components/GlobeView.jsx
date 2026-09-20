@@ -18,6 +18,7 @@ import GlobeDerivedAlertsLayer  from "../globe/GlobeDerivedAlertsLayer.jsx"
 import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
+import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
 import GlobeFiresLayer           from "../globe/GlobeFiresLayer.jsx"
 import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
@@ -121,6 +122,7 @@ export default function GlobeView({
     // GDELT machine-coded news events — separate from geoConfirmedEnabled
     // on purpose, see GlobeGdeltLayer.jsx.
     gdeltEnabled = false,
+    frontlinesEnabled = false,
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
     firesEnabled = false,
@@ -875,6 +877,7 @@ export default function GlobeView({
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} />
+                <GlobeFrontlinesLayer enabled={frontlinesEnabled} />
                 <GlobeFiresLayer enabled={firesEnabled} />
                 {/* §A8 — surge and fusion, evaluated at the same playhead the
                     archive pins use (§A7). */}

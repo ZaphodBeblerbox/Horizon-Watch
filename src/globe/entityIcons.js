@@ -241,16 +241,16 @@ export function getEntityMarkerDataUri(opts = {}) {
 export const MARKER_MAX_CAMERA_M = 60_000_000
 
 export const MARK_SIZE = {
-    // The three event marks are drawn at ONE size, by request, so no shape
-    // out-reads another. Note they will not look identical even so: a
-    // square fills its box, a diamond is that square rotated (about 70% of
-    // the area) and a triangle less again. That is inherent to the shapes,
-    // not a size bug — matching the numbers is what was asked for and what
-    // keeps them comparable.
-    geoconfirmed: 16,
+    // Matched by eye, not by number. The event marks were first set to one
+    // identical size, which looked wrong: a square fills its box, while a
+    // diamond is that same square rotated (about 70% of the area) and a
+    // triangle less again. Equal numbers therefore make the square the
+    // heaviest mark on the globe. The square is knocked down until the
+    // three read as the same weight.
+    geoconfirmed: 14,
     gdelt: 16,
     alert: 16,
-    ucdp: 16,
+    ucdp: 14,
     // These two stay smaller. A detection is read inside an image, not
     // against the globe, and a thermal reading is the weakest claim here —
     // the news diamond was cut to 14 in the same pass that found it was

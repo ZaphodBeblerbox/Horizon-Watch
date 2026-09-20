@@ -38,6 +38,7 @@ def _real_geoconfirmed_counts_by_iso(window_days: int) -> dict:
             GeoConfirmedPlacemark.status == "active",
             GeoConfirmedPlacemark.date >= cutoff,
         ).all()
+    import country_codes as _cc
     for (plus_code,) in rows:
         if not plus_code:
             continue
@@ -46,8 +47,12 @@ def _real_geoconfirmed_counts_by_iso(window_days: int) -> dict:
             continue
         resolved = country_registry.canonical_country(raw)
         if resolved:
-            iso = resolved[0]
-            counts[iso] = counts.get(iso, 0) + 1
+            # country_registry speaks ISO alpha-2; the index is keyed on
+            # alpha-3 so that GDELT's FIPS and CAMEO codes can be compared
+            # against it at all. Converted here, once.
+            iso3 = _cc.from_iso2(resolved[0])
+            if iso3:
+                counts[iso3] = counts.get(iso3, 0) + 1
     return counts
 
 
@@ -113,3 +118,118 @@ def reset_weights():
     global _current_weights
     _current_weights = dict(_gri.DEFAULT_WEIGHTS)
     return {"weights": _current_weights}
+
+@router.get("/country/{iso_code}/explain")
+def explain_country_risk(iso_code: str, window_days: int = 30, limit: int = 8):
+    """Why this country scores what it scores, and what has happened there.
+
+    A band on a choropleth is unarguable and unactionable. Three things
+    make it usable, and all three already exist somewhere in this process:
+    the score's own decomposition, the EVENTS that produced it, and what
+    the wires are saying now.
+
+    THE EVENTS ARE SELECTED BY THE SCORER'S OWN RULE. _country_matches is
+    the same predicate compute_country_risk uses, so this list cannot
+    quietly disagree with the number it claims to explain — an explanation
+    derived from a different rule than the thing it explains is worse than
+    none, because it is checkable and wrong.
+    """
+    iso = (iso_code or "").upper()
+    events = get_all_events()
+    geo_counts = _real_geoconfirmed_counts_by_iso(window_days)
+    hist_days = real_history_days(events)
+    risk = _gri.compute_country_risk(
+        iso, events, geo_counts, weights=_current_weights,
+        window_days=window_days, real_history_days=hist_days,
+    )
+
+    # The events behind the score, newest first.
+    import datetime as _dt
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=window_days)
+    mine = []
+    for e in events:
+        if not _gri._country_matches(e, iso):
+            continue
+        dt = _gri._event_dt(e)
+        if dt is None or dt < cutoff:
+            continue
+        mine.append((dt, e))
+    mine.sort(key=lambda p: p[0], reverse=True)
+
+    drivers = [{
+        "date": dt.date().isoformat(),
+        "title": (e.get("headline") or e.get("summary") or "").strip() or None,
+        "event_type": e.get("event_type"),
+        "goldstein": e.get("goldstein"),
+        "tone": e.get("avg_tone"),
+        "mentions": e.get("mentions"),
+        "location": e.get("location") or e.get("location_name"),
+        "source_url": e.get("source_url"),
+        # Whether a journalist wrote this sentence or this system did.
+        "headline_is_article": bool(e.get("headline_is_article")),
+    } for dt, e in mine[:limit]]
+
+    return {
+        "iso_code": iso,
+        "risk": risk,
+        "window_days": window_days,
+        "events_in_window": len(mine),
+        "drivers": drivers,
+        "news": _recent_articles(iso, limit),
+        # Both codes, because downstream needs different ones: news_articles
+        # and flagcdn are keyed on alpha-2, the index on alpha-3.
+        "iso2": _iso2(iso),
+        "country": _country_name(iso),
+        # flagcdn serves public-domain flags with no key and no rate limit.
+        "flag_url": (f"https://flagcdn.com/w160/{_iso2(iso).lower()}.png"
+                     if _iso2(iso) else None),
+        "note": ("drivers are the same events the scorer counted, selected by "
+                 "the scorer's own country rule; news is separate RSS and did "
+                 "not affect the score"),
+    }
+
+
+def _iso2(iso: str) -> str | None:
+    import country_codes as _cc
+    c = (iso or "").upper()
+    if len(c) == 2:
+        return c if c in _cc.ISO2_TO_ISO3 else None
+    return _cc.ISO3_TO_ISO2.get(c)
+
+
+def _country_name(iso: str) -> str | None:
+    """The country's own name, so a panel never has to show a code."""
+    import country_registry
+    two = _iso2(iso)
+    if not two:
+        return None
+    # country_registry's own alpha-2 -> name table, rather than a second
+    # list of country names that could disagree with it.
+    return getattr(country_registry, "_ISO_TO_NAME", {}).get(two)
+
+
+def _recent_articles(iso: str, limit: int) -> list:
+    """Latest ingested RSS for this country.
+
+    SEPARATE FROM THE SCORE ON PURPOSE, and labelled as such in the
+    response. These articles did not feed the index, so presenting them
+    beside it as though they were evidence for the number would be a quiet
+    lie. They answer a different and equally real question: what is
+    happening there right now.
+    """
+    from database import NewsArticle as _NA, get_db as _gdb
+    try:
+        with _gdb() as db:
+            two = _iso2(iso) or iso
+            rows = (db.query(_NA)
+                      .filter(_NA.country_code == two.lower())
+                      .order_by(_NA.ingested_at.desc())
+                      .limit(limit).all())
+            return [{
+                "title": r.title, "url": r.url, "source": r.source_name,
+                "published": r.published, "ingested_at":
+                    r.ingested_at.isoformat() if r.ingested_at else None,
+            } for r in rows]
+    except Exception as ex:                                 # noqa: BLE001
+        # A missing news table must not take the risk explanation with it.
+        return []

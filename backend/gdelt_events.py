@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.parse
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -645,6 +645,40 @@ def _load_persisted_cache() -> None:
         print(f"[gdelt] load persisted cache failed: {type(ex).__name__}: {ex}")
 
 
+# How much history the cache keeps. The risk index's baseline needs weeks,
+# not minutes, and MAX_EVENTS_CACHE (20k) is the hard ceiling above this.
+RETENTION_DAYS = int(os.getenv("GDELT_RETENTION_DAYS", "30"))
+
+
+def _event_key(e: dict) -> str:
+    return str(e.get("event_id") or e.get("id") or "")
+
+
+def _merge_events(existing: list, incoming: list) -> list:
+    """Old events plus new ones, deduped by id and aged out.
+
+    Newer wins on a collision, because a re-read of the same event may
+    carry an enriched headline the first pass could not fetch.
+    """
+    by_id: dict = {}
+    for e in existing:
+        k = _event_key(e)
+        if k:
+            by_id[k] = e
+    for e in incoming:
+        k = _event_key(e)
+        if k:
+            by_id[k] = e
+
+    cutoff = (datetime.now(timezone.utc).date()
+              - timedelta(days=RETENTION_DAYS)).isoformat()
+    kept = [e for e in by_id.values()
+            if str(e.get("event_date") or "")[:10] >= cutoff
+            or not e.get("event_date")]
+    kept.sort(key=lambda e: str(e.get("event_date") or ""), reverse=True)
+    return kept[:MAX_EVENTS_CACHE]
+
+
 # ── Event filtering ───────────────────────────────────────────────────────────
 
 def _passes_filter(ev: dict[str, Any]) -> bool:
@@ -1086,7 +1120,21 @@ def refresh_cache() -> dict[str, Any]:
 
     with _CACHE_LOCK:
         EVENTS_CACHE["updated_at"] = datetime.now(timezone.utc).isoformat()
-        EVENTS_CACHE["events"] = filtered_events[:MAX_EVENTS_CACHE]
+        # ACCUMULATE, DO NOT REPLACE.
+        #
+        # Each refresh reads ONE 15-minute export, which is 60-120 events.
+        # Overwriting the cache with it meant every consumer asking for a
+        # "30-day window" was really seeing the last fifteen minutes, and
+        # seeing a different fifteen minutes on every poll. The visible
+        # symptom was the country risk index highlighting a different
+        # country on every reload: a country scores 78 because two of the
+        # seventy events in the current slice mention it, then vanishes
+        # entirely from the next slice.
+        #
+        # Merged by event id and aged out by RETENTION_DAYS, so the window
+        # a caller asks for is a window that actually exists.
+        EVENTS_CACHE["events"] = _merge_events(
+            EVENTS_CACHE.get("events") or [], filtered_events)
         EVENTS_CACHE["source_files"] = recent_urls
         EVENTS_CACHE["files_attempted"] = len(recent_urls)
         EVENTS_CACHE["files_loaded"] = len(loaded_urls)

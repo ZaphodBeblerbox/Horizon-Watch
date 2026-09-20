@@ -186,6 +186,11 @@ function OntologyRecordBlock({ entityType, data }) {
     )
 }
 
+// Entity kinds a reference photograph exists for. A chokepoint is a
+// strait or canal and Wikipedia has a picture of every one of them; it
+// was simply never asked.
+const FACILITY_PHOTO_TYPES = new Set(["port", "airport", "chokepoint"])
+
 export default function InspectorPanel({
     entityType,
     entityId,
@@ -312,13 +317,45 @@ export default function InspectorPanel({
     const [facilityPhoto, setFacilityPhoto] = useState(null)
     useEffect(() => {
         setFacilityPhoto(null)
-        if (entityType !== "port" && entityType !== "airport") return
-        const facility = data?.name || data?.port_name || data?.iata || data?.icao
+        if (!FACILITY_PHOTO_TYPES.has(entityType)) return
+        // THE FIELD NAMES ARE NOT THE ONES THIS WAS ASKING FOR. An airport
+        // record carries airport_name / icao_code / iata_code, and none of
+        // `name`, `iata` or `icao` exists on it — so `facility` was always
+        // undefined, the effect returned immediately, and no airport has
+        // ever requested a photograph. Ports use port_name, which was
+        // covered; chokepoints were never wired at all.
+        const facility = data?.name || data?.port_name || data?.airport_name
+            || data?.icao_code || data?.iata_code || data?.ident
+            || data?.iata || data?.icao
         if (!facility) return
         let cancelled = false
         fetch(`${API_BASE}/api/reference-image?kind=${entityType}&name=${encodeURIComponent(facility)}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (!cancelled && d?.available) setFacilityPhoto(d) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    /**
+     * A country's risk score, explained.
+     *
+     * A band on a choropleth is unarguable and unactionable: "Ukraine 83"
+     * invites no next step. Three things make it usable and all three
+     * already existed server-side — the score's own decomposition, the
+     * EVENTS that produced it, and what the wires are saying now. The
+     * panel showed none of them because the type was not even clickable.
+     */
+    const [countryDetail, setCountryDetail] = useState(null)
+    useEffect(() => {
+        setCountryDetail(null)
+        if (entityType !== "country_risk") return
+        const iso = data?.iso3 || data?.iso_code
+        if (!iso) return
+        let cancelled = false
+        fetch(`${API_BASE}/api/risk-index/country/${encodeURIComponent(iso)}/explain?limit=6`,
+              { credentials: "include" })
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => { if (!cancelled && d && !d.detail) setCountryDetail(d) })
             .catch(() => {})
         return () => { cancelled = true }
     }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -413,12 +450,26 @@ export default function InspectorPanel({
                 borderBottom: "var(--elevation-1)",
                 flexShrink: 0,
             }}>
-                <div
-                    style={{ flexShrink: 0, width: 36, height: 36 }}
-                    // entityMarkerSvg() is a pure, trusted, locally-generated SVG
-                    // string (src/globe/entityIcons.js) — not user-controlled HTML.
-                    dangerouslySetInnerHTML={{ __html: iconSvg }}
-                />
+                {countryDetail?.flag_url ? (
+                    // THE FLAG IS THE FASTEST IDENTIFIER THERE IS. A marker
+                    // glyph here says "country", which the reader already
+                    // knows; the flag says which one, before the title is
+                    // read. Public-domain flags from flagcdn, no key.
+                    <img
+                        src={countryDetail.flag_url}
+                        alt={countryDetail.country || identity.title}
+                        style={{ flexShrink: 0, width: 36, height: 27, objectFit: "cover",
+                                 borderRadius: 3, border: "1px solid var(--line)" }}
+                        onError={(e) => { e.currentTarget.style.display = "none" }}
+                    />
+                ) : (
+                    <div
+                        style={{ flexShrink: 0, width: 36, height: 36 }}
+                        // entityMarkerSvg() is a pure, trusted, locally-generated SVG
+                        // string (src/globe/entityIcons.js) — not user-controlled HTML.
+                        dangerouslySetInnerHTML={{ __html: iconSvg }}
+                    />
+                )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
                         fontSize: "var(--text-lg)", fontWeight: "var(--weight-bold)",
@@ -445,6 +496,73 @@ export default function InspectorPanel({
 
             {/* Body */}
             <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-3) var(--space-4)" }}>
+                {/* ── what drove this country's score, and what is happening
+                    there now. Kept as two clearly separated lists because
+                    they are not the same kind of thing: the drivers ARE the
+                    score's evidence, the articles did not feed it at all.
+                    Blending them would imply the news justified the number. */}
+                {countryDetail && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        {countryDetail.drivers?.length > 0 && (
+                            <>
+                                <div style={{ font: "600 10px var(--mono)", color: "var(--text-secondary)",
+                                              textTransform: "uppercase", letterSpacing: ".05em",
+                                              marginBottom: 6 }}>
+                                    What drove this score
+                                    <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                                        {" "}· {countryDetail.events_in_window} event(s) in{" "}
+                                        {countryDetail.window_days}d
+                                    </span>
+                                </div>
+                                {countryDetail.drivers.map((d, i) => (
+                                    <div key={i} style={{ padding: "5px 0",
+                                                          borderBottom: "1px solid var(--line-soft)" }}>
+                                        <div style={{ font: "400 11px var(--font)", color: "var(--text-primary)" }}>
+                                            {d.source_url ? (
+                                                <a href={d.source_url} target="_blank" rel="noopener noreferrer"
+                                                   style={{ color: "inherit" }}>{d.title || d.event_type}</a>
+                                            ) : (d.title || d.event_type)}
+                                        </div>
+                                        <div style={{ font: "400 10px var(--mono)", color: "var(--text-dim)" }}>
+                                            {d.date} · {d.event_type}
+                                            {d.goldstein != null ? ` · Goldstein ${d.goldstein}` : ""}
+                                            {d.location ? ` · ${d.location}` : ""}
+                                            {/* Whether a journalist wrote this line or this
+                                                system generated it from CAMEO codes. */}
+                                            {d.headline_is_article ? "" : " · machine-worded"}
+                                        </div>
+                                    </div>
+                                ))}
+                            </>
+                        )}
+
+                        {countryDetail.news?.length > 0 && (
+                            <div style={{ marginTop: "var(--space-3)" }}>
+                                <div style={{ font: "600 10px var(--mono)", color: "var(--text-secondary)",
+                                              textTransform: "uppercase", letterSpacing: ".05em",
+                                              marginBottom: 6 }}>
+                                    Latest news
+                                    <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                                        {" "}· RSS, did not affect the score
+                                    </span>
+                                </div>
+                                {countryDetail.news.map((n, i) => (
+                                    <div key={i} style={{ padding: "4px 0" }}>
+                                        <a href={n.url} target="_blank" rel="noopener noreferrer"
+                                           style={{ font: "400 11px var(--font)", color: "var(--text-primary)",
+                                                    textDecoration: "none" }}>
+                                            {n.title}
+                                        </a>
+                                        <div style={{ font: "400 10px var(--mono)", color: "var(--text-dim)" }}>
+                                            {n.source}{n.published ? ` · ${String(n.published).slice(0, 16)}` : ""}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* Reference photo. Aircraft carry the EXACT airframe from
                     Planespotters by ICAO24; vessels fall back to Wikimedia by
                     ship name, which is the vessel CLASS or that ship on

@@ -19,6 +19,7 @@
  */
 import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react"
 import API_BASE from "../apiBase.js"
+import { safeArray } from "../utils/safeArray.js"
 import GlobeView from "../components/GlobeView.jsx"
 import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
@@ -340,7 +341,19 @@ export default function Situation({ onOpenDossier }) {
     // what decides where imagery gets tasked, so hiding it by default
     // conceals the system's own reasoning.
     const [firesOn, setFiresOn] = useState(true)
-    const [contextOn, setContextOn] = useState({ risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+    // Which theatres the frontline layer should draw. Ukraine is the only
+    // one with an open control feed today; the roster comes from the
+    // backend so adding a source later needs no frontend change.
+    const [theatresOn, setTheatresOn] = useState({ ukraine: true })
+    const [frontlineTheatres, setFrontlineTheatres] = useState([])
+    useEffect(() => {
+        fetch(`${API_BASE}/api/frontlines/theatres`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => setFrontlineTheatres(safeArray(d?.theatres)))
+            .catch(() => {})
+    }, [])
+
+    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     /**
      * PARALLAX layers addendum §L5 — Global infrastructure is its OWN group.
      *
@@ -766,6 +779,50 @@ export default function Situation({ onOpenDossier }) {
                             </button>
                         </div>
                     ))}
+                    {/* Frontlines, per theatre. The unavailable ones are
+                        listed rather than hidden: a control layer offering
+                        only Ukraine implies the other wars have no front
+                        line, and each row carries the actual reason. */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>Frontlines</span>
+                        <button
+                            onClick={() => setContextOn((p) => ({ ...p, frontlines: !p.frontlines }))}
+                            title={contextOn.frontlines ? "Hide layer" : "Show layer"}
+                            style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: contextOn.frontlines ? "var(--txt-2)" : "var(--txt-4)" }}
+                        >
+                            <svg className="icon sm"><use href={contextOn.frontlines ? "#i-eye" : "#i-eye-off"} /></svg>
+                        </button>
+                    </div>
+                    {frontlineTheatres.map((t) => (
+                        <div key={t.key}
+                             title={t.available
+                                 ? `${t.label} — ${t.source}`
+                                 : `${t.label} — ${t.reason}`}
+                             style={{ display: "flex", alignItems: "center", gap: 8,
+                                      padding: "3px 12px 3px 27px",
+                                      opacity: contextOn.frontlines && t.available ? 1 : 0.4 }}>
+                            <span style={{ flex: 1, font: "400 11px var(--font)", color: "var(--txt-3)" }}>
+                                {t.label}
+                                {!t.available && (
+                                    <span style={{ color: "var(--txt-4)" }}> · no open source</span>
+                                )}
+                            </span>
+                            <button
+                                onClick={t.available && contextOn.frontlines
+                                    ? () => setTheatresOn((p) => ({ ...p, [t.key]: !p[t.key] }))
+                                    : undefined}
+                                disabled={!t.available || !contextOn.frontlines}
+                                title={t.available ? (theatresOn[t.key] ? "Hide" : "Show") : t.reason}
+                                style={{ width: 18, height: 18, display: "flex", alignItems: "center",
+                                         justifyContent: "center", background: "none", border: "none",
+                                         cursor: t.available && contextOn.frontlines ? "pointer" : "default",
+                                         color: theatresOn[t.key] && t.available && contextOn.frontlines
+                                             ? "var(--txt-2)" : "var(--txt-4)" }}
+                            >
+                                <svg className="icon sm"><use href={theatresOn[t.key] && t.available ? "#i-eye" : "#i-eye-off"} /></svg>
+                            </button>
+                        </div>
+                    ))}
                     <div
                         role="button" tabIndex={0}
                         onClick={() => toast("Satellite tasking is not a real capability in this build yet", { icon: "icon-eye-off" })}
@@ -1006,6 +1063,7 @@ export default function Situation({ onOpenDossier }) {
                         onInspectorPopupChange={handleInspectorPopupChange}
                         cablesEnabled={infraOn.cables} chokepointsEnabled={infraOn.chokepoints}
                         riskEnabled={contextOn.risk}
+                        frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={infraOn.power}
                         nauticalEnabled={infraOn.nautical}
                         eezEnabled={groupsOn.zones}

@@ -59,9 +59,17 @@ def score_to_band(score: float) -> int:
 
 
 def _country_matches(event: dict, iso: str) -> bool:
-    return (event.get("country_code") or "").upper() == iso or \
-           (event.get("actor1_country") or "").upper() == iso or \
-           (event.get("actor2_country") or "").upper() == iso
+    """Does this event touch this country?
+
+    `iso` is ISO alpha-3. It has to be, because the three fields compared
+    here are in three different coding systems: ActionGeo_CountryCode is
+    FIPS 10-4, and the two actor codes are CAMEO alpha-3. Comparing a bare
+    string against all three treated FIPS "RS" (Russia) and ISO "RS"
+    (Serbia) as the same country, and scored Russia three separate times
+    under RS, RU and RUS with a third of its evidence each.
+    """
+    import country_codes as _cc
+    return iso.upper() in _cc.event_iso3s(event)
 
 
 def _volume_component(iso: str, all_events: list, window_days: int, real_history_days: float) -> dict:
@@ -192,13 +200,15 @@ def compute_all_countries(all_events: list, geoconfirmed_counts_by_iso: dict,
     """Real scores for every real country present in either real data
     source this round (GDELT events or GeoConfirmed placemarks) — never a
     fabricated score for a country with zero real signal in either."""
+    import country_codes as _cc
     isos = set()
     for e in all_events:
-        for key in ("country_code", "actor1_country", "actor2_country"):
-            v = (e.get(key) or "").upper()
-            if v:
-                isos.add(v)
-    isos.update(geoconfirmed_counts_by_iso.keys())
+        isos.update(_cc.event_iso3s(e))
+    # GeoConfirmed counts arrive keyed on ISO alpha-2 from country_registry.
+    for k in geoconfirmed_counts_by_iso:
+        iso3 = _cc.from_iso2(k) or (k.upper() if len(k) == 3 else None)
+        if iso3:
+            isos.add(iso3)
     return [
         compute_country_risk(iso, all_events, geoconfirmed_counts_by_iso, weights, window_days, real_history_days)
         for iso in sorted(isos)

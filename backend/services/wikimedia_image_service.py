@@ -56,6 +56,11 @@ _NOT_A_PHOTOGRAPH = re.compile(
 _SUBJECT = {
     "port": re.compile(r"\b(port|harbou?r|terminal|docks?|seaport|quay|marina)\b", re.I),
     "airport": re.compile(r"\b(airport|airfield|air ?base|aerodrome|airstrip|aviation)\b", re.I),
+    # A chokepoint is a strait, canal or passage. Without its own pattern
+    # "Bab-el-Mandeb" resolves to whatever Wikipedia's search likes.
+    "chokepoint": re.compile(
+        r"\b(strait|straits|canal|passage|channel|chokepoint|gulf|sound|"
+        r"bosphorus|dardanelles|isthmus|waterway)\b", re.I),
     "vessel": re.compile(r"\b(ship|vessel|tanker|freighter|cargo|carrier|ferry|"
                          r"icebreaker|frigate|destroyer|submarine|boat|trawler|"
                          r"barge|cruiser|corvette|yacht)\b", re.I),
@@ -190,6 +195,12 @@ def _candidates(name: str, kind: str) -> list[str]:
         if re.search(r"airport|airfield|air base|aerodrome", n, re.I):
             return [n, f"{n} (airport)"]
         return [f"{n} Airport", f"{n} International Airport", f"{n} Air Base", n]
+    if kind == "chokepoint":
+        # Most are already named "Strait of X" or "X Canal"; the bare name
+        # is tried first and the prefixes only if it says nothing itself.
+        if re.search(r"\b(strait|canal|passage|channel|gulf|sound)\b", n, re.I):
+            return [n]
+        return [f"Strait of {n}", f"{n} Strait", f"{n} Canal", n]
     if kind == "vessel":
         return [n, f"{n} (ship)", f"MV {n}", f"USS {n}"]
     return [n]

@@ -3512,6 +3512,31 @@ async def aviation_photo(icao24: str):
     return data
 
 
+@app.get("/api/frontlines/theatres")
+def api_frontline_theatres():
+    """Which conflicts this layer can draw, and why the rest it cannot.
+
+    Served rather than hardcoded in the UI so that adding a source later
+    is a backend change only — and so the reasons stay with the data.
+    """
+    import frontlines as _fl
+    return {"theatres": _fl.theatres()}
+
+
+@app.get("/api/frontlines")
+async def api_frontlines(force: bool = False):
+    """Territorial control polygons for the one theatre a free source covers.
+
+    Ukraine only, from DeepStateMap. The coverage limit travels in the
+    response: a frontlines layer that silently shows nothing over Sudan
+    implies that war has no front line, which is a worse lie than saying
+    "unmapped".
+    """
+    import frontlines as _fl
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _fl.fetch, force)
+
+
 @app.get("/api/reference-image")
 async def reference_image(name: str, kind: str = "port"):
     """A reference photograph of a real named place or ship, from Wikimedia.
@@ -3520,8 +3545,8 @@ async def reference_image(name: str, kind: str = "port"):
     reason rather than a placeholder: "no photograph found" is a true and
     useful answer, a stock picture of some other port is not.
     """
-    if kind not in ("port", "airport", "vessel"):
-        raise HTTPException(400, "kind must be port, airport or vessel")
+    if kind not in ("port", "airport", "vessel", "chokepoint"):
+        raise HTTPException(400, "kind must be port, airport, vessel or chokepoint")
     from services.wikimedia_image_service import get_image as _wiki_image
 
     # A CODE IS NOT A NAME. "EHAM" shares no word with "Amsterdam Airport
