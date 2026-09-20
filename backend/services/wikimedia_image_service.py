@@ -79,6 +79,58 @@ def _is_about(summary: dict, kind: str) -> bool:
     return bool(pattern.search(text))
 
 
+# Words that identify a KIND of thing rather than a particular one. What is
+# left after removing them is what makes this port this port.
+_GENERIC_TOKENS = {
+    "port", "ports", "of", "the", "harbour", "harbor", "terminal", "terminals",
+    "docks", "dock", "seaport", "quay", "marina", "airport", "airfield", "air",
+    "base", "aerodrome", "airstrip", "international", "intl", "regional",
+    "municipal", "national", "county", "city", "new", "old", "north", "south",
+    "east", "west", "ship", "vessel", "mv", "ms", "uss", "hms", "and", "de",
+}
+
+# Pages that are ABOUT the right kind of thing but are not a place you can
+# photograph: an index, a railway station inside an airport, a company, an
+# incident. Wikipedia search returns these constantly.
+_NOT_A_FACILITY = re.compile(
+    r"^(list of|timeline of|history of|index of|outline of)\b|"
+    r"\bstation\b|"
+    r"\b(disambiguation|authority|airlines|airways|group|holdings?|"
+    r"corporation|company|conglomerate)\b|"
+    r"\(company\)",
+    re.I,
+)
+
+
+def _distinctive(name: str) -> set:
+    """The tokens that make this name refer to one place and not a category."""
+    toks = re.findall(r"[a-z0-9]+", (name or "").lower())
+    return {t for t in toks if t not in _GENERIC_TOKENS and len(t) > 2}
+
+
+def _name_matches(name: str, title: str) -> bool:
+    """Is this page about the place we asked for?
+
+    THE GATE THAT WAS MISSING, and its absence produced confident wrong
+    answers rather than misses: "Port of Rotterdam" resolved to the generic
+    article "Port", "EHAM" to "List of busiest airports by passenger
+    traffic", and "Dubai International Airport" to Chhatrapati Shivaji
+    Maharaj International Airport — Mumbai. Every one of those passed the
+    subject check, because that check only asks whether the page is about
+    airports IN GENERAL. Showing an analyst Mumbai captioned as Dubai is
+    worse than showing nothing, and it looks right.
+
+    An ICAO/IATA code shares no tokens with the airport's name, so a
+    code-only query cannot be verified this way and is handled by resolving
+    the code to a name first.
+    """
+    want = _distinctive(name)
+    if not want:
+        return True                      # nothing distinctive to check against
+    have = _distinctive(title)
+    return bool(want & have)
+
+
 def _empty(reason: str | None = None) -> dict:
     return {"available": False, "image_url": None, "thumbnail_url": None,
             "page_url": None, "title": None, "source": "wikimedia", "reason": reason}
@@ -127,6 +179,12 @@ def _candidates(name: str, kind: str) -> list[str]:
     if not n:
         return []
     if kind == "port":
+        # Do not re-prefix a name that already says it. "Port of Rotterdam"
+        # became "Port of Port of Rotterdam", which Wikipedia collapses to
+        # the generic article "Port" — and that article is about ports as a
+        # concept, so every downstream check passed.
+        if re.search(r"\b(port|harbou?r|terminal|docks?)\b", n, re.I):
+            return [n, f"Port of {n}"] if not re.match(r"(?i)^port of\b", n) else [n]
         return [f"Port of {n}", f"{n} Port", f"{n} Harbour", n]
     if kind == "airport":
         if re.search(r"airport|airfield|air base|aerodrome", n, re.I):
@@ -172,6 +230,16 @@ def _commons_photo(query: str) -> dict | None:
     return None
 
 
+def _hit(s: dict) -> dict:
+    full, thumb = _usable_image(s)
+    return {
+        "available": True, "image_url": full, "thumbnail_url": thumb,
+        "page_url": (s.get("content_urls", {}).get("desktop", {}) or {}).get("page"),
+        "title": s.get("title"), "source": "wikimedia",
+        "extract": (s.get("extract") or "")[:400] or None, "reason": None,
+    }
+
+
 def get_image(name: str, kind: str = "port", *, allow_search: bool = True) -> dict:
     """A reference photograph for a real named place or ship.
 
@@ -197,15 +265,14 @@ def get_image(name: str, kind: str = "port", *, allow_search: bool = True) -> di
             continue
         if not _is_about(s, kind):
             continue
+        if _NOT_A_FACILITY.search(s.get("title") or ""):
+            continue
+        if not _name_matches(name, s.get("title") or ""):
+            continue
         full, thumb = _usable_image(s)
         if not full:
             continue
-        result = {
-            "available": True, "image_url": full, "thumbnail_url": thumb,
-            "page_url": (s.get("content_urls", {}).get("desktop", {}) or {}).get("page"),
-            "title": s.get("title"), "source": "wikimedia",
-            "extract": (s.get("extract") or "")[:400] or None, "reason": None,
-        }
+        result = _hit(s)
         break
 
     if not result["available"] and allow_search:
@@ -219,15 +286,14 @@ def get_image(name: str, kind: str = "port", *, allow_search: bool = True) -> di
                 continue
             if not _is_about(s, kind):
                 continue
+            if _NOT_A_FACILITY.search(s.get("title") or ""):
+                continue
+            if not _name_matches(name, s.get("title") or ""):
+                continue
             full, thumb = _usable_image(s)
             if not full:
                 continue
-            result = {
-                "available": True, "image_url": full, "thumbnail_url": thumb,
-                "page_url": (s.get("content_urls", {}).get("desktop", {}) or {}).get("page"),
-                "title": s.get("title"), "source": "wikimedia",
-                "extract": (s.get("extract") or "")[:400] or None, "reason": None,
-            }
+            result = _hit(s)
             break
 
     if not result["available"] and allow_search:

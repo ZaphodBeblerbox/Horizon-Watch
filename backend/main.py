@@ -3523,8 +3523,29 @@ async def reference_image(name: str, kind: str = "port"):
     if kind not in ("port", "airport", "vessel"):
         raise HTTPException(400, "kind must be port, airport or vessel")
     from services.wikimedia_image_service import get_image as _wiki_image
+
+    # A CODE IS NOT A NAME. "EHAM" shares no word with "Amsterdam Airport
+    # Schiphol", so the identity check in the image service can never
+    # confirm a code-only lookup — and before that check existed, "EHAM"
+    # confidently returned "List of busiest airports by passenger traffic".
+    # The airport roster is already in memory with both codes, so the code
+    # is resolved to the real name here and the lookup proceeds normally.
+    resolved_from = None
+    if kind == "airport" and re.fullmatch(r"[A-Za-z]{3,4}", (name or "").strip()):
+        code = name.strip().upper()
+        for a in _STATIC_AIRPORTS:
+            codes = a.get("codes") or {}
+            if code in ((codes.get("icao") or "").upper(), (codes.get("iata") or "").upper()):
+                resolved_from, name = code, a["name"]
+                break
+
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _wiki_image, name, kind)
+    out = await loop.run_in_executor(_executor, _wiki_image, name, kind)
+    if resolved_from:
+        # Say which code was expanded, so a wrong expansion is visible
+        # rather than silently attributed to the image lookup.
+        out = {**out, "resolved_from_code": resolved_from, "resolved_name": name}
+    return out
 
 
 @app.get("/api/vessel/photo/{mmsi}")
