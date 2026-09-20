@@ -7,6 +7,7 @@ import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, Sce
 import ScanProgress from "../components/imagery/ScanProgress.jsx"
 import AoiMiniMap from "./AoiMiniMap.jsx"
 import Minimap from "../components/Minimap.jsx"
+import CorroboratedPanel from "../components/CorroboratedPanel.jsx"
 import { boundsToPolygon } from "./sourcesLogic.js"
 
 // Imagery — page-by-page rebuild, Part B. A UI over the real, already-
@@ -142,6 +143,10 @@ export default function Imagery({ onOpenGenerate }) {
     // a choice of date.
     const [dates, setDates] = useState([])
     const [scanDate, setScanDate] = useState("")
+    // Sentinel-1 change detection: the only route on free imagery to
+    // damaged and new structure, and the way a camp is found.
+    const [changeJob, setChangeJob] = useState(null)
+    const [changeResult, setChangeResult] = useState(null)
     const [tiledJob, setTiledJob] = useState(null)
     const [tiledResult, setTiledResult] = useState(null)
     const viewerRef = useRef(null)
@@ -390,6 +395,48 @@ export default function Imagery({ onOpenGenerate }) {
         toast("Observation area deleted", { icon: "i-check" })
     }
 
+    // Radar change, as a background job: one Sentinel Hub request per
+    // acquisition per side, so a held-open request would be killed by a
+    // proxy long before it finished.
+    async function runChangeDetect() {
+        if (!selectedAoi || changeJob) return
+        const b = selectedAoi.bbox
+        const bounds = { west: b.min_lon, south: b.min_lat, east: b.max_lon, north: b.max_lat }
+        const est = await fetch(`${API_BASE}/api/imagery/change-detect`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ bounds, estimate_only: true }),
+        }).then((r) => r.json()).catch(() => null)
+        if (!est || est.error) { toast(est?.error || "Could not plan change detection", {}); return }
+        if (!window.confirm(`${est.describe}\n\nRun it?`)) return
+
+        const started = await fetch(`${API_BASE}/api/imagery/change-detect`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            credentials: "include", body: JSON.stringify({ bounds, depth: 5, px: 384 }),
+        }).then((r) => r.json()).catch(() => null)
+        if (!started || started.error) { toast(started?.error || "Could not start", {}); return }
+        setChangeResult(null); setChangeJob(started.job_id)
+
+        // Poll. Results carry their own qualifications, which are reported
+        // rather than reduced to a count.
+        for (let i = 0; i < 400; i++) {
+            await new Promise((r) => setTimeout(r, 3000))
+            const d = await fetch(`${API_BASE}/api/imagery/change-detect/${started.job_id}`,
+                                  { credentials: "include" }).then((r) => r.json()).catch(() => null)
+            if (!d) continue
+            if (d.status === "running") continue
+            setChangeJob(null)
+            if (d.status === "error") { toast(`Change detection: ${d.error}`, { icon: "i-alert" }); return }
+            setChangeResult(d)
+            const n = (d.detections || []).length
+            toast(n
+                ? `${n} structural change region(s) — a cue to look, not a finding`
+                : `No structural change between ${d.dates_before?.at(-1)} and ${d.dates_after?.[0]}`, {})
+            return
+        }
+        setChangeJob(null)
+    }
+
     async function createDrawnArea({ name, sensor, cadence, aoiClass }) {
         const polygon = boundsToPolygon(drawnBounds)
         if (!name.trim() || !polygon) { toast("Give the area a name first", {}); return }
@@ -634,6 +681,11 @@ export default function Imagery({ onOpenGenerate }) {
                             </option>
                         ))}
                     </select>
+                    <button className="btn sm" disabled={!selectedAoi || !!changeJob}
+                        onClick={runChangeDetect}
+                        title="Sentinel-1 radar change between two time windows — sees through cloud and darkness; finds what appeared or was removed">
+                        {changeJob ? "…" : "change"}
+                    </button>
                     <button className="btn sm" disabled={!selectedAoi || !!tiledJob} onClick={runTiledScan}
                         title="Cover this area at the sensor's native resolution (shows the cost first)">
                         {tiledJob ? "…" : "scan"}
@@ -648,6 +700,25 @@ export default function Imagery({ onOpenGenerate }) {
                 </div>
 
                 <ScanProgress jobId={tiledJob} onDone={onTiledDone} />
+                <ScanProgress jobId={changeJob} />
+
+                {/* Radar change, with the qualifications that make it
+                    readable: what it compared, and that it is a cue. */}
+                {changeResult && changeResult.status === "completed" ? (
+                    <div style={{ padding: "5px 10px", borderBottom: "1px solid var(--bdr)",
+                                  font: "400 10px var(--mono)",
+                                  color: (changeResult.detections || []).length
+                                      ? "var(--sev-high)" : "var(--txt-dim)" }}>
+                        SAR change · {(changeResult.detections || []).length} region(s) ·
+                        {" "}{changeResult.dates_before?.at(-1)} → {changeResult.dates_after?.[0]} ·
+                        {" "}{changeResult.stack_before}+{changeResult.stack_after} acquisitions ·
+                        {" "}{changeResult.m_per_px} m/px
+                        {changeResult.suspect_wholesale_shift
+                            ? " · WHOLE-SCENE SHIFT (weather or orbit, not structure)" : ""}
+                        {(changeResult.detections || []).length
+                            ? " · a cue to look, not a finding" : ""}
+                    </div>
+                ) : null}
 
                 {/* The result of a native-res scan, stated with its own
                     qualifications. Coverage below 100% is reported because
@@ -736,6 +807,24 @@ export default function Imagery({ onOpenGenerate }) {
                         />
                     </div>
                 )}
+
+                {/* Corroborated first. A place two independent kinds of
+                    source agree on outranks anything one sensor saw alone,
+                    so it sits above this area's own detections rather than
+                    below them. */}
+                <div style={{ marginTop: 16 }}>
+                    <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
+                        Corroborated
+                    </div>
+                    <div style={{ border: "1px solid var(--line)", maxHeight: 220, overflow: "hidden",
+                                  display: "flex", flexDirection: "column" }}>
+                        <CorroboratedPanel hours={168} onFocus={(c) => {
+                            window.dispatchEvent(new CustomEvent("akili:fly-to",
+                                { detail: { lat: c.lat, lon: c.lon } }))
+                            toast(c.headline, {})
+                        }} />
+                    </div>
+                </div>
 
                 <div style={{ marginTop: 16 }}>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Detections</div>
