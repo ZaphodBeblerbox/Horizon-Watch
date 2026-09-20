@@ -95,9 +95,14 @@ export function SceneScrubber({ scenes, selectedScanId, onSelect, currentInstrum
  * codebase keeps finding, so the frame says which it is.
  */
 export function EmptyFrame({ reason = "retired", detections = null }) {
-    const text = reason === "retired"
-        ? "Image retired — only the newest two scenes per area keep their pixels"
-        : "No image was persisted for this scene"
+    // Three different facts, and they must not read the same. A radar
+    // change scan NEVER had a picture — it produces regions, not pixels —
+    // and calling that "retired" invents a deletion that never happened.
+    const text = reason === "radar"
+        ? "Radar change scan — it produces regions, not a picture"
+        : reason === "retired"
+            ? "Image retired — only the newest two scenes per area keep their pixels"
+            : "No image was persisted for this scene"
     return (
         <div style={{ width: "100%", height: "100%", minHeight: 160, background: "var(--bg-2)",
                       display: "flex", flexDirection: "column", alignItems: "center",
@@ -418,7 +423,14 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
         // whole scene is fitted to a pane. The detection boxes are
         // percentage-positioned inside the same transformed stack, so they
         // stay welded to their objects at every zoom level.
-        if (!curSrc) return <EmptyFrame />
+        if (!curSrc) {
+            return <EmptyFrame
+                reason={scene?.scan?.instrument === "SAR"
+                    && (scene?.scan?.triggered_by === "change-detect"
+                        || /PWTT/.test(scene?.scan?.result_summary || ""))
+                    ? "radar" : "retired"}
+                detections={changes?.length ?? null} />
+        }
         return (
             <ZoomPanViewer
                 ref={viewerRef}
@@ -448,7 +460,14 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
         // Both images now live inside the same ZoomPanViewer, under the
         // same transform, so they cannot drift. The wipe is a clip on the
         // upper one.
-        if (!curSrc && !refSrc) return <EmptyFrame />
+        if (!curSrc && !refSrc) {
+            return <EmptyFrame
+                reason={scene?.scan?.instrument === "SAR"
+                    && (scene?.scan?.triggered_by === "change-detect"
+                        || /PWTT/.test(scene?.scan?.result_summary || ""))
+                    ? "radar" : "retired"}
+                detections={changes?.length ?? null} />
+        }
         // A wipe against a retired reference is a wipe against nothing. Say
         // so rather than revealing an empty half as the handle moves.
         if (!refSrc) {
