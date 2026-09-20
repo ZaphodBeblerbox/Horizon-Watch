@@ -9369,6 +9369,19 @@ async def api_ais_vessels(bbox: str = Query(None, description="south,west,north,
     vessels = [v for v in vessels if v.get("lat") is not None and v.get("lon") is not None]
     vessels = sorted(vessels, key=lambda v: v.get("last_update", 0), reverse=True)[:500]
 
+    # A SHIP WE HAVE ALREADY IDENTIFIED STAYS IDENTIFIED. AIS sends
+    # position thirty times more often than identity, and this dict is
+    # rebuilt from scratch on every restart — so without this the map is
+    # a field of "unknown vessel" for several minutes after any deploy,
+    # and permanently for anything that does not re-broadcast. The name
+    # was never lost; it was in history, unread. Flag needs no history at
+    # all: it is the first three digits of the MMSI.
+    try:
+        import vessel_identity as _vi
+        vessels = _vi.enrich_all(vessels)
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[ais] identity enrich failed: {type(ex).__name__}: {ex}")
+
     return {
         "vessels": vessels,
         "total":   len(vessels),
