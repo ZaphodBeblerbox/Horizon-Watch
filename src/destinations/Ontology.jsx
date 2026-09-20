@@ -212,7 +212,7 @@ export default function Ontology({ onOpenGenerate }) {
 
     useEffect(() => {
         const url = scope === "global"
-            ? `${API_BASE}/api/ontology/diagram`
+            ? `${API_BASE}/api/ontology/global?hours=168`
             : `${API_BASE}/api/ontology/country/${encodeURIComponent(scope)}?hours=168`
         fetch(url).then((r) => r.json()).then((d) => {
             // A country graph carries no tiers, and can legitimately be
@@ -414,7 +414,7 @@ export default function Ontology({ onOpenGenerate }) {
                     <select className="input" value={scope}
                             onChange={(e) => setScope(e.target.value)}
                             style={{ width: "100%", font: "400 12px var(--font)" }}>
-                        <option value="global">Global — curated overview</option>
+                        <option value="global">Global — nations and their relations</option>
                         {countries.map((c) => (
                             <option key={c.iso3} value={c.iso3}>{c.name}</option>
                         ))}

@@ -137,3 +137,71 @@ def event_iso3s(event: dict) -> set[str]:
         if a:
             out.add(a)
     return out
+
+
+# ── names, for every code this module knows ──────────────────────────────
+#
+# country_registry.py holds 84 names and is deliberately partial — it is
+# grounded only in country strings actually seen in GeoConfirmed data,
+# which is the right rule for THAT job. It is the wrong source for a
+# nation-to-nation graph: Saudi Arabia and the UAE are absent, so the
+# global view rendered "SAU" and "ARE" as node labels.
+#
+# Keyed on alpha-3 so it covers whatever the FIPS and CAMEO tables can
+# produce, and consulted only after country_registry, which stays
+# authoritative for the names it does have.
+ISO3_NAME: dict[str, str] = {
+    "AFG": "Afghanistan", "ARE": "United Arab Emirates", "ARG": "Argentina",
+    "ARM": "Armenia", "AUS": "Australia", "AUT": "Austria",
+    "AZE": "Azerbaijan", "BDI": "Burundi", "BEL": "Belgium",
+    "BFA": "Burkina Faso", "BGD": "Bangladesh", "BGR": "Bulgaria",
+    "BHR": "Bahrain", "BIH": "Bosnia and Herzegovina", "BLR": "Belarus",
+    "BRA": "Brazil", "CAF": "Central African Republic", "CAN": "Canada",
+    "CHE": "Switzerland", "CHL": "Chile", "CHN": "China", "CIV": "Ivory Coast",
+    "CMR": "Cameroon", "COD": "DR Congo", "COG": "Congo-Brazzaville",
+    "COL": "Colombia", "CRI": "Costa Rica", "CUB": "Cuba", "CYM": "Cayman Islands",
+    "CZE": "Czechia", "DEU": "Germany", "DJI": "Djibouti", "DNK": "Denmark",
+    "DOM": "Dominican Republic", "DZA": "Algeria", "ECU": "Ecuador",
+    "EGY": "Egypt", "ERI": "Eritrea", "ESP": "Spain", "EST": "Estonia",
+    "ETH": "Ethiopia", "FIN": "Finland", "FRA": "France", "GAB": "Gabon",
+    "GBR": "United Kingdom", "GEO": "Georgia", "GHA": "Ghana",
+    "GRC": "Greece", "HND": "Honduras", "HRV": "Croatia", "HUN": "Hungary",
+    "IDN": "Indonesia", "IND": "India", "IRL": "Ireland", "IRN": "Iran",
+    "IRQ": "Iraq", "ISL": "Iceland", "ISR": "Israel", "ITA": "Italy",
+    "JOR": "Jordan", "JPN": "Japan", "KAZ": "Kazakhstan", "KEN": "Kenya",
+    "KGZ": "Kyrgyzstan", "KHM": "Cambodia", "KOR": "South Korea",
+    "KWT": "Kuwait", "LBN": "Lebanon", "LBY": "Libya", "LKA": "Sri Lanka",
+    "LTU": "Lithuania", "LVA": "Latvia", "MAR": "Morocco", "MDA": "Moldova",
+    "MEX": "Mexico", "MLI": "Mali", "MMR": "Myanmar", "MNG": "Mongolia",
+    "MOZ": "Mozambique", "MYS": "Malaysia", "NER": "Niger", "NGA": "Nigeria",
+    "NLD": "Netherlands", "NOR": "Norway", "NPL": "Nepal", "NZL": "New Zealand",
+    "OMN": "Oman", "PAK": "Pakistan", "PER": "Peru", "PHL": "Philippines",
+    "POL": "Poland", "PRI": "Puerto Rico", "PRK": "North Korea",
+    "PRT": "Portugal", "PSE": "Palestine", "QAT": "Qatar", "ROU": "Romania",
+    "RUS": "Russia", "SAU": "Saudi Arabia", "SDN": "Sudan", "SEN": "Senegal",
+    "SGP": "Singapore", "SOM": "Somalia", "SRB": "Serbia", "SSD": "South Sudan",
+    "SVK": "Slovakia", "SVN": "Slovenia", "SWE": "Sweden", "SYR": "Syria",
+    "TCD": "Chad", "THA": "Thailand", "TJK": "Tajikistan", "TKM": "Turkmenistan",
+    "TUN": "Tunisia", "TUR": "Turkey", "TWN": "Taiwan", "TZA": "Tanzania",
+    "UGA": "Uganda", "UKR": "Ukraine", "USA": "United States",
+    "UZB": "Uzbekistan", "VEN": "Venezuela", "VNM": "Vietnam", "YEM": "Yemen",
+    "ZAF": "South Africa", "ZMB": "Zambia", "ZWE": "Zimbabwe",
+}
+
+
+def name_of(iso3: str) -> str:
+    """A country's name, or its code if nobody has one.
+
+    country_registry first: it is the app's canonical name source and
+    other surfaces already show its spellings.
+    """
+    c = (iso3 or "").upper()
+    try:
+        import country_registry
+        two = ISO3_TO_ISO2.get(c)
+        n = getattr(country_registry, "_ISO_TO_NAME", {}).get(two or "")
+        if n:
+            return n
+    except Exception:                                       # noqa: BLE001
+        pass
+    return ISO3_NAME.get(c, c)

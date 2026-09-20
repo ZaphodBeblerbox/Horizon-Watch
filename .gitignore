@@ -41,3 +41,9 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+
+# Runtime GDELT accumulation — this file grows to a 30-day window at
+# run time and is not source. Committing it meant every checkout reset
+# the window to whatever was last committed, which is why the risk index
+# and the nation graph kept seeing one day of events.
+backend/data/gdelt_events_cache.json

@@ -25,12 +25,11 @@ import { safeArray } from "../utils/safeArray.js"
 import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-// Visible to regional zoom. The first cut capped this at 900km, which
-// meant the layer was invisible at every zoom a person actually starts
-// from and read as "facilities don't render". They are still context
-// rather than findings, so they stop short of world view where they
-// would bury the events this map exists to show.
-const MAX_CAMERA_M = 6_000_000
+// Country or region scale, never the globe. Nobody needs every hospital
+// on earth drawn at once, and at world zoom hundreds per country would
+// bury the events this map exists to show. If the layer looks empty,
+// that is a coverage gap in the ingest, not a zoom problem.
+const MAX_CAMERA_M = 900_000
 
 const STYLE = {
     "Military Facility": { colour: "#C084FC", label: "Military" },

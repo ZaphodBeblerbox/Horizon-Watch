@@ -535,15 +535,21 @@ export default function App() {
     const notifSeenRef = useRef(null)
     useEffect(() => {
         if (!notifFeed.length) return
-        if (notifSeenRef.current === null) {
-            notifSeenRef.current = new Set(notifFeed.map((i) => i.id))
-            return
-        }
+        // THE FIRST LOAD FILLS THE TRAY WITHOUT INTERRUPTING. It used to
+        // record the backlog in a Set and nowhere else, so the tray was
+        // empty until something new happened to arrive — and most of
+        // what this system detects carries a STABLE id (a surge, a
+        // fusion point, a town that changed hands a fortnight ago), so
+        // "something new" could be hours away. The whole surface read as
+        // dead because the only thing feeding it was change.
+        const firstLoad = notifSeenRef.current === null
+        if (firstLoad) notifSeenRef.current = new Set()
         const seen = notifSeenRef.current
         for (const i of notifFeed) {
             if (seen.has(i.id)) continue
             seen.add(i.id)
             pushNotification({
+                silent: firstLoad,
                 id: i.id,
                 sev: i.sev || "moderate",
                 kind: i.kind || "signal",

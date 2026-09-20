@@ -24110,6 +24110,20 @@ def _ontology_node_risk(node, degree):
     return round(min(degree, 20) / 20 * 60)
 
 
+@app.get("/api/ontology/global")
+async def api_ontology_global(hours: int = 168, min_events: int = 1):
+    """The world as nations and what passes between them.
+
+    At world scale the only question a graph can answer legibly is who is
+    doing what to whom, so the global view is nations and their coded
+    interactions — not a sample of every entity type, which is a picture
+    of nothing.
+    """
+    import country_graph as _cg
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _cg.global_graph, hours, min_events)
+
+
 @app.get("/api/ontology/countries")
 def api_ontology_countries():
     """Countries this system can draw a graph for.
@@ -24119,12 +24133,13 @@ def api_ontology_countries():
     """
     import country_graph as _cg
     import country_codes as _cc
-    import country_registry as _cr
-    names = getattr(_cr, "_ISO_TO_NAME", {})
     out = []
-    for iso2, name in sorted(names.items(), key=lambda kv: kv[1]):
-        iso3 = _cc.from_iso2(iso2)
-        if not iso3:
+    # Every country this app can name, not the 84 that happen to appear
+    # in GeoConfirmed's own strings.
+    for iso3 in sorted(_cc.ISO3_NAME, key=lambda k: _cc.name_of(k)):
+        name = _cc.name_of(iso3)
+        iso2 = _cc.ISO3_TO_ISO2.get(iso3)
+        if not iso2:
             continue
         try:
             if _cg._bbox_of(iso3):

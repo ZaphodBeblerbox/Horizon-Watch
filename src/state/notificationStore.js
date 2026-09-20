@@ -83,7 +83,17 @@ export function setMuted(v) {
     notify()
 }
 
-/** Push a notification. Returns true if it raised a card. */
+/**
+ * Push a notification. Returns true if it raised a card.
+ *
+ * `n.silent` records the item in the tray without interrupting. That is
+ * for the BACKLOG THAT ALREADY EXISTED when the page opened: replaying a
+ * hundred historical criticals as cards on every load is the "shouts at
+ * every event" failure, but the previous answer — recording the backlog
+ * nowhere at all — meant the tray was empty on arrival and the whole
+ * notification surface read as broken. The backlog is a record; only
+ * what arrives while you are watching is an interruption.
+ */
 export function pushNotification(n) {
     const item = {
         id: n.id || `N-${Math.random().toString(36).slice(2, 9)}`,
@@ -98,7 +108,7 @@ export function pushNotification(n) {
     if (state.items.some((x) => x.id === item.id)) return false   // never double-raise
     state.items = [item, ...state.items].slice(0, 500)
 
-    const raised = interrupts(item)
+    const raised = !n.silent && interrupts(item)
     if (raised) state.cards = [...state.cards, item]
     notify()
 

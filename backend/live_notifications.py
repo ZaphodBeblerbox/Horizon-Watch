@@ -271,7 +271,14 @@ def frontline_items(days: int = 7, limit: int = 12) -> list[dict]:
                     "reason": f"{c['from']} → {c['to']} · {d['label']} · "
                               f"per the war map's own revision history",
                     "notify": True,
-                    "kind": "confirm",
+                    # ESCALATE, NOT CONFIRM. The store cards a change and
+                    # deliberately never cards an arrival — "an arrival is
+                    # a FACT and belongs in the tray, while a change is the
+                    # only thing worth taking someone's attention for".
+                    # A town changing sides is a change in the world, and
+                    # filing it as an arrival meant Mokha Port falling was
+                    # recorded silently.
+                    "kind": "escalate",
                     "source": _wm.SOURCE,
                     "lat": c["lat"], "lon": c["lon"],
                     "region": d["label"],

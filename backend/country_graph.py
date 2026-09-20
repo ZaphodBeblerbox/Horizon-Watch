@@ -400,13 +400,7 @@ def build(iso3: str, hours: int = 168, radius_km: float = PROXIMITY_KM) -> dict:
     # country graph opens with two blank bands and reads as broken.
     import country_codes as cc
     iso2 = cc.ISO3_TO_ISO2.get(iso3) or iso3
-    try:
-        import country_registry
-        cname = (getattr(country_registry, "_ISO_TO_NAME", {}).get(iso2)
-                 or iso3)
-    except Exception:                                       # noqa: BLE001
-        cname = iso3
-    country_node = _node(f"country_{iso2}", "country", cname,
+    country_node = _node(f"country_{iso2}", "country", cc.name_of(iso3),
                          kind="Country", source="country registry", risk=50)
 
     links = proximity_links(events, fixed, radius_km)
@@ -425,20 +419,48 @@ def build(iso3: str, hours: int = 168, radius_km: float = PROXIMITY_KM) -> dict:
                       "conf": 0.7, "inferred": True,
                       "label": "reported in"})
 
-    # Only fixed things that something actually connects to, plus events
-    # and factions. A country's 4,000 unconnected airports are true and
-    # useless here; the graph is for relationships.
+    # A COUNTRY'S INFRASTRUCTURE IS PART OF ITS GRAPH WHETHER OR NOT
+    # ANYTHING HAPPENED NEAR IT THIS WEEK. The first cut kept only fixed
+    # sites that an event linked to, which was meant to stop 4,000
+    # unconnected airports swamping the view. What it actually did was
+    # empty the graph of every quiet country: Germany found 3,914 sites
+    # and rendered one node, because no event touched any of them.
+    #
+    # The fix is to attach them to the country rather than discard them,
+    # and to spend the node budget in order of how much each kind tells
+    # you about a place.
     linked_ids = {l["t"] for l in links} | {l["s"] for l in links}
-    kept_fixed = [f for f in fixed if f["id"] in linked_ids]
-    nodes = [country_node] + events + factions + kept_fixed
+    near_events = [f for f in fixed if f["id"] in linked_ids]
+    rest = [f for f in fixed if f["id"] not in linked_ids]
 
-    truncated = False
-    if len(nodes) > MAX_NODES:
-        nodes = nodes[:MAX_NODES]
-        keep = {n["id"] for n in nodes}
-        links = [l for l in links
-                 if l["s"] in keep and l["t"] in keep]
-        truncated = True
+    # A BUDGET PER TYPE, not one shared budget. Spending 1,200 nodes on
+    # whatever is most numerous gave Germany 1,124 regional airfields and
+    # nothing else — the hairball this scoping exists to avoid, wearing a
+    # country's name. Each kind gets a share big enough to characterise
+    # the country and small enough to stay readable.
+    ORDER = {"facility": 0, "port": 1, "airport": 2, "power": 3}
+    rest.sort(key=lambda f: (ORDER.get(f["type"], 9), -(f["risk"] or 0)))
+
+    per_type = {"facility": 120, "port": 40, "airport": 40, "power": 30}
+    taken: dict = {}
+    filler = []
+    for f in rest:
+        cap = per_type.get(f["type"], 20)
+        n = taken.get(f["type"], 0)
+        if n >= cap:
+            continue
+        taken[f["type"]] = n + 1
+        filler.append(f)
+        if 1 + len(events) + len(factions) + len(near_events) + len(filler) >= MAX_NODES:
+            break
+    for f in filler:
+        links.append({"id": f"loc_{f['id']}", "s": f["id"],
+                      "t": country_node["id"], "kind": "located_in",
+                      "conf": 1.0, "inferred": False, "label": "in"})
+
+    kept_fixed = near_events + filler
+    nodes = [country_node] + events + factions + kept_fixed
+    truncated = len(rest) > len(filler)
 
     from collections import Counter
     return {
@@ -461,8 +483,119 @@ def build(iso3: str, hours: int = 168, radius_km: float = PROXIMITY_KM) -> dict:
             "fixed_linked": len(kept_fixed),
         },
         "truncated": truncated,
-        "note": ("fixed infrastructure appears only where something links to "
-                 "it — every airport in the country is true and tells you "
-                 "nothing; the graph is for relationships"),
+        "note": ("sites near an event come first, then the rest of the "
+                 "country's infrastructure in order of what it tells you: "
+                 "military, ports, airfields, power"),
+        "error": None,
+    }
+
+
+# ── the world, as nations and what passes between them ───────────────────
+#
+# The global view was the Forge store curated to 40 nodes a tier — a
+# sample of everything, which is a picture of nothing. At world scale the
+# only question a graph can answer legibly is WHO IS DOING WHAT TO WHOM,
+# and that is a graph of nations.
+#
+# GDELT already answers it. Every coded event names an actor country and,
+# usually, a target country, so the edges are not inferred from
+# co-occurrence or proximity — they are the interactions themselves,
+# counted. Volume is the edge weight, mean Goldstein is its tone, and
+# both are things the reader can argue with.
+
+def global_graph(hours: int = 168, min_events: int = 1) -> dict:
+    """Every nation in the window, and what passed between them."""
+    from collections import Counter, defaultdict
+    import country_codes as cc
+
+    try:
+        import gdelt_events as ge
+        events = ge.EVENTS_CACHE.get("events") or []
+    except Exception as ex:                                 # noqa: BLE001
+        return {"available": False, "error": f"{type(ex).__name__}: {ex}",
+                "nodes": [], "links": []}
+
+    pair_count: dict = defaultdict(int)
+    pair_tone: dict = defaultdict(list)
+    seen_iso: Counter = Counter()
+
+    for e in events:
+        a = cc.from_cameo(e.get("actor1_country"))
+        b = cc.from_cameo(e.get("actor2_country"))
+        # The place it happened counts as a participant too: a strike in
+        # Yemen by a coalition is about Yemen whether or not the coder
+        # named it as an actor.
+        geo = cc.from_fips(e.get("country_code"))
+        for iso in (a, b, geo):
+            if iso:
+                seen_iso[iso] += 1
+        try:
+            g = float(e.get("goldstein"))
+        except (TypeError, ValueError):
+            g = None
+        for x, y in ((a, b), (a, geo), (b, geo)):
+            if not x or not y or x == y:
+                continue
+            key = tuple(sorted((x, y)))
+            pair_count[key] += 1
+            if g is not None:
+                pair_tone[key].append(g)
+
+    nodes = [
+        _node(f"country_{iso}", "country", cc.name_of(iso),
+              kind="Country", source="GDELT actors",
+              risk=min(95, 20 + n))
+        for iso, n in seen_iso.most_common()
+    ]
+
+    links = []
+    for (x, y), n in sorted(pair_count.items(), key=lambda kv: -kv[1]):
+        if n < min_events:
+            continue
+        tones = pair_tone.get((x, y)) or []
+        mean = sum(tones) / len(tones) if tones else None
+        # Goldstein runs -10 (force) to +10 (cooperation). Naming the
+        # direction beats showing a number nobody has the codebook for.
+        if mean is None:
+            character = "unscored"
+        elif mean <= -5:
+            character = "conflictual"
+        elif mean < 0:
+            character = "strained"
+        elif mean < 5:
+            character = "routine"
+        else:
+            character = "cooperative"
+        links.append({
+            "id": f"rel_{x}_{y}",
+            "s": f"country_{x}", "t": f"country_{y}",
+            "kind": character,
+            "conf": round(min(1.0, n / 20.0), 2),
+            "inferred": False,
+            "events": n,
+            "mean_goldstein": round(mean, 2) if mean is not None else None,
+            "label": f"{n} coded interaction(s) · {character}",
+        })
+
+    # A nation with no surviving edge is in the window but not in any
+    # relationship, which is not what this graph is for.
+    linked = {l["s"] for l in links} | {l["t"] for l in links}
+    nodes = [n for n in nodes if n["id"] in linked]
+
+    return {
+        "available": bool(nodes),
+        "scope": "global",
+        "window_hours": hours,
+        "nodes": nodes,
+        "links": links,
+        "tier_names": ["Nations", "", "", ""],
+        "type_counts": {"country": len(nodes)},
+        "total_real_nodes": len(nodes),
+        "total_real_links": len(links),
+        "counts": {"nodes": len(nodes), "links": len(links),
+                   "by_type": {"country": len(nodes)}},
+        "note": ("nations and the coded interactions between them — edges "
+                 "are GDELT's own actor pairs, counted, not inferred from "
+                 "co-occurrence"),
         "error": None,
     }
