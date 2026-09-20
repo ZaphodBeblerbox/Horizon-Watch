@@ -38,20 +38,22 @@ function bounds(family) {
 }
 
 /**
- * Cesium's own conversion for a glTF loaded with the defaults.
+ * Cesium's own conversion for a .glb, built exactly as
+ * ModelUtility.getAxisCorrectionMatrix builds it: Y_UP_TO_Z_UP for
+ * upAxis Y, then multiplied by Z_UP_TO_X_UP because GltfLoader's
+ * default forwardAxis is Z.
  *
- * READ FROM CESIUM, NOT ASSUMED — an earlier version of this test wrote
- * multiply(Z_UP_TO_X_UP, Y_UP_TO_Z_UP) and passed, while the aircraft
- * on screen pointed at the ground. It was wrong twice over: the
- * composition order, and the fact that the forward correction is not
- * applied at all. ModelUtility.getAxisCorrectionMatrix applies
- * Y_UP_TO_Z_UP for upAxis Y, and Z_UP_TO_X_UP only `if (forwardAxis ===
- * Axis.Z)` — and the default forwardAxis is Axis.X.
- *
- * A test that encodes the same guess as the code it checks proves the
- * two agree, not that either is right.
+ * THIS LINE HAS BEEN WRONG TWICE, in both directions, and each time the
+ * test still passed while the aircraft on screen were visibly wrong —
+ * first composed in the wrong order, then with the forward correction
+ * dropped after reading a `?? Axis.X` default that belongs to a
+ * different loader. A test that encodes the same guess as the code it
+ * checks proves the two agree, not that either is right, which is why
+ * there is now a browser check that reads sceneGraph.axisCorrectionMatrix
+ * off a live model instead of reasoning about which default applies.
  */
-const TO_CESIUM = Matrix4.clone(Axis.Y_UP_TO_Z_UP, new Matrix4())
+const TO_CESIUM = Matrix4.multiplyTransformation(
+    Matrix4.clone(Axis.Y_UP_TO_Z_UP, new Matrix4()), Axis.Z_UP_TO_X_UP, new Matrix4())
 
 /** Model extents as Cesium will render them: [along, across, vertical]. */
 function cesiumExtents(b) {

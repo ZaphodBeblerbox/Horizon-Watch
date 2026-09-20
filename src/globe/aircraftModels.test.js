@@ -56,11 +56,12 @@ describe("modelUrl", () => {
 
 describe("modelHeadingRadians", () => {
     const deg = (r) => (r * 180) / Math.PI
-    it("removes the 90 degrees Cesium's east-facing zero costs", () => {
-        // Verified against Cesium: hpr.heading 0 points the nose EAST.
-        expect(deg(modelHeadingRadians(90))).toBeCloseTo(0, 9)
-        expect(deg(modelHeadingRadians(0))).toBeCloseTo(-90, 9)
-        expect(deg(modelHeadingRadians(180))).toBeCloseTo(90, 9)
+    it("applies the measured offset that puts the nose on the track", () => {
+        // Not derived — see the module. Getting this wrong by 180° is
+        // what made every aircraft fly tail-first.
+        expect(deg(modelHeadingRadians(0))).toBeCloseTo(90, 9)
+        expect(deg(modelHeadingRadians(90))).toBeCloseTo(180, 9)
+        expect(deg(modelHeadingRadians(270))).toBeCloseTo(360, 9)
     })
     it("never returns NaN", () => {
         for (const v of [null, undefined, NaN, "x", {}])

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color, HeightReference,
-    CallbackProperty,
+    CallbackProperty, Transforms, HeadingPitchRoll, ColorBlendMode,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType } from "./iconUtils.js"
@@ -11,6 +11,8 @@ import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
 import { safeCartesian, billboardRotation, vesselHeading } from "./markerOrientation.js"
+import { familyFor as hullFor, modelUrl as hullUrl,
+         modelHeadingRadians as hullHeading } from "./vesselModels.js"
 import useCameraHeading from "./useCameraHeading.js"
 
 const BILLBOARD_SIZE = 26
@@ -20,6 +22,15 @@ const BILLBOARD_SIZE = 26
 // empty sea. Only the billboard is drawn at range — labels stop at
 // 500km — so the cost of the rest is a batched quad each.
 const DESKTOP_AIS_CAP = 6000
+
+/**
+ * How many vessels are drawn as hulls rather than glyphs.
+ *
+ * Each model is its own primitive where a billboard is one batched
+ * quad, so this is bounded the same way the aircraft are. The nearest
+ * this many to the view centre get geometry.
+ */
+const HULL_BUDGET = 600
 const aisLat = (v) => v.lat
 const aisLon = (v) => v.lon ?? v.lng
 
@@ -57,6 +68,29 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
         return { filtered: sorted.slice(0, DESKTOP_AIS_CAP) }
     }, [vessels, viewBounds])
 
+    /**
+     * Which vessels get a hull. The nearest to the view centre, bounded,
+     * and only ones that reported a heading — the rest keep the glyph
+     * because a hull would have to point somewhere.
+     */
+    const hullMmsis = useMemo(() => {
+        const out = new Set()
+        if (isMobile) return out
+        const centerLat = viewBounds ? (viewBounds.south + viewBounds.north) / 2 : 0
+        const centerLng = viewBounds ? (viewBounds.west  + viewBounds.east)  / 2 : 0
+        const byRange = [...filtered].sort((a, b) => {
+            const da = Math.abs(a.lat - centerLat) + Math.abs((a.lon ?? a.lng) - centerLng)
+            const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.lng) - centerLng)
+            return da - db
+        })
+        for (const v of byRange) {
+            if (out.size >= HULL_BUDGET) break
+            if (vesselHeading(v) === null) continue
+            if (v.mmsi != null) out.add(String(v.mmsi))
+        }
+        return out
+    }, [filtered, viewBounds])
+
     useEffect(() => {
         if (!filtered.length) return
         const ids = []
@@ -87,6 +121,21 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
 
                 const hdg = vesselHeading(v) ?? 0
 
+                // A HULL LIES ON THE WATER; A BILLBOARD CANNOT. A
+                // billboard always faces the viewer, so a ship drawn as
+                // one is a picture of a ship held up to the camera, and
+                // its heading is only ever a screen angle. A model is
+                // placed in the world, which is what makes it sit flat
+                // on the sea with its bow on the real bearing whatever
+                // the camera does.
+                //
+                // Only for vessels that reported a heading. A hull
+                // points somewhere, and 44% of this feed has no usable
+                // heading and no course-over-ground to fall back on —
+                // those keep the glyph rather than being pointed north.
+                const hullAngle = hullMmsis.has(mmsiStr) ? hullHeading(v) : null
+                const hull = hullAngle === null ? null : hullFor(v)
+
                 // Null rather than a throw: Cesium's fromDegrees raises on
                 // a coordinate that is not a number, and a raise here
                 // unmounts the whole globe instead of dropping one hull.
@@ -98,7 +147,21 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                         id={`ais-${v.mmsi}`}
                         key={v.mmsi}
                         position={position}
-                        billboard={{
+                        orientation={hull ? new CallbackProperty(() =>
+                            Transforms.headingPitchRollQuaternion(
+                                position, new HeadingPitchRoll(hullAngle, 0, 0)), false) : undefined}
+                        model={hull ? {
+                            uri: hullUrl(hull),
+                            // Nominal metres for the TYPE — AIS gives us
+                            // no length or beam — but never smaller than
+                            // this on screen.
+                            minimumPixelSize: 24,
+                            maximumScale: 40000,
+                            color: sanctioned ? Color.fromCssColorString("#FF453A") : undefined,
+                            colorBlendMode: ColorBlendMode.MIX,
+                            colorBlendAmount: sanctioned ? 0.75 : 0,
+                        } : undefined}
+                        billboard={hull ? undefined : {
                             image:           icon,
                             width:           BILLBOARD_SIZE,
                             height:          BILLBOARD_SIZE,

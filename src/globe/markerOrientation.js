@@ -82,9 +82,12 @@ export function billboardRotation(headingDeg, cameraHeadingRad = 0) {
  * is neither the marker should point nowhere rather than north.
  */
 export function vesselHeading(v) {
-    const hdg = Number(v?.heading)
-    if (Number.isFinite(hdg) && hdg !== 511 && hdg >= 0 && hdg < 360) return hdg
-    const cog = Number(v?.cog)
-    if (Number.isFinite(cog) && cog >= 0 && cog < 360) return cog
+    // coord(), not Number(). Number(null) and Number("") are 0, which is
+    // a perfectly valid heading — due north — so a vessel that reported
+    // no heading at all was being pointed up the map.
+    const hdg = coord(v?.heading)
+    if (hdg !== null && hdg !== 511 && hdg >= 0 && hdg < 360) return hdg
+    const cog = coord(v?.cog)
+    if (cog !== null && cog >= 0 && cog < 360) return cog
     return null
 }

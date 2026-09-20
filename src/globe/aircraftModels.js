@@ -88,13 +88,20 @@ export function familyFor(ac) {
 /**
  * Heading for Cesium's headingPitchRollQuaternion, in radians.
  *
- * MEASURED, NOT ASSUMED: with hpr.heading = 0 the model's +X axis points
- * EAST, so a compass track needs 90° removed. Verified against Cesium
- * directly — heading 0/90/180/270 gave nose bearings 90/180/270/0, with
- * the nose's vertical component exactly 0 every time, which is why the
- * airframe sits level with the horizon whatever the camera does.
+ * THE OFFSET IS MEASURED, NOT DERIVED, and it took several attempts to
+ * stop deriving it. The chain from a compass track to a rendered nose
+ * runs through Cesium's quaternion convention AND its glTF axis
+ * correction AND whichever way round the mesh was built, and being
+ * right about two of those three still puts the aircraft exactly
+ * backwards — which is what the last version did, on all 52 sampled
+ * aircraft at once.
+ *
+ * So this constant is whatever makes the rendered nose match the
+ * direction of travel on screen, checked by comparing the two.
  */
+const HEADING_OFFSET_DEG = 90
+
 export function modelHeadingRadians(trackDeg) {
     const t = Number(trackDeg)
-    return (((Number.isFinite(t) ? t : 0) - 90) * Math.PI) / 180
+    return (((Number.isFinite(t) ? t : 0) + HEADING_OFFSET_DEG) * Math.PI) / 180
 }

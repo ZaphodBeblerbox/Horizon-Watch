@@ -82,7 +82,14 @@ describe("vesselHeading", () => {
     })
 
     it("returns null when there is nothing, rather than north", () => {
+        // Number(null) and Number("") are 0, a valid heading, so these
+        // vessels were all being drawn pointing due north.
         expect(vesselHeading({})).toBeNull()
         expect(vesselHeading(null)).toBeNull()
+        expect(vesselHeading({ heading: null })).toBeNull()
+        expect(vesselHeading({ heading: "" })).toBeNull()
+        expect(vesselHeading({ heading: [] })).toBeNull()
+        // A real zero is a real heading.
+        expect(vesselHeading({ heading: 0 })).toBe(0)
     })
 })

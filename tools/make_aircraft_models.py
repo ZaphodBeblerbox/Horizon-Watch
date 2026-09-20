@@ -25,17 +25,18 @@ was authored in.
 CESIUM REMAPS THE AXES ON LOAD, and getting this wrong is invisible in
 any check of the entity's orientation — the quaternion can be provably
 correct while the mesh inside it lies on its side or points at the
-ground. Read from Cesium's own ModelUtility.getAxisCorrectionMatrix
-rather than assumed: with the defaults a glTF gets upAxis Y and
-forwardAxis X, and only the up correction is applied, because the
-forward correction is conditional on forwardAxis being Z:
+ground. Read from Cesium's own code rather than assumed - and read twice,
+because the first reading was of the wrong loader.
+ModelUtility.getAxisCorrectionMatrix applies Y_UP_TO_Z_UP for upAxis Y
+and then Z_UP_TO_X_UP when forwardAxis is Z. GltfLoader's default
+forwardAxis IS Z (the `?? Axis.X` default elsewhere in Cesium belongs
+to other loaders), so BOTH corrections apply to a .glb:
 
-    glTF +X -> Cesium +X
+    glTF +X -> Cesium +Y
     glTF +Y -> Cesium +Z   (up)
-    glTF +Z -> Cesium -Y
+    glTF +Z -> Cesium +X   (forward)
 
-So the natural frame maps out as gltf = (nose, up, -starboard), which
-is what to_gltf_axes does.
+So the natural frame maps out as gltf = (starboard, up, nose).
 """
 import json, struct, math, pathlib
 
@@ -221,20 +222,34 @@ def fighter(length, span):
     return m
 
 
-def to_gltf_axes(p):
-    """Natural frame (nose +X, starboard +Y, up +Z) into glTF's frame.
+def to_gltf_axes(p, forward=-1):
+    """Natural frame into glTF's frame.
 
-    Cesium's conversion sends glTF (gx,gy,gz) to Cesium (gx, -gz, gy).
-    Setting that equal to (nose, starboard, up) gives
-    gltf = (nose, up, -starboard).
+    `forward` is which way along X the vehicle FACES, and it is a
+    parameter because the two builders disagree. fuselage() starts its
+    nose cone at x=0 and extends aft, so an aircraft faces -X. hull()
+    puts its pointed bow at x=length, so a ship faces +X. Both were
+    then handed to the same converter, and the aircraft came out flying
+    backwards - perfectly level, nose exactly 180 degrees from the
+    direction of travel, across every one of 51 sampled.
+
+    The geometry test cannot catch that: it measures EXTENTS, and a
+    model facing backwards has exactly the same extents as one facing
+    forwards. Only the browser check that compares rendered nose against
+    direction of travel finds it.
+
+    Cesium's conversion sends glTF (gx,gy,gz) to Cesium (gz, gx, gy) -
+    read off a live model's sceneGraph.axisCorrectionMatrix, not
+    inferred. Setting that equal to (forward, starboard, up) gives
+    gltf = (starboard, up, forward).
     """
-    x, y, z = p          # nose, starboard, up
-    return (x, z, -y)
+    x, y, z = p          # along-body, starboard, up
+    return (y, z, forward * x)
 
 
-def to_glb(mesh, path, colour):
-    mv = [to_gltf_axes(p) for p in mesh.v]
-    mn = [to_gltf_axes(p) for p in mesh.n]
+def to_glb(mesh, path, colour, forward=-1):
+    mv = [to_gltf_axes(p, forward) for p in mesh.v]
+    mn = [to_gltf_axes(p, forward) for p in mesh.n]
     verts = struct.pack("<%df" % (len(mv) * 3), *[c for p in mv for c in p])
     norms = struct.pack("<%df" % (len(mn) * 3), *[c for p in mn for c in p])
     idx = struct.pack("<%dI" % len(mesh.i), *mesh.i)
