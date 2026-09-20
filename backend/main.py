@@ -14433,6 +14433,105 @@ def _gather_observations(hours: int = 72, bbox: list | None = None) -> list[dict
     return out
 
 
+@app.post("/api/ontology/ingest-observations")
+def ontology_ingest_observations(hours: int = 168):
+    """Write observations into the claim store, with their evidence.
+
+    ontology_claims has had exactly the right columns and zero rows since it
+    was created: source_title, source_publisher, source_url, source_date,
+    source_excerpt, confidence, status. It was designed to let the system
+    say "we believe X because of Y" and nothing has ever written to it.
+
+    Imagery detections, drawable GDELT events and corroborated clusters all
+    qualify, because each is a CLAIM something asserted on evidence. AIS
+    positions do not: a transponder reading is a measurement, it already
+    has a table, and copying it here would make the claim store a slower
+    duplicate of the telemetry.
+    """
+    import corroborate as _co
+    import observation_ontology as _oo
+    from database import (SentinelDetection, SentinelScan, WatchZone,
+                          get_db as _god)
+
+    claims = []
+
+    # GDELT — the article is the evidence.
+    try:
+        import gdelt_events as _g
+        for p in _g.map_points(_g.EVENTS_CACHE.get("events", []) or []):
+            claims.append(_oo.claim_from_gdelt(p))
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[ontology] gdelt claims skipped: {e}")
+
+    # Imagery detections — the scan is the evidence.
+    try:
+        import datetime as _dto
+        since = _dto.datetime.utcnow() - _dto.timedelta(hours=hours)
+        with _god() as db:
+            rows = (db.query(SentinelDetection, SentinelScan, WatchZone)
+                      .join(SentinelScan, SentinelScan.scan_id == SentinelDetection.scan_id)
+                      .outerjoin(WatchZone, WatchZone.id == SentinelDetection.zone_id)
+                      .filter(SentinelScan.created_at >= since)
+                      .limit(3000).all())
+            for d, sc, z in rows:
+                claims.append(_oo.claim_from_detection(
+                    {"detection_id": d.detection_id, "object_type": d.object_type,
+                     "confidence": d.confidence, "centroid_lat": d.centroid_lat,
+                     "centroid_lon": d.centroid_lon, "area_m2": d.area_m2,
+                     "attributes": d.attributes, "provenance": (
+                         "sar_vessel" if d.instrument == "SAR" else "imagery")},
+                    {"scan_id": sc.scan_id, "instrument": sc.instrument,
+                     "image_timestamp_utc": sc.image_timestamp_utc,
+                     "created_at": sc.created_at,
+                     "zone_name": z.name if z else None}))
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[ontology] detection claims skipped: {e}")
+
+    # Corroborated clusters — the agreement is the evidence.
+    try:
+        obs = _gather_observations(hours=hours)
+        for c in _co.corroborated_only(_co.cluster(obs)):
+            claims.append(_oo.claim_from_cluster(c))
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[ontology] cluster claims skipped: {e}")
+
+    claims = [c for c in claims if c]
+    with _god() as db:
+        result = _oo.write_claims(db, claims)
+        db.commit()
+        from database import OntologyClaim
+        total = db.query(OntologyClaim).count()
+
+    return {**result, "candidates": len(claims), "total_claims": total,
+            "note": ("every claim carries what produced it — a claim without "
+                     "its source is an assertion, and an assertion the reader "
+                     "cannot check looks like knowledge")}
+
+
+@app.get("/api/ontology/claims")
+def ontology_claims(limit: int = 100, status: str | None = None):
+    """The claim store, newest first, with the evidence for each."""
+    from database import OntologyClaim, get_db as _god2
+    with _god2() as db:
+        q = db.query(OntologyClaim)
+        if status:
+            q = q.filter(OntologyClaim.status == status)
+        rows = q.order_by(OntologyClaim.id.desc()).limit(max(1, min(limit, 500))).all()
+        return {
+            "claims": [{
+                "claim_id": r.claim_id, "subject": r.entity_a_label,
+                "subject_type": r.entity_a_type, "relationship": r.relationship_type,
+                "object": r.entity_b_label, "object_type": r.entity_b_type,
+                "as_of": r.as_of, "confidence": r.confidence,
+                "because": {"title": r.source_title, "publisher": r.source_publisher,
+                            "url": r.source_url, "date": r.source_date,
+                            "detail": r.source_excerpt},
+                "status": r.status, "origin": r.origin_class,
+            } for r in rows],
+            "count": len(rows),
+        }
+
+
 @app.get("/api/corroborate")
 def api_corroborate(hours: int = 72, radius_km: float = 5.0,
                     window_hours: float = 36.0, min_modalities: int = 2,
