@@ -17,10 +17,25 @@ encode a distinction nobody can see. What does read, and what these
 carry, is: narrowbody against widebody, twin against quad, jet against
 turboprop, airliner against fighter against helicopter.
 
-Nose points along +X, up is +Z, starboard is +Y. Cesium's
-headingPitchRollQuaternion puts +X along the heading in an East-North-Up
-frame, which is what makes these sit level with the horizon and turn
-with the aircraft instead of with the camera.
+Geometry is built in the frame that reads naturally: nose +X,
+starboard +Y, up +Z. It is rewritten into glTF's frame on the way out
+by to_gltf_axes(), because Cesium does NOT load a glTF in the frame it
+was authored in.
+
+CESIUM REMAPS THE AXES ON LOAD, and getting this wrong is invisible in
+any check of the entity's orientation — the quaternion can be provably
+correct while the mesh inside it lies on its side or points at the
+ground. Read from Cesium's own ModelUtility.getAxisCorrectionMatrix
+rather than assumed: with the defaults a glTF gets upAxis Y and
+forwardAxis X, and only the up correction is applied, because the
+forward correction is conditional on forwardAxis being Z:
+
+    glTF +X -> Cesium +X
+    glTF +Y -> Cesium +Z   (up)
+    glTF +Z -> Cesium -Y
+
+So the natural frame maps out as gltf = (nose, up, -starboard), which
+is what to_gltf_axes does.
 """
 import json, struct, math, pathlib
 
@@ -114,12 +129,31 @@ def nacelle(m, x, y, z, length, radius, seg=10):
 
 
 def disc(m, x, y, z, radius, seg=12):
-    """A propeller or rotor disc - drawn as the blurred circle it looks like."""
+    """A propeller disc, facing forward - the blurred circle it looks like.
+
+    Lies in the Y-Z plane, which is correct for something that pulls the
+    aircraft along +X.
+    """
     for j in range(seg):
         a0, a1 = 2 * math.pi * j / seg, 2 * math.pi * (j + 1) / seg
         m.tri((x, y, z),
               (x, y + radius * math.cos(a0), z + radius * math.sin(a0)),
               (x, y + radius * math.cos(a1), z + radius * math.sin(a1)))
+
+
+def disc_flat(m, x, y, z, radius, seg=16):
+    """A main rotor disc, lying flat in the X-Y plane.
+
+    A helicopter's main rotor sweeps a HORIZONTAL circle. Drawing it with
+    disc() put a 14.6m vertical disc on a 16m airframe, which the model
+    geometry test caught as "not thin vertically" - the same shape of
+    error as an aircraft rolled onto its side.
+    """
+    for j in range(seg):
+        a0, a1 = 2 * math.pi * j / seg, 2 * math.pi * (j + 1) / seg
+        m.tri((x, y, z),
+              (x + radius * math.cos(a0), y + radius * math.sin(a0), z),
+              (x + radius * math.cos(a1), y + radius * math.sin(a1), z))
 
 
 def airliner(length, span, engines=2, rear_engines=False, prop=False,
@@ -161,8 +195,15 @@ def helicopter(length, rotor):
     nacelle(m, length * 0.60, 0, r * 0.35, length * 0.40, r * 0.16)
     panel(m, length * 0.92, r * 0.4, length * 0.16, length * 0.10, length * 0.05,
           length * 0.04, 0, r * 0.10, vertical=True)
-    disc(m, length * 0.34, 0, r * 1.15, rotor / 2)          # main rotor
-    disc(m, length * 0.99, r * 0.25, r * 0.5, rotor * 0.17)  # tail rotor
+    disc_flat(m, length * 0.34, 0, r * 1.15, rotor / 2)      # main rotor, horizontal
+    # Tail rotor spins about a lateral axis, so its disc stands upright
+    # in the X-Z plane rather than facing forward.
+    for j in range(12):
+        a0, a1 = 2 * math.pi * j / 12, 2 * math.pi * (j + 1) / 12
+        tr, tx, tz = rotor * 0.17, length * 0.99, r * 0.5
+        m.tri((tx, r * 0.25, tz),
+              (tx + tr * math.cos(a0), r * 0.25, tz + tr * math.sin(a0)),
+              (tx + tr * math.cos(a1), r * 0.25, tz + tr * math.sin(a1)))
     return m
 
 
@@ -180,15 +221,28 @@ def fighter(length, span):
     return m
 
 
+def to_gltf_axes(p):
+    """Natural frame (nose +X, starboard +Y, up +Z) into glTF's frame.
+
+    Cesium's conversion sends glTF (gx,gy,gz) to Cesium (gx, -gz, gy).
+    Setting that equal to (nose, starboard, up) gives
+    gltf = (nose, up, -starboard).
+    """
+    x, y, z = p          # nose, starboard, up
+    return (x, z, -y)
+
+
 def to_glb(mesh, path, colour):
-    verts = struct.pack("<%df" % (len(mesh.v) * 3), *[c for p in mesh.v for c in p])
-    norms = struct.pack("<%df" % (len(mesh.n) * 3), *[c for p in mesh.n for c in p])
+    mv = [to_gltf_axes(p) for p in mesh.v]
+    mn = [to_gltf_axes(p) for p in mesh.n]
+    verts = struct.pack("<%df" % (len(mv) * 3), *[c for p in mv for c in p])
+    norms = struct.pack("<%df" % (len(mn) * 3), *[c for p in mn for c in p])
     idx = struct.pack("<%dI" % len(mesh.i), *mesh.i)
     while len(verts) % 4: verts += b"\0"
     while len(norms) % 4: norms += b"\0"
     while len(idx) % 4: idx += b"\0"
     blob = verts + norms + idx
-    xs = [p[0] for p in mesh.v]; ys = [p[1] for p in mesh.v]; zs = [p[2] for p in mesh.v]
+    xs = [p[0] for p in mv]; ys = [p[1] for p in mv]; zs = [p[2] for p in mv]
     gltf = {
         "asset": {"version": "2.0", "generator": "horizon-watch procedural aircraft"},
         "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
@@ -198,9 +252,9 @@ def to_glb(mesh, path, colour):
             "baseColorFactor": colour, "metallicFactor": 0.25, "roughnessFactor": 0.55},
             "doubleSided": True}],
         "accessors": [
-            {"bufferView": 0, "componentType": 5126, "count": len(mesh.v), "type": "VEC3",
+            {"bufferView": 0, "componentType": 5126, "count": len(mv), "type": "VEC3",
              "min": [min(xs), min(ys), min(zs)], "max": [max(xs), max(ys), max(zs)]},
-            {"bufferView": 1, "componentType": 5126, "count": len(mesh.n), "type": "VEC3"},
+            {"bufferView": 1, "componentType": 5126, "count": len(mn), "type": "VEC3"},
             {"bufferView": 2, "componentType": 5125, "count": len(mesh.i), "type": "SCALAR"},
         ],
         "bufferViews": [
