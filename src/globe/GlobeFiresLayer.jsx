@@ -22,10 +22,10 @@ import { Entity } from "resium"
 import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getShapeMarkerDataUri } from "./entityIcons.js"
+import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-const MARKER_SIZE = 16
+const MARKER_SIZE = MARK_SIZE.fire
 const REFRESH_MS = 5 * 60 * 1000
 
 /** Brightness temperature, in kelvin, as colour. */
@@ -59,7 +59,10 @@ export default function GlobeFiresLayer({ enabled = false, hours = 72 }) {
             if (!Number.isFinite(f.lat) || !Number.isFinite(f.lon)) return
             const id = `fire-${f.id}`
             ids.push(id)
-            setEntity(id, {
+            // setEntity(id, TYPE, data) — three arguments. Passing the
+            // object alone stored it as the TYPE with data undefined, so
+            // the inspector opened empty on every click.
+            setEntity(id, "thermal_anomaly", {
                 id, kind: "thermal_anomaly", name: f.label,
                 lat: f.lat, lon: f.lon,
                 meta: {

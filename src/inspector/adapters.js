@@ -555,6 +555,127 @@ function adaptPort(data) {
 
 // ── dispatch ───────────────────────────────────────────────────────────────────
 
+
+// ── GDELT event ──────────────────────────────────────────────────────────
+//
+// Without an adapter this fell to adaptGeneric, which drops every value
+// that is an object — and the whole payload lives under `meta`. The panel
+// therefore showed a headline and a coordinate over nothing, which is the
+// worst possible presentation for the one source on this map that most
+// needs its caveats read.
+
+export function adaptGdeltEvent(data = {}) {
+    const m = data.meta || {}
+    const point = pointOf(data)
+    const types = Array.isArray(m.event_types) && m.event_types.length
+        ? m.event_types.join(" / ") : m.event_type
+
+    const attributes = compact([
+        attr("Headline", data.name || m.title),
+        attr("Coding", types),
+        attr("Actors", m.actors),
+        attr("Location", m.location_name),
+        attr("Date", m.date ? fmtTimestamp(m.date) : null),
+        attr("Mentions", m.mentions != null ? String(m.mentions) : null),
+        // Goldstein is meaningless as a bare number to anyone who has not
+        // read the codebook, so the scale is stated with it.
+        attr("Goldstein", m.goldstein != null
+            ? `${m.goldstein} (−10 force … +10 cooperation)` : null),
+        attr("Article", m.source_url),
+        // THE CAVEAT IS AN ATTRIBUTE, not a footnote. A GDELT coordinate is
+        // a place NAMED IN THE ARTICLE that a machine matched to a gazetteer
+        // — it is not where anyone confirmed anything happened.
+        attr("Geolocation", "city named in the article, machine-matched — "
+                          + "not a confirmed incident location"),
+        attr("Confidence", "machine-coded from wire text; no human verified this"),
+    ])
+
+    return {
+        identity: {
+            title: data.name || m.title || "GDELT event",
+            subtitle: types || "machine-coded event",
+            entityType: "gdelt_event",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes,
+        provenance: { feed: "GDELT v2", ingestedAt: m.date || null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
+// ── thermal anomaly (FIRMS) ──────────────────────────────────────────────
+
+export function adaptThermalAnomaly(data = {}) {
+    const m = data.meta || {}
+    const point = pointOf(data)
+
+    const attributes = compact([
+        attr("Instrument", [m.instrument, m.satellite].filter(Boolean).join(" · ") || null),
+        attr("Acquired", m.acquired_at ? fmtTimestamp(m.acquired_at) : null),
+        attr("Brightness", m.brightness_k != null ? `${m.brightness_k} K` : null),
+        attr("Radiative power", m.frp_mw != null ? `${m.frp_mw} MW` : null),
+        attr("Detection confidence", m.confidence),
+        attr("Location", point ? fmtCoord(point.lat, point.lon) : null),
+        // Whether it was acted on. "Seen and judged not worth a scan" is a
+        // different record from "never seen", and the reader cannot tell
+        // them apart unless the panel says which.
+        attr("Imagery", m.triggered_scan
+            ? `tasked a scan in ${m.zone || "a watch zone"}`
+            : "not in a watch zone — no scan tasked"),
+        // WHY THIS IS NOT CALLED A FIRE. The instrument measured a
+        // temperature; a gas flare, burning stubble and a munitions strike
+        // are identical to it.
+        attr("What this is", "a thermal anomaly — a gas flare, burning stubble "
+                           + "and a strike look identical to the instrument"),
+    ])
+
+    return {
+        identity: {
+            title: data.name || "Thermal anomaly",
+            subtitle: m.instrument || "VIIRS",
+            entityType: "thermal_anomaly",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes,
+        provenance: { feed: m.source || "NASA FIRMS", ingestedAt: m.acquired_at || null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
+// ── a record a fusion point was built from ───────────────────────────────
+//
+// The far end of one of the dashed threads. These had no id and no store
+// entry at all, so clicking one did nothing whatsoever — the reported
+// "random dots with no explanations". WHY IT IS LINKED is the first thing
+// the panel says, because that is the question the line provokes.
+
+export function adaptFusionMember(data = {}) {
+    const m = data.meta || {}
+    const point = pointOf(data)
+    const attributes = compact([
+        attr("Why it is linked", m.why_linked),
+        attr("Part of", m.belongs_to),
+        attr("Modality", m.modality),
+        attr("Observed", m.observed_at ? fmtTimestamp(m.observed_at) : null),
+        attr("Place", m.place || (point ? fmtCoord(point.lat, point.lon) : null)),
+        attr("Source reference", m.reference),
+    ])
+    return {
+        identity: {
+            title: data.name || "Contributing record",
+            subtitle: m.modality || null,
+            entityType: "fusion_member",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes,
+        provenance: { feed: m.modality || null, ingestedAt: m.observed_at || null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -569,6 +690,9 @@ const ADAPTERS = {
     infrastructure: adaptInfrastructure,
     airport: adaptAirport,
     port: adaptPort,
+    gdelt_event: adaptGdeltEvent,
+    thermal_anomaly: adaptThermalAnomaly,
+    fusion_member: adaptFusionMember,
 }
 
 /**

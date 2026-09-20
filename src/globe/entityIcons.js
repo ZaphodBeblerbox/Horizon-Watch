@@ -202,13 +202,44 @@ export function getEntityMarkerDataUri(opts = {}) {
 // Design update: every news-derived marker (raw news/events in
 // GlobeEventsLayer.jsx, and Forge NEWS-domain assessment alerts in
 // GlobeAlertsLayer.jsx) now renders as one solid diamond at one fixed size,
+// ── HOW BIG A MARK IS, IN ONE PLACE ──────────────────────────────────────
+//
+// SIZE IS EVIDENTIAL WEIGHT, and it was inverted. The raw news diamond was
+// the LARGEST mark on the globe at 30px — larger than a human-verified
+// GeoConfirmed square at 22 — so the least trustworthy source out-read the
+// most trustworthy one at every zoom level. Nobody chose that; the numbers
+// were set per-layer, months apart, and no file ever showed them together.
+//
+// Ordered here, descending, so the ordering is the visible thing and the
+// next person to change one has to look at the others:
+//
+//   geoconfirmed  a human found the building in the video
+//   detection     a model found an object in an image we hold
+//   gdelt         a machine coded a wire story, and cites the article
+//   news          an RSS item, geocoded by place name
+//   fire          an instrument measured a temperature
+//
+// Every one of these is drawn through getShapeMarkerDataUri, which renders
+// at MARKER_SUPERSAMPLE and lets the GPU downsample — a mark built at
+// exactly its billboard size is half the pixels a HiDPI screen wants, and
+// that is what "low res" looked like.
+export const MARK_SIZE = {
+    geoconfirmed: 20,
+    detection: 18,
+    ucdp: 16,
+    gdelt: 15,
+    news: 14,
+    fire: 13,
+    alert: 16,
+}
+
 // replacing the previous mix of a Newspaper lucide icon (events) and the
 // generic TriangleAlert glyph (assessments) at several different tier/
 // severity-scaled sizes. Colour still varies by real article/assessment
 // type (unchanged); only shape and size are now uniform. A hand-drawn shape
 // rather than a lucide icon, same precedent as vesselAircraftGlyphs.js's
 // purpose-drawn hull/airframe silhouettes.
-export const NEWS_MARKER_SIZE = 30
+export const NEWS_MARKER_SIZE = MARK_SIZE.news
 
 function newsDiamondSvg(color, size) {
     const cx = size / 2, cy = size / 2, r = size * 0.42
@@ -249,7 +280,7 @@ export function getNewsMarkerDataUri({ color = TEXT_MUTED } = {}) {
 // solid fill against a map background. Never fabricated new colors — only
 // a rendering-mode choice for genuinely-real GeoConfirmed color values.
 const GEOCONFIRMED_DOT_FALLBACK = "#E8C547" // pre-existing color, used only when this placemark has no real faction_color yet
-export const GEOCONFIRMED_MARKER_SIZE = 22
+export const GEOCONFIRMED_MARKER_SIZE = MARK_SIZE.geoconfirmed
 
 function geoconfirmedDotSvg(color, size, invert) {
     const cx = size / 2, cy = size / 2, r = size * 0.36

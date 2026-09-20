@@ -22,10 +22,10 @@ import { Entity } from "resium"
 import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getShapeMarkerDataUri } from "./entityIcons.js"
+import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-const MARKER_SIZE = 20
+const MARKER_SIZE = MARK_SIZE.gdelt
 const REFRESH_MS = 5 * 60 * 1000      // GDELT publishes every 15 minutes
 
 /**
@@ -68,7 +68,10 @@ export default function GlobeGdeltLayer({ enabled = false, limit = 500 }) {
             if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return
             const id = `gdelt-${p.id}`
             ids.push(id)
-            setEntity(id, {
+            // setEntity(id, TYPE, data) — three arguments. Passing the
+            // object alone stored it as the TYPE with data undefined, so
+            // the inspector opened empty on every click.
+            setEntity(id, "gdelt_event", {
                 id,
                 kind: "gdelt_event",
                 name: p.title,

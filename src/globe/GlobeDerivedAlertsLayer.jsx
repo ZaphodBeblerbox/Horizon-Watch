@@ -27,6 +27,7 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { showTip, hideTip } from "./mapTip.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
 import { SurgeTip, FusionTip } from "./DerivedTips.jsx"
 import {
     SURGE_HALO_M, SURGE_INNER_M, FUSION_RING_M, FUSION_OUTER_M,
@@ -39,6 +40,41 @@ const RED = Color.fromCssColorString("#c4453c")
 const BG0 = Color.fromCssColorString("#171b20")
 
 const labelCond = new DistanceDisplayCondition(0, LABEL_MAX_DISTANCE_M)
+
+/**
+ * The region rings are honest and they are large, and both facts matter.
+ *
+ * A surge halo is §A4's 2.5° cell — ~278km across — and a fusion point sits
+ * at a cell CENTROID, which is nowhere in particular. Shrinking the rings to
+ * look tidier would claim a precision the finding does not have, so they
+ * keep their real ground radius.
+ *
+ * What they cannot do is stay on screen at street zoom, where an 85km circle
+ * stops reading as "about this region" and becomes a wall across the map with
+ * the mark it describes lost inside it. Reported as the marks being "too big",
+ * and that is what it looks like. Beyond this camera distance the ring is
+ * information; closer in, the shape marker alone carries the finding.
+ */
+const REGION_RING_MIN_CAMERA_M = 120_000
+const regionRingCond = new DistanceDisplayCondition(REGION_RING_MIN_CAMERA_M, Number.MAX_VALUE)
+
+/**
+ * The mark itself: a triangle, the universal caution form, matching
+ * SHAPE_FOR_SOURCE.alert and every other point layer on this globe.
+ *
+ * It was a raw Cesium `point` at pixelSize 6 — a flat GPU disc with no shape
+ * language and a 1px outline, which next to the supersampled shape markers
+ * everywhere else is exactly what "low res" looks like. Drawn through the
+ * shared marker path so it is rendered at MARKER_SUPERSAMPLE and downsampled.
+ */
+function markBillboard(color, size = MARK_SIZE.alert) {
+    return {
+        image: getShapeMarkerDataUri({ shape: "triangle", color, size, strokeWidth: 1.5 }),
+        width: size, height: size,
+        heightReference: HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    }
+}
 
 /** §A8's pulse, on outlineColor alpha — never on `material`; see geometry. */
 function pulsingOutline(base, periodMs, min, max) {
@@ -70,6 +106,7 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
     const [surges, setSurges] = useState([])
     const [fusions, setFusions] = useState([])
     const threadsRef = useRef(null)
+    const threadIdsRef = useRef([])
     const theatreKey = theatres && theatres.length ? theatres.join(",") : ""
 
     // §A7 — the playhead is an input to detection. Debounced at the spec's
@@ -119,12 +156,35 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
         }
     }, [viewer])
 
+    // A THREAD ENDPOINT HAS TO SAY WHAT IT IS. Reported: "they connect to
+    // some random dots with no explanations, clicking on them gives no
+    // context either" — which was exactly right. Each endpoint was an
+    // anonymous 6px ring with no label, no id and no entityStore record,
+    // so there was nothing for a tooltip or the inspector to show. Every
+    // one of these carries a label, a modality and a source ref from the
+    // backend; none of it was ever put on screen.
     const drawThreads = (f) => {
         const ds = threadsRef.current
         if (!ds) return
-        ds.entities.removeAll()
-        for (const i of f.items || []) {
+        clearThreads()
+        const ids = []
+        for (const [n, i] of (f.items || []).entries()) {
             if (!Number.isFinite(i.lat) || !Number.isFinite(i.lon)) continue
+            const id = `fusion-${f.id}-item-${i.ref || n}`
+            ids.push(id)
+            // Registered so a click opens the inspector on the RECORD, not
+            // on nothing. The line explains the mark; this explains the line.
+            setEntity(id, "fusion_member", {
+                id, name: i.label, lat: i.lat, lon: i.lon,
+                meta: {
+                    modality: i.mod, reference: i.ref, place: i.place,
+                    observed_at: Number.isFinite(i.ts)
+                        ? new Date(i.ts * 1000).toISOString() : null,
+                    belongs_to: f.headline,
+                    why_linked: `one of ${(f.items || []).length} records that put `
+                              + `${f.mods.length} independent modalities in this cell`,
+                },
+            })
             ds.entities.add({
                 polyline: {
                     positions: Cartesian3.fromDegreesArray([f.lon, f.lat, i.lon, i.lat]),
@@ -134,20 +194,58 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                 },
             })
             ds.entities.add({
+                id,
                 position: Cartesian3.fromDegrees(i.lon, i.lat, 0),
-                point: {
-                    pixelSize: 6, color: Color.TRANSPARENT,
-                    outlineColor: RED.withAlpha(0.85), outlineWidth: 1.5,
+                billboard: {
+                    image: getShapeMarkerDataUri({
+                        shape: "circle", color: "#c4453c",
+                        size: MARK_SIZE.alert - 4, invert: true, strokeWidth: 1.5,
+                    }),
+                    width: MARK_SIZE.alert - 4, height: MARK_SIZE.alert - 4,
                     heightReference: HeightReference.CLAMP_TO_GROUND,
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                 },
+                // The modality, at the end of the line. This is the whole
+                // point of the threads: seeing at a glance whether the
+                // "independent" sources are in fact one incident reported
+                // four times.
+                label: labelOpts((i.mod || "").toUpperCase(), RED),
             })
         }
+        threadIdsRef.current = ids
     }
-    const clearThreads = () => { threadsRef.current?.entities.removeAll() }
+
+    const clearThreads = () => {
+        threadsRef.current?.entities.removeAll()
+        threadIdsRef.current.forEach(deleteEntity)
+        threadIdsRef.current = []
+    }
 
     // Cesium reports canvas-relative coordinates; the shared #maptip places
     // against the viewport.
+    // THREADS MUST NOT SURVIVE THE HOVER THAT DREW THEM. Cesium fires no
+    // mouse-leave when the pointer exits the canvas, when the camera moves
+    // the entity out from under a stationary cursor, or when a refresh
+    // replaces the marks — and a stranded thread is precisely the reported
+    // "random dots with no explanation", because the tooltip that explained
+    // it is long gone. Cleared on every one of those, not just on leave.
+    useEffect(() => {
+        if (!viewer) return
+        const canvas = viewer.scene?.canvas
+        const clear = () => clearThreads()
+        canvas?.addEventListener("pointerleave", clear)
+        viewer.camera.moveStart.addEventListener(clear)
+        return () => {
+            canvas?.removeEventListener("pointerleave", clear)
+            if (!viewer.isDestroyed?.()) viewer.camera.moveStart.removeEventListener(clear)
+            clear()
+        }
+    }, [viewer])
+
+    // A refresh replaces the fusion marks; any thread still on screen now
+    // belongs to a mark that no longer exists.
+    useEffect(() => { clearThreads() }, [surges, fusions])
+
     const tipAt = (content, movement) => {
         const rect = viewer?.scene?.canvas?.getBoundingClientRect?.()
         if (!rect || !movement?.endPosition) return
@@ -172,13 +270,9 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                         outlineColor: pulsingOutline(AMBER, 3400, 0.45, 0.9),
                         outlineWidth: 1.2,
                         heightReference: HeightReference.CLAMP_TO_GROUND,
+                        distanceDisplayCondition: regionRingCond,
                     }}
-                    point={{
-                        pixelSize: 6, color: AMBER,
-                        outlineColor: BG0, outlineWidth: 1,
-                        heightReference: HeightReference.CLAMP_TO_GROUND,
-                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                    }}
+                    billboard={markBillboard("#b7822c")}
                     label={labelOpts(`SURGE · ${s.n}`, AMBER)}
                 />
             ))}
@@ -193,6 +287,7 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                         material: Color.TRANSPARENT,
                         outline: true, outlineColor: AMBER.withAlpha(0.5), outlineWidth: 1,
                         heightReference: HeightReference.CLAMP_TO_GROUND,
+                        distanceDisplayCondition: regionRingCond,
                     }}
                 />
             ))}
@@ -209,13 +304,9 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                         material: RED.withAlpha(0.12),
                         outline: true, outlineColor: RED.withAlpha(0.9), outlineWidth: 1.6,
                         heightReference: HeightReference.CLAMP_TO_GROUND,
+                        distanceDisplayCondition: regionRingCond,
                     }}
-                    point={{
-                        pixelSize: 6, color: RED,
-                        outlineColor: BG0, outlineWidth: 1,
-                        heightReference: HeightReference.CLAMP_TO_GROUND,
-                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                    }}
+                    billboard={markBillboard("#c4453c")}
                     label={labelOpts(`FUSION · ${f.mods.length}`, RED)}
                 />
             ))}
@@ -230,6 +321,7 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                         outlineColor: pulsingOutline(RED, 2800, 0.3, 0.6),
                         outlineWidth: 1,
                         heightReference: HeightReference.CLAMP_TO_GROUND,
+                        distanceDisplayCondition: regionRingCond,
                     }}
                 />
             ))}
@@ -245,6 +337,10 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                             polyline={{
                                 positions: Cartesian3.fromDegreesArray([a.lon, a.lat, z.lon, z.lat]),
                                 width: 2, material: RED, clampToGround: true,
+                                // The ticks are drawn on the region ring, so
+                                // they vanish with it rather than hanging in
+                                // space around a mark at street zoom.
+                                distanceDisplayCondition: regionRingCond,
                             }}
                         />
                     )
