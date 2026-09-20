@@ -167,9 +167,26 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
         const ds = threadsRef.current
         if (!ds) return
         clearThreads()
+        // AT MOST THIS MANY THREADS. Live fusions here carry 51, 38 and 33
+        // contributing records, and fifty-one dashed leaders to fifty-one
+        // labelled dots is not an explanation, it is the cobweb §A9.1 warns
+        // about — and it is what the reader was actually looking at when
+        // they called them "random dots with no explanations".
+        //
+        // The threads exist to answer one question: is this several
+        // independent observations, or one incident reported forty times?
+        // That is a question about SPREAD, so the ones worth drawing are
+        // the farthest from the centroid. The tooltip states the true
+        // total, so the cap never hides the denominator.
+        const MAX_THREADS = 12
+        const all = (f.items || []).filter(i => Number.isFinite(i.lat) && Number.isFinite(i.lon))
+        const byDistance = [...all].sort((a, c) =>
+            ((c.lat - f.lat) ** 2 + (c.lon - f.lon) ** 2)
+            - ((a.lat - f.lat) ** 2 + (a.lon - f.lon) ** 2))
+        const shown = byDistance.slice(0, MAX_THREADS)
+
         const ids = []
-        for (const [n, i] of (f.items || []).entries()) {
-            if (!Number.isFinite(i.lat) || !Number.isFinite(i.lon)) continue
+        for (const [n, i] of shown.entries()) {
             const id = `fusion-${f.id}-item-${i.ref || n}`
             ids.push(id)
             // Registered so a click opens the inspector on the RECORD, not
@@ -181,8 +198,11 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                     observed_at: Number.isFinite(i.ts)
                         ? new Date(i.ts * 1000).toISOString() : null,
                     belongs_to: f.headline,
-                    why_linked: `one of ${(f.items || []).length} records that put `
-                              + `${f.mods.length} independent modalities in this cell`,
+                    why_linked: `one of ${all.length} records that put `
+                              + `${f.mods.length} independent modalities in this cell`
+                              + (all.length > MAX_THREADS
+                                  ? ` — the ${MAX_THREADS} most spread out are drawn`
+                                  : ""),
                 },
             })
             ds.entities.add({
