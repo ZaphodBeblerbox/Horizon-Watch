@@ -3403,24 +3403,142 @@ def get_news_region():
 # ── /adsb ──────────────────────────────────────────────────────────────────────
 
 _adsb_cache: CappedDict = CappedDict(maxsize=500)
-_GLOBAL_ADSB_CACHE: CappedDict = CappedDict(maxsize=5_000)  # icao(upper) → aircraft dict
+_GLOBAL_ADSB_CACHE: CappedDict = CappedDict(maxsize=15_000)  # icao(upper) → aircraft dict
 
+# Discs, not a grid, because adsb.lol serves a radius around a point and
+# clamps how large that radius may be. The first five left the sky empty
+# north of 53° and east of 158° — no Canada, no Scandinavia, no northern
+# Russia, no Pacific — so the map looked like aviation stops at the top
+# of Europe. These overlap deliberately; the cache is keyed by ICAO hex,
+# so an aircraft seen by two regions is stored once.
 GLOBAL_ADSB_REGIONS = [
-    {"name": "Europe/Middle East", "lat": 40.0,  "lon": 22.5,  "dist": 3000},
-    {"name": "East Asia",          "lat": 27.5,  "lon": 105.0, "dist": 3000},
-    {"name": "Americas",           "lat": 25.0,  "lon": -80.0, "dist": 3000},
-    {"name": "Africa",             "lat": -12.5, "lon": 17.5,  "dist": 3000},
-    {"name": "South Asia/Oceania", "lat": -5.0,  "lon": 120.0, "dist": 3000},
+    {"name": "Europe/Middle East",  "lat": 40.0,  "lon": 22.5,   "dist": 3000},
+    {"name": "Northern Europe",     "lat": 60.0,  "lon": 10.0,   "dist": 3000},
+    {"name": "East Asia",           "lat": 27.5,  "lon": 105.0,  "dist": 3000},
+    {"name": "Northern Asia",       "lat": 55.0,  "lon": 90.0,   "dist": 3000},
+    {"name": "North America east",  "lat": 25.0,  "lon": -80.0,  "dist": 3000},
+    {"name": "North America west",  "lat": 45.0,  "lon": -115.0, "dist": 3000},
+    {"name": "South America",       "lat": -20.0, "lon": -60.0,  "dist": 3000},
+    {"name": "Africa",              "lat": -12.5, "lon": 17.5,   "dist": 3000},
+    {"name": "South Asia/Oceania",  "lat": -5.0,  "lon": 120.0,  "dist": 3000},
+    {"name": "Oceania/Pacific",     "lat": -30.0, "lon": 155.0,  "dist": 3000},
 ]
+
+
+def _in_bbox(lat, lon, west, south, east, north) -> bool:
+    """Is this position inside the viewport? No bbox means everywhere.
+
+    Handles a viewport that crosses the antimeridian, where west is
+    numerically greater than east and a naive `west <= lon <= east`
+    silently returns nothing — which looks exactly like "no aircraft
+    over the Pacific".
+    """
+    if west is None or south is None or east is None or north is None:
+        return True
+    if lat < south or lat > north:
+        return False
+    if west <= east:
+        return west <= lon <= east
+    return lon >= west or lon <= east
+
+
+def _thin_for_viewport(aircraft: list, limit: int) -> list:
+    """At most `limit` aircraft, spread across the view.
+
+    WHY NOT JUST THE FIRST N. Taking a slice hands back whatever the
+    cache happened to store first, which clusters: five hundred
+    aircraft stacked over Frankfurt and an empty Atlantic, on a map
+    whose whole job is showing where things are.
+
+    So: anything militarily or otherwise flagged is kept outright, then
+    the rest are dealt round-robin out of a coarse grid of cells. The
+    result thins dense airspace and keeps the lone aircraft over an
+    ocean, which is usually the one worth seeing.
+    """
+    if len(aircraft) <= limit:
+        return aircraft
+    keep = [a for a in aircraft if a.get("military") or a.get("interesting")]
+    rest = [a for a in aircraft if not (a.get("military") or a.get("interesting"))]
+    room = max(0, limit - len(keep))
+    if room == 0:
+        return keep[:limit]
+
+    cells: dict = {}
+    for a in rest:
+        # ~2 degree cells: fine enough to separate airports, coarse
+        # enough that the round robin actually spreads.
+        key = (int(a["lat"] // 2), int(a["lon"] // 2))
+        cells.setdefault(key, []).append(a)
+    ordered = list(cells.values())
+    picked = []
+    i = 0
+    while len(picked) < room and ordered:
+        row = ordered[i % len(ordered)]
+        if row:
+            picked.append(row.pop())
+        else:
+            ordered.remove(row)
+            continue
+        i += 1
+    return keep + picked
 
 @app.get("/adsb")
 @_response_cache(expire=30)
 def get_adsb(
-    lat:  float = Query(...),
-    lon:  float = Query(...),
-    dist: int   = Query(250),
+    lat:   float | None = Query(None),
+    lon:   float | None = Query(None),
+    dist:  int          = Query(250),
+    west:  float | None = Query(None),
+    south: float | None = Query(None),
+    east:  float | None = Query(None),
+    north: float | None = Query(None),
+    limit: int          = Query(700),
 ):
-    """Live ADS-B aircraft from adsb.lol within dist nautical miles of lat/lon. Cached 30 s."""
+    """Live ADS-B aircraft. Cached 30 s.
+
+    With lat/lon, a disc of `dist` NAUTICAL MILES around that point,
+    straight from adsb.lol.
+
+    Without them, the whole world. _global_adsb_cache_loop has been
+    polling five regions covering the globe every 60 seconds all along,
+    but only anomaly detection could see it — the map asked for a single
+    2,000nm disc centred on (20, 10), which is why the sky was busy over
+    Europe and Africa and empty everywhere else. adsb.lol also clamps a
+    disc that large, so the radius was not doing what it looked like it
+    was doing either.
+    """
+    if lat is None or lon is None:
+        now_ts = time.time()
+        out = []
+        for ac in list(_GLOBAL_ADSB_CACHE.values()):
+            if ac.get("lat") is None or ac.get("lon") is None:
+                continue
+            # A position nobody has heard in five minutes is a memory,
+            # not a contact.
+            if now_ts - float(ac.get("last_seen") or 0) > 300:
+                continue
+            if not _in_bbox(ac["lat"], ac["lon"], west, south, east, north):
+                continue
+            out.append({
+                "icao":        ac.get("icao") or ac.get("hex") or "",
+                "flight":      ac.get("flight") or "",
+                "lat":         ac.get("lat"),
+                "lon":         ac.get("lon"),
+                "alt_baro":    ac.get("alt_baro"),
+                "gs":          ac.get("gs"),
+                "track":       ac.get("track"),
+                "category":    ac.get("category") or "",
+                "military":    bool(ac.get("military")),
+                "interesting": bool(ac.get("interesting")),
+                "type":        ac.get("type") or "",
+            })
+        total = len(out)
+        out = _thin_for_viewport(out, limit)
+        print(f"[adsb] viewport → {len(out)} of {total} aircraft")
+        return {"aircraft": out, "scope": "viewport" if west is not None else "global",
+                "available": total, "returned": len(out),
+                "regions": [r["name"] for r in GLOBAL_ADSB_REGIONS]}
+
     key = f"{round(lat, 2)},{round(lon, 2)},{dist}"
     cached = _adsb_cache.get(key)
     if cached and (time.time() - cached["ts"]) < 30:
@@ -10144,7 +10262,7 @@ async def _global_adsb_cache_loop():
             for k in stale:
                 _GLOBAL_ADSB_CACHE.pop(k, None)
             # Hard cap at 3000 entries — drop oldest 500 if exceeded
-            if len(_GLOBAL_ADSB_CACHE) > 3000:
+            if len(_GLOBAL_ADSB_CACHE) > 12000:
                 _oldest = sorted(_GLOBAL_ADSB_CACHE.items(), key=lambda x: x[1].get("last_seen", 0))
                 for k, _ in _oldest[:500]:
                     _GLOBAL_ADSB_CACHE.pop(k, None)

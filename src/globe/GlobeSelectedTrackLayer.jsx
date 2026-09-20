@@ -56,14 +56,19 @@ export default function GlobeSelectedTrackLayer({ selected = null }) {
                 // parked aircraft repeats one coordinate for hours, and
                 // Cesium cannot build a line out of a point repeated.
                 const pts = dedupe(chronological(safeArray(d?.positions)))
-                if (isDrawable(pts)) setTrack({ isAir, pts })
+                // The id is carried WITH the track. Reading it off the
+                // `selected` prop during render crashed the globe: when a
+                // contact is deselected, React renders with selected=null
+                // before the effect that clears this state has run, so
+                // `selected.id` was read off null.
+                if (isDrawable(pts)) setTrack({ isAir, pts, id: selected.id })
             })
             .catch(() => {})
         return () => { cancelled = true }
     }, [selected?.id, selected?.kind])
 
     if (!track) return null
-    const { isAir, pts } = track
+    const { isAir, pts, id } = track
 
     // Per-vertex height in metres, ground for anything a vessel or an
     // aircraft on the surface.
@@ -74,7 +79,7 @@ export default function GlobeSelectedTrackLayer({ selected = null }) {
     return (
         <>
             <Entity
-                id={`selected-track-${selected.id}`}
+                id={`selected-track-${id}`}
                 name={`${HOURS}h track`}
                 polyline={{
                     positions,
@@ -98,7 +103,7 @@ export default function GlobeSelectedTrackLayer({ selected = null }) {
                 overflight are three obviously different silhouettes. */}
             {isAir && positions.length >= 2 ? (
                 <Entity
-                    id={`selected-track-wall-${selected.id}`}
+                    id={`selected-track-wall-${id}`}
                     name="Altitude profile"
                     wall={{
                         positions,

@@ -554,7 +554,8 @@ export default function Situation({ onOpenDossier }) {
     useEffect(() => {
         let cancelled = false
         if (!tracksOn.aircraft) { setTrackCounts((p) => ({ ...p, aircraft: null })); return }
-        const load = () => fetch(`${API}/adsb?lat=20.0000&lon=10.0000&dist=2000`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+        // Global, so the count matches what the map draws.
+        const load = () => fetch(`${API}/adsb`).then((r) => (r.ok ? r.json() : null)).then((d) => {
             if (cancelled || !d) return
             setTrackCounts((p) => ({ ...p, aircraft: (d.aircraft || d.states || []).length }))
         }).catch(() => {})

@@ -13,7 +13,6 @@ import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { safeCartesian, billboardRotation } from "./markerOrientation.js"
 import { deadReckon } from "./deadReckon.js"
 import { familyFor, modelUrl, modelHeadingRadians } from "./aircraftModels.js"
-import useCameraAltitude from "./useCameraAltitude.js"
 import useCameraHeading from "./useCameraHeading.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
@@ -22,18 +21,31 @@ const adsbLon = (ac) => ac.lon ?? ac.longitude
 const BILLBOARD_SIZE = 26
 
 /**
- * ABOVE THIS THE MODELS ARE NOT DRAWN AT ALL.
+ * How many aircraft are drawn as geometry rather than as a glyph.
  *
- * A 3D model is a separate primitive per aircraft, where billboards are
- * one batched quad each, so thousands of them is not a trade worth
- * making for shapes that are a pixel wide. Below this altitude the
- * viewport holds few enough aircraft that the geometry is both visible
- * and affordable; above it, every contact is a glyph.
+ * There is no altitude gate. An earlier version only drew models below
+ * 400km, which meant that at any normal working zoom the aircraft were
+ * flat glyphs again — the models were there and almost never visible.
+ * minimumPixelSize keeps a model legible at any range, so the only
+ * thing that needs bounding is how many exist: each is its own
+ * primitive, where billboards are one batched quad each.
+ *
+ * The nearest this many to the view centre get geometry; everything
+ * beyond keeps the glyph.
  */
-const MODEL_CAMERA_M = 400_000
+const MODEL_BUDGET = 800
 
-/** And never more than this many at once, however far in you zoom. */
-const MODEL_BUDGET = 300
+/**
+ * Drop lines are bounded far tighter than models.
+ *
+ * Each one is a DYNAMIC polyline — its geometry is rebuilt every frame
+ * so the line stays under an aircraft that is being extrapolated. That
+ * is affordable for a hundred and not for a thousand, and a thousand
+ * vertical lines is visual noise at any zoom where a thousand aircraft
+ * fit on screen. Zoomed in, where the line actually helps you read
+ * altitude, the viewport holds few enough aircraft that they all get one.
+ */
+const DROP_LINE_BUDGET = 120
 
 /**
  * How often to ask for a frame while aircraft are moving.
@@ -90,7 +102,6 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
     // little arithmetic per aircraft, needs no timer at all, and is
     // smooth at the display's refresh rate instead of stepping at 10Hz.
 
-    const cameraAltitude = useCameraAltitude()
     const cesium = useCesium()
 
     const { filtered } = useMemo(() => {
@@ -123,15 +134,15 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
      * Which aircraft are drawn as geometry rather than as a glyph.
      *
      * Separate from the visibility filter above because it answers a
-     * different question and changes at a different time: visibility
-     * follows the data, this follows the camera. Bounded twice — by
-     * altitude, because a model a pixel wide is all cost and no
-     * information, and by count, because each one is its own primitive.
+     * different question: visibility follows the data, this follows the
+     * camera, and it is bounded by count because each model is its own
+     * primitive.
      */
-    const { modelled, nearIds } = useMemo(() => {
+    const { modelled, dropIds } = useMemo(() => {
         const m = new Map()
-        const near = new Set()
-        if (cameraAltitude > MODEL_CAMERA_M || isMobile) return { modelled: m, nearIds: near }
+        const considered = new Set()
+        const drops = new Set()
+        if (isMobile) return { modelled: m, dropIds: drops }
         const centerLat = viewBounds ? (viewBounds.south + viewBounds.north) / 2 : 0
         const centerLng = viewBounds ? (viewBounds.west  + viewBounds.east)  / 2 : 0
         const sortedByRange = [...filtered].sort((a, b) => {
@@ -140,18 +151,19 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
             return da - db
         })
         for (const ac of sortedByRange) {
-            if (near.size >= MODEL_BUDGET) break
+            if (considered.size >= MODEL_BUDGET) break
             const id = ac.icao ?? ac.icao24 ?? ""
             if (!id) continue
-            near.add(id)
+            considered.add(id)
+            if (drops.size < DROP_LINE_BUDGET) drops.add(id)
             // A family only when the type or category says so — an
             // unidentified return keeps the flat glyph rather than being
             // given an airframe it was never reported to have.
             const fam = familyFor(ac)
             if (fam) m.set(id, fam)
         }
-        return { modelled: m, nearIds: near }
-    }, [filtered, viewBounds, cameraAltitude])
+        return { modelled: m, dropIds: drops }
+    }, [filtered, viewBounds])
 
     // Keep the scene drawing while there are aircraft to move. Without
     // this the markers are correct every time they are asked for their
@@ -276,7 +288,6 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                             color: watchlisted ? Color.fromCssColorString("#FFB020") : undefined,
                             colorBlendMode: ColorBlendMode.MIX,
                             colorBlendAmount: watchlisted ? 0.7 : 0,
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, MODEL_CAMERA_M * 2),
                         } : undefined}
                         billboard={family ? undefined : {
                             image:           icon,
@@ -333,7 +344,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                            work — Cesium builds no geometry while it is off,
                            so the near-set bound still holds. */
                         polyline={(isMobile || !reportedGround) ? undefined : {
-                            show: nearIds.has(icao),
+                            show: dropIds.has(icao),
                             /* NEVER undefined. Cesium's dynamic polyline
                                updater reads .positions off whatever this
                                returns, so an undefined value throws in the

@@ -223,6 +223,10 @@ export default function GlobeView({
     const [watchlistedIcaos, setWatchlistedIcaos] = useState(new Set())
     const [aircraft, setAircraft] = useState([])
     const [viewBounds, setViewBounds] = useState(null)
+    // How many aircraft the server may return for one viewport. The
+    // point is not to draw every aircraft on earth, it is to draw what
+    // is in front of you, immediately.
+    const ADSB_VIEWPORT_LIMIT = 700
     // The one contact whose full track is drawn. Clicking a vessel or an
     // aircraft is a request to follow it, not just to read its card.
     const [selectedContact, setSelectedContact] = useState(null)
@@ -310,17 +314,34 @@ export default function GlobeView({
     useEffect(() => {
         if (!adsbEnabled) return
         if (externalADSB !== null) { setAircraft(externalADSB); return }
-        const lat = center[0] ?? 20
-        const lon = center[1] ?? 10
+        // WHAT IS IN VIEW, THINNED, the way a flight tracker does it.
+        //
+        // Two earlier versions were each wrong in one direction. A
+        // 2,000nm disc around the map centre meant the sky was busy over
+        // Europe and empty everywhere else however far you travelled.
+        // Asking for the whole world fixed the coverage and made the
+        // globe slow, because ten thousand aircraft were shipped and
+        // drawn so that a few hundred could be looked at.
+        //
+        // The backend now filters its in-memory worldwide cache to the
+        // viewport and thins it to a bounded number, spread across the
+        // view rather than clustered. No upstream call is involved, so
+        // panning is answered from memory.
+        const bbox = viewBounds
+            ? `&west=${viewBounds.west.toFixed(3)}&south=${viewBounds.south.toFixed(3)}`
+              + `&east=${viewBounds.east.toFixed(3)}&north=${viewBounds.north.toFixed(3)}`
+            : ""
         const load = () =>
-            fetch(`${API}/adsb?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&dist=2000`)
+            fetch(`${API}/adsb?limit=${ADSB_VIEWPORT_LIMIT}${bbox}`)
                 .then(r => r.ok ? r.json() : null)
                 .then(d => { if (d) setAircraft(d.aircraft || d.states || []) })
                 .catch(() => {})
-        load()
+        // Debounced, so a drag across the map is one request at the end
+        // of it rather than one per frame of the pan.
+        const first = setTimeout(load, viewBounds ? 350 : 0)
         const t = setInterval(load, 10_000)
-        return () => clearInterval(t)
-    }, [adsbEnabled, externalADSB]) // eslint-disable-line react-hooks/exhaustive-deps
+        return () => { clearTimeout(first); clearInterval(t) }
+    }, [adsbEnabled, externalADSB, viewBounds]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Fidelity pass, build spec v2 §7 — real "watchlisted" aircraft status,
     // reusing the real existing Military Aircraft alert rule (rule_004)
