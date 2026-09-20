@@ -23,6 +23,7 @@ import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import { GeoJsonDataSource as CesiumGeoJsonDataSource, Color, JulianDate } from "cesium"
 import API_BASE from "../apiBase.js"
+import { crossfade, progress } from "./frontlineFade.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
 const REFRESH_MS = 6 * 60 * 60 * 1000       // these are edited daily at most
@@ -42,21 +43,57 @@ export default function GlobeWarMapLayer({ theatre = null, enabled = false, revi
     const { viewer } = useCesium()
     const dsRef = useRef(null)
     const idsRef = useRef([])
+    const fadingRef = useRef(null)
+    const rafRef = useRef(0)
+    const clearRef = useRef(null)
+    // Which theatre is drawn, so a change of COUNTRY cuts rather than
+    // fades — two countries dissolving into each other is not a
+    // transition between two states of the same front.
+    const theatreRef = useRef(null)
 
     useEffect(() => {
         if (!viewer) return
         let cancelled = false
 
-        const clear = () => {
-            idsRef.current.forEach(deleteEntity)
-            idsRef.current = []
-            if (dsRef.current && !viewer.isDestroyed?.()) {
-                try { viewer.dataSources.remove(dsRef.current, true) } catch { /* torn down */ }
+        const drop = (ds, ids) => {
+            (ids || []).forEach(deleteEntity)
+            if (ds && !viewer.isDestroyed?.()) {
+                try { viewer.dataSources.remove(ds, true) } catch { /* torn down */ }
             }
+        }
+
+        const settle = () => {
+            if (rafRef.current) cancelAnimationFrame(rafRef.current)
+            rafRef.current = 0
+            if (fadingRef.current) {
+                drop(fadingRef.current.ds, fadingRef.current.ids)
+                fadingRef.current = null
+            }
+        }
+
+        const clear = () => {
+            settle()
+            drop(dsRef.current, idsRef.current)
+            idsRef.current = []
             dsRef.current = null
         }
 
-        if (!enabled || !theatre) { clear(); return }
+        const applyAlpha = (ds, k) => {
+            if (!ds) return
+            ds.entities.values.forEach((e) => {
+                if (e.polygon && e.__fill) {
+                    e.polygon.material = Color.fromCssColorString(e.__fill).withAlpha(FILL_ALPHA * k)
+                }
+            })
+        }
+
+        clearRef.current = clear
+
+        if (!enabled || !theatre) { clear(); theatreRef.current = null; return }
+
+        // A different country is not a later state of this one.
+        if (theatreRef.current && theatreRef.current !== theatre) clear()
+        theatreRef.current = theatre
 
         const load = () => {
             // A revision id scrubs the same derivation back in time; the
@@ -75,7 +112,6 @@ export default function GlobeWarMapLayer({ theatre = null, enabled = false, revi
                         clampToGround: true,
                     })
                     if (cancelled || viewer.isDestroyed?.()) { ds.destroy(); return }
-                    clear()
 
                     const ids = []
                     ds.entities.values.forEach((entity) => {
@@ -85,8 +121,10 @@ export default function GlobeWarMapLayer({ theatre = null, enabled = false, revi
                         // this must not invent a second phrasing for it.
                         const held = raw.faction || `unidentified side (${raw.colour})`
                         if (entity.polygon) {
+                            entity.__fill = hex
+                            // Starts invisible and is faded up below.
                             entity.polygon.material =
-                                Color.fromCssColorString(hex).withAlpha(FILL_ALPHA)
+                                Color.fromCssColorString(hex).withAlpha(0)
                             entity.polygon.outline = false
                         }
                         entity.name = held
@@ -113,17 +151,46 @@ export default function GlobeWarMapLayer({ theatre = null, enabled = false, revi
                         })
                         ids.push(id)
                     })
+                    // Crossfade, for the same reason as the Ukraine
+                    // layer: scrubbing used to tear this map down before
+                    // the next revision had been requested, and only
+                    // opacity may move between two surveyed states.
+                    settle()
+                    const outgoing = dsRef.current
+                        ? { ds: dsRef.current, ids: idsRef.current } : null
+                    fadingRef.current = outgoing
                     idsRef.current = ids
                     dsRef.current = ds
                     viewer.dataSources.add(ds)
+
+                    if (!outgoing) { applyAlpha(ds, 1); return }
+
+                    const t0 = performance.now()
+                    const step = () => {
+                        if (viewer.isDestroyed?.()) return
+                        const t = progress(performance.now(), t0)
+                        const { outgoing: o, incoming: i } = crossfade(t)
+                        applyAlpha(ds, i)
+                        applyAlpha(outgoing.ds, o)
+                        viewer.scene?.requestRender?.()
+                        if (t < 1) { rafRef.current = requestAnimationFrame(step); return }
+                        rafRef.current = 0
+                        fadingRef.current = null
+                        drop(outgoing.ds, outgoing.ids)
+                    }
+                    rafRef.current = requestAnimationFrame(step)
                 })
                 .catch(() => { /* a dropped poll is not a change of control */ })
         }
 
         load()
         const h = setInterval(load, REFRESH_MS)
-        return () => { cancelled = true; clearInterval(h); clear() }
+        // Not clear() — see GlobeFrontlinesLayer. Tearing down here
+        // emptied the theatre the moment the revision slider moved.
+        return () => { cancelled = true; clearInterval(h) }
     }, [viewer, enabled, theatre, revid])
+
+    useEffect(() => () => { clearRef.current?.(); clearRef.current = null }, [])
 
     return null
 }
