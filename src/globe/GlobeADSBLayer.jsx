@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, useRef } from "react"
-import { Entity } from "resium"
+import { Entity, useCesium } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
-    CallbackProperty,
+    CallbackProperty, Transforms, HeadingPitchRoll, ColorBlendMode,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { getAircraftMarkerDataUri } from "./vesselAircraftGlyphs.js"
@@ -12,12 +12,42 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { safeCartesian, billboardRotation } from "./markerOrientation.js"
 import { deadReckon } from "./deadReckon.js"
+import { familyFor, modelUrl, modelHeadingRadians } from "./aircraftModels.js"
+import useCameraAltitude from "./useCameraAltitude.js"
 import useCameraHeading from "./useCameraHeading.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
 const adsbLon = (ac) => ac.lon ?? ac.longitude
 
 const BILLBOARD_SIZE = 26
+
+/**
+ * ABOVE THIS THE MODELS ARE NOT DRAWN AT ALL.
+ *
+ * A 3D model is a separate primitive per aircraft, where billboards are
+ * one batched quad each, so thousands of them is not a trade worth
+ * making for shapes that are a pixel wide. Below this altitude the
+ * viewport holds few enough aircraft that the geometry is both visible
+ * and affordable; above it, every contact is a glyph.
+ */
+const MODEL_CAMERA_M = 400_000
+
+/** And never more than this many at once, however far in you zoom. */
+const MODEL_BUDGET = 300
+
+/**
+ * How often to ask for a frame while aircraft are moving.
+ *
+ * The scene runs in requestRenderMode: it draws only when something
+ * asks it to, and when idle it draws nothing at all — measured, zero
+ * frames in four seconds. Dead reckoning lives in a per-frame position
+ * callback, so with no frames the aircraft simply freeze between
+ * position reports. Ten a second matches what the old smoothing timer
+ * produced on screen, at none of its cost: this asks Cesium to draw,
+ * where that rebuilt thousands of React components to achieve the
+ * same thing.
+ */
+const DR_RENDER_MS = 100
 
 // See GlobeAISLayer: the old 150 capped the sky far below what the
 // feed and the backend already provide. Labels stop at 1,500km.
@@ -60,6 +90,9 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
     // little arithmetic per aircraft, needs no timer at all, and is
     // smooth at the display's refresh rate instead of stepping at 10Hz.
 
+    const cameraAltitude = useCameraAltitude()
+    const cesium = useCesium()
+
     const { filtered } = useMemo(() => {
         if (!smooth?.length) return { filtered: [] }
         if (isMobile) {
@@ -85,6 +118,53 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
         // airframes it was summarising.
         return { filtered: sorted.slice(0, DESKTOP_ADSB_CAP) }
     }, [smooth, viewBounds])
+
+    /**
+     * Which aircraft are drawn as geometry rather than as a glyph.
+     *
+     * Separate from the visibility filter above because it answers a
+     * different question and changes at a different time: visibility
+     * follows the data, this follows the camera. Bounded twice — by
+     * altitude, because a model a pixel wide is all cost and no
+     * information, and by count, because each one is its own primitive.
+     */
+    const { modelled, nearIds } = useMemo(() => {
+        const m = new Map()
+        const near = new Set()
+        if (cameraAltitude > MODEL_CAMERA_M || isMobile) return { modelled: m, nearIds: near }
+        const centerLat = viewBounds ? (viewBounds.south + viewBounds.north) / 2 : 0
+        const centerLng = viewBounds ? (viewBounds.west  + viewBounds.east)  / 2 : 0
+        const sortedByRange = [...filtered].sort((a, b) => {
+            const da = Math.abs(a.lat - centerLat) + Math.abs((a.lon ?? a.longitude ?? 0) - centerLng)
+            const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.longitude ?? 0) - centerLng)
+            return da - db
+        })
+        for (const ac of sortedByRange) {
+            if (near.size >= MODEL_BUDGET) break
+            const id = ac.icao ?? ac.icao24 ?? ""
+            if (!id) continue
+            near.add(id)
+            // A family only when the type or category says so — an
+            // unidentified return keeps the flat glyph rather than being
+            // given an airframe it was never reported to have.
+            const fam = familyFor(ac)
+            if (fam) m.set(id, fam)
+        }
+        return { modelled: m, nearIds: near }
+    }, [filtered, viewBounds, cameraAltitude])
+
+    // Keep the scene drawing while there are aircraft to move. Without
+    // this the markers are correct every time they are asked for their
+    // position and frozen every time you actually look at them.
+    const hasAircraft = filtered.length > 0
+    useEffect(() => {
+        const scene = cesium?.scene || cesium?.viewer?.scene
+        if (!scene || !hasAircraft) return
+        const iv = setInterval(() => {
+            if (!scene.isDestroyed?.()) scene.requestRender()
+        }, DR_RENDER_MS)
+        return () => clearInterval(iv)
+    }, [cesium?.scene, cesium?.viewer, hasAircraft])
 
     useEffect(() => {
         if (!filtered.length) return
@@ -119,6 +199,10 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 // dropping one aircraft.
                 const reported = safeCartesian(lon, lat, altM)
                 if (!reported) return null
+                // The foot of the drop line, from the same validated
+                // coordinates, so the callback below always has something
+                // real to fall back to.
+                const reportedGround = safeCartesian(lon, lat, 0)
 
                 // Dead reckoned at draw time from the last real report,
                 // so the marker moves smoothly between position updates
@@ -128,11 +212,19 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 const icao   = ac.icao ?? ac.icao24 ?? ""
                 const cs     = (ac.flight || ac.callsign || "").trim()
 
-                const position = new CallbackProperty(() => {
+                // Both ends of the drop line come from one evaluation, so
+                // the line stays under the aircraft as it is extrapolated
+                // rather than trailing back to the last report.
+                const atNow = () => {
                     const dr = deadReckon(drBaseRef.current[icao], Date.now())
-                    if (!dr) return reported
-                    return safeCartesian(dr.lon, dr.lat, altM) || reported
-                }, false)
+                    const la = dr ? dr.lat : lat
+                    const lo = dr ? dr.lon : lon
+                    return {
+                        air: safeCartesian(lo, la, altM) || reported,
+                        ground: safeCartesian(lo, la, 0),
+                    }
+                }
+                const position = new CallbackProperty(() => atNow().air, false)
 
                 // Fidelity pass, build spec v2 §7 — real triangle glyph,
                 // amber when this real icao matches a real "Military
@@ -148,13 +240,45 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 const icon = getAircraftMarkerDataUri({ watchlisted, classification, size: BILLBOARD_SIZE, theme })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
+                // GEOMETRY, NOT A PICTURE OF GEOMETRY. A billboard always
+                // faces the viewer, so its heading is only ever a screen
+                // angle. A model is placed in the world: the quaternion
+                // below puts its nose on the real track in the local
+                // East-North-Up frame, which leaves it level with the
+                // horizon no matter where the camera is or which way it
+                // is rolled. Measured against Cesium: hpr.heading 0 points
+                // the nose east — hence the 90° — and the nose's vertical
+                // component is exactly 0 at every heading.
+                const family = modelled.get(icao) || null
+                const orientation = family ? new CallbackProperty(() => {
+                    const p = position.getValue()
+                    return p ? Transforms.headingPitchRollQuaternion(
+                        p, new HeadingPitchRoll(modelHeadingRadians(track), 0, 0)) : undefined
+                }, false) : undefined
+
 
                 return (
                     <Entity
                         id={`adsb-${icao}`}
                         key={icao || `${lat}-${lon}`}
                         position={position}
-                        billboard={{
+                        orientation={orientation}
+                        model={family ? {
+                            uri: modelUrl(family),
+                            // Real metres, so a widebody is visibly bigger
+                            // than a regional jet — but never smaller than
+                            // this on screen, or zooming out would make the
+                            // aircraft vanish before the glyph takes over.
+                            minimumPixelSize: 26,
+                            maximumScale: 20000,
+                            // The watchlist signal has to survive the switch
+                            // from glyph to model.
+                            color: watchlisted ? Color.fromCssColorString("#FFB020") : undefined,
+                            colorBlendMode: ColorBlendMode.MIX,
+                            colorBlendAmount: watchlisted ? 0.7 : 0,
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, MODEL_CAMERA_M * 2),
+                        } : undefined}
+                        billboard={family ? undefined : {
                             image:           icon,
                             width:           BILLBOARD_SIZE,
                             height:          BILLBOARD_SIZE,
@@ -188,8 +312,37 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                             showBackground: true,
                             backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.8),
                         }}
-                        polyline={isMobile ? undefined : {
-                            positions: [position, Cartesian3.fromDegrees(lon, lat, 0)],
+                        /* THE POSITIONS MUST BE ONE PROPERTY, NOT AN ARRAY
+                           CONTAINING ONE. This was [position, ground] after
+                           position became a callback, so Cesium read x/y/z
+                           off a property object, got NaN, and threw out of
+                           PolylineGeometry inside the render loop — which
+                           stops Cesium drawing the entire globe and leaves
+                           the last frame on screen looking like a freeze.
+
+                           Only drawn for the near set: a dynamic polyline is
+                           rebuilt every frame, and two thousand of those is
+                           a real cost for lines that are visual noise at any
+                           altitude where you can see two thousand aircraft. */
+                        /* SHOWN OR HIDDEN, NEVER ADDED AND REMOVED. Setting
+                           this prop to undefined for an entity that already
+                           has a live dynamic geometry updater makes Cesium
+                           read .positions off nothing on the next tick, which
+                           throws in the render loop and stops the globe. So
+                           the graphics stay attached and `show` does the
+                           work — Cesium builds no geometry while it is off,
+                           so the near-set bound still holds. */
+                        polyline={(isMobile || !reportedGround) ? undefined : {
+                            show: nearIds.has(icao),
+                            /* NEVER undefined. Cesium's dynamic polyline
+                               updater reads .positions off whatever this
+                               returns, so an undefined value throws in the
+                               render loop and stops the globe just as surely
+                               as a NaN does. */
+                            positions: new CallbackProperty(() => {
+                                const { air, ground } = atNow()
+                                return [air, ground || reportedGround]
+                            }, false),
                             width:    1,
                             material: dropColor.withAlpha(0.25),
                         }}
