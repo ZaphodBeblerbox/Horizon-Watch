@@ -9738,6 +9738,8 @@ async def _prune_history_loop():
 @app.get("/api/history/aircraft")
 def get_aircraft_history(
     icao24: str = Query(None),
+    icaos: str = Query(None, description="comma-separated, for per-airframe tracks"),
+    per_vessel: int = Query(40),
     lat: float = Query(None),
     lon: float = Query(None),
     radius_km: float = Query(50),
@@ -9761,7 +9763,24 @@ def get_aircraft_history(
                 AircraftHistory.lat.between(lat - lat_r, lat + lat_r),
                 AircraftHistory.lon.between(lon - lon_r, lon + lon_r),
             )
-        results = q.order_by(AircraftHistory.timestamp.desc()).limit(5000).all()
+        # Per airframe, for the same reason vessels are: a global newest-N
+        # holds one point each and draws no track at all.
+        wanted = [a.strip().lower() for a in (icaos or "").split(",") if a.strip()][:200]
+        if wanted:
+            q = q.filter(AircraftHistory.icao24.in_(wanted))
+            cap = min(20000, max(1000, len(wanted) * max(2, per_vessel)))
+            rows = q.order_by(AircraftHistory.icao24,
+                              AircraftHistory.timestamp.desc()).limit(cap).all()
+            seen: dict = {}
+            results = []
+            for r in rows:
+                n = seen.get(r.icao24, 0)
+                if n >= per_vessel:
+                    continue
+                seen[r.icao24] = n + 1
+                results.append(r)
+        else:
+            results = q.order_by(AircraftHistory.timestamp.desc()).limit(5000).all()
     return {
         "count": len(results),
         "positions": [
@@ -9835,8 +9854,25 @@ def get_vessel_history(
     lon: float = Query(None),
     radius_km: float = Query(50),
     hours: int = Query(24),
+    bbox: str = Query(None, description="south,west,north,east"),
+    mmsis: str = Query(None, description="comma-separated, for per-vessel tracks"),
+    per_vessel: int = Query(40),
+    limit: int = Query(5000),
     user=None,
 ):
+    """Recent positions, for drawing tracks.
+
+    A GLOBAL "NEWEST N" CANNOT PRODUCE A TRACK, whatever N is. History is
+    throttled to one row per vessel per five minutes, and the feed writes
+    about twenty-four rows a second, so the newest 12,000 rows span eight
+    minutes — inside which almost every vessel appears exactly once.
+    Measured: 12,000 positions, 12,000 distinct vessels, zero with enough
+    points to draw a line.
+
+    Tracks therefore come from asking PER VESSEL. `mmsis` names the ships
+    on screen and `per_vessel` caps how far back each one is followed,
+    which is the shape the question actually has.
+    """
     try:
         from database import VesselHistory, get_db
     except ImportError as e:
@@ -9854,7 +9890,25 @@ def get_vessel_history(
                 VesselHistory.lat.between(lat - lat_r, lat + lat_r),
                 VesselHistory.lon.between(lon - lon_r, lon + lon_r),
             )
-        results = q.order_by(VesselHistory.timestamp.desc()).limit(5000).all()
+        wanted = [m.strip() for m in (mmsis or "").split(",") if m.strip()][:200]
+        if wanted:
+            q = q.filter(VesselHistory.mmsi.in_(wanted))
+            # Generous enough to hold per_vessel points for every ship
+            # asked about, then trimmed per vessel below.
+            cap = min(20000, max(1000, len(wanted) * max(2, per_vessel)))
+            rows = q.order_by(VesselHistory.mmsi,
+                              VesselHistory.timestamp.desc()).limit(cap).all()
+            seen: dict = {}
+            results = []
+            for r in rows:
+                n = seen.get(r.mmsi, 0)
+                if n >= per_vessel:
+                    continue
+                seen[r.mmsi] = n + 1
+                results.append(r)
+        else:
+            results = (q.order_by(VesselHistory.timestamp.desc())
+                        .limit(max(100, min(limit, 20000))).all())
     return {
         "count": len(results),
         "positions": [

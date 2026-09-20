@@ -62,10 +62,15 @@ def _load_known() -> dict:
             key = str(mmsi)
             if key in known:
                 continue
+            # TWO DIFFERENT SHAPES UNDER ONE NAME. The live path stores
+            # ship_type as a human label ("Cargo"); the history column
+            # stores the numeric AIS code (70). Copying the number into
+            # the live field broke the map outright — the client calls
+            # .toLowerCase() on it. Only the label is ever carried.
             known[key] = {
                 "name": (name or "").strip() or None,
-                "ship_type": stype if stype not in (0, "0", None) else None,
-                "ship_type_text": (stext or "").strip() or None,
+                "ship_type": (stext or "").strip() or None,
+                "ship_type_code": stype if stype not in (0, "0", None) else None,
                 "destination": (dest or "").strip() or None,
             }
     except Exception as ex:                                 # noqa: BLE001
@@ -115,12 +120,14 @@ def enrich(vessel: dict) -> dict:
     out = dict(vessel)
     known = _load_known().get(mmsi)
     if known:
-        for field in ("name", "ship_type_text", "destination"):
+        for field in ("name", "destination"):
             if not out.get(field) and known.get(field):
                 out[field] = known[field]
                 out.setdefault("identity_from", {})[field] = "earlier AIS static message"
-        if known.get("ship_type") and out.get("ship_type") in (None, 0, "0"):
+        # Always a label, never the numeric code — see above.
+        if known.get("ship_type") and not out.get("ship_type"):
             out["ship_type"] = known["ship_type"]
+            out["ship_type_text"] = known["ship_type"]
             out.setdefault("identity_from", {})["ship_type"] = "earlier AIS static message"
 
     f = flag_of(mmsi)

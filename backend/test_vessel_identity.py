@@ -86,3 +86,26 @@ def test_enrich_does_not_mutate_its_input():
     original = {"mmsi": "636019825", "lat": 1.0}
     vi.enrich(original)
     assert "flag" not in original
+
+
+# ── two different shapes under one field name ─────────────────────────────
+
+def test_ship_type_is_always_a_label_never_the_numeric_code():
+    """The live path stores ship_type as a human label ("cargo"); the
+    history column stores the AIS numeric code (70). Copying the number
+    into the live field broke the map outright — the client calls
+    .toLowerCase() on it."""
+    v = vi.enrich({"mmsi": "636020959"})
+    st = v.get("ship_type")
+    if st is not None:
+        assert isinstance(st, str), f"ship_type must be a label, got {type(st)}"
+
+
+def test_every_enriched_field_survives_a_string_operation():
+    """The client treats these as strings. Anything that is not one is a
+    crash waiting for the first vessel that carries it."""
+    v = vi.enrich({"mmsi": "636020959"})
+    for field in ("name", "ship_type", "ship_type_text", "destination", "flag"):
+        val = v.get(field)
+        if val is not None:
+            assert isinstance(val, str), f"{field} is {type(val)}"

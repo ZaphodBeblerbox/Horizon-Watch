@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, PolylineDashMaterialProperty, ColorMaterialProperty } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -44,29 +44,51 @@ export function groupByKey(positions, keyField) {
     return groups
 }
 
-function usePositionHistory(enabled, path) {
+function usePositionHistory(enabled, path, keys) {
     const [groups, setGroups] = useState(new Map())
     useEffect(() => {
         if (!enabled) { setGroups(new Map()); return }
         let cancelled = false
-        const load = () =>
-            fetch(`${API_BASE}${path}?hours=${HOURS}`)
+        const load = () => {
+            // ASKED PER VESSEL, because a global "newest N" cannot
+            // contain a track: history is throttled to one row per ship
+            // per five minutes and the feed writes ~24 rows a second, so
+            // any recent slice holds one point per vessel. Measured:
+            // 12,000 positions, 12,000 vessels, zero drawable tracks.
+            // Naming the ships on screen gives 40 of 40 a real trail.
+            if (!keys || !keys.length) { setGroups(new Map()); return }
+            const param = path.includes("aircraft") ? "icaos" : "mmsis"
+            const q = `&per_vessel=40&${param}=${keys.slice(0, 150).join(",")}`
+            fetch(`${API_BASE}${path}?hours=${HOURS}${q}`)
                 .then(r => r.ok ? r.json() : { positions: [] })
                 .then(d => { if (!cancelled) setGroups(groupByKey(d.positions || [], path.includes("aircraft") ? "icao24" : "mmsi")) })
                 .catch(() => {})
+        }
         load()
         const iv = setInterval(load, POLL_MS)
         return () => { cancelled = true; clearInterval(iv) }
-    }, [enabled, path])
+        // Joined so the effect re-runs when the set of visible ships
+        // changes, not on every position update for the same ones.
+    }, [enabled, path, (keys || []).join(",")]) // eslint-disable-line react-hooks/exhaustive-deps
     return groups
 }
 
 const AIS_TRACK_COLOR  = Color.fromCssColorString("#5AC8FA").withAlpha(0.55)
 const ADSB_TRACK_COLOR = Color.fromCssColorString("#FF9F0A").withAlpha(0.5)
 
-export default function GlobeTrackLayer({ aisEnabled = false, adsbEnabled = false }) {
-    const vesselTracks  = usePositionHistory(aisEnabled,  "/api/history/vessels")
-    const aircraftTracks = usePositionHistory(adsbEnabled, "/api/history/aircraft")
+export default function GlobeTrackLayer({ aisEnabled = false, adsbEnabled = false,
+                                         vessels = [], aircraft = [] }) {
+    // The ships and airframes actually on screen. Tracks are drawn for
+    // what the analyst can see, which is also the only set small enough
+    // to fetch real history for.
+    const vesselKeys = useMemo(
+        () => (vessels || []).map((v) => String(v.mmsi)).filter(Boolean).slice(0, 150),
+        [vessels])
+    const aircraftKeys = useMemo(
+        () => (aircraft || []).map((a) => String(a.icao24 || a.hex || "")).filter(Boolean).slice(0, 150),
+        [aircraft])
+    const vesselTracks  = usePositionHistory(aisEnabled,  "/api/history/vessels", vesselKeys)
+    const aircraftTracks = usePositionHistory(adsbEnabled, "/api/history/aircraft", aircraftKeys)
 
     return (
         <>

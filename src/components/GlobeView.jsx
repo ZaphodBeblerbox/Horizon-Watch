@@ -910,7 +910,8 @@ export default function GlobeView({
 
                 {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} sanctionedMmsis={sanctionedMmsis} />}
                 {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} watchlistedIcaos={watchlistedIcaos} />}
-                <GlobeTrackLayer aisEnabled={aisEnabled} adsbEnabled={adsbEnabled} />
+                <GlobeTrackLayer aisEnabled={aisEnabled} adsbEnabled={adsbEnabled}
+                                 vessels={vessels} aircraft={aircraft} />
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />
