@@ -3512,6 +3512,23 @@ async def aviation_photo(icao24: str):
     return data
 
 
+@app.get("/api/warmap/{theatre}/polygons")
+async def api_warmap_polygons(theatre: str, force: bool = False):
+    """Faction AREAS for one war, derived from its control points.
+
+    The source publishes points; these polygons are computed by asking
+    which control point each spot on the map is nearest to. That makes
+    the boundary an estimate rather than an assertion, which every
+    feature says of itself.
+    """
+    import wiki_warmaps as _wm
+    loop = asyncio.get_event_loop()
+    # Off the event loop without exception: this is shapely over thousands
+    # of cells, and blocking work on the loop is how this app has taken
+    # itself down before.
+    return await loop.run_in_executor(_executor, _wm.polygons, theatre, force)
+
+
 @app.get("/api/warmap/{theatre}")
 async def api_warmap(theatre: str, force: bool = False):
     """Settlement-level control points for one war, from Wikipedia's

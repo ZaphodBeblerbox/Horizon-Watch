@@ -221,3 +221,159 @@ def fetch(theatre: str, force: bool = False) -> dict:
 def theatres() -> list[dict]:
     return [{"key": k, "label": v["label"], "module": v["module"],
              "legend": v.get("legend") or {}} for k, v in THEATRES.items()]
+
+
+# ── points into areas ────────────────────────────────────────────────────
+#
+# Asked for these to render as polygons in the same style as Ukraine's.
+# The source gives POINTS, so the areas are DERIVED and that is a real
+# difference worth keeping visible: DeepStateMap's Ukraine polygons are
+# drawn by an analyst who decided where the line runs, whereas these are
+# computed by asking, for every spot on the map, which control point is
+# nearest. Nobody asserted the boundary — it is the midline between two
+# towns held by different sides, which is a reasonable estimate of a front
+# and is not a survey of one.
+#
+# Voronoi rather than buffered discs: discs leave holes between towns and
+# overlap where factions interleave, so the map would show gaps that mean
+# "no data" and overlaps that mean nothing at all. A Voronoi tessellation
+# partitions the ground exactly once, which is the right claim — every
+# place is nearest to somebody.
+#
+# shapely, not scipy: scipy is installed here but absent from
+# requirements.txt, so depending on it would work locally and fail on
+# deploy. shapely 2.1 has voronoi_polygons and is already declared.
+
+# How far beyond the outermost control point a faction may claim. Without
+# a bound the tessellation runs to infinity and one faction appears to
+# hold an ocean.
+CLAIM_RADIUS_DEG = 0.45
+
+# How tightly the claim area hugs the control points. 0 is maximally
+# concave and 1 is the convex hull; this is loose enough to bridge normal
+# gaps between towns and tight enough not to annex a sea.
+CONCAVE_RATIO = 0.25
+
+# Below this a cell is a rendering artefact rather than territory.
+MIN_CELL_AREA_DEG2 = 1e-6
+
+
+def polygons(theatre: str, force: bool = False) -> dict:
+    """Faction areas derived from a theatre's control points."""
+    data = fetch(theatre, force=force)
+    if not data.get("available"):
+        return {**data, "geojson": {"type": "FeatureCollection", "features": []}}
+
+    try:
+        import shapely
+        from shapely.geometry import MultiPoint, Point, mapping
+        from shapely.ops import unary_union
+    except Exception as e:                                  # noqa: BLE001
+        return {**data, "geojson": {"type": "FeatureCollection", "features": []},
+                "polygon_error": f"shapely unavailable: {e}"}
+
+    pts, factions = [], []
+    seen = set()
+    for p in data.get("points") or []:
+        key = (round(p["lon"], 5), round(p["lat"], 5))
+        if key in seen:
+            continue            # duplicate coordinates break the tessellation
+        seen.add(key)
+        pts.append(Point(p["lon"], p["lat"]))
+        factions.append((p.get("faction"), p.get("colour")))
+
+    if len(pts) < 3:
+        return {**data, "geojson": {"type": "FeatureCollection", "features": []},
+                "polygon_error": "too few distinct points to tessellate"}
+
+    mp = MultiPoint(pts)
+    # The area anyone may claim at all: the theatre's outline, fattened.
+    # Anything outside it is ground no editor has said a word about.
+    #
+    # The convex hull rather than a buffer of all 7,576 points. Buffering
+    # the points produces a polygon with thousands of arcs, and then every
+    # single cell is intersected against it — which is what made Syria run
+    # past two minutes. The hull costs a little accuracy in concave
+    # coastline, and the alternative was the feature not existing.
+    try:
+        # CONCAVE, not convex. The convex hull spans every bay and strait
+        # between the outermost towns, so Yemen's government faction
+        # appeared to hold several thousand square kilometres of the Gulf
+        # of Aden — a straight diagonal edge across open water, which is
+        # both obviously wrong and exactly the kind of confident-looking
+        # error a control map must not make. A concave hull follows where
+        # the towns actually are.
+        envelope = shapely.concave_hull(mp, ratio=CONCAVE_RATIO).buffer(CLAIM_RADIUS_DEG)
+        if envelope.is_empty:
+            raise ValueError("empty concave hull")
+    except Exception:                                       # noqa: BLE001
+        # Degenerate point sets (collinear, tiny) have no concave hull.
+        envelope = mp.convex_hull.buffer(CLAIM_RADIUS_DEG)
+
+    try:
+        # ordered=True returns one cell per input point IN INPUT ORDER.
+        # Without it the cells come back unordered and each has to be
+        # matched to its generator by a contains() scan — which is
+        # quadratic and took Syria's 7,576 points past two minutes, on a
+        # thread that must never block. With it the match is an index.
+        cells = shapely.voronoi_polygons(mp, extend_to=envelope.envelope,
+                                         ordered=True)
+    except Exception as e:                                  # noqa: BLE001
+        return {**data, "geojson": {"type": "FeatureCollection", "features": []},
+                "polygon_error": f"tessellation failed: {e}"}
+
+    by_faction: dict = {}
+    geoms = list(cells.geoms)
+    if len(geoms) != len(pts):
+        return {**data, "geojson": {"type": "FeatureCollection", "features": []},
+                "polygon_error": (f"tessellation returned {len(geoms)} cells for "
+                                  f"{len(pts)} points — refusing to guess which "
+                                  f"belongs to whom")}
+    for i, cell in enumerate(geoms):
+        clipped = cell.intersection(envelope)
+        if clipped.is_empty or clipped.area < MIN_CELL_AREA_DEG2:
+            continue
+        by_faction.setdefault(factions[i], []).append(clipped)
+
+    features = []
+    for (faction, colour), geoms in by_faction.items():
+        try:
+            # coverage_union_all, not unary_union. Voronoi cells are a
+            # COVERAGE — they tile the plane without overlapping and share
+            # exact edges — and shapely has a dedicated path for that which
+            # does not have to compute intersections it knows are empty.
+            # unary_union over Syria's 7,576 cells ran past two minutes and
+            # was killed; this is the difference between a feature and an
+            # outage.
+            try:
+                merged = shapely.coverage_union_all(geoms)
+            except Exception:                               # noqa: BLE001
+                # Not a valid coverage (duplicate or slightly-off edges).
+                # Fall back rather than lose the faction entirely.
+                merged = unary_union(geoms)
+            # Simplified because a dissolved tessellation carries every
+            # midline vertex, and a browser drawing thousands of them per
+            # faction will not thank us for precision it cannot show.
+            merged = merged.simplify(0.01, preserve_topology=True)
+        except Exception:                                   # noqa: BLE001
+            continue
+        if merged.is_empty:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": mapping(merged),
+            "properties": {
+                "faction": faction,
+                "colour": colour,
+                "derived": True,
+                "how": ("nearest-control-point areas, dissolved by faction — "
+                        "the boundary is computed, not asserted by anyone"),
+            },
+        })
+
+    return {
+        **data,
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "polygon_count": len(features),
+        "polygon_error": None,
+    }

@@ -817,20 +817,23 @@ export function adaptSurge(data = {}) {
 
 // ── a control point from a community war map ────────────────────────────
 
-export function adaptWarmapPoint(data = {}) {
+export function adaptWarmapArea(data = {}) {
     const m = data.meta || {}
     const point = pointOf(data)
     return {
         identity: {
             title: data.name || "Control point",
             subtitle: m.held_by || null,
-            entityType: "warmap_point",
+            entityType: "warmap_area",
             subtype: null,
             sanctionsStatus: null,
         },
         attributes: compact([
             attr("Held by", m.held_by),
             attr("Theatre", m.theatre),
+            // Stated before anything else about the shape, because a
+            // derived boundary looks identical to a surveyed one.
+            attr("Boundary", m.boundary),
             attr("Map last edited", m.last_edited ? fmtTimestamp(m.last_edited) : null),
             // WHO SAYS SO is the first thing a reader needs here. This is
             // not a sensor reading or a verified geolocation; it is an
@@ -864,7 +867,7 @@ const ADAPTERS = {
     country_risk: adaptCountryRisk,
     frontline: adaptFrontline,
     surge: adaptSurge,
-    warmap_point: adaptWarmapPoint,
+    warmap_area: adaptWarmapArea,
 }
 
 /**
