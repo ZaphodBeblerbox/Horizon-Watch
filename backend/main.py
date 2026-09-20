@@ -3563,7 +3563,14 @@ def api_frontline_theatres():
         if w["key"] in have:
             continue
         out = [t for t in out if t["key"] != w["key"]]
-        out.append({"key": w["key"], "label": w["label"], "available": True,
+        # Respect the module's own availability. A war whose factions
+        # cannot be named is offered as unavailable WITH ITS REASON, not
+        # silently enabled — hardcoding True here put Myanmar, Libya,
+        # Somalia and Mali back on the map with unnamed factions, which is
+        # exactly what the refusal exists to prevent.
+        out.append({"key": w["key"], "label": w["label"],
+                    "available": bool(w.get("available")),
+                    "reason": w.get("reason"),
                     "kind": "points", "source": _wm.SOURCE,
                     "source_url": f"https://en.wikipedia.org/wiki/{w['module'].replace(' ', '_')}",
                     "legend": w.get("legend") or {}})

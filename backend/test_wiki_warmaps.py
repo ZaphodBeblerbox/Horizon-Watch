@@ -58,10 +58,13 @@ def test_a_colour_is_named_only_where_the_module_documents_it():
     assert w.THEATRES["sudan"]["legend"]["red"] == "Sudanese Armed Forces"
 
 
-def test_an_undocumented_theatre_still_loads_without_inventing_names():
-    """Syria's colours are not declared; it must still be usable."""
-    assert "syria" in w.THEATRES
-    assert w.THEATRES["syria"]["legend"] == {}
+def test_a_curated_legend_only_fills_what_the_module_does_not_publish():
+    """Syria's /doc names red, blue, green, grey and black at runtime, so
+    the curated table only has to carry what it leaves — and must not
+    shadow it."""
+    curated = set(w.THEATRES["syria"]["legend"])
+    assert "yellow" in curated          # not in the module's own table
+    assert "red" not in curated         # the module names this one
 
 
 # ── the derivation, and its honesty ───────────────────────────────────────
@@ -118,3 +121,99 @@ def test_one_area_per_faction_not_one_per_point():
     with _m.patch.object(w, "fetch", return_value={"available": True, "points": pts}):
         r = w.polygons("yemen")
     assert len(r["geojson"]["features"]) == 2
+
+
+# ── no unnamed factions, guaranteed by refusal ────────────────────────────
+#
+# Asked to make sure the map never shows an unnamed faction. The guarantee
+# is kept by NOT OFFERING a war whose colours cannot all be named, rather
+# than by inventing names — "unnamed faction (grey)" is merely unhelpful,
+# but a confidently mislabelled belligerent on a control map is the worst
+# output this system can produce.
+
+def test_every_offered_theatre_declares_a_legend():
+    for key, spec in w.THEATRES.items():
+        assert spec.get("legend"), f"{key} is offered with no legend"
+
+
+def test_theatres_without_a_legend_are_offered_as_unavailable_with_a_reason():
+    rows = {t["key"]: t for t in w.theatres()}
+    for key in w.UNNAMED_THEATRES:
+        assert rows[key]["available"] is False, key
+        assert "legend" in rows[key]["reason"]
+
+
+def test_no_colour_reaches_the_map_without_a_name(monkeypatch):
+    """THE GUARANTEE ITSELF, checked the way it actually holds.
+
+    Coverage is a RUNTIME property: the curated table fills only what the
+    module's /doc does not publish, so inspecting either alone proves
+    nothing. This drives the real merge with a stubbed /doc, then asserts
+    that every colour present in the data is named.
+    """
+    monkeypatch.setattr(w, "fetch_legend", lambda t: {"red": "From the module"})
+    monkeypatch.setattr(w, "_get", lambda p: {"query": {"pages": {"1": {"revisions": [{
+        "timestamp": "2026-09-17T00:00:00Z",
+        "slots": {"main": {"*": (
+            '{ lat = "15.0", long = "44.0", mark = "Location dot red.svg" },'
+            '{ lat = "15.1", long = "44.1", mark = "Dot green 0d0.svg" },'
+            '{ lat = "15.2", long = "44.2", mark = "Location dot blue.svg" },'
+        )}}}]}}}})
+    w._CACHE.clear()
+    d = w.fetch("yemen", force=True)
+    assert d["available"]
+    assert d["unlabelled_colours"] == [], d["unlabelled_colours"]
+    for p in d["points"]:
+        assert p["faction"], f"{p['colour']} reached the map unnamed"
+
+
+def test_where_each_name_came_from_is_recorded(monkeypatch):
+    """A wrong faction has to be traceable to the source that asserted it
+    — the editors' table or this file's own curated fallback."""
+    monkeypatch.setattr(w, "fetch_legend", lambda t: {"red": "From the module"})
+    monkeypatch.setattr(w, "_get", lambda p: {"query": {"pages": {"1": {"revisions": [{
+        "timestamp": "2026-09-17T00:00:00Z",
+        "slots": {"main": {"*": (
+            '{ lat = "15.0", long = "44.0", mark = "Location dot red.svg" },'
+            '{ lat = "15.1", long = "44.1", mark = "Dot green 0d0.svg" },'
+        )}}}]}}}})
+    w._CACHE.clear()
+    d = w.fetch("yemen", force=True)
+    assert d["legend_source"]["red"] == "module /doc"
+    assert d["legend_source"]["green"] == "curated"
+
+
+# ── the palette confusion that produced a wrong belligerent ───────────────
+
+def test_an_article_hex_is_not_used_to_name_an_icon_colour():
+    """Sudan's SAF is #FFCDCD on the static SVG — a pale pink, which
+    nearest-RGB bucketing called "yellow". Naming the module's yellow
+    icons from it labelled SPLM-N as the Sudanese Armed Forces. Two
+    palettes for two maps; matching one against the other is a category
+    error, and the guard is that fetch() no longer consults it."""
+    import inspect
+    src = inspect.getsource(w.fetch)
+    assert "fetch_article_legend" not in src
+
+
+def test_template_parameters_are_not_mistaken_for_factions():
+    """"type = notice" appeared as a faction because it sits in a table
+    cell. A faction name is prose, not an assignment."""
+    lua = "|-\n|type      = notice\n|[[File:Location dot orange.svg|11px]]\n"
+    assert w.parse_legend(lua) == {}
+
+
+def test_a_mixed_control_row_never_names_a_colour():
+    """A row whose icons span several colours is a contested-control key,
+    not a faction, and naming a colour from it mislabels everything drawn
+    in that colour."""
+    lua = ("|-\n|Contested\n|[[File:Location dot red.svg|11px]]\n"
+           "|[[File:Location dot green.svg|11px]]\n")
+    assert w.parse_legend(lua) == {}
+
+
+def test_a_real_legend_row_is_read():
+    lua = ("|-\n|[[Assadism|Assadist]] forces and [[Russian Armed Forces]]\n"
+           "|[[File:Location dot red.svg|11px]]\n"
+           "|[[File:Abm-red-icon.png|13px]]\n")
+    assert w.parse_legend(lua) == {"red": "Assadist forces and Russian Armed Forces"}

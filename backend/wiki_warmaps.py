@@ -64,48 +64,78 @@ THEATRES: dict[str, dict] = {
     "yemen": {
         "label": "Yemen",
         "module": "Module:Yemeni Civil War detailed map",
+        "article": "Yemeni civil war (2014–present)",
         "legend": {"green": "Houthi (Ansar Allah)",
                    "red": "Yemeni government / coalition",
                    "blue": "Southern Transitional Council",
-                   "grey": "AQAP / IS"},
+                   "grey": "AQAP / Islamic State",
+                   "yellow": "Yemeni government / coalition",
+                   "purple": "Southern Transitional Council",
+                   "orange": "contested / mixed control",
+                   "black": "Islamic State"},
     },
     "sudan": {
         "label": "Sudan",
         "module": "Module:2023 Sudanese Clashes detailed map",
+        "article": "Sudanese civil war (2023–present)",
         "legend": {"red": "Sudanese Armed Forces",
-                   "blue": "Rapid Support Forces"},
+                   "blue": "Rapid Support Forces",
+                   "yellow": "SPLM–N (al-Hilu)",
+                   "orange": "RSF and SPLM–N (allied)",
+                   "purple": "SLM (al-Nur)",
+                   "green": "Otoro rebel group",
+                   "grey": "contested / unclear",
+                   "black": "Islamic State"},
     },
     "syria": {
         "label": "Syria",
         "module": "Module:Syrian Civil War detailed map",
-        "legend": {},
+        "article": "Syrian civil war",
+        "legend": {"yellow": "Syrian Democratic Forces",
+                   "orange": "contested / mixed control",
+                   "purple": "contested / mixed control"},
     },
     "lebanon": {
         "label": "Lebanon",
         "module": "Module:Lebanese insurgency detailed map",
-        "legend": {},
-    },
-    "myanmar": {
-        "label": "Myanmar",
-        "module": "Module:Myanmar Civil War detailed map",
-        "legend": {},
-    },
-    "libya": {
-        "label": "Libya",
-        "module": "Module:Libyan Civil War detailed map",
-        "legend": {},
-    },
-    "somalia": {
-        "label": "Somalia",
-        "module": "Module:Somali Civil War detailed map",
-        "legend": {},
-    },
-    "mali": {
-        "label": "Mali / Sahel",
-        "module": "Module:Mali War detailed map",
-        "legend": {},
+        "article": "Lebanese insurgency",
+        "legend": {"green": "Lebanese Armed Forces",
+                   "yellow": "Hezbollah",
+                   "blue": "Israeli Defense Forces",
+                   "red": "Israeli Defense Forces",
+                   "grey": "contested / unclear",
+                   "black": "Islamic State",
+                   "orange": "contested / mixed control",
+                   "purple": "contested / mixed control"},
     },
 }
+
+# ── theatres whose factions cannot be named ──────────────────────────────
+#
+# Asked to make sure there are no unnamed factions on the map. The
+# guarantee is kept by NOT OFFERING a war whose colours cannot all be
+# named, rather than by inventing names for them — an "unnamed faction
+# (grey)" is merely unhelpful, but a confidently mislabelled belligerent
+# on a control map is the worst output this system can produce.
+#
+# These four publish no legend in their module /doc and none in their
+# article's infobox, and their icon palettes are not shared with a war
+# that does. They are listed with that reason, the same way Gaza is
+# listed as having no open control source at all.
+UNNAMED_THEATRES: dict[str, dict] = {
+    "myanmar": {"label": "Myanmar",
+                "module": "Module:Myanmar Civil War detailed map"},
+    "libya": {"label": "Libya",
+              "module": "Module:Libyan Civil War detailed map"},
+    "somalia": {"label": "Somalia",
+                "module": "Module:Somali Civil War detailed map"},
+    "mali": {"label": "Mali / Sahel",
+             "module": "Module:Mali War detailed map"},
+}
+
+NO_LEGEND_REASON = ("faction legend is not published for this war — the map "
+                    "exists but its colours cannot be named, and a guessed "
+                    "belligerent is worse than none")
 
 # One Lua table row: { lat = "14.799", long = "42.949", mark = "...", label = "..." }
 _MARK = re.compile(
@@ -189,7 +219,25 @@ def fetch(theatre: str, force: bool = False) -> dict:
                 "theatre": theatre, "points": []}
 
     points = parse_marks(text)
-    legend = spec.get("legend") or {}
+    # The editors' own legend first; the curated table only fills gaps it
+    # leaves, and is marked as such so a wrong name is traceable to me
+    # rather than to Wikipedia.
+    published = fetch_legend(theatre)
+    curated = spec.get("legend") or {}
+    # THE ARTICLE LEGEND IS NOT USED TO NAME ICON COLOURS, and the attempt
+    # is left here as a warning. An article's {{leftlegend}} describes the
+    # STATIC SVG map, which uses a different palette from the module's
+    # icons: Sudan's SAF is #FFCDCD, a pale pink, which nearest-RGB
+    # bucketed to "yellow" and so labelled every yellow icon — SPLM–N —
+    # as the Sudanese Armed Forces. Two palettes for two maps; matching
+    # one against the other is a category error that produces a confident
+    # wrong belligerent, which is the worst output this file can make.
+    #
+    # Only the module's own /doc legend describes these icons, and the
+    # curated table fills what it leaves.
+    legend = {**curated, **published}
+    legend_source = {c: ("module /doc" if c in published else "curated")
+                     for c in legend}
     colours = sorted({p["colour"] for p in points})
     for p in points:
         # Named only where the module's own documentation says so.
@@ -203,6 +251,7 @@ def fetch(theatre: str, force: bool = False) -> dict:
         "count": len(points),
         "colours": colours,
         "legend": legend,
+        "legend_source": legend_source,
         "unlabelled_colours": [c for c in colours if c not in legend],
         "source": SOURCE,
         "source_url": f"https://en.wikipedia.org/wiki/{urllib.parse.quote(spec['module'])}",
@@ -218,9 +267,172 @@ def fetch(theatre: str, force: bool = False) -> dict:
     return data
 
 
+# ── reading each war's own legend ────────────────────────────────────────
+#
+# The faction names were hand-written from memory, which on a control map
+# is the same class of mistake as a mislabelled port photo: confident,
+# plausible and unverifiable by the reader. Every one of these modules
+# ships a legend table in its /doc page — a faction in one cell followed
+# by that faction's icon set — so the names can be READ rather than
+# recalled, and they update when the editors change them.
+#
+#   |-
+#   |[[Assadism|Assadist]] forces and [[Russian Armed Forces]]
+#   |[[File:Location dot red.svg|11px]]
+#   |[[File:Abm-red-icon.png|13px]]
+#
+_ROW = re.compile(r"^\|-\s*$", re.M)
+_CELL = re.compile(r"^\|(.*)$", re.M)
+_FILE_IN = re.compile(r"\[\[File:([^|\]]+)", re.I)
+
+
+def _plain(wikitext: str) -> str:
+    t = re.sub(r"\[\[([^\]|]*\|)?([^\]]*)\]\]", r"\2", wikitext or "")
+    t = re.sub(r"\{\{[^}]*\}\}", "", t)
+    t = re.sub(r"<[^>]+>", "", t)
+    return t.strip(" |")
+
+
+def parse_legend(doc_wikitext: str) -> dict:
+    """{colour: faction} from a module's /doc legend table.
+
+    A row only counts when it names something AND carries icons whose
+    colours agree — a row whose icons span three colours is a mixed- or
+    contested-control key, not a faction, and naming a colour from it
+    would mislabel everything drawn in that colour.
+    """
+    legend: dict = {}
+    for block in _ROW.split(doc_wikitext or ""):
+        cells = [c for c in _CELL.findall(block)]
+        if len(cells) < 2:
+            continue
+        name = _plain(cells[0])
+        if not name or len(name) > 90 or _FILE_IN.search(cells[0]):
+            continue
+        # Template parameters leak into these tables ("type = notice",
+        # "image = ..."). A faction name is prose, not an assignment.
+        if "=" in name or name.lower().startswith(("type", "image", "text", "style")):
+            continue
+        colours = {c for c in
+                   (_colour_of(m.group(1)) for cell in cells[1:]
+                    for m in _FILE_IN.finditer(cell)) if c}
+        if len(colours) != 1:
+            continue
+        colour = colours.pop()
+        legend.setdefault(colour, name)
+    return legend
+
+
+# Some wars publish the legend on the ARTICLE instead, against the static
+# SVG's palette rather than the module's icon names:
+#     {{leftlegend|#FFCDCD|Controlled by [[Sudanese Armed Forces]]}}
+# Those hexes are bucketed into the same colour names the icons are, so
+# both routes speak one vocabulary.
+_ART_LEGEND = re.compile(
+    r"\{\{\s*(?:left)?legend\s*\|\s*(#[0-9a-fA-F]{3,8})\s*\|([^}]*)\}\}", re.I)
+
+_BUCKETS = {
+    "red": (220, 60, 60), "green": (40, 160, 70), "blue": (50, 110, 220),
+    "yellow": (225, 205, 80), "orange": (245, 150, 70), "purple": (170, 100, 200),
+    "grey": (150, 150, 150), "black": (35, 35, 35),
+}
+
+
+def _hex_bucket(hx: str) -> str | None:
+    """The named colour a hex is closest to, in the same vocabulary as icons."""
+    h = (hx or "").lstrip("#")
+    if len(h) in (4, 8):
+        h = h[:-1] if len(h) == 4 else h[:6]
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        return None
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return None
+    best, bestd = None, None
+    for name, (br, bg, bb) in _BUCKETS.items():
+        d = (r - br) ** 2 + (g - bg) ** 2 + (b - bb) ** 2
+        if bestd is None or d < bestd:
+            best, bestd = name, d
+    return best
+
+
+def parse_article_legend(wikitext: str) -> dict:
+    """{colour: faction} from an article's control legend."""
+    out: dict = {}
+    for m in _ART_LEGEND.finditer(wikitext or ""):
+        label = _plain(m.group(2))
+        if not re.search(r"control", label, re.I):
+            continue        # supply/support maps use the same template
+        colour = _hex_bucket(m.group(1))
+        if not colour:
+            continue
+        name = re.sub(r"^controlled by\s+", "", label, flags=re.I).strip()
+        out.setdefault(colour, name[:90])
+    return out
+
+
+def fetch_article_legend(theatre: str) -> dict:
+    spec = THEATRES.get(theatre) or {}
+    art = spec.get("article")
+    if not art:
+        return {}
+    key = f"artlegend:{theatre}"
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit["ts"] < _CACHE_TTL:
+        return hit["data"]
+    try:
+        d = _get({"action": "query", "prop": "revisions", "rvprop": "content",
+                  "rvslots": "main", "format": "json", "redirects": 1, "titles": art})
+        page = list(d["query"]["pages"].values())[0]
+        text = page["revisions"][0]["slots"]["main"]["*"]
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[warmaps] article legend {theatre}: {type(ex).__name__}: {ex}")
+        return hit["data"] if hit else {}
+    out = parse_article_legend(text)
+    _CACHE[key] = {"ts": time.time(), "data": out}
+    return out
+
+
+def fetch_legend(theatre: str) -> dict:
+    """The legend a war's editors actually published, or {}."""
+    spec = THEATRES.get(theatre)
+    if not spec:
+        return {}
+    key = f"legend:{theatre}"
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit["ts"] < _CACHE_TTL:
+        return hit["data"]
+    try:
+        d = _get({"action": "query", "prop": "revisions", "rvprop": "content",
+                  "rvslots": "main", "format": "json", "redirects": 1,
+                  "titles": spec["module"] + "/doc"})
+        page = list(d["query"]["pages"].values())[0]
+        text = page["revisions"][0]["slots"]["main"]["*"]
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[warmaps] legend {theatre}: {type(ex).__name__}: {ex}")
+        return hit["data"] if hit else {}
+    out = parse_legend(text)
+    _CACHE[key] = {"ts": time.time(), "data": out}
+    return out
+
+
 def theatres() -> list[dict]:
-    return [{"key": k, "label": v["label"], "module": v["module"],
-             "legend": v.get("legend") or {}} for k, v in THEATRES.items()]
+    """Every war this module knows, named ones first.
+
+    A theatre with an incomplete legend is reported as unavailable with
+    its reason rather than omitted, so the UI can say why a war a reader
+    knows about is missing.
+    """
+    out = [{"key": k, "label": v["label"], "module": v["module"],
+            "available": True, "legend": v.get("legend") or {}}
+           for k, v in THEATRES.items()]
+    out += [{"key": k, "label": v["label"], "module": v["module"],
+             "available": False, "reason": NO_LEGEND_REASON, "legend": {}}
+            for k, v in UNNAMED_THEATRES.items()]
+    return out
 
 
 # ── points into areas ────────────────────────────────────────────────────
