@@ -189,19 +189,48 @@ export default function Ontology({ onOpenGenerate }) {
 
     const pendingSelectNodeRef = useRef(null)
 
+    /**
+     * WHICH GRAPH. The global diagram is the Forge store curated to 40
+     * nodes a tier — about 160 — while the ontology tables hold 50,686
+     * entities. The page was not showing a sparse ontology, it was
+     * showing a different and much smaller one, and one graph for the
+     * world cannot be both complete and legible.
+     *
+     * Scoped to a country, "everything" is a few hundred nodes: its
+     * airfields, ports, hospitals, bases, the events reported there and
+     * the factions holding ground in it, with every event joined to the
+     * fixed things near it.
+     */
+    const [scope, setScope] = useState("global")
+    const [countries, setCountries] = useState([])
     useEffect(() => {
-        fetch(`${API_BASE}/api/ontology/diagram`).then((r) => r.json()).then((d) => {
+        fetch(`${API_BASE}/api/ontology/countries`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => setCountries(Array.isArray(d?.countries) ? d.countries : []))
+            .catch(() => {})
+    }, [])
+
+    useEffect(() => {
+        const url = scope === "global"
+            ? `${API_BASE}/api/ontology/diagram`
+            : `${API_BASE}/api/ontology/country/${encodeURIComponent(scope)}?hours=168`
+        fetch(url).then((r) => r.json()).then((d) => {
+            // A country graph carries no tiers, and can legitimately be
+            // empty for a quiet week. Neither may throw.
+            const nodes = Array.isArray(d?.nodes) ? d.nodes : []
+            const links = Array.isArray(d?.links) ? d.links : []
+            d = { ...d, nodes, links }
             setData(d)
-            const key = d.nodes.map((n) => n.id).sort().join(",") + "|layered"
+            const key = nodes.map((n) => n.id).sort().join(",") + `|${scope}`
             if (layoutKeyRef.current !== key) {
-                setPositions(computeLayout(d.nodes, d.links))
+                setPositions(computeLayout(nodes, links))
                 layoutKeyRef.current = key
             }
-            requestAutoFit(d.nodes)
+            requestAutoFit(nodes)
             if (pendingSelectNodeRef.current) {
                 const id = pendingSelectNodeRef.current
                 pendingSelectNodeRef.current = null
-                const node = d.nodes.find((n) => n.id === id)
+                const node = nodes.find((n) => n.id === id)
                 if (node) {
                     setSelected({ kind: "node", item: node })
                     setTimeout(() => requestAutoFit([node]), 30)
@@ -209,7 +238,7 @@ export default function Ontology({ onOpenGenerate }) {
             }
         })
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [scope])
 
     // Real deep-link entry point — the Briefings reader's "open in ontology"
     // xref action (and any other future caller) selects and locates a real
@@ -375,6 +404,31 @@ export default function Ontology({ onOpenGenerate }) {
                     </p>
                 ) : (
                 <>
+                {/* WHICH GRAPH. One graph for the world is a hairball at
+                    any zoom, so the global view is a 160-node curation of
+                    a 50,686-entity store. Picking a country swaps it for
+                    everything that country actually has — and joins each
+                    event to the fixed things near it. */}
+                <div>
+                    <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Scope</div>
+                    <select className="input" value={scope}
+                            onChange={(e) => setScope(e.target.value)}
+                            style={{ width: "100%", font: "400 12px var(--font)" }}>
+                        <option value="global">Global — curated overview</option>
+                        {countries.map((c) => (
+                            <option key={c.iso3} value={c.iso3}>{c.name}</option>
+                        ))}
+                    </select>
+                    {scope !== "global" && (
+                        <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginTop: 4 }}>
+                            {data?.counts
+                                ? `${data.counts.nodes} nodes · ${data.counts.links} links · `
+                                  + `${data.counts.fixed_linked}/${data.counts.fixed_in_country} fixed sites linked`
+                                : "loading…"}
+                            {data?.truncated ? " · truncated" : ""}
+                        </div>
+                    )}
+                </div>
                 <div>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Types</div>
                     <div role="button" onClick={() => setTypeFilter(null)} style={{ font: "400 12px var(--font)", color: !typeFilter ? "var(--txt)" : "var(--txt-3)", cursor: "pointer", marginBottom: 4 }}>All</div>

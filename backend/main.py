@@ -24110,6 +24110,44 @@ def _ontology_node_risk(node, degree):
     return round(min(degree, 20) / 20 * 60)
 
 
+@app.get("/api/ontology/countries")
+def api_ontology_countries():
+    """Countries this system can draw a graph for.
+
+    Scoped by whether an extent can be derived at all — a war map's own
+    control points, a strategic zone, or the country's power plants.
+    """
+    import country_graph as _cg
+    import country_codes as _cc
+    import country_registry as _cr
+    names = getattr(_cr, "_ISO_TO_NAME", {})
+    out = []
+    for iso2, name in sorted(names.items(), key=lambda kv: kv[1]):
+        iso3 = _cc.from_iso2(iso2)
+        if not iso3:
+            continue
+        try:
+            if _cg._bbox_of(iso3):
+                out.append({"iso3": iso3, "iso2": iso2, "name": name})
+        except Exception:                                   # noqa: BLE001
+            continue
+    return {"countries": out, "count": len(out)}
+
+
+@app.get("/api/ontology/country/{iso3}")
+async def api_ontology_country(iso3: str, hours: int = 168,
+                               radius_km: float = 2.0):
+    """One country's graph: its infrastructure, events and factions.
+
+    One graph for the world cannot be both complete and legible — 50,686
+    entities is a hairball, so the page was showing a 160-node curated
+    subset instead. Scoped to a country, everything fits.
+    """
+    import country_graph as _cg
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _cg.build, iso3, hours, radius_km)
+
+
 @app.get("/api/ontology/diagram")
 def api_ontology_diagram(tier_cap: int = 40):
     """Real nodes/links for the fixed four-tier Ontology diagram — the whole
