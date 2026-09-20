@@ -46,13 +46,29 @@ let rafOK = null
 function applyFit(setTransform, next, ms) {
     if (rafOK && ms) {
         const start = performance.now()
+        // CAPTURE THE STARTING TRANSFORM INSIDE THE UPDATER.
+        //
+        // This read it by calling setTransform((prev) => { from = prev; ... })
+        // and then using `from` on the next line, which assumes React runs
+        // the updater synchronously. React 18 batches, so it does not: the
+        // updater ran during the next render, `from` was still null when the
+        // first animation frame fired, and the component threw
+        // "Cannot read properties of null (reading 'x')" — taking the whole
+        // Ontology page down on every mount.
+        //
+        // The updater is the only place `prev` genuinely exists, so the
+        // interpolation happens there.
         let from = null
-        setTransform((prev) => { from = prev; return prev })
         function frame(now) {
             const t = Math.min(1, (now - start) / ms)
-            setTransform({
-                x: from.x + (next.x - from.x) * t, y: from.y + (next.y - from.y) * t,
-                k: from.k + (next.k - from.k) * t,
+            setTransform((prev) => {
+                if (from === null) from = prev
+                if (!from) return next
+                return {
+                    x: from.x + (next.x - from.x) * t,
+                    y: from.y + (next.y - from.y) * t,
+                    k: from.k + (next.k - from.k) * t,
+                }
             })
             if (t < 1) requestAnimationFrame(frame)
         }
