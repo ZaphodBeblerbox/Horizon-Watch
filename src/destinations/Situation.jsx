@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "rea
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import GlobeView from "../components/GlobeView.jsx"
+import { GDELT_EVENT_TYPES } from "../globe/GlobeGdeltLayer.jsx"
 import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
 import MapMeta from "../components/MapMeta.jsx"
@@ -337,6 +338,10 @@ export default function Situation({ onOpenDossier }) {
     // Default OFF. Machine-coded pins are opt-in: the reader should choose
     // to accept them, not discover them mixed in with verified events.
     const [gdeltOn, setGdeltOn] = useState(false)
+    // Which CAMEO codings to draw. Starts as every kind rather than a
+    // curated subset: a reader who has not chosen yet should see the whole
+    // feed, not a silently narrowed one.
+    const [gdeltTypes, setGdeltTypes] = useState(() => GDELT_EVENT_TYPES.map((t) => t.key))
     // Default ON: a thermal anomaly is a real instrument reading and it is
     // what decides where imagery gets tasked, so hiding it by default
     // conceals the system's own reasoning.
@@ -344,6 +349,9 @@ export default function Situation({ onOpenDossier }) {
     // Which theatres the frontline layer should draw. Ukraine is the only
     // one with an open control feed today; the roster comes from the
     // backend so adding a source later needs no frontend change.
+    // Ukraine defaults on; the point-based theatres do not, because
+    // Syria alone carries 7,576 marks and turning them all on unasked
+    // would bury the rest of the map.
     const [theatresOn, setTheatresOn] = useState({ ukraine: true })
     const [frontlineTheatres, setFrontlineTheatres] = useState([])
     useEffect(() => {
@@ -752,6 +760,25 @@ export default function Situation({ onOpenDossier }) {
                                     on={gdeltOn} parentOn={groupsOn.news}
                                     onToggle={() => setGdeltOn((v) => !v)} />
                             )}
+                            {g.key === "news" && gdeltOn && groupsOn.news && (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 3,
+                                              padding: "2px 12px 6px 27px" }}>
+                                    {GDELT_EVENT_TYPES.map((t) => {
+                                        const on = gdeltTypes.includes(t.key)
+                                        return (
+                                            <button key={t.key} className="chip" aria-pressed={on}
+                                                title={t.label}
+                                                onClick={() => setGdeltTypes((prev) => on
+                                                    ? prev.filter((k) => k !== t.key)
+                                                    : [...prev, t.key])}
+                                                style={{ font: "400 10px var(--mono)", padding: "1px 5px",
+                                                         opacity: on ? 1 : 0.45 }}>
+                                                {t.key}
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            )}
                         </Fragment>
                     ))}
                 </div>
@@ -1046,6 +1073,7 @@ export default function Situation({ onOpenDossier }) {
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
                         geoConfirmedEnabled={groupsOn.news}
                         gdeltEnabled={groupsOn.news && gdeltOn}
+                        gdeltTypes={gdeltTypes}
                         firesEnabled={groupsOn.imagery && firesOn}
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
@@ -1064,6 +1092,11 @@ export default function Situation({ onOpenDossier }) {
                         cablesEnabled={infraOn.cables} chokepointsEnabled={infraOn.chokepoints}
                         riskEnabled={contextOn.risk}
                         frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
+                        warmapTheatres={contextOn.frontlines
+                            ? frontlineTheatres
+                                .filter((t) => t.kind === "points" && theatresOn[t.key])
+                                .map((t) => t.key)
+                            : []}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={infraOn.power}
                         nauticalEnabled={infraOn.nautical}
                         eezEnabled={groupsOn.zones}

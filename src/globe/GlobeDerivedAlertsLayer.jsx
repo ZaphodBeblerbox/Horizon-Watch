@@ -29,6 +29,7 @@ import { showTip, hideTip } from "./mapTip.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
 import { SurgeTip, FusionTip } from "./DerivedTips.jsx"
+import { CAT } from "../components/timeStripMath.js"
 import {
     SURGE_HALO_M, SURGE_INNER_M, FUSION_RING_M, FUSION_OUTER_M,
     TICK_OUTER_M, TICK_INNER_M, LABEL_MAX_DISTANCE_M,
@@ -80,6 +81,25 @@ function markBillboard(color, size = MARK_SIZE.alert) {
 function pulsingOutline(base, periodMs, min, max) {
     if (prefersReducedMotion()) return base.withAlpha(max)
     return new CallbackProperty(() => base.withAlpha(pulseAlpha(Date.now(), periodMs, min, max)), false)
+}
+
+/** What surged, and by how much against its own baseline. */
+export function surgeLabel(s) {
+    const topic = (CAT[s.cat]?.name || s.cat || "activity")
+        .split(" / ")[0].split(" ")[0].toUpperCase()
+    const mult = Number(s.mult)
+    // The multiple is the finding. Without a baseline to compare against,
+    // fall back to the raw count rather than inventing a ratio.
+    if (Number.isFinite(mult) && mult >= 2) return `${topic} ×${Math.round(mult)}`
+    return `${topic} · ${s.n}`
+}
+
+/** Which independent modalities agreed, not how many. */
+export function fusionLabel(f) {
+    const mods = (f.mods || []).map((m) => String(m).toUpperCase())
+    if (!mods.length) return "FUSION"
+    if (mods.length <= 2) return mods.join("+")
+    return `${mods.slice(0, 2).join("+")}+${mods.length - 2}`
 }
 
 function labelOpts(text, color) {
@@ -293,7 +313,12 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                         distanceDisplayCondition: regionRingCond,
                     }}
                     billboard={markBillboard("#b7822c")}
-                    label={labelOpts(`SURGE · ${s.n}`, AMBER)}
+                    /* "SURGE · 5" named neither the subject nor the size,
+                       which is the whole finding. The payload already
+                       carries the category and the multiple against this
+                       cell's own baseline; the label just never used them.
+                       "AIR ×13" reads at a glance and is falsifiable. */
+                    label={labelOpts(surgeLabel(s), AMBER)}
                 />
             ))}
             {/* The inner ring is its own entity: one Cesium entity carries at
@@ -327,7 +352,10 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                         distanceDisplayCondition: regionRingCond,
                     }}
                     billboard={markBillboard("#c4453c")}
-                    label={labelOpts(`FUSION · ${f.mods.length}`, RED)}
+                    /* The count of INDEPENDENT ways of looking is the
+                       finding, so name them rather than counting them:
+                       "AIS+ADSB" says why it is worth believing. */
+                    label={labelOpts(fusionLabel(f), RED)}
                 />
             ))}
             {fusions.map((f) => (

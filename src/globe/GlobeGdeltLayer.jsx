@@ -26,7 +26,11 @@ import { getShapeMarkerDataUri, MARK_SIZE, MARKER_MAX_CAMERA_M } from "./entityI
 import { setEntity, deleteEntity } from "./entityStore.js"
 
 const MARKER_SIZE = MARK_SIZE.gdelt
-const REFRESH_MS = 5 * 60 * 1000      // GDELT publishes every 15 minutes
+// GDELT publishes a new export every 15 minutes and the backend loop
+// ingests on that cadence, so polling faster than the data changes is
+// waste and polling slower makes the map stale. Three minutes keeps a
+// newly-ingested slice on screen within one publish interval.
+const REFRESH_MS = 3 * 60 * 1000
 
 /**
  * Colour by how conflictual the coding is, not by event type.
@@ -43,7 +47,25 @@ function colourFor(goldstein) {
     return "var(--txt-4, #6f8fa8)"
 }
 
-export default function GlobeGdeltLayer({ enabled = false, limit = 500 }) {
+/**
+ * Which CAMEO codings a reader wants on the map.
+ *
+ * GDELT's kinetic root codes are not equally interesting and the mix
+ * changes by theatre: "Fight" and "Assault" are what happened, "Coerce"
+ * and "Protest" are pressure, "Reject" is talk. Filtering is per-type
+ * rather than a single severity slider because the reader's question
+ * ("show me violence, hide the diplomacy") is about kind, not degree.
+ */
+export const GDELT_EVENT_TYPES = [
+    { key: "Fight", label: "Fight / armed clash" },
+    { key: "Assault", label: "Assault" },
+    { key: "Coerce", label: "Coerce" },
+    { key: "Protest", label: "Protest" },
+    { key: "Threaten", label: "Threaten" },
+    { key: "Reduce relations", label: "Reduce relations" },
+]
+
+export default function GlobeGdeltLayer({ enabled = false, limit = 500, types = null }) {
     const [points, setPoints] = useState([])
 
     useEffect(() => {
@@ -97,11 +119,21 @@ export default function GlobeGdeltLayer({ enabled = false, limit = 500 }) {
         return () => ids.forEach(deleteEntity)
     }, [points])
 
-    if (!enabled || !points.length) return null
+    // `types` null means no filter at all, which is different from an
+    // empty set — an empty set is a reader who has deselected everything
+    // and should see nothing, not everything.
+    const shown = types
+        ? points.filter((p) => {
+            const list = p.event_types?.length ? p.event_types : [p.event_type]
+            return list.some((t) => types.includes(t))
+        })
+        : points
+
+    if (!enabled || !shown.length) return null
 
     return (
         <>
-            {points.map((p) => {
+            {shown.map((p) => {
                 if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return null
                 return (
                     <Entity

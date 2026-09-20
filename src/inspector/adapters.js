@@ -768,6 +768,82 @@ export function adaptFrontline(data = {}) {
     }
 }
 
+// ── a surge, and what it is a surge OF ───────────────────────────────────
+//
+// Reported: "the surge point should show what did it even surge about???
+// what topic, how much increase?" The payload always carried the category,
+// the count, the expected count from this cell's own 90-day baseline and a
+// Poisson p — the mark just showed "SURGE · 5".
+
+const SURGE_CATEGORY = {
+    conflict: "Conflict / strike", equipment: "Equipment loss",
+    infrastructure: "Infrastructure", maritime: "Maritime",
+    air: "Air activity", orbat: "Unit / ORBAT", civil: "Civil / protest",
+}
+
+export function adaptSurge(data = {}) {
+    const point = pointOf(data)
+    const mult = Number(data.mult)
+    const topic = SURGE_CATEGORY[data.cat] || data.cat || "activity"
+    return {
+        identity: {
+            title: `${topic} surging around ${data.place || "this cell"}`,
+            subtitle: Number.isFinite(mult) ? `${mult.toFixed(1)}x normal` : null,
+            entityType: "surge",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes: compact([
+            attr("What surged", topic),
+            attr("How much", Number.isFinite(mult)
+                ? `${data.n} in ${Math.round(data.window_days ?? 7)} days, `
+                  + `against ${Number(data.expected ?? 0).toFixed(1)} expected `
+                  + `— ${mult.toFixed(1)}x` : null),
+            attr("Baseline", data.baseline_days
+                ? `this cell's own previous ${Math.round(data.baseline_days)} days` : null),
+            attr("Chance of coincidence", data.p != null
+                ? `${Number(data.p).toExponential(1)} (Poisson)` : null),
+            attr("Where", data.place || (point ? fmtCoord(point.lat, point.lon) : null)),
+            // THE CAVEAT IS THE POINT. A surge is a change in how much is
+            // being REPORTED, which is not the same as a change on the
+            // ground — coverage follows attention.
+            attr("What this is not", "a change in reporting volume, not a "
+                + "confirmed change on the ground"),
+        ]),
+        provenance: { feed: "Horizon-Watch surge detection", ingestedAt: null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
+// ── a control point from a community war map ────────────────────────────
+
+export function adaptWarmapPoint(data = {}) {
+    const m = data.meta || {}
+    const point = pointOf(data)
+    return {
+        identity: {
+            title: data.name || "Control point",
+            subtitle: m.held_by || null,
+            entityType: "warmap_point",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes: compact([
+            attr("Held by", m.held_by),
+            attr("Theatre", m.theatre),
+            attr("Map last edited", m.last_edited ? fmtTimestamp(m.last_edited) : null),
+            // WHO SAYS SO is the first thing a reader needs here. This is
+            // not a sensor reading or a verified geolocation; it is an
+            // editor's assertion on a page anyone can change.
+            attr("Basis", m.basis),
+            attr("Caveat", m.caveat),
+            attr("Source", m.source_url),
+        ]),
+        provenance: { feed: m.source || "Wikipedia war map", ingestedAt: m.last_edited || null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -787,6 +863,8 @@ const ADAPTERS = {
     fusion_member: adaptFusionMember,
     country_risk: adaptCountryRisk,
     frontline: adaptFrontline,
+    surge: adaptSurge,
+    warmap_point: adaptWarmapPoint,
 }
 
 /**

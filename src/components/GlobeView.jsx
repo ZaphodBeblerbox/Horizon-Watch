@@ -19,6 +19,7 @@ import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
+import GlobeWarMapLayer          from "../globe/GlobeWarMapLayer.jsx"
 import GlobeFiresLayer           from "../globe/GlobeFiresLayer.jsx"
 import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
@@ -122,7 +123,9 @@ export default function GlobeView({
     // GDELT machine-coded news events — separate from geoConfirmedEnabled
     // on purpose, see GlobeGdeltLayer.jsx.
     gdeltEnabled = false,
+    gdeltTypes = null,
     frontlinesEnabled = false,
+    warmapTheatres = [],
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
     firesEnabled = false,
@@ -876,8 +879,11 @@ export default function GlobeView({
                     endDate={geoConfirmedEndDate}
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
-                <GlobeGdeltLayer enabled={gdeltEnabled} />
+                <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} />
+                {warmapTheatres.map((k) => (
+                    <GlobeWarMapLayer key={k} theatre={k} enabled />
+                ))}
                 <GlobeFiresLayer enabled={firesEnabled} />
                 {/* §A8 — surge and fusion, evaluated at the same playhead the
                     archive pins use (§A7). */}

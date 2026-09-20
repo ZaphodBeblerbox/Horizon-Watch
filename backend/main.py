@@ -3512,6 +3512,18 @@ async def aviation_photo(icao24: str):
     return data
 
 
+@app.get("/api/warmap/{theatre}")
+async def api_warmap(theatre: str, force: bool = False):
+    """Settlement-level control points for one war, from Wikipedia's
+    community-maintained war-map modules.
+
+    Points, not polygons — "who holds this town", not a line of control.
+    """
+    import wiki_warmaps as _wm
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _wm.fetch, theatre, force)
+
+
 @app.get("/api/frontlines/theatres")
 def api_frontline_theatres():
     """Which conflicts this layer can draw, and why the rest it cannot.
@@ -3520,7 +3532,25 @@ def api_frontline_theatres():
     is a backend change only — and so the reasons stay with the data.
     """
     import frontlines as _fl
-    return {"theatres": _fl.theatres()}
+    import wiki_warmaps as _wm
+    # Two kinds of source, reported as one roster. DeepStateMap gives
+    # polygons for Ukraine; Wikipedia's war-map modules give control POINTS
+    # for a dozen other wars. Both are real control data and the UI should
+    # not have to know which it is getting — but a reader should, so each
+    # entry says its own kind.
+    out = []
+    for t in _fl.theatres():
+        out.append({**t, "kind": "polygons"})
+    have = {t["key"] for t in out if t.get("available")}
+    for w in _wm.theatres():
+        if w["key"] in have:
+            continue
+        out = [t for t in out if t["key"] != w["key"]]
+        out.append({"key": w["key"], "label": w["label"], "available": True,
+                    "kind": "points", "source": _wm.SOURCE,
+                    "source_url": f"https://en.wikipedia.org/wiki/{w['module'].replace(' ', '_')}",
+                    "legend": w.get("legend") or {}})
+    return {"theatres": out}
 
 
 @app.get("/api/frontlines")
@@ -6929,8 +6959,68 @@ def _build_surface_pool() -> list:
             traceback.print_exc()
         return result
 
+    def _collect_gdelt_items(apply_geo_gate: bool) -> list[dict]:
+        """Drawable GDELT events, in the same shape as the GeoConfirmed ones.
+
+        WHY THIS WAS MISSING AND WHAT IT COST. The pool was GeoConfirmed-only
+        by design, from when RSS was retired for dropping 620 articles on
+        Berlin. But GeoConfirmed is a small volunteer feed and overwhelmingly
+        Ukraine-facing, so "newest critical" could only ever show what that
+        one feed had verified. Reported symptom: the Moscow drone strikes
+        never appeared. They were in GDELT the whole time — "Massive
+        Ukrainian drone attack hits Moscow" reached the country panel and
+        had no route to the critical list.
+
+        The old RSS failure is not repeated here. These are map_points(),
+        which already require a city-level ActionGeo, a kinetic code, a real
+        article URL and a headline a journalist wrote — roughly one event in
+        forty survives, and the country centroid case is excluded outright.
+        """
+        result: list[dict] = []
+        try:
+            import gdelt_events as _ge
+            pins = _ge.map_points(_ge.EVENTS_CACHE.get("events") or [])
+            from exposure_index import classify_severity_deterministic as _csd
+            for pin in pins:
+                lat, lon = pin.get("lat"), pin.get("lon")
+                if lat is None or lon is None:
+                    continue
+                if apply_geo_gate and not geo_gate_passes(float(lat), float(lon), _ACTIVE_PROFILE):
+                    continue
+                tier = _csd(pin["title"], lat, lon) or "elevated"
+                result.append({
+                    "id":              f"gdelt_{pin['id']}",
+                    "source_type":     "news_event",
+                    "type":            "news_event",
+                    "lat":             float(lat),
+                    "lon":             float(lon),
+                    "location":        pin.get("location_name") or "Unknown",
+                    "severity_tier":   tier,
+                    "headline":        pin["title"],
+                    "context":         pin.get("context") or "",
+                    "relevance_score": _SEV_WORD_RISK.get(tier, 42),
+                    "analysed":        True,
+                    "source":          "gdelt",
+                    "published_at":    (pin.get("date") or
+                                        datetime.now(timezone.utc).isoformat()),
+                    "url":             pin.get("source_url"),
+                    # Never "high": this is a machine reading a wire story,
+                    # not a human who found the building in the video.
+                    "confidence":      "medium",
+                    "marker": {
+                        "location": pin.get("location_name"),
+                        "location_name": pin.get("location_name"),
+                        "location_confidence": "city",
+                        "resolved_display_name": pin.get("location_name"),
+                    },
+                })
+        except Exception as ex:                             # noqa: BLE001
+            print(f"[surface] gdelt source error: {type(ex).__name__}: {ex}")
+        return result
+
     # ── First pass ────────────────────────────────────────────────────────────
     items = _collect_geoconfirmed_items(apply_geo_gate=True)
+    items += _collect_gdelt_items(apply_geo_gate=True)
 
     # ── Fallback: if pool is sparse, relax geo gate ───────────────────────────
     if len(items) < 3:
@@ -6939,7 +7029,7 @@ def _build_surface_pool() -> list:
             f"retrying without geo gate"
         )
         fallback_news  = _collect_geoconfirmed_items(apply_geo_gate=False)
-        fallback_all   = fallback_news
+        fallback_all   = fallback_news + _collect_gdelt_items(apply_geo_gate=False)
 
         # Merge: keep strict items, add fallback items not already in pool
         existing_ids = {i["id"] for i in items}
@@ -23175,9 +23265,71 @@ def api_get_notifications(
             "origin_class": r.origin_class, "licence_tier": r.licence_tier,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         })
-        if len(out) >= limit:
+        # Alerts are capped BELOW the limit on purpose — see the fair
+        # merge below.
+        if len(out) >= max(8, limit // 2):
             break
-    return out
+
+    # ── everything else this system detects ──────────────────────────────
+    #
+    # The Alert table is one source of one kind. GDELT pins, GeoConfirmed
+    # confirmations, surges, fusion points and country risk moves all live
+    # elsewhere and could therefore never raise a card — measured, 60 of 60
+    # notifications were AIS sanctioned-vessel alerts while the tray, the
+    # stack and the arrival tracking all worked perfectly on that one feed.
+    #
+    # Each source carries its own `reason` in the same vocabulary, so a
+    # reader can always see the rule that raised the card.
+    try:
+        import live_notifications as _ln
+        extra = []
+        extra += _ln.gdelt_items(hours=hours)
+        extra += _ln.geoconfirmed_items(hours=hours)
+        extra += _ln.derived_items()
+        try:
+            from routers import risk_index as _ri
+            rows = _ri.get_all_country_risk().get("countries") or []
+            extra += _ln.risk_change_items(rows)
+        except Exception as ex:                             # noqa: BLE001
+            print(f"[notifications] risk: {type(ex).__name__}: {ex}")
+        seen_ids = {o["id"] for o in out}
+        for e in extra:
+            if e["id"] in seen_ids:
+                continue
+            seen_ids.add(e["id"])
+            out.append(e)
+    except Exception as ex:                                 # noqa: BLE001
+        # A failure in a derived source must never take the alert tray
+        # down with it.
+        print(f"[notifications] live sources: {type(ex).__name__}: {ex}")
+
+    # ── a fair merge, not a global sort ──────────────────────────────────
+    #
+    # Sorting everything by timestamp and truncating hands the whole tray
+    # back to AIS: there are hundreds of vessel alerts a day carrying
+    # precise second-level times, while a GDELT event date is midnight and
+    # a surge is computed rather than stamped. The most recent 40 rows are
+    # therefore always the same one feed — which is the bug this change
+    # exists to fix, reintroduced by the sort.
+    #
+    # Each source gets a guaranteed share instead, newest-first within it,
+    # so a quiet feed is never crowded out by a chatty one.
+    by_kind: dict = {}
+    for o in out:
+        by_kind.setdefault(o.get("kind") or "signal", []).append(o)
+    for rows in by_kind.values():
+        rows.sort(key=lambda o: str(o.get("created_at") or ""), reverse=True)
+
+    share = max(3, limit // max(1, len(by_kind)))
+    merged, leftovers = [], []
+    for rows in by_kind.values():
+        merged.extend(rows[:share])
+        leftovers.extend(rows[share:])
+    # Any unused budget goes to whoever had more to say.
+    leftovers.sort(key=lambda o: str(o.get("created_at") or ""), reverse=True)
+    merged.extend(leftovers[:max(0, limit - len(merged))])
+    merged.sort(key=lambda o: str(o.get("created_at") or ""), reverse=True)
+    return merged[:limit]
 
 
 @app.get("/api/alerts/{alert_id}")
